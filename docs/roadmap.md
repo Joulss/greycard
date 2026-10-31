@@ -617,8 +617,6 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] The command-line export the editor binary has today in the
-      README's highlights, since people ask for it without finding it
 - [ ] The engine, part 1 (§454): the sidecar helpers, the edited
       pictures' engine half, and the version key moved below the
       window as pure moves, explicit imports in each file touched.
