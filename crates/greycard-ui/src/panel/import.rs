@@ -1613,24 +1613,34 @@ mod tests {
             "the last line at {y}+{h} past the pane's {}",
             p.y + s.height
         );
-        // A window too short: the pane is cut, and a turn of the wheel
-        // over it brings the last line up.
+        // A window too short for the sheet's fixed rows, whatever the
+        // platform's type measures: the pane is cut, and a turn of
+        // the wheel over it brings the last line up.
         app.window()
-            .set_size(slint::LogicalSize::new(1500.0, 600.0));
+            .set_size(slint::LogicalSize::new(1500.0, 400.0));
         settle();
-        let (y, h) = last().expect("the last line is still laid out");
         let (p, s) = pane();
+        // Past the pane's foot, or so far past the window that the
+        // backend lists it no more.
+        let before = last();
         assert!(
-            y + h > p.y + s.height,
+            before.is_none_or(|(y, h)| y + h > p.y + s.height),
             "the pane holds all of it in a short window"
         );
         app.window().dispatch_event(WindowEvent::PointerScrolled {
             position: slint::LogicalPosition::new(p.x + 100.0, p.y + 100.0),
             delta_x: 0.0,
-            delta_y: -120.0,
+            delta_y: -1000.0,
         });
         settle();
-        let (after, _) = last().unwrap();
-        assert!(after < y, "the wheel scrolled nothing: {after} from {y}");
+        let (after, h) = last().expect("the wheel brings the last line up");
+        assert!(
+            after + h <= p.y + s.height,
+            "the last line at {after}+{h} is still past the pane"
+        );
+        assert!(
+            before.is_none_or(|(was, _)| after < was),
+            "the wheel scrolled nothing: {after} from {before:?}"
+        );
     }
 }
