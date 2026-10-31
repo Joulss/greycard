@@ -650,6 +650,11 @@ touches.
       sidecar, the history) split by part; the profile and look
       stores, the sync algorithm, and the importers to a sibling so
       the schema crate stays data and conversion
+- [ ] A one-page architecture document: each crate, what it may
+      depend on, and which crate runs each pipeline stage, with the
+      layer rule beside CLAUDE.md's core rule; §5 predates ai,
+      render, and gpu, and building.md names no crate. Written last,
+      against the layout the moves above leave
 - [ ] The architecture document (in the pool below) written first,
       since it is the map the move is planned on
 
