@@ -87,7 +87,7 @@ mod tests {
 
     fn develop_window() -> (
         App,
-        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::Shared>,
         std::rc::Rc<crate::worker::Worker>,
     ) {
         let app = crate::testing::window(3);

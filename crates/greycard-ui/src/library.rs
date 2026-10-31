@@ -2420,7 +2420,7 @@ pub(crate) fn skipped_words(roots: &greycard_library::Roots, root: &Path) -> Str
 /// The index moved under the window: the rows read again, and the
 /// browser's list rebuilt when the filter asks the index something
 /// and the answer changed; otherwise only the chips.
-fn reread(state: &Rc<RefCell<State>>, app: &App, changed: bool) {
+fn reread(state: &Rc<Shared>, app: &App, changed: bool) {
     let mut st = state.borrow_mut();
     let moved = refresh_ids(&mut st);
     let pass = index_pass(&st);

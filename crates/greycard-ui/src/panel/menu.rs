@@ -140,7 +140,7 @@ fn spawn_reveal(path: &Path, mut cmd: std::process::Command) -> std::io::Result<
 /// Settle what a right-click on browser row `row` (-1: the frame on
 /// screen, from the viewport) is about, and fill the menu's checks
 /// and counts for it.
-pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
+pub(crate) fn menu_asked(state: &Rc<Shared>, app: &App, row: i32) {
     let file = {
         let st = state.borrow();
         match usize::try_from(row) {
@@ -194,7 +194,7 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     crate::panel::cull::show_back(&st, app);
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // A right-click is a Control+click on a Mac, and a Mac's Control
     // is what Slint calls `meta`.
     app.set_ctrl_click_menu(cfg!(target_os = "macos"));

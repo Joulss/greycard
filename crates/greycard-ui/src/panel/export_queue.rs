@@ -287,12 +287,7 @@ pub(crate) fn open_at_launch(st: &mut State, app: &App, settings: Option<&Path>,
 /// from `pressed` and `frames` now, into the folder the sheet's Folder
 /// row shows or, with a subfolder on the sheet, into that beside each
 /// frame, appended to the queue. Nothing is exported.
-fn queue_pressed(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    pressed: &crate::versions::Key,
-    frames: &[usize],
-) {
+fn queue_pressed(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, frames: &[usize]) {
     if state.borrow().work.export_choosing {
         return;
     }
@@ -788,7 +783,7 @@ pub(crate) fn remove(st: &mut State, app: &App, index: usize) {
     );
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // Add to queue: the selection or the frame, as Export takes it.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -926,7 +921,7 @@ mod tests {
     }
 
     /// Frame `index` of the running set came back as `done`.
-    fn frame(app: &App, state: &Rc<RefCell<State>>, index: usize, done: queue::Done) {
+    fn frame(app: &App, state: &Rc<Shared>, index: usize, done: queue::Done) {
         let (set, source, edit) = {
             let st = state.borrow();
             let run = st.work.queue_run.as_ref().expect("the queue runs");
@@ -949,7 +944,7 @@ mod tests {
     }
 
     /// The running set is finished.
-    fn finish(app: &App, state: &Rc<RefCell<State>>) {
+    fn finish(app: &App, state: &Rc<Shared>) {
         let set = state
             .borrow()
             .work

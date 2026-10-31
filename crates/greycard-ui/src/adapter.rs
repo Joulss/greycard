@@ -390,7 +390,7 @@ mod tests {
     }
 
     /// A develop landed, its line as the status line shows it.
-    fn develop_line(app: &App, state: &std::cell::RefCell<State>) -> String {
+    fn develop_line(app: &App, state: &crate::Shared) -> String {
         let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             app,

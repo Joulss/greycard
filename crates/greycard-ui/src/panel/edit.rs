@@ -484,7 +484,7 @@ pub(crate) fn read_look(app: &App) -> Look {
 /// sliders do.
 pub(crate) fn develop_soon(
     st: &mut State,
-    state: Rc<RefCell<State>>,
+    state: Rc<Shared>,
     worker: Rc<Worker>,
     app_weak: slint::Weak<App>,
 ) {
@@ -1038,7 +1038,7 @@ pub(crate) fn read_folds(app: &App) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // A change the engine must see: the viewport previews what it can
     // at once, and the develop waits until the sliders rest.
     {

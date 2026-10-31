@@ -156,7 +156,7 @@ pub(crate) fn edit_roots<T>(
 /// The folder is made canonical and looked at off the window's thread
 /// (a folder on a share can take a round trip, or never answer), and
 /// added when that is done.
-pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+pub(crate) fn add(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     app.set_status(format!("adding {}...", dir.display()).into());
     send_check(state, app, worker, dir.to_path_buf(), Check::Add);
 }
@@ -164,7 +164,7 @@ pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, di
 /// [`add`], and the folder's frames opened once it is in: its own
 /// view as a root, or, under a root already, that root's view of it
 /// and the folders under it. The Import sheet's Add in place.
-pub(crate) fn add_and_open(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+pub(crate) fn add_and_open(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     app.set_status(format!("adding {}...", dir.display()).into());
     send_check(state, app, worker, dir.to_path_buf(), Check::AddOpen);
 }
@@ -195,7 +195,7 @@ impl Check {
     /// The answer, on the window's thread.
     pub(super) fn land(
         self,
-        state: &Rc<RefCell<State>>,
+        state: &Rc<Shared>,
         app: &App,
         worker: &Rc<Worker>,
         dir: &Path,
@@ -268,13 +268,7 @@ pub(super) fn checked_within(
 /// Look at a folder off the window's thread, and act on it on the
 /// window's thread when that is done.
 #[cfg(not(test))]
-fn send_check(
-    _state: &Rc<RefCell<State>>,
-    app: &App,
-    _worker: &Rc<Worker>,
-    dir: PathBuf,
-    check: Check,
-) {
+fn send_check(_state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, dir: PathBuf, check: Check) {
     let app_weak = app.as_weak();
     let spawned = std::thread::Builder::new()
         .name("greycard roots add".into())
@@ -302,13 +296,7 @@ fn send_check(
 /// run (`tests::run_checks`), so it can see the window's thread asked
 /// nothing meanwhile.
 #[cfg(test)]
-fn send_check(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    dir: PathBuf,
-    check: Check,
-) {
+fn send_check(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: PathBuf, check: Check) {
     if tests::HOLD_CHECKS.with(|h| *h.borrow()) {
         tests::CHECKS_SENT.with(|c| c.borrow_mut().push((dir, check)));
         return;
@@ -320,7 +308,7 @@ fn send_check(
 /// A folder to add, looked at: kept, watched, passed over; and with
 /// `then_open`, its frames opened.
 fn add_checked(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     checked: std::result::Result<PathBuf, greycard_library::roots::RootError>,
@@ -419,7 +407,7 @@ fn add_checked(
 /// this session, the folders added in memory; then each kept, watched
 /// and passed over, as an add from the pane is.
 pub(crate) fn taken_from_file(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: Option<&Rc<Worker>>,
     added: Vec<PathBuf>,
@@ -458,7 +446,7 @@ pub(crate) fn taken_from_file(
 /// always does) is taken out at once, asking the disk nothing; any
 /// other path is made canonical off the window's thread first, and
 /// taken out by that when it is in the list.
-pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+pub(crate) fn remove(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     if state
         .borrow()
         .views
@@ -475,7 +463,7 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
 }
 
 /// Take out a root the list has as `dir`, as it is.
-fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+fn remove_listed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let mut st = state.borrow_mut();
     let was = said(&st.views.library.roots, dir);
     match edit_roots(&mut st, |r| r.remove(dir)) {
@@ -528,7 +516,7 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
 /// Give a root a name, or with an empty one take its name away. The
 /// root is still its path, and nothing on disk is touched; only its
 /// row and what the status line calls it change.
-pub(crate) fn rename(state: &Rc<RefCell<State>>, app: &App, dir: &Path, name: &str) {
+pub(crate) fn rename(state: &Rc<Shared>, app: &App, dir: &Path, name: &str) {
     let mut st = state.borrow_mut();
     let before = st.views.library.roots.name(dir).map(str::to_owned);
     match edit_roots(&mut st, |r| r.set_name(dir, name)) {

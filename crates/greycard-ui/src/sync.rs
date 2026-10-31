@@ -17,7 +17,6 @@
 //! holds *now*, and taken or joined from that: a save made while the
 //! job was out is never undone by what the job saw before it.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -35,7 +34,7 @@ use crate::archive::{self, Beat, Heard};
 use crate::panel::browser::file_name;
 use crate::roots::ROOT_WAIT;
 use crate::worker::Worker;
-use crate::{App, State};
+use crate::{App, Shared, State};
 
 /// How long a write to an archive may say nothing before it is given
 /// up (§233): a share that answered its look and then went quiet.
@@ -1377,7 +1376,7 @@ pub(crate) fn retry(st: &mut State, app: &App) {
 }
 /// Where a write's end lands on the window's thread.
 fn landed(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     frame: &Path,
@@ -1472,7 +1471,7 @@ fn landed(
 /// the local root may be a share too. Each save queues the archive
 /// write again, which then finds the copy behind and goes.
 fn settle(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     frame: &Path,
@@ -1492,7 +1491,7 @@ fn settle(
 /// [`settle`]'s work on the window's sidecar; false when the frame is
 /// not the window's to settle. The window's borrow ends in every arm.
 fn settle_held(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     frame: &Path,
@@ -1600,7 +1599,7 @@ fn settle_held(
 
 /// The frame on screen holds a sidecar that changed under it without
 /// a save of its own: the panel shows it, developed again.
-fn show_settled(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+fn show_settled(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let mut st = state.borrow_mut();
     if st.culling.cull.is_some() {
         return;
@@ -1828,7 +1827,7 @@ fn follow_check(
 /// Where the follow check lands: the frame follows when the copy is
 /// ready, is settled when it is another's, stays otherwise.
 fn follow_landed(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     frame: &Path,
@@ -1926,7 +1925,7 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
 }
 
 /// The window's callbacks.
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     let st = Rc::clone(state);
     let app_weak = app.as_weak();
     app.on_sync_retry(move || {
@@ -1937,8 +1936,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
 }
 
 /// Where a job's end lands on the window's thread.
-type Landing<R> =
-    Arc<dyn Fn(&Rc<RefCell<State>>, &App, &Rc<Worker>, Heard<R>) + Send + std::marker::Sync>;
+type Landing<R> = Arc<dyn Fn(&Rc<Shared>, &App, &Rc<Worker>, Heard<R>) + Send + std::marker::Sync>;
 
 /// Run `job` off the window's thread with its beats watched for
 /// `wait`, and land what it says on the window's thread. False when no
@@ -1949,7 +1947,7 @@ fn send<R: Send + 'static>(
     name: &str,
     wait: Duration,
     job: impl FnOnce(&Beat) -> R + Send + 'static,
-    land: impl Fn(&Rc<RefCell<State>>, &App, &Rc<Worker>, Heard<R>) + Send + std::marker::Sync + 'static,
+    land: impl Fn(&Rc<Shared>, &App, &Rc<Worker>, Heard<R>) + Send + std::marker::Sync + 'static,
 ) -> bool {
     let land: Landing<R> = Arc::new(land);
     let app_weak = app.as_weak();
@@ -1985,7 +1983,7 @@ fn send<R: Send + 'static>(
     _name: &str,
     _wait: Duration,
     job: impl FnOnce(&Beat) -> R + Send + 'static,
-    land: impl Fn(&Rc<RefCell<State>>, &App, &Rc<Worker>, Heard<R>) + Send + std::marker::Sync + 'static,
+    land: impl Fn(&Rc<Shared>, &App, &Rc<Worker>, Heard<R>) + Send + std::marker::Sync + 'static,
 ) -> bool {
     let land: Landing<R> = Arc::new(land);
     let aside = tests::ASIDE_NEXT.with(|a| a.replace(false));
@@ -2022,8 +2020,9 @@ pub(crate) mod tests {
     use crate::testing::{state_for, window};
     use greycard_library::fixture::{A7, R5, write_frame};
     use greycard_library::sync_note::note_disk_save;
+    use std::cell::RefCell;
 
-    type Sent = Box<dyn FnOnce(&Rc<RefCell<State>>, &App, &Rc<Worker>)>;
+    type Sent = Box<dyn FnOnce(&Rc<Shared>, &App, &Rc<Worker>)>;
 
     thread_local! {
         pub(crate) static SENT: RefCell<Vec<Sent>> = RefCell::new(Vec::new());
@@ -2033,7 +2032,7 @@ pub(crate) mod tests {
 
     /// Run the jobs sent off and land them, as the threads and the
     /// event loop would, until none are left; how many there were.
-    pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+    pub(crate) fn land_sent(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
         let mut n = 0;
         loop {
             let jobs: Vec<Sent> = SENT.with(|s| s.borrow_mut().drain(..).collect());
@@ -2092,7 +2091,7 @@ pub(crate) mod tests {
         local: &Path,
         nas: &Path,
         db: &Path,
-    ) -> (Rc<RefCell<State>>, Rc<Worker>) {
+    ) -> (Rc<Shared>, Rc<Worker>) {
         let (state, worker) = state_for(app, files);
         {
             let mut st = state.borrow_mut();
@@ -2123,7 +2122,7 @@ pub(crate) mod tests {
     /// index: its reader let go, since the app's callbacks keep the
     /// state alive past the drop, and Windows will not remove a folder
     /// holding an open database.
-    fn close(state: Rc<RefCell<State>>, worker: Rc<Worker>) {
+    fn close(state: Rc<Shared>, worker: Rc<Worker>) {
         state.borrow_mut().views.index_reader = None;
         drop(worker);
         drop(state);
@@ -2154,7 +2153,7 @@ pub(crate) mod tests {
             .unwrap()
     }
 
-    fn save(state: &Rc<RefCell<State>>, stops: f32) {
+    fn save(state: &Rc<Shared>, stops: f32) {
         let mut st = state.borrow_mut();
         crate::panel::edit::save_edit(&mut st, exposed(stops));
     }
@@ -3044,7 +3043,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .map(|w| w.revision)
         };
-        let latest = |state: &Rc<RefCell<State>>| {
+        let latest = |state: &Rc<Shared>| {
             state.borrow().sidecars[0]
                 .revisions
                 .last()
@@ -3166,7 +3165,7 @@ pub(crate) mod tests {
 
     /// Frame `c`'s edit on the panel, as an open shows it, and into
     /// culling from there, staying on a key rather than moving on.
-    fn cull_from(state: &Rc<RefCell<State>>, app: &App, c: usize) {
+    fn cull_from(state: &Rc<Shared>, app: &App, c: usize) {
         let mut st = state.borrow_mut();
         st.current = Some(c);
         let edit = st.sidecars[c].current.clone();

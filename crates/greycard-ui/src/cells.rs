@@ -72,7 +72,7 @@ impl Window {
 
 /// What the rows and the two views share.
 #[derive(Default)]
-struct Shared {
+struct Between {
     rows: RefCell<Vec<Thumb>>,
     views: [Window; 2],
     shape: RefCell<Shape>,
@@ -108,7 +108,7 @@ pub(crate) const SQUARE: i32 = -1;
 
 /// Every row of the browser's list: the window's `thumbs`.
 pub(crate) struct Rows {
-    shared: Rc<Shared>,
+    shared: Rc<Between>,
     notify: ModelNotify,
 }
 
@@ -147,7 +147,7 @@ impl Model for Rows {
 
 /// A view's cells: the window's `strip-cells` or `grid-cells`.
 pub(crate) struct Cells {
-    shared: Rc<Shared>,
+    shared: Rc<Between>,
     view: View,
 }
 
@@ -188,11 +188,11 @@ impl Model for Cells {
 
 /// The rows and views on `app`, put there the first time they are
 /// asked for.
-fn shared(app: &App) -> Rc<Shared> {
+fn shared(app: &App) -> Rc<Between> {
     if let Some(cells) = app.get_grid_cells().as_any().downcast_ref::<Cells>() {
         return cells.shared.clone();
     }
-    let shared = Rc::new(Shared::default());
+    let shared = Rc::new(Between::default());
     app.set_strip_cells(ModelRc::new(Cells {
         shared: shared.clone(),
         view: View::Strip,
@@ -294,7 +294,7 @@ pub(crate) fn window(app: &App, view: View) -> (usize, usize) {
 }
 
 /// Put `aspects` in as the rows' shapes, one a row, and lay out anew.
-fn put_aspects(app: &App, shared: &Shared, aspects: Vec<f32>) {
+fn put_aspects(app: &App, shared: &Between, aspects: Vec<f32>) {
     let serial = {
         let mut shape = shared.shape.borrow_mut();
         shape.aspects = aspects;

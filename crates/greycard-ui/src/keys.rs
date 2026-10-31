@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 use slint::platform::Key;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::{App, BindRow, KeyRow, State};
+use crate::{App, BindRow, KeyRow, Shared};
 
 /// A line of the sheet: the chords that do it, by [`chord`]'s names,
 /// how the sheet writes them when the names alone would read badly,
@@ -880,7 +880,7 @@ pub(crate) fn load(app: &App, saved: &BTreeMap<String, String>) {
 
 /// The bindings changed from the Settings sheet: logged, written to
 /// settings.json at once, and both sheets made again.
-fn changed(app: &App, state: &Rc<RefCell<State>>) {
+fn changed(app: &App, state: &Rc<Shared>) {
     let saved = with_map(|m| {
         log_conflicts(m);
         m.saved()
@@ -892,7 +892,7 @@ fn changed(app: &App, state: &Rc<RefCell<State>>) {
 
 /// The Settings sheet's Keys section: a press taken as an action's
 /// new chord, and Reset to defaults.
-pub(crate) fn install_sheet(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install_sheet(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         // True when the press ends the listening: a chord, taken or
@@ -1345,7 +1345,7 @@ mod tests {
     /// A window with a frame open in Develop, as the tools' keys want.
     fn develop_window() -> (
         App,
-        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::Shared>,
         std::rc::Rc<crate::worker::Worker>,
     ) {
         let app = window(3);
@@ -1426,9 +1426,8 @@ mod tests {
     #[test]
     fn m_and_shift_m_start_a_mask_placed_by_the_next_drag() {
         let (app, state, _worker) = develop_window();
-        let masks = |state: &std::rc::Rc<std::cell::RefCell<crate::State>>| {
-            state.borrow().develop.edit.adjustments.len()
-        };
+        let masks =
+            |state: &std::rc::Rc<crate::Shared>| state.borrow().develop.edit.adjustments.len();
         press(&app, "m");
         assert_eq!(app.get_panel_tab(), "Masks");
         assert_eq!(app.get_placing(), "Linear");
@@ -1737,7 +1736,7 @@ mod tests {
     /// the view is out of the accessible tree too.
     fn settings_window() -> (
         App,
-        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::Shared>,
         std::rc::Rc<crate::worker::Worker>,
     ) {
         let (app, state, worker) = develop_window();
@@ -2173,9 +2172,7 @@ mod tests {
     fn a_text_box_keeps_the_keys_over_the_picture() {
         use crate::testing::{click, labeled, type_text};
         let (app, state, _worker) = develop_window();
-        let rating = |state: &std::rc::Rc<std::cell::RefCell<crate::State>>| {
-            state.borrow().sidecars[0].meta.rating
-        };
+        let rating = |state: &std::rc::Rc<crate::Shared>| state.borrow().sidecars[0].meta.rating;
         let over_the_picture = |app: &App| {
             app.window().dispatch_event(WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(700.0, 400.0),

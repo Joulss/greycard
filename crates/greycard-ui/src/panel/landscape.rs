@@ -234,7 +234,7 @@ pub(crate) fn stopped(st: &mut State) {
     st.develop.landscape_offer = None;
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_find_landscape(move |mode| {
@@ -265,7 +265,7 @@ mod tests {
     use greycard_ai::landscape::Group;
 
     /// A window on the Masks tab with one empty mask chosen.
-    fn masks() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn masks() -> (App, Rc<Shared>, Rc<Worker>) {
         let app = window(1);
         let (state, worker) = state_for(&app, folder(1));
         app.set_panel_tab("Masks".into());

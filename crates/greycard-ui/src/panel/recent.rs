@@ -173,7 +173,7 @@ pub(crate) fn show(st: &State, app: &App) {
 /// is opened, or said to be gone, back on the window's thread, unless
 /// another list has opened since it was chosen.
 #[cfg(not(test))]
-fn chosen(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, path: &str) {
+fn chosen(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, path: &str) {
     let dir = PathBuf::from(path);
     let app_weak = app.as_weak();
     let generation = state.borrow().views.view_generation;
@@ -224,7 +224,7 @@ fn still_wanted(st: &State, generation: u64) -> bool {
 /// In a test the folder is looked at in place: there is no event loop
 /// to land it on.
 #[cfg(test)]
-fn chosen(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, path: &str) {
+fn chosen(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, path: &str) {
     let dir = Path::new(path);
     checked(
         state,
@@ -237,25 +237,14 @@ fn chosen(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, path: &str
 
 /// A folder chosen from the list, for another module's test.
 #[cfg(test)]
-pub(crate) fn choose_for_test(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    dir: &Path,
-) {
+pub(crate) fn choose_for_test(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     chosen(state, app, worker, &dir.to_string_lossy());
 }
 
 /// A folder chosen, looked at: opened, or, no longer on the disk (a
 /// card taken out, a drive unplugged, a folder moved), said to be
 /// gone. It stays listed either way: it may be back when the drive is.
-fn checked(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    dir: &Path,
-    there: Option<bool>,
-) {
+fn checked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path, there: Option<bool>) {
     let Some(there) = there else {
         tracing::warn!("recently opened: {} is not answering", dir.display());
         // Not "in 3 s": a look still out from before answers no at once.
@@ -274,7 +263,7 @@ fn checked(
     open_folder(state, app, worker, dir);
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_recent_folders(ModelRc::from(state.borrow().views.recent.rows.clone()));
     let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
     app.on_recent_chosen(move |path| {
@@ -311,12 +300,12 @@ mod tests {
 
     /// A folder's open, its list landed: it is read off the window's
     /// thread (`roots::open_listing`), and a test lands it.
-    fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+    fn open_folder(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
         crate::panel::browser::open_folder(state, app, worker, dir);
         crate::roots::land_sent(state, app, worker);
     }
 
-    fn chosen(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &str) {
+    fn chosen(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &str) {
         app.invoke_recent_chosen(dir.into());
         crate::roots::land_sent(state, app, worker);
     }

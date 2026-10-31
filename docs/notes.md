@@ -480,3 +480,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§465. The wrapped line the layout does not see](notes/465-the-wrapped-line-the-layout-does-not-see.md) (2026-10-31)
 - [§466. Sky on Core ML without its weights as text, and the race remembered](notes/466-sky-on-core-ml-without-its-weights-as-text.md) (2026-10-31)
 - [§467. A library target for the windowless modules](notes/467-a-library-target-for-the-windowless-modules.md) (2026-10-31)
+- [§468. The borrow that names both sides](notes/468-the-borrow-that-names-both-sides.md) (2026-10-31)

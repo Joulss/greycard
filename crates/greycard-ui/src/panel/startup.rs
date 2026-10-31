@@ -558,7 +558,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(keys) = cli.keys.clone() {
         let _ = crate::panel::viewport::SNAPSHOT_KEYS.set(keys);
     }
-    let state = Rc::new(RefCell::new({
+    let state = Rc::new(Shared::new({
         let write_sidecars = !cli.no_sidecars;
         let xmp_sidecars = cli.xmp_sidecars || remembered.xmp_sidecars;
         let cull_move_on = remembered.cull_move_on;
@@ -2342,11 +2342,7 @@ const FRAMES_A_SECOND_SAID: f64 = 5.0;
 /// the last written, so a run that ends without the close's write (a
 /// Mac's Quit, a crash) keeps them. Polled rather than wired to each
 /// control, so a choice added to `remember` is kept with no more work.
-pub(crate) fn keep_choices(
-    app: &App,
-    state: &Rc<RefCell<State>>,
-    panes_from_file: bool,
-) -> slint::Timer {
+pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, panes_from_file: bool) -> slint::Timer {
     let mut last = gathered(app, &state.borrow());
     let mut said_unread = false;
     let (app_weak, state) = (app.as_weak(), state.clone());

@@ -809,7 +809,7 @@ pub(crate) fn fit_when_read(app: &App, tries: u32) {
     });
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_match_asked(move || {

@@ -537,7 +537,7 @@ fn offline_view(
     Vec<PathBuf>,
     greycard_library::Library,
     App,
-    Rc<RefCell<State>>,
+    Rc<Shared>,
     Rc<Worker>,
 ) {
     let dir = scratch(what);
@@ -888,7 +888,7 @@ fn many_under_a_root(
     Vec<PathBuf>,
     greycard_library::Library,
     App,
-    Rc<RefCell<State>>,
+    Rc<Shared>,
     Rc<Worker>,
 ) {
     let dir = scratch(what);
@@ -919,7 +919,7 @@ fn many_under_a_root(
 }
 
 /// The frame's whole sidecar in memory after its pick landed.
-fn open_and_land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, row: i32) {
+fn open_and_land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, row: i32) {
     crate::panel::browser::open_row(&mut state.borrow_mut(), app, worker, row, false);
     crate::rows::land_pending(state, app, worker);
 }
@@ -1472,7 +1472,7 @@ fn three_picks_culling(
     Vec<PathBuf>,
     greycard_library::Library,
     App,
-    Rc<RefCell<State>>,
+    Rc<Shared>,
     Rc<Worker>,
 ) {
     let dir = scratch(what);

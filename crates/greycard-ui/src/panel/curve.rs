@@ -410,7 +410,7 @@ pub(crate) fn draw_curve(app: &App, bins: Option<&[u32]>) -> slint::Image {
     slint::Image::from_rgb8(buf)
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // The curve editor: press selects or adds a point, drag moves it,
     // release records the edit, a double-click removes a point. On
     // the parametric curve the same presses take a split point
@@ -940,10 +940,7 @@ mod tests {
     /// A window on a picture with one mask, of `shape`, and the last
     /// analysis's histogram in hand; the Masks tab showing, nothing
     /// chosen yet.
-    fn a_mask_of(
-        shape: &str,
-        bins: &[u32],
-    ) -> (App, Rc<RefCell<State>>, Rc<crate::worker::Worker>) {
+    fn a_mask_of(shape: &str, bins: &[u32]) -> (App, Rc<Shared>, Rc<crate::worker::Worker>) {
         use crate::testing;
         let app = testing::window(1);
         let (state, worker) = testing::state_for(&app, testing::folder(1));
@@ -1024,7 +1021,7 @@ mod tests {
         let drawn = image_bytes(&draw_curve(&app, Some(&frame)));
         assert_eq!(image_bytes(&app.get_curve_image()), drawn);
 
-        let locals = |state: &Rc<RefCell<State>>| {
+        let locals = |state: &Rc<Shared>| {
             let mut st = state.borrow_mut();
             let st = &mut *st;
             bake_locals(

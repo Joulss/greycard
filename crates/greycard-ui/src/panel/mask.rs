@@ -673,7 +673,7 @@ pub(crate) fn sky_pick(no_sky: bool, have_sam: bool) -> Result<&'static str, &'s
 /// color range the dropper in hand, so the next click on the picture
 /// centers the window. Called with the state let go of, since putting
 /// a dropper in hand puts any other tool down.
-fn arm_range_pick(app: &App, state: &RefCell<State>, kind: &str) {
+fn arm_range_pick(app: &App, state: &Shared, kind: &str) {
     if kind != "Color" {
         app.set_status(made_hint(kind).into());
         return;
@@ -684,7 +684,7 @@ fn arm_range_pick(app: &App, state: &RefCell<State>, kind: &str) {
     crate::panel::deliver::show_hint(app, &mut state.borrow_mut(), made_hint(kind));
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The mask toggle thrown by hand while a tool is in hand: that
     // choice stands once the tool is down.
     {
@@ -3112,7 +3112,7 @@ mod tests {
         shape: Shape,
     ) -> (
         App,
-        Rc<RefCell<State>>,
+        Rc<Shared>,
         Rc<crate::worker::Worker>,
         slint::LogicalPosition,
     ) {
@@ -3150,7 +3150,7 @@ mod tests {
     /// Where in the window a point of the masks' units is shown.
     fn shown_at(
         app: &App,
-        state: &Rc<RefCell<State>>,
+        state: &Rc<Shared>,
         base: slint::LogicalPosition,
         u: f32,
         v: f32,
@@ -3159,7 +3159,7 @@ mod tests {
         (base.x + x, base.y + y)
     }
 
-    fn the_shape(state: &Rc<RefCell<State>>) -> Shape {
+    fn the_shape(state: &Rc<Shared>) -> Shape {
         state.borrow().develop.edit.adjustments[0].mask.components[0]
             .shape
             .clone()

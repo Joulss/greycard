@@ -367,7 +367,7 @@ pub(crate) fn start(app: &App, batch: bool, kept: &Kept) {
 }
 
 /// The switch, Check now, the entry's link and its dismissal.
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     let fetch: Fetch = if cfg!(test) { offline } else { github };
     {
         let (state, app_weak) = (state.clone(), app.as_weak());

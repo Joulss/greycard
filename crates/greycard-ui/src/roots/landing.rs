@@ -5,7 +5,7 @@ use super::*;
 /// A read done, on the window's thread: what it saw of the roots and
 /// the folders kept, and the list opened or merged. Nothing here asks
 /// the disk.
-pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found) {
+pub(super) fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, found: Found) {
     let Found {
         purpose,
         generation,
@@ -309,7 +309,7 @@ pub(super) fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, f
 /// roots. A capture of it waits for that pass when there is one to
 /// wait for, and ends when there is none.
 fn take_empty(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     view: View,

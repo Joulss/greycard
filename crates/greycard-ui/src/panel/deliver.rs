@@ -341,7 +341,7 @@ pub(crate) fn thumb_turn(between: Option<Duration>) -> Duration {
 /// input.
 pub(crate) fn take_thumbnails(
     app: &App,
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     batch: crate::thumbpool::Batch,
     budget: Duration,
 ) {
@@ -1710,7 +1710,7 @@ thread_local! {
 /// subfolder is cleared, since it would otherwise still win. An export
 /// whose folder is still being looked at is overtaken: its answer is
 /// dropped, and Export is pressed again for the new folder.
-fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
+fn choose_export_folder(state: &Rc<Shared>, app: &App) {
     let start = {
         let st = state.borrow();
         if st.work.exporting.is_some() || st.work.export_choosing {
@@ -1761,7 +1761,7 @@ fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
     });
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_overwrite_answered(move |answer| {
@@ -1963,12 +1963,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 /// sheet's folder. A pressed frame no longer on screen when the
 /// sidecars came in (the user moved on while they were read) is
 /// exported under its own sidecar's edit, never the panel's.
-fn export_frames(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    pressed: &crate::versions::Key,
-    frames: &[usize],
-) {
+fn export_frames(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, frames: &[usize]) {
     {
         let st = state.borrow();
         // One set at a time, and one folder asked about for it: a
@@ -1994,7 +1989,7 @@ pub(crate) type SetFrames = Vec<(PathBuf, Edit, u8, bool, Option<queue::Version>
 /// panel's edit is made a state first when it is. None when there is
 /// nothing to take, the reason on the status line.
 pub(crate) fn pressed_frames(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     pressed: &crate::versions::Key,
     frames: &[usize],
@@ -2057,7 +2052,7 @@ pub(crate) fn pressed_frames(
 /// size, with no dialog: with a subfolder on the sheet, into it beside
 /// each frame; else into the folder the sheet's Folder row shows for
 /// `raw`, each frame under its own name there.
-fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: SetFrames) {
+fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrames) {
     let preset = preset_in_use(app);
     let sheet = read_sheet(app);
     let settings = sheet.settings();

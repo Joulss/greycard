@@ -671,7 +671,7 @@ fn land(st: &mut State, app: &App, built: Built) {
 /// A test's turn at the trees sent off the window's thread: each built
 /// and landed; how many.
 #[cfg(test)]
-pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App) -> usize {
+pub(crate) fn land_sent(state: &Rc<Shared>, app: &App) -> usize {
     let builds: Vec<Build> = tests::SENT.with(|s| s.borrow_mut().drain(..).collect());
     let n = builds.len();
     for b in builds {
@@ -743,7 +743,7 @@ fn tile_folder(st: &State, tile: i32) -> Option<PathBuf> {
 }
 
 /// A folder of the tree chosen, by its row: opened as [`open`] has it.
-fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, row: i32) {
+fn picked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, row: i32) {
     let Some(folder) = row_folder(&state.borrow(), row) else {
         return;
     };
@@ -752,7 +752,7 @@ fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, row: i32) 
 
 /// A folder's tile in the grid clicked: opened as its row in the tree
 /// opens it.
-fn tile_picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, tile: i32) {
+fn tile_picked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, tile: i32) {
     let (folder, loose) = {
         let st = state.borrow();
         let Some(folder) = tile_folder(&st, tile) else {
@@ -773,7 +773,7 @@ fn tile_picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, tile:
 /// from the index, its own or with those under it as the switch says.
 /// The tree marks it and Recently opened records it once the view
 /// lands, as for any view.
-fn open(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, folder: &Path, from: &str) {
+fn open(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, folder: &Path, from: &str) {
     let view = {
         let st = state.borrow();
         let Some(root) = st.views.tree.root.clone() else {
@@ -830,7 +830,7 @@ fn folded(st: &mut State, app: &App, row: i32) {
 /// it, and nothing else is opened again. When it is not (the
 /// switch turned off under a frame of a folder below), or there is no
 /// frame on screen, the view is opened as any is.
-fn subfolders_changed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+fn subfolders_changed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let on = app.get_folder_tree_subfolders();
     let again = {
         let mut st = state.borrow_mut();
@@ -885,7 +885,7 @@ fn keeps_frame(st: &State, folder: &Path, deep: bool) -> bool {
 /// is the new one over the old list until the next read of it. False,
 /// the view left as it was, when there is nothing to read the list
 /// from or a view is still opening.
-fn change_in_place(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, view: View) -> bool {
+fn change_in_place(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, view: View) -> bool {
     let was = std::mem::replace(&mut state.borrow_mut().views.view, view);
     if !crate::roots::read_view_now(state, app, worker) {
         state.borrow_mut().views.view = was;
@@ -926,7 +926,7 @@ impl Tree {
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_folder_tree(ModelRc::from(state.borrow().views.tree.rows.clone()));
     app.set_grid_tiles(ModelRc::from(state.borrow().views.tree.tiles.clone()));
     app.set_folder_tree_subfolders(state.borrow().views.tree.subfolders);
@@ -1153,7 +1153,7 @@ mod tests {
     /// A root `archive` of a frame of its own, a day of two frames, and
     /// a folder under the day of one, indexed; a window on it with the
     /// root in its library and the root's view open, its tree landed.
-    fn archive(dir: &Path, window_px: Option<(f32, f32)>) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn archive(dir: &Path, window_px: Option<(f32, f32)>) -> (App, Rc<Shared>, Rc<Worker>) {
         let root = dir.join("archive");
         frames(&root, &["r.tif"]);
         frames(&root.join("day"), &["d1.tif", "d2.tif"]);
@@ -1167,7 +1167,7 @@ mod tests {
         dir: &Path,
         root: &Path,
         window_px: Option<(f32, f32)>,
-    ) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    ) -> (App, Rc<Shared>, Rc<Worker>) {
         let root = root.to_path_buf();
         let db = dir.join("index").join("library.sqlite");
         greycard_library::Library::open(&db)
@@ -1196,7 +1196,7 @@ mod tests {
         (app, state, worker)
     }
 
-    fn listed(state: &Rc<RefCell<State>>) -> Vec<String> {
+    fn listed(state: &Rc<Shared>) -> Vec<String> {
         state
             .borrow()
             .files
@@ -1668,7 +1668,7 @@ mod tests {
     /// of its own, a same-named folder of raws under it and an export
     /// folder beside that. Under a root `studio`, in a 1500 by 950
     /// window.
-    fn studio(dir: &Path) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn studio(dir: &Path) -> (App, Rc<Shared>, Rc<Worker>) {
         let root = dir.join("studio");
         frames(&root.join("cedar"), &["c1.tif", "c2.tif", "c3.tif"]);
         frames(&root.join("cedar").join("export"), &["ce1.tif", "ce2.tif"]);
@@ -1685,7 +1685,7 @@ mod tests {
             .collect()
     }
 
-    fn done(dir: &Path, state: Rc<RefCell<State>>) {
+    fn done(dir: &Path, state: Rc<Shared>) {
         state.borrow_mut().views.index_reader = None;
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
@@ -1818,13 +1818,13 @@ mod tests {
 
     /// Row `i` chosen and its frame opened, its sidecar read as the
     /// window reads the one on screen.
-    fn open_at(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, i: i32) {
+    fn open_at(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, i: i32) {
         app.invoke_select(i);
         crate::rows::land_pending(state, app, worker);
     }
 
     /// The frame on screen, by name, and the develop it is on.
-    fn on_screen(state: &Rc<RefCell<State>>) -> (Option<String>, u64) {
+    fn on_screen(state: &Rc<Shared>) -> (Option<String>, u64) {
         let st = state.borrow();
         let name = st
             .current
@@ -1835,7 +1835,7 @@ mod tests {
 
     /// The switch flipped, and what it sends landed: the reads of the
     /// list, and the sidecars of a frame it opens.
-    fn flip(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, on: bool) {
+    fn flip(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, on: bool) {
         app.set_folder_tree_subfolders(on);
         app.invoke_folder_tree_subfolders_changed();
         land_sent(state, app, worker);
@@ -2086,7 +2086,7 @@ mod tests {
         let dir = scratch("switch-pass-said");
         let (app, state, worker) = archive(&dir, Some((1500.0, 950.0)));
         let day = dir.join("archive").join("day");
-        let said = |state: &Rc<RefCell<State>>, app: &App| {
+        let said = |state: &Rc<Shared>, app: &App| {
             crate::panel::cull::show_filter(&state.borrow(), app);
             app.get_filter_facet_note().to_string()
         };

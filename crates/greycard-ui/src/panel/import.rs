@@ -380,7 +380,7 @@ pub(crate) fn place_read(st: &mut State, app: &App, generation: u64, read: Resul
 /// Add in place: the folder added to the library as Add a root adds
 /// one, and opened; nothing copied, nothing written beside its
 /// frames. The sheet goes.
-pub(crate) fn add_in_place(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+pub(crate) fn add_in_place(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let folder = {
         let st = state.borrow();
         let ready = st.import.place_read.is_some_and(|h| h.frames > 0);
@@ -621,7 +621,7 @@ pub(crate) fn start(st: &mut State, app: &App) {
 
 /// The import is done, however it went: the line said, and the folder
 /// that took the most frames opened in the browser.
-pub(crate) fn finished(state: &Rc<RefCell<State>>, app: &App, opts: &Options, report: Report) {
+pub(crate) fn finished(state: &Rc<Shared>, app: &App, opts: &Options, report: Report) {
     let (closing, moved) = {
         let mut st = state.borrow_mut();
         st.import.job = None;
@@ -771,7 +771,7 @@ fn say(app: &App, line: String) {
     app.set_import_status(line.into());
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let state = state.clone();
         let weak = app.as_weak();

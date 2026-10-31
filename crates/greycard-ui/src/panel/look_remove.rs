@@ -555,7 +555,7 @@ pub(crate) fn list_in(dir: Option<PathBuf>) -> Vec<Entry> {
         .collect()
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_look_remove_asked(move || {

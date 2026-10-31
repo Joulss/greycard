@@ -837,7 +837,7 @@ pub(crate) fn show_preset_checks(st: &mut State, app: &App) {
     app.set_preset_lines(lines);
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The LENS panel asks for the profiles.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());

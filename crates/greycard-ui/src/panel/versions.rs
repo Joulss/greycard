@@ -62,7 +62,7 @@ fn unready(st: &mut State, app: &App, c: usize) -> Option<String> {
 /// all of it chosen, so typing names it and Escape keeps the name it
 /// was made with.
 pub(crate) fn new_version(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     from_original: bool,
@@ -530,7 +530,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, path: &Path, was: Option<us
     app.window().request_redraw();
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_version_new_asked(move |from_original, from_menu| {
@@ -618,7 +618,7 @@ mod tests {
     /// A version named `name` of file `file`, made in its sidecar as the
     /// edit crate makes one, and the cells put in step: its id.
     fn version_of(
-        state: &Rc<RefCell<State>>,
+        state: &Rc<Shared>,
         app: &App,
         worker: &Worker,
         file: usize,
@@ -642,7 +642,7 @@ mod tests {
             .collect()
     }
 
-    fn save(app: &App, state: &Rc<RefCell<State>>) {
+    fn save(app: &App, state: &Rc<Shared>) {
         let mut st = state.borrow_mut();
         let edit = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(&mut st, edit);

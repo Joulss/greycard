@@ -328,6 +328,14 @@ mod tests {
             .spawn(|| panic!("on purpose"))
             .unwrap();
         assert!(worker.join().is_err());
+        // A panic message with two places in it, the shape of the
+        // binary's clash on the window's state, reaches the file whole.
+        let clash = format!(
+            "{f}:1561 needs the state while {f}:722 holds it",
+            f = file!()
+        );
+        let said = clash.clone();
+        assert!(std::thread::spawn(move || panic!("{said}")).join().is_err());
 
         let now = std::fs::read_to_string(&path).unwrap();
         let before = std::fs::read_to_string(dir.join(format!("{FILE}.1"))).unwrap();
@@ -339,6 +347,7 @@ mod tests {
         assert!(now.contains("thread 'worker' panicked"), "{now:?}");
         assert!(now.contains("on purpose"), "{now:?}");
         assert!(now.contains("log.rs"), "the place: {now:?}");
+        assert!(now.contains(&clash), "{clash} in {now:?}");
         assert!(before.contains("first run"), "{before:?}");
         assert!(!now.contains("first run"));
         let _ = std::fs::remove_dir_all(&dir);

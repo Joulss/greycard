@@ -380,7 +380,7 @@ pub(crate) enum Pressed {
 /// A copy asked for: what it is over worked out here, from the window's
 /// state alone, and the look at what is on the other side sent off the
 /// window's thread. The sheet opens when the look lands.
-pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: usize) {
+pub(crate) fn ask(state: &Rc<Shared>, app: &App, from: Pressed, choice: usize) {
     let mut st = state.borrow_mut();
     if st.archive.running.is_some() {
         app.set_status("a backup is still under way".into());
@@ -728,7 +728,7 @@ fn look(st: &mut State, app: &App) {
 /// The look landed: the sheet filled and opened, or what went wrong
 /// said.
 fn land_look(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     token: u64,
@@ -932,7 +932,7 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
 
 /// The folder field or the rejects' checkbox changed: looked at again,
 /// the folder held to the root it must be under.
-pub(crate) fn look_again(state: &Rc<RefCell<State>>, app: &App) {
+pub(crate) fn look_again(state: &Rc<Shared>, app: &App) {
     let mut st = state.borrow_mut();
     let Some(asked) = st.archive.asked.as_mut() else {
         return;
@@ -968,7 +968,7 @@ pub(crate) fn look_again(state: &Rc<RefCell<State>>, app: &App) {
 
 /// The sheet answered. A yes over a folder typed and not looked at yet
 /// looks first; otherwise the copy goes off the window's thread.
-pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, yes: bool) {
+pub(crate) fn answered(state: &Rc<Shared>, app: &App, yes: bool) {
     if !yes {
         let mut st = state.borrow_mut();
         st.archive.look_token += 1;
@@ -1155,13 +1155,7 @@ pub(crate) struct Copied {
 
 /// The copy landed, or went quiet: said, its folders handed to the
 /// indexer, the count taken again.
-fn land_run(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    _worker: &Rc<Worker>,
-    token: u64,
-    heard: Heard<Copied>,
-) {
+fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, heard: Heard<Copied>) {
     let mut st = state.borrow_mut();
     let ours = st
         .archive
@@ -1396,7 +1390,7 @@ pub(crate) fn want_count(st: &mut State, app: &App) {
 }
 
 fn land_count(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     token: u64,
@@ -1510,7 +1504,7 @@ pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
 }
 
 fn land_delete(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     token: u64,
@@ -1595,7 +1589,7 @@ pub(crate) fn delete_words(
 }
 
 /// A root's archive mark turned on or off, from its chip's menu.
-pub(crate) fn toggle(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+pub(crate) fn toggle(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let refresh = {
         let mut st = state.borrow_mut();
         let on = !st.views.library.roots.is_archive(dir);
@@ -1682,7 +1676,7 @@ fn look_at(roots: &[PathBuf], beat: &Beat) -> Vec<bool> {
 }
 
 /// Where a job's end lands on the window's thread.
-type Landing<R> = fn(&Rc<RefCell<State>>, &App, &Rc<Worker>, u64, Heard<R>);
+type Landing<R> = fn(&Rc<Shared>, &App, &Rc<Worker>, u64, Heard<R>);
 
 /// Run `job` off the window's thread with its beats watched, and land
 /// what it says on the window's thread. False when no thread could be
@@ -1765,7 +1759,7 @@ fn send<R: Send + 'static>(
     true
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     rejects::install(app, state);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -1821,7 +1815,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 pub(crate) mod tests {
     use super::*;
 
-    type Sent = Box<dyn FnOnce(&Rc<RefCell<State>>, &App, &Rc<Worker>)>;
+    type Sent = Box<dyn FnOnce(&Rc<Shared>, &App, &Rc<Worker>)>;
 
     thread_local! {
         pub(crate) static SENT: RefCell<Vec<Sent>> = RefCell::new(Vec::new());
@@ -1831,7 +1825,7 @@ pub(crate) mod tests {
 
     /// Run the jobs sent off and land them, as the threads and the event
     /// loop would, until none are left; how many there were.
-    pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+    pub(crate) fn land_sent(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
         let mut n = 0;
         loop {
             let jobs: Vec<Sent> = SENT.with(|s| s.borrow_mut().drain(..).collect());
@@ -1847,7 +1841,7 @@ pub(crate) mod tests {
 
     /// The jobs sent off so far run and landed, once: what one of them
     /// sends meanwhile waits for the next turn.
-    fn land_once(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+    fn land_once(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
         let jobs: Vec<Sent> = SENT.with(|s| s.borrow_mut().drain(..).collect());
         let n = jobs.len();
         for job in jobs {
@@ -1977,7 +1971,7 @@ pub(crate) mod tests {
         local: &Path,
         nas: &Path,
         db: &Path,
-    ) -> (Rc<RefCell<State>>, Rc<Worker>) {
+    ) -> (Rc<Shared>, Rc<Worker>) {
         let (state, worker) = state_for(app, files);
         {
             let mut st = state.borrow_mut();
@@ -2229,16 +2223,7 @@ pub(crate) mod tests {
 
     /// A window over a shoot of three frames, a rejects folder and a
     /// subfolder of exports, under `local`, with `nas` an archive.
-    fn shoot_window(
-        what: &str,
-    ) -> (
-        PathBuf,
-        PathBuf,
-        PathBuf,
-        App,
-        Rc<RefCell<State>>,
-        Rc<Worker>,
-    ) {
+    fn shoot_window(what: &str) -> (PathBuf, PathBuf, PathBuf, App, Rc<Shared>, Rc<Worker>) {
         let dir = scratch(what);
         let (local, nas) = (dir.join("local"), dir.join("nas"));
         let shoot = local.join("shoot");
@@ -2409,13 +2394,7 @@ pub(crate) mod tests {
 
     /// A folder's view opened, its lists and counts landed, nothing
     /// picked.
-    fn open_branch(
-        state: &Rc<RefCell<State>>,
-        app: &App,
-        worker: &Rc<Worker>,
-        root: &Path,
-        folder: &Path,
-    ) {
+    fn open_branch(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, root: &Path, folder: &Path) {
         crate::roots::open_view(
             state,
             app,
@@ -2432,7 +2411,7 @@ pub(crate) mod tests {
     }
 
     /// The sheet opened from the header and its look landed: the field.
-    fn sheet_dest(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> String {
+    fn sheet_dest(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> String {
         app.invoke_archive_header_pressed(0);
         assert_eq!(land_sent(state, app, worker), 1);
         assert!(app.get_archive_open(), "{}", app.get_status());
@@ -2690,7 +2669,7 @@ pub(crate) mod tests {
         let (moved, kept) = (nas.join("moved"), nas.join("kept"));
         std::fs::create_dir_all(&kept).unwrap();
         // The pairings the file keeps, and the window agrees.
-        let pairings = |state: &Rc<RefCell<State>>| {
+        let pairings = |state: &Rc<Shared>| {
             let file = greycard_library::Roots::load(&dir.join("roots.json")).unwrap();
             assert_eq!(file.backups(), state.borrow().views.library.roots.backups());
             file.backups().len()

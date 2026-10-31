@@ -18,7 +18,6 @@
 //! clocks is said aloud. A colon form is read from the right, seconds
 //! then minutes then hours, so `5:00` is five minutes.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -31,7 +30,7 @@ use slint::ComponentHandle;
 
 use crate::panel::browser::{chosen_frames, file_name, meta_on_selection};
 use crate::worker::Worker;
-use crate::{App, State};
+use crate::{App, Shared, State};
 
 // In the tags, whose undo notices write a shift too.
 use crate::tags::signed;
@@ -290,7 +289,7 @@ pub(crate) fn moved(st: &mut State, app: &App, files: &[usize]) {
 /// The index wrote rows: when some of them are a shift's the list by
 /// capture time waits on, the list is read again, in the new order,
 /// the frame on screen kept in view. True when a read was asked.
-pub(crate) fn indexed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> bool {
+pub(crate) fn indexed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> bool {
     let landed = {
         let mut guard = state.borrow_mut();
         let st = &mut *guard;
@@ -458,7 +457,7 @@ pub(crate) fn show(st: &State, app: &App) {
 
 /// The sheet answered: 1 Apply, 2 Clear shift, anything else Cancel.
 /// Apply with fields that do not read keeps the sheet up.
-pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, answer: i32) {
+pub(crate) fn answered(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, answer: i32) {
     let change = {
         let mut st = state.borrow_mut();
         let Some(asked) = st.sheets.time_shift.asked.clone() else {
@@ -487,7 +486,7 @@ pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_time_shift_asked(move || {

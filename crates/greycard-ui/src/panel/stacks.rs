@@ -427,7 +427,7 @@ pub(crate) fn menu_asked(st: &State, app: &App, c: usize) {
 /// The index found members moved or rewritten: the stacks follow, and
 /// the list with them.
 pub(crate) fn healed(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     moved: &[(PathBuf, PathBuf)],
     rehashed: &[Rehash],
@@ -441,7 +441,7 @@ pub(crate) fn healed(
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_stack_make(move || {
@@ -533,7 +533,7 @@ mod tests {
         files: Vec<PathBuf>,
         writer: greycard_library::Library,
         app: App,
-        state: Rc<RefCell<State>>,
+        state: Rc<Shared>,
         worker: Rc<Worker>,
     }
 

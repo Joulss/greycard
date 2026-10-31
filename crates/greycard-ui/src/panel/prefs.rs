@@ -514,12 +514,7 @@ pub(crate) fn network_poll_changed(st: &mut State, app: &App) {
 /// roots' counts and the tree made again by it, and the open list read
 /// again, so the JPEGs come into it or go out of it as a merge brings
 /// any file in or takes one out. Nothing on disk is touched.
-pub(crate) fn jpegs_apart_changed(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    apart: bool,
-) {
+pub(crate) fn jpegs_apart_changed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, apart: bool) {
     {
         let mut st = state.borrow_mut();
         if st.views.jpegs_apart == apart {
@@ -576,7 +571,7 @@ fn show_about(app: &App) {
     app.set_about_log_dir(log.into());
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     show_about(app);
     // The category the sheet shows, kept for its next opening.
     {
@@ -890,7 +885,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             let (files, placement) = (st.files.clone(), st.window.placement);
             drop(st);
-            let land = move |app: &App, state: &Rc<RefCell<State>>, moved: Moved| {
+            let land = move |app: &App, state: &Rc<Shared>, moved: Moved| {
                 MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
                 tracing::info!(
                     "moved {} sidecars to {:?}, removed {} older copies, {} failed",
@@ -1582,7 +1577,7 @@ mod tests {
 
     /// A window with a frame open on the Develop tab, the panel's
     /// MONITOR and SOFT PROOF sections showing.
-    fn develop_window() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn develop_window() -> (App, Rc<Shared>, Rc<Worker>) {
         let app = crate::testing::window(3);
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
@@ -1704,7 +1699,7 @@ mod tests {
     /// that keeps the panel's choices in it, as a run starts it.
     fn kept_window() -> (
         App,
-        Rc<RefCell<State>>,
+        Rc<Shared>,
         Rc<Worker>,
         slint::Timer,
         std::path::PathBuf,
@@ -1849,7 +1844,7 @@ mod tests {
 
     /// The grid at 1500 by 950 over 120 frames, open on the first,
     /// with the window's callbacks.
-    fn grid_window() -> (App, std::rc::Rc<std::cell::RefCell<State>>) {
+    fn grid_window() -> (App, std::rc::Rc<crate::Shared>) {
         let app = crate::testing::window(120);
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 950.0));

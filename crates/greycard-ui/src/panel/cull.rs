@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -21,7 +20,7 @@ use crate::panel::startup::sync_rows;
 use crate::panel::viewport::{schedule_snapshot, sync_display, write_screenshot, zoom_label};
 use crate::render::{self, View};
 use crate::worker::Worker;
-use crate::{App, CompareTile, FilterChip, STATE, State, cull, filter, placeholder};
+use crate::{App, CompareTile, FilterChip, STATE, Shared, State, cull, filter, placeholder};
 
 /// The panel's tab while culling, which the tab bar does not list:
 /// the develop sections go away by their own condition and the
@@ -1333,7 +1332,7 @@ pub(crate) fn ask_whole(st: &mut State) {
 /// or at the zoom, turned as its edit turns it; the tiles' boxes
 /// and names for the overlay; the status line; and the captures a
 /// batch run waits on, once every tile has its picture.
-pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
     let (vw, vh) = (
         app.get_view_width().max(1) as u32,
         app.get_view_height().max(1) as u32,
@@ -1870,7 +1869,7 @@ pub(crate) fn zoom_words(zoom: f32, own: bool) -> String {
 pub(crate) fn time_cull(
     timing: &mut Option<(u32, Vec<f64>)>,
     app: &App,
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     ms: f64,
     row: Option<usize>,
     count: usize,
@@ -2511,24 +2510,24 @@ pub(crate) fn say_if_empty(st: &State, app: &App) {
 /// says so in the log. A character typed into the text field is not:
 /// a word typed is a dozen filters of which only the last was meant,
 /// so that path goes to debug through [`apply_filter_typed`].
-pub(crate) fn apply_filter(state: &Rc<RefCell<State>>, app: &App) {
+pub(crate) fn apply_filter(state: &Rc<Shared>, app: &App) {
     apply_filter_said(state, app, true, true);
 }
 
 /// The same, for a character typed into the text field.
-fn apply_filter_typed(state: &Rc<RefCell<State>>, app: &App) {
+fn apply_filter_typed(state: &Rc<Shared>, app: &App) {
     apply_filter_said(state, app, false, true);
 }
 
 /// The same, for the index having moved under the filter: a pass
 /// has reached more of the folder, or a row was written after a
 /// save. `settled` when it is worth the log's line.
-pub(crate) fn refilter(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
+pub(crate) fn refilter(state: &Rc<Shared>, app: &App, settled: bool) {
     // The index moving is no reason to say a typing mistake again.
     apply_filter_said(state, app, settled, false);
 }
 
-fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool, say_errors: bool) {
+fn apply_filter_said(state: &Rc<Shared>, app: &App, settled: bool, say_errors: bool) {
     let mut st = state.borrow_mut();
     let next = rebuild_browser(&mut st, app);
     let (what, shown, count) = (
@@ -2563,7 +2562,7 @@ fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool, say_e
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // Culling mode: in and out, the compare view, the browser's
     // filter, and the rejects moved out.
     {
@@ -2885,6 +2884,7 @@ mod tests {
     use crate::{Pt, ScopeMark};
     use slint::Model;
     use slint::platform::{Key, WindowEvent};
+    use std::cell::RefCell;
 
     /// The camera's picture of `file`, as a decode thread delivers
     /// one: a small copy of a JPEG of `source` pixels.
@@ -3632,13 +3632,13 @@ mod tests {
     /// A frame drawn, as far as a window without a GPU goes: the
     /// render's own start, which takes up a develop that has landed,
     /// and the kind the view is given for the picture on the GPU.
-    fn draw(app: &App, state: &Rc<RefCell<State>>) -> crate::finish::Source {
+    fn draw(app: &App, state: &Rc<Shared>) -> crate::finish::Source {
         crate::panel::startup::land_pending(&mut state.borrow_mut(), app).kind
     }
 
     /// The look the view is given: of the edit it draws the picture on
     /// the GPU under, as the render reads it.
-    fn drawn_look(app: &App, state: &Rc<RefCell<State>>) -> f32 {
+    fn drawn_look(app: &App, state: &Rc<Shared>) -> f32 {
         let st = state.borrow();
         let panel = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
         View::with_look(&crate::panel::startup::view_edit(&st, &panel))
@@ -3667,7 +3667,7 @@ mod tests {
             space: "sRGB".into(),
             bits: 8,
         };
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
 
         // A raw opens and develops: its scene is what the view draws.
         let raw = Source::raw("Canon", "EOS R5");
@@ -3714,7 +3714,7 @@ mod tests {
     fn a_frame_left_before_its_develop_keeps_the_last_picture_under_its_look() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         // Z develops, and its exposure moves on the panel after.
         app.invoke_select(0);
         crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
@@ -3753,7 +3753,7 @@ mod tests {
     fn a_dropper_waits_for_the_open_frames_develop() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         app.invoke_select(0);
         crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
         draw(&app, &state);
@@ -3820,7 +3820,7 @@ mod tests {
     fn leaving_cull_onto_another_frame_keeps_the_last_picture_under_its_look() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         app.invoke_select(0);
         crate::panel::deliver::deliver(&app, developed(generation(&state), (6000, 4000)));
         draw(&app, &state);
@@ -3862,7 +3862,7 @@ mod tests {
     fn a_frame_come_back_to_stands_in_with_its_kept_camera_picture() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         app.invoke_select(1);
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
@@ -3908,7 +3908,7 @@ mod tests {
     fn a_kept_camera_only_picture_stands_in_only_for_a_frame_with_no_edit() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         {
             let mut st = state.borrow_mut();
             let mut edit = Edit::default();
@@ -3954,7 +3954,7 @@ mod tests {
     fn a_kept_frame_chosen_while_another_stands_in_shows_its_own_picture() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         app.invoke_select(2);
         let loaded = camera_picture(&state.borrow(), 2, (8192, 5464));
         deliver_preview(&app, loaded);
@@ -4313,7 +4313,7 @@ mod tests {
     }
 
     /// A delivery that may be dropped as stale: taken, if it was not.
-    fn land_if_taken(app: &App, state: &Rc<RefCell<State>>, outcome: crate::worker::Outcome) {
+    fn land_if_taken(app: &App, state: &Rc<Shared>, outcome: crate::worker::Outcome) {
         crate::panel::deliver::deliver(app, outcome);
         let mut st = state.borrow_mut();
         if st.develop.pending.take().is_some() {
@@ -5313,7 +5313,7 @@ mod tests {
 
     /// `files` open with their sidecars read and writes on, the first
     /// frame on screen.
-    fn opened_with_sidecars(app: &App, files: &[PathBuf]) -> (Rc<RefCell<State>>, Rc<Worker>) {
+    fn opened_with_sidecars(app: &App, files: &[PathBuf]) -> (Rc<Shared>, Rc<Worker>) {
         let (state, worker) = state_for(app, files.to_vec());
         {
             let mut st = state.borrow_mut();
@@ -5987,7 +5987,7 @@ mod tests {
 
     /// The quit's saves, as `startup::main` makes them once the window
     /// has closed: the panel read, then `save_at_quit`.
-    fn quit(state: &Rc<RefCell<State>>, app: &App) -> crate::sync::QuitWrites {
+    fn quit(state: &Rc<Shared>, app: &App) -> crate::sync::QuitWrites {
         let edit = {
             let st = state.borrow();
             read_edit(app, &st.develop.edit, st.develop.target)
@@ -6110,7 +6110,7 @@ mod tests {
     }
 
     /// A tall window over six frames, the third one open in Develop.
-    fn modes_window() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn modes_window() -> (App, Rc<Shared>, Rc<Worker>) {
         let app = window(6);
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
@@ -6120,7 +6120,7 @@ mod tests {
     }
 
     /// The selection: the frame open, its row and the set.
-    fn chosen(app: &App, state: &Rc<RefCell<State>>) -> (Option<usize>, i32, Vec<usize>) {
+    fn chosen(app: &App, state: &Rc<Shared>) -> (Option<usize>, i32, Vec<usize>) {
         let st = state.borrow();
         (st.current, app.get_selected(), st.views.picked.clone())
     }
@@ -6136,7 +6136,7 @@ mod tests {
         Develop,
     }
 
-    fn seen(app: &App, state: &Rc<RefCell<State>>) -> Seen {
+    fn seen(app: &App, state: &Rc<Shared>) -> Seen {
         let st = state.borrow();
         // Never both at once.
         assert!(!(st.culling.cull.is_some() && st.culling.developed.is_some()));
@@ -6817,7 +6817,7 @@ mod tests {
             st.current = None;
             st.culling.prefetch.set_previews(previews.clone());
         }
-        let generation = |state: &Rc<RefCell<State>>| state.borrow().develop.generation;
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
         let picture = || crate::worker::SourceKind::Picture {
             space: "sRGB".into(),
             bits: 8,
@@ -6849,7 +6849,7 @@ mod tests {
         };
         // What the loupe draws of a: where it came from, and its red
         // against its blue.
-        let shown = |state: &Rc<RefCell<State>>| {
+        let shown = |state: &Rc<Shared>| {
             let st = state.borrow();
             let cull = st.culling.cull.as_ref().expect("Cull on the camera's JPEG");
             let p = cull.cache.best(0).expect("a picture of a");
@@ -6874,7 +6874,7 @@ mod tests {
         // Developed: until a's develop lands it stands in with the
         // picture of its edit, the camera's up only until that is read,
         // and b's camera picture is not kept to stand in with.
-        let stand_in = |state: &Rc<RefCell<State>>, file: usize| {
+        let stand_in = |state: &Rc<Shared>, file: usize| {
             let st = state.borrow();
             assert_eq!(standing_in(&st), Some(file), "a stand-in up");
             let hold = st.culling.hold.as_ref().expect("the hold");

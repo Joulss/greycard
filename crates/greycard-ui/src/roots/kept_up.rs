@@ -269,7 +269,7 @@ pub(crate) fn merge(
 /// list was read again, which reads the index's rows and facets with
 /// it.
 pub(crate) fn background_done(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     path: &Path,
     report: &greycard_library::Report,

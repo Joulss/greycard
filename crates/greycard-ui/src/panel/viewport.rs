@@ -124,7 +124,7 @@ fn own_white(st: &State) -> Result<WhiteBase, NeutralMiss> {
 /// to the panel, As shot off, and the develop follows, one step of
 /// the history. On a miss nothing moves, and the caller says why.
 pub(crate) fn white_from_neutral(
-    mut st: std::cell::RefMut<'_, State>,
+    mut st: crate::shared::HeldMut<'_>,
     app: &App,
     px: [f32; 3],
 ) -> Result<(), NeutralMiss> {
@@ -213,7 +213,7 @@ fn auto_white_grid(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
 /// The Auto button: the white [`greycard_core::color::auto_neutral`]
 /// reads off the whole picture, against the camera's as-shot white,
 /// set the way the Neutral dropper sets the one it is shown.
-pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
+pub(crate) fn auto_white(mut st: crate::shared::HeldMut<'_>, app: &App) {
     let found = (|| {
         let base = own_white(&st)?;
         let profile = white_profile(&mut st).ok_or(NeutralMiss::NoProfile)?;
@@ -715,7 +715,7 @@ const HOVER_REACH: f32 = 3.0;
 /// scope, now, or a frame's time later while the state is borrowed
 /// now: a delay, not the loop's next turn, so a nested event loop
 /// holding the borrow does not spin it.
-fn hover_left(state: Rc<RefCell<State>>, app_weak: slint::Weak<App>) {
+fn hover_left(state: Rc<Shared>, app_weak: slint::Weak<App>) {
     let Some(app) = app_weak.upgrade() else {
         return;
     };
@@ -1337,7 +1337,7 @@ pub(crate) static SNAPSHOT_KEYS: std::sync::OnceLock<String> = std::sync::OnceLo
 /// `then`, once no learned mask and no part's people are being waited
 /// on (or after `tries` looks a fifth of a second apart), and half a
 /// second later, for the frame that shows what came.
-fn when_quiet(state: Rc<RefCell<State>>, then: impl FnOnce() + 'static, tries: u32) {
+fn when_quiet(state: Rc<Shared>, then: impl FnOnce() + 'static, tries: u32) {
     let quiet = state.try_borrow().is_ok_and(|st| {
         st.develop.asked.is_empty()
             && st.develop.part_pending.is_none()
@@ -1359,7 +1359,7 @@ pub(crate) fn schedule_snapshot(
     panel_scroll: &mut Option<f32>,
     shown: &mut Option<Shown>,
     app: &App,
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     ready: bool,
     then_quit: bool,
 ) {
@@ -1679,7 +1679,7 @@ pub(crate) fn proof_settings(app: &App) -> Option<display::Proof> {
     })
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // A change the shader handles: redraw, and remember it.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -2580,7 +2580,7 @@ mod tests {
     /// A window at `scale` with frame 0 open and its own develop of
     /// 6000 by 4000 on the GPU, at the fit: the state `view_to_frame`
     /// and the readout measure by. Nothing is drawn.
-    fn hover_frame(scale: f32) -> (App, Rc<RefCell<State>>, Rc<crate::worker::Worker>) {
+    fn hover_frame(scale: f32) -> (App, Rc<Shared>, Rc<crate::worker::Worker>) {
         let app = window(1);
         if scale != 1.0 {
             app.window()
@@ -3301,7 +3301,7 @@ mod tests {
                 })
                 .collect()
         };
-        let line = |state: &Rc<RefCell<State>>| {
+        let line = |state: &Rc<Shared>| {
             let st = state.borrow();
             let l = &st.sidecars[0];
             (l.history.len(), l.current.light, l.current_label.clone())
@@ -3458,7 +3458,7 @@ mod tests {
     /// the global's alone.
     /// A daylight frame open with one mask, "Lamp", chosen on the Masks
     /// tab: the frame's As shot white as a temperature and tint.
-    fn a_lamp_mask(app: &App, state: &Rc<RefCell<State>>) -> greycard_core::TempTint {
+    fn a_lamp_mask(app: &App, state: &Rc<Shared>) -> greycard_core::TempTint {
         use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
         app.invoke_select(0);
         let frame = daylight_frame();
@@ -3749,7 +3749,7 @@ mod tests {
 
     /// A window with a 6000 by 4000 picture on the viewport, centered,
     /// at `zoom` (0 fits).
-    fn scrolled_view(zoom: f32) -> (App, Rc<RefCell<State>>, Rc<crate::worker::Worker>) {
+    fn scrolled_view(zoom: f32) -> (App, Rc<Shared>, Rc<crate::worker::Worker>) {
         let app = window(1);
         let (state, worker) = crate::testing::retouch_state(&app);
         {

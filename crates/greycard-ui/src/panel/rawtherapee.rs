@@ -304,7 +304,7 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
 /// A dry run's answer, on the window's thread. One asked for before
 /// the last says nothing.
 pub(crate) fn landed(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     generation: u64,
     read: std::result::Result<Report, String>,
@@ -387,7 +387,7 @@ pub(crate) fn show(st: &State, app: &App) {
 /// Write: the import runs on its thread, its progress said as it goes;
 /// the sheet stays up with its buttons waiting, and shows the report
 /// when done.
-pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
+pub(crate) fn write(state: &Rc<Shared>, app: &App) {
     let mut st = state.borrow_mut();
     if st.rawtherapee.thread.is_some() {
         return;
@@ -477,7 +477,7 @@ pub(crate) fn progress_line(p: Progress) -> String {
 /// that the window holds read again from the disk, the frame on screen
 /// opened again on what was written, and the sheet on its last step.
 pub(crate) fn wrote(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     report: std::result::Result<Report, String>,
     keys: Vec<PathBuf>,
@@ -531,7 +531,7 @@ pub(crate) fn wrote(
     app.set_rt_open(true);
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let state = state.clone();
         let weak = app.as_weak();
@@ -614,7 +614,7 @@ Enabled=true
 
     /// The dry run the sheet asked for, run here and landed as its
     /// thread would land it.
-    fn land_now(state: &Rc<RefCell<State>>, app: &App) {
+    fn land_now(state: &Rc<Shared>, app: &App) {
         let (dir, opts, generation) = {
             let st = state.borrow();
             (
@@ -628,7 +628,7 @@ Enabled=true
     }
 
     /// The write as Write runs it, landed.
-    fn write_now(state: &Rc<RefCell<State>>, app: &App) -> Vec<String> {
+    fn write_now(state: &Rc<Shared>, app: &App) -> Vec<String> {
         let (dir, opts) = {
             let mut st = state.borrow_mut();
             let opts = write_options(&mut st, app);

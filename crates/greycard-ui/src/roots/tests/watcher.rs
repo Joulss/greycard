@@ -127,7 +127,7 @@ fn on(root: &Path, fs: Option<&str>) {
 
 /// A window with an indexer of its own over a library in `dir`, and
 /// `roots` as its roots, kept in memory alone, each on a local disk.
-fn watched_window(dir: &Path, roots: &[PathBuf]) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+fn watched_window(dir: &Path, roots: &[PathBuf]) -> (App, Rc<Shared>, Rc<Worker>) {
     for root in roots {
         on(root, None);
     }
@@ -143,7 +143,7 @@ fn watched_window(dir: &Path, roots: &[PathBuf]) -> (App, Rc<RefCell<State>>, Rc
     (app, state, worker)
 }
 
-fn leave(state: &Rc<RefCell<State>>, dir: &Path) {
+fn leave(state: &Rc<Shared>, dir: &Path) {
     let mut st = state.borrow_mut();
     st.views.library.watcher = None;
     st.views.library.poll = None;

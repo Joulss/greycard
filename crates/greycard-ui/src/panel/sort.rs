@@ -1,7 +1,6 @@
 //! The filter bar's Sort menu: what it says, and a choice taken from
 //! it into the view, the settings and the list (`crate::sort`).
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -9,7 +8,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::roots::View;
 use crate::sort::{Choice, button_words, entries, picked, turned, way_words};
 use crate::worker::Worker;
-use crate::{App, SortMenu, State};
+use crate::{App, Shared, SortMenu, State};
 
 /// The menu as the view's choice has it.
 pub(crate) fn menu_of(st: &State) -> SortMenu {
@@ -84,7 +83,7 @@ pub(crate) fn show(st: &State, app: &App) {
 /// screen (a collection's row asked for its capture order) is opened in
 /// it.
 pub(crate) fn choose(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     view: &View,
@@ -131,14 +130,14 @@ pub(crate) fn choose(
 /// A merge read landed: the frame on screen brought into view, when the
 /// read was for a sort. The state is not held across the reveal, which
 /// tells the window's ranges to the callbacks that read it.
-pub(crate) fn landed(state: &Rc<RefCell<State>>, app: &App) {
+pub(crate) fn landed(state: &Rc<Shared>, app: &App) {
     let reveal = std::mem::take(&mut state.borrow_mut().views.sort_reveal);
     if reveal {
         app.invoke_reveal_selected();
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     show(&state.borrow(), app);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());

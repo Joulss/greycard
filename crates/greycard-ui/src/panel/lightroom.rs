@@ -244,7 +244,7 @@ pub(crate) fn cancel(st: &mut State, app: &App) {
 /// A dry run's answer, on the window's thread. One asked for before
 /// the last, or canceled, says nothing.
 pub(crate) fn landed(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     generation: u64,
     read: std::result::Result<Report, String>,
@@ -362,7 +362,7 @@ pub(crate) fn root_chosen(st: &mut State, app: &App, row: usize, folder: PathBuf
 
 /// Write: the sheet goes, the import runs on its thread, its progress
 /// said as it goes; the sheet comes back with the report when done.
-pub(crate) fn write(state: &Rc<RefCell<State>>, app: &App) {
+pub(crate) fn write(state: &Rc<Shared>, app: &App) {
     let mut st = state.borrow_mut();
     if st.lightroom.thread.is_some() {
         return;
@@ -483,7 +483,7 @@ fn progress_words(p: Progress) -> String {
 /// collections, stacks and roots read again from what it wrote, and
 /// the sheet back with the report.
 pub(crate) fn wrote(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     report: std::result::Result<Report, String>,
     keys: Vec<PathBuf>,
@@ -559,7 +559,7 @@ pub(crate) fn wrote(
 /// What the write changed on disk taken up by the window: the
 /// collections and the stacks read again, and each root it added
 /// kept, watched and passed over, as the roots pane's own add does.
-fn took_up(state: &Rc<RefCell<State>>, app: &App) {
+fn took_up(state: &Rc<Shared>, app: &App) {
     let added: Vec<PathBuf> = {
         let mut st = state.borrow_mut();
         let Some(path) = st.views.index_path.clone() else {
@@ -602,12 +602,7 @@ fn took_up(state: &Rc<RefCell<State>>, app: &App) {
 /// the next key or slider moves from the import's edit and not over it.
 /// `whose` names the import in the log. The RawTherapee profiles'
 /// import takes up its write the same way.
-pub(crate) fn reread_written(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    keys: Vec<PathBuf>,
-    whose: &str,
-) {
+pub(crate) fn reread_written(state: &Rc<Shared>, app: &App, keys: Vec<PathBuf>, whose: &str) {
     let mut st = state.borrow_mut();
     let written: std::collections::HashSet<PathBuf> = keys.into_iter().collect();
     let files: Vec<usize> = st
@@ -643,7 +638,7 @@ fn say(app: &App, line: String) {
     app.set_lr_status(line.into());
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let weak = app.as_weak();
         app.on_lr_asked(move || {
@@ -836,7 +831,7 @@ mod tests {
 
     /// The dry run the sheet asked for, run here and landed as its
     /// thread would land it.
-    fn land_now(state: &Rc<RefCell<State>>, app: &App) {
+    fn land_now(state: &Rc<Shared>, app: &App) {
         let (catalog, opts, generation) = {
             let st = state.borrow();
             (

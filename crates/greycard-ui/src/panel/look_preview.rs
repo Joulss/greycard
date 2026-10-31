@@ -347,7 +347,7 @@ pub(crate) fn drawn(st: &State, app: &App, edit: &Edit) -> Option<Look> {
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let state = state.clone();
         app.on_look_hovered(move |name, on| {
@@ -379,7 +379,7 @@ mod tests {
     use std::time::Duration;
 
     /// The reads asked for so far, landed.
-    fn arrive(state: &Rc<RefCell<State>>, app: &App) {
+    fn arrive(state: &Rc<Shared>, app: &App) {
         let read: Vec<_> = READ.with(|r| r.borrow_mut().drain(..).collect());
         for (generation, look) in read {
             landed(&mut state.borrow_mut(), app, generation, look);
@@ -415,7 +415,7 @@ mod tests {
 
     struct Setup {
         app: App,
-        state: Rc<RefCell<State>>,
+        state: Rc<Shared>,
         dir: PathBuf,
     }
 

@@ -556,11 +556,7 @@ fn changed(st: &mut State, app: &App, worker: &Worker) {
     }
 }
 
-pub(crate) fn install(
-    app: &App,
-    state: &std::rc::Rc<std::cell::RefCell<State>>,
-    worker: &std::rc::Rc<Worker>,
-) {
+pub(crate) fn install(app: &App, state: &std::rc::Rc<crate::Shared>, worker: &std::rc::Rc<Worker>) {
     app.on_lightbox_cell(cell);
     {
         let app_weak = app.as_weak();
@@ -694,7 +690,7 @@ mod tests {
 
     /// A window of `count` frames laid out at 1500 by 950, wired as a
     /// session wires it, the first frame chosen and the panes showing.
-    fn lightbox_window(count: usize) -> (App, std::rc::Rc<std::cell::RefCell<State>>) {
+    fn lightbox_window(count: usize) -> (App, std::rc::Rc<crate::Shared>) {
         let app = window(count);
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 950.0));

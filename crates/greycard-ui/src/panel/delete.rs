@@ -677,7 +677,7 @@ pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     drop_files(st, app, worker, &gone, status);
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_delete_asked(move |which| {
@@ -722,7 +722,7 @@ pub(crate) mod tests {
 
     /// Run the deletes sent off and land them, as the thread and the
     /// event loop would; how many there were.
-    pub(crate) fn land_all(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+    pub(crate) fn land_all(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
         let jobs: Vec<Job> = SENT.with(|s| s.borrow_mut().drain(..).collect());
         let n = jobs.len();
         for job in jobs {
@@ -780,7 +780,7 @@ pub(crate) mod tests {
 
     /// `files` open on `app` in a session someone is at, the first
     /// frame on screen.
-    fn opened(app: &App, files: Vec<PathBuf>) -> (Rc<RefCell<State>>, Rc<Worker>) {
+    fn opened(app: &App, files: Vec<PathBuf>) -> (Rc<Shared>, Rc<Worker>) {
         let (state, worker) = state_for(app, files);
         {
             let mut st = state.borrow_mut();
@@ -793,7 +793,7 @@ pub(crate) mod tests {
 
     /// The trash refused this folder earlier, so the sheet offers the
     /// permanent delete: the one path a test may take.
-    fn refused(state: &Rc<RefCell<State>>, dir: &Path) {
+    fn refused(state: &Rc<Shared>, dir: &Path) {
         state
             .borrow_mut()
             .sheets

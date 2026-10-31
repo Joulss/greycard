@@ -305,7 +305,7 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
 /// Level the picture to a line at `drawn` degrees counter-clockwise
 /// on the screen, the level's way: the nearer of horizontal and
 /// vertical taken, the crop re-fit, the change recorded.
-fn level_by(state: &std::cell::RefCell<State>, app: &App, drawn: f32) {
+fn level_by(state: &crate::Shared, app: &App, drawn: f32) {
     let geometry = read_geometry(app);
     app.set_geo_angle(geometry.leveled_by(drawn));
     let (sw, sh, settled) = {
@@ -416,7 +416,7 @@ thread_local! {
 /// Straighten's press: the develop read off the GPU here, its line
 /// found on a thread of its own (a few tens of milliseconds), and the
 /// level set back here, through the level's own path.
-fn straighten(state: &Rc<RefCell<State>>, app: &App) {
+fn straighten(state: &Rc<Shared>, app: &App) {
     if STRAIGHTENING.get() {
         return;
     }
@@ -490,7 +490,7 @@ fn straighten_read(st: &State) -> Option<StraightenRead> {
 /// keystone turns a line by where it is): so a frame Straighten has
 /// leveled reads level and a second press changes nothing.
 fn straighten_apply(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     read: StraightenRead,
     line: Option<greycard_core::horizon::Line>,
@@ -582,7 +582,7 @@ pub(crate) fn read_geometry(app: &App) -> Geometry {
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // Straighten and crop. Entering or leaving crop mode fits the
     // view to what it shows; handles move the crop as it was when
     // pressed; the angle, aspect and portrait re-fit the crop.
@@ -955,7 +955,7 @@ mod tests {
     /// have left it, since nothing here drives that step to run.
     /// The viewport's own top left, in the window's own logical
     /// pixels.
-    fn draw_setup(app: &App) -> (Rc<RefCell<crate::State>>, slint::LogicalPosition) {
+    fn draw_setup(app: &App) -> (Rc<crate::Shared>, slint::LogicalPosition) {
         let (state, _worker) = retouch_state(app);
         {
             let mut st = state.borrow_mut();
@@ -1935,7 +1935,7 @@ mod tests {
     /// A frame of the window's folder opened, as a click on its cell
     /// opens it, with its develop landed: `sw` by `sh`, and the
     /// crop mode as it was.
-    fn open_frame(app: &App, state: &Rc<RefCell<crate::State>>, i: i32, (sw, sh): (u32, u32)) {
+    fn open_frame(app: &App, state: &Rc<crate::Shared>, i: i32, (sw, sh): (u32, u32)) {
         app.invoke_select(i);
         let mut st = state.borrow_mut();
         st.develop.source_size = (sw, sh);

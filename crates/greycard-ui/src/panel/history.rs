@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -12,7 +11,7 @@ use crate::panel::edit::{
     current_turn, edit_to_develop, read_edit, record_panel, show_edit, write_file, write_sidecar,
 };
 use crate::worker::{Job, Worker};
-use crate::{App, HistoryRow, State};
+use crate::{App, HistoryRow, Shared, State};
 
 /// The undo and redo buttons, the history's rows and the snapshots'
 /// names follow the current file's sidecar. The rows are newest
@@ -393,7 +392,7 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // Undo and redo walk the sidecar's history.
     for back in [true, false] {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -772,7 +771,7 @@ mod tests {
 
     /// The panel's edit made a state, as the save timer (or the
     /// export button) makes it.
-    fn save(app: &App, state: &Rc<RefCell<State>>) {
+    fn save(app: &App, state: &Rc<Shared>) {
         let mut st = state.borrow_mut();
         let edit = read_edit(app, &st.develop.edit, st.develop.target);
         crate::panel::edit::save_edit(&mut st, edit);
@@ -1104,7 +1103,7 @@ mod tests {
         dir: &Path,
         frames: usize,
         temperature: bool,
-    ) -> (App, Rc<RefCell<State>>, Rc<Worker>, PathBuf, Vec<u8>) {
+    ) -> (App, Rc<Shared>, Rc<Worker>, PathBuf, Vec<u8>) {
         let raws: Vec<PathBuf> = (0..frames)
             .map(|i| dir.join(format!("IMG_02{i:02}.CR3")))
             .collect();
@@ -1400,7 +1399,7 @@ mod tests {
     }
 
     /// A develop landing with `sources` for the state developing now.
-    fn land(app: &App, state: &Rc<RefCell<State>>, sources: Vec<greycard_edit::retouch::Patch>) {
+    fn land(app: &App, state: &Rc<Shared>, sources: Vec<greycard_edit::retouch::Patch>) {
         let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             app,
@@ -1450,7 +1449,7 @@ mod tests {
             assert!(st.develop.edit.retouch.patches[0].source.is_none());
             st.develop.edit.retouch.patches[0].clone()
         };
-        let spots = |state: &Rc<RefCell<State>>| {
+        let spots = |state: &Rc<Shared>| {
             state.borrow().sidecars[0]
                 .current
                 .retouch
@@ -1580,7 +1579,7 @@ mod tests {
     }
 
     /// Click the history's row for the state at `index`.
-    fn click_state(app: &App, state: &Rc<RefCell<State>>, index: usize) {
+    fn click_state(app: &App, state: &Rc<Shared>, index: usize) {
         let row = state.borrow().sidecars[0]
             .row_of_state(index)
             .expect("a row for every state");
@@ -1589,7 +1588,7 @@ mod tests {
 
     /// The global exposure of every state, oldest first, and where
     /// the current one sits.
-    fn walk(state: &Rc<RefCell<State>>) -> (Vec<f32>, usize) {
+    fn walk(state: &Rc<Shared>) -> (Vec<f32>, usize) {
         let st = state.borrow();
         let s = &st.sidecars[0];
         let all = (0..s.states())
@@ -1630,7 +1629,7 @@ mod tests {
         // Two back, and the panel reads as that state.
         click_state(&app, &state, 3);
         assert_eq!(walk(&state), (steps.clone(), 3));
-        let panel_is_current = |state: &Rc<RefCell<State>>| {
+        let panel_is_current = |state: &Rc<Shared>| {
             let st = state.borrow();
             read_edit(&app, &st.develop.edit, st.develop.target) == st.sidecars[0].current
         };
@@ -1771,8 +1770,7 @@ mod tests {
         app.set_exposure(1.0);
         app.invoke_view_changed();
         rest();
-        let exposure =
-            |state: &Rc<RefCell<State>>| state.borrow().sidecars[0].current.light.exposure;
+        let exposure = |state: &Rc<Shared>| state.borrow().sidecars[0].current.light.exposure;
         assert_eq!(exposure(&state), 1.0);
         let middle = |(at, size): (slint::LogicalPosition, slint::LogicalSize)| {
             (at.x + size.width / 2.0, at.y + size.height / 2.0)

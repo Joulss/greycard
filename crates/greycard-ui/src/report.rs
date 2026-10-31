@@ -316,7 +316,7 @@ fn reveal(file: &Path) -> Result<()> {
 /// and the status line saying what to do with the two. The GPU is
 /// what the rendering setup found, or nothing for the tester to fill
 /// in when it has not run.
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     let (state, app_weak) = (state.clone(), app.as_weak());
     app.on_report_asked(move || {
         let Some(app) = app_weak.upgrade() else {

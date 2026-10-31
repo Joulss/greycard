@@ -488,7 +488,7 @@ pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalanc
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // As shot switched on the panel: on, the sliders show the
     // camera's white again; either way the picture develops as a
     // slider's move does. Moving a slider turns it off on the panel's
@@ -916,7 +916,7 @@ mod tests {
     /// and either way its values go on the sliders; a
     /// slider then moves that wheel and no other; the ring and the
     /// name's accent follow `grade-range`. Global and a mask's alike.
-    fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<RefCell<State>>, prefix: &str) {
+    fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<Shared>, prefix: &str) {
         use crate::testing::click;
         // The edit as a save reads it off the panel, and the grading
         // the panel is on in it.
@@ -1048,7 +1048,7 @@ mod tests {
     /// target's tint.
     fn the_tint_switches_and_keeps_its_values(
         app: &App,
-        state: &Rc<RefCell<State>>,
+        state: &Rc<Shared>,
         prefix: &str,
         tint_of: impl Fn(&Edit) -> Tint,
         other_of: impl Fn(&Edit) -> Tint,

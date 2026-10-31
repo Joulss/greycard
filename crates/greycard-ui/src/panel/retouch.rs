@@ -194,7 +194,7 @@ pub(crate) fn another(st: &mut State, app: &App) -> bool {
     true
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The repair tools: heal or clone in hand, a patch chosen, its
     // sliders, its handles, its deletion.
     {
@@ -391,7 +391,7 @@ mod tests {
 
     /// A develop landing for the state developing now, with which
     /// engine made each Fill.
-    fn land(app: &App, state: &Rc<RefCell<State>>, engines: Vec<(u64, Engine)>) {
+    fn land(app: &App, state: &Rc<Shared>, engines: Vec<(u64, Engine)>) {
         let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             app,
@@ -423,7 +423,7 @@ mod tests {
         );
     }
 
-    fn save(app: &App, state: &Rc<RefCell<State>>) {
+    fn save(app: &App, state: &Rc<Shared>) {
         let mut st = state.borrow_mut();
         let edit = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
         crate::panel::edit::save_edit(&mut st, edit);

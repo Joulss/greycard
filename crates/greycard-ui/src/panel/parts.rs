@@ -464,7 +464,7 @@ pub(crate) fn boxes(st: &State, app: &App) -> Vec<PersonBox> {
         .collect()
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_add_part(move |label, mode| {
@@ -514,7 +514,7 @@ mod tests {
 
     /// A window on the Masks tab with one empty mask chosen, over a
     /// picture 1200 by 800.
-    fn masks() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn masks() -> (App, Rc<Shared>, Rc<Worker>) {
         let app = window(1);
         let (state, worker) = state_for(&app, folder(1));
         app.set_panel_tab("Masks".into());
@@ -775,7 +775,7 @@ mod tests {
         }
     }
 
-    fn with_a_part(state: &Rc<RefCell<State>>) {
+    fn with_a_part(state: &Rc<Shared>) {
         let mut st = state.borrow_mut();
         st.develop.edit.adjustments[0]
             .mask
@@ -1081,14 +1081,14 @@ mod tests {
 
     /// The view as it stands: the zoom asked for, the center and the
     /// frame's size.
-    fn view(state: &Rc<RefCell<State>>) -> (f32, (f32, f32), (u32, u32)) {
+    fn view(state: &Rc<Shared>) -> (f32, (f32, f32), (u32, u32)) {
         let st = state.borrow();
         (st.develop.zoom, st.develop.center, st.develop.image_size)
     }
 
     /// The part's raster and the develop after it, as the worker
     /// delivers them.
-    fn land(app: &App, state: &Rc<RefCell<State>>) {
+    fn land(app: &App, state: &Rc<Shared>) {
         let (shape, generation) = {
             let st = state.borrow();
             (shapes(&st)[0].clone(), st.develop.generation)

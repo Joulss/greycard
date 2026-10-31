@@ -50,7 +50,6 @@
 //! into every frame still standing in ([`apply_row`]); a frame already
 //! loaded keeps what memory holds, as a merge always did.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -72,7 +71,7 @@ use slint::ComponentHandle;
 use crate::roots::Progress;
 use crate::versions::Key;
 use crate::worker::{Job, Worker};
-use crate::{App, State};
+use crate::{App, Shared, State};
 
 /// Whether cell `c`'s line still waits for its ISO's learned-denoiser
 /// blend: its file is a raw and the line was never developed (the
@@ -268,8 +267,7 @@ pub(crate) fn refused(st: &State, c: usize, what: &str) -> Option<String> {
 /// handed, for each frame the request named, the cell it is at now, or
 /// `None` for one no longer listed. Never the selection as it is by
 /// then: what was pressed on is what is acted on.
-pub(crate) type Action =
-    Box<dyn FnOnce(&Rc<RefCell<State>>, &App, &Rc<Worker>, Vec<Option<usize>>)>;
+pub(crate) type Action = Box<dyn FnOnce(&Rc<Shared>, &App, &Rc<Worker>, Vec<Option<usize>>)>;
 
 /// What a request acts on: a frame's own line (a paste, a sync, a
 /// preset, an export, the open of a frame), or its file (a culling key,
@@ -463,7 +461,7 @@ fn queue(
 /// Frames under an offline root are not read and not waited for; each
 /// action says what it does about them. True when the action ran now.
 pub(crate) fn request(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     frames: Vec<Key>,
@@ -548,7 +546,7 @@ thread_local! {
     /// The reads a test's requests asked for, waiting for the test to
     /// run and land them (`land_pending`): there is no event loop to
     /// land them on, as the roots' reads are queued.
-    pub(crate) static QUEUED: RefCell<Vec<QueuedRead>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static QUEUED: std::cell::RefCell<Vec<QueuedRead>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The read for request `id`: `to_read`'s sidecars on the pool, landed
@@ -632,7 +630,7 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
 /// A test's turn at the reads its requests queued: each read in place
 /// and landed, its action run in its turn; how many reads landed.
 #[cfg(test)]
-pub(crate) fn land_pending(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+pub(crate) fn land_pending(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
     let mut n = 0;
     loop {
         let reads: Vec<QueuedRead> = QUEUED.with(|q| q.borrow_mut().drain(..).collect());
@@ -666,7 +664,7 @@ pub(crate) fn land_pending(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Wo
 /// export's record), and its older bytes would be saved over the newer
 /// by the next key. A stand-in is filled only by a read of its own list.
 fn landed(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     id: u64,
@@ -704,7 +702,7 @@ fn landed(
 
 /// Run every request at the front of the queue whose read is in, in
 /// order, each on the frames its paths are at now.
-pub(crate) fn run_ready(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+pub(crate) fn run_ready(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     loop {
         let next = {
             let mut st = state.borrow_mut();
@@ -824,7 +822,7 @@ fn bar_started(st: &mut State, app: &App, n: usize) {
 /// filled to the sidecars read, once a read has been out
 /// `roots::LOADING_SHOWN_AFTER`; a read out past the give-up whose
 /// count has stood still is given up on, its requests dropped.
-pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, now: Instant) {
+pub(crate) fn bar_tick(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, now: Instant) {
     let gave_up = {
         let mut st = state.borrow_mut();
         let (Some(since), Some(progress)) = (st.views.loads.since, st.views.loads.progress.clone())

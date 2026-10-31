@@ -21,7 +21,6 @@
 //! with the field typed in, the text is sent to them, once the state
 //! is free, and the field shows the new frames' title.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -168,7 +167,7 @@ fn send_pending_later(app: &App) {
 }
 
 /// Each title left pending, onto the frames it was typed for.
-fn send_pending(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+fn send_pending(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let pending = std::mem::take(&mut state.borrow().views.words.borrow_mut().pending);
     for (keys, text) in pending {
         meta_on_keys(state, app, worker, keys, Change::Title(text));
@@ -184,7 +183,7 @@ fn send_pending(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
 /// queued for a read that could only land on a loop that is over.
 /// Called before the worker stops and the index closes, so the saves
 /// are told to the index as any other.
-pub(crate) fn send_title(state: &Rc<RefCell<State>>, app: &App) {
+pub(crate) fn send_title(state: &Rc<Shared>, app: &App) {
     let mut sends = std::mem::take(&mut state.borrow().views.words.borrow_mut().pending);
     if app.get_title_dirty() {
         app.set_title_dirty(false);
@@ -221,7 +220,7 @@ fn shown_keys(st: &State, text: &str) -> Option<Vec<Key>> {
 
 /// `text` as the title of the frames the field shows, unless it is an
 /// empty field over a Mixed set.
-fn title_to_shown(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, text: String) {
+fn title_to_shown(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, text: String) {
     let Some(keys) = shown_keys(&state.borrow(), &text) else {
         return;
     };
@@ -402,12 +401,12 @@ fn offer(st: &State, app: &App, typed: &str) {
 }
 
 /// `words` onto the selection, and into the vocabulary.
-fn add_words(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, words: Vec<String>) {
+fn add_words(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, words: Vec<String>) {
     learn(&state.borrow(), &words);
     meta_on_selection(state, app, worker, Change::AddKeywords(words));
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The Keywords field taken: its words read now, if they are not in
     // hand, rather than at the first key.
     {
@@ -483,7 +482,7 @@ mod tests {
 
     /// Frames `0..n` of `folder(n)` open, the first on screen and all
     /// of them chosen.
-    fn chosen(n: usize) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn chosen(n: usize) -> (App, Rc<Shared>, Rc<Worker>) {
         let app = window(n);
         let (state, worker) = state_for(&app, folder(n));
         app.invoke_select(0);

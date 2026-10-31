@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -22,7 +21,7 @@ use crate::panel::history::show_history;
 use crate::tags::{self, Tags};
 use crate::worker::{self, Job, Worker};
 use crate::{
-    App, GridPlace, STATE, State, Thumb, WORKER, cells, chooser, cull, files, filter, grid,
+    App, GridPlace, STATE, Shared, State, Thumb, WORKER, cells, chooser, cull, files, filter, grid,
     selection, settings,
 };
 
@@ -1561,7 +1560,7 @@ pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
 /// ([`crate::roots::open_listing`]); an empty folder, or a path that is
 /// not one, is said and the list left alone rather than emptied under
 /// the user's feet.
-pub(crate) fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+pub(crate) fn open_folder(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     // A folder opened by hand while the index is still opening wins
     // over the view the launch asked for: that view is not opened
     // over it once the index is open.
@@ -1580,12 +1579,7 @@ pub(crate) fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Wor
 /// What the desktop asked to open, the Finder's double-click or Open
 /// With: each path as the command line's path would be, a file on its
 /// own and a folder's pictures, starting on the first.
-pub(crate) fn open_paths(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    paths: &[PathBuf],
-) {
+pub(crate) fn open_paths(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, paths: &[PathBuf]) {
     let apart = state.borrow().views.jpegs_apart;
     let (files, refused) = files::list_paths(paths, apart);
     for e in &refused {
@@ -1667,7 +1661,7 @@ fn hold_outgoing(st: &mut State, outgoing: &Edit) {
 /// `ids_known` says the read asked the index for every file's row, so
 /// each `Held::id` is the answer and the index is not asked again here.
 pub(crate) fn open_loaded(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     files: Vec<PathBuf>,
@@ -1835,7 +1829,7 @@ pub(crate) fn open_loaded(
 /// set (Ctrl+clicks on those rows), which the launch asked for once:
 /// from the rendering setup when the list was in before it, else when
 /// the list lands.
-pub(crate) fn open_at_start(state: &Rc<RefCell<State>>, app: &App, row: usize) {
+pub(crate) fn open_at_start(state: &Rc<Shared>, app: &App, row: usize) {
     app.invoke_select(row as i32);
     let (also, rows) = {
         let mut st = state.borrow_mut();
@@ -2611,14 +2605,7 @@ pub(crate) fn beside(shown: &[usize], current: usize) -> Vec<(usize, crate::work
 /// would and the set collapses to it, even at the end of the strip
 /// where nothing moved; with Shift the set keeps what it had and
 /// takes the frame landed on as well.
-fn step_to(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Worker,
-    row: i32,
-    moves: bool,
-    extend: bool,
-) {
+fn step_to(state: &Rc<Shared>, app: &App, worker: &Worker, row: i32, moves: bool, extend: bool) {
     match (moves, extend) {
         (true, false) => app.invoke_select(row),
         (true, true) => open_row(&mut state.borrow_mut(), app, worker, row, true),
@@ -2705,7 +2692,7 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
 /// is recorded, so undo's step names the frame that was rated and
 /// not the one moved on to.
 pub(crate) fn meta_on_selection(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     change: meta::Change,
@@ -2733,7 +2720,7 @@ pub(crate) fn chosen_keys(st: &State) -> Vec<crate::versions::Key> {
 /// [`meta_on_selection`] over the frames `paths` name, chosen or not:
 /// for a title typed for a selection that has moved on since.
 pub(crate) fn meta_on_keys(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     paths: Vec<crate::versions::Key>,
@@ -2826,7 +2813,7 @@ pub(crate) fn meta_on_keys(
 /// on the nearest row when the frame left the filtered list (not when
 /// the press moved it on already).
 fn meta_on(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     frames: &[usize],
     change: meta::Change,
@@ -2911,7 +2898,7 @@ pub(crate) fn say_notice(st: &mut State, app: &App, text: String) {
         });
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The culling keys: a rating, a flag or a color label on the
     // selection. None of this is an edit, so nothing here records a
     // history state, marks the panel dirty or asks for a develop.
@@ -3323,6 +3310,7 @@ mod tests {
     use greycard_edit::geometry::Geometry;
     use greycard_edit_io::xmp;
     use slint::platform::{Key, WindowEvent};
+    use std::cell::RefCell;
 
     /// The neighbors the worker is told of are the frames the right and
     /// the left keys reach, the next first, under the filter: a frame it
@@ -3843,7 +3831,7 @@ mod tests {
 
     /// A browser of five thousand frames in a 1500 by 950 window,
     /// opened on the first, with pictures in hand for every frame.
-    fn five_thousand() -> (App, Rc<RefCell<State>>, Vec<PathBuf>) {
+    fn five_thousand() -> (App, Rc<Shared>, Vec<PathBuf>) {
         use crate::panel::deliver::deliver;
         let app = window(5000);
         app.window()

@@ -291,7 +291,7 @@ pub(crate) fn entering(st: &mut State) {
 /// again (a collection gone, the index not open yet), leaves to nothing
 /// open. Every other way to the Loupe (a tile opened, Return, Escape,
 /// G) stays in the view, on the queued frame as it will export.
-pub(crate) fn leave(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, loupe: bool) {
+pub(crate) fn leave(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, loupe: bool) {
     let Before {
         view,
         listing,
@@ -337,7 +337,7 @@ pub(crate) fn leave(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, 
 /// (a version as itself, which the read's own pick, by path, takes for
 /// its file), then the Loupe when that was pressed. Shown with the list,
 /// never over the queue's frame while the read is out.
-pub(crate) fn landed(state: &Rc<RefCell<State>>, app: &App, generation: u64) {
+pub(crate) fn landed(state: &Rc<Shared>, app: &App, generation: u64) {
     let (loupe, row) = {
         let mut st = state.borrow_mut();
         let Some(back) = st
@@ -399,7 +399,7 @@ pub(crate) fn changed(st: &mut State, app: &App) {
 /// nearest one left, which is opened, the status line kept. A queue
 /// with a file the list does not have yet (a set added) is opened
 /// again as a view is.
-pub(crate) fn relist(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+pub(crate) fn relist(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let reopen = {
         let mut st = state.borrow_mut();
         st.views.queue_relist_due = false;
@@ -617,7 +617,7 @@ pub(crate) fn take_out(st: &mut State, app: &App, out: &[u64]) {
     );
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_grid_head_h(crate::grid::HEAD);
     show_count(&state.borrow(), app);
     {
@@ -657,7 +657,7 @@ mod tests {
         dir: PathBuf,
         files: Vec<PathBuf>,
         app: App,
-        state: Rc<RefCell<State>>,
+        state: Rc<Shared>,
         worker: Rc<Worker>,
     }
 

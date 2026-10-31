@@ -683,7 +683,7 @@ fn all_roots_lists_the_archives_copy_when_the_local_one_is_away() {
         st.views.library.roots.set_archive(&nas, true);
         recount(&mut st);
     }
-    let listed = |state: &Rc<RefCell<State>>| {
+    let listed = |state: &Rc<Shared>| {
         let mut files = state.borrow().files.clone();
         files.sort();
         files

@@ -70,7 +70,7 @@ pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Or
 /// browser's list replaced once they are in. The window goes on with
 /// what it has meanwhile. An open is asked for by hand, so every folder
 /// is looked at again.
-pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, view: View) {
+pub(crate) fn open_view(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, view: View) {
     open_view_on(state, app, worker, view, None);
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
 /// open yet (the view opened once it is), the collection gone, or the
 /// index unreadable.
 pub(crate) fn open_view_on(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     view: View,
@@ -200,7 +200,7 @@ pub(crate) fn open_view_on(
 /// Nothing open, as a window with no folder is: the list emptied, the
 /// view a folder's, and a read still out dropped. The way back from
 /// the export queue's view when nothing was open before it.
-pub(crate) fn open_nothing(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+pub(crate) fn open_nothing(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     {
         let mut st = state.borrow_mut();
         st.views.view_generation += 1;
@@ -225,7 +225,7 @@ pub(crate) fn open_nothing(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Wo
 /// what it is read in.
 #[allow(clippy::too_many_arguments)]
 fn send_view(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     view: View,
     source: Source,
@@ -293,7 +293,7 @@ fn send_view(
 /// that turns out empty leaves the list alone. No sidecar is read on
 /// the window's thread.
 pub(crate) fn open_listing(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     listing: Listing,
@@ -370,12 +370,7 @@ pub(crate) fn open_listing(
 /// [`LOADING_SHOWN_AFTER`], and goes when it lands or is given up on.
 /// `at` is the one root the read is under, named, for the bar to say
 /// when the count stands still.
-fn loading_started(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    progress: Arc<Progress>,
-    at: Option<String>,
-) {
+fn loading_started(state: &Rc<Shared>, app: &App, progress: Arc<Progress>, at: Option<String>) {
     let mut st = state.borrow_mut();
     let lib = &mut st.views.library;
     let now = Instant::now();
@@ -611,7 +606,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
 /// than after it. A view still opening sends nothing, as
 /// [`refresh_view`] has it, and the read out is then still out: its
 /// mark is put back.
-pub(crate) fn read_view_now(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> bool {
+pub(crate) fn read_view_now(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> bool {
     let was = {
         let mut st = state.borrow_mut();
         (
@@ -637,7 +632,7 @@ pub(crate) fn read_view_now(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<W
 /// that stopped answering mid-read) is given up on, and another sent.
 /// True when a merge is coming; false when there was nothing to read
 /// the list from.
-pub(crate) fn refresh_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>) -> bool {
+pub(crate) fn refresh_view(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>) -> bool {
     let look = {
         let mut st = state.borrow_mut();
         let late = |since: Option<Instant>| since.is_some_and(|t| t.elapsed() > READ_GIVES_UP);

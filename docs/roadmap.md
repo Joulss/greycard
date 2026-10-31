@@ -628,9 +628,6 @@ touches.
       with its own scratch helper; camera match and the measurement
       runners after part 2; explicit imports in place of the 44 glob
       imports of the crate root as each moves
-- [ ] One entry for every Slint callback that takes the State borrow
-      and names the callback when it fails, so a re-entrant borrow
-      reports itself (1521 borrow_mut sites, 10 try_borrow)
 - [ ] The profile and look stores out of greycard-edit: `settings()`
       reads the camera profile and the look table through them, so a
       loader handed in first, then the listing half to

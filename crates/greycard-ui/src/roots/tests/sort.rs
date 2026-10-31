@@ -35,7 +35,7 @@ fn two_bodies(what: &str) -> (PathBuf, PathBuf, greycard_library::Library) {
 }
 
 /// A window on the root, the library open as the editor has it.
-fn window_on(dir: &Path, root: &Path) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+fn window_on(dir: &Path, root: &Path) -> (App, Rc<Shared>, Rc<Worker>) {
     let db = dir.join("index").join("library.sqlite");
     let app = window(0);
     let (state, worker) = state_for(&app, Vec::new());
@@ -70,7 +70,7 @@ fn on_screen(st: &State) -> Option<String> {
     Some(st.path_at(c)?.file_name()?.to_string_lossy().into_owned())
 }
 
-fn teardown(dir: &Path, state: Rc<RefCell<State>>, writer: greycard_library::Library) {
+fn teardown(dir: &Path, state: Rc<Shared>, writer: greycard_library::Library) {
     state.borrow_mut().views.index_reader = None;
     drop(state);
     drop(writer);

@@ -1417,7 +1417,7 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_look_rename_asked(move || {
@@ -1468,7 +1468,7 @@ mod tests {
 
     /// The rename's thread, run here: the job the sheet sent, run and
     /// landed.
-    fn run_sent(state: &Rc<RefCell<State>>, app: &App) {
+    fn run_sent(state: &Rc<Shared>, app: &App) {
         let (generation, job) = sent();
         job.run(&|| {});
         heard(&mut state.borrow_mut(), app, generation, true);
@@ -1742,7 +1742,7 @@ mod tests {
         dir: &Path,
         store: &Path,
         frames: usize,
-    ) -> (Rc<RefCell<State>>, Rc<crate::worker::Worker>, Vec<PathBuf>) {
+    ) -> (Rc<Shared>, Rc<crate::worker::Worker>, Vec<PathBuf>) {
         STORE.with(|s| *s.borrow_mut() = Some(store.to_path_buf()));
         let files: Vec<PathBuf> = (0..frames).map(|i| dir.join(format!("f{i}.tif"))).collect();
         for f in &files {
@@ -2181,7 +2181,7 @@ mod tests {
 
     /// The sheet asked and answered with `new` over the look the panel
     /// has chosen; the job sent, not run.
-    fn answer(state: &Rc<RefCell<State>>, app: &App, new: &str) {
+    fn answer(state: &Rc<Shared>, app: &App, new: &str) {
         ask(&mut state.borrow_mut(), app);
         assert!(app.get_look_rename_open(), "{}", app.get_status());
         let generation = state.borrow().sheets.look_rename_generation;
@@ -2211,7 +2211,7 @@ mod tests {
 
     /// Frames 0 and 1 with sidecars on disk naming Neon, frame 0 open
     /// on it, frame 1 loaded.
-    fn two_on_neon(dir: &Path, store: &Path) -> (App, Rc<RefCell<State>>, Vec<PathBuf>) {
+    fn two_on_neon(dir: &Path, store: &Path) -> (App, Rc<Shared>, Vec<PathBuf>) {
         let app = window(2);
         let (state, _worker, files) = renaming(&app, dir, store, 2);
         {

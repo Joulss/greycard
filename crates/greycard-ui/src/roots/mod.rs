@@ -657,7 +657,7 @@ impl Checks {
 
 /// The header's callbacks: a root chosen, all of them, one added by
 /// the chooser or as the folder open, one taken out, one named.
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_library_roots(ModelRc::from(state.borrow().views.library.rows.clone()));
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -766,7 +766,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 /// window's thread: each run and landed, as the thread and the event
 /// loop would; how many there were.
 #[cfg(test)]
-pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+pub(crate) fn land_sent(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
     land_sent_in(state, app, worker, false)
 }
 
@@ -780,21 +780,12 @@ pub(crate) fn sent_reads() -> usize {
 /// [`land_sent`], the reads sent landing last first: a thread that was
 /// sent later and came back sooner.
 #[cfg(test)]
-pub(crate) fn land_sent_last_first(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-) -> usize {
+pub(crate) fn land_sent_last_first(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
     land_sent_in(state, app, worker, true)
 }
 
 #[cfg(test)]
-fn land_sent_in(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    reversed: bool,
-) -> usize {
+fn land_sent_in(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, reversed: bool) -> usize {
     let mut landed = 0;
     loop {
         let mut looks: Vec<Look> = tests::SENT.with(|s| s.borrow_mut().drain(..).collect());

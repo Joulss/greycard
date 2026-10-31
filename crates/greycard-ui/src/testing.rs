@@ -5,7 +5,7 @@ use slint::platform::WindowEvent;
 use slint::{ComponentHandle, ModelRc};
 
 use crate::worker::Worker;
-use crate::{App, State, Thumb, grid, install_callbacks};
+use crate::{App, Shared, State, Thumb, grid, install_callbacks};
 
 // The helpers the render crate's tests share with these.
 pub(crate) use greycard_render::testing::{GFX, bar_png, remove_dir_retry, white_shift};
@@ -133,11 +133,8 @@ pub(crate) fn press(app: &App, key: impl Into<slint::SharedString>) {
 /// A state over `files` and a no-op worker, wired to `app` exactly
 /// as `run` wires the real one: enough to drive any of the window's
 /// callbacks without a picture open or a file on disk.
-pub(crate) fn state_for(
-    app: &App,
-    files: Vec<std::path::PathBuf>,
-) -> (Rc<RefCell<State>>, Rc<Worker>) {
-    let state = Rc::new(RefCell::new(State::empty(files, app)));
+pub(crate) fn state_for(app: &App, files: Vec<std::path::PathBuf>) -> (Rc<Shared>, Rc<Worker>) {
+    let state = Rc::new(Shared::new(State::empty(files, app)));
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     let worker = Rc::new(Worker::new(|_| {}));
     install_callbacks(app, state.clone(), worker.clone());
@@ -146,7 +143,7 @@ pub(crate) fn state_for(
 
 /// A file-less state and a no-op worker: enough to drive the retouch
 /// callbacks without a picture open.
-pub(crate) fn retouch_state(app: &App) -> (Rc<RefCell<State>>, Rc<Worker>) {
+pub(crate) fn retouch_state(app: &App) -> (Rc<Shared>, Rc<Worker>) {
     state_for(app, Vec::new())
 }
 
@@ -320,7 +317,7 @@ pub(crate) fn rename_away(from: &std::path::Path, to: &std::path::Path) {
 /// `drop` in the test does not end it, and Windows refuses to remove
 /// an open file. The removal is tried again for a while, as
 /// [`rename_away`] is, for the pool's reads still in flight.
-pub(crate) fn remove_scratch(state: Rc<RefCell<State>>, dir: &std::path::Path) {
+pub(crate) fn remove_scratch(state: Rc<Shared>, dir: &std::path::Path) {
     state.borrow_mut().views.index_reader = None;
     drop(state);
     remove_dir_retry(dir);

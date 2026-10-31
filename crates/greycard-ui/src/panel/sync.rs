@@ -889,12 +889,7 @@ pub(crate) fn apply_preset(
 /// The preset's click, from the callback: a request for the
 /// selection's sidecars, and the preset over exactly those frames once
 /// they are in.
-pub(crate) fn preset_pressed(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    preset: Preset,
-) {
+pub(crate) fn preset_pressed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, preset: Preset) {
     let paths: Vec<crate::versions::Key> = {
         let st = state.borrow();
         chosen_frames(&st)
@@ -1487,7 +1482,7 @@ fn tool_in_hand(app: &App) -> bool {
         || app.get_level_mode()
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // Copy and paste: Ctrl+C and Ctrl+V, and the frame menu's two.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -3278,7 +3273,7 @@ mod tests {
         };
         // What the viewport would draw for (1, 0) now, and what it
         // would ask the worker for.
-        let baked = |state: &Rc<RefCell<State>>| {
+        let baked = |state: &Rc<Shared>| {
             let st = &mut *state.borrow_mut();
             let edit = read_edit(&app, &st.develop.edit, st.develop.target);
             let (_, wants) = bake_locals(
@@ -3569,7 +3564,7 @@ mod tests {
     /// Frame 0 on the panel with a look and two masks, frame 2 with a
     /// look and a mask of its own, in a window tall enough for the
     /// sheet's whole list.
-    fn two_frames() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn two_frames() -> (App, Rc<Shared>, Rc<Worker>) {
         let app = window(3);
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 1200.0));

@@ -281,7 +281,7 @@ pub(crate) fn opened_words(st: &State, missing: usize) -> Option<String> {
 
 /// The index found files rewritten in place: each collection holding
 /// one heals by its hints, and the view of one that did is read again.
-pub(crate) fn healed(state: &Rc<RefCell<State>>, app: &App, rehashed: &[Rehash]) {
+pub(crate) fn healed(state: &Rc<Shared>, app: &App, rehashed: &[Rehash]) {
     if rehashed.is_empty() {
         return;
     }
@@ -364,7 +364,7 @@ fn pairs_of(frames: &[Frame]) -> HashSet<Pair<'_>> {
 
 /// The selection's frames into collection `id`: new pictures at its end,
 /// and another copy of a member moving its hint.
-fn add_to(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str, frames: &[Frame]) {
+fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: &[Frame]) {
     let viewing = {
         let mut st = state.borrow_mut();
         let name = name_of(&st, id);
@@ -428,7 +428,7 @@ pub(crate) fn version_made(st: &mut State, app: &App, c: usize, id: &str) -> boo
 /// The frames `pairs` (each a version of a picture) out of collection
 /// `id`; the frames themselves are not touched.
 fn remove_from(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Rc<Worker>,
     id: &str,
@@ -497,7 +497,7 @@ fn forgettable(st: &State, id: &str) -> usize {
 /// the editor's look (up to its 3 s), or at a file on disk kept;
 /// refused while a pass is under way. The status line is said again
 /// with the count that is left.
-fn forget_missing(state: &Rc<RefCell<State>>, app: &App, id: &str) {
+fn forget_missing(state: &Rc<Shared>, app: &App, id: &str) {
     let mut st = state.borrow_mut();
     let st = &mut *st;
     if st.views.view.collection() != Some(id) {
@@ -634,7 +634,7 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
 }
 
 /// The sheet answered.
-fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     if !app.get_collection_sheet_open() {
         return;
     }
@@ -744,7 +744,7 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
 /// B: the selection into the collection open, else the last one added
 /// to; out of it when all of it is in already; with no collection to
 /// go to, a new one asked for.
-fn key(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
+fn key(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let (target, frames, all_in) = {
         let st = state.borrow();
         let files = chosen_frames(&st);
@@ -785,7 +785,7 @@ fn key(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
 /// A frame dragged in the grid, from its row to before row `to` (the
 /// end for one past the last): it, or the set it is in, moved there in
 /// the collection's own order.
-fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize, to: usize) {
+fn moved(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, from: usize, to: usize) {
     {
         let mut st = state.borrow_mut();
         let View::Collection { id } = st.views.view.clone() else {
@@ -822,7 +822,7 @@ fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize
 
 /// A row of the list clicked: a collection opened as a view of the
 /// index; a smart one's filter put on the bar over the view of its root.
-fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str) {
+fn picked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str) {
     let mut st = state.borrow_mut();
     if st.views.collections.collection(id).is_some() {
         // In the order kept for it, its own until another is chosen.
@@ -851,7 +851,7 @@ fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str) 
     }
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.set_collections(ModelRc::from(state.borrow().views.collections.rows.clone()));
     app.set_collection_names(ModelRc::from(
         state.borrow().views.collections.names.clone(),
@@ -1051,7 +1051,7 @@ mod tests {
         copy: PathBuf,
         writer: greycard_library::Library,
         app: App,
-        state: Rc<RefCell<State>>,
+        state: Rc<Shared>,
         worker: Rc<Worker>,
     }
 

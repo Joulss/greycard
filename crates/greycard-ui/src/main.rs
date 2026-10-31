@@ -54,6 +54,7 @@ mod roots;
 mod rows;
 mod scope;
 mod settings;
+mod shared;
 mod sheet;
 mod sort;
 mod stacks;
@@ -123,6 +124,7 @@ pub(crate) use ai::{Key, prompted};
 pub(crate) use finish::{Local, MAX_LOCALS, RasterRef};
 use panel::startup::main;
 pub(crate) use render::{Renderer, View};
+pub(crate) use shared::Shared;
 pub(crate) use worker::{
     Developed, Job, LearnedReport, LensReport, Outcome, SourceKind, WhiteBase, Worker,
 };
@@ -1074,7 +1076,7 @@ fn on_exists_named(name: &str) -> Result<export::OnExists, String> {
         .ok_or_else(|| format!("want increment, overwrite or skip, not {name}"))
 }
 
-pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc<Worker>) {
+pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>) {
     entry::install(app);
     keys::install(app);
     keys::install_sheet(app, &state);
@@ -1128,7 +1130,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
 }
 
 thread_local! {
-    static STATE: RefCell<Option<Rc<RefCell<State>>>> = const { RefCell::new(None) };
+    static STATE: RefCell<Option<Rc<Shared>>> = const { RefCell::new(None) };
     static WORKER: RefCell<Option<Rc<Worker>>> = const { RefCell::new(None) };
 }
 

@@ -50,7 +50,7 @@ thread_local! {
 /// The looks queued while held, run and landed, as the thread and
 /// the event loop would; how many.
 #[cfg(unix)]
-fn run_checks(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+fn run_checks(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
     let queued: Vec<(PathBuf, Check)> = CHECKS_SENT.with(|c| c.borrow_mut().drain(..).collect());
     for (dir, check) in &queued {
         let checked = checked_within(*check, dir);
@@ -76,7 +76,7 @@ fn sent() -> usize {
 
 /// Every read sent run and landed, and those their landing sent;
 /// how many.
-fn land_all(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+fn land_all(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -> usize {
     land_sent(state, app, worker)
 }
 
@@ -109,7 +109,7 @@ fn seen_now(st: &State, db: Option<&Path>) -> OnScreen {
 /// `merge` as a landed read would call it: the new files' sidecars
 /// and the frame on screen read first.
 fn merge_read(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     worker: &Worker,
     next: Vec<PathBuf>,
@@ -162,7 +162,7 @@ fn three_under_a_root(
     PathBuf,
     greycard_library::Library,
     App,
-    Rc<RefCell<State>>,
+    Rc<Shared>,
     Rc<Worker>,
 ) {
     let dir = scratch(what);
@@ -186,7 +186,7 @@ fn three_under_a_root(
 }
 
 /// The count a view's read keeps, as the pool would bump it.
-fn read_so_far(state: &Rc<RefCell<State>>, n: usize) {
+fn read_so_far(state: &Rc<Shared>, n: usize) {
     let st = state.borrow();
     let p = st
         .views
@@ -216,7 +216,7 @@ fn disk_reads_under(dir: &Path) -> usize {
 /// The three frames of `three_under_a_root` opened as a folder's
 /// files, on a window with no index path: every sidecar read from
 /// disk, which is what the bar counts.
-fn open_three(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+fn open_three(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let a = dir.join("a");
     let files = vec![a.join("x.tif"), a.join("y.tif"), a.join("z.tif")];
     open_listing(state, app, worker, Listing::Files(files), Select::Row(0));
@@ -233,7 +233,7 @@ fn rated_under_a_root(
     Vec<PathBuf>,
     greycard_library::Library,
     App,
-    Rc<RefCell<State>>,
+    Rc<Shared>,
     Rc<Worker>,
 ) {
     let dir = scratch(what);
@@ -281,7 +281,7 @@ struct Shoot {
     e: PathBuf,
     writer: greycard_library::Library,
     app: App,
-    state: Rc<RefCell<State>>,
+    state: Rc<Shared>,
     worker: Rc<Worker>,
 }
 

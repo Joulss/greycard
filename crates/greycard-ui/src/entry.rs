@@ -474,7 +474,7 @@ mod tests {
     /// slider focused by a press on its label, which moves nothing.
     fn exposure_focused() -> (
         App,
-        std::rc::Rc<std::cell::RefCell<crate::State>>,
+        std::rc::Rc<crate::Shared>,
         std::rc::Rc<crate::worker::Worker>,
     ) {
         use crate::testing;

@@ -529,7 +529,7 @@ enum Count {
     Failed,
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_people_offer_used(move || {
@@ -601,11 +601,7 @@ mod tests {
 
     /// The frames `files`, the first with her lips mask, synced onto the
     /// `onto` after it; with `write` the sidecars go to disk.
-    fn synced_over(
-        files: Vec<PathBuf>,
-        onto: usize,
-        write: bool,
-    ) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn synced_over(files: Vec<PathBuf>, onto: usize, write: bool) -> (App, Rc<Shared>, Rc<Worker>) {
         let app = window(files.len());
         let (state, worker) = state_for(&app, files);
         {
@@ -646,13 +642,13 @@ mod tests {
     }
 
     /// `frames` frames nothing writes, as [`synced_over`].
-    fn synced(frames: usize, onto: usize) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+    fn synced(frames: usize, onto: usize) -> (App, Rc<Shared>, Rc<Worker>) {
         synced_over(folder(frames), onto, false)
     }
 
     /// Frame `c` opened on the Masks tab, its lips asking which of the
     /// two there she is, as the worker says it.
-    fn asking_on(app: &App, state: &Rc<RefCell<State>>, c: usize) {
+    fn asking_on(app: &App, state: &Rc<Shared>, c: usize) {
         app.invoke_select(c as i32);
         let file = state.borrow().files[c].clone();
         app.set_panel_tab("Develop".into());
@@ -681,7 +677,7 @@ mod tests {
     }
 
     /// The second person on frame `c` clicked.
-    fn pick_second(app: &App, state: &Rc<RefCell<State>>, c: usize) {
+    fn pick_second(app: &App, state: &Rc<Shared>, c: usize) {
         let mut st = state.borrow_mut();
         let p = &two(c)[1];
         let (x, y) = source_to_view(&st, app, p.at[0], p.at[1]);
@@ -701,7 +697,7 @@ mod tests {
         person_in(&st.line(c)?.current)
     }
 
-    fn answer(app: &App, state: &Rc<RefCell<State>>, c: usize, found: PersonOn) {
+    fn answer(app: &App, state: &Rc<Shared>, c: usize, found: PersonOn) {
         let (batch, frame) = {
             let st = state.borrow();
             (

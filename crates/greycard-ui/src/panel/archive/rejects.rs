@@ -113,7 +113,7 @@ pub(crate) fn show(st: &State, app: &App) {
 /// Remove rejects from the archive at `choice` asked for: what it is
 /// over worked out here, from the window's state alone, and the look
 /// sent off the window's thread. The sheet opens when the look lands.
-pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
+pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
     let mut st = state.borrow_mut();
     if st.archive.running.is_some() {
         app.set_status("a job on an archive is still under way".into());
@@ -202,7 +202,7 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
 }
 
 fn land_look(
-    state: &Rc<RefCell<State>>,
+    state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     token: u64,
@@ -376,7 +376,7 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
 
 /// The sheet's answer: 0 no, 1 move, 2 delete to the trash, 3 delete
 /// permanently. An answer the sheet did not offer is a no.
-pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, answer: i32) {
+pub(crate) fn answered(state: &Rc<Shared>, app: &App, answer: i32) {
     let mut st = state.borrow_mut();
     if answer != 0
         && let Some(asked) = &st.archive.rejects.asked
@@ -521,13 +521,7 @@ fn start(
 
 /// A run landed, or went quiet: said, the queue kept, the folders
 /// handed to the indexer, and a queue that waited on it run.
-fn land_run(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    _worker: &Rc<Worker>,
-    token: u64,
-    heard: Heard<Done>,
-) {
+fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, heard: Heard<Done>) {
     let mut st = state.borrow_mut();
     let ours = st
         .archive
@@ -955,7 +949,7 @@ fn run_queue(st: &mut State, app: &App, archive: &Path) {
     );
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
+pub(crate) fn install(app: &App, state: &Rc<Shared>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_archive_rejects_asked(move |i| {
@@ -1026,7 +1020,7 @@ mod tests {
         rejects: PathBuf,
         there: PathBuf,
         app: App,
-        state: Rc<RefCell<State>>,
+        state: Rc<Shared>,
         worker: Rc<Worker>,
     }
 
