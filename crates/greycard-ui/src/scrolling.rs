@@ -11,7 +11,7 @@
 /// Whether a swipe up comes as a scroll down. Read once, at the
 /// start: macOS's `com.apple.swipescrolldirection`, natural when it
 /// is absent as it is by default. Elsewhere false: not read.
-pub(crate) fn natural() -> bool {
+pub fn natural() -> bool {
     let natural = read();
     if natural {
         tracing::info!("natural scrolling: a swipe up moves a slider up");

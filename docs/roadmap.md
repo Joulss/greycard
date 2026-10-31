@@ -620,10 +620,13 @@ touches.
       subset reader for the window, headless export, and the command
       line, the editor's `--export` kept an alias for a release.
       Waits on part 2
-- [ ] A lib target for greycard-ui and the modules with no Slint,
-      wgpu, or State in them moved out of the binary (archive, import,
-      naming, collections, camera match, reduced, thumbpool, the
-      measurement runners), explicit imports in place of the 88 glob
+- [ ] The window's remaining windowless modules into its library
+      (§467): import after the panel's four helpers move below it,
+      archive after cull's rejects half splits out, collections
+      without its Slint chip, zoom without cull's tile rects, delete
+      with the trash stand-in moved to its caller, the GPU marker
+      with its own scratch helper; camera match and the measurement
+      runners after part 2; explicit imports in place of the 44 glob
       imports of the crate root as each moves
 - [ ] One entry for every Slint callback that takes the State borrow
       and names the callback when it fails, so a re-entrant borrow

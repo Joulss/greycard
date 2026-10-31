@@ -40,7 +40,7 @@
 use std::path::Path;
 
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
-pub(crate) use greycard_library::filter::Facet;
+pub use greycard_library::filter::Facet;
 use greycard_library::filter::{ParseError, Term};
 
 /// How the rating chips read: at least so many stars, or exactly so

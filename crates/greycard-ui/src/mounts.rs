@@ -175,10 +175,9 @@ pub(crate) fn remote_under_in(table: &str, root: &Path) -> Vec<(PathBuf, Option<
 /// The network mounts below `root` (canonical, as the roots are): on
 /// Linux from the mount table, as [`remote_under_in`] reads it. Elsewhere
 /// none is found: macOS mounts its shares under `/Volumes`, and Windows
-/// watches a share as any folder. The tests swap it out
+/// watches a share as any folder. The binary's tests swap it out
 /// (`roots::remote_under_fs`).
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) fn remote_under(root: &Path) -> Vec<(PathBuf, Option<String>)> {
+pub fn remote_under(root: &Path) -> Vec<(PathBuf, Option<String>)> {
     #[cfg(target_os = "linux")]
     {
         let Ok(table) = std::fs::read_to_string("/proc/self/mounts")
@@ -198,10 +197,9 @@ pub(crate) fn remote_under(root: &Path) -> Vec<(PathBuf, Option<String>)> {
 /// The type of the network filesystem `root` is on, or none when it is
 /// on a local one or it cannot be told. `root` is canonical, as the
 /// roots are. It may ask the disk (`statfs` on macOS, `GetDriveTypeW`
-/// on Windows), so it is asked off the window's thread. The tests
-/// swap it out (`roots::remote_fs`), so a test build has no caller.
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) fn remote(root: &Path) -> Option<String> {
+/// on Windows), so it is asked off the window's thread. The binary's
+/// tests swap it out (`roots::remote_fs`).
+pub fn remote(root: &Path) -> Option<String> {
     remote_on(root)
 }
 
@@ -215,7 +213,6 @@ fn remote_on(root: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-#[cfg_attr(test, allow(dead_code))]
 fn remote_on(root: &Path) -> Option<String> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(root.as_os_str().as_bytes()).ok()?;
@@ -237,7 +234,6 @@ fn remote_on(root: &Path) -> Option<String> {
 }
 
 #[cfg(windows)]
-#[cfg_attr(test, allow(dead_code))]
 fn remote_on(root: &Path) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use std::path::{Component, Prefix};

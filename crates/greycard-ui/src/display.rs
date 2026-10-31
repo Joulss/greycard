@@ -15,7 +15,7 @@ use lcms2::{
     Transform,
 };
 
-use crate::export::Space;
+use greycard_render::export::Space;
 
 /// Points per axis; 33 is the usual compromise of size and smoothness
 /// for a display transform.
@@ -179,7 +179,7 @@ impl MonitorProfile {
                     Green: point(0.21, 0.71),
                     Blue: point(0.15, 0.06),
                 },
-                ToneCurve::new(crate::export::ADOBE_RGB_GAMMA),
+                ToneCurve::new(greycard_render::export::ADOBE_RGB_GAMMA),
             ),
             // Display P3: DCI-P3's primaries under the sRGB curve.
             MonitorProfile::DisplayP3 => standard(
@@ -361,7 +361,7 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let lut = Lut3d::from_icc(&path).unwrap();
         assert!(lut.max_deviation() < 1.0 / 255.0, "{}", lut.max_deviation());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]

@@ -4,7 +4,6 @@
 //! edit-io's (`greycard_edit_io::on_disk`).
 
 pub use greycard_edit_io::on_disk::line_never_developed;
-#[cfg(test)]
 pub use greycard_edit_io::on_disk::never_developed;
 pub use greycard_library::files::{list, list_files, list_paths};
 pub use greycard_library::tilde;

@@ -23,17 +23,17 @@ use greycard_edit::meta::{Change, Flag, Label, Meta};
 /// capture time's shift, which the shift sheet writes down the same
 /// path and takes back with the same undo.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Tags {
-    pub(crate) rating: u8,
-    pub(crate) flag: Flag,
-    pub(crate) label: Label,
-    pub(crate) keywords: Vec<String>,
-    pub(crate) title: String,
-    pub(crate) time_shift: i64,
+pub struct Tags {
+    pub rating: u8,
+    pub flag: Flag,
+    pub label: Label,
+    pub keywords: Vec<String>,
+    pub title: String,
+    pub time_shift: i64,
 }
 
 impl Tags {
-    pub(crate) fn of(meta: &Meta) -> Self {
+    pub fn of(meta: &Meta) -> Self {
         Self {
             rating: meta.rating,
             flag: meta.flag,
@@ -44,7 +44,7 @@ impl Tags {
         }
     }
 
-    pub(crate) fn put(self, meta: &mut Meta) {
+    pub fn put(self, meta: &mut Meta) {
         meta.rating = self.rating;
         meta.flag = self.flag;
         meta.label = self.label;
@@ -58,7 +58,7 @@ impl Tags {
 /// against the frames it went on: what the frame carries now, not
 /// the key that was pressed, so a label key that cleared the label
 /// says so. The flag's past tense is the one a culler says aloud.
-pub(crate) fn notice(change: &Change) -> String {
+pub fn notice(change: &Change) -> String {
     match change {
         Change::Rating(0) => "No stars".into(),
         Change::Rating(1) => "1 star".into(),
@@ -73,8 +73,22 @@ pub(crate) fn notice(change: &Change) -> String {
         Change::RemoveKeyword(word) => format!("No keyword {word}"),
         Change::Title(text) if text.is_empty() => "No title".into(),
         Change::Title(_) => "Titled".into(),
-        Change::TimeShift(by) => format!("Capture time {}", crate::panel::time_shift::signed(*by)),
+        Change::TimeShift(by) => format!("Capture time {}", signed(*by)),
         Change::ClearTimeShift => "Capture time as the camera set it".into(),
+    }
+}
+
+/// A shift as the info line and the notices write it: a sign, then
+/// minutes and seconds, the hours in front when there are any: `+5:00`,
+/// `-1:02:03`, `+0:00`.
+pub fn signed(secs: i64) -> String {
+    let sign = if secs < 0 { '-' } else { '+' };
+    let a = secs.unsigned_abs();
+    let (h, m, s) = (a / 3600, a / 60 % 60, a % 60);
+    if h > 0 {
+        format!("{sign}{h}:{m:02}:{s:02}")
+    } else {
+        format!("{sign}{m}:{s:02}")
     }
 }
 
@@ -84,7 +98,7 @@ pub(crate) fn notice(change: &Change) -> String {
 /// or how many there were. Without it a frame rated under a filter
 /// that no longer wants it is gone from the strip and the grid with
 /// no word, and reads as lost.
-pub(crate) fn hidden_by_filter(change: &Change, who: &str, many: bool, filter: &str) -> String {
+pub fn hidden_by_filter(change: &Change, who: &str, many: bool, filter: &str) -> String {
     let done = match change {
         Change::Rating(n) => format!("rated {n}"),
         Change::Flag(Flag::Pick) => "picked".into(),
@@ -107,7 +121,7 @@ pub(crate) fn hidden_by_filter(change: &Change, who: &str, many: bool, filter: &
 /// or a redo did to it, in the key's own terms, for the word over
 /// the picture. None when nothing differs; a step moves one field,
 /// so a difference in more than one names the first found.
-pub(crate) fn between(from: &Tags, to: &Tags) -> Option<Change> {
+pub fn between(from: &Tags, to: &Tags) -> Option<Change> {
     let has = |words: &[String], w: &str| words.iter().any(|k| k.eq_ignore_ascii_case(w));
     if from.rating != to.rating {
         Some(Change::Rating(to.rating))
@@ -144,7 +158,7 @@ pub(crate) fn between(from: &Tags, to: &Tags) -> Option<Change> {
 /// The word for an undo (`back`) or a redo that put `landed` frames
 /// back: "Undo: No stars" for one frame, what it carries now after
 /// the key's own word, and a bare "Undone" for a step over several.
-pub(crate) fn step_notice(back: bool, landed: &[Option<Change>]) -> String {
+pub fn step_notice(back: bool, landed: &[Option<Change>]) -> String {
     let what = if back { "Undo" } else { "Redo" };
     match landed {
         [Some(change)] => format!("{what}: {}", notice(change)),
@@ -155,17 +169,17 @@ pub(crate) fn step_notice(back: bool, landed: &[Option<Change>]) -> String {
 
 /// One frame's part in a step.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Moved {
-    pub(crate) path: PathBuf,
-    pub(crate) before: Tags,
-    pub(crate) after: Tags,
+pub struct Moved {
+    pub path: PathBuf,
+    pub before: Tags,
+    pub after: Tags,
 }
 
 /// One key's change, over every frame it moved.
-pub(crate) type Step = Vec<Moved>;
+pub type Step = Vec<Moved>;
 
 #[derive(Debug, Default)]
-pub(crate) struct History {
+pub struct History {
     undo: Vec<Step>,
     redo: Vec<Step>,
 }
@@ -176,7 +190,7 @@ const KEPT: usize = 1000;
 
 impl History {
     /// A change just made. What was undone is gone, as in any undo.
-    pub(crate) fn record(&mut self, step: Step) {
+    pub fn record(&mut self, step: Step) {
         if step.is_empty() {
             return;
         }
@@ -189,7 +203,7 @@ impl History {
 
     /// The step to take back, with each frame going to its `before`;
     /// it moves to the redo side.
-    pub(crate) fn undo(&mut self) -> Option<Step> {
+    pub fn undo(&mut self) -> Option<Step> {
         let step = self.undo.pop()?;
         self.redo.push(step.clone());
         Some(step)
@@ -198,7 +212,7 @@ impl History {
     /// The step to make again, each frame going back to its `after`,
     /// given as an undo is: `before` the state it leaves, `after` the
     /// state it lands on.
-    pub(crate) fn redo(&mut self) -> Option<Step> {
+    pub fn redo(&mut self) -> Option<Step> {
         let step = self.redo.pop()?;
         self.undo.push(step.clone());
         Some(step.into_iter().map(Moved::reversed).collect())
@@ -220,7 +234,7 @@ impl Moved {
 /// as (file index, tags to put); `find` looks a path up among the
 /// files now listed. For an undo, `step` is as [`History::undo`] gave
 /// it; a redo's is already turned round.
-pub(crate) fn landing(
+pub fn landing(
     step: &[Moved],
     find: impl Fn(&Path) -> Option<usize>,
     now: impl Fn(usize) -> Tags,

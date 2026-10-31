@@ -8,6 +8,10 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+# The modules with no window in them; the binary names them as its own.
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "greycard-ui"
 path = "src/main.rs"

@@ -241,7 +241,7 @@ pub(super) const WATCH_REMOTE: bool = cfg!(windows);
 /// The network filesystem a root is on, if it is on one.
 #[cfg(not(test))]
 fn remote_fs(root: &Path) -> Option<String> {
-    crate::mounts::remote(root)
+    greycard_ui::mounts::remote(root)
 }
 
 /// In a test, a root is on the mount the test says, so a temporary
@@ -303,7 +303,7 @@ fn mount_on_purpose(root: &Path, point: &Path) -> Mount {
 /// The network mounts below a local root, with each one's type.
 #[cfg(not(test))]
 fn remote_under_fs(root: &Path) -> Vec<(PathBuf, Option<String>)> {
-    crate::mounts::remote_under(root)
+    greycard_ui::mounts::remote_under(root)
 }
 
 /// In a test, the mounts the test says are below a root; none when it

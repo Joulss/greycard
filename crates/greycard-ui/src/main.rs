@@ -23,13 +23,10 @@ mod clipboard;
 mod collections;
 mod cull;
 mod delete;
-mod display;
 mod edited;
 mod edited_pictures;
 mod entry;
 mod export_queue;
-mod files;
-mod filter;
 mod finder;
 mod fit_lightroom;
 mod gpu_errors;
@@ -41,14 +38,10 @@ mod import;
 mod keys;
 mod library;
 mod lightbox;
-mod log;
 mod match_compare;
 mod measure_baseline;
 mod measure_crop;
 mod measure_lightroom;
-mod mounts;
-mod naming;
-mod outline;
 mod owners;
 mod panel;
 mod placeholder;
@@ -60,14 +53,11 @@ mod report;
 mod roots;
 mod rows;
 mod scope;
-mod scrolling;
-mod selection;
 mod settings;
 mod sheet;
 mod sort;
 mod stacks;
 mod sync;
-mod tags;
 #[cfg(test)]
 pub(crate) mod testing;
 mod thumbpool;
@@ -75,10 +65,15 @@ mod tree;
 mod update;
 mod version_key;
 mod versions;
-mod wheel;
 mod window_fit;
 mod worker;
 mod zoom;
+
+// The modules with no window in them, in the library beside this
+// binary; named here as they were when they were the binary's own.
+pub(crate) use greycard_ui::{
+    display, files, filter, log, naming, outline, scrolling, selection, tags, wheel,
+};
 
 // What renders a developed frame into a picture or a file, in a crate
 // of its own below the window; named here as the modules were.

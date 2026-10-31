@@ -33,6 +33,9 @@ use crate::panel::browser::{chosen_frames, file_name, meta_on_selection};
 use crate::worker::Worker;
 use crate::{App, State};
 
+// In the tags, whose undo notices write a shift too.
+use crate::tags::signed;
+
 /// The sheet's two ways, as its switch names them.
 pub(crate) const BY: &str = "Shift by";
 pub(crate) const SET: &str = "Set this frame to";
@@ -72,20 +75,6 @@ pub(crate) struct Asked {
     camera: Option<String>,
     /// The shift it carries now.
     shift: i64,
-}
-
-/// A shift as the info line and the notices write it: a sign, then
-/// minutes and seconds, the hours in front when there are any: `+5:00`,
-/// `-1:02:03`, `+0:00`.
-pub(crate) fn signed(secs: i64) -> String {
-    let sign = if secs < 0 { '-' } else { '+' };
-    let a = secs.unsigned_abs();
-    let (h, m, s) = (a / 3600, a / 60 % 60, a % 60);
-    if h > 0 {
-        format!("{sign}{h}:{m:02}:{s:02}")
-    } else {
-        format!("{sign}{m}:{s:02}")
-    }
 }
 
 /// A shift as the sheet's field shows it: always hours, minutes and
