@@ -184,7 +184,7 @@ pub(super) fn masks_for(
     let path = frame.path.as_path();
     let name = frame.said();
     let started = Instant::now();
-    let (mut sidecar, trouble) = crate::panel::browser::load_sidecar_said(path, true);
+    let (mut sidecar, trouble) = greycard_edit_io::on_disk::load_sidecar_said(path, true);
     if trouble.is_some() {
         tracing::info!("the masks of {name}: its sidecar could not be read");
         return MasksMade::Short;

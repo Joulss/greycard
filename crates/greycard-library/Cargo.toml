@@ -16,6 +16,8 @@ greycard-edit-io = { path = "../greycard-edit-io" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# A listing's errors (`files`), as the editor says them.
+anyhow.workspace = true
 dirs.workspace = true
 # The index. Bundled, so the same SQLite is on every platform and a
 # build needs no system library; `functions` for the Unicode lower

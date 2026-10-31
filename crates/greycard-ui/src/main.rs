@@ -25,6 +25,7 @@ mod cull;
 mod delete;
 mod display;
 mod edited;
+mod edited_pictures;
 mod entry;
 mod export_queue;
 mod files;
@@ -72,6 +73,7 @@ pub(crate) mod testing;
 mod thumbpool;
 mod tree;
 mod update;
+mod version_key;
 mod versions;
 mod wheel;
 mod window_fit;
@@ -96,7 +98,9 @@ pub(crate) use slint::{ComponentHandle, Model, ModelRc, VecModel};
 pub(crate) use greycard_core::CameraProfile;
 pub(crate) use greycard_core::color::{Matrix3, WhitePoint, resolve_white_balance};
 pub(crate) use greycard_core::develop::defringe;
-pub(crate) use greycard_core::raw::{Orientation, RawFrame};
+#[cfg(test)]
+pub(crate) use greycard_core::raw::Orientation;
+pub(crate) use greycard_core::raw::RawFrame;
 pub(crate) use greycard_edit::brush::{Op, Raster, Stroke};
 pub(crate) use greycard_edit::curve::{self, Channel, Parametric, Point};
 pub(crate) use greycard_edit::geometry::{

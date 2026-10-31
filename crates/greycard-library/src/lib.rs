@@ -34,10 +34,13 @@ use greycard_edit::meta::Meta;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
 pub mod collections;
+pub mod export_record;
+pub mod files;
 pub mod filter;
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixture;
 pub mod hash;
+pub mod held;
 mod index;
 pub mod lightroom_catalog;
 pub mod lightroom_exports;
@@ -46,6 +49,7 @@ pub mod pairs;
 pub mod rawtherapee;
 pub mod roots;
 pub mod stacks;
+pub mod sync_note;
 pub mod thumbs;
 
 pub use filter::{Facet, Filter, ParseError};

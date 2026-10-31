@@ -2084,6 +2084,7 @@ dependencies = [
 name = "greycard-library"
 version = "0.9.1"
 dependencies = [
+ "anyhow",
  "blake3",
  "dirs",
  "dunce",

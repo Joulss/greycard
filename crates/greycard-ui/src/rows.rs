@@ -58,10 +58,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use greycard_edit::{Edit, Sidecar};
+#[cfg(test)]
+use greycard_edit::Sidecar;
+use greycard_edit_io::on_disk::{Trouble, line_never_developed};
 use greycard_library::RowMeta;
+#[cfg(test)]
+pub(crate) use greycard_library::held::{DISK_READS, from_nothing};
+pub(crate) use greycard_library::held::{FromRow, Held, from_disk, from_row, versions_of_row};
 
-use crate::panel::browser::{file_name, load_sidecar_said};
+use crate::panel::browser::file_name;
 use slint::ComponentHandle;
 
 use crate::roots::Progress;
@@ -69,217 +74,9 @@ use crate::versions::Key;
 use crate::worker::{Job, Worker};
 use crate::{App, State};
 
-/// What a frame's row stands in for while its sidecar has not been
-/// read, kept beside the sidecar in `State::from_row`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FromRow {
-    /// The sidecar was read from disk, or there is none to read
-    /// (`--no-sidecars`): the row stands in for nothing, and the
-    /// sidecar in memory is the whole of it.
-    pub(crate) read: bool,
-    /// The quarter turns and the mirror the row says the picture is
-    /// shown at, used while the sidecar stands in; once read, the
-    /// sidecar's own edit says.
-    pub(crate) turns: (u8, bool),
-    /// The file's content hash and its mtime stamp, from the row: the
-    /// key its thumbnails are kept under in the cache, for a frame
-    /// whose file cannot be read (its root offline).
-    pub(crate) key: Option<(String, u64)>,
-    /// The row says the sidecar holds a develop: a read that finds no
-    /// sidecar then is not believed over it.
-    pub(crate) edited: bool,
-    /// The row says the sidecar records an export, for the mark on the
-    /// frame's cell while the sidecar stands in.
-    pub(crate) exported: bool,
-    /// The frame's ISO as the row had it (`Some(None)`: the camera
-    /// gave none), kept past the read; `None` for a frame never
-    /// stood in for. What a learned blend is judged against.
-    pub(crate) iso: Option<Option<u32>>,
-    /// The hash of the sidecar the row was read from, `None` for none:
-    /// a row that comes in with another says the sidecar changed under
-    /// the frame (`edited::changed`).
-    pub(crate) sidecar: Option<String>,
-    /// The last read of the sidecar did not take, and why: it could not
-    /// be read, or it was not there though the row says it holds a
-    /// develop. The frame stands in still, and nothing is written over
-    /// the file; the next request for it reads it again.
-    pub(crate) unread: Option<String>,
-    /// The develop key of the frame's edit as the row has it, so its
-    /// edit's pictures are found without the sidecar being read, its
-    /// root offline included; `None` for a row not yet read for one, or
-    /// one whose edit could not be read.
-    pub(crate) develop_key: Option<u64>,
-    /// The versions the row says the sidecar keeps, each with its own
-    /// marks and key: what a version's cell stands in with.
-    pub(crate) versions: Vec<greycard_library::VersionRow>,
-}
-
-impl FromRow {
-    /// A frame whose sidecar has been read, or has nothing to read.
-    pub(crate) fn read() -> Self {
-        FromRow {
-            read: true,
-            turns: (0, false),
-            key: None,
-            edited: false,
-            exported: false,
-            iso: None,
-            sidecar: None,
-            unread: None,
-            develop_key: None,
-            versions: Vec::new(),
-        }
-    }
-
-    /// A frame standing in from `row`.
-    pub(crate) fn of(row: &RowMeta) -> Self {
-        FromRow {
-            read: false,
-            turns: row.shown_turns(),
-            key: Some((row.hash.clone(), row.mtime.max(0) as u64)),
-            edited: row.edited,
-            exported: row.exported,
-            iso: Some(row.iso),
-            sidecar: row.sidecar_hash.clone(),
-            unread: None,
-            develop_key: row.develop_key.filter(|&k| k != 0),
-            versions: row.versions.clone(),
-        }
-    }
-
-    /// The marks of version `version` of the frame as the row has
-    /// them, the file's own for none: whether it shows as edited and
-    /// as exported.
-    pub(crate) fn marks(&self, version: Option<&str>) -> (bool, bool) {
-        match version {
-            None => (self.edited, self.exported),
-            Some(id) => self
-                .versions
-                .iter()
-                .find(|v| v.id == id)
-                .map_or((false, false), |v| (v.edited, v.exported)),
-        }
-    }
-}
-
-/// The versions a row lists, as a stand-in sidecar keeps them: each
-/// with the default edit `default` makes, so a version's cell stands
-/// where it will once the sidecar is read.
-pub(crate) fn versions_of_row(
-    row: &RowMeta,
-    default: impl Fn() -> greycard_edit::Line,
-) -> Vec<greycard_edit::Version> {
-    row.versions
-        .iter()
-        .map(|v| greycard_edit::Version {
-            id: v.id.clone(),
-            name: v.name.clone(),
-            made: v.made.max(0) as u64,
-            line: default(),
-        })
-        .collect()
-}
-
-/// What went wrong reading a sidecar from disk, the default edit
-/// standing in for it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Trouble {
-    /// No `.gcd` beside the frame.
-    Missing,
-    /// There is one, and it could not be read: the error.
-    Unreadable(String),
-}
-
-impl Default for FromRow {
-    fn default() -> Self {
-        Self::read()
-    }
-}
-
-/// A frame's sidecar as the browser first holds it, with what a merge
-/// carries beside it.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Held {
-    pub(crate) sidecar: Sidecar,
-    pub(crate) from_row: FromRow,
-    /// The frame's row in the index, when the read that brought this
-    /// asked the index and it had one.
-    pub(crate) id: Option<i64>,
-    /// Read from disk, and the `.gcd` was not there or could not be
-    /// read: the default stands in the sidecar. Over a frame standing
-    /// in from its row, that is not taken as the frame's sidecar
-    /// ([`take`]).
-    pub(crate) trouble: Option<Trouble>,
-}
-
-/// The frames whose sidecars were read from disk since the process
-/// started, for the tests that say a view of the roots reads none:
-/// by path, since the tests run beside each other.
-#[cfg(test)]
-pub(crate) static DISK_READS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-/// A stand-in for `path`'s sidecar from its row: the row's meta, the
-/// frame's default edit, nothing read. With sidecars off there is
-/// nothing to stand in for, and the frame is held as read.
-pub(crate) fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held {
-    if !write_sidecars {
-        return from_nothing();
-    }
-    let raw = !greycard_core::picture::is_picture_path(path);
-    let default = || {
-        greycard_edit::Line::of(if raw {
-            Edit::default()
-        } else {
-            Edit::for_picture()
-        })
-    };
-    Held {
-        sidecar: Sidecar {
-            line: default(),
-            meta: row.meta.clone(),
-            // The versions the row lists, standing in as the file's
-            // own line does, so each has its cell.
-            versions: versions_of_row(row, default),
-            ..Sidecar::default()
-        },
-        from_row: FromRow::of(row),
-        id: Some(row.id),
-        trouble: None,
-    }
-}
-
-/// `path`'s sidecar read from disk, as a folder's open always read it.
-pub(crate) fn from_disk(path: &Path, write_sidecars: bool) -> Held {
-    if !write_sidecars {
-        return from_nothing();
-    }
-    #[cfg(test)]
-    DISK_READS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(path.to_path_buf());
-    let (sidecar, trouble) = load_sidecar_said(path, true);
-    Held {
-        sidecar,
-        from_row: FromRow::read(),
-        id: None,
-        trouble,
-    }
-}
-
-/// A frame with sidecars off: the default, and nothing to read.
-fn from_nothing() -> Held {
-    Held {
-        sidecar: Sidecar::default(),
-        from_row: FromRow::read(),
-        id: None,
-        trouble: None,
-    }
-}
-
 /// Whether cell `c`'s line still waits for its ISO's learned-denoiser
 /// blend: its file is a raw and the line was never developed (the
-/// default edit, no history, no snapshot: `files::line_never_developed`),
+/// default edit, no history, no snapshot: `on_disk::line_never_developed`),
 /// which while the row stands in for the sidecar is the row's word on
 /// the line (`FromRow::marks`). Decided a line at a time: a version made
 /// from the original before the raw was opened waits on its own, one
@@ -296,7 +93,7 @@ pub(crate) fn wants_seed(st: &State, c: usize) -> bool {
     }
     match st.from_row.get(cell.file) {
         Some(row) if !row.read => !row.marks(cell.version.as_deref()).0,
-        _ => st.line(c).is_some_and(crate::files::line_never_developed),
+        _ => st.line(c).is_some_and(line_never_developed),
     }
 }
 

@@ -207,7 +207,11 @@ pub(crate) fn claim(reserve: impl FnOnce(), in_hand: impl FnOnce() -> usize) -> 
 /// for an open that never landed, a save waiting, a quiet still to
 /// come) would otherwise hold the reduced develops for as long as it
 /// lasts.
-pub(super) fn settle_reservation(due: &Due, edited: &crate::edited::Edited, wake: impl FnOnce()) {
+pub(super) fn settle_reservation(
+    due: &Due,
+    edited: &crate::edited_pictures::Edited,
+    wake: impl FnOnce(),
+) {
     if !matches!(due, Due::Fetch(_)) && edited.prefetching() {
         edited.set_prefetching(false);
         wake();
@@ -782,7 +786,7 @@ mod tests {
     /// wakes the pool; a fetch about to claim it again keeps it.
     #[test]
     fn a_reservation_is_let_go_unless_a_prefetch_is_due() {
-        let edited = crate::edited::Edited::new(Arc::new(Mutex::new(None)));
+        let edited = crate::edited_pictures::Edited::new(Arc::new(Mutex::new(None)));
         let open = base(40, 30);
         let shelf = Shelf::new(Budget::Bytes(size(40, 30) * 5));
         let woken = Cell::new(0);

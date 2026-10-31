@@ -796,9 +796,13 @@ pub(crate) fn fetch(
     if let Source::Preview { hash, stamp } = &want.from {
         // An edited frame out of reach shows the last picture of its
         // edit kept for its content, ahead of the camera's.
-        let from_edit = edited
-            .filter(|_| want.size > 0)
-            .and_then(|e| e.lookup(hash, crate::edited::BIG, e.shows_offline(&want.frame())));
+        let from_edit = edited.filter(|_| want.size > 0).and_then(|e| {
+            e.lookup(
+                hash,
+                crate::edited_pictures::BIG,
+                e.shows_offline(&want.frame()),
+            )
+        });
         if let Some(thumb) = from_edit {
             deliver(Loaded::Ok {
                 file: want.file,
@@ -830,9 +834,9 @@ pub(crate) fn fetch(
     // 1:1 is the camera's JPEG all the same, for focus.
     if want.size > 0
         && let Some(edited) = edited
-        && let shows @ crate::edited::Shows::Edit(_) = edited.shows(&want.frame())
+        && let shows @ crate::edited_pictures::Shows::Edit(_) = edited.shows(&want.frame())
         && let Ok(hash) = greycard_library::hash_file(&want.path)
-        && let Some(thumb) = edited.lookup(&hash, crate::edited::BIG, shows)
+        && let Some(thumb) = edited.lookup(&hash, crate::edited_pictures::BIG, shows)
     {
         deliver(Loaded::Ok {
             file: want.file,

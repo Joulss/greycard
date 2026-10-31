@@ -1,0 +1,397 @@
+//! What the editor opens: which files a path names, a folder's frames
+//! or the one file asked for, with the camera's JPEGs beside each raw.
+//! It touches the disk (a listing and a canonical path are questions
+//! about the disk) but knows nothing of a window.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+
+/// Map a .gcd sidecar path to its raw: IMG.CR3.gcd -> IMG.CR3, and
+/// .greycard/IMG.CR3.gcd -> IMG.CR3 beside the folder, since a
+/// sidecar under the hidden folder belongs to the frame above it.
+/// Other paths pass through unchanged.
+pub fn sidecar_to_raw(p: PathBuf) -> PathBuf {
+    if !p
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("gcd"))
+    {
+        return p;
+    }
+    let raw = p.with_extension("");
+    let folder = raw.parent().and_then(Path::file_name)
+        == Some(std::ffi::OsStr::new(greycard_edit::SIDECAR_FOLDER));
+    match (folder, raw.parent().and_then(Path::parent), raw.file_name()) {
+        (true, Some(shoot), Some(name)) => shoot.join(name),
+        _ => raw,
+    }
+}
+
+/// Several paths opened at once, as the Finder sends a selection:
+/// each listed as `list_files` lists it, in the order given, a file
+/// named twice (or a sidecar beside its raw, or the camera's JPEG
+/// beside it) kept once, and the paths that list nothing returned
+/// with why.
+pub fn list_paths(paths: &[PathBuf], apart: bool) -> (Vec<PathBuf>, Vec<anyhow::Error>) {
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut refused = Vec::new();
+    for path in paths {
+        match list_files(path, apart) {
+            Ok(listed) => {
+                for f in listed {
+                    if !files.contains(&f) {
+                        files.push(f);
+                    }
+                }
+            }
+            Err(e) => refused.push(e),
+        }
+    }
+    (files, refused)
+}
+
+/// The frames `path` names, as [`list`] finds them.
+pub fn list_files(path: &Path, apart: bool) -> Result<Vec<PathBuf>> {
+    Ok(list(path, apart)?.frames)
+}
+
+/// What `path` names, as the editor opens it: a folder's frames, or
+/// the one file asked for, each raw with the camera's JPEGs beside it
+/// (`pairs`). Unless `apart`, a JPEG beside its raw
+/// is no frame: a folder's is left out, and one named on its own opens
+/// as its raw, as a sidecar named on its own does.
+pub fn list(path: &Path, apart: bool) -> Result<crate::pairs::Paired> {
+    use crate::pairs;
+    // Before the extension: a name with the right ending but no file
+    // behind it used to pass and open a blank window that never said
+    // anything.
+    anyhow::ensure!(path.exists(), "there is no {}", path.display());
+    let opens = |p: &std::path::Path| {
+        greycard_core::decode::is_raw_path(p) || greycard_core::picture::is_picture_path(p)
+    };
+    if path.is_dir() {
+        // In a directory, the files the index holds: raws and pictures,
+        // not hidden ones (macOS's `._` resource forks on a share).
+        // .gcd sidecars are naturally excluded since .gcd is not a raw or
+        // picture extension; they stay beside the raws they edit.
+        // Only regular files, or links to them: a folder, a named
+        // pipe or a socket with a raw's name would hold a thumbnail
+        // thread, and the indexer, on a read that never returns.
+        let mut files: Vec<PathBuf> = std::fs::read_dir(path)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| crate::is_indexed_path(p) && p.is_file())
+            .collect();
+        files.sort();
+        Ok(pairs::pair(files, apart))
+    } else {
+        // For a single file, map .gcd sidecars to their raw files, but
+        // ensure the raw actually exists.
+        let mapped = sidecar_to_raw(path.to_path_buf());
+        anyhow::ensure!(
+            opens(&mapped),
+            "{} is not a RAW, JPEG, PNG or TIFF file (or a .gcd sidecar for one)",
+            path.display()
+        );
+        // If it was a .gcd, verify the raw exists.
+        if path != mapped && !mapped.exists() {
+            anyhow::bail!(
+                "{} names {}, which is not there",
+                path.display(),
+                mapped.display()
+            );
+        }
+        if apart {
+            return Ok(pairs::Paired {
+                frames: vec![mapped],
+                companions: Vec::new(),
+            });
+        }
+        let raw = match pairs::raw_on_disk(&mapped) {
+            Some(raw) => {
+                log::info!(
+                    "{} is the camera's JPEG of {}; the raw opens",
+                    mapped.display(),
+                    raw.display()
+                );
+                raw
+            }
+            None => mapped,
+        };
+        Ok(pairs::Paired {
+            companions: pairs::companions_of(std::slice::from_ref(&raw)),
+            frames: vec![raw],
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder of this test's own under the temp directory, made.
+    fn scratch_dir(what: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-{what}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dunce::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn a_folder_lists_only_its_regular_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-regular-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("folder.CR3")).unwrap();
+        std::fs::write(dir.join("a.CR3"), b"").unwrap();
+        #[cfg(unix)]
+        {
+            let made = std::process::Command::new("mkfifo")
+                .arg(dir.join("pipe.CR3"))
+                .status();
+            // Without mkfifo on the machine the folder case stands alone.
+            if made.is_ok_and(|s| s.success()) {
+                assert!(dir.join("pipe.CR3").exists());
+            }
+        }
+        assert_eq!(list_files(&dir, false).unwrap(), vec![dir.join("a.CR3")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_is_not_there_is_refused_by_name() {
+        // The extension is one the editor opens, so the old check
+        // passed it through and the window came up empty.
+        // A name of this run's own: the temp directory is shared, and
+        // another worktree may be running these tests too.
+        let name = format!(
+            "greycard-no-such-frame-{}-{}.CR3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let missing = std::env::temp_dir().join(&name);
+        let e = list_files(&missing, false).expect_err("a missing file is an error");
+        let said = e.to_string();
+        assert!(said.contains(&name), "{said}");
+
+        // A file that is there is listed as before.
+        std::fs::write(&missing, b"not a raw, but a file").unwrap();
+        assert_eq!(list_files(&missing, false).unwrap(), vec![missing.clone()]);
+        std::fs::remove_file(&missing).unwrap();
+    }
+
+    #[test]
+    fn list_paths_keeps_each_file_once_and_says_what_it_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-list-paths-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.CR3"), dir.join("b.RAF"));
+        for p in [&a, &b] {
+            std::fs::write(p, b"").unwrap();
+        }
+        let gcd = dir.join("a.CR3.gcd");
+        std::fs::write(&gcd, b"{}").unwrap();
+        let missing = dir.join("gone.NEF");
+        // The Finder's order, not the name's; the sidecar is its raw,
+        // already listed.
+        let (files, refused) = list_paths(&[b.clone(), a.clone(), gcd, missing], false);
+        assert_eq!(files, vec![b, a]);
+        assert_eq!(refused.len(), 1);
+        assert!(refused[0].to_string().contains("gone.NEF"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_sidecar_under_the_folder_names_the_frame_above_it() {
+        let under = PathBuf::from("/shoot/.greycard/IMG_0001.CR3.gcd");
+        assert_eq!(sidecar_to_raw(under), PathBuf::from("/shoot/IMG_0001.CR3"));
+        // Only that folder: a `.gcd` in any other folder is beside
+        // its raw.
+        let elsewhere = PathBuf::from("/shoot/edits/IMG_0001.CR3.gcd");
+        assert_eq!(
+            sidecar_to_raw(elsewhere),
+            PathBuf::from("/shoot/edits/IMG_0001.CR3")
+        );
+    }
+
+    /// A JPEG beside a raw of its name, in any case, is the raw's and
+    /// no frame; a JPEG alone is one, and so is each of two raws of one
+    /// stem, the camera's taking the JPEG. Apart, every file is a frame.
+    /// A JPEG named on its own opens as its raw, as a sidecar does.
+    #[test]
+    fn a_folders_jpegs_beside_their_raws_are_the_raws() {
+        let dir = scratch_dir("list-pairs");
+        for name in [
+            "IMG_1.CR3",
+            "IMG_1.JPG",
+            "IMG_2.jpg",
+            "img_3.nef",
+            "IMG_3.JPEG",
+            "DSCF4.DNG",
+            "DSCF4.RAF",
+            "dscf4.jpg",
+            "IMG_5.CR3",
+            "IMG_5.png",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let listed = list(&dir, false).unwrap();
+        let names = |files: &[PathBuf]| -> Vec<String> {
+            files
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            names(&listed.frames),
+            [
+                "DSCF4.DNG",
+                "DSCF4.RAF",
+                "IMG_1.CR3",
+                "IMG_2.jpg",
+                "IMG_5.CR3",
+                "IMG_5.png",
+                "img_3.nef",
+            ]
+        );
+        assert_eq!(
+            listed.companions,
+            [
+                (dir.join("DSCF4.RAF"), vec![dir.join("dscf4.jpg")]),
+                (dir.join("IMG_1.CR3"), vec![dir.join("IMG_1.JPG")]),
+                (dir.join("img_3.nef"), vec![dir.join("IMG_3.JPEG")]),
+            ]
+        );
+        let apart = list(&dir, true).unwrap();
+        assert_eq!(apart.frames.len(), 10);
+        assert!(apart.companions.is_empty());
+        // Named on its own: the companion opens its raw, with the pair
+        // found; apart, it opens as itself.
+        let named = list(&dir.join("IMG_1.JPG"), false).unwrap();
+        assert_eq!(named.frames, [dir.join("IMG_1.CR3")]);
+        assert_eq!(
+            named.companions,
+            [(dir.join("IMG_1.CR3"), vec![dir.join("IMG_1.JPG")])]
+        );
+        assert_eq!(
+            list_files(&dir.join("IMG_1.JPG"), true).unwrap(),
+            [dir.join("IMG_1.JPG")]
+        );
+        assert_eq!(
+            list_files(&dir.join("IMG_2.jpg"), false).unwrap(),
+            [dir.join("IMG_2.jpg")]
+        );
+        // Two paths of one pair given at once are its one frame.
+        let (files, refused) = list_paths(&[dir.join("IMG_1.JPG"), dir.join("IMG_1.CR3")], false);
+        assert!(refused.is_empty());
+        assert_eq!(files, [dir.join("IMG_1.CR3")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_listing_skips_the_hidden_folder() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-list-hidden-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let hidden = dir.join(greycard_edit::SIDECAR_FOLDER);
+        std::fs::create_dir_all(&hidden).unwrap();
+        std::fs::write(dir.join("a.CR3"), b"raw").unwrap();
+        std::fs::write(hidden.join("a.CR3.gcd"), b"{}").unwrap();
+        let files = list_files(&dir, false).unwrap();
+        assert_eq!(files, vec![dir.join("a.CR3")]);
+        // And the sidecar under it opens as its frame.
+        assert_eq!(
+            list_files(&hidden.join("a.CR3.gcd"), false).unwrap(),
+            vec![dir.join("a.CR3")]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// macOS's `._` resource forks and `.DS_Store` beside a raw on a
+    /// share are no frames, and give the raw no companion.
+    #[test]
+    fn a_folder_listing_skips_hidden_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-list-dotfiles-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "IMG.CR3",
+            "._IMG.CR3",
+            "._IMG.xmp",
+            "._IMG.JPG",
+            ".DS_Store",
+        ] {
+            std::fs::write(dir.join(name), b"mac").unwrap();
+        }
+        let listed = list(&dir, false).unwrap();
+        assert_eq!(listed.frames, vec![dir.join("IMG.CR3")]);
+        assert!(listed.companions.is_empty());
+        assert_eq!(list_files(&dir, true).unwrap(), vec![dir.join("IMG.CR3")]);
+        // Named by hand, a hidden file still opens as what it says.
+        let named = dir.join("._IMG.CR3");
+        assert_eq!(list_files(&named, false).unwrap(), vec![named]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sidecar_to_raw_maps_gcd_to_raw_and_leaves_others_alone() {
+        use std::path::PathBuf;
+
+        let cr3 = PathBuf::from("IMG_0001.CR3");
+        assert_eq!(sidecar_to_raw(cr3.clone()), cr3);
+
+        let gcd = PathBuf::from("IMG_0001.CR3.gcd");
+        let raw = PathBuf::from("IMG_0001.CR3");
+        assert_eq!(sidecar_to_raw(gcd), raw);
+
+        let jpeg = PathBuf::from("photo.JPG");
+        assert_eq!(sidecar_to_raw(jpeg.clone()), jpeg);
+
+        let gcd_jpeg = PathBuf::from("photo.JPG.gcd");
+        let jpeg_raw = PathBuf::from("photo.JPG");
+        assert_eq!(sidecar_to_raw(gcd_jpeg), jpeg_raw);
+    }
+
+    #[test]
+    fn sidecar_mapping_preserves_directory_paths() {
+        use std::path::PathBuf;
+
+        let dir_raw = PathBuf::from("/path/to/IMG_0001.CR3");
+        assert_eq!(sidecar_to_raw(dir_raw.clone()), dir_raw);
+
+        let dir_gcd = PathBuf::from("/path/to/IMG_0001.CR3.gcd");
+        let dir_expected = PathBuf::from("/path/to/IMG_0001.CR3");
+        assert_eq!(sidecar_to_raw(dir_gcd), dir_expected);
+    }
+}

@@ -14,14 +14,14 @@ pub(super) fn keep_open(
     leaving: bool,
     hand: InHand<'_>,
     ai: &mut Ai,
-    edited: &Arc<crate::edited::Edited>,
+    edited: &Arc<crate::edited_pictures::Edited>,
     deliver: &Deliver,
 ) -> Option<Keep> {
     let frame = keep.frame.clone();
     let path = frame.path.clone();
     let name = frame.said();
     let said = |frame: Frame| deliver(Outcome::EditedKept { frame });
-    let is_edited = crate::edited::is_edited(&path, &keep.edit, keep.iso);
+    let is_edited = crate::edited_pictures::is_edited(&path, &keep.edit, keep.iso);
     if !is_edited {
         let hash = greycard_library::hash_file(&path).ok();
         if edited.reset(&frame, hash.as_deref()) {
@@ -29,7 +29,7 @@ pub(super) fn keep_open(
         }
         return None;
     }
-    let left = |edited: &crate::edited::Edited| {
+    let left = |edited: &crate::edited_pictures::Edited| {
         edited.note(&frame, true, keep.iso, Some(edited.key_of(&keep.edit)));
         said(frame.clone());
     };
@@ -50,7 +50,7 @@ pub(super) fn keep_open(
     // cells are asked again only when they were showing something else.
     // The reduced develop's pictures of the key do not count: this
     // develop's take their place.
-    if edited.all_kept_by(&hash, key, crate::edited::EDITED_RECIPE) {
+    if edited.all_kept_by(&hash, key, crate::edited_pictures::EDITED_RECIPE) {
         if edited.settle_key(&frame, &hash, key, keep.iso) {
             said(frame);
         }
@@ -58,7 +58,7 @@ pub(super) fn keep_open(
     }
     // Being made already, from a save or a develop just before: that
     // making says when it is kept, and nothing waits here.
-    let marked = edited.mark(&hash, key, crate::edited::EDITED_RECIPE)?;
+    let marked = edited.mark(&hash, key, crate::edited_pictures::EDITED_RECIPE)?;
     // The develop in hand of this edit at this turn: the frame's turn is
     // not in the key, but the picture in hand is turned by it, and the
     // making takes it back out.
@@ -98,12 +98,13 @@ pub(super) fn keep_open(
         left(edited);
         return None;
     }
-    let factor = |source: (u32, u32)| crate::edited::factor_for(source, &keep.edit.geometry);
+    let factor =
+        |source: (u32, u32)| crate::edited_pictures::factor_for(source, &keep.edit.geometry);
     let (developed, source, factor, read_back) = match (cpu, gpu) {
         (Some(l), _) => {
             let source = (l.image.width as u32, l.image.height as u32);
             (
-                crate::edited::Developed::Full(l.image.clone()),
+                crate::edited_pictures::Developed::Full(l.image.clone()),
                 source,
                 factor(source),
                 None,
@@ -113,9 +114,9 @@ pub(super) fn keep_open(
             let source = (s.texture.width(), s.texture.height());
             let k = factor(source);
             let started = Instant::now();
-            match crate::edited::read_back_reduced(ctx, &s.texture, k) {
+            match crate::edited_pictures::read_back_reduced(ctx, &s.texture, k) {
                 Ok(reduced) => (
-                    crate::edited::Developed::Reduced(reduced),
+                    crate::edited_pictures::Developed::Reduced(reduced),
                     source,
                     k,
                     Some(started.elapsed().as_secs_f64()),
@@ -129,7 +130,7 @@ pub(super) fn keep_open(
         }
         (None, None) => unreachable!("one picture or the other, matched above"),
     };
-    let job = crate::edited::Keeping {
+    let job = crate::edited_pictures::Keeping {
         frame,
         hash,
         key,
@@ -138,7 +139,7 @@ pub(super) fn keep_open(
         read_back,
         iso: keep.iso,
         marked,
-        finish: crate::edited::Finish {
+        finish: crate::edited_pictures::Finish {
             turn: keep.turn,
             source,
             full: source,
@@ -157,7 +158,7 @@ pub(super) fn keep_open(
     };
     let (on, deliver) = (edited.clone(), deliver.clone());
     edited.keep_later(Box::new(move || {
-        crate::edited::keep(&on, job, |frame| deliver(Outcome::EditedKept { frame }))
+        crate::edited_pictures::keep(&on, job, |frame| deliver(Outcome::EditedKept { frame }))
     }));
     None
 }

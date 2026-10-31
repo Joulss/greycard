@@ -18,13 +18,20 @@
 //! clocks is said aloud. A colon form is read from the right, seconds
 //! then minutes then hours, so `5:00` is five minutes.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use greycard_core::exif::{seconds_of, shifted};
 use greycard_edit::meta::{Change, SHIFT_LIMIT};
+use greycard_library::export_record::camera_time_of;
+use slint::ComponentHandle;
 
 use crate::panel::browser::{chosen_frames, file_name, meta_on_selection};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, State};
 
 /// The sheet's two ways, as its switch names them.
 pub(crate) const BY: &str = "Shift by";
@@ -179,18 +186,6 @@ fn later(by: i64) -> String {
     let words = signed(by);
     let way = if by < 0 { "earlier" } else { "later" };
     format!("{} {way}", &words[1..])
-}
-
-/// The file at `path`'s capture time as its camera wrote it, read from
-/// the file itself (the EXIF, no samples), in the index's form. For a
-/// caller with no window state: an XMP written off the window's thread.
-pub(crate) fn camera_time_of(path: &Path) -> Option<String> {
-    let probe = if greycard_core::picture::is_picture_path(path) {
-        greycard_core::picture::probe_path(path)
-    } else {
-        greycard_core::decode::probe_path(path)
-    };
-    greycard_library::normalize_taken(probe.ok()?.taken.as_deref()?)
 }
 
 /// File `file`'s capture time as its camera wrote it, in the index's

@@ -52,7 +52,7 @@ use std::time::{Duration, Instant};
 
 use greycard_library::thumbs::Thumb;
 
-use crate::versions::Key;
+use crate::version_key::Key;
 use crate::worker::{Deliver, Outcome, THUMB_WIDTH, order_thumbnails, panic_message};
 
 /// How a picture is made: a frame (a file, and the version of it whose

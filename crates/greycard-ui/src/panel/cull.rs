@@ -1,3 +1,14 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use greycard_edit::geometry::Geometry;
+use greycard_edit::{Edit, Sidecar, meta};
+use slint::wgpu_30::wgpu as gpu;
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::panel::browser::{
     file_name, filter_frames, grid_filled_rows, migrate_frame, rebuild_browser, reject_count,
     row_of, show_frame_tags,
@@ -8,7 +19,9 @@ use crate::panel::edit::{read_edit, save_edit, schedule_save, show_edit};
 use crate::panel::history::show_history;
 use crate::panel::startup::sync_rows;
 use crate::panel::viewport::{schedule_snapshot, sync_display, write_screenshot, zoom_label};
-use crate::*;
+use crate::render::{self, View};
+use crate::worker::Worker;
+use crate::{App, CompareTile, FilterChip, STATE, State, cull, filter, placeholder};
 
 /// The panel's tab while culling, which the tab bar does not list:
 /// the develop sections go away by their own condition and the
@@ -2869,6 +2882,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 mod tests {
     use super::*;
     use crate::testing::{click, folder, press, state_for, window};
+    use crate::{Pt, ScopeMark};
+    use slint::Model;
     use slint::platform::{Key, WindowEvent};
 
     /// The camera's picture of `file`, as a decode thread delivers
@@ -6764,11 +6779,11 @@ mod tests {
                 greycard_library::thumbs::DEFAULT_CAP,
             )
             .with_previews(
-                crate::edited::BIG,
+                crate::edited_pictures::BIG,
                 greycard_library::thumbs::DEFAULT_PREVIEW_CAP,
             ),
         )));
-        let edited = Arc::new(crate::edited::Edited::new(cache.clone()));
+        let edited = Arc::new(crate::edited_pictures::Edited::new(cache.clone()));
         edited.note_all([
             (Frame::file(files[0].clone()), true, None, None),
             (Frame::file(files[1].clone()), true, None, None),
@@ -6781,8 +6796,8 @@ mod tests {
                 rgb: vec![128; (w * h * 3) as usize],
             }
         };
-        let made = crate::edited::Made {
-            big: grey(crate::edited::BIG),
+        let made = crate::edited_pictures::Made {
+            big: grey(crate::edited_pictures::BIG),
             thumbs: crate::grid::MADE.iter().map(|&s| (s, grey(s))).collect(),
         };
         for f in &files {

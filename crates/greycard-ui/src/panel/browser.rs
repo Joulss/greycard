@@ -1,3 +1,16 @@
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_core::raw::Orientation;
+use greycard_edit::meta::{self, Meta};
+use greycard_edit::{Edit, Sidecar};
+#[cfg(test)]
+use greycard_edit_io::on_disk::load_sidecar_said;
+use slint::{ComponentHandle, Model, ModelRc};
+
+pub(crate) use greycard_edit_io::on_disk::file_name;
+
 use crate::panel::crop::read_geometry;
 use crate::panel::cull::{
     cull_select, drop_placeholder, enter_cull, say_if_empty, show_filter, start_placeholder,
@@ -7,7 +20,11 @@ use crate::panel::edit::{
 };
 use crate::panel::history::show_history;
 use crate::tags::{self, Tags};
-use crate::*;
+use crate::worker::{self, Job, Worker};
+use crate::{
+    App, GridPlace, STATE, State, Thumb, WORKER, cells, chooser, cull, files, filter, grid,
+    selection, settings,
+};
 
 /// A folder's first round of thumbnails as it comes back from the
 /// worker: which have not yet, and what the ones that have cost. The
@@ -1020,16 +1037,6 @@ pub(crate) fn camera_tag(st: &mut State, c: usize) -> Option<Orientation> {
     stance(st, c).map(|s| s.orientation)
 }
 
-/// A turn in words, for the log: which way and how far.
-pub(crate) fn turn_words(quarters: i32) -> &'static str {
-    match quarters.rem_euclid(4) {
-        1 => "a quarter turn to the right of its tag",
-        2 => "a half turn from its tag",
-        3 => "a quarter turn to the left of its tag",
-        _ => "as its tag says",
-    }
-}
-
 /// The shape of a frame's developed picture, width over height, for
 /// the map that carries masks and repair patches round a turn.
 ///
@@ -1548,114 +1555,6 @@ pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
     (sidecar, seed)
 }
 
-/// One file's sidecar, read from disk: what [`crate::rows::from_disk`]
-/// reads for a frame the index has no row for, and for a frame whose
-/// row stood in until now. Beside it, what went wrong when the `.gcd`
-/// was not there or could not be read and the default stands in for it,
-/// so a frame whose row says it has a develop is not given the default
-/// in its place. Whether a line of it still waits for its ISO's blend
-/// is the line's to say (`rows::wants_seed`).
-pub(crate) fn load_sidecar_said(
-    f: &Path,
-    write_sidecars: bool,
-) -> (Sidecar, Option<crate::rows::Trouble>) {
-    if !write_sidecars {
-        return (Sidecar::default(), None);
-    }
-    let mut trouble = None;
-    // A picture that is not a raw starts from its own default.
-    let fresh = || {
-        if greycard_core::picture::is_picture_path(f) {
-            Sidecar {
-                line: greycard_edit::Line::of(Edit::for_picture()),
-                ..Sidecar::default()
-            }
-        } else {
-            Sidecar::default()
-        }
-    };
-    let mut sidecar = match Sidecar::load(f) {
-        Ok(Some(s)) => {
-            // A shape from a later build: loaded as nothing, the
-            // rest of the edit kept. One of a kind this build has
-            // not heard of is gone on the next save; a known kind
-            // with a route or a group it has not (a Part, a
-            // Landscape) is written back as it came.
-            let unknown: usize = s.current.adjustments.iter().map(|a| a.mask.unknown()).sum();
-            let dropped: usize = s
-                .current
-                .adjustments
-                .iter()
-                .flat_map(|a| &a.mask.components)
-                .filter(|c| c.shape == Shape::Unknown)
-                .count();
-            if unknown > 0 {
-                tracing::warn!(
-                    "{}: sidecar: {unknown} mask shape(s) this build does not know, left out of \
-                     their masks; {dropped} of a kind it has not heard of, dropped when the edit \
-                     is saved, and {} kept as they came",
-                    file_name(f),
-                    unknown - dropped
-                );
-            }
-            s
-        }
-        Ok(None) => {
-            trouble = Some(crate::rows::Trouble::Missing);
-            fresh()
-        }
-        Err(e) => {
-            tracing::warn!(
-                "{}: sidecar: {e}; starting from the default edit",
-                file_name(f)
-            );
-            trouble = Some(crate::rows::Trouble::Unreadable(format!("{e}")));
-            fresh()
-        }
-    };
-    // What an XMP beside the frame has to say, when it has
-    // changed since the sidecar last took its word. Reading
-    // one is not behind the setting: writing an XMP is a
-    // choice about somebody else's folder, believing one
-    // that is already there is not. Nothing is written
-    // here — the meta and the mark ride in memory until the
-    // frame's next real save — so opening a folder of
-    // somebody else's raws deposits nothing in it.
-    // The camera's tag, for the one field of a packet that
-    // is measured against it. The closure is called only for
-    // a packet that carries `tiff:Orientation` at all, so a
-    // folder whose XMPs are silent about it opens without
-    // reading a byte of any raw.
-    let took = xmp::adopt(f, &mut sidecar, || {
-        greycard_core::decode::orientation_path(f)
-            .inspect_err(|e| tracing::warn!("{}: orientation: {e}", file_name(f)))
-            .ok()
-    });
-    // A turn taken from somebody else's file turns the
-    // picture under the user without their having pressed
-    // anything, and records no state to undo it with, so it
-    // is said out loud and by name.
-    if took.turned.is_some() {
-        tracing::info!(
-            "{}: the XMP beside it says the frame stands {}; turned to match",
-            file_name(f),
-            // Where it now stands, not how far it moved to
-            // get there: a reader of the log wants the frame,
-            // not the delta.
-            turn_words(i32::from(sidecar.turn))
-        );
-        if took.left_placed {
-            tracing::warn!(
-                "{}: its masks and repair patches stay where they are on the \
-                 screen, since nothing is decoded at a folder's opening to \
-                 measure the frame by",
-                file_name(f)
-            );
-        }
-    }
-    (sidecar, trouble)
-}
-
 /// Replace the file list with `dir`'s files, and select the last file
 /// open if it lies there, else the first. The folder is listed and its
 /// frames' sidecars found off the window's thread
@@ -2133,12 +2032,6 @@ pub(crate) fn time_select(
             }
         });
     });
-}
-
-pub(crate) fn file_name(p: &std::path::Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 /// Open the frame on browser row `row`: decode and develop it on the
@@ -3427,6 +3320,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 mod tests {
     use super::*;
     use crate::testing::{press, window};
+    use greycard_edit::geometry::Geometry;
+    use greycard_edit_io::xmp;
     use slint::platform::{Key, WindowEvent};
 
     /// The neighbors the worker is told of are the frames the right and

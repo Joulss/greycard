@@ -17,7 +17,7 @@
 //! 2048. Then the
 //! pipeline as it is on that picture: the lens, the defringe, the retouch, the local
 //! contrast, the dehaze, the guide plane; then the finish exactly as the
-//! open frame's pictures are finished (`edited::make`: the geometry, a
+//! open frame's pictures are finished (`edited_pictures::make`: the geometry, a
 //! resize to 2048, `export::render_framed` with no output sharpening,
 //! sRGB), and the made sizes, kept under the edit's key like the open
 //! frame's.
@@ -25,7 +25,7 @@
 //! Left out, since they are measured on the mosaic's own pixels and mean
 //! nothing at half size: the capture sharpen, the learned denoiser and
 //! the profiled one. So these pictures are kept under a recipe of their
-//! own (`edited::REDUCED_RECIPE`), and the open frame's develop makes
+//! own (`edited_pictures::REDUCED_RECIPE`), and the open frame's develop makes
 //! its own in their place when the frame is opened. The grain stays: it
 //! is laid on by the finish at 2048, placed by the output's pixels, on
 //! both develops alike. Every op measured in pixels is
@@ -67,8 +67,8 @@ use greycard_edit::Edit;
 use greycard_edit::brush::Raster;
 
 use crate::ai::Ai;
-use crate::edited::{Edited, Shows};
-use crate::versions::Key;
+use crate::edited_pictures::{Edited, Shows};
+use crate::version_key::Key;
 
 /// How many reduced develops the pool runs at once: one while a frame
 /// is open in the editor, whose develop is what the user is waiting on
@@ -193,7 +193,7 @@ pub(crate) fn settings(
 /// The bin for a frame whose full develop is `full` (oriented) under
 /// `geometry`, binned by `cell` ([`reduced::cell_of`] its pattern: 2,
 /// or 3 for X-Trans): `cell` only while the framed picture keeps at
-/// least `cell` times [`crate::edited::BIG`] on its long edge, so the
+/// least `cell` times [`crate::edited_pictures::BIG`] on its long edge, so the
 /// 2048 picture is always brought down to and never up; 1 (the
 /// demosaic, a full develop of the frame) under a tighter crop or a
 /// straighten that takes it there. A 24 MP Bayer frame is binned down
@@ -203,7 +203,7 @@ pub(crate) fn bin_under(
     cell: usize,
     geometry: &greycard_edit::geometry::Geometry,
 ) -> usize {
-    let (w, h) = crate::edited::framed_size((full.0 as u32, full.1 as u32), geometry);
+    let (w, h) = crate::edited_pictures::framed_size((full.0 as u32, full.1 as u32), geometry);
     reduced::bin_for_cell(cell, w as usize, h as usize)
 }
 
@@ -309,7 +309,7 @@ pub(crate) fn develop(
             let full = (turned.width as u32, turned.height as u32);
             let bin = bin_under((turned.width, turned.height), reduced::BIN, &edit.geometry);
             let image = if bin > 1 {
-                crate::edited::reduce(&turned, bin)
+                crate::edited_pictures::reduce(&turned, bin)
             } else {
                 turned
             };
@@ -772,7 +772,7 @@ impl Reducer {
         let path = frame.path.as_path();
         let name = frame.said();
         let hash = greycard_library::hash_file(path).map_err(|e| Why::Failed(e.to_string()))?;
-        let (mut sidecar, trouble) = crate::panel::browser::load_sidecar_said(path, true);
+        let (mut sidecar, trouble) = greycard_edit_io::on_disk::load_sidecar_said(path, true);
         if let Some(t) = trouble {
             return Err(Why::Failed(format!("its sidecar: {t:?}")));
         }
@@ -793,7 +793,7 @@ impl Reducer {
         let key = edited.key_of(&line.current);
         let mut moved = false;
         if key != held {
-            if !crate::edited::is_edited(path, &line.current, iso) {
+            if !crate::edited_pictures::is_edited(path, &line.current, iso) {
                 tracing::info!("the edit's pictures of {name}: its edit was reset; the camera's");
                 edited.reset(frame, Some(&hash));
                 return Ok(true);
@@ -815,7 +815,7 @@ impl Reducer {
         // decode: the look, and the learned masks' rasters or models.
         look_ready(&edit)?;
         masks_ready(&mut self.ai.lock().expect("reduced ai"), path, &edit, turn)?;
-        let Some(marked) = edited.mark(&hash, key, crate::edited::REDUCED_RECIPE) else {
+        let Some(marked) = edited.mark(&hash, key, crate::edited_pictures::REDUCED_RECIPE) else {
             // Being made by another of these threads (another link to
             // the same content).
             return Err(Why::NotWanted);
@@ -840,7 +840,7 @@ impl Reducer {
         if edited.shows(frame) != Shows::Edit(key) {
             return Err(Why::Stale);
         }
-        let finish = crate::edited::Finish {
+        let finish = crate::edited_pictures::Finish {
             edit: edit.clone(),
             turn,
             source: (developed.image.width as u32, developed.image.height as u32),
@@ -854,7 +854,7 @@ impl Reducer {
         };
         let made = self
             .pool()
-            .install(|| crate::edited::make(&developed.image, &finish));
+            .install(|| crate::edited_pictures::make(&developed.image, &finish));
         let making =
             started.elapsed().as_secs_f64() - developed.decode - developed.develop - developed.rest;
         let kept = edited
@@ -1101,7 +1101,7 @@ mod tests {
                 greycard_library::thumbs::DEFAULT_CAP,
             )
             .with_previews(
-                crate::edited::BIG,
+                crate::edited_pictures::BIG,
                 greycard_library::thumbs::DEFAULT_PREVIEW_CAP,
             ),
         )));
@@ -1204,7 +1204,7 @@ mod tests {
         assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
         assert_eq!(reducer.develops(), 1);
         assert!(edited.all_kept(&hash, key));
-        assert!(!edited.all_kept_by(&hash, key, crate::edited::EDITED_RECIPE));
+        assert!(!edited.all_kept_by(&hash, key, crate::edited_pictures::EDITED_RECIPE));
         assert!(!reducer.wants(&edited, &frame), "kept");
         std::fs::remove_dir_all(&dir).unwrap();
     }

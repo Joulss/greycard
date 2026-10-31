@@ -5,6 +5,7 @@
 //! tools' files into them.
 
 pub mod lightroom;
+pub mod on_disk;
 pub mod pp3;
 pub mod preset;
 // XMP interop for the meta section (§72): read and write the

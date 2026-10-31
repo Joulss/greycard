@@ -1,8 +1,8 @@
 //! The reduced develop checked against the full one: the CPU reference
 //! is the full develop finished at 2048 as an export at that size is
 //! (`export::fit`), and its 360 shrunk from that 2048 as every made size
-//! is (`edited::shrunk`); the reduced develop's pictures (`reduced`, then
-//! `edited::make`) must lie within a ΔE limit of them, over seeded random
+//! is (`edited_pictures::shrunk`); the reduced develop's pictures (`reduced`, then
+//! `edited_pictures::make`) must lie within a ΔE limit of them, over seeded random
 //! edits in the manner of the GPU ops' sweeps. On the sample raws
 //! (`GREYCARD_SAMPLES`), so ignored; `GREYCARD_REDUCED_CASES` sets the
 //! cases a frame (18), `GREYCARD_REDUCED_SEED` the seed,
@@ -362,8 +362,8 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
             // from the 2048, so what is measured is the develop and not
             // a second resample.
             let reference = [
-                (2048u32, crate::edited::shrunk(&big, 2048)),
-                (360, crate::edited::shrunk(&big, 360)),
+                (2048u32, crate::edited_pictures::shrunk(&big, 2048)),
+                (360, crate::edited_pictures::shrunk(&big, 360)),
             ];
             // The reduced develop and the pictures made from it.
             let started = Instant::now();
@@ -374,7 +374,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                     continue;
                 }
             };
-            let finish = crate::edited::Finish {
+            let finish = crate::edited_pictures::Finish {
                 edit: edit.clone(),
                 turn: 0,
                 source: (developed.image.width as u32, developed.image.height as u32),
@@ -386,7 +386,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 white: developed.white.clone(),
                 detail: developed.detail.clone(),
             };
-            let made = crate::edited::make(&developed.image, &finish);
+            let made = crate::edited_pictures::make(&developed.image, &finish);
             let reduced_ms = started.elapsed().as_secs_f64() * 1e3;
             let describe = format!(
                 "{:.2},{:.2},{:.2},{:.1},{},{},{:.2},{},{:.2}",
@@ -521,7 +521,7 @@ fn the_reduced_develop_of_the_samples_timed() {
                     break;
                 }
             };
-            let finish = crate::edited::Finish {
+            let finish = crate::edited_pictures::Finish {
                 edit: edit.clone(),
                 turn: 0,
                 source: (developed.image.width as u32, developed.image.height as u32),
@@ -534,7 +534,7 @@ fn the_reduced_develop_of_the_samples_timed() {
                 detail: developed.detail.clone(),
             };
             let before_finish = started.elapsed().as_secs_f64();
-            let made = crate::edited::make(&developed.image, &finish);
+            let made = crate::edited_pictures::make(&developed.image, &finish);
             let finished = started.elapsed().as_secs_f64();
             let cache: ThumbCache = Arc::new(Mutex::new(Some(
                 Thumbs::at(
@@ -543,11 +543,11 @@ fn the_reduced_develop_of_the_samples_timed() {
                 )
                 .with_previews(2048, greycard_library::thumbs::DEFAULT_PREVIEW_CAP),
             )));
-            let edited = crate::edited::Edited::new(cache);
+            let edited = crate::edited_pictures::Edited::new(cache);
             let hash = greycard_library::hash_file(path).unwrap();
             let bytes = edited
                 .store(
-                    &crate::versions::Key::file(path),
+                    &crate::version_key::Key::file(path),
                     &hash,
                     run + 1,
                     None,

@@ -96,7 +96,7 @@ pub(crate) struct Previews {
     /// previews through this: an edited frame stands in for its develop,
     /// and is compared with its versions, on the picture of its edit
     /// (`edited`); Cull on the camera's JPEG asks for the camera's alone.
-    edited: Option<Arc<crate::edited::Edited>>,
+    edited: Option<Arc<crate::edited_pictures::Edited>>,
 }
 
 /// One preview being made from a picture in hand, counted while it is
@@ -127,13 +127,13 @@ impl Previews {
     }
 
     /// The same previews, with the frames that show their edit.
-    pub(crate) fn with_edited(mut self, edited: Arc<crate::edited::Edited>) -> Self {
+    pub(crate) fn with_edited(mut self, edited: Arc<crate::edited_pictures::Edited>) -> Self {
         self.edited = Some(edited);
         self
     }
 
     /// Which frames show their edit, when the previews were told.
-    pub(crate) fn edited(&self) -> Option<&crate::edited::Edited> {
+    pub(crate) fn edited(&self) -> Option<&crate::edited_pictures::Edited> {
         self.edited.as_deref()
     }
 

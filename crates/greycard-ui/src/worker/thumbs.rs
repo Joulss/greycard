@@ -107,7 +107,7 @@ pub(super) fn thumb_lookup(
     frame: &Frame,
     size: u32,
     previews: Option<&crate::previews::Previews>,
-    edited: Option<&crate::edited::Edited>,
+    edited: Option<&crate::edited_pictures::Edited>,
 ) -> (Option<(u64, u64)>, Option<(String, Tag)>, Option<Thumb>) {
     let path = frame.path.as_path();
     let on = cache
@@ -156,7 +156,7 @@ pub(super) fn thumb_lookup(
 pub(super) fn cached_thumbnail_noting(
     cache: &ThumbCache,
     previews: Option<&crate::previews::Previews>,
-    edited: Option<&crate::edited::Edited>,
+    edited: Option<&crate::edited_pictures::Edited>,
     frame: &Frame,
     size: u32,
     make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,

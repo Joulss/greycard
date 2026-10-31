@@ -476,3 +476,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§461. A sheet sized from its wrapped notes](notes/461-a-sheet-sized-from-its-wrapped-notes.md) (2026-10-31)
 - [§462. The next shoot beside the last, not inside it](notes/462-the-next-shoot-beside-the-last-not-inside-it.md) (2026-10-31)
 - [§463. greycard-edit split by part, its readers beside it](notes/463-greycard-edit-split-by-part-its-readers-beside-it.md) (2026-10-31)
+- [§464. The engine, part one: the helpers below the window](notes/464-the-engine-part-one-the-helpers-below-the-window.md) (2026-10-31)

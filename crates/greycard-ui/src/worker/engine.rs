@@ -56,7 +56,7 @@ pub(super) fn run(
     queue: Arc<(Mutex<Queue>, Condvar)>,
     deliver: Deliver,
     pool: Arc<crate::thumbpool::Pool>,
-    edited: Arc<crate::edited::Edited>,
+    edited: Arc<crate::edited_pictures::Edited>,
     reducer: Arc<crate::reduced::Reducer>,
 ) {
     let (lock, cv) = &*queue;
@@ -162,7 +162,7 @@ pub(super) fn run(
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
                     reducer.set_lenses(lenses.clone());
-                    edited.set_lenses(crate::edited::lens_database());
+                    edited.set_lenses(crate::edited_pictures::lens_database());
                     forget_bases(&mut base, &mut learned, &mut shelf, gpu.as_ref());
                 }
                 if let Some(d) = q.gpu.take()

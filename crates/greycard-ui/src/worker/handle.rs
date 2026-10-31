@@ -22,7 +22,7 @@ impl Worker {
     fn build(deliver: Deliver, batched: bool) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let thumbs: ThumbCache = Arc::new(Mutex::new(None));
-        let edited = Arc::new(crate::edited::Edited::new(thumbs.clone()));
+        let edited = Arc::new(crate::edited_pictures::Edited::new(thumbs.clone()));
         let previews =
             Arc::new(crate::previews::Previews::new(thumbs.clone()).with_edited(edited.clone()));
         let make: crate::thumbpool::Make = {
@@ -142,7 +142,7 @@ impl Worker {
 
     /// Which frames show their edit: the window says which it holds as
     /// edited, and the culling loupe looks their pictures up.
-    pub(crate) fn edited(&self) -> Arc<crate::edited::Edited> {
+    pub(crate) fn edited(&self) -> Arc<crate::edited_pictures::Edited> {
         self.edited.clone()
     }
 
@@ -857,7 +857,7 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
             cv.notify_one();
             // The index's keys are made under the new name from here,
             // before the window asks it to clear the old ones.
-            greycard_library::set_lens_database(crate::edited::lens_database());
+            greycard_library::set_lens_database(crate::edited_pictures::lens_database());
             deliver(Outcome::LensesFetched);
         }
         Err(e) => deliver(Outcome::LensesFetchFailed {

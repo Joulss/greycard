@@ -29,8 +29,9 @@ pub const FILE: &str = "greycard-ui.log";
 /// The crates whose lines are ours: the file keeps them from info,
 /// and `-v` raises them. Everything else, the libraries, from warn.
 /// Of the library crate, the catalog import, whose night-long write
-/// says how far it is.
-const OURS: [&str; 9] = [
+/// says how far it is, and the listing and the export record, which
+/// were the editor's and keep its lines.
+const OURS: [&str; 11] = [
     "greycard_ui",
     "greycard_core",
     "greycard_edit",
@@ -40,6 +41,8 @@ const OURS: [&str; 9] = [
     "greycard_gpu",
     "greycard_render",
     "greycard_library::lightroom_catalog",
+    "greycard_library::files",
+    "greycard_library::export_record",
 ];
 
 /// `$XDG_STATE_HOME/greycard` when that is set, else the platform's

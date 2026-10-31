@@ -617,15 +617,11 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] The engine, part 1 (§454): the sidecar helpers, the edited
-      pictures' engine half, and the version key moved below the
-      window as pure moves, explicit imports in each file touched.
-      After 0.9.1 has been out a week
 - [ ] The engine, part 2 (§454): greycard-engine with the stage list
       defined once, the worker and its collaborators moved, core's
       `finish` trimmed to prepare, the reduced develop on the list;
-      exports byte-equal before and after. Waits on part 1 and a
-      design pass on the stage list's type
+      exports byte-equal before and after (part 1 landed, §464).
+      Waits on a design pass on the stage list's type
 - [ ] The engine, part 3 (§454): the viewport crate, the shader and
       its parity tests over gpu and render, Slint's pixel types out
       of it. Waits on part 2

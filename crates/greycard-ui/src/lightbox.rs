@@ -30,7 +30,7 @@ use std::sync::Arc;
 use slint::{ComponentHandle, Model};
 
 use crate::cull::{self, Loaded, Preview, Source, Want};
-use crate::edited::{BIG, Edited, Shows};
+use crate::edited_pictures::{BIG, Edited, Shows};
 use crate::panel::browser::{row_of, thumb_turns};
 use crate::versions::Key;
 use crate::worker::Worker;
@@ -125,7 +125,7 @@ pub(crate) fn pick(edited: Option<&Edited>, hash: Option<&str>, shows: Shows, si
         .into_iter()
         .find_map(|s| edited.lookup(hash, s, shows))
         .map_or(Pick::Wait, |thumb| {
-            Pick::Edit(crate::edited::shrunk(&thumb, size))
+            Pick::Edit(crate::edited_pictures::shrunk(&thumb, size))
         })
 }
 
@@ -202,7 +202,7 @@ impl Picture {
             rgb,
         };
         let thumb = if preview.width.max(preview.height) > size + size / 2 {
-            crate::edited::shrunk(&thumb, size)
+            crate::edited_pictures::shrunk(&thumb, size)
         } else {
             thumb
         };
@@ -1005,7 +1005,7 @@ mod tests {
             }
         };
         let hash = greycard_library::hash_file(&kept).unwrap();
-        let made = crate::edited::Made {
+        let made = crate::edited_pictures::Made {
             big: bright(BIG),
             thumbs: grid::MADE.iter().map(|&s| (s, bright(s))).collect(),
         };

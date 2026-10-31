@@ -50,8 +50,8 @@ fn the_edit_s_pictures_of_the_samples() {
         let image = image.expect("a picture on the CPU");
         let b = base.as_ref().unwrap();
         let source = (image.width as u32, image.height as u32);
-        let factor = crate::edited::factor_for(source, &edit.geometry);
-        let finish = || crate::edited::Finish {
+        let factor = crate::edited_pictures::factor_for(source, &edit.geometry);
+        let finish = || crate::edited_pictures::Finish {
             edit: edit.clone(),
             turn: 0,
             source,
@@ -70,19 +70,21 @@ fn the_edit_s_pictures_of_the_samples() {
             )
             .with_previews(2048, greycard_library::thumbs::DEFAULT_PREVIEW_CAP),
         )));
-        let edited = crate::edited::Edited::new(cache);
+        let edited = crate::edited_pictures::Edited::new(cache);
         let hash = greycard_library::hash_file(&path).unwrap();
         let cpu = Instant::now();
-        crate::edited::keep(
+        crate::edited_pictures::keep(
             &edited,
-            crate::edited::Keeping {
+            crate::edited_pictures::Keeping {
                 frame: Frame::file(path.clone()),
                 hash: hash.clone(),
                 key: 1,
-                developed: crate::edited::Developed::Full(image.clone()),
+                developed: crate::edited_pictures::Developed::Full(image.clone()),
                 factor,
                 read_back: None,
-                marked: edited.mark(&hash, 1, crate::edited::EDITED_RECIPE).unwrap(),
+                marked: edited
+                    .mark(&hash, 1, crate::edited_pictures::EDITED_RECIPE)
+                    .unwrap(),
                 iso: None,
                 finish: finish(),
             },
@@ -113,19 +115,21 @@ fn the_edit_s_pictures_of_the_samples() {
             );
             ctx.queue().submit([]);
             let started = Instant::now();
-            let reduced = crate::edited::read_back_reduced(ctx, &texture, factor).unwrap();
+            let reduced = crate::edited_pictures::read_back_reduced(ctx, &texture, factor).unwrap();
             let read = started.elapsed().as_secs_f64();
             let started = Instant::now();
-            crate::edited::keep(
+            crate::edited_pictures::keep(
                 &edited,
-                crate::edited::Keeping {
+                crate::edited_pictures::Keeping {
                     frame: Frame::file(path.clone()),
                     hash: hash.clone(),
                     key: 2,
-                    developed: crate::edited::Developed::Reduced(reduced),
+                    developed: crate::edited_pictures::Developed::Reduced(reduced),
                     factor,
                     read_back: Some(read),
-                    marked: edited.mark(&hash, 2, crate::edited::EDITED_RECIPE).unwrap(),
+                    marked: edited
+                        .mark(&hash, 2, crate::edited_pictures::EDITED_RECIPE)
+                        .unwrap(),
                     iso: None,
                     finish: finish(),
                 },

@@ -11,8 +11,17 @@
 //! of that is here, from the same functions the window used, and no
 //! wgpu device is asked for: there is nothing for one to do.
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use greycard_edit::preset;
+use greycard_render::export;
+
+use crate::Cli;
 use crate::panel::startup::{Overrides, check_also, export_folder, opening_sheet, preset_at_start};
-use crate::*;
+use crate::worker::{Job, Outcome, Worker};
+use crate::{queue, settings, sheet};
 
 /// What an `--export` run writes: each frame under its edit, and the
 /// sheet the set is written under.
@@ -169,7 +178,7 @@ pub(crate) fn plan(
         .filter(|p| p.is_file());
     let (files, first) = match &cli.path {
         Some(path) => {
-            let files = files::list_files(path, remembered.jpegs_apart)?;
+            let files = greycard_library::files::list_files(path, remembered.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", path.display());
             let first = if path.is_dir() {
                 position_of(&files, last_file.as_deref())
@@ -182,7 +191,7 @@ pub(crate) fn plan(
             let dir = last_file.as_deref().and_then(Path::parent).context(
                 "--export wants a file or a folder to export from, and no last file is remembered",
             )?;
-            let files = files::list_files(dir, remembered.jpegs_apart)?;
+            let files = greycard_library::files::list_files(dir, remembered.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", dir.display());
             let first = position_of(&files, last_file.as_deref());
             (files, first)
@@ -247,8 +256,11 @@ pub(crate) fn plan(
     let mut frames = Vec::with_capacity(rows.len());
     for &i in &rows {
         let source = files[i].clone();
-        let held = crate::rows::from_disk(&source, write_sidecars);
-        let unreadable = matches!(held.trouble, Some(crate::rows::Trouble::Unreadable(_)));
+        let held = greycard_library::held::from_disk(&source, write_sidecars);
+        let unreadable = matches!(
+            held.trouble,
+            Some(greycard_edit_io::on_disk::Trouble::Unreadable(_))
+        );
         let mut sidecar = held.sidecar;
         // The version `--version-name` named, first by position when two
         // share the name; the file's own line without it. Found before
@@ -286,14 +298,14 @@ pub(crate) fn plan(
             let placement = (write_sidecars && !unreadable).then_some(placement);
             preset_at_start(&mut sidecar, version, &source, preset, placement);
         }
-        crate::files::migrate_from_file(&mut sidecar, &source);
+        greycard_edit_io::on_disk::migrate_from_file(&mut sidecar, &source);
         let line = sidecar
             .line(version)
             .expect("the version was found in this sidecar above");
         let mut edit = line.current.clone();
         // The line's own wait for its ISO.
         let raw = !greycard_core::picture::is_picture_path(&source);
-        let seed = raw && crate::files::line_never_developed(line);
+        let seed = raw && greycard_edit_io::on_disk::line_never_developed(line);
 
         // The command line's temperature, exposure and curve, over the
         // edit of the frame opened (every frame's, with `--all`) and
@@ -463,7 +475,7 @@ pub(crate) fn run(plan: Plan) -> Finished {
                                 preset: set.preset.clone(),
                                 at: crate::panel::history::now(),
                             };
-                            if crate::panel::history::record_export_on_disk(
+                            if greycard_library::export_record::record_export_on_disk(
                                 &source,
                                 &edit,
                                 version.as_deref(),
@@ -475,7 +487,7 @@ pub(crate) fn run(plan: Plan) -> Finished {
                                 // The copy on the archive is not
                                 // written here: noted as waiting, for
                                 // the next window's catch-up (§233).
-                                crate::sync::note_disk_save(index, roots, &source);
+                                greycard_library::sync_note::note_disk_save(index, roots, &source);
                             }
                         }
                         written.push(path);
@@ -631,6 +643,10 @@ pub(crate) fn batch_settings(path: &Path, sheet: export::Settings) -> export::Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::Developed;
+    use clap::Parser;
+    use greycard_core::raw::{Orientation, RawFrame};
+    use greycard_edit::{Edit, Preset, Sidecar};
     use std::sync::mpsc;
     use std::time::Duration;
 

@@ -137,7 +137,7 @@ use greycard_edit::retouch::Retouch;
 use greycard_edit::{Edit, Noise};
 
 use crate::ai::{Ai, Key, NoDenoiser, NoFill};
-use crate::versions::Key as Frame;
+use crate::version_key::Key as Frame;
 
 pub enum Job {
     Open {
@@ -222,7 +222,7 @@ pub enum Job {
         turn: u8,
         /// The frame's ISO from its row, which the learned blend is
         /// judged against in saying whether this is an edit at all.
-        iso: crate::edited::Iso,
+        iso: crate::edited_pictures::Iso,
     },
     /// Make the learned masks' rasters of a frame under its line's edit
     /// and put them in the mask cache, so the reduced develop of its
@@ -698,7 +698,7 @@ pub struct Worker {
     previews: Arc<crate::previews::Previews>,
     /// Which frames show their edit, and the pictures made from it, in
     /// the same cache (`edited`).
-    edited: Arc<crate::edited::Edited>,
+    edited: Arc<crate::edited_pictures::Edited>,
     /// The reduced develops of the edit's pictures in the pool
     /// (`reduced`).
     reducer: Arc<crate::reduced::Reducer>,
@@ -738,7 +738,7 @@ struct Keep {
     frame: Frame,
     edit: Edit,
     turn: u8,
-    iso: crate::edited::Iso,
+    iso: crate::edited_pictures::Iso,
 }
 
 /// The develop the viewport shows, as a texture the engine's GPU ops
