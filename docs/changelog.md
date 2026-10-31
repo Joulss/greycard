@@ -47,6 +47,10 @@ disk image's install window.
   tiles, or everything under it with With subfolders on; before, the
   last folder opened in its place
   ([§459](https://github.com/jessolmstead/greycard/blob/master/docs/notes/459-a-start-folder-of-folders.md)).
+- Scrolling the Library over a large root no longer jitters in place:
+  a picture arriving after a notch of the wheel brought the selected
+  frame's row back whole, undoing the notch
+  ([§460](https://github.com/jessolmstead/greycard/blob/master/docs/notes/460-a-scroll-the-shapes-leave-alone.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

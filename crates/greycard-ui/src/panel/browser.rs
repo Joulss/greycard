@@ -1295,9 +1295,12 @@ fn note_shape(app: &App, row: usize, aspect: f32) {
 /// The shapes noted since the last layout laid out: the rows move, and
 /// the sheet's scroll moves with them so what was on screen stays. A
 /// sheet scrolled to its end stays at its end, as near it as shows the
-/// selected frame whole when that was on screen; short of the end, the
-/// selected frame on screen is the row held in place and is shown whole
-/// again if its row grew; else the first row on screen is held.
+/// selected frame whole when that was whole on screen; short of the
+/// end, the selected frame on screen is the row held in place and is
+/// shown whole again if its row grew; else the first row on screen is
+/// held. A selected frame the wheel has cut at an edge is left cut:
+/// bringing it back whole would undo the scroll, a notch at a time, as
+/// long as pictures kept coming.
 pub(crate) fn reshape(app: &App) {
     let seen = STATE.with(|s| {
         let state = s.borrow().clone()?;
@@ -1328,7 +1331,10 @@ pub(crate) fn reshape(app: &App) {
     let after = laid(grid_shape(app));
     let scroll = app.get_grid_scroll();
     let at_end = scroll > 0.0 && scroll >= before.max_scroll(height, top) - 0.5;
-    let to = if at_end && on_screen {
+    // Whole on screen before the rows moved: the reveal, which brings
+    // it back whole, is for that frame alone.
+    let whole = on_screen && before.reveal(scroll, height, selected, top) == scroll;
+    let to = if at_end && whole {
         after.reveal(after.max_scroll(height, top), height, selected, top)
     } else if at_end {
         after.max_scroll(height, top)
@@ -1338,7 +1344,7 @@ pub(crate) fn reshape(app: &App) {
             (Some(was), Some(now)) if scroll > 0.0 => scroll + now - was,
             _ => scroll,
         };
-        if on_screen {
+        if whole {
             after.reveal(moved, height, selected, top)
         } else {
             moved
@@ -4111,6 +4117,66 @@ mod tests {
         whole(101);
         batch(&|i| i >= 96 && i % 3 == 0, true);
         whole(101);
+    }
+
+    /// A notch of the wheel that cuts the selected row at the top is
+    /// the user's own: shapes that come in after it hold the sheet
+    /// where the wheel put it, rather than bring the row back whole.
+    #[test]
+    fn shapes_that_come_after_a_scroll_leave_the_sheet_where_it_was() {
+        use crate::panel::deliver::deliver;
+        let app = window(120);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = crate::testing::folder(120);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().current = Some(0);
+        app.set_selected(0);
+        press(&app, "g");
+        let settle = || {
+            for _ in 0..10 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                (0..60).map(|i| picture_shaped(&files, i, 3, 2)).collect(),
+            )),
+        );
+        settle();
+        assert_eq!(app.get_grid_scroll(), 0.0);
+        // A third of a row down: the selected frame's row cut at the
+        // top, and still on screen.
+        app.invoke_scroll_by(48.0);
+        assert_eq!(app.get_grid_scroll(), 48.0);
+        assert_eq!(state.borrow().views.grid_shown.map(|s| s.0), Some(0));
+        // Shapes for rows below, one of them a portrait: the sheet
+        // stays where the wheel put it.
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                (60..120)
+                    .map(|i| match i {
+                        66 => portrait_for(&files, i),
+                        _ => picture_shaped(&files, i, 3, 2),
+                    })
+                    .collect(),
+            )),
+        );
+        settle();
+        assert_eq!(app.get_grid_scroll(), 48.0, "the shapes undid the scroll");
+        // Another notch, and the selected row's own shape changes: its
+        // row grows under the cut, and the sheet still holds.
+        app.invoke_scroll_by(48.0);
+        deliver(&app, portrait_for(&files, 3));
+        settle();
+        assert_eq!(
+            app.get_grid_scroll(),
+            96.0,
+            "the row's growth undid the scroll"
+        );
     }
 
     /// The strip and the grid make cells for the rows on screen and a
