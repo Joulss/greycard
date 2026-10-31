@@ -1563,4 +1563,74 @@ mod tests {
         leave(&mut sheet, std::time::Duration::from_secs(5));
         assert!(sheet.thread.is_none());
     }
+
+    /// The sheet's notes wrap, and the sheet is sized from the
+    /// body's own height: every row at its height, the last line on
+    /// screen, and in a window too short for them the rows scroll
+    /// under the buttons rather than lose their end.
+    #[test]
+    fn the_sheets_rows_keep_their_height_and_scroll_in_a_short_window() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::WindowEvent;
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
+        app.invoke_import_asked();
+        app.set_import_source("/card/DCIM".into());
+        app.set_import_note(
+            "582 frames; 9 left on the card (videos, and files the editor does not open)".into(),
+        );
+        app.set_import_destination("~/Pictures".into());
+        app.set_import_preview("5M0A7819.CR3 becomes ~/Pictures/2026-10-25/5M0A7819.CR3".into());
+        app.set_import_count(582);
+        let settle = || {
+            for _ in 0..5 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        settle();
+        let last = || {
+            ElementHandle::find_by_element_type_name(&app, "Text")
+                .find(|e| {
+                    e.accessible_label()
+                        .is_some_and(|l| l.starts_with("Verify compares"))
+                })
+                .map(|e| (e.absolute_position().y, e.size().height))
+        };
+        let pane = || {
+            ElementHandle::find_by_element_type_name(&app, "Flickable")
+                .map(|e| (e.absolute_position(), e.size()))
+                .find(|(p, s)| s.width > 500.0 && s.width < 540.0 && p.y > 0.0)
+                .expect("the sheet's pane")
+        };
+        // Room for all of it: the last line inside the pane.
+        let (y, h) = last().expect("the last line is laid out");
+        let (p, s) = pane();
+        assert!(
+            y + h <= p.y + s.height,
+            "the last line at {y}+{h} past the pane's {}",
+            p.y + s.height
+        );
+        // A window too short: the pane is cut, and a turn of the wheel
+        // over it brings the last line up.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 600.0));
+        settle();
+        let (y, h) = last().expect("the last line is still laid out");
+        let (p, s) = pane();
+        assert!(
+            y + h > p.y + s.height,
+            "the pane holds all of it in a short window"
+        );
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(p.x + 100.0, p.y + 100.0),
+            delta_x: 0.0,
+            delta_y: -120.0,
+        });
+        settle();
+        let (after, _) = last().unwrap();
+        assert!(after < y, "the wheel scrolled nothing: {after} from {y}");
+    }
 }

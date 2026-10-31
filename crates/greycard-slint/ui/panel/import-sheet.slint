@@ -87,10 +87,16 @@ export component ImportSheet inherits Rectangle {
         clip: true;
         TouchArea { }
         VerticalLayout {
-            ScrollPane {
+            scroll := ScrollPane {
                 min-height: 80px;
                 vertical-stretch: 1;
+                // The rows at their own height, however short the
+                // sheet: left to itself the pane holds them to its
+                // height and squeezes the rows, and nothing scrolls.
+                content-height: body.preferred-height;
+                content-width: self.visible-width;
                 body := VerticalLayout {
+                    width: scroll.visible-width;
                     padding: Theme.space-5;
                     padding-right: Theme.space-5 + Theme.scrollbar-band;
                     padding-bottom: Theme.space-2;
@@ -110,6 +116,7 @@ export component ImportSheet inherits Rectangle {
                             ? "Copies are verified; the card is untouched."
                             : "Adds a folder and its subfolders to the library where it is; nothing is copied.";
                         wrap: word-wrap;
+                            height: self.preferred-height;
                         font-size: Theme.font-xs;
                         color: Theme.text-secondary;
                     }
@@ -127,6 +134,7 @@ export component ImportSheet inherits Rectangle {
                             Text {
                                 text: root.import-place-note;
                                 wrap: word-wrap;
+                            height: self.preferred-height;
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                             }
@@ -145,6 +153,7 @@ export component ImportSheet inherits Rectangle {
                             Text {
                                 text: root.import-note;
                                 wrap: word-wrap;
+                            height: self.preferred-height;
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                             }
@@ -178,6 +187,7 @@ export component ImportSheet inherits Rectangle {
                             Text {
                                 text: "{date} {yyyy} {mm} {dd} {name} {camera} {seq} {folder}; a / in Folders makes a folder in a folder.";
                                 wrap: word-wrap;
+                            height: self.preferred-height;
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                             }
@@ -187,6 +197,7 @@ export component ImportSheet inherits Rectangle {
                             Text {
                                 text: root.import-preview;
                                 wrap: word-wrap;
+                            height: self.preferred-height;
                                 font-size: Theme.font-sm;
                                 color: Theme.text;
                             }
@@ -213,6 +224,7 @@ export component ImportSheet inherits Rectangle {
                             Text {
                                 text: root.import-folders-note;
                                 wrap: word-wrap;
+                            height: self.preferred-height;
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                             }
@@ -224,6 +236,7 @@ export component ImportSheet inherits Rectangle {
                         Text {
                             text: "Verify compares every byte (slower).";
                             wrap: word-wrap;
+                            height: self.preferred-height;
                             font-size: Theme.font-xs;
                             color: Theme.text-muted;
                         }

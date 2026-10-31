@@ -51,6 +51,10 @@ disk image's install window.
   a picture arriving after a notch of the wheel brought the selected
   frame's row back whole, undoing the notch
   ([§460](https://github.com/jessolmstead/greycard/blob/master/docs/notes/460-a-scroll-the-shapes-leave-alone.md)).
+- The Import sheet no longer loses its last line, and in a window
+  too short for it the rows scroll under the buttons; the sheet was
+  sized a line short for every note that wrapped
+  ([§461](https://github.com/jessolmstead/greycard/blob/master/docs/notes/461-a-sheet-sized-from-its-wrapped-notes.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

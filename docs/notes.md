@@ -473,3 +473,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§458. The switch keeps the frame on screen](notes/458-the-switch-keeps-the-frame-on-screen.md) (2026-10-30)
 - [§459. A start folder of folders](notes/459-a-start-folder-of-folders.md) (2026-10-30)
 - [§460. A scroll the shapes leave alone](notes/460-a-scroll-the-shapes-leave-alone.md) (2026-10-31)
+- [§461. A sheet sized from its wrapped notes](notes/461-a-sheet-sized-from-its-wrapped-notes.md) (2026-10-31)
