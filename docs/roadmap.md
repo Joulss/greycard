@@ -353,7 +353,12 @@ ask for first.
       inverted color matrix instead. Then the DNG opcodes, which
       rawler copies through on write and applies on neither side:
       gain maps first (phone DNGs, some Fuji and Leica), then the
-      rectilinear warp and the bad-pixel list (an outside review)
+      rectilinear warp and the bad-pixel list (an outside review).
+      Three Pixel 9 DNGs on hand since 2026-10-31, one a camera, each
+      with four gain maps, WarpRectilinear, and on the ultra-wide and
+      the front WarpRectilinear2 (DNG 1.7); their `BaselineExposure`
+      (0.4 to 1.1 EV) is not applied either, the biggest visible
+      gap, and the one tag to read first
 
 - [ ] Color accuracy against a chart: a 48-patch chart shot per camera in
       daylight and under tungsten, kept with the samples, and an ignored
@@ -1028,7 +1033,8 @@ clears or a tester asks for it.
 - [ ] A mask's adjustments nested under the mask, so a folded mask
       is one row (pixls, 2026-10-24)
 - [ ] A default preset applied to every frame on its first open, so
-      the tools a user never wants start off (pixls, 2026-10-24)
+      the tools a user never wants start off (pixls, 2026-10-24;
+      asked again as a saved baseline, discussion 59, 2026-10-30)
 - [ ] Sharpen in a mask's Detail, beside Texture, Clarity, and
       Dehaze, so a gradient can sharpen the foreground more
       (pixls, 2026-10-24)
@@ -1092,6 +1098,18 @@ clears or a tester asks for it.
       do not share a left edge; a mask's row deletes with a bin and a
       shape's with an x: one edge, one glyph (discussion 51,
       2026-10-29)
+- [ ] A new mask's name field takes the focus, so it can be named at
+      once (discussion 51, 2026-10-30)
+- [ ] A section opened out of sight under One section open at a time
+      scrolls into view (discussion 59, 2026-10-30)
+- [ ] Luminance, hue, and chroma ranges in one mask shape with a curve
+      for each, and chroma as a range rather than a floor, as ART's
+      parametric mask; today it is a Luminance and a Color shape under
+      Intersect (discussion 59, 2026-10-30)
+- [ ] A pivot for Contrast, so it turns about a chosen grey rather
+      than the middle (issue 56, 2026-10-30)
+- [ ] Sync from the open frame onto the selection by a middle-click
+      on it, as DaVinci does (issue 56, 2026-10-30)
 
 ## Blocked
 

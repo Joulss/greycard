@@ -5,114 +5,81 @@ design note behind it.
 
 ## 0.9.1, 2026-10-29
 
-Fixes for 0.9.0's fills: their level, grain, and color blotches, the
-Light sliders' lift over a removed object, a learned mask made again
-under a fill, the Library's idle CPU over a large root, and the Mac
-disk image's install window.
+Fixes for 0.9.0: fills matched to the surrounding picture, the
+Library idle and scrolling over a large root, a dozen smaller ones,
+and the Mac disk image's install window.
 
 ### Install
 
-- The Mac `.dmg` opens as an install window, with an arrow from
-  greycard to Applications showing where to drag it
+- The Mac `.dmg` opens as an install window with an arrow to
+  Applications
   ([§442](https://github.com/jessolmstead/greycard/blob/master/docs/notes/442-the-disk-images-window.md)).
 
-### Fixes
+### Fills
+
+- A fill's level is matched to the picture across the hole's edge,
+  so it no longer comes back lighter
+  ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md)),
+  ([§447](https://github.com/jessolmstead/greycard/blob/master/docs/notes/447-the-fills-level-read-by-sector.md)).
+- A fill's middle no longer drifts from the sky round it
+  ([§448](https://github.com/jessolmstead/greycard/blob/master/docs/notes/448-the-fills-middle-against-the-surface-round-it.md)).
+- A Fast fill's green and magenta blotches are smoothed out; fills
+  from before this version are made again once
+  ([§446](https://github.com/jessolmstead/greycard/blob/master/docs/notes/446-the-fills-chroma-mottle.md)).
+- A fill's grain is read right beside strong texture
+  ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md)).
+- Shadows, Highlights, Whites, and Blacks no longer lift a ghost of a
+  removed object
+  ([§450](https://github.com/jessolmstead/greycard/blob/master/docs/notes/450-the-tones-guide-made-after-the-retouch.md)).
+- A Subject, Sky, or other learned mask under a Fill is made again on
+  the filled picture
+  ([§445](https://github.com/jessolmstead/greycard/blob/master/docs/notes/445-a-learned-mask-made-again-under-a-fill.md)).
+- The status line keeps "the fill model is at work..." when a tool is
+  put down
+  ([§444](https://github.com/jessolmstead/greycard/blob/master/docs/notes/444-a-tools-hint-remembered.md)).
+
+### Library
 
 - The Library no longer develops every edited frame under a root
-  while it sits idle, which kept the CPU at 50 percent for minutes on
-  a large root: the pictures of edited frames are made for the rows
-  on screen and near them, the rest as you scroll to them, and the
-  status line says how many are being made
+  while idle; pictures are made near the screen, and the status line
+  counts them
   ([§452](https://github.com/jessolmstead/greycard/blob/master/docs/notes/452-the-edits-pictures-made-near-the-screen.md)).
-- From the export queue, the Library and Loupe buttons at the top now
-  go back to what was open before the queue, on the same frame with
-  its tools; before, Loupe showed the queued frame frozen with no
-  tools and nothing saying why. Opening a queued tile still shows it
-  as it will export, and says so
-  ([§456](https://github.com/jessolmstead/greycard/blob/master/docs/notes/456-the-way-back-from-the-export-queue.md)).
-- In the Loupe, a drag that starts on the canvas round the picture no
-  longer pans it; a drag on the picture does, and a picture dragged
-  out of view can be dragged back from anywhere
-  ([§455](https://github.com/jessolmstead/greycard/blob/master/docs/notes/455-a-pan-from-a-press-on-the-picture.md)).
-- In culling's compare view at 1:1, every frame is now shown from its
-  full camera JPEG, not only the chosen one; the others were scaled-up
-  previews, soft where sharpness was the question
-  ([§457](https://github.com/jessolmstead/greycard/blob/master/docs/notes/457-every-compared-frame-whole-at-one-to-one.md)).
-- Flipping With subfolders in the Loupe no longer reloads the frame
-  on screen, which made the navigator blink; the list changes under
-  it and the frame stays as it is
-  ([§458](https://github.com/jessolmstead/greycard/blob/master/docs/notes/458-the-switch-keeps-the-frame-on-screen.md)).
-- A Start in folder that holds only folders, a root or under one, now
-  opens at launch as it does from the folder tree, its folders as
-  tiles, or everything under it with With subfolders on; before, the
-  last folder opened in its place
-  ([§459](https://github.com/jessolmstead/greycard/blob/master/docs/notes/459-a-start-folder-of-folders.md)).
-- Scrolling the Library over a large root no longer jitters in place:
-  a picture arriving after a notch of the wheel brought the selected
-  frame's row back whole, undoing the notch
+- Scrolling over a large root no longer jitters in place
   ([§460](https://github.com/jessolmstead/greycard/blob/master/docs/notes/460-a-scroll-the-shapes-leave-alone.md)).
-- The Import sheet no longer loses its last line, and in a window
-  too short for it the rows scroll under the buttons; the sheet was
-  sized a line short for every note that wrapped
-  ([§461](https://github.com/jessolmstead/greycard/blob/master/docs/notes/461-a-sheet-sized-from-its-wrapped-notes.md)).
-- Back up's default folder for a shoot, after a day folder of
-  another shoot was backed up as year/shoot/day, is now year/shoot
-  beside the first shoot, not a folder inside it
+- The Library and Loupe buttons leave the export queue for what was
+  open before it
+  ([§456](https://github.com/jessolmstead/greycard/blob/master/docs/notes/456-the-way-back-from-the-export-queue.md)).
+- Flipping With subfolders in the Loupe keeps the frame on screen
+  ([§458](https://github.com/jessolmstead/greycard/blob/master/docs/notes/458-the-switch-keeps-the-frame-on-screen.md)).
+- A Start in folder of folders opens as it does from the folder tree
+  ([§459](https://github.com/jessolmstead/greycard/blob/master/docs/notes/459-a-start-folder-of-folders.md)).
+- Back up's default folder for the next shoot is beside the last one,
+  not inside it
   ([§462](https://github.com/jessolmstead/greycard/blob/master/docs/notes/462-the-next-shoot-beside-the-last-not-inside-it.md)).
-- A compact whose raw names its lens as a focal range, as CHDK's DNGs
-  do, now gets the body's lens profile instead of "no profile for"
-  ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).
-- An exported JPEG or TIFF now carries an ICC version 2 profile, so
-  Windows' photo viewer, which ignored the version 4 one and showed an
-  Adobe RGB export flat, reads it like Lightroom's
+- The Import sheet keeps its last line and scrolls in a short window
+  ([§461](https://github.com/jessolmstead/greycard/blob/master/docs/notes/461-a-sheet-sized-from-its-wrapped-notes.md)).
+
+### Loupe and export
+
+- A drag on the canvas round the picture no longer pans it
+  ([§455](https://github.com/jessolmstead/greycard/blob/master/docs/notes/455-a-pan-from-a-press-on-the-picture.md)).
+- Compare at 1:1 shows every frame from its full camera JPEG
+  ([§457](https://github.com/jessolmstead/greycard/blob/master/docs/notes/457-every-compared-frame-whole-at-one-to-one.md)).
+- Exports carry an ICC version 2 profile, which Windows' photo viewer
+  reads
   ([§451](https://github.com/jessolmstead/greycard/blob/master/docs/notes/451-version-2-profiles-in-exports.md)).
-- On a Mac, the first Subject or Background mask of a launch no longer
-  waits two minutes or more for Core ML, which cannot run that model;
-  it goes straight to the GPU
-  ([§441](https://github.com/jessolmstead/greycard/blob/master/docs/notes/441-subject-kept-off-core-ml.md)).
-- A fill, Patch, Fast, or Best, no longer comes back lighter than the
-  picture around it: its level is matched to the picture's across the
-  hole's edge, sector by sector so a hole that crosses from sky into
-  something dark is matched on the sky, and left alone where the edge
-  disagrees with itself or reads no more than the picture's own texture
-  ([§443](https://github.com/jessolmstead/greycard/blob/master/docs/notes/443-the-fills-level-across-its-edge.md),
-  [§447](https://github.com/jessolmstead/greycard/blob/master/docs/notes/447-the-fills-level-read-by-sector.md)).
-- A removed dark object no longer leaves a bright ghost of itself when
-  Shadows, Highlights, Whites, or Blacks are set: the plane those
-  sliders read to decide where to lift was made before the retouch and
-  still held the object; it is made after it now, for the viewport,
-  the export, and the thumbnails
-  ([§450](https://github.com/jessolmstead/greycard/blob/master/docs/notes/450-the-tones-guide-made-after-the-retouch.md)).
-- A fill's middle no longer drifts from the sky round it, grey and
-  warm in Patch, light and red in Fast and Best, which the edge match
-  cannot see: the picture round the hole is read as a smooth surface
-  and the fill's low-frequency departure from it is divided out, where
-  the surround is smooth enough to read
-  ([§448](https://github.com/jessolmstead/greycard/blob/master/docs/notes/448-the-fills-middle-against-the-surface-round-it.md)).
-- On the Export sheet, Enter presses Export and Esc presses Cancel,
-  unless a field or a control has the focus; the sheet took neither
-  before.
-- On a Mac, Settings' Canvas, Monitor, and Soft proof, and the rest of
-  the panel's choices, survive Cmd+Q: they are written as they change
-  rather than when the window closes, which Quit skipped; so is the
-  last edit before it
+- On the Export sheet, Enter exports and Esc cancels.
+- A compact whose raw names its lens as a focal range gets the body's
+  lens profile
+  ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).
+
+### Mac
+
+- Settings and the last edit survive Cmd+Q
   ([§449](https://github.com/jessolmstead/greycard/blob/master/docs/notes/449-the-panels-choices-written-as-they-change.md)).
-- The status line keeps "the fill model is at work..." when you put
-  the Fill tool down, or any tool while a develop runs; only the
-  tool's own hint goes
-  ([§444](https://github.com/jessolmstead/greycard/blob/master/docs/notes/444-a-tools-hint-remembered.md)).
-- A Subject, Sky, or other learned mask that a Fill lies over is made
-  again on the filled picture, so a person you removed leaves the mask
-  too
-  ([§445](https://github.com/jessolmstead/greycard/blob/master/docs/notes/445-a-learned-mask-made-again-under-a-fill.md)).
-- A fill's grain is read right where a dark, quiet surround sits
-  beside strong texture
-  ([§398](https://github.com/jessolmstead/greycard/blob/master/docs/notes/398-the-frames-grain-under-a-fill.md)).
-- A Fast fill's green and magenta blotches are smoothed out, down to
-  the picture's own color noise round the hole, with its luma and any
-  color edge that follows it left as they were. Fills made before
-  this version are made again once when the photo is next opened
-  ([§446](https://github.com/jessolmstead/greycard/blob/master/docs/notes/446-the-fills-chroma-mottle.md)).
+- The first Subject or Background mask no longer waits minutes for
+  Core ML
+  ([§441](https://github.com/jessolmstead/greycard/blob/master/docs/notes/441-subject-kept-off-core-ml.md)).
 
 ## 0.9.0, 2026-10-27
 
