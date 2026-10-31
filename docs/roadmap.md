@@ -615,8 +615,8 @@ touches.
 - [ ] The engine, part 2 (§454): greycard-engine with the stage list
       defined once, the worker and its collaborators moved, core's
       `finish` trimmed to prepare, the reduced develop on the list;
-      exports byte-equal before and after (part 1 landed, §464).
-      Waits on a design pass on the stage list's type
+      exports byte-equal before and after (part 1 landed, §464; the
+      list's type decided, §469)
 - [ ] The engine, part 3 (§454): the viewport crate, the shader and
       its parity tests over gpu and render, Slint's pixel types out
       of it. Waits on part 2
