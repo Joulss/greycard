@@ -1055,7 +1055,11 @@ clears or a tester asks for it.
       toolbar (pixls, 2026-10-24)
 - [ ] A color negative photographed with a digital camera inverted:
       the film base sampled as the white point, each channel turned
-      about it, a curve per film stock later (pixls, 2026-10-28)
+      about it, a curve per film stock later (pixls, 2026-10-28). The
+      inversion a stage of its own before the tone tools, so Highlights
+      still lightens the highlights of the positive; swapping the
+      black and white points, as C1 and Lightroom make one do, turns
+      every slider round (reddit, 2026-10-31)
 - [ ] Open on the Library rather than the Loupe at launch, as a
       choice under Settings' Start in (discussion 51, 2026-10-28)
 - [ ] One instance: a file sent to a running greycard opens in it,
@@ -1110,6 +1114,13 @@ clears or a tester asks for it.
       than the middle (issue 56, 2026-10-30)
 - [ ] Sync from the open frame onto the selection by a middle-click
       on it, as DaVinci does (issue 56, 2026-10-30)
+- [ ] A pan while a tool is in hand: Space or Shift held with a
+      drag moves the picture without putting the heal brush down,
+      for dust at 100 to 300 percent (reddit, 2026-10-31)
+- [ ] Dust and scratches on a film scan found and healed in one go,
+      each spot listed so a wrong one can be removed or redrawn; the
+      camera-scanning workflow alongside digital raws (reddit,
+      2026-10-31)
 
 ## Blocked
 
