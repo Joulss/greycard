@@ -434,10 +434,6 @@ ask for first.
       and Portrait differ from each other (issue #49, 0.8.1; §122
       applies the matrix and hue map only); the tone curve stays a
       Look choice. After 0.9.0
-- [ ] Two profile files with the same name inside list as one when
-      they are the same profile, else by file name, so a body's
-      Adobe Standard saved under two names is not two entries
-      (discussion 59, 2026-10-31)
 - [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
       that project under the GPL, so they can be hosted by us as the
       Sky model is and fetched into the profile directory from the

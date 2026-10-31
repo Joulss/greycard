@@ -482,3 +482,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§467. A library target for the windowless modules](notes/467-a-library-target-for-the-windowless-modules.md) (2026-10-31)
 - [§468. The borrow that names both sides](notes/468-the-borrow-that-names-both-sides.md) (2026-10-31)
 - [§469. The stage list, once](notes/469-the-stage-list-once.md) (2026-10-31)
+- [§470. One profile under two file names](notes/470-one-profile-under-two-file-names.md) (2026-10-31)

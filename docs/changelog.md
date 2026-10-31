@@ -14,6 +14,9 @@ design note behind it.
   Core ML, nor 4.5 at each launch after; the Sky model and the
   learned denoiser open in under half a second once they have run
   ([§466](https://github.com/jessolmstead/greycard/blob/master/docs/notes/466-sky-on-core-ml-without-its-weights-as-text.md)).
+- A camera profile saved under two file names lists once, and two
+  profiles with one name show their file names
+  ([§470](https://github.com/jessolmstead/greycard/blob/master/docs/notes/470-one-profile-under-two-file-names.md)).
 
 ## 0.9.1, 2026-10-29
 

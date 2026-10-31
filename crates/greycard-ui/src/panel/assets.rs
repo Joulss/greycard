@@ -614,8 +614,8 @@ fn body_of(st: &State) -> greycard_edit::camera::Body<'_> {
 
 /// What the CAMERA PROFILE section lists for the open file: the
 /// file's own calibrations first, then the profiles in the profile
-/// directory that were made for this camera, then the chosen one when
-/// it is neither.
+/// directory that were made for this camera, one row a profile however
+/// many files hold it, then the chosen one when it is neither.
 pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
     let body = body_of(st);
     let mut names = vec![slint::SharedString::from(greycard_edit::camera::EMBEDDED)];
@@ -624,10 +624,12 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     let chosen_name = chosen.name().to_string();
     let chosen = chosen_name.as_str();
     let mut hidden = 0;
-    for e in &st.develop.profiles {
+    let mut rows = Vec::new();
+    // One row a profile: a file that is the same profile as another is
+    // left out, and the one the edit names stands for its pair.
+    for e in greycard_edit::camera::listed(&st.develop.profiles, chosen) {
         if e.fits(body) || e.name == chosen {
-            names.push(e.name.as_str().into());
-            labels.push(e.label().into());
+            rows.push(e);
         } else {
             hidden += 1;
             // The name each side goes by, so a profile hidden by a
@@ -640,6 +642,18 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
                 body.names()
             );
         }
+    }
+    // Two different profiles can go by one name on the same rows: two
+    // files made for one body, or for the body under each of its
+    // names. The file name beside each tells them apart.
+    for e in &rows {
+        let label = e.label();
+        let twin = rows.iter().filter(|o| o.label() == label).count() > 1;
+        names.push(e.name.as_str().into());
+        labels.push(match twin && label != e.name {
+            true => format!("{label} ({})", e.name).into(),
+            false => label.into(),
+        });
     }
     // A profile the edit names and the directory does not have is
     // still shown, and chosen, so the panel says what the edit says.
@@ -2102,5 +2116,94 @@ mod tests {
         state.borrow_mut().window.batch = true;
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(!app.get_fetch_open());
+    }
+
+    /// The CAMERA PROFILE rows for `profiles` on an EOS 850D, also
+    /// sold as the Rebel T8i, with `chosen` named by the edit.
+    fn profile_rows(
+        profiles: Vec<greycard_edit::camera::Entry>,
+        chosen: &str,
+    ) -> (Vec<String>, Vec<String>, App) {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.camera = ("Canon".into(), "EOS 850D".into());
+            st.develop.other_names = vec!["EOS Rebel T8i".into()];
+            st.develop.profiles = profiles;
+        }
+        let choice = greycard_edit::camera::ProfileChoice::from_name(chosen);
+        show_profiles(&state.borrow(), &choice, &app);
+        let strings = |m: ModelRc<slint::SharedString>| m.iter().map(|s| s.to_string()).collect();
+        let names = strings(app.get_camera_profile_names());
+        let labels = strings(app.get_camera_profile_labels());
+        (names, labels, app)
+    }
+
+    /// An Adobe Standard made for `camera`, in a file named `name`.
+    fn adobe_standard(
+        name: &str,
+        camera: &str,
+        same_as: Option<&str>,
+    ) -> greycard_edit::camera::Entry {
+        greycard_edit::camera::Entry {
+            name: name.into(),
+            path: std::path::PathBuf::new(),
+            title: Some("Adobe Standard".into()),
+            unique_camera_model: Some(camera.into()),
+            copyright: None,
+            same_as: same_as.map(str::to_string),
+        }
+    }
+
+    /// One profile saved under two file names is one row, the file the
+    /// edit names standing for the pair; two that differ show their
+    /// file names.
+    #[test]
+    fn a_profile_under_two_names_is_one_row() {
+        let rebel = "Canon EOS Rebel T8i";
+        let pair = || {
+            vec![
+                adobe_standard("Canon EOS 850D Adobe Standard", rebel, None),
+                adobe_standard(rebel, rebel, Some("Canon EOS 850D Adobe Standard")),
+            ]
+        };
+        let (names, labels, app) = profile_rows(pair(), "embedded");
+        assert_eq!(names, ["embedded", "Canon EOS 850D Adobe Standard"]);
+        assert_eq!(labels, ["Embedded", "Adobe Standard"]);
+        assert!(app.get_camera_profile_note().is_empty(), "nothing hidden");
+        // A sidecar naming the other file: that file is the row.
+        let (names, labels, app) = profile_rows(pair(), rebel);
+        assert_eq!(names, ["embedded", rebel]);
+        assert_eq!(labels, ["Embedded", "Adobe Standard"]);
+        assert!(app.get_camera_profile_warning().is_empty());
+        // Two that differ: both, each with its file name.
+        let twins = vec![
+            adobe_standard("new", rebel, None),
+            adobe_standard("old", rebel, None),
+        ];
+        let (_, labels, _) = profile_rows(twins, "embedded");
+        assert_eq!(
+            labels,
+            ["Embedded", "Adobe Standard (new)", "Adobe Standard (old)"]
+        );
+    }
+
+    /// Two different profiles naming the body by its two names both fit
+    /// it, so both are listed, and the file names tell them apart.
+    #[test]
+    fn a_body_s_two_names_profiles_list_with_their_file_names() {
+        let profiles = vec![
+            adobe_standard("850D", "Canon EOS 850D", None),
+            adobe_standard("T8i", "Canon EOS Rebel T8i", None),
+            // Another body's is not on these rows, so it is no twin.
+            adobe_standard("R5", "Canon EOS R5", None),
+        ];
+        let (names, labels, _) = profile_rows(profiles, "embedded");
+        assert_eq!(names, ["embedded", "850D", "T8i"]);
+        assert_eq!(
+            labels,
+            ["Embedded", "Adobe Standard (850D)", "Adobe Standard (T8i)"]
+        );
     }
 }

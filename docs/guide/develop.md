@@ -141,7 +141,10 @@ develop with.
 A DCP profile gives Adobe's rendering of your camera, or a profile
 made for your own copy of it. Put `.dcp` files in the folder the
 section names (`greycard/profiles` in your data directory). The list
-shows the profiles made for the open frame's camera.
+shows the profiles made for the open frame's camera, by the name inside
+each file. The same profile copied under two file names is listed once;
+two different profiles listed with one name show their file names in
+parentheses.
 
 Where to get profiles:
 

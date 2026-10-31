@@ -131,11 +131,17 @@ pub struct Entry {
     /// The camera it was made for, when it says.
     pub unique_camera_model: Option<String>,
     pub copyright: Option<String>,
+    /// The entry this file is the same profile as, byte for byte under
+    /// another file name: that one stands for both on the panel. The
+    /// file is still an entry, so an edit naming it still finds it.
+    pub same_as: Option<String>,
 }
 
 impl Entry {
     /// What the panel shows: the profile's own name when it has one
-    /// and it is not simply the file's name again.
+    /// and it is not simply the file's name again. Two that differ but
+    /// share it are told apart by the panel, which knows which rows
+    /// stand side by side.
     pub fn label(&self) -> &str {
         match &self.title {
             Some(title) if !title.is_empty() && title != &self.name => title,
@@ -217,16 +223,21 @@ fn folded(s: &str) -> String {
 /// look tables is megabytes of floats nobody has asked for yet, and
 /// this runs on the thread that draws the panel. The profile that is
 /// chosen is read in full by [`load`], once. A file that will not read
-/// is passed over with a word in the log.
+/// is passed over with a word in the log. Two that are one profile
+/// under two file names are paired by [`pair_up`].
 pub fn list() -> Vec<Entry> {
     // A listing is also the moment to let go of what was read before
     // it: a profile that has been replaced or is no longer wanted has
     // no claim on the memory its tables take.
     forget();
-    let Some(dir) = store_dir() else {
-        return Vec::new();
-    };
-    let Ok(read) = std::fs::read_dir(&dir) else {
+    match store_dir() {
+        Some(dir) => list_in(&dir),
+        None => Vec::new(),
+    }
+}
+
+fn list_in(dir: &Path) -> Vec<Entry> {
+    let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut out: Vec<Entry> = read
@@ -251,11 +262,93 @@ pub fn list() -> Vec<Entry> {
                 title: info.name,
                 unique_camera_model: info.unique_camera_model,
                 copyright: info.copyright,
+                same_as: None,
             })
         })
         .collect();
+    // By file name first, so "the first by name" below is this order.
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    pair_up(&mut out);
     out.sort_by_key(|e| e.label().to_lowercase());
     out
+}
+
+/// Two files that are one profile under two names, as a body's Adobe
+/// Standard saved once by its US name and once by its own, list as
+/// one. `entries` is in file-name order.
+///
+/// Only entries whose camera and name collide are looked at further,
+/// and only those whose lengths agree are read: the listing otherwise
+/// stays a header read.
+fn pair_up(entries: &mut [Entry]) {
+    let key = |e: &Entry| (e.folded_unique(), e.label().to_string());
+    let mut groups: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        groups.entry(key(e)).or_default().push(i);
+    }
+    for group in groups.values().filter(|g| g.len() > 1) {
+        // The same contents: equal lengths, then equal bytes, each
+        // file read at most once. A file that will not read is its own
+        // profile.
+        let lens: Vec<Option<u64>> = group
+            .iter()
+            .map(|&i| std::fs::metadata(&entries[i].path).ok().map(|m| m.len()))
+            .collect();
+        let mut contents: Vec<Option<Vec<u8>>> = vec![None; group.len()];
+        let mut same: Vec<Vec<usize>> = Vec::new();
+        for a in 0..group.len() {
+            let found = same.iter().position(|class| {
+                let b = class[0];
+                if lens[a].is_none() || lens[a] != lens[b] {
+                    return false;
+                }
+                for k in [a, b] {
+                    if contents[k].is_none() {
+                        contents[k] =
+                            Some(std::fs::read(&entries[group[k]].path).unwrap_or_default());
+                    }
+                }
+                contents[a].as_ref().is_some_and(|c| !c.is_empty()) && contents[a] == contents[b]
+            });
+            match found {
+                Some(c) => same[c].push(a),
+                None => same.push(vec![a]),
+            }
+        }
+        let same: Vec<Vec<usize>> = same
+            .into_iter()
+            .map(|class| class.into_iter().map(|k| group[k]).collect())
+            .collect();
+        for class in same.iter().filter(|c| c.len() > 1) {
+            // The file named for the profile stands for the pair, else
+            // the first by name.
+            let title = entries[class[0]].label().to_lowercase();
+            let stands = class
+                .iter()
+                .copied()
+                .find(|&i| entries[i].name.to_lowercase().contains(&title))
+                .unwrap_or(class[0]);
+            let name = entries[stands].name.clone();
+            for &i in class.iter().filter(|&&i| i != stands) {
+                entries[i].same_as = Some(name.clone());
+            }
+        }
+    }
+}
+
+/// The entries the panel lists, one a profile: an entry that is the
+/// same profile as another is left out, unless it is the one `chosen`
+/// names, which then stands for the pair in the other's place so the
+/// list shows what the edit names.
+pub fn listed<'a>(entries: &'a [Entry], chosen: &str) -> impl Iterator<Item = &'a Entry> {
+    let instead = entries
+        .iter()
+        .find(|e| e.name == chosen)
+        .and_then(|e| e.same_as.as_deref());
+    entries.iter().filter(move |e| match &e.same_as {
+        Some(_) => e.name == chosen,
+        None => Some(e.name.as_str()) != instead,
+    })
 }
 
 /// What a path read to last time.
@@ -375,6 +468,7 @@ mod tests {
             title: None,
             copyright: None,
             unique_camera_model: Some("Canon EOS R5".into()),
+            same_as: None,
         };
         let theirs = Entry {
             name: "theirs".into(),
@@ -437,6 +531,7 @@ mod tests {
             title: None,
             unique_camera_model: unique.map(str::to_string),
             copyright: None,
+            same_as: None,
         }
     }
 
@@ -509,6 +604,7 @@ mod tests {
             title: Some("Canon EOS R6 Neutral".into()),
             unique_camera_model: None,
             copyright: None,
+            same_as: None,
         };
         assert_eq!(entry.label(), "Canon EOS R6 Neutral");
         entry.title = None;
@@ -519,11 +615,16 @@ mod tests {
     /// `hues` changes both what is in it and how long it is, so a
     /// rewrite is a different file whatever the clock's resolution.
     fn a_profile_file(path: &Path, hues: usize) {
+        a_profile(path, "Test Camera Neutral", "Test Cam", hues);
+    }
+
+    /// [`a_profile_file`] with its own name and camera.
+    fn a_profile(path: &Path, name: &str, camera: &str, hues: usize) {
         use greycard_core::dcp::{DcpCalibration, EmbedPolicy, HueSatMap};
         let matrix = [0.8, -0.1, -0.1, -0.4, 1.3, 0.1, 0.0, -0.2, 0.9];
         let dcp = Dcp {
-            name: Some("Test Camera Neutral".into()),
-            unique_camera_model: Some("Test Cam".into()),
+            name: Some(name.into()),
+            unique_camera_model: Some(camera.into()),
             copyright: Some("public domain".into()),
             calibration_signature: None,
             embed_policy: EmbedPolicy::AllowCopying,
@@ -635,6 +736,85 @@ mod tests {
         assert!(
             !CACHE.lock().unwrap().contains_key(&path),
             "a header read keeps nothing"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn labels<'a>(entries: &'a [Entry], chosen: &str) -> Vec<&'a str> {
+        listed(entries, chosen).map(Entry::label).collect()
+    }
+
+    /// The tester's case: a body's Adobe Standard saved under its own
+    /// name and under its US one is one profile, listed once, by the
+    /// file named for the profile even when it is not the first by
+    /// name; an edit naming the other file still finds it, and it fits
+    /// the body by its other name.
+    #[test]
+    fn one_profile_under_two_file_names_lists_once() {
+        let dir = scratch("pair");
+        let rebel = "Canon EOS Rebel T8i";
+        let (first, named) = ("Canon EOS 850D", "Canon EOS Rebel T8i Adobe Standard");
+        for name in [first, named] {
+            a_profile(&dir.join(format!("{name}.dcp")), "Adobe Standard", rebel, 4);
+        }
+        let entries = list_in(&dir);
+        assert_eq!(entries.len(), 2, "both files are entries");
+        let shown: Vec<&str> = listed(&entries, EMBEDDED)
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(shown, [named]);
+        assert_eq!(labels(&entries, EMBEDDED), ["Adobe Standard"]);
+        // A sidecar naming the other file shows that file in its place.
+        let shown: Vec<&str> = listed(&entries, first).map(|e| e.name.as_str()).collect();
+        assert_eq!(shown, [first]);
+        assert_eq!(labels(&entries, first), ["Adobe Standard"]);
+        // And the warning finds it by its name, not its label.
+        let aliases = ["EOS Rebel T8i".to_string()];
+        let body = Body::new("Canon", "EOS 850D", &aliases);
+        assert!(warning(&entries, body, first).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Two profiles of one name for one camera, with different tables,
+    /// are two profiles: both listed, for the panel to tell apart.
+    #[test]
+    fn two_profiles_of_one_name_both_list() {
+        let dir = scratch("twins");
+        let rebel = "Canon EOS Rebel T8i";
+        a_profile(&dir.join("old.dcp"), "Adobe Standard", rebel, 4);
+        a_profile(&dir.join("new.dcp"), "Adobe Standard", rebel, 8);
+        // The same length, different bytes: read, and kept apart.
+        a_profile(
+            &dir.join("other.dcp"),
+            "Adobe Standard",
+            "CANON EOS REBEL T8I",
+            4,
+        );
+        let tables = |n: &str| std::fs::read(dir.join(n)).unwrap();
+        let mut other = tables("other.dcp");
+        let last = other.len() - 1;
+        other[last] ^= 1;
+        std::fs::write(dir.join("other.dcp"), &other).unwrap();
+        assert_eq!(other.len(), tables("old.dcp").len());
+        let entries = list_in(&dir);
+        let shown: Vec<&str> = listed(&entries, EMBEDDED)
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(shown, ["new", "old", "other"]);
+        assert!(entries.iter().all(|e| e.same_as.is_none()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// One name for two cameras: two profiles, listed plainly.
+    #[test]
+    fn one_name_for_two_cameras_lists_plainly() {
+        let dir = scratch("cameras");
+        a_profile(&dir.join("r5.dcp"), "Adobe Standard", "Canon EOS R5", 4);
+        a_profile(&dir.join("z8.dcp"), "Adobe Standard", "NIKON Z 8", 4);
+        let entries = list_in(&dir);
+        assert_eq!(
+            labels(&entries, EMBEDDED),
+            ["Adobe Standard", "Adobe Standard"]
         );
         std::fs::remove_dir_all(&dir).ok();
     }

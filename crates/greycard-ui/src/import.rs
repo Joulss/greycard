@@ -2417,6 +2417,7 @@ mod tests {
             title: None,
             unique_camera_model: Some("Nikon Z 9".into()),
             copyright: None,
+            same_as: None,
         }];
         let r = go(&o);
         assert_eq!((r.frames, r.preset, r.profile_left_off), (1, 1, 1), "{r:?}");

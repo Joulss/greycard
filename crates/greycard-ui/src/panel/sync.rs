@@ -1940,6 +1940,7 @@ mod tests {
             title: None,
             unique_camera_model: made_for.map(str::to_string),
             copyright: None,
+            same_as: None,
         }
     }
 
