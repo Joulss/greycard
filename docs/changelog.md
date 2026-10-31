@@ -55,6 +55,10 @@ disk image's install window.
   too short for it the rows scroll under the buttons; the sheet was
   sized a line short for every note that wrapped
   ([§461](https://github.com/jessolmstead/greycard/blob/master/docs/notes/461-a-sheet-sized-from-its-wrapped-notes.md)).
+- Back up's default folder for a shoot, after a day folder of
+  another shoot was backed up as year/shoot/day, is now year/shoot
+  beside the first shoot, not a folder inside it
+  ([§462](https://github.com/jessolmstead/greycard/blob/master/docs/notes/462-the-next-shoot-beside-the-last-not-inside-it.md)).
 - A compact whose raw names its lens as a focal range, as CHDK's DNGs
   do, now gets the body's lens profile instead of "no profile for"
   ([§453](https://github.com/jessolmstead/greycard/blob/master/docs/notes/453-a-named-lens-the-database-lacks-falls-to-the-body.md)).

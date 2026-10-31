@@ -96,9 +96,11 @@ pub enum BackupDefault {
     /// own name in it. From a folder above this one, or from the most
     /// recent pairing of the same root.
     Inside,
-    /// The parent of the most recent destination chosen from the same
-    /// root to this archive, that destination named as its source, with
-    /// the folder's own name.
+    /// The folder's place beside the most recent destination chosen
+    /// from the same root to this archive, that destination named as
+    /// its source: the pairing read back up to the folder the two
+    /// sources share, as far as the destination mirrors the source's
+    /// names, with the folder's path under it.
     Sibling,
     /// `<archive>/<root's label>/<path under the root>`.
     Mirror,
@@ -522,8 +524,10 @@ impl Roots {
     ///   the folder's own name in it;
     /// - the most recent destination chosen from a folder under `base`
     ///   to `archive`, unless that source is under `folder` (a root
-    ///   after one of its shoots): named as its source, its parent with
-    ///   the folder's own name (a sibling); a container, the container
+    ///   after one of its shoots): named as its source, the folder's
+    ///   place beside it, the pairing read back up to the folder the
+    ///   two sources share (a day under one shoot, then the next shoot
+    ///   beside the first, not inside it); a container, the container
     ///   with the folder's own name in it;
     /// - the mirror, `<archive>/<base's label>/<path under base>`.
     pub fn backup_default(
@@ -557,6 +561,25 @@ impl Roots {
             if !self.named_as_itself(recent) {
                 return (recent.dest.join(name), BackupDefault::Inside);
             }
+            // Up from the pairing, a level a turn while the destination
+            // keeps the source's name, to the folder the two sources
+            // share: the folder's path under it, under the destination
+            // there. A shoot's day was backed up as `<year>/<shoot>/<day>`;
+            // the next shoot goes to `<year>/<its name>`, beside the
+            // first and not inside it.
+            let (mut src, mut dst) = (recent.source.as_path(), recent.dest.as_path());
+            while src.file_name().is_some()
+                && src.file_name() == dst.file_name()
+                && let (Some(s), Some(d)) = (src.parent(), dst.parent())
+                && d.starts_with(archive)
+            {
+                (src, dst) = (s, d);
+                if let Ok(rel) = folder.strip_prefix(src) {
+                    return (dst.join(rel), BackupDefault::Sibling);
+                }
+            }
+            // The names part ways above the pairing: beside it as a
+            // sibling, by the folder's own name.
             if let Some(parent) = recent.dest.parent().filter(|d| d.starts_with(archive)) {
                 return (parent.join(name), BackupDefault::Sibling);
             }
@@ -1824,6 +1847,47 @@ mod tests {
         assert_eq!(
             roots.backup_default(&local.join("2026"), &local, &nas),
             (nas.join("local").join("2026"), BackupDefault::Mirror)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The most recent pairing is deeper than the folder: a day under
+    /// one shoot, backed up as `<year>/<shoot>/<day>`. The next shoot
+    /// goes beside the first, `<year>/<its name>`, not inside the
+    /// first shoot. Where the destination stops mirroring the
+    /// source's names, the old sibling rule holds.
+    #[test]
+    fn a_shoot_after_a_day_of_another_goes_beside_that_shoot() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-day-then-shoot");
+        let day = local.join("fall").join("2026-10-07");
+        let trip = local.join("trip");
+        let year = nas.join("2026");
+        assert!(roots.set_backup_folder(&day, &nas, &year.join("fall").join("2026-10-07")));
+        assert_eq!(
+            roots.backup_default(&trip, &local, &nas),
+            (year.join("trip"), BackupDefault::Sibling)
+        );
+        // A day of the trip, the same way: beside the fall shoot's
+        // days' parent, under its own shoot.
+        assert_eq!(
+            roots
+                .backup_default(&trip.join("2026-10-25"), &local, &nas)
+                .0,
+            year.join("trip").join("2026-10-25")
+        );
+        // The shoot's other day, beside the first.
+        assert_eq!(
+            roots
+                .backup_default(&local.join("fall").join("2026-10-05"), &local, &nas)
+                .0,
+            year.join("fall").join("2026-10-05")
+        );
+        // The names part ways one level up (the shoot renamed on the
+        // archive): the next shoot is a sibling of the renamed one.
+        assert!(roots.set_backup_folder(&day, &nas, &year.join("autumn").join("2026-10-07")));
+        assert_eq!(
+            roots.backup_default(&trip, &local, &nas),
+            (year.join("autumn").join("trip"), BackupDefault::Sibling)
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
