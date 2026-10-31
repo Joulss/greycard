@@ -2249,4 +2249,30 @@ mod tests {
         assert!(url.ends_with("/docs/user-guide.md"), "{url}");
         assert!(url.contains(env!("CARGO_PKG_VERSION")));
     }
+
+    /// The rows' words wrap, and the list is measured for its pane: the
+    /// last row on screen in a tall window, and in a short one the list
+    /// scrolls to it.
+    #[test]
+    fn the_keys_sheet_keeps_its_last_row_under_wrapped_rows() {
+        let app = window(0);
+        let mut rows = vec![KeyRow {
+            heading: true,
+            keys: "Viewing".into(),
+            does: "".into(),
+        }];
+        let does = "shows the frame at its own size, centered on the point under \
+                    the pointer, and back to the fit on a second press";
+        rows.extend((0..12).map(|i| KeyRow {
+            heading: false,
+            keys: format!("Ctrl+Shift+{i}").into(),
+            does: format!("Row {i}: {does}").into(),
+        }));
+        // Opened, the sheet fills with the table's rows; these in their
+        // place.
+        app.set_keys_open(true);
+        crate::testing::settle(&app);
+        app.set_keys_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
+        crate::testing::keeps_its_last_line(&app, "Row 11: shows", (580.0, 600.0), 1400.0);
+    }
 }

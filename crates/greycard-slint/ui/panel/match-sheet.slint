@@ -120,13 +120,16 @@ export component MatchSheet inherits Rectangle {
                 // The list scrolls inside its box, as the snapshots do,
                 // so a library of many bodies keeps the buttons on
                 // screen.
-                // A line a group wraps to two or three, which the list's own
-                // preferred height does not count until it is laid out at
-                // its width: room for that, so a box is never hidden.
-                preferred-height: min(max(group-list.preferred-height, root.match-groups.length * 40px + 16px), 200px);
+                preferred-height: min(group-list.preferred-height, 200px);
                 max-height: self.preferred-height;
-                ScrollPane {
+                groups-scroll := ScrollPane {
+                    // The groups at their own height, a line wrapped to
+                    // two or three: left to itself the pane counts each
+                    // a line, and the last is cut with nothing to scroll.
+                    content-height: group-list.preferred-height;
+                    content-width: self.visible-width;
                     group-list := VerticalLayout {
+                        width: groups-scroll.visible-width;
                         padding: Theme.space-2;
                         padding-right: Theme.space-2 + Theme.scrollbar-band;
                         spacing: Theme.space-1;
@@ -173,11 +176,13 @@ export component MatchSheet inherits Rectangle {
                                 font-size: Theme.font-xs;
                                 color: group.checked ? Theme.text : Theme.text-muted;
                                 wrap: word-wrap;
+                                height: self.preferred-height;
                             }
                         }
                         if root.match-groups.length == 0 && root.match-list-note != "": Text {
                             text: root.match-list-note;
                             wrap: word-wrap;
+                            height: self.preferred-height;
                             font-size: Theme.font-xs;
                             color: Theme.text-muted;
                         }

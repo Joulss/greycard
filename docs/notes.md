@@ -477,3 +477,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§462. The next shoot beside the last, not inside it](notes/462-the-next-shoot-beside-the-last-not-inside-it.md) (2026-10-31)
 - [§463. greycard-edit split by part, its readers beside it](notes/463-greycard-edit-split-by-part-its-readers-beside-it.md) (2026-10-31)
 - [§464. The engine, part one: the helpers below the window](notes/464-the-engine-part-one-the-helpers-below-the-window.md) (2026-10-31)
+- [§465. The wrapped line the layout does not see](notes/465-the-wrapped-line-the-layout-does-not-see.md) (2026-10-31)

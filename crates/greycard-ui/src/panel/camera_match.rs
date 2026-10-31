@@ -1470,4 +1470,29 @@ mod tests {
         );
         assert!(summary(&Survey::default()).is_empty());
     }
+
+    /// A group's line wraps to two or three, and the list scrolls in its
+    /// box: the wheel over it reaches the last group whole.
+    #[test]
+    fn the_group_list_scrolls_to_its_last_wrapped_group() {
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1400.0));
+        let groups: Vec<MatchGroup> = (0..10)
+            .map(|i| MatchGroup {
+                name: format!("Body {i} Standard").into(),
+                text: format!(
+                    "Body {i} Standard: 14 frames, under the 20 a fit needs, so it \
+                     borrows the fit of the body's Neutral, the nearest style with \
+                     enough frames of its own, and is replaced only when asked"
+                )
+                .into(),
+                checked: true,
+            })
+            .collect();
+        app.set_match_groups(ModelRc::new(VecModel::from(groups)));
+        app.set_match_open(true);
+        crate::testing::wheel_brings_in(&app, "Body 9 Standard: 14", (500.0, 580.0));
+    }
 }

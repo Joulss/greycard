@@ -135,23 +135,29 @@ export component LightroomSheet inherits Rectangle {
         body := VerticalLayout {
             padding: Theme.space-5;
             spacing: Theme.space-2;
-            // The head.
+            // The head. Each wrapped note says its height: the sheet is
+            // sized from the body's, which otherwise counts a note in a
+            // layout of its own, as the warning's, one line however many
+            // it wraps to, and cuts the foot.
             Text {
                 text: root.lr-title;
                 font-size: Theme.font-lg;
                 font-weight: Theme.weight-medium;
                 color: Theme.text;
                 wrap: word-wrap;
+                height: self.preferred-height;
             }
             if root.lr-subtitle != "": Text {
                 text: root.lr-subtitle;
                 wrap: word-wrap;
+                height: self.preferred-height;
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
             }
             if root.lr-note != "": Text {
                 text: root.lr-note;
                 wrap: word-wrap;
+                height: self.preferred-height;
                 font-size: Theme.font-sm;
                 color: Theme.warn-red;
             }
@@ -161,12 +167,14 @@ export component LightroomSheet inherits Rectangle {
                 Text {
                     text: root.lr-warning;
                     wrap: word-wrap;
+                    height: self.preferred-height;
                     font-size: Theme.font-sm;
                     color: Theme.warn-red;
                 }
                 Text {
                     text: root.lr-remedy;
                     wrap: word-wrap;
+                    height: self.preferred-height;
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                 }
@@ -175,6 +183,7 @@ export component LightroomSheet inherits Rectangle {
             if root.lr-step > 0: Text {
                 text: root.lr-step == 1 ? root.lr-summary : root.lr-done;
                 wrap: word-wrap;
+                height: self.preferred-height;
                 font-size: Theme.font-sm;
                 color: Theme.text;
             }

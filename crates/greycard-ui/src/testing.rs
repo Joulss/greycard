@@ -340,6 +340,94 @@ pub(crate) fn rest_on(app: &App, label: &str) -> (f32, f32) {
     (x, y)
 }
 
+/// Timers and animations a few frames on, after a control a property
+/// has just brought in is built on the next event: a sheet's layout
+/// settled.
+pub(crate) fn settle(app: &App) {
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    for _ in 0..5 {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+    }
+}
+
+/// The top and height of the text that starts with `words`; `None`
+/// while it is clipped out of sight whole, as past a pane's foot.
+fn line_starting(app: &App, words: &str) -> Option<(f32, f32)> {
+    use i_slint_backend_testing::ElementHandle;
+    ElementHandle::find_by_element_type_name(app, "Text")
+        .find(|e| e.accessible_label().is_some_and(|l| l.starts_with(words)))
+        .map(|e| (e.absolute_position().y, e.size().height))
+}
+
+/// A sheet's scroller, the one `width` wide (at least the first
+/// number and under the second): its top left and size.
+fn pane(app: &App, width: (f32, f32)) -> (slint::LogicalPosition, slint::LogicalSize) {
+    use i_slint_backend_testing::ElementHandle;
+    ElementHandle::find_by_element_type_name(app, "Flickable")
+        .map(|e| (e.absolute_position(), e.size()))
+        .find(|(p, s)| s.width >= width.0 && s.width < width.1 && p.y > 0.0)
+        .expect("the sheet's pane")
+}
+
+/// Whether the line that starts with `last` lies whole inside the pane
+/// `pane_width` wide, as laid out now, and where it is.
+fn inside(app: &App, last: &str, pane_width: (f32, f32)) -> (bool, String) {
+    let (p, s) = pane(app, pane_width);
+    let foot = p.y + s.height;
+    match line_starting(app, last) {
+        Some((y, h)) => (
+            y >= p.y - 0.5 && y + h <= foot + 0.5,
+            format!("{last:?} at {y}+{h}, the pane {}..{foot}", p.y),
+        ),
+        None => (
+            false,
+            format!("{last:?} out of sight, the pane {}..{foot}", p.y),
+        ),
+    }
+}
+
+/// The line that starts with `last` is past the foot of the pane
+/// `pane_width` wide, and the wheel over the pane brings it in: the
+/// pane's content is as tall as what it draws.
+pub(crate) fn wheel_brings_in(app: &App, last: &str, pane_width: (f32, f32)) {
+    settle(app);
+    let (whole, said) = inside(app, last, pane_width);
+    assert!(!whole, "the wheel has nothing to prove: {said}");
+    let (p, s) = pane(app, pane_width);
+    for _ in 0..40 {
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(p.x + 40.0, p.y + (s.height / 2.0).min(40.0)),
+            delta_x: 0.0,
+            delta_y: -120.0,
+        });
+        settle(app);
+        if inside(app, last, pane_width).0 {
+            return;
+        }
+    }
+    let (_, said) = inside(app, last, pane_width);
+    panic!("the wheel left {said}");
+}
+
+/// A sheet whose notes wrap keeps its last line, the text that starts
+/// with `last`, in its pane `pane_width` wide: inside it in a window
+/// `tall` high, room for all of the sheet, and in one 400 high the
+/// wheel over the pane brings it in. A layout's preferred height, read
+/// as a property, can count a wrapped note as one line, and a sheet or
+/// a pane sized from it cuts its foot.
+pub(crate) fn keeps_its_last_line(app: &App, last: &str, pane_width: (f32, f32), tall: f32) {
+    app.window().set_size(slint::LogicalSize::new(1500.0, tall));
+    settle(app);
+    let (whole, said) = inside(app, last, pane_width);
+    assert!(whole, "in a window {tall} high, {said}");
+    app.window()
+        .set_size(slint::LogicalSize::new(1500.0, 400.0));
+    wheel_brings_in(app, last, pane_width);
+}
+
 /// A linear DNG of our own writing from a body of `make` and `model`, a
 /// textured scene of `width` by `height` with a ramp across it: a raw
 /// the engine opens and names by its body, which no sample raw in the

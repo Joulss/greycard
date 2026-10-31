@@ -1444,4 +1444,43 @@ mod tests {
         );
         assert_eq!(roots[1].catalog, "E:/2025/Shoots");
     }
+
+    /// The warning and its remedy wrap, and the sheet is sized from its
+    /// body's height: the details' last line on screen in a tall window,
+    /// and in a short one the details scroll to it.
+    #[test]
+    fn the_sheet_keeps_its_last_detail_under_a_wrapped_warning() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_lr_step(1);
+        app.set_lr_title("Import the catalog Shoots.lrcat".into());
+        app.set_lr_warning(
+            "The catalog was copied without its log: the edits Lightroom made \
+             since it last closed the catalog may be missing from what the \
+             import reads, and from what it writes."
+                .into(),
+        );
+        app.set_lr_remedy(
+            "Close Lightroom, so that it writes its log into the catalog, then \
+             copy the catalog again with the file beside it that ends in -wal, \
+             and choose the copy."
+                .into(),
+        );
+        app.set_lr_summary("12 frames to write, 3 collections, and 40 keywords.".into());
+        let details: Vec<ReportLine> = (0..20)
+            .map(|i| ReportLine {
+                label: "frame".into(),
+                text: format!("IMG_{i:04}.CR3: exposure, white balance, and crop").into(),
+            })
+            .collect();
+        app.set_lr_details(ModelRc::new(VecModel::from(details)));
+        app.set_lr_open(true);
+        crate::testing::settle(&app);
+        ElementHandle::find_by_accessible_label(&app, "Details")
+            .next()
+            .expect("the details' fold")
+            .invoke_accessible_default_action();
+        crate::testing::keeps_its_last_line(&app, "IMG_0019.CR3: exposure", (540.0, 560.0), 1000.0);
+    }
 }

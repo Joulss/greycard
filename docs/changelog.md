@@ -3,6 +3,14 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.9.2
+
+### Fixes
+
+- The Keys sheet reaches its last row, and the camera match sheet's
+  group list its last group, by the wheel
+  ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).
+
 ## 0.9.1, 2026-10-29
 
 Fixes for 0.9.0: fills matched to the surrounding picture, the

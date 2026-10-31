@@ -55,11 +55,18 @@ export component KeysSheet inherits Rectangle {
                         init => { self.focus(); }
                     }
                 }
-                ScrollPane {
+                scroll := ScrollPane {
                     // The window less the sheet's head and foot.
                     min-height: 80px;
                     preferred-height: list.preferred-height;
+                    // The rows at their own height, a row's words
+                    // wrapped: left to itself the pane counts each row
+                    // a line, and the last rows are cut with nothing to
+                    // scroll.
+                    content-height: list.preferred-height;
+                    content-width: self.visible-width;
                     list := VerticalLayout {
+                        width: scroll.visible-width;
                         alignment: start;
                         // Clear of the scroll bar's band.
                         padding-right: Theme.scrollbar-band;
@@ -80,12 +87,14 @@ export component KeysSheet inherits Rectangle {
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text;
                                 wrap: word-wrap;
+                                height: self.preferred-height;
                             }
                             if !row.heading: Text {
                                 text: row.does;
                                 font-size: Theme.font-sm;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
+                                height: self.preferred-height;
                             }
                         }
                         if root.rows.length == 0: Text {
