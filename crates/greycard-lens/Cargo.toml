@@ -12,8 +12,8 @@ repository.workspace = true
 log.workspace = true
 greycard-core = { path = "../greycard-core" }
 roxmltree.workspace = true
-ureq = "3"
+ureq.workspace = true
 bzip2 = "0.6"
-tar = "0.4"
+tar.workspace = true
 thiserror.workspace = true
 dirs.workspace = true

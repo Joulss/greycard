@@ -12,9 +12,9 @@ repository.workspace = true
 greycard-core = { path = "../greycard-core" }
 # The major Slint 1.18 pins (notes §91): the editor hands this crate
 # its own device, so the two must be one wgpu.
-wgpu = "30"
-bytemuck = { version = "1", features = ["derive"] }
-pollster = "0.4"
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 log.workspace = true
@@ -22,5 +22,5 @@ log.workspace = true
 [dev-dependencies]
 # The shader compiler wgpu carries, so `cargo test` validates the
 # WGSL without a GPU.
-naga = { version = "30", features = ["wgsl-in"] }
+naga.workspace = true
 anyhow.workspace = true

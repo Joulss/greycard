@@ -30,15 +30,11 @@ greycard-slint = { path = "../greycard-slint" }
 # the export.
 greycard-render = { path = "../greycard-render" }
 # winit's window behind Slint's, for the monitor the window opens on.
-# greycard-slint's Slint has the same features; keep the two lists the
-# same, or a build of that crate alone compiles it for a Slint of its
-# own and the next build of this one compiles it again.
-slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
-bytemuck = { version = "1", features = ["derive"] }
-# greycard-render's half and lcms2 are these, feature for feature;
-# keep the two lists the same.
-half = { version = "2", features = ["bytemuck"] }
-lcms2 = "6"
+slint.workspace = true
+bytemuck.workspace = true
+# greycard-render's half and lcms2, feature for feature.
+half = { workspace = true, features = ["bytemuck"] }
+lcms2.workspace = true
 rayon.workspace = true
 image.workspace = true
 clap.workspace = true
@@ -56,13 +52,13 @@ tracing-log.workspace = true
 webbrowser = "1.2"
 # The update check's one request to GitHub's releases API. The model
 # and lens downloads already bring it.
-ureq = "3"
+ureq.workspace = true
 # The import's verify, a hash of the whole file. The library's index
 # already brings it.
-blake3 = "1"
+blake3.workspace = true
 # Paths compared as the file system has them, without the prefix
 # Windows puts on a canonical path. The library already brings it.
-dunce = "1"
+dunce.workspace = true
 # A file's modification day in local time, for a name when the EXIF
 # has no date. rawler already brings it, clock and all.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -82,17 +78,17 @@ nikon-he = ["greycard-core/nikon-he"]
 # every other desktop takes its icon from the .desktop entry or the
 # bundle beside the binary.
 [target."cfg(windows)".build-dependencies]
-winresource = "0.1"
+winresource.workspace = true
 
 [dev-dependencies]
 # The shader compiler wgpu already carries, named here so `cargo test`
 # can parse and validate the WGSL without a GPU. Same version wgpu 30
 # resolves, so this adds nothing to the tree.
-naga = { version = "30", features = ["wgsl-in"] }
+naga.workspace = true
 # A headless backend so the window's key handling can be tested.
 i-slint-backend-testing = "1.18"
 # For a device of our own in the worker's GPU fallback tests.
-pollster = "0.4"
+pollster.workspace = true
 # The render crate's test helpers, which these tests share (a camera
 # profile, a scratch folder's removal, a watermark picture), and the
 # CPU references the viewport's tests hold the GPU to.
@@ -101,7 +97,7 @@ greycard-render = { path = "../greycard-render", features = ["testing"] }
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
 # A second connection that holds the library's write lock, for the
 # test of a locked index. The library's own, so nothing new in the tree.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite.workspace = true
 
 # The file chooser portal and colord are the desktop's on Linux.
 # zbus needs an async runtime named even where only its blocking API
@@ -121,14 +117,14 @@ rfd = { version = "0.17", default-features = false }
 # F_NOCACHE), and its sweep's check that a process is gone (kill with
 # signal 0). Already in the tree.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc.workspace = true
 
 # The same rename on Windows: MoveFileExW without REPLACE_EXISTING. The
 # version and feature greycard-edit already asks for. And the startup
 # info (GetStartupInfoW), for a shortcut set to open the window
 # maximized: a module of the same crate, nothing new in the tree.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 # The Finder's open: a method added to winit's application delegate,
 # and the URLs it is handed. winit carries both already on the Mac.

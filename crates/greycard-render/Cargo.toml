@@ -18,11 +18,11 @@ image.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 # The detail bands are half floats, and the export's ICC profiles and
-# conversions are lcms2's. Both are greycard-ui's, feature for feature;
-# keep the lists the same, so a build of this crate alone resolves them
-# as the editor's build does.
-half = { version = "2", features = ["bytemuck"] }
-lcms2 = "6"
+# conversions are lcms2's. Both are greycard-ui's, feature for feature,
+# so a build of this crate alone resolves them as the editor's build
+# does.
+half = { workspace = true, features = ["bytemuck"] }
+lcms2.workspace = true
 # The watermark's text: the system's sans-serif found the way Slint
 # finds its own, and rasterized. Both already in the tree.
 fontique = "0.11"

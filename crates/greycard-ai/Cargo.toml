@@ -46,15 +46,15 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "half",
     "load-dynamic",
 ] }
-half = "2"
-ureq = "3"
-sha2 = "0.10"
+half.workspace = true
+ureq.workspace = true
+sha2.workspace = true
 # Microsoft's CPU-only ONNX Runtime, fetched where the processor cannot
 # run greycard's own, comes as a tgz on Linux and a zip on Windows; the
 # zip is read by hand (`unpack`) with flate2's deflate. Both already in
 # the tree.
-flate2 = "1"
-tar = "0.4"
+flate2.workspace = true
+tar.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 serde.workspace = true
@@ -62,16 +62,16 @@ serde_json.workspace = true
 # Only to read `AdapterInfo` off a short-lived instance of our own for
 # the provider-outcome record; never used to render anything. Same
 # version `greycard-ui` gets through Slint.
-wgpu = { version = "30", optional = true }
-pollster = { version = "0.4", optional = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 
 # `runtime::leave`'s `_exit` and `ram`'s `sysconf`. Already in the tree.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc.workspace = true
 
 # `ram`'s `GlobalMemoryStatusEx`. Already in the tree.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
+windows-sys = { workspace = true, features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 image.workspace = true

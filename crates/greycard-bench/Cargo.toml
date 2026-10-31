@@ -24,4 +24,4 @@ clap.workspace = true
 anyhow.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
-half = "2"
+half.workspace = true

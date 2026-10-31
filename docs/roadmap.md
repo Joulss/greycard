@@ -641,9 +641,6 @@ touches.
 - [ ] One entry for every Slint callback that takes the State borrow
       and names the callback when it fails, so a re-entrant borrow
       reports itself (1521 borrow_mut sites, 10 try_borrow)
-- [ ] The dependencies repeated across manifests (slint, wgpu, half,
-      lcms2, blake3, and the rest) in the workspace table, and the
-      "keep the two lists the same" comments gone
 - [ ] greycard-edit's lib.rs (5900 lines: the struct, migrations, the
       sidecar, the history) split by part; the profile and look
       stores, the sync algorithm, and the importers to a sibling so

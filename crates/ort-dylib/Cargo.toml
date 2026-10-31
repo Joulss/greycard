@@ -14,8 +14,8 @@ anyhow.workspace = true
 # The same versions and features ort-sys's own download used, so the
 # lock file carries nothing new: ureq for the fetch, sha2 for the
 # check, lzma-rust2 for the archive (a raw LZMA2 stream, not .xz).
-ureq = "3"
-sha2 = "0.10"
+ureq.workspace = true
+sha2.workspace = true
 lzma-rust2 = { version = "0.15", default-features = false, features = ["std", "optimization"] }
 # Finds MSVC's link.exe and the LIB path it needs, the way cc does for
 # a build script; on the other hosts it is never called.

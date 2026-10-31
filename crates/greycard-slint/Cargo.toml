@@ -16,16 +16,16 @@ test = false
 doctest = false
 
 [dependencies]
-# The whole feature list greycard-ui's Slint has, not only what the
-# generated code needs, so Slint resolves the same whichever of the two
-# crates is named; keep the two lists the same. The rest of the tree
-# does not: on its own this crate leaves out features the editor's
-# other dependencies turn on (image, zbus, chrono and a dozen more), so
+# The workspace's Slint, the editor's whole feature list and
+# not only what the generated code needs, so Slint resolves the same
+# whichever of the two crates is named. The rest of the tree does not:
+# on its own this crate leaves out features the editor's other
+# dependencies turn on (image, zbus, chrono, and a dozen more), so
 # `cargo build -p greycard-slint` compiles a second copy of the Slint
 # stack and of this crate, which the editor's build does not use. Build
-# it through greycard-ui; a build of the editor, its tests or the
+# it through greycard-ui; a build of the editor, its tests, or the
 # workspace all resolve the same one.
-slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
+slint.workspace = true
 
 [build-dependencies]
 slint-build = "1.18"
