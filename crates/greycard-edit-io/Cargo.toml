@@ -1,0 +1,19 @@
+[package]
+name = "greycard-edit-io"
+version.workspace = true
+description = "The edit's files from elsewhere: Lightroom presets and XMP, RawTherapee profiles, and the XMP beside a frame"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+greycard-core = { path = "../greycard-core" }
+greycard-edit = { path = "../greycard-edit" }
+thiserror.workspace = true
+roxmltree.workspace = true
+# The kelvin and Duv of a chromaticity, for a RawTherapee profile's
+# white. Already in the tree through greycard-core.
+rawcolor.workspace = true

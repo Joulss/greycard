@@ -3,7 +3,7 @@
 //! makes, each write as JSON and read back equal.
 #![no_main]
 
-use greycard_edit::lightroom;
+use greycard_edit_io::lightroom;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

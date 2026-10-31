@@ -19,10 +19,10 @@
 //! meta keeps, `Places/Scotland/Skye`), the title and the caption go
 //! to the sidecar's meta as the catalog has them. The develop settings
 //! are the catalog's Lua table of Camera Raw keys, mapped by
-//! [`greycard_edit::lightroom::read_table`] and recorded as one named
+//! [`greycard_edit_io::lightroom::read_table`] and recorded as one named
 //! state over the frame's starting edit, for the user to see and
 //! redo, the crop with them where the file says its size
-//! ([`greycard_edit::lightroom::crop`]); what the mapper has no place
+//! ([`greycard_edit_io::lightroom::crop`]); what the mapper has no place
 //! for is counted by name. A
 //! virtual copy becomes a version of its file under the copy's name;
 //! the meta is the file's, so a copy rated or labeled apart from its
@@ -58,12 +58,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use greycard_edit::lightroom::{self, Value};
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
 use greycard_edit::{Edit, Placement, Sidecar};
+use greycard_edit_io::lightroom::{self, Value};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use greycard_edit::lightroom::crop::Crop;
+use greycard_edit_io::lightroom::crop::Crop;
 
 use crate::collections::{self, Collection, Reference, Smart};
 use crate::filter::{Filter, Saved};
@@ -3038,7 +3038,7 @@ fn xmp_title(blob: &[u8]) -> Option<String> {
     } else {
         inflated(blob)?
     };
-    let title = greycard_edit::xmp::read(&packet).ok()?.meta.title;
+    let title = greycard_edit_io::xmp::read(&packet).ok()?.meta.title;
     (!title.is_empty()).then_some(title)
 }
 

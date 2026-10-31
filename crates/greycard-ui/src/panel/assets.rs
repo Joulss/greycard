@@ -439,7 +439,7 @@ fn bring(store: &preset::Store, path: &Path) -> Brought {
     let file = file_name(path);
     // Never over a preset the list has: its bin is the way to a new
     // copy, and a refusal here says so.
-    match store.import(path, false) {
+    match greycard_edit_io::preset::import_into(store, path, false) {
         Ok((written, imported)) => {
             let preset = &imported.preset;
             tracing::info!(
@@ -463,8 +463,8 @@ fn bring(store: &preset::Store, path: &Path) -> Brought {
 
 /// Why a file was left out, as the look sheets say a refusal: a
 /// sentence, the file named.
-pub(crate) fn refusal_words(file: &str, e: &preset::ImportError) -> String {
-    use preset::ImportError;
+pub(crate) fn refusal_words(file: &str, e: &greycard_edit_io::preset::ImportError) -> String {
+    use greycard_edit_io::preset::ImportError;
     match e {
         ImportError::Unreadable(e) => format!("{file} could not be read: {e}."),
         ImportError::NotAPreset(why) => format!("{file} is not a preset: {why}."),

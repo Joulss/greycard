@@ -17,6 +17,7 @@ libfuzzer-sys = "0.4"
 serde_json = "1"
 greycard-core = { path = "../crates/greycard-core" }
 greycard-edit = { path = "../crates/greycard-edit" }
+greycard-edit-io = { path = "../crates/greycard-edit-io" }
 greycard-library = { path = "../crates/greycard-library" }
 
 # The same rawler the main build takes: a [patch] applies only from the

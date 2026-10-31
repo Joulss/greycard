@@ -1,0 +1,786 @@
+//! The edit and its parts: the struct, the look a mask can carry, and
+//! the engine settings an edit asks for.
+
+use serde::{Deserialize, Serialize};
+
+use greycard_core::develop::DevelopSettings;
+use greycard_core::develop::denoise::{DenoiseOptions, Strength};
+
+use crate::{
+    BlackWhite, Camera, Color, Curves, Demosaic, Detail, DisplayCurve, Geometry, Grading, Lens,
+    Light, LocalWhite, LookLut, Mask, Mixer, Noise, Result, Sharpen, Tint, VERSION, WhiteBalance,
+    grain, mask, migrate, retouch, vignette,
+};
+
+/// A development, described.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Edit {
+    /// Schema version of the struct as written.
+    pub version: u32,
+    pub light: Light,
+    /// The display curve under the light: per channel, as it always has
+    /// been, or AgX. Global, as the curve is; left out of a sidecar at its
+    /// default, so a picture nobody switched writes what it always wrote.
+    #[serde(skip_serializing_if = "DisplayCurve::is_channels")]
+    pub display_curve: DisplayCurve,
+    pub white_balance: WhiteBalance,
+    pub noise: Noise,
+    /// Local contrast, Texture and Clarity, on the developed picture
+    /// after the retouch and before the sharpen.
+    pub detail: Detail,
+    pub sharpen: Sharpen,
+    /// The parametric and point curves on the encoded picture, after
+    /// the tone curve.
+    pub curves: Curves,
+    /// The color mixer, by hue band, on the scene after exposure.
+    pub mixer: Mixer,
+    /// Global vibrance and saturation, in the same pass as the mixer.
+    #[serde(alias = "colour")]
+    pub color: Color,
+    /// The conversion to black and white, after the mixer and the
+    /// global color, before the curves and the grading. Global: a
+    /// mask carries a look, and a picture is mono or it is not.
+    pub bw: BlackWhite,
+    /// Color grading by lightness, after the curves, with them.
+    pub grading: Grading,
+    /// A tint toward one hue, in the same Oklab pass, last in it.
+    pub tint: Tint,
+    /// The look the picture finishes through: a 3D LUT by name and a
+    /// strength, after the tone curve and the point curves, before
+    /// the output transform (notes §78). Named `look_lut` and not
+    /// `look` because [`Look`] above is already the other thing the
+    /// word means here; the sidecar's key is `look`.
+    #[serde(rename = "look")]
+    pub look_lut: LookLut,
+    /// The lens's corrections, on the developed picture before
+    /// everything else that moves or shades it.
+    pub lens: Lens,
+    /// Straighten and crop, on the developed picture.
+    pub geometry: Geometry,
+    /// The vignette over the frame as shown.
+    pub vignette: vignette::Vignette,
+    /// The grain over the frame as shown.
+    pub grain: grain::Grain,
+    pub demosaic: Demosaic,
+    /// The camera profile the sensor's color is taken through: the
+    /// file's own calibrations, or a DCP from the profile directory.
+    pub camera: Camera,
+    /// Local adjustments: each a mask and a look of its own, blended
+    /// into the global look where the mask is.
+    pub adjustments: Vec<Adjustment>,
+    /// Spots and strokes healed or cloned, on the developed picture
+    /// before its look.
+    pub retouch: retouch::Retouch,
+}
+
+/// The part of an edit that is a look: what the viewport and the
+/// export apply after the develop, and what a mask can carry a
+/// version of.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Look {
+    pub light: Light,
+    pub curves: Curves,
+    pub mixer: Mixer,
+    #[serde(alias = "colour")]
+    pub color: Color,
+    pub grading: Grading,
+    pub tint: Tint,
+    /// A mask's own white balance, on the developed picture before
+    /// the rest of the look ([`white`]). Off on the global look, which
+    /// never reads it: the picture's white is the edit's, in the
+    /// develop. Left out of a sidecar while off with no light kept.
+    ///
+    /// [`white`]: crate::white
+    #[serde(skip_serializing_if = "LocalWhite::is_off")]
+    pub white_balance: LocalWhite,
+    /// A mask's own Texture, Clarity and Dehaze, put on at the finish
+    /// by its weight from the bands the develop keeps beside the
+    /// picture. Never read on the global look, whose Detail is the
+    /// edit's own, before the sharpen. Left out of a sidecar at its
+    /// default.
+    #[serde(skip_serializing_if = "Detail::is_default")]
+    pub detail: Detail,
+}
+
+/// Which of the detail bands some mask asks the develop for: the
+/// texture and clarity bands and the haze, each made only when an
+/// enabled mask with something in it has that slider off zero under
+/// its section's switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DetailWants {
+    pub texture: bool,
+    pub clarity: bool,
+    pub haze: bool,
+}
+
+impl DetailWants {
+    /// Whether any band is wanted at all.
+    pub fn any(&self) -> bool {
+        self.texture || self.clarity || self.haze
+    }
+
+    /// Whether planes made for these hold every one `other` asks for.
+    pub fn covers(&self, other: &DetailWants) -> bool {
+        (self.texture || !other.texture)
+            && (self.clarity || !other.clarity)
+            && (self.haze || !other.haze)
+    }
+}
+
+/// A local adjustment: a look where a mask says, with a stable id so
+/// the panel and the history can hold on to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Adjustment {
+    pub id: u64,
+    pub name: String,
+    pub enabled: bool,
+    pub mask: Mask,
+    pub look: Look,
+}
+
+impl Default for Adjustment {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: String::new(),
+            enabled: true,
+            mask: Mask::default(),
+            look: Look::default(),
+        }
+    }
+}
+
+impl Edit {
+    /// The edit a picture that is not a raw starts from: the default,
+    /// but with the capture sharpening off, since the file has been
+    /// sharpened once by whatever rendered it.
+    pub fn for_picture() -> Self {
+        Self {
+            sharpen: Sharpen {
+                enabled: false,
+                ..Sharpen::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    /// The color mixer as the picture takes it: nothing at all while
+    /// the black and white is on. A mono conversion has the last word
+    /// on hue and chroma, so two of the mixer's three sliders could
+    /// not reach the picture anyway, and the third, luminance, is a
+    /// second set of band gains over the conversion's own — the same
+    /// control twice, in two places, with no way to tell from the
+    /// picture which one did it. So the black and white takes the
+    /// section over: the switch and the sliders keep what they say
+    /// and come back untouched when it goes off again, and the panel
+    /// shows the section dimmed with its switch off while it is on.
+    /// A local adjustment's mixer is its mask's and is not touched.
+    pub fn acting_mixer(&self) -> Mixer {
+        if self.bw.enabled {
+            Mixer {
+                enabled: false,
+                ..Mixer::default()
+            }
+        } else {
+            self.mixer
+        }
+    }
+
+    /// The global look.
+    pub fn look(&self) -> Look {
+        Look {
+            light: self.light,
+            curves: self.curves.clone(),
+            mixer: self.mixer,
+            color: self.color,
+            grading: self.grading,
+            tint: self.tint,
+            white_balance: LocalWhite::Off,
+            detail: Detail::default(),
+        }
+    }
+
+    pub fn set_look(&mut self, look: Look) {
+        // The zero the exposure rests at is the edit's, not the look's:
+        // a look read off the panel's sliders knows nothing of it.
+        let baseline = self.light.baseline;
+        self.light = look.light;
+        self.light.baseline = baseline;
+        self.curves = look.curves;
+        self.mixer = look.mixer;
+        self.color = look.color;
+        self.grading = look.grading;
+        self.tint = look.tint;
+        // `look.white_balance` is a mask's alone: the picture's white
+        // is `white_balance`, in the develop. So is `look.detail`: the
+        // picture's is `detail`, before the sharpen.
+    }
+
+    /// The detail bands the masks ask for ([`DetailWants`]).
+    pub fn detail_wants(&self) -> DetailWants {
+        let mut wants = DetailWants::default();
+        for a in self
+            .adjustments
+            .iter()
+            .filter(|a| a.enabled && !a.mask.is_empty() && a.look.detail.enabled)
+        {
+            let d = &a.look.detail;
+            wants.texture |= d.texture != 0.0;
+            wants.clarity |= d.clarity != 0.0;
+            wants.haze |= d.dehaze != 0.0;
+        }
+        wants
+    }
+
+    /// The look of a target: an adjustment by index, or the global
+    /// look for none (or one that is gone).
+    pub fn target_look(&self, target: Option<usize>) -> Look {
+        match target.and_then(|i| self.adjustments.get(i)) {
+            Some(a) => a.look.clone(),
+            None => self.look(),
+        }
+    }
+
+    pub fn set_target_look(&mut self, target: Option<usize>, look: Look) {
+        match target.and_then(|i| self.adjustments.get_mut(i)) {
+            Some(a) => a.look = look,
+            None => self.set_look(look),
+        }
+    }
+
+    /// An id no adjustment has.
+    pub fn next_id(&self) -> u64 {
+        self.adjustments.iter().map(|a| a.id).max().unwrap_or(0) + 1
+    }
+}
+
+impl Default for Edit {
+    fn default() -> Self {
+        Self {
+            version: VERSION,
+            light: Light::default(),
+            display_curve: DisplayCurve::default(),
+            white_balance: WhiteBalance::default(),
+            noise: Noise::default(),
+            detail: Detail::default(),
+            sharpen: Sharpen::default(),
+            curves: Curves::default(),
+            mixer: Mixer::default(),
+            color: Color::default(),
+            bw: BlackWhite::default(),
+            grading: Grading::default(),
+            tint: Tint::default(),
+            look_lut: LookLut::default(),
+            lens: Lens::default(),
+            geometry: Geometry::default(),
+            vignette: vignette::Vignette::default(),
+            grain: grain::Grain::default(),
+            adjustments: Vec::new(),
+            demosaic: Demosaic::default(),
+            camera: Camera::default(),
+            retouch: retouch::Retouch::default(),
+        }
+    }
+}
+
+impl Edit {
+    /// The engine's settings for this edit. Exposure and the tone curve
+    /// are not the engine's; see [`Light`].
+    pub fn settings(&self) -> DevelopSettings {
+        DevelopSettings {
+            white_point: self.white_balance.white_point(),
+            // Read here, where every consumer's develop passes, so the
+            // viewport and the export cannot disagree about it. The
+            // file is read once and kept (see [`camera`]).
+            profile: self.camera.profile(),
+            demosaic: self.demosaic.method(),
+            denoise: self.noise.profiled_runs().then(|| DenoiseOptions {
+                strength: Strength::Fixed(self.noise.strength),
+                ..Default::default()
+            }),
+            sharpen: self.sharpen.options(),
+            dehaze: self.detail.dehaze_options(),
+            ..Default::default()
+        }
+    }
+
+    /// This edit for a frame turned `quarters` quarter turns
+    /// clockwise under it, so every part of it still means the same
+    /// pixels.
+    ///
+    /// Two different spaces move, and they move differently. The
+    /// geometry is in fractions of the leveled plane and needs no
+    /// aspect, so it always turns
+    /// ([`geometry::Geometry::under_turned_source`]). The masks and
+    /// the repair patches are in units of the developed picture's
+    /// *width*, both ways, so their map depends on the picture's
+    /// shape: `positions` is [`mask::Turned`] for it, and is `None`
+    /// when the caller does not know the shape. Then they are left
+    /// where they are and the caller says so; [`Edit::placed`] tells
+    /// it whether there was anything to leave.
+    ///
+    /// [`geometry::Geometry::under_turned_source`]: crate::geometry::Geometry::under_turned_source
+    pub fn turn(&mut self, quarters: i32, positions: Option<mask::Turned>) {
+        self.geometry = self.geometry.under_turned_source(quarters);
+        let Some(t) = positions.filter(|t| !t.is_identity()) else {
+            return;
+        };
+        for a in &mut self.adjustments {
+            a.mask.turn(t);
+        }
+        self.retouch.turn(t);
+    }
+
+    /// Whether anything here is placed on the picture itself — a
+    /// mask's shape, a repair patch — and so has to be carried round
+    /// by a turn of the frame rather than merely surviving it.
+    pub fn placed(&self) -> bool {
+        self.adjustments
+            .iter()
+            .any(|a| !a.mask.components.is_empty())
+            || !self.retouch.patches.is_empty()
+    }
+
+    /// Whether two edits develop the same image; the rest is the viewport's.
+    pub fn same_develop(&self, other: &Edit) -> bool {
+        self.same_patched(other)
+            && self.detail == other.detail
+            && self.sharpen == other.sharpen
+            && self.detail_wants() == other.detail_wants()
+    }
+
+    /// Whether the developed picture before its local contrast, its
+    /// dehaze and its sharpen is the same: the base and the retouch.
+    pub fn same_patched(&self, other: &Edit) -> bool {
+        self.same_base(other) && self.retouch == other.retouch
+    }
+
+    /// Whether two edits develop the same image before the sharpen,
+    /// which a consumer may cache and apply on its own.
+    pub fn same_base(&self, other: &Edit) -> bool {
+        self.white_balance == other.white_balance
+            && self.noise == other.noise
+            && self.demosaic == other.demosaic
+            && self.camera == other.camera
+            && self.lens == other.lens
+    }
+
+    /// Whether the learned denoiser would answer the same for both:
+    /// the same mosaic and tier. Its strength is a blend a consumer
+    /// applies on the answer it has.
+    pub fn same_learned(&self, other: &Edit) -> bool {
+        self.white_balance == other.white_balance
+            && self.demosaic == other.demosaic
+            && self.camera == other.camera
+            && self.noise.learned == other.noise.learned
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("an edit serializes")
+    }
+
+    pub fn from_json(json: &str) -> Result<Self> {
+        let value: serde_json::Value = serde_json::from_str(json)?;
+        Ok(serde_json::from_value(migrate(value)?)?)
+    }
+}
+
+/// `onto` with every leaf that differs between `before` and
+/// `touched` taking `touched`'s value: the one slider moved, and
+/// nothing else of `touched`. Arrays are leaves. Through the edit's
+/// JSON, which is the one flat view of every field there is.
+pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edit> {
+    use serde_json::Value;
+    fn overlay(before: &Value, touched: &Value, onto: &mut Value) {
+        match (before, touched) {
+            (Value::Object(b), Value::Object(t)) if onto.is_object() => {
+                for (key, tv) in t {
+                    match b.get(key) {
+                        Some(bv) if bv == tv => {}
+                        Some(bv) if bv.is_object() && tv.is_object() => {
+                            let slot = onto
+                                .as_object_mut()
+                                .expect("checked")
+                                .entry(key.clone())
+                                .or_insert_with(|| Value::Object(Default::default()));
+                            overlay(bv, tv, slot);
+                        }
+                        _ => {
+                            onto.as_object_mut()
+                                .expect("checked")
+                                .insert(key.clone(), tv.clone());
+                        }
+                    }
+                }
+            }
+            _ => {
+                if before != touched {
+                    *onto = touched.clone();
+                }
+            }
+        }
+    }
+    let before: Value = serde_json::from_str(&before.to_json())?;
+    let touched: Value = serde_json::from_str(&touched.to_json())?;
+    let mut result: Value = serde_json::from_str(&onto.to_json())?;
+    overlay(&before, &touched, &mut result);
+    Edit::from_json(&serde_json::to_string(&result)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Learned, Tone};
+    use greycard_core::color::WhitePoint;
+    use greycard_core::develop::dehaze::DehazeOptions;
+
+    fn masked(detail: Detail) -> Edit {
+        let mut edit = Edit::default();
+        edit.adjustments.push(Adjustment {
+            id: 1,
+            name: "Skin".into(),
+            mask: mask::Mask {
+                components: vec![mask::Component::default()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        edit.adjustments[0].look.detail = detail;
+        edit
+    }
+
+    /// A mask's Detail is written only when it is set, reads back
+    /// whole, and a sidecar without it reads as none.
+    #[test]
+    fn a_masks_detail_is_in_the_sidecar_only_when_set() {
+        let plain = masked(Detail::default());
+        let look = serde_json::to_value(&plain.adjustments[0].look).unwrap();
+        assert!(look.get("detail").is_none(), "{look}");
+        let set = masked(Detail {
+            texture: -0.5,
+            dehaze: 0.25,
+            ..Detail::default()
+        });
+        let read = Edit::from_json(&set.to_json()).unwrap();
+        assert_eq!(read, set);
+        let old = Edit::from_json(
+            r#"{"version":4,"adjustments":[{"id":1,"look":{"light":{"exposure":0.5}}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.adjustments[0].look.detail, Detail::default());
+        assert_eq!(old.adjustments[0].look.light.exposure, 0.5);
+    }
+
+    /// A build from before reads a look with a Detail in it as the
+    /// look without: the look has no `deny_unknown_fields`.
+    #[test]
+    fn a_build_before_reads_a_masks_detail_as_nothing() {
+        #[derive(Debug, Deserialize)]
+        #[serde(default)]
+        #[allow(dead_code)]
+        #[derive(Default)]
+        struct Before {
+            light: Light,
+            curves: Curves,
+            mixer: Mixer,
+            color: Color,
+            grading: Grading,
+            tint: Tint,
+            white_balance: LocalWhite,
+        }
+        let set = masked(Detail {
+            texture: -0.5,
+            ..Detail::default()
+        });
+        let json = serde_json::to_value(&set.adjustments[0].look).unwrap();
+        assert!(json.get("detail").is_some(), "{json}");
+        let before: Before = serde_json::from_value(json).unwrap();
+        assert_eq!(before.light, set.adjustments[0].look.light);
+        assert_eq!(before.tint, set.adjustments[0].look.tint);
+    }
+
+    /// The global look never carries one: the picture's Detail is the
+    /// edit's own, and setting the global look leaves it alone.
+    #[test]
+    fn the_global_look_never_reads_a_detail() {
+        let mut edit = Edit::default();
+        edit.detail.texture = 0.4;
+        assert_eq!(edit.look().detail, Detail::default());
+        let mut look = edit.look();
+        look.detail.texture = -1.0;
+        edit.set_look(look);
+        assert_eq!(edit.detail.texture, 0.4);
+    }
+
+    /// Which bands the masks ask for, and that a change in which is a
+    /// new develop while a change of amount is not.
+    #[test]
+    fn the_bands_wanted_follow_the_masks_that_ask() {
+        assert!(!Edit::default().detail_wants().any());
+        let quiet = masked(Detail::default());
+        assert!(!quiet.detail_wants().any());
+        let texture = masked(Detail {
+            texture: -0.5,
+            ..Detail::default()
+        });
+        assert_eq!(
+            texture.detail_wants(),
+            DetailWants {
+                texture: true,
+                ..Default::default()
+            }
+        );
+        assert!(!texture.same_develop(&quiet));
+        let mut more = texture.clone();
+        more.adjustments[0].look.detail.texture = -0.8;
+        assert!(more.same_develop(&texture));
+        // Off by the section's switch, by the adjustment's, or with
+        // nothing in the mask: nothing asked.
+        for off in [
+            {
+                let mut e = texture.clone();
+                e.adjustments[0].look.detail.enabled = false;
+                e
+            },
+            {
+                let mut e = texture.clone();
+                e.adjustments[0].enabled = false;
+                e
+            },
+            {
+                let mut e = texture.clone();
+                e.adjustments[0].mask.components.clear();
+                e
+            },
+        ] {
+            assert!(!off.detail_wants().any(), "{off:?}");
+        }
+        let all = masked(Detail {
+            texture: 0.1,
+            clarity: 0.2,
+            dehaze: -0.3,
+            ..Detail::default()
+        });
+        assert_eq!(
+            all.detail_wants(),
+            DetailWants {
+                texture: true,
+                clarity: true,
+                haze: true,
+            }
+        );
+    }
+
+    /// A control reached in culling: its change alone goes over the
+    /// culled frame's edit, and nothing else of the panel's, which
+    /// was another frame's.
+    #[test]
+    fn a_control_moved_in_culling_goes_over_the_frames_own_edit() {
+        // The panel showed the previous frame's edit: warm, with a
+        // contrast and a curve of its own.
+        let mut before = Edit::default();
+        before.light.exposure = 1.0;
+        before.light.tone.contrast = 1.4;
+        before.white_balance = WhiteBalance::Custom {
+            temperature: 3200.0,
+            tint: 0.01,
+        };
+        before.curves.rgb = vec![[0.0, 0.0], [0.5, 0.6], [1.0, 1.0]];
+        // The culled frame's own edit: cool, its own exposure, a mask.
+        let mut frame = Edit::default();
+        frame.light.exposure = -0.5;
+        frame.white_balance = WhiteBalance::Custom {
+            temperature: 6500.0,
+            tint: -0.02,
+        };
+        frame.adjustments.push(Adjustment {
+            id: 1,
+            name: "Sky".into(),
+            enabled: true,
+            mask: mask::Mask::default(),
+            look: Look::default(),
+        });
+        // One slider moved: the shadows.
+        let mut touched = before.clone();
+        touched.light.tone.shadows = 0.7;
+        let merged = overlay_changes(&before, &touched, &frame).unwrap();
+        let mut want = frame.clone();
+        want.light.tone.shadows = 0.7;
+        assert_eq!(merged, want);
+        // A whole array moved (a curve's points): the array comes
+        // across, and only it.
+        let mut touched = before.clone();
+        touched.curves.rgb = vec![[0.0, 0.1], [1.0, 1.0]];
+        let merged = overlay_changes(&before, &touched, &frame).unwrap();
+        let mut want = frame.clone();
+        want.curves.rgb = vec![[0.0, 0.1], [1.0, 1.0]];
+        assert_eq!(merged, want);
+        // Nothing moved: the frame's edit as it was.
+        assert_eq!(overlay_changes(&before, &before, &frame).unwrap(), frame);
+    }
+
+    #[test]
+    fn adjustments_round_trip_and_the_target_look_is_theirs() {
+        use mask::{Component, Shape};
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        let mut local = Look::default();
+        local.light.exposure = -1.0;
+        local.mixer.saturation[2] = 0.4;
+        edit.adjustments.push(Adjustment {
+            id: edit.next_id(),
+            name: "Linear 1".into(),
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Linear {
+                        from: [0.5, 0.0],
+                        to: [0.5, 0.4],
+                    },
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            look: local.clone(),
+            ..Default::default()
+        });
+        assert_eq!(edit.adjustments[0].id, 1);
+        assert_eq!(edit.next_id(), 2);
+        let back = Edit::from_json(&edit.to_json()).unwrap();
+        assert_eq!(back, edit);
+        assert_eq!(back.target_look(Some(0)), local);
+        assert_eq!(back.target_look(None).light.exposure, 0.5);
+        // A target that is gone is the global look; setting it sets that.
+        assert_eq!(back.target_look(Some(3)), back.look());
+        let mut moved = back.clone();
+        moved.set_target_look(Some(0), Look::default());
+        assert_eq!(moved.adjustments[0].look, Look::default());
+        moved.set_target_look(None, local.clone());
+        assert_eq!(moved.light.exposure, -1.0);
+        // Old sidecars have none.
+        let old: Edit = serde_json::from_str(r#"{"version":1}"#).unwrap();
+        assert!(old.adjustments.is_empty());
+    }
+
+    #[test]
+    fn round_trips_and_defaults() {
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.7;
+        edit.white_balance = WhiteBalance::Custom {
+            temperature: 3200.0,
+            tint: -0.004,
+        };
+        edit.noise = Noise {
+            enabled: true,
+            profiled: true,
+            strength: 2.0,
+            learned: Learned::Best,
+            learned_strength: 0.8,
+        };
+        edit.demosaic = Demosaic::Rcd;
+        let json = edit.to_json();
+        assert!(json.contains("\"mode\": \"custom\""), "{json}");
+        assert!(json.contains("\"demosaic\": \"rcd\""), "{json}");
+        assert!(json.contains("\"learned\": \"best\""), "{json}");
+        assert_eq!(Edit::from_json(&json).unwrap(), edit);
+        // An empty document is the default edit; unknown fields are ignored.
+        assert_eq!(Edit::from_json("{}").unwrap(), Edit::default());
+        let partial = r#"{"light": {"exposure": -1}, "future_field": 3}"#;
+        let e = Edit::from_json(partial).unwrap();
+        assert_eq!(e.light.exposure, -1.0);
+        assert_eq!(e.light.tone, Tone::default());
+        assert_eq!(e.version, VERSION);
+    }
+
+    #[test]
+    fn the_black_and_white_takes_the_mixer_over_and_gives_it_back() {
+        let mut edit = Edit::default();
+        edit.mixer.saturation[5] = -0.6;
+        edit.mixer.luminance[5] = 0.4;
+        assert_eq!(edit.acting_mixer(), edit.mixer);
+        edit.bw.enabled = true;
+        let acting = edit.acting_mixer();
+        assert!(!acting.enabled);
+        assert!(acting.is_identity(), "no band reaches the picture");
+        assert_eq!(acting.luminance[5], 0.0);
+        // The settings are kept, and come back as they were.
+        assert_eq!(edit.mixer.saturation[5], -0.6);
+        assert!(edit.mixer.enabled);
+        edit.bw.enabled = false;
+        assert_eq!(edit.acting_mixer(), edit.mixer);
+        // And a mixer switched off by hand stays off under it.
+        edit.mixer.enabled = false;
+        edit.bw.enabled = true;
+        assert!(!edit.acting_mixer().enabled);
+        edit.bw.enabled = false;
+        assert!(!edit.acting_mixer().enabled);
+    }
+
+    #[test]
+    fn settings_follow_the_edit() {
+        let mut edit = Edit::default();
+        assert!(edit.settings().denoise.is_none());
+        assert!(matches!(edit.settings().white_point, WhitePoint::AsShot));
+        edit.noise.profiled = true;
+        edit.white_balance = WhiteBalance::Custom {
+            temperature: 5000.0,
+            tint: 0.0,
+        };
+        let s = edit.settings();
+        assert!(
+            matches!(s.denoise, Some(DenoiseOptions { strength: Strength::Fixed(v), .. }) if v == 1.5)
+        );
+        assert!(matches!(s.white_point, WhitePoint::TempTint(_)));
+        let mut other = edit.clone();
+        other.light.exposure = 2.0;
+        assert!(edit.same_develop(&other));
+        other.demosaic = Demosaic::Vng4;
+        assert!(!edit.same_develop(&other));
+        let mut other = edit.clone();
+        other.detail.dehaze = 0.5;
+        assert!(edit.same_patched(&other), "the dehaze is after the base");
+        assert!(!edit.same_develop(&other));
+        assert!(edit.settings().dehaze.is_none());
+        assert_eq!(other.settings().dehaze, Some(DehazeOptions { amount: 0.5 }));
+        // The section's switch takes the dehaze with it.
+        other.detail.enabled = false;
+        assert!(other.settings().dehaze.is_none());
+        assert!(other.detail.options().is_none());
+    }
+
+    /// Found by fuzzing: without serde_json's `float_roundtrip`, these
+    /// white balance tints (from a Lightroom XMP, a catalog's table,
+    /// and a RawTherapee profile) read back a unit in the last place
+    /// off what was written.
+    #[test]
+    fn fuzz_a_white_balance_reads_back_to_the_last_bit() {
+        for tint in [
+            0.014999999664723873,
+            0.025333333760499954,
+            0.0013249980323305319,
+        ] {
+            let edit = Edit {
+                white_balance: WhiteBalance::Custom {
+                    temperature: 4800.0,
+                    tint,
+                },
+                ..Edit::default()
+            };
+            assert_eq!(Edit::from_json(&edit.to_json()).unwrap(), edit, "{tint}");
+        }
+    }
+
+    #[test]
+    fn an_edit_written_before_the_american_spelling_still_loads() {
+        // "colour" was the field name before the 2026-09-19 rename; an
+        // alias keeps sidecars written before it readable.
+        let json = r#"{"colour": {"enabled": true, "saturation": 0.4, "vibrance": 0.1}}"#;
+        let edit: Edit = serde_json::from_str(json).unwrap();
+        assert_eq!(edit.color.saturation, 0.4);
+        assert_eq!(edit.color.vibrance, 0.1);
+        let look: Look = serde_json::from_str(json).unwrap();
+        assert_eq!(look.color.saturation, 0.4);
+    }
+}

@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 
 /// A preset file's refusal as `--import` prints it, with the way past
 /// a name the store has.
-fn not_imported(path: &std::path::Path, e: &greycard_edit::preset::ImportError) -> String {
-    let hint = if matches!(e, greycard_edit::preset::ImportError::Taken(_)) {
+fn not_imported(path: &std::path::Path, e: &greycard_edit_io::preset::ImportError) -> String {
+    let hint = if matches!(e, greycard_edit_io::preset::ImportError::Taken(_)) {
         "; --replace writes over it"
     } else {
         ""
@@ -47,10 +47,10 @@ pub(crate) fn presets(
     for path in import {
         let (
             written,
-            greycard_edit::lightroom::Imported {
+            greycard_edit_io::lightroom::Imported {
                 preset, unmapped, ..
             },
-        ) = match store.import(path, replace) {
+        ) = match greycard_edit_io::preset::import_into(&store, path, replace) {
             Ok(got) => got,
             Err(e) => {
                 eprintln!("{}", not_imported(path, &e));
@@ -277,7 +277,7 @@ mod tests {
         assert!(open().find("Other").is_some(), "tried after the refusals");
         assert_eq!(amount(), 0.2, "refused, the one there is as it was");
         // What it printed for the name the store has.
-        let e = open().import(&gcp, false).unwrap_err();
+        let e = greycard_edit_io::preset::import_into(&open(), &gcp, false).unwrap_err();
         assert_eq!(
             super::not_imported(&gcp, &e),
             format!(

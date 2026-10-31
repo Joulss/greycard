@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 greycard-core = { path = "../greycard-core" }
 greycard-edit = { path = "../greycard-edit" }
+greycard-edit-io = { path = "../greycard-edit-io" }
 greycard-ai = { path = "../greycard-ai" }
 greycard-lens = { path = "../greycard-lens" }
 greycard-gpu = { path = "../greycard-gpu" }

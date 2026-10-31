@@ -108,11 +108,11 @@ pub(crate) use greycard_edit::meta::{self, Meta};
 pub(crate) use greycard_edit::mixer::BANDS;
 pub(crate) use greycard_edit::preset::{self, Entry, Section};
 pub(crate) use greycard_edit::retouch::{Method as RetouchMethod, Patch};
-pub(crate) use greycard_edit::xmp;
 pub(crate) use greycard_edit::{
     Adjustment, Color, Curves, Demosaic, Edit, Grain, Learned, Light, Look, Mixer, Preset, Sidecar,
     Tint, Vignette, WhiteBalance,
 };
+pub(crate) use greycard_edit_io::xmp;
 
 use crate::panel::color::WhiteKey;
 use crate::panel::cull::{Cull, deliver_preview};

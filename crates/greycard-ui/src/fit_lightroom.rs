@@ -17,7 +17,7 @@
 //!
 //! What is fitted: one exposure offset per body (where Lightroom's
 //! Exposure zero sits against ours), and the mapper's scales
-//! ([`greycard_edit::lightroom::Scales`]) in the order of how much they
+//! ([`greycard_edit_io::lightroom::Scales`]) in the order of how much they
 //! move a picture. The error minimized is the mean over frames of the
 //! frame's mean ΔE in Oklab against the export, brightness and all;
 //! the brightness-matched error is reported beside it. History pairs
@@ -36,9 +36,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use greycard_core::lut;
-use greycard_edit::lightroom::{self, Scales};
 use greycard_edit::look::{LookLut, LutChoice};
 use greycard_edit::{DisplayCurve, Edit};
+use greycard_edit_io::lightroom::{self, Scales};
 use greycard_match::color::{decode3, luminance, oklab};
 
 use crate::finish;

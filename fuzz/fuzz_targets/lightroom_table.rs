@@ -8,7 +8,7 @@
 
 use greycard_core::raw::Orientation;
 use greycard_edit::Edit;
-use greycard_edit::lightroom::{self, crop};
+use greycard_edit_io::lightroom::{self, crop};
 use libfuzzer_sys::fuzz_target;
 
 /// Frames the crop is placed on: as it is, turned in Lightroom and

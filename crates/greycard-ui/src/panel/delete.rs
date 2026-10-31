@@ -761,7 +761,7 @@ pub(crate) mod tests {
         s.meta.rating = 3;
         s.save(&files[1]).unwrap();
         s.save(&files[3]).unwrap();
-        greycard_edit::xmp::save(&files[1], &s.meta, None).unwrap();
+        greycard_edit_io::xmp::save(&files[1], &s.meta, None).unwrap();
         std::fs::write(dir.join("notes.txt"), b"mine").unwrap();
         files
     }

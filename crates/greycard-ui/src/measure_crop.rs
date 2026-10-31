@@ -279,7 +279,7 @@ fn frame(pair: &lx::Pair, shot: &lx::Shot, lenses: Option<&greycard_lens::Databa
         let on_side = shot
             .orientation
             .as_deref()
-            .and_then(greycard_edit::lightroom::crop::orientation_of)
+            .and_then(greycard_edit_io::lightroom::crop::orientation_of)
             .is_some_and(|o| {
                 matches!(
                     o,

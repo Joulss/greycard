@@ -641,10 +641,11 @@ touches.
 - [ ] One entry for every Slint callback that takes the State borrow
       and names the callback when it fails, so a re-entrant borrow
       reports itself (1521 borrow_mut sites, 10 try_borrow)
-- [ ] greycard-edit's lib.rs (5900 lines: the struct, migrations, the
-      sidecar, the history) split by part; the profile and look
-      stores, the sync algorithm, and the importers to a sibling so
-      the schema crate stays data and conversion
+- [ ] The profile and look stores out of greycard-edit: `settings()`
+      reads the camera profile and the look table through them, so a
+      loader handed in first, then the listing half to
+      greycard-edit-io (the split and the readers landed in §463;
+      sync stays, being data and conversion)
 - [ ] A one-page architecture document: each crate, what it may
       depend on, and which crate runs each pipeline stage, with the
       layer rule beside CLAUDE.md's core rule; §5 predates ai,

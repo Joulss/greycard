@@ -12,6 +12,7 @@ repository.workspace = true
 log.workspace = true
 greycard-core = { path = "../greycard-core" }
 greycard-edit = { path = "../greycard-edit" }
+greycard-edit-io = { path = "../greycard-edit-io" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

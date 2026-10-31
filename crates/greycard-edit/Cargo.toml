@@ -14,18 +14,12 @@ greycard-core = { path = "../greycard-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-roxmltree.workspace = true
 dirs.workspace = true
 # State ids and revisions in the sidecar (§233); the hash the library
 # and the editor already use for a file's identity.
 blake3.workspace = true
 # The host's name on a revision. Already in the tree through x11rb.
 gethostname = "1"
-# The kelvin and Duv of a chromaticity, for a RawTherapee profile's
-# white; and a camera profile made by hand, for the local white
-# balance's tests. Already in the tree through greycard-core.
-rawcolor.workspace = true
-
 [target.'cfg(unix)'.dependencies]
 # The errors a sync gives on a volume that cannot sync. Already in the
 # tree through greycard-ai and greycard-ui.
@@ -35,3 +29,8 @@ libc.workspace = true
 # For the hidden attribute on the sidecar folder; a leading dot hides
 # nothing on Windows.
 windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+# A camera profile made by hand, for the local white balance's tests.
+# Already in the tree through greycard-core.
+rawcolor.workspace = true

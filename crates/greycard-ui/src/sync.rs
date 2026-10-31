@@ -25,7 +25,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use greycard_edit::sync::{Compared, Side, compare, join};
-use greycard_edit::{Placement, Sidecar, xmp};
+use greycard_edit::{Placement, Sidecar};
+use greycard_edit_io::xmp;
 use greycard_library::{ArchiveWrite, Library};
 use slint::ComponentHandle;
 
@@ -2579,7 +2580,7 @@ pub(crate) mod tests {
         assert_eq!(compare(&here, &there), Compared::Same);
         assert_eq!(here, there);
         assert!(
-            !greycard_edit::xmp::paths_of(&copy).is_empty(),
+            !greycard_edit_io::xmp::paths_of(&copy).is_empty(),
             "the copy's XMP"
         );
         assert!(state.borrow().work.sync.queued.is_empty());
@@ -2594,7 +2595,7 @@ pub(crate) mod tests {
         state2.borrow_mut().sidecars[0].meta.rating = 3;
         save(&state2, 0.5);
         land_sent(&state2, &app2, &worker2);
-        assert!(greycard_edit::xmp::paths_of(&nas2.join("shoot").join("a.tif")).is_empty());
+        assert!(greycard_edit_io::xmp::paths_of(&nas2.join("shoot").join("a.tif")).is_empty());
         crate::testing::remove_scratch(state2, &dir2);
         crate::testing::remove_scratch(state, &dir);
     }

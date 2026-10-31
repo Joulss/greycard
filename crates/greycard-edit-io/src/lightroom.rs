@@ -21,11 +21,11 @@ use std::collections::BTreeMap;
 
 pub mod crop;
 
-use crate::curve::Point;
-use crate::grading::Wheel;
-use crate::mixer::BANDS;
-use crate::preset::{Preset, Section};
-use crate::{Edit, Error, Result, WhiteBalance};
+use greycard_edit::curve::Point;
+use greycard_edit::grading::Wheel;
+use greycard_edit::mixer::BANDS;
+use greycard_edit::preset::{Preset, Section};
+use greycard_edit::{Edit, Error, Result, WhiteBalance};
 
 /// The Camera Raw settings namespace.
 const CRS: &str = "http://ns.adobe.com/camera-raw-settings/1.0/";
@@ -187,9 +187,9 @@ impl Default for Scales {
 /// table carries some brightness of its own, so installing refitted
 /// tables means measuring again and changing the constant in the same
 /// commit. Measured against a default develop of
-/// [`crate::baseline::BEFORE_BODIES`] for every body; [`body_offset`]
+/// [`greycard_edit::baseline::BEFORE_BODIES`] for every body; [`body_offset`]
 /// takes off the change of a body's own baseline
-/// ([`crate::baseline::BODIES`]), so an imported frame lands where it
+/// ([`greycard_edit::baseline::BODIES`]), so an imported frame lands where it
 /// did before and a change to that table is the one change to make. A
 /// body not here takes [`UNKNOWN_BODY_OFFSET`]. The names are as the
 /// library names a camera (`camera_name`), compared with case, spaces
@@ -210,7 +210,7 @@ pub const UNKNOWN_BODY_OFFSET: f32 = 0.0;
 /// baseline since the measurement; [`UNKNOWN_BODY_OFFSET`] for none or
 /// one not measured.
 pub fn body_offset(camera: Option<&str>) -> f32 {
-    let key = crate::baseline::key;
+    let key = greycard_edit::baseline::key;
     let Some(camera) = camera else {
         return UNKNOWN_BODY_OFFSET;
     };
@@ -219,7 +219,9 @@ pub fn body_offset(camera: Option<&str>) -> f32 {
         .iter()
         .find(|(name, _)| key(name) == want)
         .map_or(UNKNOWN_BODY_OFFSET, |(_, measured)| {
-            measured - (crate::baseline::for_body(Some(camera)) - crate::baseline::BEFORE_BODIES)
+            measured
+                - (greycard_edit::baseline::for_body(Some(camera))
+                    - greycard_edit::baseline::BEFORE_BODIES)
         })
 }
 
@@ -1008,7 +1010,7 @@ pub fn oklab_hue(hsl_degrees: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preset::Section;
+    use greycard_edit::preset::Section;
 
     const SAMPLE: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000">
@@ -1132,7 +1134,7 @@ mod tests {
         assert_eq!(e.curves.rgb.len(), 3);
         assert!((e.curves.rgb[1][0] - 128.0 / 255.0).abs() < 1e-6);
         assert!((e.curves.rgb[2][1] - 245.0 / 255.0).abs() < 1e-6);
-        assert_eq!(e.curves.green, crate::curve::identity());
+        assert_eq!(e.curves.green, greycard_edit::curve::identity());
         let p = &e.curves.parametric;
         assert!((p.shadows + 0.15).abs() < 1e-6);
         assert_eq!(p.darks, 0.0);
@@ -1179,8 +1181,8 @@ mod tests {
         assert!((e.lens.manual + 0.02).abs() < 1e-6);
         assert_eq!(unmapped, vec!["ColorNoiseReduction"]);
         // Not touched: the demosaic and the geometry are not a preset's.
-        assert_eq!(e.demosaic, crate::Demosaic::default());
-        assert_eq!(e.geometry, crate::Geometry::default());
+        assert_eq!(e.demosaic, greycard_edit::Demosaic::default());
+        assert_eq!(e.geometry, greycard_edit::Geometry::default());
         // And it writes and reads as a preset of this engine's.
         assert_eq!(Preset::from_json(&preset.to_json()).unwrap(), preset);
     }
@@ -1195,7 +1197,7 @@ mod tests {
         assert_eq!(preset.name, "Mono", "the fallback when the file gives none");
         assert_eq!(preset.sections, vec![Section::Light, Section::BlackWhite]);
         // The mixer is left alone: the grey is the section's now.
-        assert_eq!(preset.edit.mixer, crate::Mixer::default());
+        assert_eq!(preset.edit.mixer, greycard_edit::Mixer::default());
         assert!(preset.edit.bw.enabled);
         assert!((preset.edit.bw.weights[0] - 0.4).abs() < 1e-6);
         assert!((preset.edit.bw.weights[5] + 0.6).abs() < 1e-6);
@@ -1206,7 +1208,7 @@ mod tests {
         let color = xml.replace(r#"crs:ConvertToGrayscale="True""#, "");
         let Imported { preset, .. } = read(&color, "Color").unwrap();
         assert_eq!(preset.sections, vec![Section::Light]);
-        assert_eq!(preset.edit.bw, crate::BlackWhite::OFF);
+        assert_eq!(preset.edit.bw, greycard_edit::BlackWhite::OFF);
     }
 
     #[test]
@@ -1406,8 +1408,8 @@ mod tests {
     #[test]
     fn an_imported_frame_lands_where_it_did_before_the_baselines() {
         for (body, measured) in BODY_OFFSETS {
-            let now = crate::baseline::for_body(Some(body)) + body_offset(Some(body));
-            let before = crate::baseline::BEFORE_BODIES + measured;
+            let now = greycard_edit::baseline::for_body(Some(body)) + body_offset(Some(body));
+            let before = greycard_edit::baseline::BEFORE_BODIES + measured;
             assert!(
                 (now - before).abs() < 1e-6,
                 "{body}: {now} against {before}"
@@ -1415,7 +1417,8 @@ mod tests {
         }
         let gfx = "Fujifilm GFX 100S II";
         let at_zero = read_table_for("s = { Exposure2012 = 0 }", "x", Some(gfx)).unwrap();
-        let stops = crate::baseline::for_body(Some(gfx)) + at_zero.preset.edit.light.exposure;
+        let stops =
+            greycard_edit::baseline::for_body(Some(gfx)) + at_zero.preset.edit.light.exposure;
         assert!((stops - (0.8 - 0.90)).abs() < 1e-6, "{stops}");
         assert_eq!(at_zero.preset.edit.light.baseline, None);
     }
@@ -1427,7 +1430,8 @@ mod tests {
     fn a_body_s_offset_goes_onto_the_exposure() {
         let gfx = "Fujifilm GFX 100S II";
         let want = body_offset(Some(gfx));
-        let moved = crate::baseline::for_body(Some(gfx)) - crate::baseline::BEFORE_BODIES;
+        let moved =
+            greycard_edit::baseline::for_body(Some(gfx)) - greycard_edit::baseline::BEFORE_BODIES;
         assert!(
             (want - (BODY_OFFSETS[0].1 - moved)).abs() < 1e-6,
             "the GFX offset"

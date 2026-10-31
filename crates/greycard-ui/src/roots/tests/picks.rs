@@ -826,7 +826,7 @@ fn the_culling_tiles_turn_a_frame_by_its_row() {
 /// opened, as they did when every sidecar was read.
 #[test]
 fn an_xmp_s_rating_shows_in_a_list_built_from_the_rows() {
-    use greycard_edit::xmp;
+    use greycard_edit_io::xmp;
     let dir = scratch("rows-xmp");
     let files = frames(&dir, &["a.tif", "b.tif"]);
     let three = Meta {

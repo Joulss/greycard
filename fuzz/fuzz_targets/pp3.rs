@@ -5,7 +5,7 @@
 #![no_main]
 
 use greycard_edit::Edit;
-use greycard_edit::pp3::{self, Carry, Frame};
+use greycard_edit_io::pp3::{self, Carry, Frame};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

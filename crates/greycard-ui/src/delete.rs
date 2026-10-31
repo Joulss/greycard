@@ -5,7 +5,7 @@
 //! What goes with a frame is what belongs to it and nothing else: the
 //! raw or picture itself, its `.gcd` in either place a sidecar is kept
 //! (beside it, or under the shoot's hidden folder), and the XMPs whose
-//! names are this frame's, as [`greycard_edit::xmp::paths_of`] names
+//! names are this frame's, as [`greycard_edit_io::xmp::paths_of`] names
 //! them for the move of the rejects. The short `IMG.xmp` is only this
 //! frame's when no other picture in the folder answers to `IMG`, so a
 //! raw deleted beside a JPEG listed apart leaves the XMP the two share.
@@ -201,7 +201,7 @@ pub(crate) fn sidecars_of(frame: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = [Placement::Beside, Placement::Folder]
         .into_iter()
         .map(|p| Sidecar::path_in(frame, p))
-        .chain(greycard_edit::xmp::paths_of(frame))
+        .chain(greycard_edit_io::xmp::paths_of(frame))
         .filter(|p| std::fs::symlink_metadata(p).is_ok())
         .collect();
     out.dedup();
@@ -303,13 +303,13 @@ impl Folders {
 /// The short XMP (`IMG.xmp`) a raw and its JPEGs share, when it is
 /// there and nothing else of its stem is: the pair's, which goes where
 /// the pair goes, though it is neither file's alone
-/// ([`greycard_edit::xmp::paths_of`]).
+/// ([`greycard_edit_io::xmp::paths_of`]).
 pub(crate) fn shared_xmp(
     raw: &Path,
     companions: &[PathBuf],
     folders: &mut Folders,
 ) -> Option<PathBuf> {
-    let short = greycard_edit::xmp::short_path(raw);
+    let short = greycard_edit_io::xmp::short_path(raw);
     std::fs::symlink_metadata(&short).ok()?;
     let (dir, stem) = (
         raw.parent()?,
@@ -664,10 +664,10 @@ mod tests {
         let mut s = Sidecar::default();
         s.meta.flag = Flag::Reject;
         s.save(&files[0]).unwrap();
-        greycard_edit::xmp::save(&files[0], &s.meta, None).unwrap();
+        greycard_edit_io::xmp::save(&files[0], &s.meta, None).unwrap();
         std::fs::write(
-            greycard_edit::xmp::long_path(&files[0]),
-            greycard_edit::xmp::fresh(&s.meta, None),
+            greycard_edit_io::xmp::long_path(&files[0]),
+            greycard_edit_io::xmp::fresh(&s.meta, None),
         )
         .unwrap();
         s.save_in(&files[1], Placement::Folder).unwrap();

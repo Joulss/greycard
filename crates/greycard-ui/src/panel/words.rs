@@ -744,8 +744,9 @@ mod tests {
             let s = greycard_edit::Sidecar::load(f).unwrap().expect("a sidecar");
             assert_eq!(s.meta.keywords, ["Harbor"], "{}", f.display());
             assert_eq!(s.meta.title, "Dusk");
-            let xmp = greycard_edit::xmp::path_of(f).expect("an XMP");
-            let packet = greycard_edit::xmp::read(&std::fs::read_to_string(&xmp).unwrap()).unwrap();
+            let xmp = greycard_edit_io::xmp::path_of(f).expect("an XMP");
+            let packet =
+                greycard_edit_io::xmp::read(&std::fs::read_to_string(&xmp).unwrap()).unwrap();
             assert_eq!(packet.meta.keywords, ["Harbor"]);
             assert_eq!(packet.meta.title, "Dusk");
         }

@@ -38,7 +38,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use greycard_edit::lightroom::{self, Value};
+use greycard_edit_io::lightroom::{self, Value};
 
 use crate::lightroom_catalog::{self, ImportError, RootReport};
 
@@ -146,7 +146,7 @@ fn long_over_short(w: f64, h: f64) -> Option<f64> {
     (short > 0.0).then(|| long / short)
 }
 
-pub use greycard_edit::lightroom::crop::Crop;
+pub use greycard_edit_io::lightroom::crop::Crop;
 
 /// The settings' top-level keys with their values as written; a nested
 /// table that holds anything (a curve, the masks) is its key with an

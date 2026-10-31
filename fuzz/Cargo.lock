@@ -461,12 +461,22 @@ dependencies = [
  "greycard-core",
  "libc",
  "log",
- "rawcolor",
- "roxmltree",
  "serde",
  "serde_json",
  "thiserror",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "greycard-edit-io"
+version = "0.9.1"
+dependencies = [
+ "greycard-core",
+ "greycard-edit",
+ "log",
+ "rawcolor",
+ "roxmltree",
+ "thiserror",
 ]
 
 [[package]]
@@ -475,6 +485,7 @@ version = "0.0.0"
 dependencies = [
  "greycard-core",
  "greycard-edit",
+ "greycard-edit-io",
  "greycard-library",
  "libfuzzer-sys",
  "serde_json",
@@ -490,6 +501,7 @@ dependencies = [
  "flate2",
  "greycard-core",
  "greycard-edit",
+ "greycard-edit-io",
  "image",
  "log",
  "notify",

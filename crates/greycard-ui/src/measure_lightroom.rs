@@ -110,12 +110,12 @@ pub(crate) struct Options {
     pub(crate) no_body_offset: bool,
     /// The mapper's scales for the run: the shipped ones unless
     /// `--scale` moved some.
-    pub(crate) scales: greycard_edit::lightroom::Scales,
+    pub(crate) scales: greycard_edit_io::lightroom::Scales,
 }
 
 /// `--measure-lightroom`, from the command line to the exit code.
 pub(crate) fn headless(cli: &crate::Cli, catalog: &Path) -> Result<std::process::ExitCode> {
-    let mut scales = greycard_edit::lightroom::Scales::DEFAULT;
+    let mut scales = greycard_edit_io::lightroom::Scales::DEFAULT;
     for given in &cli.scale {
         scales
             .set_from(given)
@@ -219,7 +219,7 @@ pub(crate) struct FrameLine {
     pub(crate) arrived: BTreeMap<String, f32>,
     pub(crate) camera: String,
     /// The stops the mapper added to the Exposure slider for the body
-    /// ([`greycard_edit::lightroom::body_offset`]); with
+    /// ([`greycard_edit_io::lightroom::body_offset`]); with
     /// `--no-body-offset`, the stops it would have added and did not.
     pub(crate) body_offset: f32,
     pub(crate) offset_applied: bool,
@@ -296,7 +296,7 @@ pub(crate) fn sliders(settings: &str, imported: Option<&str>) -> BTreeMap<String
 /// distance of a point curve's point from the diagonal, or of a
 /// parametric amount from zero on its own scale. None when straight.
 fn curve_bend(settings: &str) -> Option<f32> {
-    use greycard_edit::lightroom::{Value, parse_table};
+    use greycard_edit_io::lightroom::{Value, parse_table};
     let top = parse_table(settings).ok()?;
     let mut bend = 0.0f32;
     for (key, value) in &top {
@@ -1148,11 +1148,11 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
     }
     let mut out = report(line, frames);
     out.offsets_applied = !opts.no_body_offset;
-    out.scales_moved = greycard_edit::lightroom::Scales::NAMES
+    out.scales_moved = greycard_edit_io::lightroom::Scales::NAMES
         .iter()
         .filter_map(|n| {
             let v = opts.scales.get(n)?;
-            (v != greycard_edit::lightroom::Scales::DEFAULT.get(n)?).then(|| (n.to_string(), v))
+            (v != greycard_edit_io::lightroom::Scales::DEFAULT.get(n)?).then(|| (n.to_string(), v))
         })
         .collect();
     out.schema = schema;
@@ -1170,7 +1170,7 @@ fn frame(
     lenses: Option<&greycard_lens::Database>,
     blocks: Option<&Path>,
     apply_offset: bool,
-    scales: &greycard_edit::lightroom::Scales,
+    scales: &greycard_edit_io::lightroom::Scales,
 ) -> FrameLine {
     let words = lx::words(&pair.settings);
     let profile = profile_of(&words);
@@ -1399,7 +1399,7 @@ pub(crate) fn text(r: &Report) -> String {
             out,
             "{:<13} the settings were mapped with {name} at {v} rather than the shipped {}",
             "scale",
-            greycard_edit::lightroom::Scales::DEFAULT
+            greycard_edit_io::lightroom::Scales::DEFAULT
                 .get(name)
                 .unwrap_or(f32::NAN)
         );
@@ -1692,7 +1692,7 @@ mod tests {
             None,
             None,
             true,
-            &greycard_edit::lightroom::Scales::DEFAULT,
+            &greycard_edit_io::lightroom::Scales::DEFAULT,
         );
         assert_eq!(line.process.as_deref(), Some("5.7"));
         assert!(line.old_process && !line.global());

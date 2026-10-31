@@ -57,10 +57,10 @@
 //! frame's hand-set amounts as they are unless the profile sets some
 //! (or, forced, has the section at all).
 
-use crate::geometry::{Aspect, Crop, Geometry, MIN_CROP};
-use crate::meta::{Flag, Label, Meta, STARS};
-use crate::preset::{Choice, Part, Preset, Section};
-use crate::{Edit, Error, Result, Sidecar, WhiteBalance, history};
+use greycard_edit::geometry::{Aspect, Crop, Geometry, MIN_CROP};
+use greycard_edit::meta::{Flag, Label, Meta, STARS};
+use greycard_edit::preset::{Choice, Part, Preset, Section};
+use greycard_edit::{Edit, Error, Result, Sidecar, WhiteBalance, history};
 
 /// The profile versions this reader was written against: from the
 /// one that stored a histogram-matched curve's origin (RawTherapee
@@ -566,10 +566,12 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
         .unwrap_or(0);
     let hflip = p.flag("Coarse Transformation", "HorizontalFlip") == Some(true);
     let vflip = p.flag("Coarse Transformation", "VerticalFlip") == Some(true);
-    let angle = p
-        .num("Rotation", "Degree")
-        .filter(|d| *d != 0.0)
-        .map(|d| (d as f32).clamp(-crate::geometry::MAX_ANGLE, crate::geometry::MAX_ANGLE));
+    let angle = p.num("Rotation", "Degree").filter(|d| *d != 0.0).map(|d| {
+        (d as f32).clamp(
+            -greycard_edit::geometry::MAX_ANGLE,
+            greycard_edit::geometry::MAX_ANGLE,
+        )
+    });
     let crop = (p.flag("Crop", "Enabled") == Some(true)).then(|| {
         (
             p.num("Crop", "X").unwrap_or(0.0) as f32,
@@ -749,8 +751,8 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
     if let Some(a) = p.num("Distortion", "Amount").filter(wanted) {
         let (w, h) = frame.size.unwrap_or((3, 2));
         edit.lens.manual = poly3_for(a, w as f64, h as f64).clamp(
-            -crate::lens::MAX_MANUAL as f64,
-            crate::lens::MAX_MANUAL as f64,
+            -greycard_edit::lens::MAX_MANUAL as f64,
+            greycard_edit::lens::MAX_MANUAL as f64,
         ) as f32;
         parts.push(Part::LensDistortion);
         if a == 0.0 {
@@ -765,7 +767,7 @@ pub fn map(p: &Profile, frame: Frame, carry: Carry) -> Imported {
     let red = p.num("CACorrection", "Red").unwrap_or(0.0);
     let blue = p.num("CACorrection", "Blue").unwrap_or(0.0);
     if red != 0.0 || blue != 0.0 || (every && p.keys("CACorrection").is_some()) {
-        let m = crate::lens::MAX_MANUAL_CA;
+        let m = greycard_edit::lens::MAX_MANUAL_CA;
         edit.lens.ca_red = (red as f32).clamp(-m, m);
         edit.lens.ca_blue = (blue as f32).clamp(-m, m);
         parts.push(Part::LensManualChromaticAberration);
@@ -1182,9 +1184,9 @@ Method=amaze
         assert_eq!(e.geometry.aspect, Aspect::Ratio { w: 3.0, h: 2.0 });
         assert!(!e.geometry.portrait);
         // The base curve and everything not read stay as they were.
-        assert_eq!(e.curves, crate::Curves::default());
+        assert_eq!(e.curves, greycard_edit::Curves::default());
         assert_eq!(e.light.tone.contrast, 1.0);
-        assert_eq!(e.detail, crate::Detail::default());
+        assert_eq!(e.detail, greycard_edit::Detail::default());
         assert_eq!(
             i.skipped,
             ["Exposure Contrast", "Local Contrast"],
@@ -1837,7 +1839,7 @@ Method=amaze
         assert_eq!(e.light.exposure, 0.0);
         assert_eq!(e.light.tone.blacks, 0.0);
         assert_eq!(e.color.saturation, 0.0);
-        assert_eq!(e.geometry, crate::Geometry::default());
+        assert_eq!(e.geometry, greycard_edit::Geometry::default());
         assert!(!e.lens.profile);
         assert_eq!((e.lens.manual, e.lens.ca_red), (0.0, 0.0));
         // What it does not read is not touched.

@@ -108,7 +108,8 @@ let thumb = match thumbs.get(&key, 176, tag) {
 };
 ```
 
-This crate depends on `greycard-edit` for the sidecar and
-`greycard-core` for the probe, and never on a UI.
+This crate depends on `greycard-edit` for the sidecar,
+`greycard-edit-io` for the XMP and the Lightroom and RawTherapee
+readers, and `greycard-core` for the probe, and never on a UI.
 
 GPL-3.0-or-later, as the rest of greycard.

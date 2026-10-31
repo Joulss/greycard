@@ -1490,7 +1490,7 @@ fn move_into(
             .flat_map(|c| {
                 greycard_edit::Sidecar::find(c)
                     .into_iter()
-                    .chain(greycard_edit::xmp::paths_of(c))
+                    .chain(greycard_edit_io::xmp::paths_of(c))
             })
             .chain(
                 (!companions.is_empty())
@@ -1501,7 +1501,7 @@ fn move_into(
         let beside: Vec<(PathBuf, PathBuf)> = sidecar
             .iter()
             .cloned()
-            .chain(greycard_edit::xmp::paths_of(raw))
+            .chain(greycard_edit_io::xmp::paths_of(raw))
             .chain(theirs)
             .filter_map(|from| {
                 let file = from.file_name()?;
@@ -2060,13 +2060,13 @@ mod tests {
         sidecar.save(&e).unwrap();
         // B has an XMP under both names, which must not be left
         // pointing at a frame that has gone.
-        greycard_edit::xmp::save(&files[1], &sidecar.meta, None).unwrap();
+        greycard_edit_io::xmp::save(&files[1], &sidecar.meta, None).unwrap();
         std::fs::write(
-            greycard_edit::xmp::long_path(&files[1]),
-            greycard_edit::xmp::fresh(&sidecar.meta, None),
+            greycard_edit_io::xmp::long_path(&files[1]),
+            greycard_edit_io::xmp::fresh(&sidecar.meta, None),
         )
         .unwrap();
-        greycard_edit::xmp::save(&f, &sidecar.meta, None).unwrap();
+        greycard_edit_io::xmp::save(&f, &sidecar.meta, None).unwrap();
         std::fs::create_dir_all(rejects_dir(&dir)).unwrap();
         std::fs::write(rejects_dir(&dir).join("D.CR3"), b"older").unwrap();
         std::fs::write(rejects_dir(&dir).join("E.CR3.gcd"), b"older").unwrap();
@@ -2253,10 +2253,10 @@ mod tests {
         let a = rejects.join("A.CR3");
         rejected_frame(&a, greycard_edit::Placement::Beside);
         let meta = greycard_edit::Sidecar::load(&a).unwrap().unwrap().meta;
-        greycard_edit::xmp::save(&a, &meta, None).unwrap();
+        greycard_edit_io::xmp::save(&a, &meta, None).unwrap();
         std::fs::write(
-            greycard_edit::xmp::long_path(&a),
-            greycard_edit::xmp::fresh(&meta, None),
+            greycard_edit_io::xmp::long_path(&a),
+            greycard_edit_io::xmp::fresh(&meta, None),
         )
         .unwrap();
         assert_eq!(above_rejects(&a), Some(dir.clone()));
@@ -2304,7 +2304,7 @@ mod tests {
         rejected_frame(&a, greycard_edit::Placement::Beside);
         rejected_frame(&b, greycard_edit::Placement::Beside);
         let meta = greycard_edit::Sidecar::load(&b).unwrap().unwrap().meta;
-        greycard_edit::xmp::save(&b, &meta, None).unwrap();
+        greycard_edit_io::xmp::save(&b, &meta, None).unwrap();
         assert!(rejects.join("B.xmp").exists(), "B's own short XMP");
         // A's raw name is taken above; B's short XMP name is the
         // camera JPEG's there.
@@ -2463,21 +2463,21 @@ mod tests {
         // B with its short XMP; the rejects folder has B.JPG and its XMP.
         let b = dir.join("B.CR3");
         rejected_frame(&b, greycard_edit::Placement::Beside);
-        std::fs::write(dir.join("B.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
-        assert_eq!(greycard_edit::xmp::paths_of(&b), vec![dir.join("B.xmp")]);
+        std::fs::write(dir.join("B.xmp"), greycard_edit_io::xmp::fresh(&meta, None)).unwrap();
+        assert_eq!(greycard_edit_io::xmp::paths_of(&b), vec![dir.join("B.xmp")]);
         std::fs::write(rejects.join("B.JPG"), b"jpeg").unwrap();
         std::fs::write(rejects.join("B.xmp"), b"the jpeg's").unwrap();
         // C with its short XMP; the rejects folder has c.jpg, no XMP.
         let c = dir.join("C.CR3");
         rejected_frame(&c, greycard_edit::Placement::Beside);
-        std::fs::write(dir.join("C.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        std::fs::write(dir.join("C.xmp"), greycard_edit_io::xmp::fresh(&meta, None)).unwrap();
         std::fs::write(rejects.join("c.jpg"), b"jpeg").unwrap();
         // D with only its long XMP, and a d.jpg there: D goes.
         let d = dir.join("D.CR3");
         rejected_frame(&d, greycard_edit::Placement::Beside);
         std::fs::write(
-            greycard_edit::xmp::long_path(&d),
-            greycard_edit::xmp::fresh(&meta, None),
+            greycard_edit_io::xmp::long_path(&d),
+            greycard_edit_io::xmp::fresh(&meta, None),
         )
         .unwrap();
         std::fs::write(rejects.join("D.jpg"), b"jpeg").unwrap();
@@ -2524,7 +2524,7 @@ mod tests {
             for f in &pair {
                 rejected_frame(f, greycard_edit::Placement::Beside);
             }
-            std::fs::write(dir.join("A.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+            std::fs::write(dir.join("A.xmp"), greycard_edit_io::xmp::fresh(&meta, None)).unwrap();
 
             let out = move_rejects(&pair, &order).unwrap();
             assert_eq!(out.files.len(), 2, "{:?}", out.skipped);
@@ -2545,13 +2545,13 @@ mod tests {
         for f in &pair {
             rejected_frame(f, greycard_edit::Placement::Beside);
         }
-        std::fs::write(dir.join("A.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        std::fs::write(dir.join("A.xmp"), greycard_edit_io::xmp::fresh(&meta, None)).unwrap();
         let out = move_rejects(&pair, &[0]).unwrap();
         assert_eq!(out.files, vec![0]);
         assert_eq!(names(&rejects), ["A.CR3", "A.CR3.gcd"]);
         assert_eq!(names(&dir), ["A.JPG", "A.JPG.gcd", "A.xmp"]);
         assert_eq!(
-            greycard_edit::xmp::paths_of(&pair[1]),
+            greycard_edit_io::xmp::paths_of(&pair[1]),
             vec![dir.join("A.xmp")],
             "the JPEG's now"
         );
@@ -2587,7 +2587,7 @@ mod tests {
         let a = dir.join("A.CR3");
         rejected_frame(&a, greycard_edit::Placement::Beside);
         std::fs::write(dir.join("A.JPG"), b"jpeg").unwrap();
-        std::fs::write(dir.join("A.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        std::fs::write(dir.join("A.xmp"), greycard_edit_io::xmp::fresh(&meta, None)).unwrap();
         let four = ["A.CR3", "A.CR3.gcd", "A.JPG", "A.xmp"];
 
         let out = move_rejects(std::slice::from_ref(&a), &[0]).unwrap();

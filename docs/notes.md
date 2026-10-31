@@ -475,3 +475,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§460. A scroll the shapes leave alone](notes/460-a-scroll-the-shapes-leave-alone.md) (2026-10-31)
 - [§461. A sheet sized from its wrapped notes](notes/461-a-sheet-sized-from-its-wrapped-notes.md) (2026-10-31)
 - [§462. The next shoot beside the last, not inside it](notes/462-the-next-shoot-beside-the-last-not-inside-it.md) (2026-10-31)
+- [§463. greycard-edit split by part, its readers beside it](notes/463-greycard-edit-split-by-part-its-readers-beside-it.md) (2026-10-31)

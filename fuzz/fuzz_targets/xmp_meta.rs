@@ -5,8 +5,9 @@
 //! back the same.
 #![no_main]
 
+use greycard_edit::Sidecar;
 use greycard_edit::meta::Meta;
-use greycard_edit::{Sidecar, xmp};
+use greycard_edit_io::xmp;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

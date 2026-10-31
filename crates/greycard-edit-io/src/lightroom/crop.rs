@@ -8,7 +8,7 @@
 //! positive. The export is that rectangle sampled out, then turned by
 //! Lightroom's orientation of the image.
 //!
-//! Ours is the other way about ([`crate::geometry`]): the picture is
+//! Ours is the other way about ([`greycard_edit::geometry`]): the picture is
 //! taken the way up its tag and the frame's turn say, turned by the
 //! edit's quarter turns, then by the fine angle about its center, and
 //! the crop is an upright rectangle of that leveled plane. So the
@@ -30,8 +30,8 @@
 //! mirrored where the tag is not (Lightroom's Flip) has no quarter
 //! turn, and the crop is not carried.
 
-use crate::geometry::{self, Aspect, Geometry};
 use greycard_core::raw::Orientation;
+use greycard_edit::geometry::{self, Aspect, Geometry};
 
 /// Lightroom's crop: two opposite corners of the cropped rectangle, as
 /// shares of the file's width and height before any turn, and the angle

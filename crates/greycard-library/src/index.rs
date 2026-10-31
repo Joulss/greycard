@@ -750,7 +750,7 @@ fn move_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
 fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
     disk_call();
     let path = Sidecar::find(raw);
-    let xmp = greycard_edit::xmp::path_of(raw);
+    let xmp = greycard_edit_io::xmp::path_of(raw);
     if path.is_none() && xmp.is_none() {
         return None;
     }
@@ -1585,7 +1585,7 @@ struct Parsed {
     turn: u8,
     /// What the sidecar last took from an XMP, so the same XMP is not
     /// taken again.
-    mark: Option<greycard_edit::xmp::Adopted>,
+    mark: Option<greycard_edit_io::xmp::Adopted>,
     /// The edit, brought up to this build's shape; none when there is
     /// no `current` in the file.
     current: Option<greycard_edit::Edit>,
@@ -1699,7 +1699,7 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
         .cloned()
         .and_then(|m| serde_json::from_value(m).ok())
         .unwrap_or_default();
-    let mark: Option<greycard_edit::xmp::Adopted> = value
+    let mark: Option<greycard_edit_io::xmp::Adopted> = value
         .get("xmp")
         .cloned()
         .and_then(|m| serde_json::from_value(m).ok());
@@ -1780,7 +1780,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     if now.xmp.is_some() {
         // The camera's tag is asked for only when the packet says
         // something about the orientation, as the editor asks.
-        greycard_edit::xmp::adopt(raw, &mut sidecar, || {
+        greycard_edit_io::xmp::adopt(raw, &mut sidecar, || {
             disk_call();
             greycard_core::decode::orientation_path(raw)
                 .inspect_err(|e| log::warn!("{}: orientation: {e}", raw.display()))
@@ -2655,12 +2655,12 @@ pub(crate) mod tests {
         let (turned, plain) = (dir.join("turned.dng"), dir.join("plain.DNG"));
         write_mosaic_dng(&turned, "RGGB");
         write_mosaic_dng(&plain, "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG");
-        let xmp = greycard_edit::xmp::fresh(&Meta::default(), None).replace(
+        let xmp = greycard_edit_io::xmp::fresh(&Meta::default(), None).replace(
             "<rdf:Description rdf:about=\"\"",
             "<rdf:Description rdf:about=\"\" \
              xmlns:tiff=\"http://ns.adobe.com/tiff/1.0/\" tiff:Orientation=\"6\"",
         );
-        std::fs::write(greycard_edit::xmp::short_path(&turned), xmp).unwrap();
+        std::fs::write(greycard_edit_io::xmp::short_path(&turned), xmp).unwrap();
         greycard_core::decode::watch_maps_under(&dir);
         let mut lib = Library::open_in_memory().unwrap();
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
@@ -3664,7 +3664,7 @@ pub(crate) mod tests {
     /// share that stops answering mid-pass stops it holding no lock.
     #[test]
     fn a_batch_asks_the_disk_nothing_under_the_lock() {
-        use greycard_edit::xmp;
+        use greycard_edit_io::xmp;
         let dir = scratch("under-lock");
         let (r5, r6, a7) = shoot(&dir);
         let mut lib = Library::open_in_memory().unwrap();
@@ -5612,7 +5612,7 @@ pub(crate) mod tests {
     /// opinion; and a change to the XMP is a change to the row.
     #[test]
     fn a_row_takes_the_xmp_beside_the_frame_as_the_editor_does() {
-        use greycard_edit::xmp;
+        use greycard_edit_io::xmp;
         let dir = scratch("xmp");
         let only = dir.join("only.tif");
         let both = dir.join("both.tif");

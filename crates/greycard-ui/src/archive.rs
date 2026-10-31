@@ -326,7 +326,7 @@ pub(crate) fn frames_of(ask: &Ask, beat: &dyn Fn()) -> (Vec<PathBuf>, usize) {
 pub(crate) fn travelling(frame: &Path) -> Vec<PathBuf> {
     Sidecar::find(frame)
         .into_iter()
-        .chain(greycard_edit::xmp::paths_of(frame))
+        .chain(greycard_edit_io::xmp::paths_of(frame))
         .collect()
 }
 
@@ -430,9 +430,9 @@ pub(crate) fn compare_sidecars(
         }
         _ => {}
     }
-    let theirs_xmps = greycard_edit::xmp::paths_of(theirs);
+    let theirs_xmps = greycard_edit_io::xmp::paths_of(theirs);
     let mut answered = Vec::new();
-    for m in greycard_edit::xmp::paths_of(mine) {
+    for m in greycard_edit_io::xmp::paths_of(mine) {
         let t = sidecar_at(&m, mine, theirs);
         answered.push(t.clone());
         if std::fs::symlink_metadata(&t).is_err() {
@@ -693,7 +693,7 @@ pub(crate) fn sidecar_there(to: &Path) -> Option<PathBuf> {
     ]
     .into_iter()
     .find(|p| std::fs::symlink_metadata(p).is_ok())
-    .or_else(|| greycard_edit::xmp::paths_of(to).into_iter().next())
+    .or_else(|| greycard_edit_io::xmp::paths_of(to).into_iter().next())
 }
 
 /// The library opened on a job's thread with a busy handler that beats
@@ -2217,23 +2217,23 @@ mod tests {
         let files = shoot(&local);
         let b = &files[1];
         let mut meta = Sidecar::load(b).unwrap().unwrap().meta;
-        greycard_edit::xmp::save(b, &meta, None).unwrap();
+        greycard_edit_io::xmp::save(b, &meta, None).unwrap();
         let db = dir.join("library.sqlite");
         index(&db, &[&local, &nas]);
         let ask = backup_ask(&local, &nas, &db, false);
         let (cancel, bytes) = (AtomicBool::new(false), AtomicU64::new(0));
         run(&plan(&ask, &no_beat()), &quiet_hooks(&cancel, &bytes));
         let there = nas.join("local").join("shoot").join("b.tif");
-        let xmps_there = greycard_edit::xmp::paths_of(&there);
+        let xmps_there = greycard_edit_io::xmp::paths_of(&there);
         assert_eq!(xmps_there.len(), 1);
         // Here: two more saves of the edit, and the XMP an hour old.
         rate(b, 5, 2, Placement::Beside);
-        for x in greycard_edit::xmp::paths_of(b) {
+        for x in greycard_edit_io::xmp::paths_of(b) {
             set_time(&x, Duration::from_secs(60 * 60));
         }
         // There: the XMP written again, now, by another tool.
         meta.label = greycard_edit::meta::Label::Green;
-        greycard_edit::xmp::save(&there, &meta, None).unwrap();
+        greycard_edit_io::xmp::save(&there, &meta, None).unwrap();
         let theirs_before = std::fs::read(&xmps_there[0]).unwrap();
         index(&db, &[&local, &nas]);
         let plan = plan(&ask, &no_beat());
@@ -2257,7 +2257,7 @@ mod tests {
         let (back, held, _) = compare_sidecars(&there, b);
         assert!(!held);
         assert_eq!(back.len(), 1);
-        assert_eq!(back[0].to, greycard_edit::xmp::paths_of(b)[0]);
+        assert_eq!(back[0].to, greycard_edit_io::xmp::paths_of(b)[0]);
         assert!(back[0].replace);
         crate::testing::remove_dir_retry(&dir);
     }

@@ -1,5 +1,5 @@
 //! RawTherapee's processing profiles brought across: for each frame,
-//! the `.pp3` beside it read by [`greycard_edit::pp3`], its rank, color
+//! the `.pp3` beside it read by [`greycard_edit_io::pp3`], its rank, color
 //! label and trash mark into the meta exactly, and its white balance,
 //! exposure, geometry and lens settings, as near as this engine has
 //! them, laid over the frame's edit as one state named for the import.
@@ -23,7 +23,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use greycard_edit::meta::{Flag, Label, Meta};
-use greycard_edit::{Placement, Sidecar, pp3};
+use greycard_edit::{Placement, Sidecar};
+use greycard_edit_io::pp3;
 
 pub use crate::lightroom_catalog::Voice;
 
@@ -893,7 +894,7 @@ Enabled=true
         let raw = dir.join("DSCF0001.DNG");
         crate::fixture::write_mosaic_dng_for(&raw, "RGGB", "Fujifilm", "GFX 100S II");
         std::fs::write(dir.join("DSCF0001.DNG.pp3"), PROFILE).unwrap();
-        assert!(greycard_edit::lightroom::body_offset(Some("Fujifilm GFX 100S II")) < -0.5);
+        assert!(greycard_edit_io::lightroom::body_offset(Some("Fujifilm GFX 100S II")) < -0.5);
         assert_eq!(fate(&raw, write(true, false)), Some(Fate::Wrote));
         let sidecar = Sidecar::load(&raw).unwrap().unwrap();
         assert!(

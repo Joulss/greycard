@@ -2276,7 +2276,7 @@ fn unreject(st: &mut State, i: usize) {
         Ok(Some(mut sidecar)) if sidecar.meta.flag == meta::Flag::Reject => {
             sidecar.meta.flag = meta::Flag::None;
             if st.window.xmp_sidecars
-                && let Err(e) = greycard_edit::xmp::save(&path, &sidecar.meta, None)
+                && let Err(e) = greycard_edit_io::xmp::save(&path, &sidecar.meta, None)
             {
                 tracing::warn!("{}: xmp not written: {e}", file_name(&path));
             }
@@ -5290,7 +5290,7 @@ mod tests {
         s.meta.flag = meta::Flag::Reject;
         s.save_in(&files[1], greycard_edit::Placement::Beside)
             .unwrap();
-        greycard_edit::xmp::save(&files[1], &s.meta, None).unwrap();
+        greycard_edit_io::xmp::save(&files[1], &s.meta, None).unwrap();
         s.save_in(&files[2], greycard_edit::Placement::Folder)
             .unwrap();
         (dir, shoot, files)

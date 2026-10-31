@@ -3635,7 +3635,7 @@ mod tests {
         // new to say and the three do not come back.
         let mut sidecar = Sidecar::default();
         std::fs::write(xmp::short_path(&mine), xmp::fresh(&three, None)).expect("an xmp");
-        assert!(greycard_edit::xmp::adopt(&mine, &mut sidecar, || None).moved());
+        assert!(greycard_edit_io::xmp::adopt(&mine, &mut sidecar, || None).moved());
         sidecar.meta.set_rating(0);
         sidecar.save(&mine).expect("the sidecar writes");
         set_modified(&xmp::short_path(&mine), 2_000_000_000);

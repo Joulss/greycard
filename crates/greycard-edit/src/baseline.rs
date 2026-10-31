@@ -43,7 +43,7 @@ pub const BODIES: &[(&str, f32)] = &[("Fujifilm GFX 100S II", 0.52)];
 
 /// A body's name as the tables compare it: case, spaces and
 /// punctuation dropped.
-pub(crate) fn key(s: &str) -> String {
+pub fn key(s: &str) -> String {
     s.chars()
         .filter(char::is_ascii_alphanumeric)
         .map(|c| c.to_ascii_lowercase())
