@@ -21,7 +21,7 @@ an R32Float plane, sampled to write-only storage or read-write to
 read-write, ran twelve full-size dispatches in 6 ms.
 
 The box kernels alone, copied verbatim into a test, found it. The row
-pass took 4.6 ms at 24 MP and the column pass 145 ms, at any radius
+pass took 4.6 ms at 24 MP and the column pass about 145 ms, at any radius
 from 3 to 102. wgpu zeroes a kernel's `var<workgroup>` memory at the
 start of every workgroup unless the pipeline says otherwise
 (`PipelineCompilationOptions::zero_initialize_workgroup_memory`, on by
@@ -33,8 +33,8 @@ default). The column pass's array is 2304 floats, and at 24 MP it runs
 `plumbing::pipeline`, through which every compute pipeline in the
 crate is made, turns the clearing off. That is safe only where each
 kernel writes every element of its workgroup memory before any
-invocation reads it, so each of the twelve arrays in the five shaders
-was read for it:
+invocation reads it, so each of the ten workgroup variables in the
+five shaders, nine arrays and a flag, was read for it:
 
 - `local_contrast.wgsl`: `box_rows` loads its whole window into `line`
   and `box_cols` into `column` before the barrier, and each reads only
@@ -51,7 +51,8 @@ was read for it:
 - `sharpen_planes.wgsl`: every invocation stores its `scratch` slot
   before each reduction.
 
-The rule is written at the helper for the next kernel. The GPU
+The rule is written at the helper for the next kernel, and a test
+holds the tile shader's reach to the widest kernel the host allows. The GPU
 crate's tests, which hold each op to the CPU reference, pass, and the
 bench's differences from the CPU are the same to the last digit
 before and after, as they must be when no kernel read what the
@@ -77,6 +78,16 @@ The local contrast is now the CPU's speed on this machine, at 102 MP
 and at 24. The clearing costs a discrete card or Vulkan little, which
 zeroes through an extension, so the change was not measured there; it
 can only save time.
+
+## Review
+
+A fresh review audited the ten variables again against every value
+the host can pass (the box radius held to `MAX_RADIUS`, the sharpen's
+half-width capped at 6 by `reference::kernel`, the CA vote's 224
+sites a chunk) and found them safe, and found the only other compute
+pipeline in the repository, the scopes', with no workgroup memory.
+It asked for the reach test above, nothing tying the shader's `REACH`
+to the kernel before.
 
 ## What is left
 

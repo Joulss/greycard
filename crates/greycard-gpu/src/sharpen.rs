@@ -1186,6 +1186,41 @@ mod tests {
         }
     }
 
+    /// The tile shader's workgroup memory reaches as far as the widest
+    /// kernel any radius the host allows makes: its `region` and
+    /// `rowblur` are filled `REACH` past the tile each way, and a blur
+    /// reads `half` past it, so a `half` over `REACH` would read
+    /// outside what was written, which the pipelines no longer zero
+    /// (`plumbing::pipeline`).
+    #[test]
+    fn the_tiles_reach_the_widest_kernel() {
+        use greycard_core::develop::sharpen::{MAX_RADIUS, MIN_RADIUS, kernel};
+        let source = include_str!("sharpen_tiles.wgsl");
+        let reach: usize = source
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("const REACH: u32 = "))
+            .and_then(|v| v.trim_end_matches(';').trim_end_matches('u').parse().ok())
+            .expect("the shader declares REACH");
+        let steps = 160;
+        for i in 0..=steps {
+            let radius = MIN_RADIUS + (MAX_RADIUS - MIN_RADIUS) * i as f32 / steps as f32;
+            let half = kernel(radius).len() / 2;
+            assert!(
+                half <= reach,
+                "radius {radius}: half {half} over REACH {reach}"
+            );
+        }
+        let region = 16 + 2 * reach;
+        assert!(source.contains(&format!(
+            "var<workgroup> region: array<f32, {}>;",
+            region * region
+        )));
+        assert!(source.contains(&format!(
+            "var<workgroup> rowblur: array<f32, {}>;",
+            region * 16
+        )));
+    }
+
     /// The uniform's fields sit where the WGSL `Params` puts them:
     /// vec2s on 8, the vec4 array on 16, and nothing shifted by a
     /// field added in one place and not the other.

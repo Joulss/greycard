@@ -82,13 +82,15 @@ pub(crate) fn layout_at(
 /// wgpu zeroes a kernel's `var<workgroup>` arrays at the start of every
 /// workgroup unless told not to. On Metal that clearing cost more than
 /// the kernels: the local contrast's column pass, whose array is 2304
-/// floats, took 144 ms at 24 MP with it and 3.5 ms without, and the
+/// floats, took about 145 ms at 24 MP with it and 3.5 ms without, and the
 /// whole local contrast went from 0.98 s to 0.08 s on an M5 (§480).
 /// It is safe only because every kernel here writes each element of
 /// its workgroup memory before any invocation reads it, behind a
-/// barrier: the box passes load their whole window first, the
-/// reductions have every invocation store its slot, and a flag is set
-/// by one invocation ahead of `workgroupUniformLoad`. A new kernel
+/// barrier: the box passes and the sharpen's two-stage blur load their
+/// whole window first, the reductions have every invocation store its
+/// slot, the CA vote's sites write their terms before one invocation
+/// reads them, and a flag is set by one invocation ahead of
+/// `workgroupUniformLoad`. A new kernel
 /// must keep to that; one that reads an element it did not write gets
 /// whatever the last workgroup left there.
 pub(crate) fn pipeline(

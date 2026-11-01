@@ -227,7 +227,7 @@ seconds.
       through the parser, but the Neural Engine's compile ran past
       25 min and the GPU alone is four times slower than WebGPU
       (§477); waits on a compile that finishes in seconds
-- [ ] The denoisers at fp16 on Core ML: twice to 2.5 times quicker
+- [ ] The denoisers at fp16 on Core ML: 1.4 to 2.5 times quicker
       on the M5, and on real raws within 0.01 stops of fp32 but in the
       deepest shadows (§477, §481). Waits on an fp16 file a tier
       published beside the fp32 one, and Core ML offered it
