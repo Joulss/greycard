@@ -19,6 +19,9 @@ use crate::*;
 // What the import also lays at its landing, off the window, in the
 // library.
 pub(crate) use crate::preset_fit::preset_at_start;
+// What the command line lays over the first frame's edit, which an
+// export with no window lays the same way.
+pub(crate) use greycard_engine::headless::Overrides;
 
 pub(crate) fn main() -> Result<std::process::ExitCode> {
     let cli = Cli::parse();
@@ -102,7 +105,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             // Where the Settings sheet puts sidecars, or the flag's
             // choice; none for a run that writes none.
             placement: (!cli.no_sidecars).then(|| {
-                if cli.sidecar_folder || settings::Settings::load().sidecars_in_folder {
+                if cli.sidecar_folder || settings::Settings::load().shared.sidecars_in_folder {
                     greycard_edit::Placement::Folder
                 } else {
                     greycard_edit::Placement::Beside
@@ -126,8 +129,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         Some(p) => tracing::info!("settings: {}", p.display()),
         None => tracing::warn!("settings: no configuration directory; nothing is remembered"),
     }
-    let last_file = (!remembered.last_file.is_empty())
-        .then(|| PathBuf::from(&remembered.last_file))
+    let last_file = (!remembered.shared.last_file.is_empty())
+        .then(|| PathBuf::from(&remembered.shared.last_file))
         .filter(|p| p.is_file());
 
     // The library index, on a thread of its own once the window is up:
@@ -165,7 +168,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         Option<crate::roots::View>,
     ) = match &cli.path {
         Some(path) => {
-            let files = files::list_files(path, remembered.jpegs_apart)?;
+            let files = files::list_files(path, remembered.shared.jpegs_apart)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", path.display());
             let select = if path.is_dir() {
                 crate::roots::Select::Last(last_file.clone())
@@ -193,7 +196,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 &remembered.start_folder,
                 remembered.folder_tree_subfolders,
                 last_file.as_deref().and_then(Path::parent),
-                |dir| files::list_files(dir, remembered.jpegs_apart).ok(),
+                |dir| files::list_files(dir, remembered.shared.jpegs_apart).ok(),
             );
             let select = if files.is_empty() {
                 crate::roots::Select::Row(0)
@@ -393,7 +396,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // What the last run left, unless the command line says otherwise.
     let (sheet, preset) = opening_sheet(&cli, &remembered)?;
     show_sheet(&app, &sheet);
-    show_presets_picker(&app, &remembered.export_presets, preset.as_deref());
+    show_presets_picker(&app, &remembered.shared.export_presets, preset.as_deref());
     show_folds(&app, &remembered.collapsed);
     app.set_scope(opening_scope(&cli, &remembered).name().into());
     app.set_scope_selection(cli.scope_selection);
@@ -569,7 +572,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(store) = &preset_store {
         store.seed();
     }
-    let placement = if cli.sidecar_folder || remembered.sidecars_in_folder {
+    let placement = if cli.sidecar_folder || remembered.shared.sidecars_in_folder {
         greycard_edit::Placement::Folder
     } else {
         greycard_edit::Placement::Beside
@@ -587,7 +590,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // edit when it is opened (`Overrides`, through `overrides_at_start`,
     // which names the frame once the list has landed and said which it
     // is).
-    let overrides = Overrides::of(&cli);
+    let overrides = overrides_of(&cli);
     let tweak_at_start: Option<crate::Tweak> = (preset_at_start_wanted.is_some()
         || !overrides.is_empty())
     .then(|| {
@@ -617,10 +620,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
     let state = Rc::new(Shared::new({
         let write_sidecars = !cli.no_sidecars;
-        let xmp_sidecars = cli.xmp_sidecars || remembered.xmp_sidecars;
+        let xmp_sidecars = cli.xmp_sidecars || remembered.shared.xmp_sidecars;
         let cull_move_on = remembered.cull_move_on;
         let (loupe_cull, show_developed) = (remembered.loupe_cull, remembered.cull_developed);
-        let jpegs_apart = remembered.jpegs_apart;
+        let jpegs_apart = remembered.shared.jpegs_apart;
         let sort = remembered.sort.clone();
         let zoom = cli.zoom.max(0.0);
         let scope = opening_scope(&cli, &remembered);
@@ -637,7 +640,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .or(cli.part)
             .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
             .or(cli.press.map(crate::panel::viewport::Shown::Key));
-        let export_presets = remembered.export_presets.clone();
+        let export_presets = remembered.shared.export_presets.clone();
         let export_last_folder = remembered_folder(&remembered);
         let settings_file = if cli.snapshot.is_some() || cli.screenshot.is_some() {
             None
@@ -2193,123 +2196,26 @@ pub(crate) fn sync_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, row
     }
 }
 
-/// `--develop-temperature` and `--exposure`: what the command line
-/// lays over the first file's edit for this run, on the panel's edit
-/// and not the sidecar's, so a run that exports or takes a picture of
-/// the frame at another exposure leaves the frame's edit and its
-/// history as it found them, and an export record names only a look
-/// the frame really had. The overridden edit is never recorded as a
-/// state of its own: while the panel shows it unmoved, a save, an
-/// undo, a click in the history, a snapshot or a preset records
-/// nothing of the panel's (`panel::edit::panel_state`). Once the user
-/// moves anything, what the panel then holds is recorded like any
-/// edit, with whatever of the override's values it still carries.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) struct Overrides {
-    pub temperature: Option<f32>,
-    pub exposure: Option<f32>,
-    pub display_curve: Option<greycard_edit::DisplayCurve>,
-}
-
-impl Overrides {
-    /// What the command line lays over the first frame's edit.
-    pub(crate) fn of(cli: &Cli) -> Self {
-        Self {
-            temperature: cli.develop_temperature,
-            exposure: (cli.exposure != 0.0).then_some(cli.exposure),
-            display_curve: cli.agx.then_some(greycard_edit::DisplayCurve::Agx),
-        }
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    /// `edit` with these laid over it.
-    pub(crate) fn apply(&self, edit: &mut Edit) {
-        if let Some(t) = self.temperature {
-            edit.white_balance = WhiteBalance::Custom {
-                temperature: t as f64,
-                tint: 0.0,
-            };
-        }
-        if let Some(ev) = self.exposure {
-            edit.light.exposure = ev;
-        }
-        if let Some(curve) = self.display_curve {
-            edit.display_curve = curve;
-        }
+/// `--develop-temperature`, `--exposure`, and `--agx`: what the
+/// command line lays over the first frame's edit (`Overrides`).
+pub(crate) fn overrides_of(cli: &Cli) -> Overrides {
+    Overrides {
+        temperature: cli.develop_temperature,
+        exposure: cli.exposure,
+        display_curve: cli.agx.then_some(greycard_edit::DisplayCurve::Agx),
     }
 }
 
 /// The export sheet to open with, and the preset it is: the last
 /// run's, or the preset `--export-preset` names, with `--long-edge`
-/// and `--on-exists` over either. A preset the settings do not have
-/// is an error, not a quiet export at whatever the sheet was left at.
+/// and `--on-exists` over either (`Shared::opening_sheet`).
 pub(crate) fn opening_sheet(
     cli: &Cli,
     remembered: &settings::Settings,
 ) -> Result<(sheet::Sheet, Option<String>)> {
-    let (mut s, preset) = match &cli.export_preset {
-        Some(name) => {
-            let p = sheet::lookup(&remembered.export_presets, name)?;
-            (p.sheet.clone(), Some(p.name.clone()))
-        }
-        None => (
-            remembered.export.clone(),
-            (!remembered.export_preset.is_empty()).then(|| remembered.export_preset.clone()),
-        ),
-    };
-    if let Some(edge) = cli.long_edge {
-        // The flag's size over the sheet's, for this run's export.
-        s.size = export::CUSTOM.into();
-        s.custom = edge.to_string();
-    }
-    if let Some(policy) = cli.on_exists {
-        // The flag's answer over the sheet's, for this run's export.
-        s.on_exists = policy.name().into();
-    }
-    Ok((s, preset))
-}
-
-/// Whether `--export` names a folder for the set rather than a file
-/// for one frame: a folder that is there, or a path that ends in a
-/// separator, which asks for one. With `--also` or `--all` (`set`), a
-/// path that is not there and names no picture format is a folder
-/// too: a set has no one file to go to.
-pub(crate) fn export_folder(path: &Path, set: bool) -> bool {
-    path.is_dir()
-        || path
-            .as_os_str()
-            .to_string_lossy()
-            .ends_with(std::path::is_separator)
-        || (set && !path.exists() && export::Format::from_path(path).is_none())
-}
-
-/// `--also` with `--export` names a set: an error, not a quiet export
-/// of one frame, when the export is to one file or a row is not in the
-/// folder (rows from 0, as the browser has them).
-pub(crate) fn check_also(cli: &Cli, into_folder: bool, files: usize) -> Result<()> {
-    let Some(path) = &cli.export else {
-        return Ok(());
-    };
-    if cli.also.is_empty() {
-        return Ok(());
-    }
-    if !into_folder {
-        anyhow::bail!(
-            "--also names a set, and --export {} is one frame's file: give a folder (one that is there, or a path ending in a separator)",
-            path.display()
-        );
-    }
-    if let Some(row) = cli.also.iter().find(|r| **r >= files) {
-        anyhow::bail!(
-            "--also {row}: there {} {files} frame{} to export (rows from 0); open the folder, not a file, to export a set",
-            if files == 1 { "is" } else { "are" },
-            if files == 1 { "" } else { "s" }
-        );
-    }
-    Ok(())
+    remembered
+        .shared
+        .opening_sheet(cli.export_preset.as_deref(), cli.long_edge, cli.on_exists)
 }
 
 /// The scope to open on: the command line's, else the last run's.
@@ -2339,7 +2245,7 @@ pub(crate) fn remembered_folder(settings: &settings::Settings) -> Option<PathBuf
 /// settings the panel's choices made, for the file at close.
 pub(crate) fn take_state_choices(settings: &mut settings::Settings, st: &State) {
     settings.mat = st.develop.mat;
-    settings.export_presets = st.work.export_presets.clone();
+    settings.shared.export_presets = st.work.export_presets.clone();
     settings.export_last_folder = st
         .work
         .export_last_folder
@@ -2385,16 +2291,16 @@ fn merged(
     kept: settings::Settings,
     panes_from_file: bool,
 ) -> settings::Settings {
-    settings.last_file = kept.last_file;
+    settings.shared.last_file = kept.shared.last_file;
     settings.recent_folders = kept.recent_folders;
     settings.start_folder = kept.start_folder;
     settings.start_view = kept.start_view;
     settings.filter_bar = kept.filter_bar;
     settings.grid_wheel = kept.grid_wheel;
     settings.folder_tree_subfolders = kept.folder_tree_subfolders;
-    settings.xmp_sidecars = kept.xmp_sidecars;
-    settings.sidecars_in_folder = kept.sidecars_in_folder;
-    settings.jpegs_apart = kept.jpegs_apart;
+    settings.shared.xmp_sidecars = kept.shared.xmp_sidecars;
+    settings.shared.sidecars_in_folder = kept.shared.sidecars_in_folder;
+    settings.shared.jpegs_apart = kept.shared.jpegs_apart;
     settings.one_section = kept.one_section;
     settings.exported = kept.exported;
     settings.edit_in = kept.edit_in;
@@ -2483,10 +2389,19 @@ pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, panes_from_file: bool)
 /// is put back from the file by the caller.
 pub(crate) fn remember(app: &App) -> settings::Settings {
     settings::Settings {
-        export: read_sheet(app),
-        // Kept by the caller: the list is the state's, not the panel's.
-        export_presets: Vec::new(),
-        export_preset: chosen_preset(app).unwrap_or_default(),
+        shared: settings::Shared {
+            export: read_sheet(app),
+            // Kept by the caller: the list is the state's, not the panel's.
+            export_presets: Vec::new(),
+            export_preset: chosen_preset(app).unwrap_or_default(),
+            // Kept apart, all of them: the last file is written as soon
+            // as a file develops, the sidecars' two as the Settings sheet
+            // changes them. The caller fills them in from disk.
+            xmp_sidecars: false,
+            sidecars_in_folder: false,
+            jpegs_apart: false,
+            last_file: String::new(),
+        },
         // Kept by the caller: written when a chooser answers.
         export_last_folder: String::new(),
         // Written as the first export starts; the caller keeps the file's.
@@ -2532,14 +2447,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         } else {
             app.get_strip_hidden()
         },
-        // Kept apart, all of them: the last file is written as soon
-        // as a file develops, the sidecars' two as the Settings sheet
-        // changes them, culling's switch as it is flipped, and the
-        // lens offer's answer as it is given. The caller fills them
-        // in from disk.
-        xmp_sidecars: false,
-        sidecars_in_folder: false,
-        jpegs_apart: false,
+        // Kept apart, both: culling's switch as it is flipped, and the
+        // lens offer's answer as it is given. The caller fills them in
+        // from disk.
         cull_move_on: false,
         // Written as the Loupe's mode and Cull's switch change.
         loupe_cull: false,
@@ -2547,7 +2457,6 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         lenses_declined: false,
         // Written as the RawTherapee offer is answered.
         rawtherapee_answered: Vec::new(),
-        last_file: String::new(),
         // Written as each folder opens.
         recent_folders: Vec::new(),
         // Written as the Settings sheet's rows are chosen.
@@ -2637,10 +2546,10 @@ pub(crate) fn remember_last_file(st: &State) {
     // open has changed.
     let path = path.to_string_lossy().into_owned();
     let mut settings = settings::Settings::load();
-    if settings.last_file == path {
+    if settings.shared.last_file == path {
         return;
     }
-    settings.last_file = path;
+    settings.shared.last_file = path;
     settings.save();
 }
 
@@ -2760,74 +2669,45 @@ pub(crate) fn size_text(width: u32, height: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::headless::batch_settings;
     use crate::sheet::{ExportPreset, Sheet};
     use greycard_core::image::WorkingImage;
+    use greycard_engine::headless::batch_settings;
 
     fn remembered_with_presets(dir: &Path) -> settings::Settings {
         let png = crate::testing::bar_png(dir, 40);
         settings::Settings {
-            export: Sheet {
-                size: "Full".into(),
-                ..Sheet::default()
-            },
-            export_presets: vec![
-                ExportPreset {
-                    name: "Web 2048".into(),
-                    sheet: Sheet {
-                        format: "PNG".into(),
-                        size: "2048".into(),
-                        metadata: "None".into(),
-                        mark: "Image".into(),
-                        mark_image: png.to_string_lossy().into_owned(),
-                        mark_position: "Top left".into(),
-                        mark_size: 25.0,
-                        mark_margin: 2.0,
-                        mark_opacity: 100.0,
-                        on_exists: "Overwrite".into(),
-                        ..Sheet::default()
+            shared: settings::Shared {
+                export: Sheet {
+                    size: "Full".into(),
+                    ..Sheet::default()
+                },
+                export_presets: vec![
+                    ExportPreset {
+                        name: "Web 2048".into(),
+                        sheet: Sheet {
+                            format: "PNG".into(),
+                            size: "2048".into(),
+                            metadata: "None".into(),
+                            mark: "Image".into(),
+                            mark_image: png.to_string_lossy().into_owned(),
+                            mark_position: "Top left".into(),
+                            mark_size: 25.0,
+                            mark_margin: 2.0,
+                            mark_opacity: 100.0,
+                            on_exists: "Overwrite".into(),
+                            ..Sheet::default()
+                        },
                     },
-                },
-                ExportPreset {
-                    name: "Print".into(),
-                    sheet: Sheet::default(),
-                },
-            ],
-            export_preset: "Print".into(),
+                    ExportPreset {
+                        name: "Print".into(),
+                        sheet: Sheet::default(),
+                    },
+                ],
+                export_preset: "Print".into(),
+                ..Default::default()
+            },
             ..settings::Settings::default()
         }
-    }
-
-    /// `--also` with `--export` is a set: into a folder, or an error,
-    /// never a quiet export of one frame.
-    #[test]
-    fn also_with_export_names_a_set_or_says_why_not() {
-        let parse = |args: &[&str]| Cli::try_parse_from(args).unwrap();
-        // A file to write: one frame, so --also is an error.
-        let cli = parse(&["greycard-ui", "shoot", "--export", "out.jpg", "--also", "1"]);
-        assert!(!export_folder(Path::new("out.jpg"), true));
-        let e = check_also(&cli, false, 3).unwrap_err().to_string();
-        assert!(e.contains("one frame's file"), "{e}");
-        // A path that is not there and names no format: a folder with
-        // --also, and the file it always was without.
-        let new = std::env::temp_dir().join("greycard-no-such-folder-for-also");
-        assert!(export_folder(&new, true));
-        assert!(!export_folder(&new, false));
-        // A row the folder has not got: an error naming it.
-        let cli = parse(&[
-            "greycard-ui",
-            "x.CR3",
-            "--export",
-            "out/",
-            "--also",
-            "0,1,2",
-        ]);
-        let e = check_also(&cli, true, 1).unwrap_err().to_string();
-        assert!(e.starts_with("--also 1: there is 1 frame"), "{e}");
-        assert!(check_also(&cli, true, 3).is_ok());
-        // Without --export, --also is the snapshot's and not checked.
-        let cli = parse(&["greycard-ui", "x.CR3", "--also", "5"]);
-        assert!(check_also(&cli, false, 1).is_ok());
     }
 
     #[test]
@@ -2848,7 +2728,7 @@ mod tests {
         .unwrap();
         let (sheet, preset) = opening_sheet(&cli, &remembered).unwrap();
         assert_eq!(preset.as_deref(), Some("Web 2048"));
-        assert_eq!(sheet, remembered.export_presets[0].sheet);
+        assert_eq!(sheet, remembered.shared.export_presets[0].sheet);
         // The path's extension over the preset's format, the rest the
         // preset's, as the batch run hands it to the worker.
         let settings = batch_settings(&out, sheet.settings());
@@ -2909,7 +2789,7 @@ mod tests {
         // Without the flag: the sheet as left, and the preset last on.
         let cli = Cli::try_parse_from(["greycard-ui", "frame.cr3"]).unwrap();
         let (sheet, preset) = opening_sheet(&cli, &remembered).unwrap();
-        assert_eq!(sheet, remembered.export);
+        assert_eq!(sheet, remembered.shared.export);
         assert_eq!(preset.as_deref(), Some("Print"));
         // A name the settings do not have is an error that lists them.
         let cli =

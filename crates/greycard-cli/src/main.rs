@@ -11,6 +11,7 @@ use greycard_core::stack::Reference;
 
 mod common;
 mod develop;
+mod export;
 mod info;
 mod lenses;
 mod library;
@@ -195,6 +196,12 @@ enum Command {
     },
     /// Develop a RAW: linear DNG for other editors, or linear Rec.2020 here
     Develop(develop::DevelopArgs),
+    /// Export frames as the editor does, each under its own edit, with
+    /// the editor's export sheet and presets. Exits 0 when every frame
+    /// was written as its edit asks; 2 when some went without
+    /// something the edit names that this machine has not got (a look,
+    /// a learned model), each named; 1 when a frame was not written
+    Export(export::ExportArgs),
 }
 
 /// The command, and then the process's end: by `runtime::leave`, so a
@@ -203,7 +210,7 @@ enum Command {
 /// script). An error is said as `main` returning it would say it.
 fn main() -> std::process::ExitCode {
     let code = match run() {
-        Ok(()) => 0,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("Error: {e:?}");
             1
@@ -212,7 +219,7 @@ fn main() -> std::process::ExitCode {
     greycard_ai::runtime::leave(code)
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<u8> {
     let cli = Cli::parse();
     log::start(cli.verbose);
     greycard_ai::Store::sweep_user_in_background();
@@ -225,7 +232,9 @@ fn run() -> Result<()> {
             hook(info);
         }
     }));
-    match cli.command {
+    let ran = match cli.command {
+        // The one with an exit code of its own.
+        Command::Export(args) => return export::export(args),
         Command::Library { db, action } => library::library(db, action),
         Command::Info { file } => {
             if greycard_core::picture::is_picture_path(&file) {
@@ -277,5 +286,6 @@ fn run() -> Result<()> {
             dir,
         } => presets::presets(&files, &import, replace, apply.as_deref(), dir),
         Command::Develop(args) => develop::run(args),
-    }
+    };
+    ran.map(|()| 0)
 }

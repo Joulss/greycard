@@ -38,10 +38,11 @@ complete, battle-tested editor.
   eyes, lips, hair and clothing. All on your machine.
 - **Quick culling** from the camera's embedded previews, so getting
   through a shoot is smooth.
-- **Export from a script.** `greycard-ui IMG_0001.CR3 --export out.jpg`
+- **Export from a script.** `greycard export IMG_0001.CR3 out.jpg`
   writes a frame under its saved edit with no window, no GPU, and no
-  desktop, so it runs over SSH; a folder, a preset, and a long edge
-  are flags ([the guide](docs/guide/export.md#from-the-command-line)).
+  desktop, so it runs over SSH; give several frames and a folder for a
+  set, and a preset or a long edge as flags
+  ([the guide](docs/guide/export.md#from-the-command-line)).
 - **Fast and familiar.** Native Rust, Slint and the GPU, so sliders
   update as you drag. The layout will feel at home if you're coming
   from Lightroom Classic. Lightroom presets load, and a Lightroom

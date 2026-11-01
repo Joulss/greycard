@@ -9,7 +9,6 @@ pub mod collections;
 pub mod delete;
 pub mod display;
 pub mod edit_in;
-pub mod export_name;
 pub mod files;
 pub mod filter;
 pub mod gpu_marker;
@@ -17,12 +16,14 @@ pub mod import;
 pub mod instance;
 pub mod log;
 pub mod mounts;
-pub mod naming;
 pub mod outline;
-pub mod preset_fit;
 pub mod rejects;
 pub mod scrolling;
 pub mod selection;
 pub mod tags;
 pub mod wheel;
 pub mod zoom;
+
+// The export's names and a preset laid at the start, in the engine's
+// crate, which a run with no window shares; named here as they were.
+pub use greycard_engine::{export_name, naming, preset_fit};

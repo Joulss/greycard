@@ -1710,7 +1710,7 @@ pub(crate) fn open_folder(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, di
     // over the view the launch asked for: that view is not opened
     // over it once the index is open.
     state.borrow_mut().views.library.wanted = None;
-    let last = settings::Settings::load().last_file;
+    let last = settings::Settings::load().shared.last_file;
     let last = (!last.is_empty()).then(|| PathBuf::from(last));
     crate::roots::open_listing(
         state,

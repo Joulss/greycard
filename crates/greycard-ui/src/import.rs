@@ -18,6 +18,7 @@
 //! run it on a thread of their own and hear its progress through a
 //! callback.
 
+use crate::export_name::modified_day;
 use crate::naming::{self, Day, Fields};
 use anyhow::{Context, Result, bail};
 use greycard_edit::{Placement, Preset};
@@ -302,23 +303,6 @@ pub fn folder_under(source: &Path, file: &Path) -> String {
                 .join("/")
         })
         .unwrap_or_default()
-}
-
-/// The local day a file was last written: what a card's clock stamped
-/// it with, near enough, when the EXIF says nothing. On a FAT card the
-/// time is stored without a zone and read through the mount's idea of
-/// one, so a frame taken near midnight can land on the day either side.
-pub(crate) fn modified_day(file: &Path) -> Day {
-    use chrono::Datelike;
-    let when = std::fs::metadata(file)
-        .and_then(|m| m.modified())
-        .unwrap_or_else(|_| std::time::SystemTime::now());
-    let local: chrono::DateTime<chrono::Local> = when.into();
-    Day {
-        year: local.year(),
-        month: local.month(),
-        day: local.day(),
-    }
 }
 
 /// Where a frame goes, relative to the destination: its folders and

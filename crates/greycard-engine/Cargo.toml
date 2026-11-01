@@ -22,6 +22,12 @@ greycard-render = { path = "../greycard-render" }
 # sidecar helpers the reduced develop and the masks read.
 greycard-library = { path = "../greycard-library" }
 anyhow.workspace = true
+# A file's modification day in local time, for an export's name when
+# the EXIF has no date. rawler already brings it, clock and all.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# The editor's settings file, under the platform's configuration
+# folder.
+dirs.workspace = true
 bytemuck.workspace = true
 # The render crate's half, feature for feature.
 half = { workspace = true, features = ["bytemuck"] }

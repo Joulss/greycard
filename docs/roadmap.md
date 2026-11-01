@@ -580,13 +580,13 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] The engine, part 4 (§454): `greycard export`, one settings
-      subset reader for the window, headless export, and the command
-      line, the editor's `--export` kept an alias for a release
-      (parts 2 and 3 done, §506, §509)
+- [ ] The editor's `--export` flag dropped, one release after §514
+      made it an alias of `greycard export`
+- [ ] The learned-mask cache keyed by the base it was made from, so an
+      export's masks are the viewport's (§454, §236)
 - [ ] Camera match and the measurement runners into the window's
       library, now that the worker's frame develop is the engine's
-      (§471, §506); explicit imports in place of the crate root's
+      (§471, §506, §514); explicit imports in place of the crate root's
       glob imports as each file moves
 - [ ] A one-page architecture document: each crate, what it may
       depend on, and which crate runs each pipeline stage, with the

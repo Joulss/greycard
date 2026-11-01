@@ -14,20 +14,16 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::sheet::{ExportPreset, Sheet};
+pub(crate) use greycard_engine::settings::Shared;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// The export sheet as it was left, under the `export_` names it
-    /// has always had in the file.
+    /// What a headless export and the command line read of the file
+    /// too: the export sheet, its presets, where sidecars go, the
+    /// JPEGs beside raws, and the last file.
     #[serde(flatten)]
-    pub export: Sheet,
-    /// The export presets, in the order they were first saved.
-    pub export_presets: Vec<ExportPreset>,
-    /// The preset last chosen or saved, empty for none; the sheet
-    /// above may have been edited since.
-    pub export_preset: String,
+    pub shared: Shared,
     /// The folder last chosen in an export's chooser, where the next
     /// chooser opens. Not part of the sheet or a preset: a
     /// preset that names a subfolder never asks, and one that asks
@@ -94,28 +90,6 @@ pub struct Settings {
     pub hide_left: bool,
     pub hide_right: bool,
     pub hide_strip: bool,
-    /// Whether the meta (the rating, the flag, the label, the
-    /// keywords and the words) is also written to an `.xmp` beside
-    /// the frame, for Lightroom, Bridge and darktable to read. Off
-    /// by default: the `.gcd` is the truth and one file beside a
-    /// frame is the rule (§117), so a second one is for a folder
-    /// shared with another tool and is asked for. Reading an XMP
-    /// that is there is not a choice and happens either way.
-    pub xmp_sidecars: bool,
-    /// Whether a frame's `.gcd` is written under a hidden `.greycard`
-    /// folder in the frame's folder rather than beside the frame.
-    /// Off by default. Reading looks in both places either way, so
-    /// flipping this loses nothing; only where the next write goes
-    /// changes. The XMPs stay beside the frame whatever this says,
-    /// since beside is where Lightroom and darktable look.
-    pub sidecars_in_folder: bool,
-    /// Whether a camera's JPEG beside a raw of its name is listed as a
-    /// frame of its own, as Lightroom's "treat JPEG files next to raw
-    /// files as separate photos" lists it. Off by default: the JPEG is
-    /// the raw's companion, marked on its tile, and goes where the raw
-    /// goes (`greycard_library::pairs`). The command line's listing and
-    /// `--export` read it too. Written as the switch is flipped.
-    pub jpegs_apart: bool,
     /// Whether a rating, flag or label key in culling moves the
     /// selection on to the next frame. Off by default: the key and
     /// the arrow are two presses until a culler asks for one.
@@ -138,11 +112,6 @@ pub struct Settings {
     /// it would take the folder's new sidecars from then on. Written as
     /// the offer is answered.
     pub rawtherapee_answered: Vec<String>,
-    /// The absolute path of the last file open, developed and all, so
-    /// the next run with no path can jump back to it. Written as soon
-    /// as it develops, not waited for the window to close; empty
-    /// until then.
-    pub last_file: String,
     /// The folders opened, the most recent first and at most
     /// [`RECENT_FOLDERS`] of them, each by its canonical path and
     /// once: a folder opened again moves to the front. Written as a
@@ -587,9 +556,7 @@ impl Default for ImportChoices {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            export: Sheet::default(),
-            export_presets: Vec::new(),
-            export_preset: String::new(),
+            shared: Shared::default(),
             export_last_folder: String::new(),
             exported: false,
             edit_in: String::new(),
@@ -613,15 +580,11 @@ impl Default for Settings {
             hide_left: false,
             hide_right: false,
             hide_strip: false,
-            xmp_sidecars: false,
-            sidecars_in_folder: false,
-            jpegs_apart: false,
             cull_move_on: false,
             loupe_cull: false,
             cull_developed: false,
             lenses_declined: false,
             rawtherapee_answered: Vec::new(),
-            last_file: String::new(),
             recent_folders: Vec::new(),
             start_folder: String::new(),
             start_view: START_VIEWS[0].into(),
@@ -674,25 +637,15 @@ pub(crate) fn use_file(path: Option<PathBuf>) {
     TEST_PATH.with(|p| *p.borrow_mut() = path);
 }
 
-/// `$XDG_CONFIG_HOME/greycard/settings.json` when that is set, else
-/// `greycard/settings.json` under the platform's configuration
-/// directory: `~/.config` on Linux, `~/Library/Application Support` on
-/// macOS, `%APPDATA%` on Windows.
+/// The user's file, by the rule a headless export and the command
+/// line read it by (`greycard_engine::settings::path`).
 pub fn path() -> Option<PathBuf> {
     // A test never reads or writes the user's settings: no file, so
     // the defaults, unless the test sets a scratch path of its own.
     #[cfg(test)]
     return TEST_PATH.with(|p| p.borrow().clone());
     #[cfg(not(test))]
-    real_path()
-}
-
-fn real_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(dirs::config_dir)?;
-    Some(base.join("greycard").join("settings.json"))
+    greycard_engine::settings::path()
 }
 
 impl Settings {
@@ -774,6 +727,7 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sheet::{ExportPreset, Sheet};
 
     /// A settings file that is a link is written where it points, and
     /// stays a link.
@@ -821,21 +775,27 @@ mod tests {
             border_color: "Match".into(),
         };
         let mine = Settings {
-            export: sheet.clone(),
-            export_presets: vec![
-                ExportPreset {
-                    name: "Web".into(),
-                    sheet: Sheet {
-                        mark: "Text".into(),
-                        ..sheet.clone()
+            shared: Shared {
+                export: sheet.clone(),
+                export_presets: vec![
+                    ExportPreset {
+                        name: "Web".into(),
+                        sheet: Sheet {
+                            mark: "Text".into(),
+                            ..sheet.clone()
+                        },
                     },
-                },
-                ExportPreset {
-                    name: "Print".into(),
-                    sheet: Sheet::default(),
-                },
-            ],
-            export_preset: "Web".into(),
+                    ExportPreset {
+                        name: "Print".into(),
+                        sheet: Sheet::default(),
+                    },
+                ],
+                export_preset: "Web".into(),
+                xmp_sidecars: true,
+                sidecars_in_folder: true,
+                jpegs_apart: true,
+                last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
+            },
             scope: "Vector".into(),
             curve_mode: "Parametric".into(),
             warn_shadows: true,
@@ -856,9 +816,6 @@ mod tests {
             hide_left: true,
             hide_right: false,
             hide_strip: true,
-            xmp_sidecars: true,
-            sidecars_in_folder: true,
-            jpegs_apart: true,
             cull_move_on: true,
             loupe_cull: true,
             cull_developed: true,
@@ -867,7 +824,6 @@ mod tests {
             export_last_folder: "/home/x/Pictures/out".into(),
             exported: true,
             edit_in: "/Applications/Photoshop.app".into(),
-            last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             start_folder: "~/Pictures/start".into(),
             start_view: "Library".into(),
@@ -944,11 +900,17 @@ mod tests {
         // written yet: neither is a reason to lose the rest.
         let text = r#"{"export_quality": 60, "export_size": "1024", "grain_seed": 7}"#;
         let read: Settings = serde_json::from_str(text).unwrap();
-        assert_eq!(read.export.quality, 60.0);
-        assert_eq!(read.export.size, "1024");
-        assert_eq!(read.export.format, Settings::default().export.format);
-        assert_eq!(read.export.mark, Settings::default().export.mark);
-        assert!(read.export_presets.is_empty());
+        assert_eq!(read.shared.export.quality, 60.0);
+        assert_eq!(read.shared.export.size, "1024");
+        assert_eq!(
+            read.shared.export.format,
+            Settings::default().shared.export.format
+        );
+        assert_eq!(
+            read.shared.export.mark,
+            Settings::default().shared.export.mark
+        );
+        assert!(read.shared.export_presets.is_empty());
         assert_eq!(read.scope, Settings::default().scope);
         // A file from before Recently opened has an empty list.
         assert!(read.recent_folders.is_empty());
@@ -1356,26 +1318,31 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("greycard-settings-{}", std::process::id()));
         let path = dir.join("greycard").join("settings.json");
         let mine = Settings {
-            export: Sheet {
-                size: "1024".into(),
-                ..Sheet::default()
-            },
-            export_presets: vec![ExportPreset {
-                name: "Web 2048".into(),
-                sheet: Sheet {
-                    size: "2048".into(),
-                    mark: "Text".into(),
-                    mark_text: "© greycard".into(),
+            shared: Shared {
+                export: Sheet {
+                    size: "1024".into(),
                     ..Sheet::default()
                 },
-            }],
-            export_preset: "Web 2048".into(),
+                export_presets: vec![ExportPreset {
+                    name: "Web 2048".into(),
+                    sheet: Sheet {
+                        size: "2048".into(),
+                        mark: "Text".into(),
+                        mark_text: "© greycard".into(),
+                        ..Sheet::default()
+                    },
+                }],
+                export_preset: "Web 2048".into(),
+                ..Shared::default()
+            },
             scope: "Parade".into(),
             recent_folders: vec!["/home/x/Pictures/shoot".into()],
             ..Settings::default()
         };
         mine.save_to(&path);
         assert_eq!(Settings::load_from(&path), mine);
+        // The export's half, as a run with no window reads it.
+        assert_eq!(Shared::load_from(&path), mine.shared);
         // A file that is not there is the defaults, not an error.
         crate::testing::remove_dir_retry(&dir);
         assert_eq!(Settings::load_from(&path), Settings::default());
@@ -1384,12 +1351,5 @@ mod tests {
     #[test]
     fn the_gamut_warning_is_off_by_default() {
         assert!(!Settings::default().gamut_warning);
-    }
-
-    #[test]
-    fn the_path_is_under_the_configuration_directory() {
-        let path = real_path().expect("a configuration directory in the test environment");
-        assert!(path.ends_with("greycard/settings.json"), "{path:?}");
-        assert!(path.is_absolute());
     }
 }

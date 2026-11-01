@@ -9,7 +9,7 @@
 //! were.
 
 use crate::naming::{self, Day, EXPORT_TOKENS, Fields, PatternError};
-use greycard_engine::sheet::NAME;
+use crate::sheet::NAME;
 use std::path::{Path, PathBuf};
 
 /// What `{date}` and `{camera}` fill from: the camera's own capture
@@ -85,13 +85,30 @@ fn fields(source: &Path, shot: Option<&Shot>, shift: i64, seq: usize) -> Fields 
         .as_deref()
         .and_then(|t| greycard_core::exif::shifted(t, shift))
         .and_then(|t| Day::from_exif(&t))
-        .unwrap_or_else(|| crate::import::modified_day(source));
+        .unwrap_or_else(|| modified_day(source));
     Fields {
         day,
         name,
         camera: shot.camera.clone(),
         seq,
         folder: String::new(),
+    }
+}
+
+/// The local day a file was last written: what a card's clock stamped
+/// it with, near enough, when the EXIF says nothing. On a FAT card the
+/// time is stored without a zone and read through the mount's idea of
+/// one, so a frame taken near midnight can land on the day either side.
+pub fn modified_day(file: &Path) -> Day {
+    use chrono::Datelike;
+    let when = std::fs::metadata(file)
+        .and_then(|m| m.modified())
+        .unwrap_or_else(|_| std::time::SystemTime::now());
+    let local: chrono::DateTime<chrono::Local> = when.into();
+    Day {
+        year: local.year(),
+        month: local.month(),
+        day: local.day(),
     }
 }
 
@@ -215,7 +232,7 @@ mod tests {
             ..shot.clone()
         };
         assert_eq!(at(&indexed, 3600).unwrap(), "2026-10-31 Canon EOS R5");
-        let today = crate::import::modified_day(p);
+        let today = modified_day(p);
         let none = Shot::default();
         assert_eq!(
             stem("{date}", p, Some(&none), 0, 1, 1).unwrap(),

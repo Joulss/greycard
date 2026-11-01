@@ -205,7 +205,13 @@ anywhere, copy both libraries too — dereferenced.
 ```sh
 ./target/release/greycard-ui ~/Pictures/shoot
 ./target/release/greycard develop photo.CR3 --dng photo.dng
+./target/release/greycard export photo.CR3 out.jpg
 ```
+
+`greycard develop` is the bare develop for other editors: flags into
+the engine, a linear DNG or TIFF out. `greycard export` is the
+editor's export with no window: each frame under its saved edit, with
+the export sheet and presets the editor keeps.
 
 Or from the workspace, which is what you want while changing things:
 

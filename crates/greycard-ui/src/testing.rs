@@ -9,7 +9,7 @@ use crate::{App, Shared, State, Thumb, grid, install_callbacks};
 
 // The helpers the render crate's tests share with these.
 pub(crate) use greycard_engine::testing::{linear_dng, scratch_dir};
-pub(crate) use greycard_render::testing::{GFX, bar_png, remove_dir_retry};
+pub(crate) use greycard_render::testing::{bar_png, remove_dir_retry};
 
 thread_local! {
     /// The look folder a test's removal or rename works on, in place of

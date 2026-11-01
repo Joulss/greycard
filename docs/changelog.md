@@ -64,6 +64,13 @@ design note behind it.
 
 ### Library
 
+- `greycard export IMG_0001.CR3 out.jpg` writes frames under their
+  saved edits from the command line, with the export sheet and presets
+  the editor keeps; several frames or a folder go into a folder
+  ([§514](https://github.com/jessolmstead/greycard/blob/master/docs/notes/514-the-engine-part-four-greycard-export.md)).
+- The editor's `--export` still works for this release, as another
+  name for `greycard export`, and goes in the next
+  ([§514](https://github.com/jessolmstead/greycard/blob/master/docs/notes/514-the-engine-part-four-greycard-export.md)).
 - A file or folder opened while greycard runs opens in the running
   window rather than a second one, on Linux, macOS, and Windows
   ([§504](https://github.com/jessolmstead/greycard/blob/master/docs/notes/504-one-instance.md)).

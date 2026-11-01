@@ -5,6 +5,9 @@ use crate::panel::retouch::show_patches;
 use crate::panel::viewport::{source_to_view, view_on_picture, view_to_source};
 use crate::*;
 use greycard_render::refine::MaskPicture;
+// What to do for a learned shape wanted, decided in the engine so an
+// export with no window picks the same file.
+pub(crate) use greycard_engine::ai::{Step, edge_offer, step};
 
 /// Zoom to use for a view of `vw` by `vh`: the state's, or fit.
 /// A shape being drawn: what kind, where the press was in the
@@ -448,113 +451,10 @@ pub(crate) fn learned_anew(st: &mut State, version: Option<Arc<str>>) {
     st.develop.learned_version = Some(version);
 }
 
-/// What to do for a learned shape wanted: ask the worker for it, offer
-/// its model, or wait (the sheet is busy, or every model it could use
-/// was declined).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Step {
-    Ask(&'static greycard_ai::Model),
-    /// A model to offer, and whether it is the Subject rewrite offered
-    /// in place of an original already in the store — a card that
-    /// original falls back to the CPU on — rather than a first-ever
-    /// Subject offer, which the sheet's note reads differently.
-    Offer(&'static greycard_ai::Model, bool),
-    Wait,
-}
-
-/// The step for `shape`, given what the store has, the providers, the
-/// models declined this session, those whose fetch failed, whether the
-/// sheet is free for an offer, and whether the Subject original is on
-/// record as having failed on WebGPU. A Subject whose WebGPU file was
-/// declined or could not be fetched is offered the original. A model
-/// whose fetch failed is not offered again this session, as one
-/// declined is not: offline, the sheet would come straight back.
-pub(crate) fn step(
-    shape: &Shape,
-    have: impl Fn(&greycard_ai::Model) -> bool + Copy,
-    providers: &[greycard_ai::Provider],
-    declined: &[&'static str],
-    failed: &[&'static str],
-    sheet_free: bool,
-    original_failed_on_webgpu: impl Fn(&greycard_ai::Model) -> bool,
-) -> Option<Step> {
-    let unavailable: Vec<&str> = declined.iter().chain(failed).copied().collect();
-    let model = crate::ai::model_with(
-        shape,
-        have,
-        providers,
-        &unavailable,
-        original_failed_on_webgpu,
-    )?;
-    Some(if have(model) {
-        Step::Ask(model)
-    } else if sheet_free && !declined.contains(&model.id) && !failed.contains(&model.id) {
-        // The store already has the Subject original: this offer is
-        // the rewrite standing in for it, not the first Subject offer.
-        Step::Offer(
-            model,
-            model.id == greycard_ai::SUBJECT_WEBGPU.id && have(&greycard_ai::SUBJECT),
-        )
-    } else if matches!(shape, Shape::Subject {} | Shape::Background {})
-        && have(&greycard_ai::SUBJECT)
-    {
-        // Nothing to offer right now (another sheet is up, a fetch is
-        // running, or this model was already declined or failed this
-        // session), but the store's own original runs: use it rather
-        // than wait on an offer that is not coming this round. A
-        // Background wants exactly what a Subject want does — the
-        // same model, the same fallback — so it is treated as one
-        // here too. For either want alone: an Object or a Sky asked
-        // for with the Subject model would load the wrong file.
-        Step::Ask(&greycard_ai::SUBJECT)
-    } else {
-        Step::Wait
-    })
-}
-
 /// The status line while the first Whole person of a session loads the
 /// Subject model for its edge.
 pub(crate) const EDGE_LOADING: &str =
     "finding the whole person; loading Subject for its edge takes a few seconds the first time";
-
-/// The Subject model to offer beside a Whole person being asked for:
-/// its edge is Subject's matte (`sam3::find`), but the People run never
-/// waits on it. `may_offer`: the sheet is free, the Whole person was
-/// just asked for from the People menu (not loaded or pasted), and the
-/// edge offer was not declined this session. None for any other shape,
-/// without `may_offer`, with either Subject file in the store, or with
-/// the file `step` would pick for a Subject declined or failed to fetch
-/// this session.
-pub(crate) fn edge_offer(
-    shape: &Shape,
-    have: impl Fn(&greycard_ai::Model) -> bool + Copy,
-    providers: &[greycard_ai::Provider],
-    declined: &[&'static str],
-    failed: &[&'static str],
-    may_offer: bool,
-    original_failed_on_webgpu: impl Fn(&greycard_ai::Model) -> bool,
-) -> Option<&'static greycard_ai::Model> {
-    let sheet_free = may_offer;
-    if !crate::ai::takes_subject_edge(shape)
-        || !may_offer
-        || have(&greycard_ai::SUBJECT)
-        || have(&greycard_ai::SUBJECT_WEBGPU)
-    {
-        return None;
-    }
-    match step(
-        &Shape::Subject {},
-        have,
-        providers,
-        declined,
-        failed,
-        sheet_free,
-        original_failed_on_webgpu,
-    )? {
-        Step::Offer(model, _) => Some(model),
-        _ => None,
-    }
-}
 
 /// The rasters kept drawn across a reopen that are to be asked for
 /// again now: those of shapes still held and switched on. Each stays in
@@ -2301,285 +2201,20 @@ mod tests {
     /// and the width the viewport begins at.
     const LEFT_BAR: f32 = 240.0;
 
-    /// A Subject on a WebGPU machine with neither model: the GPU file
-    /// is offered; its fetch fails (faked here), and the original is
-    /// offered next; declining the original leaves the shape waiting;
-    /// the original arriving is asked for. Declining the GPU file also
-    /// turns to the original rather than blocking it.
+    /// A fetch that failed is remembered, and the status line turns a
+    /// Subject to the original (the choice itself is the engine's,
+    /// `ai::step`).
     #[test]
-    fn a_subject_turns_to_the_original_when_the_gpu_model_cannot_be_had() {
-        use greycard_ai::{Provider, SUBJECT, SUBJECT_WEBGPU};
-        let gpu = [Provider::WebGpu, Provider::Cpu];
-        let shape = Shape::Subject {};
-        let nothing = |_: &greycard_ai::Model| false;
-        // Nothing in the store yet: the record cannot say the original
-        // failed on WebGPU, since it has never been tried.
-        let no_record = nothing;
-        let (mut declined, mut failed) = (Vec::new(), Vec::new());
-
-        assert_eq!(
-            step(&shape, nothing, &gpu, &declined, &failed, true, no_record),
-            Some(Step::Offer(&SUBJECT_WEBGPU, false))
-        );
-        // The sheet is up or a fetch is on its way: wait.
-        assert_eq!(
-            step(&shape, nothing, &gpu, &declined, &failed, false, no_record),
-            Some(Step::Wait)
-        );
+    fn a_failed_fetch_is_remembered_and_turns_a_subject_to_the_original() {
+        use greycard_ai::SUBJECT_WEBGPU;
+        let mut failed = Vec::new();
         let status = fetch_failed(&mut failed, SUBJECT_WEBGPU.id, SUBJECT_WEBGPU.name, "404");
         assert!(
             status.contains("GPU Subject model could not be fetched"),
             "{status}"
         );
         assert!(status.contains("original"), "{status}");
-        assert_eq!(
-            step(&shape, nothing, &gpu, &declined, &failed, true, no_record),
-            Some(Step::Offer(&SUBJECT, false))
-        );
-        // Offline, the original fails too: no third offer.
-        {
-            let mut failed = failed.clone();
-            fetch_failed(&mut failed, SUBJECT.id, SUBJECT.name, "offline");
-            assert_eq!(
-                step(&shape, nothing, &gpu, &declined, &failed, true, no_record),
-                Some(Step::Wait)
-            );
-            // Once it is in the store after all, it is asked for.
-            let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
-            assert_eq!(
-                step(&shape, original, &gpu, &declined, &failed, true, no_record),
-                Some(Step::Ask(&SUBJECT))
-            );
-        }
-        declined.push(SUBJECT.id);
-        assert_eq!(
-            step(&shape, nothing, &gpu, &declined, &failed, true, no_record),
-            Some(Step::Wait)
-        );
-        let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
-        assert_eq!(
-            step(&shape, original, &gpu, &declined, &failed, true, no_record),
-            Some(Step::Ask(&SUBJECT))
-        );
-
-        // Declined, not failed: the same turn to the original.
-        let (declined, failed) = (vec![SUBJECT_WEBGPU.id], Vec::new());
-        assert_eq!(
-            step(&shape, nothing, &gpu, &declined, &failed, true, no_record),
-            Some(Step::Offer(&SUBJECT, false))
-        );
-        // And on a CPU-only machine the original from the start.
-        assert_eq!(
-            step(&shape, nothing, &[Provider::Cpu], &[], &[], true, no_record),
-            Some(Step::Offer(&SUBJECT, false))
-        );
-    }
-
-    /// The original already in the store, and on record as failing on
-    /// WebGPU for this adapter: the rewrite is offered, and the offer
-    /// says why. Declining it leaves the original in use, not waiting.
-    #[test]
-    fn a_subject_already_in_the_store_offers_the_rewrite_when_it_falls_back() {
-        use greycard_ai::{Provider, SUBJECT, SUBJECT_WEBGPU};
-        let gpu = [Provider::WebGpu, Provider::Cpu];
-        let shape = Shape::Subject {};
-        let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
-        let failed_on_webgpu = |_: &greycard_ai::Model| true;
-
-        assert_eq!(
-            step(&shape, original, &gpu, &[], &[], true, failed_on_webgpu),
-            Some(Step::Offer(&SUBJECT_WEBGPU, true)),
-            "the store's original falls back to the CPU here: the rewrite is offered"
-        );
-        // Declined: the original stands, asked for rather than waited on.
-        assert_eq!(
-            step(
-                &shape,
-                original,
-                &gpu,
-                &[SUBJECT_WEBGPU.id],
-                &[],
-                true,
-                failed_on_webgpu
-            ),
-            Some(Step::Ask(&SUBJECT))
-        );
-        // Nothing on record: the original stands from the start.
-        let no_record = |_: &greycard_ai::Model| false;
-        assert_eq!(
-            step(&shape, original, &gpu, &[], &[], true, no_record),
-            Some(Step::Ask(&SUBJECT))
-        );
-        // Another sheet up, or a fetch already running: nothing can be
-        // offered this round, but the original already runs, so it is
-        // asked for rather than left waiting on an offer that is not
-        // coming.
-        assert_eq!(
-            step(&shape, original, &gpu, &[], &[], false, failed_on_webgpu),
-            Some(Step::Ask(&SUBJECT))
-        );
-    }
-
-    /// A Background wants exactly what a Subject want does: the same
-    /// model, the same fallback to the store's own original when
-    /// nothing can be offered this round. Before this was fixed,
-    /// `step` only recognized `Shape::Subject {}` for that fallback,
-    /// so a Background waited on an offer that was not coming while a
-    /// Subject in the same mask already ran.
-    #[test]
-    fn a_background_falls_back_to_the_original_exactly_as_a_subject_does() {
-        use greycard_ai::{Provider, SUBJECT, SUBJECT_WEBGPU};
-        let gpu = [Provider::WebGpu, Provider::Cpu];
-        let shape = Shape::Background {};
-        let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
-        let failed_on_webgpu = |_: &greycard_ai::Model| true;
-
-        assert_eq!(
-            step(&shape, original, &gpu, &[], &[], true, failed_on_webgpu),
-            Some(Step::Offer(&SUBJECT_WEBGPU, true))
-        );
-        assert_eq!(
-            step(
-                &shape,
-                original,
-                &gpu,
-                &[SUBJECT_WEBGPU.id],
-                &[],
-                true,
-                failed_on_webgpu
-            ),
-            Some(Step::Ask(&SUBJECT))
-        );
-        let no_record = |_: &greycard_ai::Model| false;
-        assert_eq!(
-            step(&shape, original, &gpu, &[], &[], true, no_record),
-            Some(Step::Ask(&SUBJECT))
-        );
-        // The sheet busy, the WebGPU rewrite on record as failing: the
-        // store's own original already runs, so a Background is asked
-        // for it rather than left waiting, exactly as a Subject is.
-        assert_eq!(
-            step(&shape, original, &gpu, &[], &[], false, failed_on_webgpu),
-            Some(Step::Ask(&SUBJECT))
-        );
-    }
-
-    /// A Sky wants the prior, then SAM: each offered in turn, and asked
-    /// for once both are in. SAM declined or failing leaves the prior
-    /// alone asked for, its own labels the outline.
-    #[test]
-    fn a_sky_is_offered_the_prior_then_sam_and_runs_without_sam_if_it_must() {
-        use greycard_ai::{Provider, SAM, SKY, SUBJECT};
-        let gpu = [Provider::WebGpu, Provider::Cpu];
-        let shape = Shape::Sky { picks: Vec::new() };
-        let no_record = |_: &greycard_ai::Model| false;
-        let nothing = |_: &greycard_ai::Model| false;
-        assert_eq!(
-            step(&shape, nothing, &gpu, &[], &[], true, no_record),
-            Some(Step::Offer(&SKY, false))
-        );
-        let prior = |m: &greycard_ai::Model| m.id == SKY.id;
-        assert_eq!(
-            step(&shape, prior, &gpu, &[], &[], true, no_record),
-            Some(Step::Offer(&SAM, false))
-        );
-        let both = |m: &greycard_ai::Model| m.id == SKY.id || m.id == SAM.id;
-        assert_eq!(
-            step(&shape, both, &gpu, &[], &[], true, no_record),
-            Some(Step::Ask(&SKY))
-        );
-        assert_eq!(
-            step(&shape, prior, &gpu, &[SAM.id], &[], true, no_record),
-            Some(Step::Ask(&SKY))
-        );
-        assert_eq!(
-            step(&shape, prior, &gpu, &[], &[SAM.id], true, no_record),
-            Some(Step::Ask(&SKY))
-        );
-        // The prior declined: the shape waits, whatever else the store
-        // has; the Subject original is never asked for in its place.
-        let subject_too = |m: &greycard_ai::Model| m.id == SUBJECT.id || m.id == SAM.id;
-        assert_eq!(
-            step(&shape, subject_too, &gpu, &[SKY.id], &[], true, no_record),
-            Some(Step::Wait)
-        );
-        assert_eq!(
-            step(&shape, subject_too, &gpu, &[], &[], false, no_record),
-            Some(Step::Wait)
-        );
-    }
-
-    /// A Whole person with the People model in the store is asked for
-    /// at once, and the Subject model its edge runs is offered beside
-    /// it, as a Subject would be offered; not with either Subject file
-    /// in, the sheet busy, or that file declined; never for another
-    /// part.
-    #[test]
-    fn a_whole_person_runs_at_once_and_offers_subject_beside_it() {
-        use greycard_ai::{Provider, SAM3, SUBJECT, SUBJECT_WEBGPU};
-        use greycard_edit::mask::Route;
-        let gpu = [Provider::WebGpu, Provider::Cpu];
-        let no_record = |_: &greycard_ai::Model| false;
-        let whole = Shape::Part {
-            phrase: "person".into(),
-            route: Route::Whole,
-            person: None,
-        };
-        let hair = Shape::Part {
-            phrase: "hair".into(),
-            route: Route::Whole,
-            person: None,
-        };
-        let people: fn(&greycard_ai::Model) -> bool = |m| m.id == SAM3.id;
-        assert_eq!(
-            step(&whole, people, &gpu, &[], &[], true, no_record),
-            Some(Step::Ask(&SAM3))
-        );
-        let offer = |shape, have, declined: &[&'static str], free| {
-            edge_offer(shape, have, &gpu, declined, &[], free, no_record).map(|m| m.id)
-        };
-        assert_eq!(offer(&whole, people, &[], true), Some(SUBJECT_WEBGPU.id));
-        assert_eq!(offer(&hair, people, &[], true), None);
-        assert_eq!(offer(&whole, people, &[], false), None);
-        // The GPU file declined: the original, as for a Subject.
-        assert_eq!(
-            offer(&whole, people, &[SUBJECT_WEBGPU.id], true),
-            Some(SUBJECT.id)
-        );
-        assert_eq!(
-            offer(&whole, people, &[SUBJECT_WEBGPU.id, SUBJECT.id], true),
-            None
-        );
-        let with_subject: fn(&greycard_ai::Model) -> bool =
-            |m| m.id == SAM3.id || m.id == SUBJECT.id;
-        assert_eq!(offer(&whole, with_subject, &[], true), None);
-    }
-
-    /// An Object waiting on SAM with the sheet busy waits: the Subject
-    /// original in the store is not asked for in SAM's place.
-    #[test]
-    fn an_object_waiting_on_sam_is_not_given_the_subject_model() {
-        use greycard_ai::{Provider, SUBJECT};
-        let shape = Shape::Object {
-            picks: vec![Pick {
-                pos: [0.5, 0.5],
-                positive: true,
-            }],
-            boxes: Vec::new(),
-        };
-        let subject = |m: &greycard_ai::Model| m.id == SUBJECT.id;
-        assert_eq!(
-            step(
-                &shape,
-                subject,
-                &[Provider::Cpu],
-                &[],
-                &[],
-                false,
-                |_: &greycard_ai::Model| false
-            ),
-            Some(Step::Wait)
-        );
+        assert_eq!(failed, [SUBJECT_WEBGPU.id]);
     }
 
     /// The sheet's note says who publishes the model.

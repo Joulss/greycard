@@ -70,7 +70,7 @@ pub fn preset_fitted(
 /// The preset goes on the line of `version` (the file's own for none);
 /// a line that is not there takes nothing. A raw's line still waiting on
 /// its ISO's learned-denoiser blend (never developed,
-/// `files::line_never_developed`) is given it first, as
+/// `on_disk::line_never_developed`) is given it first, as
 /// `panel::sync::lay_over_targets` gives a target: the step makes the
 /// edit no longer the default, and once written the next launch would
 /// take that to mean the blend was seeded already. A preset that
@@ -91,7 +91,7 @@ pub fn preset_at_start(
         return false;
     }
     let mut over = line.current.clone();
-    if crate::files::line_never_developed(line)
+    if greycard_edit_io::on_disk::line_never_developed(line)
         && !greycard_core::picture::is_picture_path(file)
         && let Ok(p) = greycard_core::decode::probe_path(file)
     {

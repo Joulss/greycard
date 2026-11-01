@@ -534,7 +534,7 @@ pub(crate) fn jpegs_apart_changed(state: &Rc<Shared>, app: &App, worker: &Rc<Wor
             return;
         }
         st.views.jpegs_apart = apart;
-        keep(&st, |s| s.jpegs_apart = apart);
+        keep(&st, |s| s.shared.jpegs_apart = apart);
         tracing::info!(
             "a JPEG beside its raw is {}",
             if apart {
@@ -796,7 +796,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let mut st = state.borrow_mut();
             st.window.placement = placement_named(&app.get_sidecar_placement());
             let folder = st.window.placement == greycard_edit::Placement::Folder;
-            keep(&st, |s| s.sidecars_in_folder = folder);
+            keep(&st, |s| s.shared.sidecars_in_folder = folder);
             app.set_settings_note("".into());
             show_elsewhere(&st, &app);
         });
@@ -810,7 +810,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let mut st = state.borrow_mut();
             st.window.xmp_sidecars = app.get_xmp_sidecars();
             let on = st.window.xmp_sidecars;
-            keep(&st, |s| s.xmp_sidecars = on);
+            keep(&st, |s| s.shared.xmp_sidecars = on);
         });
     }
     // A JPEG beside its raw a frame of its own, or the raw's companion:
@@ -1813,16 +1813,16 @@ mod tests {
     #[test]
     fn a_kept_field_outlives_the_next_write_of_the_choices() {
         let (app, _state, _worker, _timer, dir) = kept_window();
-        assert!(!file_after_a_tick().xmp_sidecars);
+        assert!(!file_after_a_tick().shared.xmp_sidecars);
         // As `keep` writes, which a test build skips.
         let mut file = crate::settings::Settings::load();
-        file.xmp_sidecars = true;
+        file.shared.xmp_sidecars = true;
         file.save();
         open_editing(&app);
         click_row(&app, "monitor-row", "Adobe RGB");
         let file = file_after_a_tick();
         assert_eq!(file.display_profile, "Adobe RGB");
-        assert!(file.xmp_sidecars);
+        assert!(file.shared.xmp_sidecars);
         crate::settings::use_file(None);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1852,9 +1852,9 @@ mod tests {
         open_editing(&app);
         assert_eq!(crate::testing::count_labeled(&app, "EXPORT"), 1);
         click_row(&app, "format-row", "PNG");
-        assert_eq!(kept().export.format, "PNG");
+        assert_eq!(kept().shared.export.format, "PNG");
         click_row(&app, "space-row", "Adobe RGB");
-        assert_eq!(kept().export.space, "Adobe RGB");
+        assert_eq!(kept().shared.export.space, "Adobe RGB");
         app.set_settings_open(false);
         // The export sheet shows them, and its clicks come back.
         app.set_export_open(true);
@@ -1879,8 +1879,8 @@ mod tests {
         };
         near("Format", "TIFF 16-bit");
         near("Color", "Rec.2020");
-        assert_eq!(kept().export.format, "TIFF 16-bit");
-        assert_eq!(kept().export.space, "Rec.2020");
+        assert_eq!(kept().shared.export.format, "TIFF 16-bit");
+        assert_eq!(kept().shared.export.space, "Rec.2020");
         app.set_export_open(false);
         open_editing(&app);
         assert_eq!(row_shows(&app, "format-row"), "TIFF 16-bit");

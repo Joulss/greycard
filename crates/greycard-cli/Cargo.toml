@@ -19,12 +19,11 @@ greycard-lens = { path = "../greycard-lens" }
 greycard-edit = { path = "../greycard-edit" }
 greycard-edit-io = { path = "../greycard-edit-io" }
 greycard-library = { path = "../greycard-library" }
+# The editor's export with no window, and the settings it reads.
+greycard-engine = { path = "../greycard-engine" }
 image.workspace = true
 clap.workspace = true
 anyhow.workspace = true
-# The editor's settings file, read for where a new sidecar goes.
-dirs.workspace = true
-serde_json.workspace = true
 log.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

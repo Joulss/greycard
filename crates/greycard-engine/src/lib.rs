@@ -16,13 +16,17 @@
 pub mod ai;
 pub mod camera;
 pub mod edited_pictures;
+pub mod export_name;
 pub mod finish;
+pub mod headless;
 pub mod lens;
 pub mod made;
 pub mod naming;
+pub mod preset_fit;
 pub mod previews;
 pub mod queue;
 pub mod reduced;
+pub mod settings;
 pub mod sheet;
 pub mod stages;
 pub mod thumbpool;

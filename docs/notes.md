@@ -526,3 +526,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§511. Carried sets' leftovers, and a file away while its folder is renamed](notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md) (2026-11-01)
 - [§512. Camera thumbnails near the screen](notes/512-camera-thumbnails-near-the-screen.md) (2026-11-01)
 - [§513. A DNG's own lens correction and bad pixels](notes/513-a-dngs-own-lens-correction-and-bad-pixels.md) (2026-11-01)
+- [§514. The engine, part four: `greycard export`](notes/514-the-engine-part-four-greycard-export.md) (2026-11-01)

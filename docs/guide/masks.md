@@ -396,7 +396,7 @@ runs the models on the CPU alone, so they are slower than on a GPU,
 and the status line says so ("on CPU (slower)"). **Not now** leaves
 the AI features off for the session, and the status line says why.
 From the command line, `greycard models --fetch onnxruntime` fetches
-it; an `--export` on such a machine before it is fetched writes the
+it; a `greycard export` on such a machine before it is fetched writes the
 picture without the learned masks and exits 2, naming it.
 
 ### On Windows on ARM

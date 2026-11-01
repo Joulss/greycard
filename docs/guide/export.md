@@ -349,16 +349,20 @@ An export can run from a terminal or a script, with no window. It needs
 no GPU and no desktop, so it also runs over SSH.
 
 ```
-greycard-ui IMG_0001.CR3 --export out.jpg --export-preset "Web 2048"
+greycard export IMG_0001.CR3 out.jpg --export-preset "Web 2048"
+greycard export IMG_0001.CR3 IMG_0002.CR3 out/
+greycard export ~/Pictures/shoot out/ --all
 ```
 
 The file is written under the frame's saved edit, and the export is
-added to its history, as in the window.
+added to its history, as in the window. The frames come first, then
+where they go.
 
-| Flag | What it does |
+| Path or flag | What it does |
 |---|---|
-| `--export FILE` | Writes one frame to `FILE`. Its extension (`.jpg`, `.png`, `.tif`) sets the format. |
-| `--export FOLDER/` | Writes into a folder: one that exists, or a path ending in `/`. Each frame keeps its own name. |
+| `FILE` last | Writes one frame to `FILE`. Its extension (`.jpg`, `.png`, `.tif`) sets the format; another extension, or one of the frames, is refused. |
+| `FOLDER/` last | Writes into a folder: one that exists, or a path ending in `/`. Each frame keeps its own name. |
+| Several frames | Writes each into the folder. A folder among them needs `--all`. |
 | `--also 2,5,7` | With a folder: adds more frames from the opened folder, counted from 0 in the folder's order. |
 | `--all` | With a folder: writes every frame of the opened folder, in the folder's order. Give the folder's path; not with `--also` or `--preset`. |
 | `--export-preset NAME` | Uses a saved export preset. Without it, the sheet as you last left it. |
@@ -366,7 +370,7 @@ added to its history, as in the window.
 | `--on-exists WHAT` | `increment`, `overwrite` or `skip`. |
 | `--version-name NAME` | Exports each frame's version of that name instead of the frame's own edit, named `IMG_0001-NAME.jpg` in a folder, and recorded in the version's history. A frame with no version of that name stops the run. |
 | `--preset NAME` | Applies a develop preset first, saved as a step in the history of the frame opened: the file given, or in a folder the one you last had open. Not with `--all`; lay a preset over many files with `greycard presets --apply NAME <files>`, then export. |
-| `--exposure EV`, `--develop-temperature K`, `--agx` | Change this export only, on the frame opened (with `--all`, on every frame). Not saved to the frame. |
+| `--exposure EV`, `--develop-temperature K`, `--agx` | Change this export only, on the frame opened (with `--all` or several frames, on every frame). Not saved to the frame. `--exposure 0` sets the exposure to 0. |
 | `--no-sidecars` | Reads and writes no `.gcd`: each frame exports at its defaults, and nothing is recorded. |
 | `--sidecar-folder` | Writes the `.gcd` into the hidden `.greycard` folder for this run. |
 | `--xmp-sidecars` | Also writes an XMP beside the raw for this run. |
@@ -374,8 +378,7 @@ added to its history, as in the window.
 An export preset with a border writes the border; there is no flag of
 its own for it.
 
-Give a folder as the path to open, rather than a file, to use `--also`
-or `--all`.
+Give a folder, rather than a file, to use `--also` or `--all`.
 The **Subfolder** field is not used from the command line: the path you
 give decides.
 
@@ -388,7 +391,9 @@ the same:
 | 1 | A frame was not written, or the run could not start. The reason is given. |
 | 2 | Every frame was written, but some without something the edit names that this computer has not got, such as a look or a downloaded mask model. Each is named. |
 
-Flags that only make sense with a window, such as `--snapshot`, are
-refused with the reason.
+On Windows the program is `greycard.exe`.
 
-On Windows the program is `greycard-ui.exe`.
+For this release the editor still exports the same way, as
+`greycard-ui FRAME --export OUT` with the flags above; that form goes
+in a later release. With it, a flag that needs a window, such as
+`--snapshot`, stops the run with the reason.

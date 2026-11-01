@@ -150,9 +150,10 @@ struct Cli {
     /// snapshot, so it can show a section below the fold
     #[arg(long, value_name = "PX")]
     panel_scroll: Option<f32>,
-    /// Exposure to open with, in stops
-    #[arg(long, default_value_t = 0.0)]
-    exposure: f32,
+    /// Exposure to open with, in stops, over the edit's: 0 included,
+    /// which resets it; without the flag, the edit's own
+    #[arg(long, value_name = "EV", allow_negative_numbers = true)]
+    exposure: Option<f32>,
     /// Open with AgX as the display curve, Blender's formation with
     /// its Punchy look, in place of the curve per channel: the LIGHT
     /// section's switch, for a comparison from the command line; on
@@ -214,7 +215,8 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
     /// Export the first file under its edit to this path, with no
-    /// window, then quit. A folder (one that is there, or a path
+    /// window, then quit: `greycard export`, which this flag gives way
+    /// to in a later release. A folder (one that is there, or a path
     /// ending in a separator) takes the set instead, the first file
     /// and the --also rows (or with --all, every frame), each frame
     /// under its own edit and its own name. Exits 0 when every frame

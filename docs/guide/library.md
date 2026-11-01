@@ -27,9 +27,9 @@ greycard runs as one window. A file or folder you open from your file
 manager, by double-click or Open With, while greycard is running opens
 in that window, which comes to the front; starting greycard again with
 nothing to open brings the window up too. On Wayland the compositor
-decides whether the window comes forward or is only marked. An
-`--export` from the command line, and any other run with flags, works
-on its own and leaves the window alone.
+decides whether the window comes forward or is only marked. A
+`greycard export`, and any run of the editor with flags, works on its
+own and leaves the window alone.
 
 ## Filmstrip, grid and loupe
 

@@ -214,9 +214,9 @@ fn keep_presets(st: &State, app: &App) {
         return;
     };
     let mut settings = settings::Settings::load_from(path);
-    settings.export_presets = st.work.export_presets.clone();
-    settings.export_preset = chosen_preset(app).unwrap_or_default();
-    settings.export = read_sheet(app);
+    settings.shared.export_presets = st.work.export_presets.clone();
+    settings.shared.export_preset = chosen_preset(app).unwrap_or_default();
+    settings.shared.export = read_sheet(app);
     settings.save_to(path);
 }
 
@@ -2510,27 +2510,27 @@ mod tests {
         app.set_export_size("1024".into());
         app.invoke_export_preset_saved("Small".into());
         let on_disk = read();
-        assert_eq!(on_disk.export_presets.len(), 1);
-        assert_eq!(on_disk.export_presets[0].name, "Small");
-        assert_eq!(on_disk.export_presets[0].sheet.size, "1024");
-        assert_eq!(on_disk.export_preset, "Small");
+        assert_eq!(on_disk.shared.export_presets.len(), 1);
+        assert_eq!(on_disk.shared.export_presets[0].name, "Small");
+        assert_eq!(on_disk.shared.export_presets[0].sheet.size, "1024");
+        assert_eq!(on_disk.shared.export_preset, "Small");
         assert_eq!(on_disk.scope, "Parade");
 
         // Another saved, then the first picked back: the pick is kept.
         app.set_export_size("2048".into());
         app.invoke_export_preset_saved("Web".into());
-        assert_eq!(read().export_presets.len(), 2);
+        assert_eq!(read().shared.export_presets.len(), 2);
         app.invoke_export_preset_chosen("Small".into());
         let on_disk = read();
-        assert_eq!(on_disk.export_preset, "Small");
-        assert_eq!(on_disk.export.size, "1024");
+        assert_eq!(on_disk.shared.export_preset, "Small");
+        assert_eq!(on_disk.shared.export.size, "1024");
 
         // Deleted: gone from the file, nothing chosen.
         app.invoke_export_preset_deleted();
         let on_disk = read();
-        assert_eq!(on_disk.export_presets.len(), 1);
-        assert_eq!(on_disk.export_presets[0].name, "Web");
-        assert_eq!(on_disk.export_preset, "");
+        assert_eq!(on_disk.shared.export_presets.len(), 1);
+        assert_eq!(on_disk.shared.export_presets[0].name, "Web");
+        assert_eq!(on_disk.shared.export_preset, "");
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -2731,7 +2731,7 @@ mod tests {
         // Kept with the last settings.
         app.set_export_name("{date}_{seq}".into());
         let kept = crate::panel::startup::remember(&app);
-        assert_eq!(kept.export.name, "{date}_{seq}");
+        assert_eq!(kept.shared.export.name, "{date}_{seq}");
     }
 
     /// A set is written under the pattern, each frame its number; two

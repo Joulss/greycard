@@ -248,7 +248,7 @@ fn send_view(
         match on {
             Some(on) => on,
             None => st.current.and_then(|c| st.path_at(c)).cloned().or_else(|| {
-                let last = settings::Settings::load().last_file;
+                let last = settings::Settings::load().shared.last_file;
                 (!last.is_empty()).then(|| PathBuf::from(last))
             }),
         }
