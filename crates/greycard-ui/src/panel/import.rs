@@ -560,23 +560,23 @@ pub(crate) fn start(st: &mut State, app: &App) {
     // Kept for next time now, not at the close: a run that ends
     // badly still remembers where its frames went.
     if let Some(file) = &st.window.settings_file {
-        let mut kept = settings::Settings::load_from(file);
-        kept.import = settings::ImportChoices {
-            destination: opts.destination.to_string_lossy().into_owned(),
-            subfolder: opts.subfolder.clone(),
-            name: opts.name.clone(),
-            backup: opts
-                .backup
-                .as_deref()
-                .map(|b| b.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            preset: opts
-                .preset
-                .as_ref()
-                .map(|p| p.name.clone())
-                .unwrap_or_default(),
-        };
-        kept.save_to(file);
+        settings::Settings::change_at(file, |kept| {
+            kept.import = settings::ImportChoices {
+                destination: opts.destination.to_string_lossy().into_owned(),
+                subfolder: opts.subfolder.clone(),
+                name: opts.name.clone(),
+                backup: opts
+                    .backup
+                    .as_deref()
+                    .map(|b| b.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                preset: opts
+                    .preset
+                    .as_ref()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default(),
+            };
+        });
     }
     let job = Arc::new(Job::default());
     st.import.job = Some(job.clone());

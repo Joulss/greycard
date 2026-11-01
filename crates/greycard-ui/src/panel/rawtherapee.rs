@@ -231,12 +231,12 @@ pub(crate) fn remember(st: &mut State, app: &App, dir: &Path) {
     let dir = dir.to_path_buf();
     st.rawtherapee.answered.insert(dir.clone());
     if let Some(file) = st.window.settings_file.clone().filter(|_| !st.window.batch) {
-        let mut kept = settings::Settings::load_from(&file);
         let spelled = dir.to_string_lossy().into_owned();
-        if !kept.rawtherapee_answered.contains(&spelled) {
-            kept.rawtherapee_answered.push(spelled);
-            kept.save_to(&file);
-        }
+        settings::Settings::change_at(&file, |kept| {
+            if !kept.rawtherapee_answered.contains(&spelled) {
+                kept.rawtherapee_answered.push(spelled);
+            }
+        });
     }
 }
 

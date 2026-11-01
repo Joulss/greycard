@@ -309,6 +309,11 @@ current log is `greycard-ui.log`, and the three runs before are kept as
 `greycard-ui-1.log` (the latest), `greycard-ui-2.log`, and
 `greycard-ui-3.log`.
 
+A settings file that will not parse, a hand edit with a typo say, is
+moved aside as `settings.json.bad` and the run starts on the defaults.
+A fresh file holding the defaults reappears at the first write, the
+launch's update check included.
+
 The library index is kept out of the cache, because rebuilding a large
 library takes a long time.
 

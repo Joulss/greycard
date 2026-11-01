@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A settings.json that fails to parse is written over with the
-      defaults: the close's write always writes, and three sites load
-      then save (update.rs, panel/assets.rs, panel/camera_match.rs),
-      where the minute's write skips a broken file (§514's review,
-      2026-11-01). Keep the broken file aside and say so in the log
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
       them in 1.5 to 2.6 s from a warm cache. The window says

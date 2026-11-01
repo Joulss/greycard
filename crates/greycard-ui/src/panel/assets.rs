@@ -1172,11 +1172,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     // a test, which has no business with them.
                     st.sheets.lenses_declined = true;
                     if !st.window.batch && !cfg!(test) {
-                        let mut settings = settings::Settings::load();
-                        if !settings.lenses_declined {
-                            settings.lenses_declined = true;
-                            settings.save();
-                        }
+                        settings::Settings::change(|s| s.lenses_declined = true);
                     }
                 }
             }

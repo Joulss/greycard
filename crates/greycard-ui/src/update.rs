@@ -320,10 +320,8 @@ pub(crate) fn apply(app: &App, outcome: &Outcome, now: u64, persist: bool, asked
         app.set_update_note(words(outcome, VERSION).into());
     }
     let kept = if persist {
-        let mut settings = settings::Settings::load();
-        settings.update = after(&settings.update, outcome, now, asked.is_some());
-        settings.save();
-        settings.update
+        settings::Settings::change(|s| s.update = after(&s.update, outcome, now, asked.is_some()))
+            .update
     } else if let Outcome::Found(r) = outcome {
         Kept {
             tag: r.tag.clone(),

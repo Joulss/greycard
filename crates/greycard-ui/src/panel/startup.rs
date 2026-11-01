@@ -105,7 +105,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             // Where the Settings sheet puts sidecars, or the flag's
             // choice; none for a run that writes none.
             placement: (!cli.no_sidecars).then(|| {
-                if cli.sidecar_folder || settings::Settings::load().shared.sidecars_in_folder {
+                if cli.sidecar_folder
+                    || settings::Settings::load_untouched()
+                        .shared
+                        .sidecars_in_folder
+                {
                     greycard_edit::Placement::Folder
                 } else {
                     greycard_edit::Placement::Beside
@@ -124,7 +128,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // A first run is one with no settings file yet: read before
     // anything this run writes one.
     let first_run = settings::path().is_some_and(|p| !p.exists());
-    let remembered = settings::Settings::load();
+    let (remembered, set_aside) = settings::Settings::load_at_start();
     match settings::path() {
         Some(p) => tracing::info!("settings: {}", p.display()),
         None => tracing::warn!("settings: no configuration directory; nothing is remembered"),
@@ -1820,8 +1824,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The panel's choices go to the file as they change, and they and
     // a resting edit once more as the loop exits: a Mac's Quit ends
     // the process inside the loop, so nothing after `app.run()` runs.
-    let _choices = (cli.screenshot.is_none() && cli.snapshot.is_none()).then(|| {
-        let (app_weak, held, panes) = (app.as_weak(), state.clone(), cli.hide_panels);
+    let choices = (cli.screenshot.is_none() && cli.snapshot.is_none()).then(|| {
+        let choices = Choices::new(&app, &state.borrow(), set_aside, cli.hide_panels);
+        let (app_weak, held, at_exit) = (app.as_weak(), state.clone(), choices.clone());
         AT_EXIT.with(|hook| {
             *hook.borrow_mut() = Some(Box::new(move || {
                 let (Some(app), Ok(mut st)) = (app_weak.upgrade(), held.try_borrow_mut()) else {
@@ -1834,7 +1839,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let edit = read_edit(&app, &st.develop.edit, st.develop.target);
                     save_edit(&mut st, edit);
                 }
-                save_choices(&app, &st, panes);
+                at_exit.write(&app, &st, true);
                 // The collections' and stacks' copies asked for, a
                 // moment's wait: one held up goes at the next launch.
                 if let Some(c) = &st.views.collections.carrier {
@@ -1842,7 +1847,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 }
             }));
         });
-        keep_choices(&app, &state, cli.hide_panels)
+        (keep_choices(&app, &state, &choices), choices)
     });
     // An event loop that ends in an error (the compositor gone: a
     // logout, the shell crashing) still quits as a closed window does,
@@ -1907,8 +1912,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The panel's choices, for the next run. Not from a screenshot or
     // a snapshot, which should leave the user's alone. Written as they
     // change too (`keep_choices`); this write is for the last second.
-    if cli.screenshot.is_none() && cli.snapshot.is_none() {
-        save_choices(&app, &state.borrow(), cli.hide_panels);
+    if let Some((_, choices)) = &choices {
+        choices.write(&app, &state.borrow(), true);
     }
 
     // The open file's edit, as left.
@@ -2335,14 +2340,44 @@ fn merged(
     settings
 }
 
-/// The panel's choices written into the file as it stands.
-pub(crate) fn save_choices(app: &App, st: &State, panes_from_file: bool) {
-    merged(
-        gathered(app, st),
-        settings::Settings::load(),
-        panes_from_file,
-    )
-    .save();
+/// The panel's choices as last written, shared by the timer that
+/// writes them as they change and the close's write.
+#[derive(Clone)]
+pub(crate) struct Choices {
+    last: Rc<RefCell<settings::Settings>>,
+    /// The file would not parse at the start and was set aside: until
+    /// something writes it again the close writes nothing, the
+    /// defaults on show being no one's choice.
+    set_aside: bool,
+    panes_from_file: bool,
+}
+
+impl Choices {
+    /// As the run starts; `set_aside` from `Settings::load_at_start`.
+    pub(crate) fn new(app: &App, st: &State, set_aside: bool, panes_from_file: bool) -> Self {
+        Choices {
+            last: Rc::new(RefCell::new(gathered(app, st))),
+            set_aside,
+            panes_from_file,
+        }
+    }
+
+    /// Written into the file as it stands when a choice has changed
+    /// since the last write, and at the close (`closing`) unless held.
+    /// Merged over the file there, so the close keeps what another
+    /// path wrote and what only it writes (the system's scale).
+    pub(crate) fn write(&self, app: &App, st: &State, closing: bool) {
+        let now = gathered(app, st);
+        let held =
+            self.set_aside && settings::path().is_some_and(|p| !settings::Settings::written(&p));
+        if *self.last.borrow() == now && (!closing || held) {
+            return;
+        }
+        tracing::debug!("settings: the panel's choices written");
+        let panes = self.panes_from_file;
+        settings::Settings::change(|file| *file = merged(now.clone(), std::mem::take(file), panes));
+        *self.last.borrow_mut() = now;
+    }
 }
 
 /// How long the window's frames are counted over before the count is
@@ -2355,30 +2390,14 @@ const FRAMES_A_SECOND_SAID: f64 = 5.0;
 /// the last written, so a run that ends without the close's write (a
 /// Mac's Quit, a crash) keeps them. Polled rather than wired to each
 /// control, so a choice added to `remember` is kept with no more work.
-pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, panes_from_file: bool) -> slint::Timer {
-    let mut last = gathered(app, &state.borrow());
-    let mut said_unread = false;
-    let (app_weak, state) = (app.as_weak(), state.clone());
+pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, choices: &Choices) -> slint::Timer {
+    let (app_weak, state, choices) = (app.as_weak(), state.clone(), choices.clone());
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, CHOICES_EVERY, move || {
         let (Some(app), Ok(st)) = (app_weak.upgrade(), state.try_borrow()) else {
             return;
         };
-        let now = gathered(&app, &st);
-        if now == last {
-            return;
-        }
-        // A file that will not read is left for the user to mend; the
-        // close's write still replaces it, as it always has.
-        let Some(file) = settings::Settings::load_parsed() else {
-            if !std::mem::replace(&mut said_unread, true) {
-                tracing::warn!("settings: the file will not read; choices kept at close");
-            }
-            return;
-        };
-        tracing::debug!("settings: the panel's choices written as changed");
-        merged(now.clone(), file, panes_from_file).save();
-        last = now;
+        choices.write(&app, &st, false);
     });
     timer
 }
@@ -2545,12 +2564,7 @@ pub(crate) fn remember_last_file(st: &State) {
     // Every develop lands here; the file only writes when the file
     // open has changed.
     let path = path.to_string_lossy().into_owned();
-    let mut settings = settings::Settings::load();
-    if settings.shared.last_file == path {
-        return;
-    }
-    settings.shared.last_file = path;
-    settings.save();
+    settings::Settings::change(|s| s.shared.last_file = path);
 }
 
 /// The panel's names for a profile that is the system's, and for one

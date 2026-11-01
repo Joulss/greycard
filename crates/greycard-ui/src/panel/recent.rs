@@ -69,10 +69,10 @@ pub(crate) fn opened(st: &mut State, app: &App) {
             // Through the file as it is now, so a second window's
             // folders are kept too.
             Some(path) => {
-                let mut kept = settings::Settings::load_from(path);
-                push_recent(&mut kept.recent_folders, &dir);
-                kept.save_to(path);
-                st.views.recent.folders = kept.recent_folders;
+                st.views.recent.folders = settings::Settings::change_at(path, |s| {
+                    push_recent(&mut s.recent_folders, &dir)
+                })
+                .recent_folders;
             }
             None => push_recent(&mut st.views.recent.folders, &dir),
         }

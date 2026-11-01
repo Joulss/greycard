@@ -8,7 +8,9 @@
 //! after an export; the last file is also written as soon as it
 //! develops, and a folder as it opens, so they survive a session that
 //! never closes cleanly. Trouble either way is ignored: a
-//! preference is not worth an error, and the defaults are good.
+//! preference is not worth an error, and the defaults are good. A file
+//! that will not parse is set aside as `settings.json.bad` rather than
+//! written over, and only a change writes the file again.
 
 use std::path::PathBuf;
 
@@ -654,6 +656,22 @@ impl Settings {
         path().map(|p| Self::load_from(&p)).unwrap_or_default()
     }
 
+    /// The start's read: the settings, and whether the file would not
+    /// parse and was set aside, so the close knows the defaults it
+    /// holds are no one's choice.
+    pub fn load_at_start() -> (Self, bool) {
+        path().map(|p| Self::read(&p, true)).unwrap_or_default()
+    }
+
+    /// The file as a run that writes none reads it (a headless import
+    /// or export): one that will not parse is the defaults, with a
+    /// warning, and left where it is for the window's next start.
+    pub fn load_untouched() -> Self {
+        path().map(|p| Self::read(&p, false).0).unwrap_or_default()
+    }
+
+    /// A test's write of the whole file; the run's go by `change`.
+    #[cfg(test)]
     pub fn save(&self) {
         if let Some(path) = path() {
             self.save_to(&path);
@@ -661,34 +679,95 @@ impl Settings {
     }
 
     /// The file, or the defaults: a file that is not there is the
-    /// first run, and says nothing; one that will not parse is worth
-    /// a warning, since the defaults then appear from nowhere.
+    /// first run, and says nothing; one that will not parse is set
+    /// aside (`read`).
     pub fn load_from(path: &std::path::Path) -> Self {
-        Self::read(path).unwrap_or_else(|e| {
-            tracing::warn!("settings {}: {e}; defaults", path.display());
-            Self::default()
-        })
+        Self::read(path, true).0
     }
 
-    /// The file as it stands, or none when it is there and will not
-    /// read: a write merged over the defaults would put a file
-    /// hand-edited with a typo out of reach.
-    pub fn load_parsed() -> Option<Self> {
-        path().map_or(Some(Self::default()), |p| Self::read(&p).ok())
+    /// Change the user's file: the one way a field is written as it
+    /// changes (`change_at`). The settings as changed come back, the
+    /// defaults changed when there is no file.
+    pub fn change(change: impl FnOnce(&mut Self)) -> Self {
+        match path() {
+            Some(path) => Self::change_at(&path, change),
+            None => {
+                let mut settings = Self::default();
+                change(&mut settings);
+                settings
+            }
+        }
     }
 
-    /// The file, the defaults when there is none, or why it will not
-    /// read.
-    fn read(path: &std::path::Path) -> Result<Self, String> {
+    /// Read the file at `path`, change it, and write it back when the
+    /// change changed something. A file that will not parse was set
+    /// aside by the read, so what is written is the defaults and the
+    /// change, never over what the user had.
+    pub fn change_at(path: &std::path::Path, change: impl FnOnce(&mut Self)) -> Self {
+        let read = Self::load_from(path);
+        let mut changed = read.clone();
+        change(&mut changed);
+        if changed != read {
+            changed.save_to(path);
+        }
+        changed
+    }
+
+    /// The file, and whether it was set aside. None there is the
+    /// defaults; one that will not read is the defaults, with a
+    /// warning, since they then appear from nowhere. One that will not
+    /// parse is moved aside as `.json.bad` (`aside`), over an older
+    /// one, so no write of this run's can put a typo out of reach.
+    fn read(path: &std::path::Path, aside: bool) -> (Self, bool) {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(e.to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Default::default(),
+            Err(e) => {
+                tracing::warn!("settings {}: {e}; defaults", path.display());
+                return Default::default();
+            }
         };
-        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+        let e = match serde_json::from_slice(&bytes) {
+            Ok(settings) => return (settings, false),
+            Err(e) => e,
+        };
+        if !aside {
+            tracing::warn!("settings {}: {e}; defaults", path.display());
+            return Default::default();
+        }
+        // A link is left pointing where it did: what it points at is
+        // copied aside, and the next change is written through it.
+        let aside = path.with_extension("json.bad");
+        let kept = if path.is_symlink() {
+            std::fs::copy(path, &aside).map(drop)
+        } else {
+            std::fs::rename(path, &aside)
+        };
+        match kept {
+            Ok(()) => tracing::warn!(
+                "settings {}: {e}; kept as {}, defaults",
+                path.display(),
+                aside.display()
+            ),
+            Err(r) => tracing::warn!(
+                "settings {}: {e}; not kept as {}: {r}; defaults",
+                path.display(),
+                aside.display()
+            ),
+        }
+        (Self::default(), true)
+    }
+
+    /// Whether this process has written the file at `path`: the close
+    /// holds off on a file set aside at the start only until one has.
+    pub fn written(path: &std::path::Path) -> bool {
+        WRITTEN
+            .lock()
+            .is_ok_and(|w| w.contains(&path.to_path_buf()))
     }
 
     pub fn save_to(&self, path: &std::path::Path) {
+        let asked = path;
         let text = match serde_json::to_string_pretty(self) {
             Ok(t) => t,
             Err(e) => {
@@ -717,12 +796,23 @@ impl Settings {
             }
             std::fs::rename(&temporary, path)
         });
-        if let Err(e) = written {
-            tracing::warn!("settings not saved to {}: {e}", path.display());
-            let _ = std::fs::remove_file(&temporary);
+        match written {
+            Ok(()) => {
+                if let Ok(mut w) = WRITTEN.lock() {
+                    w.insert(asked.to_path_buf());
+                }
+            }
+            Err(e) => {
+                tracing::warn!("settings not saved to {}: {e}", path.display());
+                let _ = std::fs::remove_file(&temporary);
+            }
         }
     }
 }
+
+/// The settings files this process has written (`Settings::written`).
+static WRITTEN: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 #[cfg(test)]
 mod tests {
@@ -745,6 +835,73 @@ mod tests {
         mine.save_to(&link);
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
         assert_eq!(Settings::load_from(&real), mine);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A file that will not parse is moved aside, over an older one,
+    /// and read as the defaults; a change then writes the defaults and
+    /// the change, and one that changes nothing writes nothing.
+    #[test]
+    fn a_broken_file_is_kept_aside_and_only_a_change_writes() {
+        let dir = crate::testing::scratch_dir("settings-aside");
+        let (file, aside) = (dir.join("settings.json"), dir.join("settings.json.bad"));
+        std::fs::write(&aside, "older").unwrap();
+        std::fs::write(&file, "{ not json").unwrap();
+        assert_eq!(Settings::load_from(&file), Settings::default());
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        assert!(!file.exists());
+        Settings::change_at(&file, |s| s.warn_shadows = Settings::default().warn_shadows);
+        assert!(!file.exists(), "a change of nothing wrote");
+        let changed = Settings::change_at(&file, |s| s.warn_shadows = !s.warn_shadows);
+        assert_eq!(Settings::load_from(&file), changed);
+        assert_eq!(
+            changed,
+            Settings {
+                warn_shadows: !Settings::default().warn_shadows,
+                ..Settings::default()
+            }
+        );
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A good file changed keeps every field it held.
+    #[test]
+    fn a_change_keeps_the_rest_of_a_good_file() {
+        let dir = crate::testing::scratch_dir("settings-change");
+        let file = dir.join("settings.json");
+        let mine = Settings {
+            canvas_color: crate::render::CANVAS_NAMES[1].into(),
+            ..Settings::default()
+        };
+        mine.save_to(&file);
+        Settings::change_at(&file, |s| s.warn_shadows = !s.warn_shadows);
+        let read = Settings::load_from(&file);
+        assert_eq!(read.canvas_color, mine.canvas_color);
+        assert_eq!(read.warn_shadows, !mine.warn_shadows);
+        assert!(!dir.join("settings.json.bad").exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A broken file that is a link stays a link: what it points at is
+    /// copied aside, and the change is written through it.
+    #[cfg(unix)]
+    #[test]
+    fn a_broken_linked_file_stays_a_link() {
+        let dir = crate::testing::scratch_dir("settings-aside-link");
+        let (real, link) = (dir.join("real.json"), dir.join("settings.json"));
+        std::fs::write(&real, "{ not json").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        Settings::change_at(&link, |s| s.warn_shadows = !s.warn_shadows);
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json.bad")).unwrap(),
+            "{ not json"
+        );
+        assert_eq!(
+            Settings::load_from(&real).warn_shadows,
+            !Settings::default().warn_shadows
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 

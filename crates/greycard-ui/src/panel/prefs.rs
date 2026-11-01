@@ -143,9 +143,7 @@ pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
     if st.window.batch || cfg!(test) {
         return;
     }
-    let mut kept = settings::Settings::load();
-    change(&mut kept);
-    kept.save();
+    settings::Settings::change(change);
 }
 
 /// The Start in row's words for its two choices, in its order.
@@ -189,9 +187,7 @@ fn start_picked(st: &State, app: &App, choice: &str) {
         Ok(Some(dir)) => {
             let dir = dir.to_string_lossy().into_owned();
             if !batch && !cfg!(test) {
-                let mut kept = settings::Settings::load();
-                kept.start_folder = dir.clone();
-                kept.save();
+                settings::Settings::change(|s| s.start_folder = dir.clone());
             }
             tracing::info!("a launch opens {dir}");
             show_start(app, &dir);
@@ -1773,11 +1769,33 @@ mod tests {
         slint::Timer,
         std::path::PathBuf,
     ) {
-        let dir = crate::testing::scratch_dir("choices-kept");
-        crate::settings::use_file(Some(dir.join("settings.json")));
-        let (app, state, worker) = develop_window();
-        let timer = crate::panel::startup::keep_choices(&app, &state, false);
+        let (app, state, worker, timer, _, dir) = kept_window_over(None);
         (app, state, worker, timer, dir)
+    }
+
+    /// `kept_window` over a file holding `text` as the run starts, with
+    /// the choices the close writes.
+    fn kept_window_over(
+        text: Option<&str>,
+    ) -> (
+        App,
+        Rc<Shared>,
+        Rc<Worker>,
+        slint::Timer,
+        crate::panel::startup::Choices,
+        std::path::PathBuf,
+    ) {
+        let dir = crate::testing::scratch_dir("choices-kept");
+        let file = dir.join("settings.json");
+        if let Some(text) = text {
+            std::fs::write(&file, text).unwrap();
+        }
+        crate::settings::use_file(Some(file));
+        let (_, set_aside) = crate::settings::Settings::load_at_start();
+        let (app, state, worker) = develop_window();
+        let choices = crate::panel::startup::Choices::new(&app, &state.borrow(), set_aside, false);
+        let timer = crate::panel::startup::keep_choices(&app, &state, &choices);
+        (app, state, worker, timer, choices, dir)
     }
 
     /// One tick of the keeping timer, and the file as it then stands.
@@ -1827,17 +1845,85 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
-    /// A file that will not read is not merged over mid-run: the
-    /// defaults would replace what the user meant to write.
+    /// A file that will not parse at the start is kept aside, and the
+    /// close writes nothing over it until a choice changes; then the
+    /// defaults and that change are written.
     #[test]
-    fn a_file_that_will_not_read_is_left_alone() {
+    fn a_broken_file_is_kept_aside_and_written_only_after_a_change() {
+        let (app, state, _worker, _timer, choices, dir) = kept_window_over(Some("{ not json"));
+        let (file, aside) = (dir.join("settings.json"), dir.join("settings.json.bad"));
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        assert!(!file.exists());
+        choices.write(&app, &state.borrow(), true);
+        assert!(!file.exists(), "the close wrote the defaults");
+        open_editing(&app);
+        click_row(&app, "monitor-row", "Adobe RGB");
+        assert_eq!(file_after_a_tick().display_profile, "Adobe RGB");
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Once anything writes a set-aside file again (the update check,
+    /// a Settings switch), the close writes the panel's fields over it,
+    /// no choice changed.
+    #[test]
+    fn the_close_writes_once_a_set_aside_file_is_written_again() {
+        use crate::settings::Settings;
+        let (app, state, _worker, _timer, choices, dir) = kept_window_over(Some("{ not json"));
+        let file = dir.join("settings.json");
+        // As the update check writes, the panel untouched.
+        Settings::change(|s| s.shared.xmp_sidecars = true);
+        // A panel field other than shown, by hand, so only the write
+        // above is this run's.
+        let shown = crate::panel::startup::remember(&app).display_monitor;
+        let other = Settings {
+            display_monitor: format!("{shown}-other"),
+            ..Settings::load()
+        };
+        std::fs::write(&file, serde_json::to_string(&other).unwrap()).unwrap();
+        choices.write(&app, &state.borrow(), true);
+        let kept = Settings::load();
+        assert_eq!(kept.display_monitor, shown);
+        assert!(kept.shared.xmp_sidecars);
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A file broken mid-run (a hand edit with a typo) is kept aside by
+    /// the next write, which is the defaults and the change.
+    #[test]
+    fn a_file_broken_mid_run_is_kept_aside_by_the_next_change() {
         let (app, _state, _worker, _timer, dir) = kept_window();
         let file = dir.join("settings.json");
         std::fs::write(&file, "{ not json").unwrap();
         open_editing(&app);
         click_row(&app, "monitor-row", "Adobe RGB");
-        i_slint_backend_testing::mock_elapsed_time(crate::panel::startup::CHOICES_EVERY);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
+        assert_eq!(file_after_a_tick().display_profile, "Adobe RGB");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json.bad")).unwrap(),
+            "{ not json"
+        );
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A good file is written at the close as it always was, choice
+    /// changed or not.
+    #[test]
+    fn the_close_writes_over_a_good_file() {
+        let canvas = crate::render::CANVAS_NAMES[1];
+        let good = serde_json::to_string(&crate::settings::Settings {
+            canvas_color: canvas.into(),
+            ..Default::default()
+        })
+        .unwrap();
+        let (app, state, _worker, _timer, choices, dir) = kept_window_over(Some(&good));
+        let shown = crate::panel::startup::remember(&app).canvas_color;
+        assert_ne!(shown, canvas);
+        choices.write(&app, &state.borrow(), true);
+        assert_eq!(crate::settings::Settings::load().canvas_color, shown);
+        assert!(!dir.join("settings.json.bad").exists());
         crate::settings::use_file(None);
         crate::testing::remove_dir_retry(&dir);
     }

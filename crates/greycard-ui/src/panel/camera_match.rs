@@ -867,13 +867,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
             if persists(&st) && st.camera_match.refit.is_none() {
                 let key = st.camera_match.scope_key.clone();
                 if !key.is_empty() {
-                    let mut settings = crate::settings::Settings::load();
-                    crate::settings::remember_unchecked(
-                        &mut settings.match_unchecked,
-                        &key,
-                        unchecked,
-                    );
-                    settings.save();
+                    crate::settings::Settings::change(|s| {
+                        crate::settings::remember_unchecked(&mut s.match_unchecked, &key, unchecked)
+                    });
                 }
             }
             show(&st, &app);

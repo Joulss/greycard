@@ -129,6 +129,10 @@ design note behind it.
 
 ### Fixes
 
+- A settings file that will not parse, a hand edit with a typo say, is
+  kept as `settings.json.bad` rather than written over with the
+  defaults
+  ([§520](https://github.com/jessolmstead/greycard/blob/master/docs/notes/520-a-settings-file-that-will-not-parse-is-kept-aside.md)).
 - The Library's camera thumbnails are made for the frames near the
   screen and around the one being culled, not for the whole root at
   its first open; the rest come in as a scroll reaches them

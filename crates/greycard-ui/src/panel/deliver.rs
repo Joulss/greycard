@@ -215,11 +215,11 @@ fn keep_presets(st: &State, app: &App) {
     let Some(path) = &st.window.settings_file else {
         return;
     };
-    let mut settings = settings::Settings::load_from(path);
-    settings.shared.export_presets = st.work.export_presets.clone();
-    settings.shared.export_preset = chosen_preset(app).unwrap_or_default();
-    settings.shared.export = read_sheet(app);
-    settings.save_to(path);
+    settings::Settings::change_at(path, |s| {
+        s.shared.export_presets = st.work.export_presets.clone();
+        s.shared.export_preset = chosen_preset(app).unwrap_or_default();
+        s.shared.export = read_sheet(app);
+    });
 }
 
 /// The folder an export of `raw` writes to when the sheet names no
@@ -247,9 +247,9 @@ pub(crate) fn remember_export_last_folder(st: &mut State, app: &App, folder: &Pa
     let Some(path) = &st.window.settings_file else {
         return;
     };
-    let mut settings = settings::Settings::load_from(path);
-    settings.export_last_folder = folder.to_string_lossy().into_owned();
-    settings.save_to(path);
+    settings::Settings::change_at(path, |s| {
+        s.export_last_folder = folder.to_string_lossy().into_owned();
+    });
 }
 
 /// Whether an export has gone out from the sheet, here or in an
@@ -269,11 +269,7 @@ fn remember_exported(st: &State) {
     let Some(path) = &st.window.settings_file else {
         return;
     };
-    let mut settings = settings::Settings::load_from(path);
-    if !settings.exported {
-        settings.exported = true;
-        settings.save_to(path);
-    }
+    settings::Settings::change_at(path, |s| s.exported = true);
 }
 
 /// One picture from the thumbnails' pool, or word that none could be

@@ -85,9 +85,7 @@ pub(crate) fn keep_in_file(st: &State, change: impl FnOnce(&mut settings::Settin
         return;
     }
     if let Some(file) = &st.window.settings_file {
-        let mut kept = settings::Settings::load_from(file);
-        change(&mut kept);
-        kept.save_to(file);
+        settings::Settings::change_at(file, change);
     }
 }
 
