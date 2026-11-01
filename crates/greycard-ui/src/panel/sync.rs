@@ -1946,7 +1946,7 @@ mod tests {
     #[test]
     fn apply_lays_the_current_frame_over_the_others_and_saves_them() {
         let dir = std::env::temp_dir().join(format!("greycard-sync-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..3)
             .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -2006,7 +2006,7 @@ mod tests {
         assert_eq!(back.current_label, s.current_label);
         assert!(!Sidecar::path_in(&files[1], greycard_edit::Placement::Folder).exists());
         drop(st);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     fn entry(name: &str, made_for: Option<&str>) -> camera::Entry {
@@ -2513,7 +2513,7 @@ mod tests {
     #[test]
     fn a_preset_click_with_three_selected_lays_it_over_each_and_leaves_the_rest() {
         let dir = std::env::temp_dir().join(format!("greycard-preset-set-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..4)
             .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -2591,7 +2591,7 @@ mod tests {
         assert_eq!(back.current_label, st.sidecars[1].current_label);
         assert!(!Sidecar::path_in(&files[3], greycard_edit::Placement::Folder).exists());
         drop(st);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// With one frame selected, a preset click is unchanged: the
@@ -2600,7 +2600,7 @@ mod tests {
     #[test]
     fn a_preset_click_with_one_frame_selected_is_unchanged() {
         let dir = std::env::temp_dir().join(format!("greycard-preset-one-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..2)
             .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -2637,7 +2637,7 @@ mod tests {
         assert_eq!(app.get_status(), "Portra 400 is on already");
         assert_eq!(state.borrow().sidecars[0].history.len(), 1);
 
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A store preset carrying Noise never brings the learned tier
@@ -2945,7 +2945,7 @@ mod tests {
         for (tag, also) in [("one", vec![]), ("set", vec![1])] {
             let dir = std::env::temp_dir()
                 .join(format!("greycard-preset-cull-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_dir_retry(&dir);
             std::fs::create_dir_all(&dir).expect("a temp dir");
             let files: Vec<PathBuf> = (0..3)
                 .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -3017,7 +3017,7 @@ mod tests {
                     Some(words)
                 );
             }
-            std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+            crate::testing::remove_dir_retry(&dir);
         }
     }
 
@@ -3176,7 +3176,7 @@ mod tests {
     #[test]
     fn copy_and_paste_lay_the_copy_over_the_set_and_leave_its_source() {
         let dir = std::env::temp_dir().join(format!("greycard-paste-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..4)
             .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -3293,7 +3293,7 @@ mod tests {
         assert!(!app.get_sync_paste());
         assert_eq!(headings(&app), defaults());
         press(&app, Key::Escape);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3463,7 +3463,7 @@ mod tests {
     #[test]
     fn a_paste_in_culling_goes_onto_the_sidecars_and_stays_in_culling() {
         let dir = std::env::temp_dir().join(format!("greycard-paste-cull-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..3)
             .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -3512,7 +3512,7 @@ mod tests {
                 Some("Paste from IMG_0002.CR3")
             );
         }
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3907,7 +3907,7 @@ mod tests {
         assert_eq!(out.detail.dehaze, 0.4);
         assert_eq!(out.detail.texture, 0.2);
         assert_eq!(mask_names(&out), ["Face 2"]);
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     // The relative sync: shifts, set against shift, and what the
@@ -4318,7 +4318,7 @@ mod tests {
         let set_b = card(&files[2], &set.edit);
         assert_eq!(set_a, set_b);
         assert!(at(a, b) > 100.0, "{a:?} {b:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4405,7 +4405,7 @@ mod tests {
         };
         const N: usize = 300;
         for write in [false, true] {
-            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_dir_retry(&dir);
             std::fs::create_dir_all(&dir).expect("the folder");
             let files: Vec<PathBuf> = (0..N)
                 .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -4451,6 +4451,6 @@ mod tests {
                 app.get_status()
             );
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 }

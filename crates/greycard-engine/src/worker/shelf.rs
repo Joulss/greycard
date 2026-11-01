@@ -609,7 +609,7 @@ mod tests {
         let path = dir.join("a.raw");
         std::fs::write(&path, b"not a raw").unwrap();
         let key = FileKey::of(&path).expect("the file is there");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         assert_eq!(key.stat.len, 9);
         assert!(key.frame.is_none());
         #[cfg(unix)]

@@ -1000,7 +1000,7 @@ mod tests {
         assert!(store.unstack(&second));
         assert!(store.list.is_empty());
         assert!(Store::load(dir.clone()).list.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A stack's file changed on disk since it was read: gone (another
@@ -1033,6 +1033,6 @@ mod tests {
         let aside = file_of(&dir, &broken).with_extension("json.bad");
         assert_eq!(std::fs::read_to_string(aside).unwrap(), "{");
         assert!(read_stack(&file_of(&dir, &broken)).unwrap().open);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

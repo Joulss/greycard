@@ -1638,7 +1638,7 @@ mod tests {
         .unwrap();
         adopt(&frame, &mut mirrored, || Some(Orientation::Rotate90));
         assert_eq!(mirrored.turn, 1);
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1983,7 +1983,7 @@ mod tests {
         touch(&long_path(&frame), 2_000_000_000);
         assert_eq!(path_of(&frame), Some(long_path(&frame)));
         assert_eq!(write_path(&frame, true), Some(long_path(&frame)));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// macOS's `._` files beside a raw are not its XMP, and do not
@@ -1999,7 +1999,7 @@ mod tests {
         assert_eq!(paths_of(&frame), Vec::<PathBuf>::new());
         assert_eq!(path_of(&frame), None);
         assert_eq!(write_path(&frame, true), Some(short_path(&frame)));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2048,7 +2048,7 @@ mod tests {
         assert!(!adopt(&frame, &mut reopened, || None).moved());
         assert_eq!(reopened.meta.rating, 5);
         assert!(reopened.xmp.is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2071,7 +2071,7 @@ mod tests {
             std::fs::read_to_string(short_path(&frame)).unwrap(),
             "<x:xmpmeta><half of a"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2093,12 +2093,12 @@ mod tests {
         moved.set_rating(1);
         assert_ne!(save(&frame, &moved, None).unwrap().unwrap(), first);
         assert_ne!(modified(&path), Some(stamp(1_000_000_000)));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     fn tempdir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greycard-xmp-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

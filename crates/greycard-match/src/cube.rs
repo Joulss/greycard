@@ -97,7 +97,7 @@ mod tests {
         let path = dir.join("test.cube");
         write_cube(&m, "test look", &[("display_curve", "agx")], &path).unwrap();
         let lut = Lut3d::load(&path).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
         assert_eq!(lut.size, LUT_SIZE);
         assert_eq!(lut.title.as_deref(), Some("test look"));
         assert_eq!(lut.encoding, Encoding::Srgb);

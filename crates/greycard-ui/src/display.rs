@@ -574,7 +574,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greycard-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
         dir
     }
 
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
         // Nothing left over from the rename.
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -624,7 +624,7 @@ mod tests {
         // Without a cache, no profile is a path.
         let bare = monitors_from(vec![display(1, true, None, Some(b"xdr"))], None);
         assert_eq!(bare[0].profile, None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }
 

@@ -543,7 +543,7 @@ mod tests {
         std::fs::write(&path, value.to_string()).unwrap();
         assert!(matches!(Sidecar::read(&path), Err(Error::Newer(9))));
         assert!(matches!(Sidecar::load(&raw), Err(Error::Newer(9))));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

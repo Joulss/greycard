@@ -1757,7 +1757,7 @@ mod tests {
             look_for(&dir, "Fujifilm GFX 100S II", "Adobe Standard", curve),
             None
         );
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A picture of flat patches with edges between them: blocks to
@@ -1894,6 +1894,6 @@ mod tests {
         assert!(m.de < 0.002, "{m:?}");
         assert!(m.offset.abs() < 0.01, "{m:?}");
         assert!(m.ncc > 0.99, "{m:?}");
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

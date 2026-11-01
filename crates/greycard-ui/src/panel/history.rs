@@ -1051,7 +1051,7 @@ mod tests {
             "../../target/scratch/export-record-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let raw = dir.join("IMG_0100.CR3");
         let mut on_disk = Sidecar::default();
@@ -1083,7 +1083,7 @@ mod tests {
             "../../target/scratch/export-{what}-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

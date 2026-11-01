@@ -835,7 +835,7 @@ mod tests {
         assert!(take_lock(&path).is_none());
         drop(first);
         assert!(take_lock(&path).is_some_and(|l| l.is_some()));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -855,6 +855,6 @@ mod tests {
         assert!(!path.exists());
         // Removing what is not there is no error.
         apply(&path, &File::Remove);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }

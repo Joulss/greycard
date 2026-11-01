@@ -75,6 +75,8 @@ libc.workspace = true
 windows-sys = { workspace = true, features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 image.workspace = true
 
 # These compare or time a model on WebGPU, which a build without the

@@ -1157,7 +1157,7 @@ mod tests {
         // Escape closes the sheet.
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_import_open());
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The sheet opens on Copy every time, a card found filling From
@@ -1384,7 +1384,7 @@ mod tests {
     fn the_command_line_imports_with_no_window() {
         use clap::Parser;
         let dir = std::env::temp_dir().join(format!("greycard-import-cli-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let card = dir.join("card/DCIM/100CANON");
         std::fs::create_dir_all(&card).unwrap();
         std::fs::write(card.join("IMG_0001.CR3"), b"a raw's bytes").unwrap();
@@ -1422,7 +1422,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 2);
         // `--to` alone is the sheet's, for `--sheet import`.
         assert!(crate::Cli::try_parse_from(["greycard-ui", "--to", "x"]).is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// `--import` checks before it makes anything: a destination or a
@@ -1432,7 +1432,7 @@ mod tests {
     fn the_command_line_refuses_the_card_before_it_makes_a_folder() {
         let dir =
             std::env::temp_dir().join(format!("greycard-import-first-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let card = dir.join("card2/EOS_DIGITAL");
         std::fs::create_dir_all(card.join("DCIM/100CANON")).unwrap();
         std::fs::write(card.join("DCIM/100CANON/IMG_0001.CR3"), b"raw").unwrap();
@@ -1454,7 +1454,7 @@ mod tests {
             !dir.join("photos").exists(),
             "nothing made before the check"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A remembered folder that is not there (a backup
@@ -1465,7 +1465,7 @@ mod tests {
         let app = crate::testing::window(0);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         let dir = std::env::temp_dir().join(format!("greycard-import-gone-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(dir.join("photos")).unwrap();
         let gone = dir.join("mnt/backup");
         let looked = look(Some(&dir.join("photos")), Some(&gone));
@@ -1496,7 +1496,7 @@ mod tests {
         }
         assert!(app.get_import_ready());
         assert!(app.get_import_folders_note().contains("same drive"));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Escape leaves the grid (or culling, or a set)

@@ -2730,7 +2730,7 @@ mod tests {
     #[test]
     fn export_preset_fills_the_sheet_for_a_batch_run() {
         let dir = std::env::temp_dir().join(format!("greycard-cli-preset-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let remembered = remembered_with_presets(&dir);
         let out = dir.join("out.jpg");
@@ -2834,7 +2834,7 @@ mod tests {
     fn a_preset_at_start_is_written_with_its_name() {
         let dir =
             std::env::temp_dir().join(format!("greycard-preset-start-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let file = dir.join("IMG_0001.CR3");
         let mut edit = Edit::default();
@@ -2890,7 +2890,7 @@ mod tests {
             with.line(Some(&id)).unwrap().current_label.as_deref(),
             Some("Preset: Faded film")
         );
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A start folder with no frames of its own, a root or under one,

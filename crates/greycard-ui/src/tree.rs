@@ -1688,7 +1688,7 @@ mod tests {
     fn done(dir: &Path, state: Rc<Shared>) {
         state.borrow_mut().views.index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(dir).unwrap();
+        crate::testing::remove_dir_retry(dir);
     }
 
     /// A folder with folders under it has a tile for each, counted as

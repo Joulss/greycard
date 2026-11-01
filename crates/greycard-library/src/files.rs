@@ -166,7 +166,7 @@ mod tests {
             }
         }
         assert_eq!(list_files(&dir, false).unwrap(), vec![dir.join("a.CR3")]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(files, vec![b, a]);
         assert_eq!(refused.len(), 1);
         assert!(refused[0].to_string().contains("gone.NEF"));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
         let (files, refused) = list_paths(&[dir.join("IMG_1.JPG"), dir.join("IMG_1.CR3")], false);
         assert!(refused.is_empty());
         assert_eq!(files, [dir.join("IMG_1.CR3")]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -329,7 +329,7 @@ mod tests {
             list_files(&hidden.join("a.CR3.gcd"), false).unwrap(),
             vec![dir.join("a.CR3")]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// macOS's `._` resource forks and `.DS_Store` beside a raw on a
@@ -361,7 +361,7 @@ mod tests {
         // Named by hand, a hidden file still opens as what it says.
         let named = dir.join("._IMG.CR3");
         assert_eq!(list_files(&named, false).unwrap(), vec![named]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

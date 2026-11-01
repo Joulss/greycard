@@ -106,7 +106,7 @@ struct Scratch(PathBuf);
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        greycard_render::testing::remove_dir_retry(&self.0);
     }
 }
 
@@ -126,7 +126,7 @@ fn a_set_exported_from_the_command_line_carries_each_frame_s_exif() {
             .join(format!("greycard-export-set-{}", std::process::id())),
     );
     let home = &scratch.0;
-    let _ = std::fs::remove_dir_all(home);
+    greycard_render::testing::remove_dir_retry(home);
     let shoot = home.join("shoot");
     std::fs::create_dir_all(&shoot).unwrap();
     // Copied under names that keep the browser's order, each with the

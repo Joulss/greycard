@@ -507,7 +507,7 @@ pub(crate) mod tests {
     /// in memory.
     fn three(name: &str, before: f32, after: f32) -> (App, Rc<Shared>, Vec<PathBuf>, PathBuf) {
         let dir = std::env::temp_dir().join(format!("greycard-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..3)
             .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
@@ -589,7 +589,7 @@ pub(crate) mod tests {
         assert!(temps(&dir).is_empty(), "{:?}", temps(&dir));
         assert!(st.work.saves.claims.lock().unwrap().is_empty());
         drop(st);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The files are marked saved on the window's thread only when the
@@ -629,7 +629,7 @@ pub(crate) mod tests {
         // Landed once: a second word of it does nothing.
         land(&mut st, 0);
         drop(st);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// An undo saved while the batch is out takes its frame back: the
@@ -660,7 +660,7 @@ pub(crate) mod tests {
         assert_eq!(back.saved, st.sidecars[1].saved);
         assert!(temps(&dir).is_empty(), "{:?}", temps(&dir));
         drop(st);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A shift taken off frames whose time the window never read, as
@@ -672,7 +672,7 @@ pub(crate) mod tests {
         use greycard_library::fixture::{R5, write_frame};
         let dir =
             std::env::temp_dir().join(format!("greycard-batch-unshift-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let files: Vec<PathBuf> = (0..2)
             .map(|i| dir.join(format!("IMG_{i:04}.tif")))
@@ -706,6 +706,6 @@ pub(crate) mod tests {
             assert!(!text.contains("TimeShift"), "{text}");
         }
         drop(st);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 }

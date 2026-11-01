@@ -1266,7 +1266,7 @@ mod tests {
         let path = dir.join("settings.json");
         kept.save_to(&path);
         let back = crate::settings::Settings::load_from(&path);
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         assert_eq!(back.lightbox_across, ACROSS + 1);
         assert_eq!((held(0), held(99), held(-3)), (FEWEST, MOST, FEWEST));
     }

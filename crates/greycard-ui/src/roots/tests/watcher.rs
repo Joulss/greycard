@@ -151,7 +151,7 @@ fn leave(state: &Rc<Shared>, dir: &Path) {
         indexer.stop(Duration::from_secs(20));
     }
     drop(st);
-    let _ = std::fs::remove_dir_all(dir);
+    crate::testing::remove_dir_retry(dir);
 }
 
 fn watched(st: &State) -> Vec<PathBuf> {

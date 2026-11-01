@@ -822,7 +822,7 @@ Enabled=true
         // RawTherapee's own naming wins when both are there.
         std::fs::write(dir.join("IMG_0001.CR3.pp3"), PROFILE).unwrap();
         assert_eq!(profile_beside(&raw), Some(dir.join("IMG_0001.CR3.pp3")));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -859,7 +859,7 @@ Enabled=true
                 assert_eq!(e.path, shut);
             }
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -883,7 +883,7 @@ Enabled=true
         let sidecar = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(sidecar.current.light.exposure, 0.0);
         assert_eq!(sidecar.history.len(), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The body's offset is the Lightroom mapper's: a GFX 100S II
@@ -902,7 +902,7 @@ Enabled=true
             "{}",
             sidecar.current.light.exposure
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -930,7 +930,7 @@ Enabled=true
         // Not offered for either: one will not read, and one has come in
         // (its meta and a state).
         assert_eq!(waiting_in(&dir), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -989,7 +989,7 @@ Enabled=true
             Some(Fate::Unreadable(_))
         ));
         assert!(Sidecar::find(&other).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1042,7 +1042,7 @@ Enabled=true
             dry.lines(Voice::Sheet).last(),
             Some(&("dry run".to_string(), "nothing written yet".to_string()))
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1080,7 +1080,7 @@ Enabled=true
         assert_eq!(done, [1, 2, 3]);
         told.extend(report.totals(Voice::Command));
         assert_eq!(told, report.lines(Voice::Command));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1142,7 +1142,7 @@ Enabled=true
         let after = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!((after.meta.rating, after.meta.flag), (0, Flag::None));
         assert_eq!(after.current.light.exposure, 0.5);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1192,7 +1192,7 @@ Enabled=true
         let r = one(&other, write(true, false)).unwrap();
         assert_eq!((r.fate, r.here), (Fate::Held, Here::Meta));
         assert_eq!(Sidecar::load(&other).unwrap().unwrap().meta.rating, 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1221,7 +1221,7 @@ Enabled=true
         let files: Vec<&PathBuf> = report.profiled.iter().map(|r| &r.file).collect();
         assert_eq!(files, [&raw, &lone]);
         assert_eq!(waiting_in(&dir), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1242,6 +1242,6 @@ Enabled=true
         assert_eq!(report.written(), std::slice::from_ref(&raw));
         let at = Sidecar::find(&raw).unwrap();
         assert_eq!(Placement::at(&at), Placement::Folder, "{}", at.display());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

@@ -1137,7 +1137,7 @@ mod tests {
         assert!(!roots.remove(&a));
         assert_eq!(roots.list(), std::slice::from_ref(&b));
         assert!(a.is_dir());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1175,7 +1175,7 @@ mod tests {
             std::fs::read(path.with_extension("json.unreadable")).unwrap(),
             b"{ not json"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A root's name is kept beside its path and survives the file;
@@ -1244,7 +1244,7 @@ mod tests {
         roots.set_name(&b, "Other");
         roots.add(&dir).unwrap();
         assert_eq!(roots.name(&b), None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1313,7 +1313,7 @@ mod tests {
                 nothing.display()
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1407,7 +1407,7 @@ mod tests {
         std::fs::create_dir_all(root.join("new")).unwrap();
         wait(&|c| tree_over(c, &root.join("new")));
         drop(watcher);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1420,7 +1420,7 @@ mod tests {
         assert_eq!(watcher.expect("a watcher").watched, [root]);
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].0, dir.join("gone"));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two editors on one roots file: each edit reads the file as it
@@ -1459,12 +1459,12 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             // Root reads it anyway; everyone else hears the error.
             if read.is_ok() {
-                std::fs::remove_dir_all(&dir).unwrap();
+                greycard_core::testing::remove_dir_retry(&dir);
                 return;
             }
             assert!(read.is_err());
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A root with a folder under it that cannot be read (a drive's
@@ -1484,7 +1484,7 @@ mod tests {
         if std::fs::read_dir(&locked).is_ok() {
             // Run as root, which reads it anyway.
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-            std::fs::remove_dir_all(&dir).unwrap();
+            greycard_core::testing::remove_dir_retry(&dir);
             return;
         }
         let (send, got) = mpsc::channel();
@@ -1541,7 +1541,7 @@ mod tests {
         wait(&reaches(&later), &later);
         drop(watcher);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A folder left out under a root (a network mount below a local
@@ -1608,7 +1608,7 @@ mod tests {
             "a new folder outside it is watched: {seen:?}"
         );
         drop(watcher);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Reads under a root are not changes, and do not hold a batch
@@ -1652,7 +1652,7 @@ mod tests {
             "handed on {:?} after the write",
             at.duration_since(wrote)
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The archive mark and the pairings round-trip under keys of their
@@ -1751,7 +1751,7 @@ mod tests {
         assert!(roots.remove(&nas));
         assert!(roots.archives().is_empty());
         assert!(roots.backups().is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two roots, `local` and `nas`, the second an archive, in a scratch
@@ -1848,7 +1848,7 @@ mod tests {
             roots.backup_default(&local.join("2026"), &local, &nas),
             (nas.join("local").join("2026"), BackupDefault::Mirror)
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The most recent pairing is deeper than the folder: a day under
@@ -1889,7 +1889,7 @@ mod tests {
             roots.backup_default(&trip, &local, &nas),
             (year.join("autumn").join("trip"), BackupDefault::Sibling)
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A destination that is not its source under its own name was a
@@ -1905,7 +1905,7 @@ mod tests {
             roots.backup_default(&b, &local, &nas),
             (year.join("shoot-b"), BackupDefault::Inside)
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// §219's story as the user's file has it: a root backed up once with
@@ -1940,7 +1940,7 @@ mod tests {
         let found = roots.unwind(&year.join("never-here"), &local, &nas);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].source, local);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A destination typed with a trailing separator is kept without
@@ -1959,7 +1959,7 @@ mod tests {
         roots.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains(&typed), "{text}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Bring back unwinds a pairing whose destination is the archive
@@ -1987,7 +1987,7 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         roots.add(&other).unwrap();
         assert!(roots.unwind(&year, &other, &nas).is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The pairings round-trip with their order; an older file of the
@@ -2050,6 +2050,6 @@ mod tests {
         // The root out: the pairings from folders under it go.
         assert!(roots.remove(&local));
         assert!(roots.backups().is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

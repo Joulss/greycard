@@ -658,7 +658,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -705,7 +705,7 @@ mod tests {
         );
         assert!(!dir.join("lib").exists());
         assert!(!dir.join("pax").exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -722,7 +722,7 @@ mod tests {
         tar[0] = b'g';
         assert!(untar(&mut tar.as_slice(), &dir).is_err());
         assert!(!dir.join("fine").exists() && !dir.join("gine").exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -732,7 +732,7 @@ mod tests {
         entry(&mut tar, "libonnxruntime.a", &[1u8; 2000], b'0');
         tar.truncate(1200);
         assert!(untar(&mut tar.as_slice(), &dir).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -845,6 +845,6 @@ mod tests {
             put(&from, &dangling).unwrap();
             assert_eq!(std::fs::read(&dangling).unwrap(), b"new");
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

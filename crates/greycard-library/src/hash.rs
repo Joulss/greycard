@@ -80,6 +80,6 @@ mod tests {
         std::fs::write(&b, b"short").unwrap();
         assert_eq!(hash_file(&b).unwrap(), hash_bytes(b"short", 5));
         assert_eq!(hash_file(&b).unwrap(), hash_bytes(b"short", 5));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

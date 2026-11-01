@@ -866,7 +866,7 @@ mod tests {
         let cache = Thumbs::at(dir.join("thumbs"), DEFAULT_CAP);
         let entry = cache.entry_path(&key, 170, Tag::default());
         assert!(entry.to_string_lossy().contains(&row.hash));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -892,7 +892,7 @@ mod tests {
         assert!(near(&got, &thumb));
         // Another size is another entry.
         assert!(cache.get(&key, 256, tag).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -948,7 +948,7 @@ mod tests {
             let import = cache.get(&key, 170, later).expect("the import's");
             assert_ne!(card.rgb, import.rgb);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A deleted file's entries go, every size and recipe of its
@@ -975,7 +975,7 @@ mod tests {
         assert!(cache.get(&other, 96, at(1, 7)).is_some());
         assert_eq!(cache.remove(&key, 7), 0);
         assert_eq!(cache.remove(&"ff".repeat(32), 7), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Pictures kept under a recipe of their own and a stamp that is a
@@ -1035,7 +1035,7 @@ mod tests {
         assert!(cache.get(&key, 128, at(camera, 7)).is_some());
         assert_eq!(cache.known_split(), Some(cache.split()));
         assert_eq!(cache.remove_tag(&"ff".repeat(32), at(edited, 1)), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A larger picture kept at a quality of its own is an entry like
@@ -1064,7 +1064,7 @@ mod tests {
         let high = std::fs::metadata(&path).unwrap().len();
         assert!(low < high, "{low} at 60 against {high} at 90");
         assert_eq!(cache.known_usage(), Some(cache.usage()));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1101,7 +1101,7 @@ mod tests {
         // And a good one is still a hit.
         cache.put(&key, 96, tag, &thumb).unwrap();
         assert!(cache.get(&key, 96, tag).is_some());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1152,7 +1152,7 @@ mod tests {
         assert_eq!(gone.entries, usage.entries);
         assert_eq!(cache.usage(), Usage::default());
         assert!(cache.get(&keys[0], 128, Tag::default()).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// With a cap of their own, the previews (entries of the previews'
@@ -1245,7 +1245,7 @@ mod tests {
         cache.set_preview_cap(0);
         assert_eq!(cache.split().previews, Usage::default());
         assert_eq!(cache.split().thumbs.entries, 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A count made on disk puts each entry in its class by its name, a
@@ -1279,7 +1279,7 @@ mod tests {
         assert_eq!(now.thumbs, split.thumbs);
         assert!(now.previews.entries < 4);
         assert!(now.previews.bytes <= split.previews.bytes / 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1297,7 +1297,7 @@ mod tests {
                 .is_err()
         );
         assert_eq!(cache.usage(), Usage::default());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The count kept by writes, removals, evictions and clears is
@@ -1354,7 +1354,7 @@ mod tests {
         cache.set_cap(0);
         assert_eq!(cache.usage(), Usage::default());
         assert_eq!(cache.known_usage(), Some(Usage::default()));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A cache already past its cap when it is counted — the cap
@@ -1390,7 +1390,7 @@ mod tests {
         let mut off = Thumbs::at(&root, 0);
         off.seed_usage(usage_at(&root));
         assert_eq!(off.usage(), now, "a cache off is not emptied by a count");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A temporary file left by a writer that died is counted, and
@@ -1417,6 +1417,6 @@ mod tests {
         assert!(!stray.exists());
         assert!(!fan.exists() && !orphan_fan.exists(), "the folders go too");
         assert_eq!(cache.known_usage(), Some(Usage::default()));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

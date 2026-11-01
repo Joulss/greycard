@@ -1555,7 +1555,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let a = dir.join("denoise-fast.onnx");
         let b = dir.join("denoise-best.onnx");
@@ -1570,7 +1570,7 @@ mod tests {
         assert_ne!(key, coreml_cache_key(&a, &[]));
         std::fs::write(&a, b"other").unwrap();
         assert_ne!(key, coreml_cache_key(&a, &fixed));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Making a file's compile folder removes that file's compiles
@@ -1586,7 +1586,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_core::testing::remove_dir_retry(&root);
         let cache = root.join("coreml");
         let denoiser = root.join("models").join("denoise-v20.onnx");
         let sky = root.join("models").join("eomt-s-coco-640.onnx");
@@ -1622,7 +1622,7 @@ mod tests {
         assert!(keep.exists());
         assert!(other_file.exists());
         assert!(unknown.exists());
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_core::testing::remove_dir_retry(&root);
     }
 
     /// The weight files offered with a model are the `*.onnx_data`
@@ -1635,7 +1635,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let model = dir.join("unet-512.onnx");
         std::fs::write(&model, b"graph").unwrap();
@@ -1665,7 +1665,7 @@ mod tests {
                 .files()
                 .is_empty()
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// An `ExternalWeights` holding one file of `values`, from an
@@ -2061,7 +2061,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         record::write(
             &dir,
             &[record::test_entry(
@@ -2096,7 +2096,7 @@ mod tests {
         // reaching a write; nothing here touched the file either.
         let after = std::fs::read_to_string(record::path(&dir)).unwrap();
         assert_eq!(before, after);
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2106,7 +2106,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         let _ = open(
             Path::new("/nonexistent/model.onnx"),
             GraphOptimizationLevel::Level1,
@@ -2121,7 +2121,7 @@ mod tests {
         // CPU never has an adapter identity, so nothing is looked up
         // or written for it even with somewhere to write to.
         assert!(!record::path(&dir).exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A fake loader's loads, two of them overlapping: the listener

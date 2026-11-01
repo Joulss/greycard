@@ -3973,7 +3973,7 @@ pub(crate) mod tests {
         assert!(said.contains("would be written"), "{said}");
         assert!(said.contains("1 virtual copy,"), "{said}");
         assert!(said.contains("Either: skipped"), "{said}");
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4076,7 +4076,7 @@ pub(crate) mod tests {
             std::fs::metadata(&roots_file).unwrap().modified().unwrap(),
             stamp
         );
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4120,7 +4120,7 @@ pub(crate) mod tests {
         let again = Sidecar::load(&first).unwrap().unwrap();
         assert_eq!(again.versions.len(), 1);
         assert_eq!(again.history.len(), a.history.len());
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A forced import lays the catalog's rating and the rest over the
@@ -4141,7 +4141,7 @@ pub(crate) mod tests {
         import(&s.catalog, &forced).unwrap();
         let a = Sidecar::load(&first).unwrap().unwrap();
         assert_eq!((a.meta.rating, a.meta.time_shift), (4, 300));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// Five pictures whose own capture time is `2026:03:14 10:00:00`
@@ -4237,7 +4237,7 @@ pub(crate) mod tests {
                 .starts_with("capture times: 2 frames keep the time corrected in Lightroom")),
             "{shown:?}"
         );
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A forced import over a sidecar with a shift: the catalog's
@@ -4259,7 +4259,7 @@ pub(crate) mod tests {
         import(&s.catalog, &forced).unwrap();
         assert_eq!(shift_of(&s, 1), 300, "the catalog's");
         assert_eq!(shift_of(&s, 2), 60, "no correction there: the sidecar's");
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A catalog time against a file whose own cannot be read is no
@@ -4273,7 +4273,7 @@ pub(crate) mod tests {
         assert_eq!(shift_of(&s, 1), 0);
         // Frames 2, 4 and 5 hold a catalog time too; frame 5 shifts.
         assert_eq!((w.time_shifted, w.time_unread), (1, 1));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4307,7 +4307,7 @@ pub(crate) mod tests {
             import(&other, &Options::default()),
             Err(ImportError::NotACatalog(_))
         ));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4318,7 +4318,7 @@ pub(crate) mod tests {
             import(&s.catalog, &s.options),
             Err(ImportError::Locked(_))
         ));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4363,7 +4363,7 @@ pub(crate) mod tests {
         // A mapping that names no root is refused, naming them.
         let err = with(vec![("E:/Elsewhere".into(), parent.clone())]).unwrap_err();
         assert!(err.to_string().contains("D:/Pictures/Shoots/"), "{err}");
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4545,7 +4545,7 @@ pub(crate) mod tests {
         assert_eq!(paths.get(&5).map(String::as_str), Some("Dusk"));
         assert!(!paths.contains_key(&1), "the tree's root is no keyword");
         drop(db);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4580,7 +4580,7 @@ pub(crate) mod tests {
         assert_eq!(report.wal, Wal::Read);
         assert_eq!(report.keyworded, 2, "the row in the log");
         drop(lightroom);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4596,7 +4596,7 @@ pub(crate) mod tests {
             Some(Sidecar::path_in(&raw, Placement::Folder))
         );
         assert!(!Sidecar::path_for(&raw).exists());
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
 
         // No .greycard in the folder: beside, unless the setting says.
         let s = setup("placement-setting");
@@ -4610,7 +4610,7 @@ pub(crate) mod tests {
         .unwrap();
         assert!(report.sidecars_in_folder);
         assert_eq!(report.written.unwrap().in_folder, 2);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4673,7 +4673,7 @@ pub(crate) mod tests {
         let covers: Vec<&Collection> = folder.list.iter().filter(|c| c.name == "Cover").collect();
         assert_eq!(covers.len(), 1, "the second Cover joined the first");
         assert_eq!(covers[0].refs.len(), 3);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A catalog of one picture and a virtual copy of it, both cropped
@@ -4757,7 +4757,7 @@ pub(crate) mod tests {
         assert_eq!(size(100), None);
         assert_eq!(size(101), Some((4.0, 3.0)));
         drop(catalog);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A crop that does not read, by a key that is no number or by
@@ -4786,7 +4786,7 @@ pub(crate) mod tests {
             );
             assert_eq!(edit.geometry, Edit::default().geometry, "{settings}");
         }
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4846,7 +4846,7 @@ pub(crate) mod tests {
         let w = again.written.unwrap();
         assert_eq!((w.stacks, w.stacks_there), (0, 1));
         assert_eq!(stacks::read_folder(&dir, stacks::VERSION).list.len(), 1);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -4882,7 +4882,7 @@ pub(crate) mod tests {
             "{report}"
         );
         assert_eq!((report.exif_rules, report.exif_rules_skipped), (1, 0));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// The import applies the body's offset where the user takes it:
@@ -4973,7 +4973,7 @@ pub(crate) mod tests {
         assert_eq!((w.left_alone, w.sidecars), (0, 0), "{again}");
         assert!(w.failed.is_empty(), "{again}");
         assert_eq!(exposures(), (frame, copy, other, picture));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4994,7 +4994,7 @@ pub(crate) mod tests {
         let FrameEdit { edit, unmapped, .. } = imported_edit(&frame, settings, None).unwrap();
         assert!(edit.geometry.crop.is_none());
         assert!(unmapped.iter().any(|n| n == "crop"));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5005,7 +5005,7 @@ pub(crate) mod tests {
         let w = report.written.unwrap();
         assert_eq!(w.crops, 0);
         assert_eq!(w.crops_not_carried.get("its file says no size"), Some(&2));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5042,7 +5042,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&decoy).unwrap();
         let r = import(&s.catalog, &none).unwrap();
         assert!(matches!(r.roots[0].how, Found::UnderRoot(_)), "{r}");
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5080,7 +5080,7 @@ pub(crate) mod tests {
         assert!(matches!(root.how, Found::UnderRoot(_)));
         assert_eq!((root.checked, root.checked_found), (3, 2), "{r}");
         // The shoot's own folder gone: the other shoot's is no guess.
-        std::fs::remove_dir_all(&real).unwrap();
+        greycard_core::testing::remove_dir_retry(&real);
         let r = import(&s.catalog, &none).unwrap();
         assert!(r.roots[0].local.is_none(), "{r}");
         assert!(!r.roots[0].confirmed);
@@ -5101,7 +5101,7 @@ pub(crate) mod tests {
                 .any(|(_, t)| t.ends_with("holds 1 of 3 looked for; choose it to take it")),
             "{shown:?}"
         );
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5137,12 +5137,12 @@ pub(crate) mod tests {
         let r = import(&s.catalog, &none).unwrap();
         assert!(r.roots[0].local.is_none(), "{r}");
         // At their sizes, beside the catalog: taken.
-        std::fs::remove_dir_all(s.dir.join("Shoots")).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir.join("Shoots"));
         std::fs::rename(&s.here, s.dir.join("Shoots")).unwrap();
         let r = import(&s.catalog, &none).unwrap();
         assert_eq!(r.roots[0].how, Found::BesideCatalog, "{r}");
         assert_eq!(r.found, 3);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5199,7 +5199,7 @@ pub(crate) mod tests {
             report.to_string().contains("2 turned in Lightroom"),
             "{report}"
         );
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5219,7 +5219,7 @@ pub(crate) mod tests {
             collections::VERSION,
         );
         assert!(folder.list.iter().all(|c| c.name != "Album"));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     #[test]
@@ -5233,7 +5233,7 @@ pub(crate) mod tests {
             "{seen:?}"
         );
         assert_eq!(seen.last(), Some(&Progress::Finishing));
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A stop set while the roots are looked for ends a write before it
@@ -5263,7 +5263,7 @@ pub(crate) mod tests {
         let read = import_until(&s.catalog, &s.options, &mut |_| heard += 1, &stop);
         assert!(matches!(read, Err(ImportError::Stopped)), "{read:?}");
         assert_eq!(heard, 0);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// A catalog of `n` synthetic raws in one folder: every other frame
@@ -5385,7 +5385,7 @@ pub(crate) mod tests {
             took.as_secs_f64(),
             w.read
         );
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// The folder put back as `before` had it: every file it did not
@@ -5485,7 +5485,7 @@ pub(crate) mod tests {
             assert_eq!(one.3, 1, "the stack");
             assert_eq!(one, few, "force {force}");
         }
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 
     /// Two of the catalog's files that are one file here, by two roots
@@ -5541,7 +5541,7 @@ pub(crate) mod tests {
             let v = r.version.as_deref().unwrap();
             assert!(sidecar.versions.iter().any(|s| s.id == v), "{v} dangles");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The write reads each raw once for its probe and its stance,
@@ -5588,6 +5588,6 @@ pub(crate) mod tests {
         assert_eq!(greycard_core::decode::maps_under(&s.dir), 0, "raws mapped");
         let clip = FrameRead::of(&s.here.join("clip.mov"));
         assert!(clip.stance.is_none() && clip.camera.is_none() && clip.bytes == 0);
-        std::fs::remove_dir_all(&s.dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&s.dir);
     }
 }

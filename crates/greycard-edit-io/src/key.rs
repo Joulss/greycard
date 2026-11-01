@@ -241,7 +241,7 @@ mod tests {
             develop_key_in(&edit, Some(&looks), Some(&profiles), None),
             with
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// What a store of keys was made under moves with a refit of any
@@ -280,6 +280,6 @@ mod tests {
             keys_made_under_in(Some(&looks), None, None),
             "a directory that is there with a file in it is not none"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

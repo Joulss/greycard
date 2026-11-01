@@ -1274,7 +1274,7 @@ mod tests {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            crate::testing::remove_dir_retry(&self.0);
         }
     }
 
@@ -1609,7 +1609,7 @@ mod tests {
         // shows the frame while it copies.
         let probe = probe_path(&path);
         let stance = stance_path(&path);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         for e in refusals {
             match e {
                 Err(Error::Decode(text)) => assert_eq!(text, HALF_COPIED),
@@ -1637,7 +1637,7 @@ mod tests {
         std::fs::write(&path, a_dng()).unwrap();
         let white = white_path(&path);
         let frame = RawlerDecoder.decode_path(&path);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         let (white, frame) = (white.unwrap(), frame.unwrap());
         assert!(white.as_shot_coefficients.is_some());
         assert_eq!(white.as_shot_coefficients, frame.as_shot_coefficients);
@@ -1895,7 +1895,7 @@ mod tests {
             probe_ends_path(&junk).unwrap_err().to_string(),
             probe_path(&junk).unwrap_err().to_string()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The probe and the stance read together give what the two calls
@@ -1944,7 +1944,7 @@ mod tests {
             probe_and_stance_counted(&junk).unwrap_err().to_string(),
             probe_path(&junk).unwrap_err().to_string()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// With `GREYCARD_TEST_RAWS` a folder of raws: each raw's probe and
@@ -2178,7 +2178,7 @@ mod tests {
         assert!(probe_and_mosaic_with(&clip, cr3_ends).is_err());
         assert!(index_read_path(&clip).is_err());
         assert!(mosaic_path(&clip).is_err());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A DNG past the head the hash reads is read in its pieces, its
@@ -2249,7 +2249,7 @@ mod tests {
         let path = dir.join("frame.CR3");
         std::fs::write(&path, &cr3).unwrap();
         assert!(index_read_path(&path).is_err());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A RAF's preview is read through its embedded JPEG's end, by the

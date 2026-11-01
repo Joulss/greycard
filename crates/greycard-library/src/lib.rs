@@ -3003,7 +3003,7 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION + 1);
         drop(conn);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A SQLite file that is somebody else's — no application id,
@@ -3080,7 +3080,7 @@ mod tests {
             .unwrap();
         assert_eq!(app, APPLICATION_ID);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two processes opening a library that is not there yet both
@@ -3114,7 +3114,7 @@ mod tests {
                 .unwrap();
             assert_eq!(mode, "wal");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A link to a file is listed by a folder pass under its own
@@ -3135,7 +3135,7 @@ mod tests {
             canonical_file(&dir.join("gone.tif")),
             canonical(&dir).unwrap().join("gone.tif")
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[cfg(unix)]

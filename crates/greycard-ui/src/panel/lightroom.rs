@@ -823,7 +823,7 @@ mod tests {
             "greycard-lightroom-sheet-{what}-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

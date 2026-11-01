@@ -1019,7 +1019,7 @@ mod tests {
                 .contains("Exposure2012 = 0")
         );
         assert!(p.shots[of(101)].raw.as_ref().unwrap().is_file());
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1056,7 +1056,7 @@ mod tests {
                 vec![export.join("IMG_0001-2.jpg"), export.join("IMG_0001.jpg")]
             )]
         );
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

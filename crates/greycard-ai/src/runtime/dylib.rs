@@ -783,7 +783,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         let (bundle, bin) = (dir.join("greycard.app"), dir.join("bin"));
         std::fs::create_dir_all(&bundle).unwrap();
         std::fs::create_dir_all(&bin).unwrap();
@@ -799,7 +799,7 @@ mod tests {
         assert!(decided(&facts(&[], None, &raw), Path::is_file).is_err());
         // A path that is not there is kept as given.
         assert_eq!(real_exe(dir.join("gone")), dir.join("gone"));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// `ort`'s load error says `dlopen` failed; why is the error it

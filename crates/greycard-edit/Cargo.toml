@@ -36,6 +36,8 @@ libc.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 # A camera profile made by hand, for the local white balance's tests.
 # Already in the tree through greycard-core.
 rawcolor.workspace = true

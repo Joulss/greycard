@@ -2431,7 +2431,7 @@ mod tests {
         assert_eq!(back.redo[0].id.as_deref(), Some(before[2].as_str()));
         back.redo();
         assert_eq!(ids(&back), before);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2507,7 +2507,7 @@ mod tests {
         let mut again = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(ids(&again), ids(&now));
         assert!(!again.fill_ids());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2591,7 +2591,7 @@ mod tests {
         let edits: Vec<Edit> = s.history.iter().map(|h| h.edit.clone()).collect();
         assert_eq!(old.history, edits);
         assert_eq!(old.snapshots, s.snapshots);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2631,7 +2631,7 @@ mod tests {
         }
         assert_eq!(s.revisions.len(), REVISIONS);
         assert_eq!(s.revisions[0].at, 205, "the oldest went first");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2667,7 +2667,7 @@ mod tests {
             "{tree}"
         );
         assert!(tree["meta_at"].get("title").is_none(), "a 0 is left out");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2688,7 +2688,7 @@ mod tests {
         a.meta.rating = 5;
         save(&mut a, &local, 200, "desk");
         assert_eq!(compare(&b, &a), Compared::Behind(Side::Local));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2703,7 +2703,7 @@ mod tests {
         assert_eq!(joined.current, a.current);
         assert_eq!(joined.current_id, a.current_id);
         assert_eq!(joined.current_label, a.current_label);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2750,7 +2750,7 @@ mod tests {
             Sidecar::read(&Sidecar::path_for(&archive)).unwrap(),
         );
         assert_eq!(compare(&l, &r), Compared::Same);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2795,7 +2795,7 @@ mod tests {
         // Known from the file, it counts as the copy's time.
         b0.modified = Some(250);
         assert_eq!(join(&a2, &b0).current.light.exposure, -1.0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A copy at state 4 and a copy at state 5 with 4 to undo are
@@ -2827,7 +2827,7 @@ mod tests {
         a.revisions.clear();
         b.revisions.clear();
         assert_eq!(compare(&a, &b), Compared::Behind(Side::Local));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2891,7 +2891,7 @@ mod tests {
         assert!(plain.current_id.is_none());
         assert_eq!(compare(&plain, &ra), Compared::Behind(Side::Local));
         assert!(plain.current_id.is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2921,7 +2921,7 @@ mod tests {
             .collect();
         assert_eq!(tail, [last - 2.0, last - 1.0, last, -1.0]);
         assert_eq!(j.current.light.exposure, last);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2960,7 +2960,7 @@ mod tests {
         let mut j = join(&a2, &b);
         save(&mut j, &local, 500, "desk");
         assert_eq!((j.meta_at.rating.at, j.meta_at.label.at), (400, 300));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3000,7 +3000,7 @@ mod tests {
         });
         let b = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
         assert_eq!(join(&a, &b).meta.rating, 4);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3035,7 +3035,7 @@ mod tests {
         save(&mut a, &local, 200, "desk");
         save(&mut b, &archive, 300, "laptop");
         assert_eq!(join(&a, &b).snapshots.len(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3066,7 +3066,7 @@ mod tests {
         );
         assert_eq!(files(&j.history[3].exports), ["/out/desk2.jpg"]);
         assert!(j.current_exports.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3206,7 +3206,7 @@ mod tests {
         a.history.last_mut().unwrap().exports.push(record);
         assert_eq!(compare(&l, &a), Compared::Behind(Side::Local));
         drop((local, archive));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A meta from before the times is pinned to its file's time once
@@ -3240,7 +3240,7 @@ mod tests {
         assert_eq!(j.meta.rating, 5);
         assert_eq!(j.meta.flag, Flag::Pick);
         assert_eq!(join(&a, &l).meta, j.meta);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A change made by an older build has its file's time, so it is
@@ -3268,7 +3268,7 @@ mod tests {
         let a = reread(&archive);
         assert_eq!(join(&l, &a).meta.rating, 3);
         assert_eq!(join(&a, &l).meta.rating, 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3289,7 +3289,7 @@ mod tests {
         a.turn = 3;
         save(&mut a, &archive, 400, "laptop");
         assert_eq!(join(&l, &a).turn, 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A write the other copy already carries, by the revision that
@@ -3323,7 +3323,7 @@ mod tests {
         assert_eq!(compare(&l, &a), Compared::Diverged);
         assert_eq!(join(&l, &a).meta.rating, 4);
         assert_eq!(join(&a, &l).meta.rating, 4);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A copy that only saved again where it stood has nothing the
@@ -3343,7 +3343,7 @@ mod tests {
         assert_eq!(ids(&j), ids(&l));
         assert_eq!(j.current_label, None);
         assert_eq!(join(&a, &l), j);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A copy left behind by more saves than the revision list holds
@@ -3380,7 +3380,7 @@ mod tests {
         let back = reread(&local);
         assert_eq!(back.absorbed, j.absorbed);
         assert_eq!(compare(&back, &a), Compared::Behind(Side::Other));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two machines joining the same pair in the same second each
@@ -3403,7 +3403,7 @@ mod tests {
         assert_eq!(compare(&x, &y), Compared::SameEdit);
         let z = join(&x, &y);
         assert_eq!(exposures(&z), exposures(&x));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3511,7 +3511,7 @@ mod tests {
         });
         let a = reread(&archive);
         assert_eq!(join(&l, &a).meta.rating, 4);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A field an older build cleared is a change at its file's time
@@ -3555,7 +3555,7 @@ mod tests {
             Field::Rating.value_hash(&Facts::default())
         );
         assert_eq!(join(&l, &a).meta.rating, 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A copy joined in turn with every other copy of a shoot, many
@@ -3607,7 +3607,7 @@ mod tests {
             assert_eq!(compare(&h, s), Compared::Behind(Side::Other));
             assert_eq!(join(&h, s).history.len(), h.history.len());
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A pre-revision sidecar already at the cap, backed up; the desk
@@ -3674,7 +3674,7 @@ mod tests {
             .collect();
         assert_eq!(records, ["/out/desk.jpg"]);
         assert_eq!(join(&a, &l), j);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two long branches off one base, both on this build: the cap
@@ -3739,7 +3739,7 @@ mod tests {
             "the record survives"
         );
         assert_eq!(join(&a, &l), j);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Nothing in the older copy's own branch is merged, whatever it
@@ -3812,7 +3812,7 @@ mod tests {
         let (l, a) = (reread(&local), reread(&archive));
         let j = join(&l, &a);
         assert_eq!(exposures(&j), [0.0, 0.5, 1.0, 5.0, 7.0, 8.0, 7.0, 5.0]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A join saved and then compared with the same input again, the
@@ -3902,7 +3902,7 @@ mod tests {
         assert_eq!(again.history, j.history);
         assert_eq!(again.current, j.current);
         assert_eq!(again.current_label, j.current_label);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Three copies of one frame: the desk records three states with
@@ -3962,7 +3962,7 @@ mod tests {
             assert_eq!(records, ["/out/desk-n1.jpg"]);
         }
         assert_eq!(join(&l, &j1), join(&j1, &l));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The older copy's first own state happens to be a shared state's
@@ -4012,7 +4012,7 @@ mod tests {
             assert_eq!(j.history[n - 1].edit.light.exposure, -3.0);
             assert_eq!(join(&a, &l), j);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A state of the older copy's branch that happens to equal one of
@@ -4076,7 +4076,7 @@ mod tests {
             "{got:?}"
         );
         assert_eq!(got.iter().filter(|e| **e == 3.0).count(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A reconciled entry from an earlier join, whose edit still stands
@@ -4135,7 +4135,7 @@ mod tests {
         );
         assert!(got.contains(&3.0));
         assert_eq!(join(&tab, &d2), j2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     fn is_reconciled_step(s: &Sidecar) -> bool {
@@ -4200,7 +4200,7 @@ mod tests {
         save(&mut j2s, &local, 600, "desk");
         let j3 = join(&j2s, &lap2);
         assert_eq!(exposures(&j3), exposures(&j2s));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The room for history brought back counts only the states this
@@ -4271,7 +4271,7 @@ mod tests {
             // the rest come off the restored states, oldest first.
             let dropped: Vec<f32> = got.iter().copied().filter(|x| !kept.contains(x)).collect();
             assert_eq!(dropped, got[1..5].to_vec(), "undo {undo}");
-            std::fs::remove_dir_all(&dir).unwrap();
+            greycard_core::testing::remove_dir_retry(&dir);
         }
     }
 
@@ -4349,7 +4349,7 @@ mod tests {
         save(&mut js, &local, 400, "desk");
         let j2 = join(&js, &a);
         assert_eq!(exposures(&j2), exposures(&js));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The states of a sidecar as (look, exposure, label) — what a
@@ -4437,7 +4437,7 @@ mod tests {
             .count();
         assert_eq!(shared, 1, "{joined:?}");
         assert!(joined.iter().any(|(l, e, _)| l == "Glow" && *e == 1.0));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A state after the first renamed one that does not name the look
@@ -4489,7 +4489,7 @@ mod tests {
             .filter(|(l, e, _)| l == "Mono" && *e == 2.0)
             .count();
         assert_eq!(mono_2, 2, "{joined:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The exposures of a line's states, the current last.
@@ -4558,7 +4558,7 @@ mod tests {
             text.contains(&format!("\"version\": {}", crate::VERSION))
                 && !text.contains("\"version\": 4")
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4594,7 +4594,7 @@ mod tests {
         assert_eq!(v.name, "Warm");
         // Version 0 moved on neither and gains nothing.
         assert_eq!(exposures(&joined), [0.0, 0.5, 1.0]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4614,7 +4614,7 @@ mod tests {
                 line_exposures(&joined.version(&warm).unwrap().line),
                 [1.0, 1.5, 4.0]
             );
-            std::fs::remove_dir_all(&dir).unwrap();
+            greycard_core::testing::remove_dir_retry(&dir);
         }
     }
 
@@ -4631,7 +4631,7 @@ mod tests {
         assert_eq!(compare(&b, &a), Compared::Behind(Side::Local));
         assert!(join(&a, &b).versions.is_empty());
         assert!(join(&b, &a).versions.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

@@ -1138,7 +1138,7 @@ mod tests {
             c.stamp(300 + i, "laptop");
         }
         assert_eq!(c.lineage.revs.len(), KEPT);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1153,7 +1153,7 @@ mod tests {
         b.stamp(99, "desk");
         assert_eq!(a.lineage.current(), b.lineage.current());
         assert_eq!(compare(&a.lineage, &b.lineage), Order::Same);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1197,8 +1197,8 @@ mod tests {
         assert_eq!(back.lineage, c.lineage);
         assert_eq!(back.refs[0].hint, hint_of(&desk.join("IMG_0001.CR3")));
         assert_eq!(back.refs[2].hint, hint_of(&other.join("IMG_0003.CR3")));
-        std::fs::remove_dir_all(&laptop).unwrap();
-        std::fs::remove_dir_all(desk.parent().unwrap()).unwrap();
+        greycard_core::testing::remove_dir_retry(&laptop);
+        greycard_core::testing::remove_dir_retry(desk.parent().unwrap());
     }
 
     #[test]
@@ -1219,7 +1219,7 @@ mod tests {
         apart.name = "Other".into();
         apart.stamp(300, "desk");
         assert_eq!(put(&dir, &Item::Collection(apart)).unwrap(), Wrote::Theirs);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1260,7 +1260,7 @@ mod tests {
         // A rename of a member is a revision: a stack finds frames by name.
         s.refs[1].hint = hint_of(&shoot.join("IMG_0001-renamed.CR3"));
         assert!(s.stamp(12, "laptop"));
-        std::fs::remove_dir_all(&laptop).unwrap();
+        greycard_core::testing::remove_dir_retry(&laptop);
     }
 
     #[test]
@@ -1304,7 +1304,7 @@ mod tests {
             "the laptop's own is behind the join"
         );
         assert_eq!(compare(l.lineage(), k.lineage()), Order::Behind);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1347,7 +1347,7 @@ mod tests {
             panic!()
         };
         assert_eq!(keep.refs, b.refs);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1373,7 +1373,7 @@ mod tests {
         let names: Vec<String> = read_folder(&dir).into_iter().map(|f| f.name).collect();
         assert_eq!(names, [file_name(edited.id(), Kind::Collection)]);
         assert_eq!(bury(&dir, &Gone::of(&item)).unwrap(), Wrote::Theirs);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1413,7 +1413,7 @@ mod tests {
         };
         assert_eq!(back.root.as_deref(), Some(dir.as_path()));
         assert_eq!(back.filter, s.filter);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1454,7 +1454,7 @@ mod tests {
         fresh.lineage = Lineage::default();
         fresh.seed();
         assert_eq!(read.list[0].lineage.revs, fresh.lineage.revs);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1496,7 +1496,7 @@ mod tests {
                 apart: 1
             }
         );
-        std::fs::remove_dir_all(&root).unwrap();
+        greycard_core::testing::remove_dir_retry(&root);
     }
 
     #[test]
@@ -1515,7 +1515,7 @@ mod tests {
                 .copy
                 .is_none()
         );
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     /// A later build's copy, or its deletion, whose shape ours cannot
@@ -1548,7 +1548,7 @@ mod tests {
         across(&other, &d);
         assert_eq!(std::fs::read_to_string(&gone).unwrap(), later_gone);
         assert!(!file.exists());
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     #[test]
@@ -1593,6 +1593,6 @@ mod tests {
         };
         assert_eq!(back.refs[0].hint, hint_of(&desk.join("a.CR3")));
         assert_eq!(back.refs[1].hint, hint_of(&desk.join("b.CR3")));
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 }

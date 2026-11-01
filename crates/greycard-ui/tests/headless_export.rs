@@ -13,7 +13,7 @@ struct Scratch(PathBuf);
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        greycard_render::testing::remove_dir_retry(&self.0);
     }
 }
 
@@ -110,7 +110,7 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
         Path::new(env!("CARGO_TARGET_TMPDIR"))
             .join(format!("greycard-headless-export-{}", std::process::id())),
     );
-    let _ = std::fs::remove_dir_all(&home.0);
+    greycard_render::testing::remove_dir_retry(&home.0);
     std::fs::create_dir_all(&home.0).unwrap();
     let source = home.0.join("frame.dng");
     dng(&source, 240, 160);
@@ -217,7 +217,7 @@ fn without_onnx_runtime_the_editor_runs_and_says_why() {
         "greycard-headless-no-runtime-{}",
         std::process::id()
     )));
-    let _ = std::fs::remove_dir_all(&home.0);
+    greycard_render::testing::remove_dir_retry(&home.0);
     std::fs::create_dir_all(&home.0).unwrap();
     let nowhere = home.0.join("nowhere").join("libonnxruntime.so");
     let env = [("GREYCARD_ORT_DYLIB", nowhere.as_os_str())];
@@ -303,7 +303,7 @@ fn an_export_preset_with_a_border_writes_a_file_larger_by_the_band() {
         Path::new(env!("CARGO_TARGET_TMPDIR"))
             .join(format!("greycard-headless-border-{}", std::process::id())),
     );
-    let _ = std::fs::remove_dir_all(&home.0);
+    greycard_render::testing::remove_dir_retry(&home.0);
     std::fs::create_dir_all(home.0.join("config").join("greycard")).unwrap();
     let source = home.0.join("frame.dng");
     dng(&source, 240, 160);

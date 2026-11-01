@@ -484,7 +484,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_core::testing::remove_dir_retry(&root);
         let lib: &[u8] = b"a library's bytes";
         let license: &[u8] = b"MIT License\n\nCopyright (c) Microsoft Corporation\n";
         let sha =
@@ -570,7 +570,7 @@ mod tests {
         // that would read as a runtime half had.
         assert!(store.fetch_runtime(runtime, |_| {}).is_err());
         assert!(!store.runtime_dir(runtime).exists());
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_core::testing::remove_dir_retry(&root);
     }
 
     /// A small download that fails leaves no part file: under
@@ -595,7 +595,7 @@ mod tests {
         };
         assert!(fetch_to(&file, &part, &mut |_| {}).is_err());
         assert!(!part.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A server on the loopback for one file's `body`: the first
@@ -676,7 +676,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -721,7 +721,7 @@ mod tests {
         let part = dir.join("small.part");
         assert!(fetch_resuming(&file, &part, u64::MAX, &mut |_| {}).is_err());
         assert!(!part.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A server that answers a range with the whole file in a 200:
@@ -741,7 +741,7 @@ mod tests {
         assert_eq!(std::fs::read(&part).unwrap(), body);
         assert_eq!(reports.first(), Some(&0));
         assert_eq!(seen.lock().unwrap()[1], Some(format!("bytes={kept}-")));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A kept part whose whole does not hash to the file's is removed,
@@ -760,7 +760,7 @@ mod tests {
         let resumed = fetch_resuming(&file, &part, 1000, &mut |_| {});
         assert!(matches!(resumed, Err(Error::Hash { .. })), "{resumed:?}");
         assert!(!part.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A retired file at its size and hash goes, with its directory
@@ -773,7 +773,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_core::testing::remove_dir_retry(&root);
         let bytes: &[u8] = b"an old model's weights";
         let sha =
             |b: &[u8]| -> &'static str { Box::leak(hex(&Sha256::digest(b)).into_boxed_str()) };
@@ -809,7 +809,7 @@ mod tests {
         assert_eq!(std::fs::read(other.join("other.onnx")).unwrap(), changed);
         // A second sweep finds nothing to do.
         assert!(store.sweep(&retired).is_empty());
-        std::fs::remove_dir_all(&root).unwrap();
+        greycard_core::testing::remove_dir_retry(&root);
     }
 
     /// The Carve file is retired and is no model's in use.

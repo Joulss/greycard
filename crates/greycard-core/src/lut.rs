@@ -1512,7 +1512,7 @@ mod tests {
     #[test]
     fn a_header_read_gives_a_listing_what_it_needs() {
         let dir = std::env::temp_dir().join(format!("greycard-lut-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("Some Look.cube");
         std::fs::write(
@@ -1538,7 +1538,7 @@ mod tests {
         // And something that is neither is not listed at all.
         std::fs::write(dir.join("notes.txt"), "hello").unwrap();
         assert_eq!(list_dir(&dir).len(), 2);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A header read looks at the first chunk of the file, not all of
@@ -1548,7 +1548,7 @@ mod tests {
     #[test]
     fn a_header_read_looks_at_the_first_chunk_only() {
         let dir = std::env::temp_dir().join(format!("greycard-lut-head-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
         // A 33-node table is 1.2 MB; its header is four lines.
@@ -1575,13 +1575,13 @@ mod tests {
         let info = Lut3d::info(&padded).expect("it is found the slow way");
         assert_eq!(info.title.as_deref(), Some("Padded"));
         assert_eq!(info.size, 2);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
     fn a_table_loads_from_a_path_by_its_extension() {
         let dir = std::env::temp_dir().join(format!("greycard-lut-load-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("Swap.cube");
         std::fs::write(&path, cube(3, "", |c| [c[2], c[0], c[1]])).unwrap();
@@ -1591,6 +1591,6 @@ mod tests {
         std::fs::write(&other, b"x").unwrap();
         let e = Lut3d::load(&other).expect_err("not a LUT");
         assert!(e.to_string().contains("reads .cube and HaldCLUT"), "{e}");
-        std::fs::remove_dir_all(&dir).ok();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

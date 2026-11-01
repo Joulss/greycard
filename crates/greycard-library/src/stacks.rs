@@ -407,7 +407,7 @@ mod tests {
         );
         // Not there yet: none.
         assert!(read_folder(&dir.join("none"), VERSION).list.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The collections as a build before stacks reads them: the stacks'
@@ -432,9 +432,9 @@ mod tests {
         assert_eq!(after.list, [c]);
         assert!(after.smart.is_empty());
         // And a folder of 0.7.0's, with no stacks in it, has none.
-        std::fs::remove_dir_all(dir_in(&dir)).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir_in(&dir));
         assert!(read_folder(&dir_in(&dir), VERSION).list.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A list of files shows a closed stack's top alone, counted; the

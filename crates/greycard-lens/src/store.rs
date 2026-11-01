@@ -226,7 +226,7 @@ mod tests {
         // A tarball made here: one XML file, one other, unpacked into
         // the versioned directory with its notes.
         let dir = std::env::temp_dir().join(format!("greycard-lens-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         let store = Store::at(&dir);
         assert!(!store.have());
         let mut tar_bytes = Vec::new();
@@ -271,6 +271,6 @@ mod tests {
         let (db, from) = store.load().unwrap();
         assert_eq!(from, store.dir());
         assert_eq!(db.lenses.len(), 6);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

@@ -2735,8 +2735,8 @@ pub(crate) mod tests {
             4,
             "the sidecar came with the move"
         );
-        std::fs::remove_dir_all(&near).unwrap();
-        std::fs::remove_dir_all(&far).unwrap();
+        greycard_core::testing::remove_dir_retry(&near);
+        greycard_core::testing::remove_dir_retry(&far);
     }
 
     /// Until the reads given up on under `dir` have come back, which a
@@ -2793,7 +2793,7 @@ pub(crate) mod tests {
         assert_eq!(row.meta.rating, 4);
         assert!(lib.by_path(&r5).unwrap().is_none());
         assert!(Sidecar::find(&r5).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A read over a network mount that does not answer within the limit
@@ -2854,7 +2854,7 @@ pub(crate) mod tests {
         assert_eq!(lib.by_path(&a7).unwrap().unwrap(), before);
         assert!(!lib.by_path(&r6).unwrap().unwrap().missing);
         asleep.store(false, SeqCst);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A first pass over files on a share, timed at several widths, for
@@ -2987,7 +2987,7 @@ pub(crate) mod tests {
             3,
             "three at once, no more"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The lens database's name is one value for the whole process
@@ -3048,7 +3048,7 @@ pub(crate) mod tests {
             panic!("{:?}", again.sets);
         };
         assert_eq!(back.name, "Renamed");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -3155,7 +3155,7 @@ pub(crate) mod tests {
                 ..Report::default()
             }
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The Keywords field's vocabulary: every spelling the library
@@ -3206,7 +3206,7 @@ pub(crate) mod tests {
                 ("harvest", 1),
             ])
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The filter bar's chips: a facet's values counted with one
@@ -3350,7 +3350,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(passing.len(), 2);
         assert!(passing.contains(&every[1]) && passing.contains(&every[3]));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The terms a sidecar and a path can answer are answered by
@@ -3417,7 +3417,7 @@ pub(crate) mod tests {
             let filter = Filter::parse(text).unwrap();
             assert!(!filter.terms[0].is_meta(), "{text} is the index's");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A file's kind is a facet and a term, both read from its name
@@ -3508,7 +3508,7 @@ pub(crate) mod tests {
             assert!(!got.is_empty(), "{text}");
             assert_eq!(got, names(&lib, text), "{text}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A camera's JPEG beside its raw is the raw's companion: both keep
@@ -3636,7 +3636,7 @@ pub(crate) mod tests {
         let mut jpegs = names(&lib, "kind:jpeg");
         jpegs.sort();
         assert_eq!(jpegs, ["IMG_1.JPG", "IMG_2.JPG"]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The index keeps each file's kind of mosaic, read on the same
@@ -3686,7 +3686,7 @@ pub(crate) mod tests {
             mosaic(&lib, &bayer),
             Some(FileMosaic::Mosaic(Mosaic::Bayer))
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The pass reads each raw into memory and never maps one: its
@@ -3730,7 +3730,7 @@ pub(crate) mod tests {
             Some(FileMosaic::Mosaic(Mosaic::Bayer))
         );
         assert_eq!(greycard_core::decode::maps_under(&dir), 0, "raws mapped");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two bodies at one event, the second's clock five minutes slow,
@@ -3829,7 +3829,7 @@ pub(crate) mod tests {
         shift_by(&[b1, b2], 0);
         lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(order(&lib), ["b1.tif", "a1.tif", "b2.tif", "a2.tif"]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 11 library comes up with the shift's columns and its
@@ -3872,7 +3872,7 @@ pub(crate) mod tests {
         assert_eq!(e.meta.time_shift, 300);
         assert_eq!(e.taken_at.as_deref(), Some("2026-09-20 00:01:00"));
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The upgrade's pass over rows from before the column reads each
@@ -3905,7 +3905,7 @@ pub(crate) mod tests {
         assert_eq!(unread(&lib), 10, "a batch read, the rest left for later");
         lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(unread(&lib), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A DNG whose CFA repeat is out of shape (65535 a side, or none)
@@ -3939,7 +3939,7 @@ pub(crate) mod tests {
                 p.display()
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// `!=` leaves a file that does not say out, on every kind of
@@ -4008,7 +4008,7 @@ pub(crate) mod tests {
             held_out(Facet::Iso, "100"),
             ["a7.tif", "bare.png", "r6.tif"]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The browser's box lowercases both sides with Unicode rules;
@@ -4053,7 +4053,7 @@ pub(crate) mod tests {
             );
         }
         assert_eq!(names(&lib, "keyword=été"), ["plain.tif"]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4103,7 +4103,7 @@ pub(crate) mod tests {
         let report = lib.index_file(&r5).unwrap();
         assert_eq!(report.meta_refreshed, 1, "{report:?}");
         assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 5);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A write that changes one digit changes neither the sidecar's
@@ -4136,7 +4136,7 @@ pub(crate) mod tests {
         let report = lib.index_file(&r5).unwrap();
         assert_eq!(report.meta_refreshed, 1, "{report:?}");
         assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4162,7 +4162,7 @@ pub(crate) mod tests {
         assert_eq!(after.exif.camera, "SONY ILCE-7M4");
         // The sidecar beside it still counts.
         assert_eq!(after.meta.rating, 4);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4254,7 +4254,7 @@ pub(crate) mod tests {
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 1, "{report:?}");
         assert_eq!(lib.by_hash(&e.hash).unwrap().len(), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A raw dragged by hand to another folder, or renamed, leaves its
@@ -4310,7 +4310,7 @@ pub(crate) mod tests {
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!((report.moved, report.carried), (1, 0), "{report:?}");
         assert!(Sidecar::find(&a7_to).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A sidecar at the new place already is the frame's now: the one
@@ -4330,7 +4330,7 @@ pub(crate) mod tests {
         assert_eq!((report.moved, report.carried), (1, 0), "{report:?}");
         assert!(Sidecar::path_for(&r5).is_file(), "left where it was");
         assert_eq!(lib.by_path(&renamed).unwrap().unwrap().meta.rating, 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A row whose whole folder is gone is not a move's other end:
@@ -4365,7 +4365,7 @@ pub(crate) mod tests {
         assert_eq!(report.added, 0, "{report:?}");
         assert_eq!(report.unchanged, 3);
         assert_eq!(lib.len().unwrap(), 4);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4400,7 +4400,7 @@ pub(crate) mod tests {
         assert_eq!(lib.prune_missing().unwrap(), 1);
         assert_eq!(lib.len().unwrap(), 2);
         assert!(lib.by_path(&r5).unwrap().is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A delete the editor made: the rows go at once, keywords and
@@ -4426,7 +4426,7 @@ pub(crate) mod tests {
         assert_eq!(lib.forget(std::slice::from_ref(&r5)).unwrap(), 0);
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 0, "{report:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A move the editor made, told to the index: the row goes to the
@@ -4473,7 +4473,7 @@ pub(crate) mod tests {
         lib.index_folder(&rejects, &mut quiet()).unwrap();
         assert!(names(&lib, "missing:yes").is_empty());
         assert!(!lib.file_moved(&from, &to).unwrap(), "nothing left at from");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A folder deleted with its files: a pass over the tree above
@@ -4492,7 +4492,7 @@ pub(crate) mod tests {
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 4, "{report:?}");
 
-        std::fs::remove_dir_all(&day1).unwrap();
+        greycard_core::testing::remove_dir_retry(&day1);
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 3, "{report:?}");
         assert_eq!(names(&lib, ""), ["x.tif"]);
@@ -4504,7 +4504,7 @@ pub(crate) mod tests {
         assert_eq!(lib.len().unwrap(), 1);
 
         // The folder on its own.
-        std::fs::remove_dir_all(&day2).unwrap();
+        greycard_core::testing::remove_dir_retry(&day2);
         let report = lib.index_folder(&day2, &mut quiet()).unwrap();
         assert_eq!(report.missing, 1, "{report:?}");
         assert!(lib.by_path(&day2.join("x.tif")).unwrap().unwrap().missing);
@@ -4514,7 +4514,7 @@ pub(crate) mod tests {
             lib.index_folder(&dir.join("nowhere").join("deep"), &mut quiet())
                 .is_err()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// macOS's `._` resource forks and `.DS_Store` beside a raw on a
@@ -4541,7 +4541,7 @@ pub(crate) mod tests {
         assert_eq!(paired.frames, std::slice::from_ref(&raw));
         assert!(paired.companions.is_empty());
         assert!(crate::pairs::companions_of(&[raw]).is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Rows an index made of hidden files before the listing passed
@@ -4587,7 +4587,7 @@ pub(crate) mod tests {
         // Nor does one named on its own come back.
         lib.index_file(&dir.join("._A.CR3")).unwrap();
         assert_eq!(lib.len().unwrap(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4610,7 +4610,7 @@ pub(crate) mod tests {
         // Not retried while the file stands.
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert!(report.errors.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A decoder that panics on a file's bytes costs that file its
@@ -4656,7 +4656,7 @@ pub(crate) mod tests {
         let e = lib.by_path(&bad).unwrap().unwrap();
         assert_eq!(e.exif, Exif::default());
         assert_eq!(e.hash, hash::hash_file(&bad).unwrap());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A walk leaving out a folder below its root (a share mounted there,
@@ -4701,8 +4701,8 @@ pub(crate) mod tests {
         let mut walk = lib.tree_walk(&dir).unwrap();
         let report = lib.walk_until(&mut walk, &mut quiet(), &|| false).unwrap();
         assert_eq!(report.missing, 2, "{report:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
-        std::fs::remove_dir_all(&gone).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
+        greycard_core::testing::remove_dir_retry(&gone);
     }
 
     /// A walk stopped partway and taken up again with a folder now left
@@ -4725,7 +4725,7 @@ pub(crate) mod tests {
         assert!(!report.stopped);
         assert_eq!(report.added, 1, "{report:?}");
         assert!(lib.by_path(&nas.join("b.tif")).unwrap().is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A pass asks the disk everything in its first phase and nothing
@@ -4770,7 +4770,7 @@ pub(crate) mod tests {
         assert_eq!(DISK_CALLS.with(|c| c.get()).1, 0);
         assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 1);
         assert_eq!(lib.by_path(&a7).unwrap().unwrap().meta.rating, 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The editor saves a rating and calls `index_file` while a pass
@@ -4854,7 +4854,7 @@ pub(crate) mod tests {
         assert_eq!(Sidecar::load(&r5).unwrap().unwrap().meta.rating, 1);
         drop(other);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// `index_file` on a copy in the same folder must not take the
@@ -4881,7 +4881,7 @@ pub(crate) mod tests {
         // And the folder pass agrees: nothing to do.
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.unchanged, 4, "{report:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two passes on two folders at once, on a library that is not
@@ -4922,7 +4922,7 @@ pub(crate) mod tests {
             let lib = Library::open_read_only(&db).unwrap();
             assert_eq!(lib.len().unwrap(), 2 * n);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two writers take turns rather than colliding: a folder pass
@@ -4969,7 +4969,7 @@ pub(crate) mod tests {
         assert_eq!(lib.len().unwrap(), n);
         assert!(lib.by_path(&last).unwrap().is_some());
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// An unmounted drive leaves its mount point behind, an empty
@@ -5026,7 +5026,7 @@ pub(crate) mod tests {
             lib.index_folder(&fresh, &mut quiet()).unwrap(),
             Report::default()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A folder that is not there and that the index knows nothing
@@ -5049,9 +5049,9 @@ pub(crate) mod tests {
         std::fs::create_dir(&sub).unwrap();
         write_frame(&sub.join("x.tif"), &A7, 1);
         lib.index_folder(&sub, &mut quiet()).unwrap();
-        std::fs::remove_dir_all(&sub).unwrap();
+        greycard_core::testing::remove_dir_retry(&sub);
         assert_eq!(lib.index_folder(&sub, &mut quiet()).unwrap().missing, 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A link to a file is one entry of its folder, under its own
@@ -5073,7 +5073,7 @@ pub(crate) mod tests {
         assert_eq!(lib.len().unwrap(), 4);
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.unchanged, 4, "{report:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two names that a lossy conversion spells the same are two
@@ -5125,7 +5125,7 @@ pub(crate) mod tests {
         assert_eq!(lib.len().unwrap(), 3);
         // The folder listing shows the name as best it can.
         assert_eq!(names(&lib, "caf").len(), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -5155,7 +5155,7 @@ pub(crate) mod tests {
             assert_eq!(report.skipped, vec![link]);
             assert_eq!(report.added, 0);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A folder past the batch size commits as it goes, so a reader
@@ -5185,7 +5185,7 @@ pub(crate) mod tests {
         assert_eq!(reader.len().unwrap(), BATCH + 5);
         drop(reader);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A pass asked to stop ends after the batch it is on, keeps what
@@ -5219,7 +5219,7 @@ pub(crate) mod tests {
         assert_eq!(report.added, 4);
         assert_eq!(report.missing, 1);
         assert_eq!(report.unchanged, BATCH);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -5238,7 +5238,7 @@ pub(crate) mod tests {
         assert_eq!(names(&lib, "flag:pick"), ["r5.tif"]);
         assert_eq!(lib.path(), db);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The sample raws, when they are to hand: `GREYCARD_SAMPLES`
@@ -5390,7 +5390,7 @@ pub(crate) mod tests {
             picks.len(),
             counted.as_secs_f64() * 1000.0,
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The roots' questions: every file under them by folder then
@@ -5445,7 +5445,7 @@ pub(crate) mod tests {
             [a.join("z.tif"), ab.join("c.tif")]
         );
         assert_eq!(lib.count_under(&a).unwrap(), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A root's folders as a tree is built from them: each folder with
@@ -5492,7 +5492,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_empty()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A file moved from one folder under a root to another, either
@@ -5531,7 +5531,7 @@ pub(crate) mod tests {
         let row = lib.by_path(&early.join("x.tif")).unwrap().unwrap();
         assert_eq!((row.id, row.missing), (id, false));
         assert_eq!(lib.len().unwrap(), 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A folder renamed is not a move to the index — the old folder
@@ -5561,7 +5561,7 @@ pub(crate) mod tests {
         std::fs::remove_file(new.join("x.tif")).unwrap();
         lib.index_folder(&new, &mut quiet()).unwrap();
         assert!(lib.found_at(&[id]).unwrap().is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A folder renamed is said by its old path and its new: found in
@@ -5625,20 +5625,20 @@ pub(crate) mod tests {
             }
         }
         lib.index_tree(&dir, &mut quiet()).unwrap();
-        std::fs::remove_dir_all(&a).unwrap();
+        greycard_core::testing::remove_dir_retry(&a);
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert!(report.moved_folders.is_empty(), "{report:?}");
         assert_eq!(report.missing, 3, "{report:?}");
 
         // One file of three carried out, and the folder deleted.
-        std::fs::remove_dir_all(&c).unwrap();
+        greycard_core::testing::remove_dir_retry(&c);
         let picks = dir.join("picks");
         std::fs::create_dir_all(&picks).unwrap();
         std::fs::rename(b.join("x.tif"), picks.join("x.tif")).unwrap();
-        std::fs::remove_dir_all(&b).unwrap();
+        greycard_core::testing::remove_dir_retry(&b);
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert!(report.moved_folders.is_empty(), "{report:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The halves of a rename wait a while and no longer; a new folder
@@ -5719,7 +5719,7 @@ pub(crate) mod tests {
         if std::fs::read_dir(&locked).is_ok() && passed.as_ref().is_ok_and(|r| r.errors.is_empty())
         {
             // Run as root, which reads the folder anyway.
-            std::fs::remove_dir_all(&dir).unwrap();
+            greycard_core::testing::remove_dir_retry(&dir);
             return;
         }
         let report = passed.unwrap();
@@ -5733,7 +5733,7 @@ pub(crate) mod tests {
             "said as a folder"
         );
         assert_eq!(lib.len().unwrap(), 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A tree pass asked to stop ends between folders, marks nothing
@@ -5749,7 +5749,7 @@ pub(crate) mod tests {
         write_frame(&dir.join("gone").join("g.tif"), &R6, 9);
         let mut lib = Library::open_in_memory().unwrap();
         lib.index_tree(&dir, &mut quiet()).unwrap();
-        std::fs::remove_dir_all(dir.join("gone")).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir.join("gone"));
         for d in ["a", "b", "c"] {
             write_frame(&dir.join(d).join("new.tif"), &A7, 7);
         }
@@ -5775,7 +5775,7 @@ pub(crate) mod tests {
             lib.paths_under(std::slice::from_ref(&dir)).unwrap().len(),
             6
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The review's repro for a frame "followed" to its backup: the
@@ -5802,7 +5802,7 @@ pub(crate) mod tests {
             lib.found_at(&[id]).unwrap().is_empty(),
             "a copy is not a move"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A tree pass stopped over and over, as the launch pass is while
@@ -5836,7 +5836,7 @@ pub(crate) mod tests {
         }
         assert_eq!(looked, 12, "each file looked at once");
         assert_eq!(lib.len().unwrap(), 12);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A walk stopped in the middle of a folder counts that folder's
@@ -5855,7 +5855,7 @@ pub(crate) mod tests {
         let done = lib.walk_until(&mut walk, &mut |_| {}, &|| false).unwrap();
         assert!(!done.stopped);
         assert_eq!((done.added, done.unchanged), (BATCH + 10, 0), "{done:?}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A pass names the files it found changed, so a window makes
@@ -5873,7 +5873,7 @@ pub(crate) mod tests {
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!(report.changed, 1, "{report:?}");
         assert_eq!(report.changed_files, [dir.join("b.tif")]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A file rewritten in place under its own name is said with the
@@ -5918,7 +5918,7 @@ pub(crate) mod tests {
         let one = lib.index_file(&a).unwrap();
         assert_eq!(one.rehashed.len(), 1);
         assert_eq!(one.rehashed[0].old, new);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Sets a row's maker tags by hand, as the reader would have for
@@ -6065,7 +6065,7 @@ pub(crate) mod tests {
                 .as_deref(),
             Some("Canon")
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A library from before the maker's tags keeps its rows and gets
@@ -6140,7 +6140,7 @@ pub(crate) mod tests {
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
         assert_eq!(report.styled, 0, "{report:?}");
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A row says whether its sidecar holds a develop, and which way
@@ -6239,7 +6239,7 @@ pub(crate) mod tests {
         );
         let e = lib.by_path(&rated).unwrap().unwrap();
         assert_eq!((e.meta.rating, e.edited), (3, true));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A reset leaves its history behind and is no develop; the blend
@@ -6353,7 +6353,7 @@ pub(crate) mod tests {
             let s = Sidecar::load(&path(n)).unwrap().unwrap();
             assert_eq!(crate::develop_marks(&s, &path(n), iso), said(n), "{n}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 8 library gains the develop key column empty; the next
@@ -6432,7 +6432,7 @@ pub(crate) mod tests {
         );
         drop(named);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The rows of the `versions` table the file's row lists, by id,
@@ -6510,7 +6510,7 @@ pub(crate) mod tests {
         assert_eq!(others, ["a7.tif", "r6.tif"]);
         // The other files have none.
         assert!(version_rows(&lib, &dir, &dir.join("a7.tif")).is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A version deleted from the sidecar drops its row at the next
@@ -6544,7 +6544,7 @@ pub(crate) mod tests {
         assert_eq!(versions_in_table(&mut lib), 2);
         lib.forget(std::slice::from_ref(&r5)).unwrap();
         assert_eq!(versions_in_table(&mut lib), 0, "cascaded with the file");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 9 library gains the `versions` table empty, and the
@@ -6582,7 +6582,7 @@ pub(crate) mod tests {
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.meta_refreshed, 0, "{report:?}");
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// What the rows' develop keys were made under is kept in the
@@ -6650,7 +6650,7 @@ pub(crate) mod tests {
             assert!(key_of(&mut lib).is_some(), "{why}: made anew");
         }
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 7 library comes up with the exports its sidecars
@@ -6707,7 +6707,7 @@ pub(crate) mod tests {
         let b = lib.by_path(&reset).unwrap().unwrap();
         assert_eq!((b.edited, b.exported), (false, false));
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A sidecar whose edit this build cannot read still gives up its
@@ -6807,7 +6807,7 @@ pub(crate) mod tests {
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
         assert_eq!(report.meta_refreshed, 0, "{report:?}");
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The row takes an XMP beside the frame the way the editor takes
@@ -6893,7 +6893,7 @@ pub(crate) mod tests {
         // The `.gcd` has no mark, so the XMP is taken over it, as the
         // editor would take it on opening.
         assert_eq!(row(&lib, &only).meta.rating, 5);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A copy of a frame under another root is found by its hash there,
@@ -6961,7 +6961,7 @@ pub(crate) mod tests {
         std::fs::write(&r5, &bytes).unwrap();
         lib.index_tree(&local, &mut quiet()).unwrap();
         assert_eq!(lib.whole_hash(&r5).unwrap(), None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 5 library gains the two sync tables empty, in place,
@@ -7000,7 +7000,7 @@ pub(crate) mod tests {
         );
         // Windows holds the file while the library is open.
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 6 library's rows with a maker's tags are marked to be
@@ -7051,7 +7051,7 @@ pub(crate) mod tests {
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.styled, 2, "{report:?}");
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// What we last wrote to an archive copy, and the writes that
@@ -7250,7 +7250,7 @@ pub(crate) mod tests {
         );
         assert!(!lib.is_pending("h3").unwrap() && !lib.is_pending("h5").unwrap());
         assert!(!lib.is_pending("h4").unwrap());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// `open_current` opens a library at this build's schema for
@@ -7310,7 +7310,7 @@ pub(crate) mod tests {
             Err(crate::Error::NotALibrary(_))
         ));
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A schema 4 library is brought up in place with the whole hash's
@@ -7349,6 +7349,6 @@ pub(crate) mod tests {
             "{report:?}"
         );
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

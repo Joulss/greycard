@@ -989,7 +989,7 @@ mod tests {
         };
         mine.save_to(&path);
         assert_eq!(Settings::load_from(&path), mine);
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The keys rebound are under `keys`, only the ones moved: a file
@@ -1203,7 +1203,7 @@ mod tests {
             Start::Nothing
         );
         // Gone from the disk: the last folder, or nothing.
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         assert_eq!(
             start_listing(&chosen_text, Some(last), frames(true)),
             in_last
@@ -1377,7 +1377,7 @@ mod tests {
         mine.save_to(&path);
         assert_eq!(Settings::load_from(&path), mine);
         // A file that is not there is the defaults, not an error.
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         assert_eq!(Settings::load_from(&path), Settings::default());
     }
 

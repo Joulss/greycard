@@ -657,7 +657,7 @@ mod tests {
             "b's stale one waits"
         );
         drop(lib);
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The consecutive frames of a folder of raws, as the rule sees
@@ -698,6 +698,6 @@ mod tests {
             last = Some((row, taken, look));
         }
         drop(lib);
-        let _ = std::fs::remove_dir_all(&scratch);
+        greycard_core::testing::remove_dir_retry(&scratch);
     }
 }

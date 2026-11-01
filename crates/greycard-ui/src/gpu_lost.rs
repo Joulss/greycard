@@ -355,7 +355,7 @@ mod tests {
             program_of(exe.clone(), Some(image), Some(gone.as_os_str())),
             exe
         );
-        std::fs::remove_dir_all(&root).unwrap();
+        crate::testing::remove_dir_retry(&root);
     }
 
     /// A scripted run fails on a loss under `--cpu-ops` too; an

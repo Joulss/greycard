@@ -1288,7 +1288,7 @@ mod tests {
 
     fn dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("greycard-preset-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
         d
     }
 
@@ -1423,8 +1423,8 @@ mod tests {
             theirs.preset.edit.light.exposure, 1.0,
             "the user's file stands"
         );
-        let _ = std::fs::remove_dir_all(&d);
-        let _ = std::fs::remove_dir_all(&d2);
+        greycard_core::testing::remove_dir_retry(&d);
+        greycard_core::testing::remove_dir_retry(&d2);
     }
 
     /// A binned shipped preset comes back when asked for, once, and
@@ -1462,7 +1462,7 @@ mod tests {
         for (stem, _) in SHIPPED {
             assert_eq!(record.lines().filter(|l| *l == stem).count(), 1, "{stem}");
         }
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     /// A restore writes over nothing of the user's. A preset of a
@@ -1516,7 +1516,7 @@ mod tests {
         assert!(store.restore_shipped().unwrap().is_empty());
         store.seed();
         assert_eq!(store.list().len(), 4);
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     #[test]
@@ -2251,6 +2251,6 @@ mod tests {
         let entry = store.find("odd-name").unwrap();
         store.remove(&entry).unwrap();
         assert_eq!(store.list().len(), 2);
-        std::fs::remove_dir_all(store.dir()).unwrap();
+        greycard_core::testing::remove_dir_retry(store.dir());
     }
 }

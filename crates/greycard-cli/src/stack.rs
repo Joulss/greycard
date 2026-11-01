@@ -631,7 +631,7 @@ mod tests {
                 "the preview renders {preview_means:?}, the source develops to {want_means:?}"
             );
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A format the merge is not written in is refused before anything
@@ -658,7 +658,7 @@ mod tests {
             std::fs::read(&there).expect("the file is still there"),
             b"not to be touched"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

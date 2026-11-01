@@ -356,6 +356,6 @@ mod tests {
         assert_eq!(bytes.len(), 10 + len + 6 * 2);
         let last = half::f16::from_le_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]]);
         assert_eq!(last.to_f32(), 2.5);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

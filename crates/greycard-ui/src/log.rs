@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn three_runs_are_kept_and_the_old_name_is_taken_up() {
         let dir = std::env::temp_dir().join(format!("greycard-log-rotate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(kept(1), "greycard-ui-1.log");
         std::fs::write(dir.join(FILE), "run a").unwrap();
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(read(&kept(2)), "run d");
         assert_eq!(read(&kept(3)), "run c");
         assert!(!dir.join(format!("{FILE}.1")).exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn what_is_said_and_a_panic_reach_the_file_and_the_previous_run_is_kept() {
         let dir = std::env::temp_dir().join(format!("greycard-log-file-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
         // SAFETY: read only by `filter_or_env`, and only this test
         // installs; the shell's setting would decide the levels.
         unsafe { std::env::remove_var(EnvFilter::DEFAULT_ENV) };
@@ -420,6 +420,6 @@ mod tests {
         assert!(now.contains(&clash), "{clash} in {now:?}");
         assert!(before.contains("first run"), "{before:?}");
         assert!(!now.contains("first run"));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }

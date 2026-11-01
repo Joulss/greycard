@@ -237,7 +237,7 @@ mod tests {
         use std::path::PathBuf;
         let d =
             std::env::temp_dir().join(format!("greycard-cli-preset-import-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
         std::fs::create_dir_all(&d).unwrap();
         let store = d.join("store");
         let gcp = d.join("grain.gcp");
@@ -290,6 +290,6 @@ mod tests {
         import(std::slice::from_ref(&gcp), true).unwrap();
         assert_eq!(amount(), 0.5);
         assert_eq!(std::fs::read_dir(&store).unwrap().count(), 2);
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 }

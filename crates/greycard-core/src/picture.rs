@@ -1102,6 +1102,6 @@ mod tests {
         // Not a picture at all.
         std::fs::write(&cut, b"nothing like a picture").unwrap();
         assert!(probe_path(&cut).is_err());
-        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        crate::testing::remove_dir_retry(path.parent().unwrap());
     }
 }

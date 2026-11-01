@@ -12,5 +12,7 @@ repository.workspace = true
 greycard-core = { path = "../greycard-core" }
 
 [dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 serde.workspace = true
 serde_json.workspace = true

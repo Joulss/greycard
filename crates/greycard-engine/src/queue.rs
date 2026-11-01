@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn a_pair_re_exported_goes_to_the_next_free_names_not_a_name_hunting_a_name() {
         let dir = std::env::temp_dir().join(format!("greycard-names-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let pair = [dir.join("X.CR3"), dir.join("X.jpg")];
@@ -812,13 +812,13 @@ mod tests {
             let got = names(&pair, Some(&out), None, Format::Jpeg, policy);
             assert_eq!(got, vec![out.join("X.jpg"), out.join("X-1.jpg")]);
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
     fn a_name_moved_off_a_file_on_disk_says_what_it_was_moved_from() {
         let dir = std::env::temp_dir().join(format!("greycard-moved-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         std::fs::write(out.join("X.jpg"), b"").unwrap();
@@ -848,13 +848,13 @@ mod tests {
             OnExists::Increment,
         );
         assert_eq!(quiet[0].1, None);
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
     fn a_moved_name_is_told_as_a_name_taken() {
         let dir = std::env::temp_dir().join(format!("greycard-told-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let set = Set::new(
             1,
@@ -882,7 +882,7 @@ mod tests {
             ..frame
         };
         assert_eq!(resolve(&set, &plain).note(), None);
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     // Virtual copies part 4. These say what the version's name does to

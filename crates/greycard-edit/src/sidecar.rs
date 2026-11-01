@@ -950,7 +950,7 @@ mod tests {
         .unwrap();
         let sidecar = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(sidecar.current, e);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
 
         // And through a preset.
         let preset = format!(r#"{{"name": "Old", "sections": ["light"], "edit": {old}}}"#);
@@ -992,7 +992,7 @@ mod tests {
         let nowhere = dir.join("no such folder").join("b.json");
         assert!(write_synced(&nowhere, b"{}").is_err());
         assert!(!nowhere.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     fn set_modified(path: &Path, secs: u64) {
@@ -1326,7 +1326,7 @@ mod tests {
         assert_eq!(Sidecar::settle(&a, to).unwrap(), Settled::Dropped);
         assert_eq!(read(&a, to).as_deref(), Some("a"));
         assert!(!stale.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1348,7 +1348,7 @@ mod tests {
         let back = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(back, sidecar);
         assert_eq!(back.current.light.exposure, 2.0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1378,7 +1378,7 @@ mod tests {
         assert_eq!(back.meta.label, Label::Green);
         assert_eq!(back.meta.keywords, ["harbor"]);
         assert_eq!(back.meta.title, "Low tide");
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1454,7 +1454,7 @@ mod tests {
         let back = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(back.turn, 3);
         assert_eq!(back.current.light.exposure, 0.25);
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
 
         // Four turns are none, and the field goes again.
         let mut sidecar = Sidecar::default();
@@ -1850,7 +1850,7 @@ mod before_versions {
         let path = dir.join("IMG_0001.CR3.gcd");
         std::fs::write(&path, BEFORE_VERSIONS).unwrap();
         let read = Sidecar::read(&path).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
 
         // What a build at schema 4 wrote, the same today: the states and
         // their words and records, the snapshots, the file's own facts.

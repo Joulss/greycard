@@ -21,3 +21,7 @@ blake3.workspace = true
 # The kelvin and Duv of a chromaticity, for a RawTherapee profile's
 # white. Already in the tree through greycard-core.
 rawcolor.workspace = true
+
+[dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }

@@ -859,7 +859,7 @@ mod tests {
     /// queue asks only that they exist).
     fn shoot(tag: &str, n: usize) -> (PathBuf, Vec<PathBuf>) {
         let dir = std::env::temp_dir().join(format!("greycard-queue-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let files: Vec<PathBuf> = (0..n)
             .map(|i| {

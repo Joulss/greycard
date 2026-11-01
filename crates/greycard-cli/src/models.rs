@@ -373,7 +373,7 @@ mod tests {
         let failed = fetch_models(&store, &[&FIRST, &SECOND]);
         let ids: Vec<_> = failed.iter().map(|(id, _)| *id).collect();
         assert_eq!(ids, vec!["unreachable-first", "unreachable-second"]);
-        let _ = std::fs::remove_dir_all(store.root());
+        greycard_core::testing::remove_dir_retry(store.root());
     }
 
     /// `--fetch onnxruntime`, or the runtime's id, is the CPU-only

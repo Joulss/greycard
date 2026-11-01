@@ -121,7 +121,7 @@ mod tests {
 
     fn dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("greycard-preset-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
         d
     }
 
@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(got.preset.edit.grain.amount, 0.2);
         assert!(got.unmapped.is_empty());
         assert!(import(&d.join("none.gcp")).is_err());
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     /// The store's import: a preset in, under its slug, with what did
@@ -270,6 +270,6 @@ mod tests {
             before
         );
         assert_eq!(store.list().len(), 2);
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 }

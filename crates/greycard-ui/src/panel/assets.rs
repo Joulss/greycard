@@ -1721,7 +1721,7 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, _worker) = crate::testing::retouch_state(&app);
         let d = std::env::temp_dir().join(format!("greycard-ui-bin-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        crate::testing::remove_dir_retry(&d);
         let store = preset::Store::at(d.clone());
         store.seed();
         state.borrow_mut().develop.preset_store = Some(store);
@@ -1813,7 +1813,7 @@ mod tests {
         assert!(removed, "the Remove removes");
         assert_eq!(state.borrow().develop.presets.len(), 2);
         assert_eq!(app.get_preset_confirm_remove(), -1);
-        let _ = std::fs::remove_dir_all(&d);
+        crate::testing::remove_dir_retry(&d);
     }
 
     /// A preset of parts alone, imported, says what it carries.
@@ -2074,7 +2074,7 @@ mod tests {
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::retouch_state(&app);
         let d = std::env::temp_dir().join(format!("greycard-ui-presets-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        crate::testing::remove_dir_retry(&d);
         let store = preset::Store::at(d.clone());
         store.seed();
         state.borrow_mut().develop.preset_store = Some(store);
@@ -2148,7 +2148,7 @@ mod tests {
         assert_eq!(app.get_status(), "Mine removed");
         app.invoke_preset_deleted(at("warm negative"));
         assert_eq!(app.get_status(), "warm negative removed");
-        let _ = std::fs::remove_dir_all(&d);
+        crate::testing::remove_dir_retry(&d);
     }
 
     #[test]

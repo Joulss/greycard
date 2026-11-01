@@ -1184,7 +1184,7 @@ mod tests {
         db.read_xml(crate::db::SAMPLE).unwrap();
         let c = picked("Canon", "EOS R7", Some(&db)).unwrap();
         assert!(close(c.radius_scale, 1.0 / 1.6, 1e-5));
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1202,6 +1202,6 @@ mod tests {
         assert!(Arc::ptr_eq(&load(&path).unwrap(), &load(&path).unwrap()));
         assert!(path_in(&dir, "../b.LCP").is_none());
         assert!(load(&dir.join("gone.lcp")).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

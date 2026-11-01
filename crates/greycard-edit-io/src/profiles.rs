@@ -293,7 +293,7 @@ mod tests {
     /// A directory of this test's own, gone when it returns.
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greycard-dcp-{what}-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -321,7 +321,7 @@ mod tests {
         // And forgetting makes the next read a fresh one too.
         forget();
         assert!(!Arc::ptr_eq(&again, &load(&path).unwrap()));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
         // Twice: the second answer comes from the cache, and is the
         // same nothing.
         assert!(load(&path).is_none());
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A profile the edit names and the directory has not got is
@@ -355,7 +355,7 @@ mod tests {
         // Put it there and it is read, missing marker and all.
         a_profile_file(&path, 4);
         assert!(load(&path).is_some());
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The listing reads headers, not tables: a profile in the
@@ -374,7 +374,7 @@ mod tests {
             !CACHE.lock().unwrap().contains_key(&path),
             "a header read keeps nothing"
         );
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     fn labels<'a>(entries: &'a [Entry], chosen: &str) -> Vec<&'a str> {
@@ -409,7 +409,7 @@ mod tests {
         let aliases = ["EOS Rebel T8i".to_string()];
         let body = Body::new("Canon", "EOS 850D", &aliases);
         assert!(warning(&entries, body, first).is_empty());
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// Two profiles of one name for one camera, with different tables,
@@ -439,7 +439,7 @@ mod tests {
             .collect();
         assert_eq!(shown, ["new", "old", "other"]);
         assert!(entries.iter().all(|e| e.same_as.is_none()));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// One name for two cameras: two profiles, listed plainly.
@@ -453,6 +453,6 @@ mod tests {
             labels(&entries, EMBEDDED),
             ["Adobe Standard", "Adobe Standard"]
         );
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

@@ -286,6 +286,6 @@ mod tests {
             ..Default::default()
         };
         assert!(left_out_in(other, &b, None, Some(&dir)).is_some());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

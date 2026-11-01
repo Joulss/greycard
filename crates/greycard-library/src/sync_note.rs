@@ -261,6 +261,6 @@ mod tests {
         let p = pair(&lib, &bare, &a2).unwrap();
         assert_eq!(p.copies.len(), 1);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

@@ -364,7 +364,7 @@ mod tests {
                 (dir.join("A.CR3"), vec![dir.join("a.jpg")]),
             ]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The one-folder listings over a synthetic library of 100,000

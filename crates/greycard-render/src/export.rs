@@ -2047,7 +2047,7 @@ mod tests {
     /// A directory of this test's own, emptied first.
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greycard-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

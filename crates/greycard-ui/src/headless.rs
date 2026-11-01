@@ -674,7 +674,7 @@ mod tests {
             let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../target/test-scratch")
                 .join(format!("headless-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_dir_retry(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }
@@ -682,7 +682,7 @@ mod tests {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            crate::testing::remove_dir_retry(&self.0);
         }
     }
 

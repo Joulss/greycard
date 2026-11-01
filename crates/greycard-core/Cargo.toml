@@ -24,3 +24,6 @@ toml.workspace = true
 # licensed by a patent pool per copy of a decoder, with no exemption
 # for free software. Someone building for themselves can turn it on.
 nikon-he = ["rawler/jpegxs"]
+# The scratch folder's removal every crate's tests share. Turned on by
+# the other crates' dev-dependencies only.
+testing = []

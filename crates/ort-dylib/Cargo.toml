@@ -20,3 +20,7 @@ lzma-rust2 = { version = "0.15", default-features = false, features = ["std", "o
 # Finds MSVC's link.exe and the LIB path it needs, the way cc does for
 # a build script; on the other hosts it is never called.
 find-msvc-tools = "0.1"
+
+[dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }

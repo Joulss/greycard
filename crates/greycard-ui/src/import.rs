@@ -1812,7 +1812,7 @@ mod tests {
     /// directory is behind a link).
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("greycard-import-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_render::testing::remove_dir_retry(&d);
         std::fs::create_dir_all(&d).unwrap();
         dunce::canonicalize(&d).unwrap()
     }
@@ -2757,7 +2757,7 @@ mod tests {
             "reception/late"
         );
         assert_eq!(folder_under(&job, &job.join("C001.CR3")), "");
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_render::testing::remove_dir_retry(&root);
     }
 
     /// A camera string or a stem from a file's own data never adds a

@@ -741,13 +741,6 @@ clears or a tester asks for it.
       first (§498)
 - [ ] A rename into place retried on Windows' sharing violation, from
       a scanner or a sync client holding the old sidecar open (§498)
-- [ ] Every test's scratch folder removed through the testing helpers
-      (`remove_scratch` where the state holds the index open,
-      `remove_dir_retry` otherwise), the 290-odd bare `remove_dir_all`
-      calls swept, and a guard test that fails on a bare one in test
-      code, so the Windows CI failure that has recurred five times
-      (an open SQLite file under a folder being removed) cannot come
-      back
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
       from a base whose CA ran on the GPU, where `--export` makes it

@@ -1577,7 +1577,7 @@ mod tests {
         };
         let mut untouched = source.clone();
         assert!(correct_lens(&mut untouched, id, Orientation::Normal, &away, None).is_err());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A frame with hard edges for the sharpen to bite on and a ramp
@@ -1904,7 +1904,7 @@ mod tests {
             "with no --sharpen the picture path still corrects the lens"
         );
 
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

@@ -1592,24 +1592,7 @@ Method=amaze
         let mut again = back.clone();
         assert_eq!(import_into(&mut again, &i), Landed::default());
         assert_eq!(again.history.len(), 1);
-        remove_dir_retry(&dir);
-    }
-
-    /// A test's folder removed, tried again for a while when the
-    /// system refuses, as the window's tests do: on Windows a file let
-    /// go of a moment ago can still be held.
-    fn remove_dir_retry(dir: &std::path::Path) {
-        let start = std::time::Instant::now();
-        loop {
-            match std::fs::remove_dir_all(dir) {
-                Ok(()) => return,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-                Err(_) if start.elapsed() < std::time::Duration::from_secs(20) => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(e) => panic!("{} could not be removed: {e}", dir.display()),
-            }
-        }
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

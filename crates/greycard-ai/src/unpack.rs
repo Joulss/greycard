@@ -279,7 +279,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -404,7 +404,7 @@ mod tests {
         let link = member("rt-1.0/lib/libx.so", "libonnxruntime.so", LIB);
         let e = unpack(&archive, "rt.tgz", Packing::Tgz, [&link], &dir.join("kept")).unwrap_err();
         assert!(e.to_string().contains("has no rt-1.0/lib/libx.so"), "{e}");
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -432,7 +432,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.to_string().contains("is not a zip"), "{e}");
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// An archive whose library is not the one published: nothing is
@@ -472,7 +472,7 @@ mod tests {
             assert!(unpack(&archive, "rt", packing, [&license, &lib], &into).is_err());
             assert_eq!(listing(&into), ["LICENSE", "libonnxruntime.so"]);
             assert_eq!(std::fs::read(into.join("libonnxruntime.so")).unwrap(), LIB);
-            let _ = std::fs::remove_dir_all(&dir);
+            greycard_core::testing::remove_dir_retry(&dir);
         }
     }
 
@@ -498,6 +498,6 @@ mod tests {
             "{e}"
         );
         assert!(!e.contains(".part"), "{e}");
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

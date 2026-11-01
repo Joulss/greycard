@@ -45,6 +45,8 @@ rawler = { workspace = true, optional = true }
 fixtures = ["dep:rawler"]
 
 [dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 # The tests write small TIFFs with real EXIF through the engine's
 # writer, whose metadata is rawler's type, and a PNG with none.
 rawler.workspace = true

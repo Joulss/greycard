@@ -2265,7 +2265,7 @@ fn an_export_says_which_learned_mask_it_went_without() {
         &mut ai,
         &greycard_render::export::Settings::default(),
     );
-    let _ = std::fs::remove_dir_all(empty.parent().unwrap());
+    crate::testing::remove_dir_retry(empty.parent().unwrap());
     assert_eq!(left_out.len(), 1, "{left_out:?}");
     assert!(
         left_out[0].starts_with("Face's Subject shape:"),
@@ -2391,7 +2391,7 @@ fn a_kept_stand_in_base_still_says_its_denoiser_was_missing() {
     // A move that keeps the base: the exposure.
     edit.light.exposure = 0.5;
     let second = develop(&edit, &mut base);
-    let _ = std::fs::remove_dir_all(empty.parent().unwrap());
+    crate::testing::remove_dir_retry(empty.parent().unwrap());
     assert!(matches!(
         &second,
         Outcome::Developed {

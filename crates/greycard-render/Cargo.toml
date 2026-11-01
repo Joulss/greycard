@@ -35,4 +35,8 @@ unicode-script = "0.5"
 # profile, a scratch folder's removal, a watermark picture), and the
 # references they hold the viewport to. Turned on by greycard-ui's
 # dev-dependency only.
-testing = []
+testing = ["greycard-core/testing"]
+
+[dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }

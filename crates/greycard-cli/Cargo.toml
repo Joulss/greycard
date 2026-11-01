@@ -31,6 +31,8 @@ tracing-subscriber.workspace = true
 tracing-log.workspace = true
 
 [dev-dependencies]
+# The scratch folder's removal the tests share.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 # Frames with real EXIF for the listing's tests.
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
 

@@ -374,7 +374,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         Cache::at(dir)
     }
 
@@ -404,7 +404,7 @@ mod tests {
         for (a, b) in back.iter().zip(&rgb) {
             assert!((a - b).abs() <= step, "{a} vs {b}");
         }
-        let _ = std::fs::remove_dir_all(cache.dir());
+        greycard_core::testing::remove_dir_retry(cache.dir());
     }
 
     #[test]
@@ -461,7 +461,7 @@ mod tests {
         tight.write(key, &frame, &prepared, &rgb).unwrap();
         assert!(cache.path(key).is_file());
         assert!(!cache.path(other).is_file());
-        let _ = std::fs::remove_dir_all(cache.dir());
+        greycard_core::testing::remove_dir_retry(cache.dir());
     }
 
     #[test]

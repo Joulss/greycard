@@ -52,6 +52,9 @@ pub mod raw;
 pub mod register;
 pub mod stack;
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 pub use color::{Profile, WhitePoint};
 pub use dcp::Dcp;
 pub use develop::{

@@ -268,7 +268,7 @@ mod tests {
 
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greycard-look-{what}-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -288,7 +288,7 @@ mod tests {
         assert!(!Arc::ptr_eq(&table, &again));
         forget();
         assert!(!Arc::ptr_eq(&again, &load(&path).unwrap()));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
         assert!(load(&path).is_none());
         // Twice: the second answer comes from the cache.
         assert!(load(&path).is_none());
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -316,7 +316,7 @@ mod tests {
         assert!(load(&path).is_none());
         std::fs::write(&path, flat_cube([0.5, 0.5, 0.5])).unwrap();
         assert!(load(&path).is_some());
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// On disk: a look's own file and its AgX variant beside it, each
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(table_for(&entries, "R6", Agx).unwrap().variant, Some(Agx));
         assert!(table_for(&entries, "R5", Agx).is_none());
         assert!(entries.iter().any(|e| e.name == "R5.agx"));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The directory the panel lists, and what a header read gives it.
@@ -399,6 +399,6 @@ mod tests {
         // A header read keeps nothing: the table is only built for the
         // one that is chosen.
         assert!(!CACHE.lock().unwrap().contains_key(&listed[0].1));
-        std::fs::remove_dir_all(&dir).ok();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 }

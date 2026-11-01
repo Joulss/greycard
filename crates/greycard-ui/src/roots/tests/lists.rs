@@ -698,7 +698,7 @@ fn all_roots_lists_the_archives_copy_when_the_local_one_is_away() {
 
     // The day's folder deleted after its backup: its frame is the
     // archive's now.
-    std::fs::remove_dir_all(a.join("day")).unwrap();
+    crate::testing::remove_dir_retry(&a.join("day"));
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     assert_eq!(

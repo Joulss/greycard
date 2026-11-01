@@ -232,7 +232,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         assert!(read(&dir).is_empty());
 
         let entries = vec![
@@ -255,7 +255,7 @@ mod tests {
         assert!(path(&dir).is_file());
         let back = read(&dir);
         assert_eq!(back, entries);
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A record written before races were kept reads, its entries
@@ -294,12 +294,12 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
         assert!(read(&dir).is_empty());
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(path(&dir), b"not json").unwrap();
         assert!(read(&dir).is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

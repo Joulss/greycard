@@ -1547,7 +1547,7 @@ mod tests {
     #[test]
     fn the_rejects_move_with_their_sidecars_and_nothing_is_deleted() {
         let dir = std::env::temp_dir().join(format!("greycard-rejects-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let names = ["A.CR3", "B.CR3", "C.CR3", "D.CR3"];
         let files: Vec<PathBuf> = names.iter().map(|n| dir.join(n)).collect();
@@ -1637,13 +1637,13 @@ mod tests {
         // Nothing rejected: nothing done, no folder made.
         let empty =
             std::env::temp_dir().join(format!("greycard-rejects-none-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&empty);
+        crate::testing::remove_dir_retry(&empty);
         std::fs::create_dir_all(&empty).unwrap();
         let none = move_rejects(&[empty.join("E.CR3")], &[]).unwrap();
         assert_eq!(none, Moved::default());
         assert!(!rejects_dir(&empty).exists());
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_dir_all(&empty);
+        crate::testing::remove_dir_retry(&dir);
+        crate::testing::remove_dir_retry(&empty);
     }
 
     /// A list from more than one folder, as the library's all-roots

@@ -2009,7 +2009,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        greycard_core::testing::remove_dir_retry(&root);
         let store = Store::at(&root);
         let lay = |m: &crate::Model| {
             for f in m.files {
@@ -2038,7 +2038,7 @@ mod tests {
         assert_eq!(remove.steps(), Steps::Lcm4);
         remove.set_steps(Steps::Euler25).expect("25 steps");
         assert_eq!(remove.steps(), Steps::Euler25);
-        std::fs::remove_dir_all(&root).unwrap();
+        greycard_core::testing::remove_dir_retry(&root);
     }
 
     #[test]

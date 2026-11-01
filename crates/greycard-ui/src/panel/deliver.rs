@@ -2475,7 +2475,7 @@ mod tests {
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::retouch_state(&app);
         let dir = std::env::temp_dir().join(format!("greycard-keep-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let file = dir.join("greycard").join("settings.json");
         // What else the file holds is kept.
         settings::Settings {
@@ -3187,7 +3187,7 @@ mod tests {
     #[test]
     fn overwrite_names_every_file_there_and_waits_for_an_answer() {
         let dir = std::env::temp_dir().join(format!("greycard-overwrite-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(dir.join("export")).unwrap();
         let files: Vec<PathBuf> = (0..3)
             .map(|i| {

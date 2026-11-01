@@ -487,7 +487,7 @@ mod tests {
         use greycard_library::collections::{Reference, dir_beside, hint_of};
         use greycard_library::stacks::{Stack, dir_in};
         let d = std::env::temp_dir().join(format!("greycard-cli-stacks-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
         let shoot = d.join("shoot");
         std::fs::create_dir_all(&shoot).unwrap();
         for (i, n) in ["a.jpg", "b.jpg", "c.jpg"].iter().enumerate() {
@@ -525,7 +525,7 @@ mod tests {
         later.write(&dir_in(&dir_beside(&db))).unwrap();
         assert_eq!(super::stacks_over(&lib, &db, false), shown);
         drop(lib);
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     /// `library list --sort` takes every order the grid has, by the
@@ -569,7 +569,7 @@ mod tests {
 
         // Two folders, two bodies, the times interleaved.
         let d = std::env::temp_dir().join(format!("greycard-cli-sort-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        greycard_core::testing::remove_dir_retry(&d);
         let (a, b) = (d.join("a"), d.join("b"));
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
@@ -664,7 +664,7 @@ mod tests {
             ["IMG_0002.tif", "IMG_0001.tif"]
         );
         drop(lib);
-        std::fs::remove_dir_all(&d).unwrap();
+        greycard_core::testing::remove_dir_retry(&d);
     }
 
     /// The editor's switches, read from its settings file: on only when

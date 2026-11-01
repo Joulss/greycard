@@ -4881,7 +4881,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         ai.file = Some(PathBuf::from("open.CR3"));
@@ -4921,7 +4921,7 @@ mod tests {
             "a cache hit names no provider: nothing was loaded to make it"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A Sky raster with nothing in it is the gate's answer, said on
@@ -4938,7 +4938,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let mut ai = Ai::new();
         let store = Store::at(dir.join("models"));
         ai.store = Some(store.clone());
@@ -4995,7 +4995,7 @@ mod tests {
         }
         assert!(store.have(&SAM));
         assert_ne!(ai.cached_path(&shape, None, 0), Some(without_sam));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A Sky on a frame past the raster rule (`brush::raster_width`) is
@@ -5013,7 +5013,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         let file = PathBuf::from("frame.RAF");
@@ -5111,7 +5111,7 @@ mod tests {
             .expect("the cached wide raster");
         assert_eq!(made.raster.width, WIDE_RASTER_WIDTH);
         assert!(made.provider.is_none());
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The index's masks are made on the reduced develop's binned
@@ -5138,7 +5138,7 @@ mod tests {
                 std::thread::current().id(),
                 frame.0
             ));
-            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_dir_retry(&dir);
             let mut ai = Ai::new();
             ai.store = Some(Store::at(dir.join("models")));
             let file = PathBuf::from("frame.RAF");
@@ -5175,7 +5175,7 @@ mod tests {
                 .cached_raster(&file, &sky, 0, (frame.0 as u32, frame.1 as u32))
                 .expect("the reduced develop reads it");
             assert_eq!(read.height, rows);
-            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_dir_retry(&dir);
         }
     }
 
@@ -5556,7 +5556,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         ai.file = Some(PathBuf::from("square.CR3"));
@@ -5585,7 +5585,7 @@ mod tests {
         // model is wanted, and there is none in this store.
         assert!(ask(&mut ai, 2).is_err(), "a half turn is not served it");
         assert!(ask(&mut ai, 0).is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A Part's raster on disk is keyed by its person as well as its
@@ -5906,7 +5906,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         let mut ai = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
         ai.file = Some(PathBuf::from("coast.CR3"));
         let (w, h) = (64usize, 64usize);
@@ -5988,7 +5988,7 @@ mod tests {
             made.raster.data().iter().any(|&v| v != 128),
             "made, not the cut"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Each group has its own slot in the disk cache, and none is a

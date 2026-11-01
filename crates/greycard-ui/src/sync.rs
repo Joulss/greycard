@@ -2212,7 +2212,7 @@ pub(crate) mod tests {
         } else {
             assert!(matches!(check(&under_file, None), Check::Failed(_)));
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The write itself, off any window: a copy with no sidecar gets
@@ -2310,7 +2310,7 @@ pub(crate) mod tests {
             "{out:?}"
         );
         let _ = local;
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Through the window: an edit saved here is written through to
@@ -3570,7 +3570,7 @@ pub(crate) mod tests {
             "the laptop's edit stands in the copy"
         );
         let _ = local;
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Probe J: a save noted with no window open never brings the
@@ -3595,7 +3595,7 @@ pub(crate) mod tests {
         roots.set_archive(&nas, true);
         assert_eq!(note_disk_save(&db, &roots, &files[1]), 0);
         assert_eq!(std::fs::read(&db).unwrap(), before, "not a byte changed");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A save made before the index reader is open (a launch preset's)

@@ -864,7 +864,7 @@ mod tests {
         .unwrap();
         let migrated = Sidecar::load(&raw).unwrap().unwrap();
         assert!(migrated.snapshots[0].edit.noise.profiled);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A labeled step is written with its words and read back with
@@ -940,7 +940,7 @@ mod tests {
             snapshots: &plain.snapshots,
         };
         assert_eq!(json, serde_json::to_string_pretty(&before).unwrap());
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A build from before labels reads each state of a labeled
@@ -1006,7 +1006,7 @@ mod tests {
         want.light.baseline = Some(baseline::BEFORE_BODIES);
         assert_eq!(odd.history[0], want);
         assert_eq!(odd.history[0].label, None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The words go with the state they made: undo takes them to the

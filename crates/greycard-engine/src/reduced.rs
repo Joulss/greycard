@@ -824,7 +824,7 @@ mod tests {
             at("r5.dng", ("Canon", "Canon EOS R5 Mark II")),
             greycard_render::finish::Source::SCENE
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A Fill patch refuses the reduced develop, whose fills its model
@@ -850,7 +850,7 @@ mod tests {
             reduced.err()
         );
         assert!(develop_as(&path, &edit, 0, None, &crate::stages::Purpose::ModelsSee).is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// While editing, nothing begins until the window has been quiet
@@ -1119,7 +1119,7 @@ mod tests {
         assert!(edited.all_kept(&hash, key));
         assert!(!edited.all_kept_by(&hash, key, crate::edited_pictures::EDITED_RECIPE));
         assert!(!reducer.wants(&edited, &frame), "kept");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A row's key made under what has moved since (a look refitted, the
@@ -1164,7 +1164,7 @@ mod tests {
         assert_eq!(edited.shows(&frame), Shows::Edit(now));
         assert!(edited.all_kept(&hash, now));
         assert_eq!(reducer.develops(), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A look refitted while the editor runs (the camera match's fit, a
@@ -1216,6 +1216,6 @@ mod tests {
         // eviction: read again, the frame no longer names the key it
         // showed, so nothing takes them out at once.
         assert!(edited.all_kept(&hash, fitted));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

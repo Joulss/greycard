@@ -3526,7 +3526,7 @@ mod tests {
     #[test]
     fn a_rating_from_another_tool_arrives_and_the_folder_is_left_alone() {
         let dir = std::env::temp_dir().join(format!("greycard-xmp-load-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
         std::fs::create_dir_all(&dir).expect("a temp dir");
         let theirs = dir.join("IMG_0001.CR3");
         let mine = dir.join("IMG_0002.CR3");
@@ -3574,7 +3574,7 @@ mod tests {
             load_sidecars(&[theirs, mine], false).0[0].meta,
             Meta::default()
         );
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A file's modification time, set, so the newer-wins rule can
@@ -4735,7 +4735,7 @@ mod tests {
         assert_eq!(seed, vec![true, false, true, false]);
         // With sidecars off nothing is read and nothing is seeded.
         assert_eq!(load_sidecars(&files, false).1, vec![false; 4]);
-        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The folder's round of thumbnails closes on the last first
