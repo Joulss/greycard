@@ -3710,7 +3710,7 @@ fn develop_and_walk(
         input.clone(),
         edit,
         turn,
-        &mut super::export::ExportModels::new(&mut ai, None, &deliver),
+        &mut super::export::ExportModels::new(&mut ai, None, &deliver, 0),
         None,
         &settings,
     )

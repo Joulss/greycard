@@ -513,3 +513,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§498. Many sidecars saved off the window's thread](notes/498-many-sidecars-saved-off-the-windows-thread.md) (2026-11-01)
 - [§499. Edit in another editor](notes/499-edit-in-another-editor.md) (2026-11-01)
 - [§500. The window fit to the work area](notes/500-the-window-fit-to-the-work-area.md) (2026-11-01)
+- [§501. The engine, part two: what a kept point carries](notes/501-the-engine-part-two-what-a-kept-point-carries.md) (2026-11-01)

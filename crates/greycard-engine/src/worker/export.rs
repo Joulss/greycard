@@ -95,7 +95,9 @@ pub(super) fn export_other(
         input,
         &edit,
         frame.turn % 4,
-        &mut ExportModels::new(ai, cache, deliver),
+        // A set frame is no develop of the window's: its fills are
+        // said under the generation no develop has.
+        &mut ExportModels::new(ai, cache, deliver, 0),
         lenses,
         settings,
     )?;
@@ -137,21 +139,6 @@ pub(super) fn walk_export(
     models.turn = turn;
     let purpose = Purpose::Export(Box::new(settings.clone()));
     let mut steps = stages(edit, &purpose, &input.facts(turn), lenses);
-    // A learned denoiser not to be had is known before the walk, as the
-    // develop knows it before its prepare: the engine's own path stands
-    // in from the start rather than prepare the mosaic twice.
-    let model = steps.ops().find_map(|s| match s {
-        Stage::Learned(model) => Some(*model),
-        _ => None,
-    });
-    let mut stood_in = None;
-    if let Some(model) = model
-        && let Err(why) = models.denoiser(model)
-    {
-        tracing::info!("the learned denoiser: {why:?}; the engine's own path stands in");
-        steps = steps.without_learned();
-        stood_in = Some(why);
-    }
     // Nothing is kept for a later walk: each kept point holds a picture
     // the size of the frame, and the stage after it would copy it
     // rather than change it. The patched picture alone stays when a
@@ -186,20 +173,13 @@ pub(super) fn walk_export(
         Skip::Unavailable(why) if *name == LEARNED_DENOISER => Some(*why),
         _ => None,
     });
-    let learned = match (walked.stood_in.as_ref().or(stood_in.as_ref()), unavailable) {
+    let learned = match (&walked.meta.stood_in, unavailable) {
         (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
         (Some(NoLearned::Failed(why)), _) => LearnedReport::Failed(why.clone()),
         (None, Some(why)) => LearnedReport::Unavailable(why),
         (None, None) => learned,
     };
-    // The network is the demosaic when it ran: the one the edit chose
-    // did not give way to anything.
-    let ran = matches!(
-        learned,
-        LearnedReport::Ran { .. } | LearnedReport::Cached { .. }
-    );
-    let gave_way = walked.meta.gave_way.as_ref().filter(|_| !ran);
-    let mut left_out = left_out_words(&learned, gave_way, &fills);
+    let mut left_out = left_out_words(&learned, walked.meta.gave_way.as_ref(), &fills);
     left_out.extend(super::masks::look_left_out(edit));
     left_out.extend(masks);
     let mut walked = walked;
@@ -243,15 +223,14 @@ pub(super) struct ExportModels<'a> {
     ai: &'a mut Ai,
     cache: Option<&'a greycard_ai::DenoiseCache>,
     deliver: &'a Deliver,
+    /// The job's generation, which its fills are said under.
+    generation: u64,
     /// The edit and the turn the walk is of.
     edit: Edit,
     turn: u8,
     /// How the learned denoiser's answer was had, for the log line.
     learned: LearnedReport,
     fills: FillReport,
-    /// The Fill patches left as they were, by id, which the learned
-    /// masks keep the base's raster under.
-    unmade: Vec<u64>,
     /// Each learned mask not made, in words.
     masks: Vec<String>,
 }
@@ -261,16 +240,17 @@ impl<'a> ExportModels<'a> {
         ai: &'a mut Ai,
         cache: Option<&'a greycard_ai::DenoiseCache>,
         deliver: &'a Deliver,
+        generation: u64,
     ) -> Self {
         Self {
             ai,
             cache,
             deliver,
+            generation,
             edit: Edit::default(),
             turn: 0,
             learned: LearnedReport::Off,
             fills: FillReport::default(),
-            unmade: Vec::new(),
             masks: Vec::new(),
         }
     }
@@ -295,6 +275,10 @@ impl ExportModels<'_> {
 const EXPORT_STAMP: u64 = 1;
 
 impl crate::walk::Models for ExportModels<'_> {
+    fn can_denoise(&mut self, model: &'static greycard_ai::Model) -> Result<(), NoLearned> {
+        self.denoiser(model).map(|_| ())
+    }
+
     fn denoise(
         &mut self,
         model: &'static greycard_ai::Model,
@@ -315,7 +299,7 @@ impl crate::walk::Models for ExportModels<'_> {
         let kept = self.ai.fill_kept(patch, region, picture);
         if !kept && self.ai.engine(patch, region, picture).is_ok() {
             (self.deliver)(Outcome::Filling {
-                generation: 0,
+                generation: self.generation,
                 name: patch.name(),
             });
         }
@@ -330,17 +314,14 @@ impl crate::walk::Models for ExportModels<'_> {
                 Some(data)
             }
             Err(NoFill::Missing(model)) => {
-                self.unmade.push(patch.id);
                 self.fills.missing.push((patch.name(), model));
                 None
             }
             Err(NoFill::NoGpu) => {
-                self.unmade.push(patch.id);
                 self.fills.no_gpu.push(patch.name());
                 None
             }
             Err(NoFill::Failed(why)) => {
-                self.unmade.push(patch.id);
                 self.fills.failed.push((patch.name(), why));
                 None
             }
@@ -355,7 +336,7 @@ impl crate::walk::Models for ExportModels<'_> {
         &mut self,
         how: crate::stages::Masks,
         base: &Arc<WorkingImage>,
-        patched: Option<(&Arc<WorkingImage>, &Retouch)>,
+        patched: Option<crate::walk::Patched<'_>>,
         meta: &crate::walk::Meta,
     ) -> crate::walk::Rasters {
         debug_assert_eq!(how, crate::stages::Masks::Make, "an export makes its masks");
@@ -365,10 +346,10 @@ impl crate::walk::Models for ExportModels<'_> {
             &super::masks::On {
                 stamp: EXPORT_STAMP,
                 image: base,
-                retouched: patched.map(|(image, retouch)| crate::ai::Retouched {
-                    retouch,
-                    image,
-                    unmade: &self.unmade,
+                retouched: patched.map(|p| crate::ai::Retouched {
+                    retouch: p.retouch,
+                    image: p.image,
+                    unmade: p.unmade,
                 }),
                 edit: &self.edit,
                 source: meta.source,

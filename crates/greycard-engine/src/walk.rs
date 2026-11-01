@@ -134,6 +134,10 @@ pub struct Meta {
     /// Why the demosaic the edit chose did not run, when one of the
     /// frame's own stood in.
     pub gave_way: Option<String>,
+    /// Why the learned denoiser did not run, when the engine's own
+    /// path stood in for it: carried with the picture, so a walk that
+    /// starts past the stand-in still says so.
+    pub stood_in: Option<NoLearned>,
 }
 
 impl Meta {
@@ -173,8 +177,26 @@ pub enum NoLearned {
     Failed(String),
 }
 
+/// The picture with its retouch applied, beside the base the learned
+/// masks are made on.
+#[derive(Clone, Copy)]
+pub struct Patched<'a> {
+    pub image: &'a Arc<WorkingImage>,
+    /// The retouch as it was applied, its sources chosen.
+    pub retouch: &'a Retouch,
+    /// The Fill patches left as they were, by id: the picture there is
+    /// the base's.
+    pub unmade: &'a [u64],
+}
+
 /// The models a walk runs, lent by whoever holds them.
 pub trait Models {
+    /// Whether the learned denoiser `model` is to be had, and why not
+    /// when it is not: asked before the walk starts, so a list that
+    /// cannot run it is the engine's own from its first step, and
+    /// resumes from what a walk of the same stand-in kept.
+    fn can_denoise(&mut self, model: &'static greycard_ai::Model) -> Result<(), NoLearned>;
+
     /// The learned denoiser's camera RGB of `prepared`.
     fn denoise(
         &mut self,
@@ -190,14 +212,13 @@ pub trait Models {
     /// Whether a fill left unmade in `retouch` could be made now.
     fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool;
 
-    /// The learned masks' rasters, made on `base` (and on `patched`,
-    /// the picture with the retouch beside it applied, where a patch
-    /// meets a shape) as `how` says.
+    /// The learned masks' rasters, made on `base` (and on `patched`
+    /// where a patch meets a shape) as `how` says.
     fn rasters(
         &mut self,
         how: Masks,
         base: &Arc<WorkingImage>,
-        patched: Option<(&Arc<WorkingImage>, &Retouch)>,
+        patched: Option<Patched<'_>>,
         meta: &Meta,
     ) -> Rasters;
 }
@@ -206,6 +227,10 @@ pub trait Models {
 pub struct NoModels;
 
 impl Models for NoModels {
+    fn can_denoise(&mut self, model: &'static greycard_ai::Model) -> Result<(), NoLearned> {
+        Err(NoLearned::Missing(model))
+    }
+
     fn denoise(
         &mut self,
         model: &'static greycard_ai::Model,
@@ -227,7 +252,7 @@ impl Models for NoModels {
         &mut self,
         _: Masks,
         _: &Arc<WorkingImage>,
-        _: Option<(&Arc<WorkingImage>, &Retouch)>,
+        _: Option<Patched<'_>>,
         _: &Meta,
     ) -> Rasters {
         Rasters::new()
@@ -276,6 +301,16 @@ impl KeptBuf {
     }
 }
 
+/// A retouch as a walk applied it, and the Fill patches it left as
+/// they were, by id: a walk that starts past it never asks for its
+/// fills, and the masks must still know where the picture is the
+/// base's.
+#[derive(Clone)]
+struct Applied {
+    retouch: Retouch,
+    unmade: Vec<u64>,
+}
+
 /// One point a walk kept.
 #[derive(Clone)]
 struct Point {
@@ -285,9 +320,9 @@ struct Point {
     buf: KeptBuf,
     meta: Meta,
     taps: Taps,
-    /// The retouch this point's picture carries, and whether every
-    /// fill in it was made; none before the retouch.
-    retouch: Option<(Retouch, bool)>,
+    /// The retouch this point's picture carries; none before the
+    /// retouch.
+    retouch: Option<Applied>,
 }
 
 /// What walks keep for the walks after them.
@@ -320,6 +355,55 @@ fn allowed(kept: &[Place], plan: &[Place]) -> bool {
         .all(|(k, p)| *k == Place::Cpu || *k == *p)
 }
 
+/// [`allowed`], for a point whose steps `map` puts at those indices of
+/// the walk's ([`align`]).
+fn allowed_at(kept: &[Place], map: &[Option<usize>], plan: &[Place]) -> bool {
+    kept.iter()
+        .zip(map)
+        .all(|(k, j)| *k == Place::Cpu || j.is_none_or(|j| plan.get(j) == Some(k)))
+}
+
+/// A step as the picture sees it: none for a keep, which changes
+/// nothing, and the learned masks' tap whatever its purpose makes of
+/// it, since the picture it reads is the same. The lists of two
+/// purposes are one list so far as these agree.
+fn keyed(step: &Step) -> Option<Step> {
+    match step {
+        Step::Keep(_) => None,
+        Step::Tap(Tap::Masks(_)) => Some(Step::Tap(Tap::Masks(Masks::OnAsk))),
+        step => Some(step.clone()),
+    }
+}
+
+/// Whether two lists of steps make the same picture ([`keyed`]).
+fn same_picture(a: &[Step], b: &[Step]) -> bool {
+    a.iter().filter_map(keyed).eq(b.iter().filter_map(keyed))
+}
+
+/// Where a walk of `steps` goes on from a point kept after `kept`, when
+/// those make the same picture as the start of `steps` ([`keyed`]):
+/// the index in `steps` past the last of them, and the index in
+/// `steps` of each of `kept` (none for a keep).
+fn align(kept: &[Step], steps: &[Step]) -> Option<(usize, Vec<Option<usize>>)> {
+    let mut j = 0;
+    let mut map = Vec::with_capacity(kept.len());
+    for step in kept {
+        let Some(want) = keyed(step) else {
+            map.push(None);
+            continue;
+        };
+        while matches!(steps.get(j), Some(Step::Keep(_))) {
+            j += 1;
+        }
+        if keyed(steps.get(j)?) != Some(want) {
+            return None;
+        }
+        map.push(Some(j));
+        j += 1;
+    }
+    Some((j, map))
+}
+
 impl Kept {
     /// Nothing kept.
     pub fn new() -> Self {
@@ -337,12 +421,16 @@ impl Kept {
             return false;
         };
         self.points.iter().any(|p| {
-            p.keep == keep && p.steps[..] == steps.steps[..=at] && allowed(&p.places, plan)
+            p.keep == keep
+                && same_picture(&p.steps, &steps.steps[..=at])
+                && align(&p.steps, &steps.steps)
+                    .is_some_and(|(_, map)| allowed_at(&p.places, &map, plan))
         })
     }
 
     /// The point a walk of `steps` under `plan` starts from: the last
-    /// one whose steps are its own prefix and whose places the plan
+    /// one whose steps make the picture the start of its own make
+    /// ([`align`]), whatever purpose kept it, and whose places the plan
     /// allows, its patched picture only while no fill left unmade in it
     /// could be made now. The points past it are let go, as they were
     /// another list's.
@@ -351,36 +439,39 @@ impl Kept {
             .points
             .iter()
             .enumerate()
-            .filter(|(_, p)| {
-                let n = p.steps.len();
-                n <= steps.steps.len()
-                    && p.steps[..] == steps.steps[..n]
-                    && allowed(&p.places, plan)
+            .filter_map(|(i, p)| {
+                let (at, map) = align(&p.steps, &steps.steps)?;
+                // The walk's next stage, past its own keeps there.
+                let next = (at..steps.steps.len())
+                    .find(|&k| !matches!(steps.steps[k], Step::Keep(_)))
+                    .unwrap_or(steps.steps.len());
+                let serves = allowed_at(&p.places, &map, plan)
                     // A picture on the device serves only a walk that
                     // goes on there: the viewport's texture is made by
                     // a run, not from a picture left on the device.
                     && (!matches!(p.buf, KeptBuf::Device(_))
-                        || (plan.get(n) == Some(&Place::Gpu)
-                            && !matches!(steps.steps.get(n), Some(Step::Op(Stage::Finish(_))))))
+                        || (plan.get(next) == Some(&Place::Gpu)
+                            && !matches!(steps.steps.get(next), Some(Step::Op(Stage::Finish(_))))))
                     && match (&p.retouch, &p.buf) {
-                        (Some((r, false)), KeptBuf::Working(image)) => {
-                            !models.could_fill_more(r, image)
+                        (Some(a), KeptBuf::Working(image)) if !a.unmade.is_empty() => {
+                            !models.could_fill_more(&a.retouch, image)
                         }
                         _ => true,
-                    }
+                    };
+                serves.then_some((i, (at, p.steps.len())))
             })
-            .max_by_key(|(_, p)| p.steps.len())
-            .map(|(i, _)| i);
-        match found {
-            Some(i) => {
-                let keep = self.points[i].steps.len();
-                self.points.retain(|p| {
-                    p.steps.len() <= keep && p.steps[..] == steps.steps[..p.steps.len()]
-                });
-                self.points.iter().position(|p| p.steps.len() == keep)
-            }
-            None => None,
-        }
+            .max_by_key(|(_, key)| *key)?;
+        let (best, (at, _)) = found;
+        let keep: Vec<bool> = self
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| i == best || align(&p.steps, &steps.steps).is_some_and(|(a, _)| a <= at))
+            .collect();
+        let index = keep[..best].iter().filter(|k| **k).count();
+        let mut flags = keep.into_iter();
+        self.points.retain(|_| flags.next().unwrap_or(false));
+        Some(index)
     }
 
     /// A kept base or pair made at another turn, turned to this one
@@ -529,9 +620,6 @@ pub struct Walked {
     pub sources: Vec<Patch>,
     /// What was left of the edit: a fill refused, by name.
     pub without: Vec<String>,
-    /// Why the learned denoiser did not run, when the engine's own
-    /// path stood in for it.
-    pub stood_in: Option<NoLearned>,
     /// The kept point the walk started from; none for the decode.
     pub from: Option<Keep>,
     /// Where each step ran, the kept ones as they ran then.
@@ -545,7 +633,7 @@ struct Carried {
     buf: Buf,
     meta: Meta,
     taps: Taps,
-    retouch: Option<(Retouch, bool)>,
+    retouch: Option<Applied>,
     /// The prepare's settings, which the demosaic, the denoise, and
     /// the move into the working space read.
     settings: DevelopSettings,
@@ -594,8 +682,20 @@ fn walk_held(
         plan.iter_mut().for_each(|p| *p = Place::Cpu);
     }
     let mut stood_in = None;
+    let learned = steps.ops().find_map(|s| match s {
+        Stage::Learned(model) => Some(*model),
+        _ => None,
+    });
+    if let Some(model) = learned
+        && let Err(why) = models.can_denoise(model)
+    {
+        log::info!("the learned denoiser: {why:?}; the engine's own path stands in");
+        steps = steps.without_learned();
+        plan = replan(&steps, plan.contains(&Place::Gpu));
+        stood_in = Some(why);
+    }
     loop {
-        match attempt(&steps, &mut plan, input, kept, models, gpu, hold) {
+        match attempt(&steps, &mut plan, input, kept, models, gpu, hold, &stood_in) {
             Ok(mut out) => {
                 let mut walked = out.walked;
                 if let Some(job) = out.planes.take() {
@@ -603,41 +703,27 @@ fn walk_held(
                 }
                 if let Some((how, base)) = walked.taps.masks.clone() {
                     // The patched picture, only where a retouch made it.
-                    let patched = kept
-                        .points
-                        .iter()
-                        .find(|p| p.keep == Keep::Patched)
-                        .and_then(|p| match (&p.buf, &p.retouch) {
-                            (KeptBuf::Working(image), Some((retouch, _))) => {
-                                Some((image.clone(), retouch.clone()))
-                            }
-                            _ => None,
-                        });
-                    walked.rasters = models.rasters(
-                        how,
-                        &base,
-                        patched.as_ref().map(|(image, retouch)| (image, retouch)),
-                        &walked.meta,
+                    let point = kept.points.iter().find(|p| p.keep == Keep::Patched);
+                    debug_assert!(
+                        !point.is_some_and(|p| matches!(p.buf, KeptBuf::Device(_))),
+                        "the patched picture is kept in memory, before any device run"
                     );
+                    let patched = point.and_then(|p| match (&p.buf, &p.retouch) {
+                        (KeptBuf::Working(image), Some(applied)) => Some(Patched {
+                            image,
+                            retouch: &applied.retouch,
+                            unmade: &applied.unmade,
+                        }),
+                        _ => None,
+                    });
+                    walked.rasters = models.rasters(how, &base, patched, &walked.meta);
                 }
-                walked.stood_in = stood_in;
                 return Ok(walked);
             }
             Err(Retry::Learned(why)) => {
                 log::info!("the learned denoiser: {why:?}; the engine's own path stands in");
-                let lent = plan.contains(&Place::Gpu);
                 steps = steps.without_learned();
-                plan = steps
-                    .steps
-                    .iter()
-                    .map(|s| match s {
-                        Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if lent => {
-                            Place::Gpu
-                        }
-                        Step::Op(stage) if lent && stage.device() => Place::Gpu,
-                        _ => Place::Cpu,
-                    })
-                    .collect();
+                plan = replan(&steps, plan.contains(&Place::Gpu));
                 stood_in = Some(why);
             }
             Err(Retry::Cpu { from, keep_context }) => {
@@ -651,6 +737,20 @@ fn walk_held(
             Err(Retry::Stop(stopped)) => return Err(stopped),
         }
     }
+}
+
+/// `steps`' places after the learned denoiser was taken out of them:
+/// on the device where it was `lent` and a stage has a version there.
+fn replan(steps: &Steps, lent: bool) -> Vec<Place> {
+    steps
+        .steps
+        .iter()
+        .map(|s| match s {
+            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if lent => Place::Gpu,
+            Step::Op(stage) if lent && stage.device() => Place::Gpu,
+            _ => Place::Cpu,
+        })
+        .collect()
 }
 
 /// Why an attempt at a walk is to be made again, or not.
@@ -685,6 +785,22 @@ fn start(
         .or_else(|| kept.turned(steps, plan));
     if let Some(i) = point {
         let p = &kept.points[i];
+        let (at, map) = align(&p.steps, &steps.steps).expect("a point resumed is the walk's");
+        let mut places = vec![Place::Cpu; at];
+        for (place, j) in p.places.iter().zip(&map) {
+            if let Some(j) = j {
+                places[*j] = *place;
+            }
+        }
+        // The masks are made as this walk's purpose makes them.
+        let mut taps = p.taps.clone();
+        let how = steps.steps[..at].iter().find_map(|s| match s {
+            Step::Tap(Tap::Masks(how)) => Some(*how),
+            _ => None,
+        });
+        if let (Some(how), Some((made, _))) = (how, taps.masks.as_mut()) {
+            *made = how;
+        }
         let settings = steps
             .ops()
             .find_map(|s| match s {
@@ -693,16 +809,16 @@ fn start(
             })
             .unwrap_or_default();
         return Ok((
-            p.steps.len(),
+            at,
             Carried {
                 buf: p.buf.buf(),
                 meta: p.meta.clone(),
-                taps: p.taps.clone(),
+                taps,
                 retouch: p.retouch.clone(),
                 settings,
             },
             Some(p.keep),
-            p.places.clone(),
+            places,
         ));
     }
     kept.points.clear();
@@ -719,6 +835,7 @@ fn start(
                 full: (0, 0),
                 bin: 1,
                 gave_way: None,
+                stood_in: None,
             },
         ),
         Input::Picture { image, meta } => (
@@ -732,6 +849,7 @@ fn start(
                 full: (image.width as u32, image.height as u32),
                 bin: 1,
                 gave_way: None,
+                stood_in: None,
             },
         ),
     };
@@ -749,6 +867,7 @@ fn start(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attempt(
     steps: &Steps,
     plan: &mut [Place],
@@ -757,8 +876,13 @@ fn attempt(
     models: &mut dyn Models,
     gpu: &mut Option<greycard_gpu::Context>,
     hold: &dyn Hold,
+    stood_in: &Option<NoLearned>,
 ) -> Result<Out, Retry> {
     let (begin, mut st, from, mut places) = start(steps, plan, input, kept, models)?;
+    // Said afresh on every walk: the stand-in's list is the one an
+    // edit without the learned denoiser makes, so a point kept by the
+    // one serves the other, and must not say a stand-in it never had.
+    st.meta.stood_in = stood_in.clone();
     let mut walked = Walked {
         buf: Buf::Working(Arc::new(WorkingImage::new(0, 0))),
         meta: st.meta.clone(),
@@ -771,7 +895,6 @@ fn attempt(
         sharpen: None,
         sources: Vec::new(),
         without: Vec::new(),
-        stood_in: None,
         from,
         places: Vec::new(),
         seconds: Vec::new(),
@@ -829,7 +952,8 @@ fn attempt(
                         beside,
                     } => {
                         let to = steps.steps[..i].to_vec();
-                        let kept_planes = kept.planes.as_ref().filter(|k| k.steps == to);
+                        let kept_planes =
+                            kept.planes.as_ref().filter(|k| same_picture(&k.steps, &to));
                         match kept_planes {
                             Some(k)
                                 if k.wants.covers(wants)
@@ -1075,6 +1199,9 @@ fn cpu_op(
             let network = models
                 .denoise(model, frame, &prepared)
                 .map_err(Retry::Learned)?;
+            // The network is the demosaic: the one the edit chose gave
+            // way to nothing.
+            st.meta.gave_way = None;
             let (plain, _, _) = demosaic_prepared(&prepared, &st.settings).map_err(failed)?;
             st.buf = Buf::CameraPair {
                 prepared,
@@ -1167,20 +1294,24 @@ fn cpu_op(
             let applied = retouch.with_sources(&chosen);
             walked.sources = applied.chosen_patches(&chosen);
             let mut picture = (*image).clone();
-            let mut whole = true;
-            applied.apply_with(&mut picture, |patch, region, before| match fills {
-                Fills::Run => {
-                    let made = models.fill(patch, region, before);
-                    whole &= made.is_some();
-                    made
+            let mut unmade = Vec::new();
+            applied.apply_with(&mut picture, |patch, region, before| {
+                let made = match fills {
+                    Fills::Run => models.fill(patch, region, before),
+                    Fills::Refuse => {
+                        walked.without.push(format!("the fill {}", patch.name()));
+                        None
+                    }
+                };
+                if made.is_none() {
+                    unmade.push(patch.id);
                 }
-                Fills::Refuse => {
-                    walked.without.push(format!("the fill {}", patch.name()));
-                    whole = false;
-                    None
-                }
+                made
             });
-            st.retouch = Some((applied, whole));
+            st.retouch = Some(Applied {
+                retouch: applied,
+                unmade,
+            });
             st.buf = Buf::Working(Arc::new(picture));
         }
         Stage::LocalContrast(options) => {
@@ -1284,7 +1415,7 @@ fn device_run(
         Buf::Working(picture) => {
             let to = steps.steps[..i].to_vec();
             match &kept.uploaded {
-                Some((s, image)) if *s == to => image.clone(),
+                Some((s, image)) if same_picture(s, &to) => image.clone(),
                 _ => {
                     kept.uploaded = None;
                     let started = Instant::now();
@@ -1340,7 +1471,7 @@ fn device_run(
             Step::Op(Stage::Dehaze(options)) => {
                 let to = steps.steps[..j].to_vec();
                 let reduced = match &kept.haze {
-                    Some((s, reduced)) if *s == to => reduced.clone(),
+                    Some((s, reduced)) if same_picture(s, &to) => reduced.clone(),
                     _ => {
                         kept.haze = None;
                         let reduced = Arc::new(ctx.dehaze_reduced(&image)?);
@@ -1897,7 +2028,7 @@ mod tests {
         let mut learned = edit();
         learned.noise.learned = greycard_edit::Learned::Fast;
         let walked = walk_cpu(&learned, &Purpose::Viewport, &input, 0, &mut Kept::new());
-        assert!(matches!(walked.stood_in, Some(NoLearned::Missing(_))));
+        assert!(matches!(walked.meta.stood_in, Some(NoLearned::Missing(_))));
         let mut plain = learned.clone();
         plain.noise.learned = greycard_edit::Learned::Off;
         plain.noise.profiled = false;
@@ -2131,5 +2262,215 @@ mod tests {
         assert!(matches!(off.buf, Buf::Texture(_)));
         assert!(off.sharpen.is_none());
         assert!(off.dehaze.is_some());
+    }
+
+    /// Models of the tests' own: a network that is the plain demosaic
+    /// when it is `there`, no fills, and the unmade Fill patches each
+    /// raster was made beside.
+    #[derive(Default)]
+    struct Fake {
+        there: bool,
+        unmade: Vec<Option<Vec<u64>>>,
+    }
+
+    impl Models for Fake {
+        fn can_denoise(&mut self, model: &'static greycard_ai::Model) -> Result<(), NoLearned> {
+            if self.there {
+                Ok(())
+            } else {
+                Err(NoLearned::Missing(model))
+            }
+        }
+
+        fn denoise(
+            &mut self,
+            _: &'static greycard_ai::Model,
+            _: &RawFrame,
+            prepared: &Prepared,
+        ) -> Result<Vec<f32>, NoLearned> {
+            let (rgb, _, _) = demosaic_prepared(prepared, &DevelopSettings::default())
+                .map_err(|e| NoLearned::Failed(e.to_string()))?;
+            Ok(rgb)
+        }
+
+        fn fill(&mut self, _: &Patch, _: &Region, _: &WorkingImage) -> Option<Vec<f32>> {
+            None
+        }
+
+        fn could_fill_more(&mut self, _: &Retouch, _: &WorkingImage) -> bool {
+            false
+        }
+
+        fn rasters(
+            &mut self,
+            _: Masks,
+            _: &Arc<WorkingImage>,
+            patched: Option<Patched<'_>>,
+            _: &Meta,
+        ) -> Rasters {
+            self.unmade.push(patched.map(|p| p.unmade.to_vec()));
+            Rasters::new()
+        }
+    }
+
+    fn walk_with(
+        edit: &Edit,
+        purpose: &Purpose,
+        input: &Input,
+        kept: &mut Kept,
+        models: &mut dyn Models,
+    ) -> Walked {
+        let steps = stages::stages(edit, purpose, &input.facts(0), None);
+        let plan = plan(&steps, purpose, false);
+        walk(&steps, &plan, input, kept, models, &mut None, &NoHold).expect("walks")
+    }
+
+    /// `edit` with a learned Subject mask, which puts the masks' tap
+    /// in its list.
+    fn with_subject(mut edit: Edit) -> Edit {
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 11,
+            mask: greycard_edit::mask::Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: greycard_edit::mask::Shape::Subject {},
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            ..Default::default()
+        });
+        edit
+    }
+
+    /// The export's list, its keeps left out as an export leaves them,
+    /// starts from the last point the viewport's walk kept on the CPU:
+    /// the two lists make the same picture to there, whatever each
+    /// purpose makes of the masks. The picture is the one a fresh
+    /// export walk makes, and the masks are made as the export makes
+    /// them.
+    #[test]
+    fn an_export_list_resumes_from_the_viewport_s_kept_points_on_the_cpu() {
+        let input = Input::Raw(frame());
+        let edit = with_subject(edit());
+        let mut kept = Kept::new();
+        walk_cpu(&edit, &Purpose::Viewport, &input, 0, &mut kept);
+        let purpose = Purpose::Export(Box::default());
+        let mut export = stages::stages(&edit, &purpose, &input.facts(0), None);
+        export.steps.retain(|s| !matches!(s, Step::Keep(_)));
+        let export_plan = plan(&export, &purpose, false);
+        let resumed = walk(
+            &export,
+            &export_plan,
+            &input,
+            &mut kept,
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        assert_eq!(resumed.from, Some(Keep::Developed));
+        assert!(matches!(resumed.taps.masks, Some((Masks::Make, _))));
+        assert_eq!(resumed.places.len(), export.steps.len());
+        let fresh = walk(
+            &export,
+            &export_plan,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        assert_eq!(fresh.from, None);
+        assert!(picture(&resumed).data == picture(&fresh).data);
+        assert!(kept.holds(Keep::Developed), "the viewport's points stay");
+    }
+
+    /// A learned denoiser not to be had is known before the walk: the
+    /// mosaic is prepared once, and the walk after it, of the same
+    /// stand-in, starts from its points and still says why.
+    #[test]
+    fn a_stand_in_is_known_before_the_walk_and_kept_with_its_points() {
+        let input = Input::Raw(frame());
+        let mut learned = edit();
+        learned.noise.learned = greycard_edit::Learned::Fast;
+        let mut kept = Kept::new();
+        let first = walk_cpu(&learned, &Purpose::Viewport, &input, 0, &mut kept);
+        let prepares = first
+            .seconds
+            .iter()
+            .filter(|(s, _)| *s == "prepare")
+            .count();
+        assert_eq!(prepares, 1);
+        assert!(matches!(first.meta.stood_in, Some(NoLearned::Missing(_))));
+        let again = walk_cpu(&learned, &Purpose::Viewport, &input, 0, &mut kept);
+        assert_eq!(again.from, Some(Keep::Developed));
+        assert!(matches!(again.meta.stood_in, Some(NoLearned::Missing(_))));
+    }
+
+    /// An edit without the learned denoiser makes the stand-in's list,
+    /// so it starts from the stand-in's points; it says no stand-in.
+    #[test]
+    fn a_plain_edit_resumed_from_a_stand_in_s_points_says_none() {
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.noise.profiled = false;
+        e.noise.learned = greycard_edit::Learned::Fast;
+        let mut kept = Kept::new();
+        let stood = walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut kept);
+        assert!(matches!(stood.meta.stood_in, Some(NoLearned::Missing(_))));
+        e.noise.learned = greycard_edit::Learned::Off;
+        let plain = walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut kept);
+        assert_eq!(plain.from, Some(Keep::Developed));
+        assert!(plain.meta.stood_in.is_none());
+    }
+
+    /// A walk that starts past the retouch never asks for its fills,
+    /// and the masks are still told which were left as they were.
+    #[test]
+    fn a_resumed_patched_picture_carries_its_unmade_fills() {
+        use greycard_edit::retouch::Method;
+        let input = Input::Raw(frame());
+        let mut e = with_subject(edit());
+        e.retouch.patches.push(Patch {
+            id: 21,
+            method: Method::Fill,
+            points: vec![[0.5, 0.5]],
+            radius: 0.08,
+            ..Patch::default()
+        });
+        let mut kept = Kept::new();
+        let mut models = Fake::default();
+        walk_with(&e, &Purpose::Viewport, &input, &mut kept, &mut models);
+        e.detail.clarity = 0.1;
+        let again = walk_with(&e, &Purpose::Viewport, &input, &mut kept, &mut models);
+        assert_eq!(again.from, Some(Keep::Patched));
+        assert_eq!(models.unmade, [Some(vec![21]), Some(vec![21])]);
+    }
+
+    /// The learned denoiser is the demosaic: a method of the other
+    /// mosaic chosen in the edit gives way to nothing when it runs,
+    /// and to the frame's own when it does not.
+    #[test]
+    fn the_learned_denoiser_clears_a_demosaic_that_gave_way() {
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.demosaic = greycard_edit::Demosaic::Markesteijn3;
+        let plain = walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut Kept::new());
+        assert!(plain.meta.gave_way.is_some());
+        e.noise.learned = greycard_edit::Learned::Fast;
+        let mut models = Fake {
+            there: true,
+            ..Fake::default()
+        };
+        let learned = walk_with(
+            &e,
+            &Purpose::Viewport,
+            &input,
+            &mut Kept::new(),
+            &mut models,
+        );
+        assert!(learned.meta.stood_in.is_none());
+        assert_eq!(learned.meta.gave_way, None);
     }
 }

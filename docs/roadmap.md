@@ -592,7 +592,8 @@ touches.
       where the engine loop takes a new device; exports byte-equal
       before and after (the crate, the list, and the walker landed,
       §476; the worker moved, §478; the reduced develop walks, §488;
-      the set export walks, §496)
+      the set export walks, §496; the kept points carry the stand-in
+      and the unmade fills and match by picture, §501)
 - [ ] The engine, part 3 (§454): the viewport crate, the shader and
       its parity tests over gpu and render, Slint's pixel types out
       of it. Waits on part 2
