@@ -114,6 +114,19 @@ export component ExportSheet inherits Rectangle {
     in-out property <string> export-sharpen;
     in-out property <string> export-on-exists;
     in-out property <string> export-subfolder;
+    /// The pattern each file is named by.
+    in-out property <string> export-name;
+    /// The first frame's file under a pattern, for a subfolder, a
+    /// format, the frame (its name and its row), the set's size, and the
+    /// folder's turn; and whether the pattern names no file, so the
+    /// frame's own name stands in.
+    pure callback export-name-example(string, string, string, string, int, int, int) -> string;
+    pure callback export-name-refused(string) -> bool;
+    /// The sheet is up: what the line under Name read of the files
+    /// before is read again.
+    callback sheet-opened();
+    init => { root.sheet-opened(); }
+    property <string> name-example: root.export-name-example(root.export-name, root.export-subfolder, root.export-format, root.file-name, root.frame-index, root.set-count, root.export-folder-turn);
     in-out property <string> export-metadata;
     in-out property <string> export-mark;
     in-out property <string> export-mark-text;
@@ -379,6 +392,24 @@ export component ExportSheet inherits Rectangle {
                             font-size: Theme.font-sm;
                             // Any character may break, so a long run
                             // without a space never widens the sheet.
+                            wrap: char-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.export-name;
+                                placeholder-text: "{name}";
+                            }
+                        }
+                        // The first frame's file as the pattern names it,
+                        // in the warning's color when the pattern names
+                        // none and the frame's own name stands in.
+                        Text {
+                            text: root.name-example != "" ? root.name-example : " ";
+                            color: root.export-name-refused(root.export-name) ? Theme.warn-yellow : Theme.text-secondary;
+                            font-size: Theme.font-sm;
                             wrap: char-wrap;
                         }
                         HorizontalLayout {

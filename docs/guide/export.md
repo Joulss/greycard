@@ -41,6 +41,7 @@ clear in hand.
 | **Embed profile** | on or off | on | Writes the color profile into the file, so other programs show its colors correctly. Leave it on. |
 | **Metadata** | **All**, **No edit**, **None** | All | What the file says about where it came from. See below. |
 | **Subfolder** | a folder name | empty | Where the file goes. See [Where the files go](#where-the-files-go). |
+| **Name** | a pattern | `{name}` | What each file is called. See [The file's name](#the-files-name). |
 | **If it exists** | **Increment**, **Overwrite**, **Skip** | Increment | What happens when a file of that name is already there. See [When a file is already there](#when-a-file-is-already-there). |
 | **Watermark** | **Off**, **Text**, **Image** | Off | A mark laid over the picture. See [Watermark](#watermark). |
 | **Border** | **Off**, four colors, **Match** | Off | A band of color around the picture. See [Border](#border). |
@@ -141,9 +142,30 @@ another and the export goes there; cancel and nothing is exported.
 
 ### The file's name
 
-Each frame is written under its own name with the format's extension:
-`IMG_0001.CR3` becomes `IMG_0001.jpg`. Two frames of one name, such
-as a raw and its camera JPEG, are told apart with `-1` on the second
+By default each frame is written under its own name with the format's
+extension: `IMG_0001.CR3` becomes `IMG_0001.jpg`. **Name** holds a
+pattern, text with these tokens in it:
+
+| Token | Becomes |
+|---|---|
+| `{name}` | the source file's name, without its extension |
+| `{seq}` | the frame's number in the export, from 1, as wide as the last number needs (`01` to `12` for twelve frames) |
+| `{seq:101}` | the same from 101; `{seq:0001}` is at least four digits wide |
+| `{date}` | the day it was taken, as `2026-10-31`; with no capture date, the day the file was last written, and with no file, today |
+| `{date:%Y%m%d}` | the day by `%Y`, `%y`, `%m`, and `%d` (`%%` for a `%`): `20261031` |
+| `{camera}` | the camera's make and model, as the import shows it, or "Unknown camera" |
+
+So `Trip {date} {seq}` names a set of twelve `Trip 2026-10-31 01.jpg`
+to `Trip 2026-10-31 12.jpg`. The day is the capture time with any
+[time shift](culling.md#shift-capture-time) applied. The line under
+the field shows the first frame's file as the pattern names it. A
+pattern with an unknown token, an unclosed `{`, or nothing left in it
+names each frame as `{name}` would; the line shows that name in
+yellow, and the log says why. The pattern is kept in a preset and
+for **Ctrl+E**.
+
+Two frames of one name, such as a raw and its camera JPEG, or two the
+pattern names alike, are told apart with `-1` on the second
 (`IMG_0001-1.jpg`), `-2` on a third.
 
 Written into the frame's own folder, the name is

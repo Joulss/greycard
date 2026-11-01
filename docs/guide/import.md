@@ -74,6 +74,7 @@ them:
 | `{name}` | The camera's file name, without its extension |
 | `{camera}` | The camera model, or "Unknown camera" |
 | `{seq}` | The frame's place in this import, `0001`, `0002`, … |
+| `{seq:N}` `{date:FMT}` | The count from `N`, and the day by `%Y`, `%y`, `%m`, and `%d`, as an [export's Name](export.md#the-files-name) takes them |
 | `{folder}` | The frame's folder under **From**, such as `ceremony` or `reception/late`; nothing for a frame directly in **From** |
 
 A `/` in **Folders** makes a folder inside a folder: `{yyyy}/{date}`

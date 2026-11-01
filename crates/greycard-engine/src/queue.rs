@@ -324,6 +324,22 @@ pub fn named_of(
     format: Format,
     on_exists: OnExists,
 ) -> Vec<(PathBuf, Option<PathBuf>)> {
+    named_as(sources, &[], folder, sub, format, on_exists)
+}
+
+/// [`named_of`] with each frame's stem given, as the sheet's Name
+/// pattern fills it, in place of its file's; a frame `stems` does not
+/// reach takes its file's. The version, the infix, and the numbering
+/// go on it as on the file's own, so two frames the pattern names
+/// alike are told apart as a raw and its camera JPEG are.
+pub fn named_as(
+    sources: &[(PathBuf, Option<String>)],
+    stems: &[String],
+    folder: Option<&Path>,
+    sub: Option<&Path>,
+    format: Format,
+    on_exists: OnExists,
+) -> Vec<(PathBuf, Option<PathBuf>)> {
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
     // Every source of the set is taken before any name is given: a
     // frame's export must never land on another frame's file (a raw's
@@ -348,10 +364,12 @@ pub fn named_of(
         .iter()
         .enumerate()
         .map(|(position, (source, version))| {
-            let stem = source
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "export".into());
+            let stem = stems.get(position).cloned().unwrap_or_else(|| {
+                source
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "export".into())
+            });
             // Virtual copies part 4: a version's name joins the stem
             // here, before the infix and the numbering below.
             let stem = match version {
@@ -559,6 +577,41 @@ mod tests {
         assert_eq!(
             progress_line(2, 5, "5M0A3021.jpg"),
             "exporting 3 of 5: 5M0A3021.jpg"
+        );
+    }
+
+    /// A stem given for each frame stands for its file's, and two the
+    /// pattern names alike are numbered as a pair of one name is.
+    #[test]
+    fn a_stem_given_names_the_frame_and_a_collision_is_numbered() {
+        let folder = Path::new("out");
+        let sources: Vec<(PathBuf, Option<String>)> = vec![
+            (PathBuf::from("a/IMG_1.CR3"), None),
+            (PathBuf::from("a/IMG_2.CR3"), Some("Warm".into())),
+            (PathBuf::from("a/IMG_3.CR3"), None),
+            (PathBuf::from("a/IMG_4.CR3"), None),
+        ];
+        let stems = ["trip".to_string(), "trip".into(), "trip".into()];
+        let got: Vec<PathBuf> = named_as(
+            &sources,
+            &stems,
+            Some(folder),
+            None,
+            Format::Jpeg,
+            OnExists::Overwrite,
+        )
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+        assert_eq!(
+            got,
+            vec![
+                folder.join("trip.jpg"),
+                folder.join("trip-Warm.jpg"),
+                folder.join("trip-1.jpg"),
+                // Past the stems given: the file's own.
+                folder.join("IMG_4.jpg"),
+            ]
         );
     }
 

@@ -506,3 +506,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§491. A first index pass reads the metadata alone](notes/491-a-first-index-pass-reads-the-metadata-alone.md) (2026-11-01)
 - [§492. One mask copied, and the pick's sample](notes/492-one-mask-copied-and-the-picks-sample.md) (2026-11-01)
 - [§493. Collections and stacks carried beside their frames](notes/493-collections-and-stacks-carried-beside-their-frames.md) (2026-11-01)
+- [§494. Exports named by a pattern](notes/494-exports-named-by-a-pattern.md) (2026-11-01)

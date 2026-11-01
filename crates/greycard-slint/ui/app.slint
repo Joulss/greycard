@@ -1905,6 +1905,15 @@ export component App inherits Window {
     /// A folder under each frame's own to export into; empty for the
     /// folder the sheet's Folder row shows.
     in-out property <string> export-subfolder: "";
+    /// The pattern each export's file is named by, and the sheet's
+    /// line under it: the first frame's file as it names it (for a
+    /// pattern, a subfolder, a format, the frame by its name and its
+    /// row, the set's size, and the folder's turn), and whether it
+    /// names none.
+    in-out property <string> export-name: "{name}";
+    pure callback export-name-example(string, string, string, string, int, int, int) -> string;
+    pure callback export-name-refused(string) -> bool;
+    callback export-sheet-opened();
     /// What the file says of where it came from: All, No edit, None.
     in-out property <string> export-metadata: "All";
     /// The watermark: Off, Text or Image, and its settings; the size
@@ -1946,6 +1955,7 @@ export component App inherits Window {
     changed export-sharpen => { root.export-sheet-changed(); }
     changed export-on-exists => { root.export-sheet-changed(); }
     changed export-subfolder => { root.export-sheet-changed(); }
+    changed export-name => { root.export-sheet-changed(); }
     changed export-metadata => { root.export-sheet-changed(); }
     changed export-mark => { root.export-sheet-changed(); }
     changed export-mark-text => { root.export-sheet-changed(); }
@@ -4856,6 +4866,10 @@ export component App inherits Window {
         export-sharpen <=> root.export-sharpen;
         export-on-exists <=> root.export-on-exists;
         export-subfolder <=> root.export-subfolder;
+        export-name <=> root.export-name;
+        export-name-example(a, b, c, d, e, f, g) => { return root.export-name-example(a, b, c, d, e, f, g); }
+        export-name-refused(a) => { return root.export-name-refused(a); }
+        sheet-opened => { root.export-sheet-opened(); }
         export-metadata <=> root.export-metadata;
         export-mark <=> root.export-mark;
         export-mark-text <=> root.export-mark-text;

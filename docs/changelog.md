@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- The export sheet's Name field takes a pattern of {name}, {seq},
+  {date}, and {camera}, kept with the preset
+  ([§494](https://github.com/jessolmstead/greycard/blob/master/docs/notes/494-exports-named-by-a-pattern.md)).
 - A right-click on a mask offers Duplicate mask, Copy mask, and
   Paste mask, the last onto the selection too
   ([§492](https://github.com/jessolmstead/greycard/blob/master/docs/notes/492-one-mask-copied-and-the-picks-sample.md)).

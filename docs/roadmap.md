@@ -802,15 +802,13 @@ clears or a tester asks for it.
       beside the display-referred curves and not in their place; waits
       on the scene-referred tail above, which decides where the curve
       sits
-- [ ] Export naming patterns (a suffix, a sequence number, the date)
-      on the sheet and in an export preset, for a set (§167); the
-      destination too, with the date and the frame's folder as tokens,
-      so `~/Raw/2026/2026-10-22_shoot` exports to its twin under
-      `~/Edited` (a pixls tester, 2026-10-22)
-- [ ] Export naming patterns and a destination folder on the sheet,
-      and so in an export preset; a list of marks so text and a logo
-      go on one export; a plate or shadow behind text; a bundled font
-      so exports match across machines (§157)
+- [ ] The export destination from tokens, with the date and the
+      frame's folder, so `~/Raw/2026/2026-10-22_shoot` exports to its
+      twin under `~/Edited` (a pixls tester, 2026-10-22; the name
+      pattern landed, §494)
+- [ ] A list of marks so text and a logo go on one export; a plate
+      or shadow behind text; a bundled font so exports match across
+      machines (§157)
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
 - [ ] The range masks' sample from before the Detail section, so dehaze

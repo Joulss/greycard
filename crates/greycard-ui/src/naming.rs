@@ -3,7 +3,7 @@
 //!
 //! Pure: the fields come in, a name comes out, and nothing here reads
 //! the disk or a clock. The import's subfolder and rename patterns use
-//! it, and an export's naming pattern is meant to.
+//! it, and so does the export sheet's Name.
 //!
 //! Every name is made safe for the strictest file system it could land
 //! on, whatever this machine is: a card imported on Linux onto an
@@ -68,6 +68,9 @@ pub const TOKENS: [&str; 8] = [
     "{date}", "{yyyy}", "{mm}", "{dd}", "{name}", "{camera}", "{seq}", "{folder}",
 ];
 
+/// The tokens an export's Name may hold.
+pub const EXPORT_TOKENS: [&str; 4] = ["{name}", "{seq}", "{date}", "{camera}"];
+
 /// What an empty `{folder}` takes with it from beside it: the
 /// characters a pattern puts between its parts.
 const JOINERS: [char; 6] = ['-', '_', ' ', '.', '/', '\\'];
@@ -82,6 +85,8 @@ pub enum PatternError {
     Unknown(String),
     /// A `{` with no `}` after it.
     Unclosed,
+    /// An export's Name that fills to nothing a file can be named.
+    Empty,
 }
 
 impl std::fmt::Display for PatternError {
@@ -89,6 +94,7 @@ impl std::fmt::Display for PatternError {
         match self {
             Self::Unknown(t) => write!(f, "{{{t}}} is not a token; {}", TOKENS.join(" ")),
             Self::Unclosed => write!(f, "a {{ with no }} after it"),
+            Self::Empty => write!(f, "it names nothing"),
         }
     }
 }
@@ -102,7 +108,36 @@ impl std::error::Error for PatternError {}
 /// source's folders again; in a name [`file_name`] turns its `/`
 /// into `_` as it does the pattern's own. Nothing else is made safe
 /// here; [`file_name`] and [`folders`] do that.
+///
+/// `{seq:N}` counts from `N` rather than one, at least as wide as `N`
+/// is typed, and `{date:FORMAT}` writes the day by `%Y`, `%y`, `%m`,
+/// and `%d` (`%%` for a `%`) among literal text.
 pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
+    fill(pattern, f, &TOKENS, None)
+}
+
+/// An export's file name, without its extension, from the sheet's
+/// Name pattern: only [`EXPORT_TOKENS`], `{seq}` as wide as the last
+/// number of the `count` frames exported needs, and made safe as an
+/// import's name is. An unknown or unclosed token is an error, and so
+/// is a pattern that fills to nothing.
+pub fn export_stem(pattern: &str, f: &Fields, count: usize) -> Result<String, PatternError> {
+    let stem = fill(pattern, f, &EXPORT_TOKENS, Some(count))?.replace(['/', '\\'], "_");
+    let stem = safe(&stem);
+    if stem.is_empty() {
+        return Err(PatternError::Empty);
+    }
+    Ok(stem)
+}
+
+/// [`expand`] over `tokens` alone, `{seq}` as wide as [`SEQ_WIDTH`]
+/// or, given the run's `count`, as its last number needs.
+fn fill(
+    pattern: &str,
+    f: &Fields,
+    tokens: &[&str],
+    count: Option<usize>,
+) -> Result<String, PatternError> {
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut rest = pattern;
     // Whether `out` ends in the pattern's own text rather than a
@@ -117,39 +152,66 @@ pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
         let after = &rest[open + 1..];
         let close = after.find('}').ok_or(PatternError::Unclosed)?;
         let token = &after[..close];
-        let value = match token {
-            "date" => format!("{:04}-{:02}-{:02}", f.day.year, f.day.month, f.day.day),
-            "yyyy" => format!("{:04}", f.day.year),
-            "mm" => format!("{:02}", f.day.month),
-            "dd" => format!("{:02}", f.day.day),
-            "name" => f.name.clone(),
-            "camera" if f.camera.trim().is_empty() => "Unknown camera".into(),
-            "camera" => f.camera.trim().to_string(),
-            "seq" => format!("{:0width$}", f.seq, width = SEQ_WIDTH),
-            // Its levels are `/` alone (`import::folder_under` joins
-            // them so on every platform); a `\` is a character of a
-            // folder's name on Linux, and refused as any other is.
-            // Empty, it takes a separator beside it with it, so
-            // `{folder}-{name}` in the source itself is `{name}`.
-            "folder" if f.folder.is_empty() => {
-                rest = &after[close + 1..];
-                match rest.chars().next() {
-                    Some(c) if JOINERS.contains(&c) => rest = &rest[c.len_utf8()..],
-                    _ => {
-                        if ends_literal && out.ends_with(JOINERS) {
-                            out.pop();
+        let (word, argument) = match token.split_once(':') {
+            Some((word, argument)) => (word, Some(argument)),
+            None => (token, None),
+        };
+        if !tokens.contains(&format!("{{{word}}}").as_str()) {
+            return Err(PatternError::Unknown(token.to_string()));
+        }
+        let unknown = || PatternError::Unknown(token.to_string());
+        let value = match (word, argument) {
+            ("seq", argument) => {
+                let start = match argument {
+                    None => 1,
+                    Some(a) if !a.is_empty() && a.bytes().all(|b| b.is_ascii_digit()) => {
+                        a.parse::<usize>().map_err(|_| unknown())?
+                    }
+                    Some(_) => return Err(unknown()),
+                };
+                let at = start.saturating_add(f.seq.saturating_sub(1));
+                let width = match count {
+                    Some(n) => digits(start.saturating_add(n.max(1) - 1)),
+                    None => SEQ_WIDTH,
+                }
+                .max(argument.map_or(0, str::len));
+                format!("{at:0width$}")
+            }
+            ("date", Some(format)) => day_as(f.day, format).ok_or_else(unknown)?,
+            (_, Some(_)) => return Err(unknown()),
+            (word, None) => match word {
+                "date" => format!("{:04}-{:02}-{:02}", f.day.year, f.day.month, f.day.day),
+                "yyyy" => format!("{:04}", f.day.year),
+                "mm" => format!("{:02}", f.day.month),
+                "dd" => format!("{:02}", f.day.day),
+                "name" => f.name.clone(),
+                "camera" if f.camera.trim().is_empty() => "Unknown camera".into(),
+                "camera" => f.camera.trim().to_string(),
+                // Its levels are `/` alone (`import::folder_under` joins
+                // them so on every platform); a `\` is a character of a
+                // folder's name on Linux, and refused as any other is.
+                // Empty, it takes a separator beside it with it, so
+                // `{folder}-{name}` in the source itself is `{name}`.
+                "folder" if f.folder.is_empty() => {
+                    rest = &after[close + 1..];
+                    match rest.chars().next() {
+                        Some(c) if JOINERS.contains(&c) => rest = &rest[c.len_utf8()..],
+                        _ => {
+                            if ends_literal && out.ends_with(JOINERS) {
+                                out.pop();
+                            }
                         }
                     }
+                    continue;
                 }
-                continue;
-            }
-            "folder" => {
-                out.push_str(&f.folder.replace('\\', "_"));
-                ends_literal = false;
-                rest = &after[close + 1..];
-                continue;
-            }
-            other => return Err(PatternError::Unknown(other.to_string())),
+                "folder" => {
+                    out.push_str(&f.folder.replace('\\', "_"));
+                    ends_literal = false;
+                    rest = &after[close + 1..];
+                    continue;
+                }
+                other => return Err(PatternError::Unknown(other.to_string())),
+            },
         };
         out.push_str(&value.replace(['/', '\\'], "_"));
         if !value.is_empty() {
@@ -159,6 +221,33 @@ pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// How many digits `n` is written in.
+fn digits(n: usize) -> usize {
+    n.checked_ilog10().map_or(1, |l| l as usize + 1)
+}
+
+/// `day` by a `{date:...}` format: `%Y`, `%y`, `%m`, `%d`, and `%%`,
+/// the rest as it is. None for any other `%`.
+fn day_as(day: Day, format: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut chars = format.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next()? {
+            'Y' => out.push_str(&format!("{:04}", day.year)),
+            'y' => out.push_str(&format!("{:02}", day.year.rem_euclid(100))),
+            'm' => out.push_str(&format!("{:02}", day.month)),
+            'd' => out.push_str(&format!("{:02}", day.day)),
+            '%' => out.push('%'),
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 /// A file's name from the rename pattern, with `extension` (as the
@@ -280,6 +369,66 @@ mod tests {
             ..fields()
         };
         assert_eq!(expand("{camera}", &none).unwrap(), "Unknown camera");
+    }
+
+    #[test]
+    fn an_export_name_fills_its_four_tokens_among_literal_text() {
+        let f = fields();
+        let stem = |p: &str, count: usize| export_stem(p, &f, count);
+        assert_eq!(stem("{name}", 1).unwrap(), "IMG_0042");
+        assert_eq!(stem("{date}", 1).unwrap(), "2026-09-04");
+        assert_eq!(stem("{date:%Y%m%d}", 1).unwrap(), "20260904");
+        assert_eq!(stem("{date:%y.%m.%d %%}", 1).unwrap(), "26.09.04 %");
+        assert_eq!(stem("{camera}", 1).unwrap(), "Canon EOS R5");
+        assert_eq!(
+            stem("Trip {date} - {camera} ({name})", 1).unwrap(),
+            "Trip 2026-09-04 - Canon EOS R5 (IMG_0042)"
+        );
+        // `{seq}` is as wide as the set's last number needs: the 7th of
+        // 9, of 12 and of 100.
+        assert_eq!(stem("{seq}", 9).unwrap(), "7");
+        assert_eq!(stem("{seq}", 12).unwrap(), "07");
+        assert_eq!(stem("{seq}", 100).unwrap(), "007");
+        // From a start, as wide as the last or as typed.
+        assert_eq!(stem("{seq:101}", 5).unwrap(), "107");
+        assert_eq!(stem("{seq:95}", 10).unwrap(), "101");
+        assert_eq!(stem("{seq:0001}", 9).unwrap(), "0007");
+        let first = Fields { seq: 1, ..fields() };
+        assert_eq!(export_stem("{seq:95}", &first, 10).unwrap(), "095");
+        // Made safe as an import's name is.
+        assert_eq!(stem("{name}: a/b", 1).unwrap(), "IMG_0042_ a_b");
+    }
+
+    #[test]
+    fn an_export_name_refuses_what_it_does_not_know_and_nothing() {
+        let f = fields();
+        for bad in [
+            "{yyyy}",
+            "{folder}",
+            "{lens}",
+            "{name:x}",
+            "{camera:short}",
+            "{seq:}",
+            "{seq:abc}",
+            "{seq:-1}",
+            "{date:%H}",
+            "{date:%}",
+        ] {
+            let word = bad.trim_matches(['{', '}']).to_string();
+            assert_eq!(
+                export_stem(bad, &f, 1),
+                Err(PatternError::Unknown(word)),
+                "{bad}"
+            );
+        }
+        assert_eq!(export_stem("{name", &f, 1), Err(PatternError::Unclosed));
+        for empty in ["", "  ", "..."] {
+            assert_eq!(export_stem(empty, &f, 1), Err(PatternError::Empty));
+        }
+        // The import keeps its own tokens and its fixed width, and
+        // takes a start and a date's format too.
+        assert_eq!(expand("{yyyy}-{seq:101}", &f).unwrap(), "2026-0107");
+        assert_eq!(expand("{date:%d.%m.%Y}", &f).unwrap(), "04.09.2026");
     }
 
     /// `{folder}` makes the source's folders again under the Folders

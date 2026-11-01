@@ -1,3 +1,4 @@
+use crate::export_name;
 use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
 use crate::panel::browser::{
     chosen_frames, count_thumb, end_thumb_turn, file_name, release_thumbnails, show_no_thumb,
@@ -107,6 +108,7 @@ pub(crate) fn read_sheet(app: &App) -> Sheet {
         sharpen: app.get_export_sharpen().into(),
         on_exists: app.get_export_on_exists().into(),
         subfolder: app.get_export_subfolder().into(),
+        name: app.get_export_name().into(),
         metadata: app.get_export_metadata().into(),
         mark: app.get_export_mark().into(),
         mark_text: app.get_export_mark_text().into(),
@@ -133,6 +135,7 @@ pub(crate) fn show_sheet(app: &App, s: &Sheet) {
     app.set_export_sharpen(s.sharpen.as_str().into());
     app.set_export_on_exists(s.on_exists.as_str().into());
     app.set_export_subfolder(s.subfolder.as_str().into());
+    app.set_export_name(s.name.as_str().into());
     app.set_export_metadata(s.metadata.as_str().into());
     app.set_export_mark(s.mark.as_str().into());
     app.set_export_mark_text(s.mark_text.as_str().into());
@@ -1408,10 +1411,109 @@ fn exporting(st: &State, set: &Arc<queue::Set>) -> bool {
         .is_some_and(|s| Arc::ptr_eq(s, set))
 }
 
+/// Each frame of a set as [`queue::named_as`] takes it: its file and
+/// the name of its version, none for the file's own.
+fn set_sources(frames: &SetFrames) -> Vec<(PathBuf, Option<String>)> {
+    frames
+        .iter()
+        .map(|f| (f.0.clone(), f.4.as_ref().map(|v| v.name.clone())))
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many files [`shot_of`] has read, the index having no row.
+    pub(crate) static SHOTS_READ: RefCell<usize> = const { RefCell::new(0) };
+}
+
+thread_local! {
+    /// The [`export_name::Shot`] of each file asked for since the
+    /// sheet opened or the last export started: the sheet's line asks
+    /// at every keystroke, and the set again as it starts.
+    static SHOTS: RefCell<HashMap<PathBuf, export_name::Shot>> = RefCell::new(HashMap::new());
+}
+
+/// Forget the files' shots: the sheet opened, or a set has its names.
+pub(crate) fn forget_shots() {
+    SHOTS.with(|s| s.borrow_mut().clear());
+}
+
+/// What `{date}` and `{camera}` fill from for `source`, file `file` of
+/// the list when it is one: the index's row when it has one, which
+/// asks nothing of the disk, else the file's metadata read from the
+/// pieces of it it is in.
+fn shot_of(st: &State, file: Option<usize>, source: &Path) -> export_name::Shot {
+    if let Some(shot) = SHOTS.with(|s| s.borrow().get(source).cloned()) {
+        return shot;
+    }
+    let row = file
+        .and_then(|f| st.views.index_ids.get(f).copied().flatten())
+        .and_then(|id| st.views.index_reader.as_ref()?.by_id(id).ok().flatten());
+    let shot = match row {
+        Some(row) => export_name::Shot {
+            taken: row.exif.taken,
+            camera: row.exif.camera,
+        },
+        None => {
+            #[cfg(test)]
+            SHOTS_READ.with(|n| *n.borrow_mut() += 1);
+            export_name::read_shot(source)
+        }
+    };
+    SHOTS.with(|s| s.borrow_mut().insert(source.to_path_buf(), shot.clone()));
+    shot
+}
+
+/// What the Name `pattern` needs of each of `sources`, in order: its
+/// shot when the pattern [`export_name::wants_shot`], and its capture
+/// time's shift when it [`export_name::wants_date`]. Nothing is looked
+/// up for a pattern without `{date}` or `{camera}`.
+fn name_frames(st: &State, sources: &[&Path], pattern: &str) -> Vec<export_name::Frame> {
+    let (shots, date) = (
+        export_name::wants_shot(pattern),
+        export_name::wants_date(pattern),
+    );
+    let files: HashMap<&Path, usize> = if shots {
+        st.files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.as_path(), i))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    sources
+        .iter()
+        .map(|&source| {
+            let file = files.get(source).copied();
+            let shot = shots.then(|| shot_of(st, file, source));
+            let shift = match file {
+                Some(f) if date => st.sidecars[f].meta.time_shift,
+                _ if date => time_shift_of(st, source),
+                _ => 0,
+            };
+            (source.to_path_buf(), shot, shift)
+        })
+        .collect()
+}
+
+/// The stem each frame of a set is written under, from the sheet's
+/// Name `pattern`. One that names a frame no file is said in the log,
+/// and the frame is named as its file.
+pub(crate) fn set_stems(st: &State, frames: &SetFrames, pattern: &str) -> Vec<String> {
+    let sources: Vec<&Path> = frames.iter().map(|f| f.0.as_path()).collect();
+    let (stems, problem) = export_name::stems(pattern, &name_frames(st, &sources, pattern));
+    forget_shots();
+    if let Some(problem) = problem {
+        tracing::warn!("{problem}");
+    }
+    stems
+}
+
 /// Send `frames` to the worker as a set, into `folder`, or with none
-/// into `sub` under each file's folder or beside each file, and hold
-/// the set to cancel it. The set started, or none when there was
-/// nothing to send.
+/// into `sub` under each file's folder or beside each file, each under
+/// its stem of `stems` ([`set_stems`]), and hold the set to cancel it.
+/// The set started, or none when there was nothing to send.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn start_set(
     st: &mut State,
@@ -1422,6 +1524,7 @@ pub(crate) fn start_set(
     settings: export::Settings,
     on_exists: export::OnExists,
     preset: Option<String>,
+    stems: Vec<String>,
 ) -> Option<Arc<queue::Set>> {
     st.work.export_choosing = false;
     // Nothing to write would never be said done: the spinner would run
@@ -1434,12 +1537,9 @@ pub(crate) fn start_set(
         }
         return None;
     }
-    let sources: Vec<(PathBuf, Option<String>)> = frames
-        .iter()
-        .map(|f| (f.0.clone(), f.4.as_ref().map(|v| v.name.clone())))
-        .collect();
-    let outs = queue::named_of(
-        &sources,
+    let outs = queue::named_as(
+        &set_sources(&frames),
+        &stems,
         folder.as_deref(),
         sub.as_deref(),
         settings.format,
@@ -1496,6 +1596,7 @@ pub(crate) struct Pending {
     sub: Option<PathBuf>,
     settings: export::Settings,
     preset: Option<String>,
+    stems: Vec<String>,
 }
 
 /// `start_set`, unless the policy is Overwrite and some of the files
@@ -1513,17 +1614,21 @@ fn start_or_ask(
     settings: export::Settings,
     on_exists: export::OnExists,
     preset: Option<String>,
+    name: String,
 ) {
+    // Named once: the question and the set take the same names.
+    let stems = set_stems(st, &frames, &name);
     if on_exists == export::OnExists::Overwrite {
-        let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
-        let there: Vec<PathBuf> = queue::names(
-            &sources,
+        let there: Vec<PathBuf> = queue::named_as(
+            &set_sources(&frames),
+            &stems,
             folder.as_deref(),
             sub.as_deref(),
             settings.format,
             on_exists,
         )
         .into_iter()
+        .map(|(path, _)| path)
         .filter(|p| p.exists())
         .collect();
         if !there.is_empty() {
@@ -1548,11 +1653,14 @@ fn start_or_ask(
                 sub,
                 settings,
                 preset,
+                stems,
             });
             return;
         }
     }
-    start_set(st, app, frames, folder, sub, settings, on_exists, preset);
+    start_set(
+        st, app, frames, folder, sub, settings, on_exists, preset, stems,
+    );
 }
 
 /// The overwrite sheet's answer: 0 no, 1 keep both (the set under
@@ -1572,7 +1680,7 @@ fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
         }
     };
     start_set(
-        st, app, p.frames, p.folder, p.sub, p.settings, on_exists, p.preset,
+        st, app, p.frames, p.folder, p.sub, p.settings, on_exists, p.preset, p.stems,
     );
 }
 
@@ -1603,6 +1711,51 @@ pub(crate) fn folder_line(st: &State, typed: &str, room: usize) -> String {
         return String::new();
     };
     Sheet::elide_front(&sheet_folder(st, raw).display().to_string(), room.max(4))
+}
+
+/// The sheet's line under Name: the file the set's first frame is
+/// written as under `pattern`, in the subfolder `typed` or the folder
+/// the Folder row shows, in the format `format` names. The name asked
+/// for, before the policy looks at what is there. Empty with no frame.
+pub(crate) fn name_example(st: &State, pattern: &str, typed: &str, format: &str) -> String {
+    let chosen = chosen_frames(st);
+    let Some(c) = chosen.first().copied().or(st.current) else {
+        return String::new();
+    };
+    let Some(source) = st.path_at(c) else {
+        return String::new();
+    };
+    let (_, shot, shift) = name_frames(st, &[source.as_path()], pattern).remove(0);
+    // A pattern that names no file: the frame's own name.
+    let stems: Vec<String> = export_name::stem(
+        pattern,
+        source,
+        shot.as_ref(),
+        shift,
+        1,
+        chosen.len().max(1),
+    )
+    .into_iter()
+    .collect();
+    let sheet = Sheet {
+        format: format.into(),
+        subfolder: typed.into(),
+        ..Sheet::default()
+    };
+    let sub = sheet.subfolder().ok().flatten();
+    let folder = sub.is_none().then(|| sheet_folder(st, source));
+    let version = frame_version(st, c).map(|v| v.name);
+    queue::named_as(
+        &[(source.clone(), version)],
+        &stems,
+        folder.as_deref(),
+        sub.as_deref(),
+        sheet.settings().format,
+        export::OnExists::Overwrite,
+    )
+    .first()
+    .map(|(path, _)| file_name(path))
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1824,6 +1977,20 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             folder_line(&st, &typed, room.max(0) as usize).into()
         });
+    }
+    {
+        let state = state.clone();
+        app.on_export_name_example(
+            move |pattern, typed, format, _name, _index, _count, _turn| {
+                // As the Folder row: nothing while the state is lent out.
+                let Ok(st) = state.try_borrow() else {
+                    return slint::SharedString::default();
+                };
+                name_example(&st, &pattern, &typed, &format).into()
+            },
+        );
+        app.on_export_name_refused(|pattern| export_name::refused(&pattern));
+        app.on_export_sheet_opened(forget_shots);
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -2117,6 +2284,7 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
             settings,
             on_exists,
             preset,
+            sheet.name,
         );
         return;
     }
@@ -2147,6 +2315,7 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
             settings,
             on_exists,
             preset,
+            sheet.name,
         );
     };
     check_folder(app, folder.clone(), move |app, problem| {
@@ -2480,6 +2649,112 @@ mod tests {
         })
         .save(path)
         .unwrap();
+    }
+
+    /// The line under Name is the file the set's first frame is
+    /// written as: its own name by default, the pattern's otherwise
+    /// with `{seq}` as wide as the set needs, and the frame's own name
+    /// in the warning's color for a pattern that names none. The
+    /// pattern is kept with the last settings, for Ctrl+E.
+    #[test]
+    fn the_name_line_is_the_first_frame_s_file_under_the_pattern() {
+        let app = crate::testing::window(12);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(12));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(4);
+            st.views.picked = (2..12).collect();
+            st.work.export_last_folder = Some(PathBuf::from("/out"));
+        }
+        app.set_set_count(10);
+        app.set_export_open(true);
+        let line = || {
+            app.invoke_export_name_example(
+                app.get_export_name(),
+                app.get_export_subfolder(),
+                app.get_export_format(),
+                "".into(),
+                0,
+                10,
+                0,
+            )
+            .to_string()
+        };
+        let shown = |text: &str| crate::testing::count_labeled(&app, text);
+        assert_eq!(app.get_export_name(), "{name}");
+        assert_eq!(line(), "IMG_0002.jpg");
+        assert_eq!(shown("IMG_0002.jpg"), 1);
+        assert!(!app.invoke_export_name_refused(app.get_export_name()));
+
+        app.set_export_name("trip {seq} {name}".into());
+        assert_eq!(line(), "trip 01 IMG_0002.jpg");
+        assert_eq!(shown("trip 01 IMG_0002.jpg"), 1);
+        app.set_export_name("{seq:101}".into());
+        app.set_export_format("PNG".into());
+        assert_eq!(line(), "101.png");
+        // Beside the frame, the name the editor writes there.
+        app.set_export_subfolder("web".into());
+        assert_eq!(line(), "101.png");
+        app.set_export_subfolder("".into());
+        state.borrow_mut().work.export_last_folder = None;
+        assert_eq!(line(), "101.greycard.png");
+
+        // A pattern that names no file: the frame's own name, flagged.
+        app.set_export_name("{name}-{lens}".into());
+        assert_eq!(line(), "IMG_0002.greycard.png");
+        assert!(app.invoke_export_name_refused(app.get_export_name()));
+
+        // Kept with the last settings.
+        app.set_export_name("{date}_{seq}".into());
+        let kept = crate::panel::startup::remember(&app);
+        assert_eq!(kept.export.name, "{date}_{seq}");
+    }
+
+    /// A set is written under the pattern, each frame its number; two
+    /// the pattern names alike are told apart as a pair of one name is,
+    /// and a bad pattern writes each under its own name.
+    #[test]
+    fn a_set_is_written_under_the_name_pattern() {
+        let app = crate::testing::window(2);
+        let dir = crate::testing::scratch_dir("export-name");
+        let sources = vec![
+            dir.join("shoot").join("a.png"),
+            dir.join("shoot").join("b.png"),
+        ];
+        for s in &sources {
+            picture(s);
+        }
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let (state, _worker) = crate::testing::state_for(&app, sources.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.views.picked = vec![0, 1];
+            st.work.export_last_folder = Some(out.clone());
+        }
+        let written = |name: &str| {
+            let file = out.join(name);
+            let start = Instant::now();
+            while !file.exists() {
+                assert!(start.elapsed() < Duration::from_secs(60), "{name} written");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let send = |pattern: &str, names: &[&str]| {
+            app.set_export_name(pattern.into());
+            app.invoke_export();
+            assert!(state.borrow().work.exporting.is_some(), "{pattern}");
+            for name in names {
+                written(name);
+            }
+            state.borrow_mut().work.exporting = None;
+            app.set_export_running(false);
+        };
+        send("shoot {seq:7}-{name}", &["shoot 7-a.jpg", "shoot 8-b.jpg"]);
+        send("shoot", &["shoot.jpg", "shoot-1.jpg"]);
+        send("{nmae}", &["a.jpg", "b.jpg"]);
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// Ctrl+E: before any export from the sheet, the sheet, as
@@ -2994,6 +3269,84 @@ mod tests {
         assert!(state.borrow().work.exporting.is_some());
         state.borrow_mut().work.exporting = None;
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Overwrite asks about the files the set will write, a version's
+    /// included: the version's file there is asked about, and a name
+    /// the set does not write is not.
+    #[test]
+    fn overwrite_asks_about_a_version_s_file() {
+        let dir = crate::testing::scratch_dir("overwrite-version");
+        std::fs::create_dir_all(dir.join("export")).unwrap();
+        let file = dir.join("IMG_0000.CR3");
+        std::fs::write(&file, b"").unwrap();
+        for there in ["IMG_0000-Warm.jpg", "IMG_0000-1.jpg"] {
+            std::fs::write(dir.join("export").join(there), b"").unwrap();
+        }
+        let app = crate::testing::window(1);
+        let (state, worker) = crate::testing::state_for(&app, vec![file]);
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[0].new_version(None, Some("Warm")).unwrap();
+            crate::versions::settle(&mut st, &app, &worker);
+        }
+        app.invoke_select(0);
+        app.invoke_step(1, true);
+        app.set_export_subfolder("export".into());
+        app.set_export_on_exists("Overwrite".into());
+        app.invoke_export();
+        assert!(app.get_overwrite_open());
+        assert_eq!(
+            app.get_overwrite_title(),
+            "IMG_0000-Warm.jpg is there already"
+        );
+        app.invoke_overwrite_answered(0);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// `{date}` and `{camera}` come from the index's row and read
+    /// nothing from a file it holds; a file it does not hold is read
+    /// once while the sheet is up, however often the line asks.
+    #[test]
+    fn the_name_line_reads_a_file_only_when_the_index_has_no_row() {
+        use greycard_library::fixture::{R5, write_frame};
+        let dir = crate::testing::scratch_dir("export-name-index");
+        let files = vec![dir.join("a.tif"), dir.join("b.tif")];
+        write_frame(&files[0], &R5, 1);
+        write_frame(&files[1], &R5, 2);
+        let mut lib = greycard_library::Library::open_in_memory().unwrap();
+        lib.index_file(&files[0]).unwrap();
+        let id = lib.by_path(&files[0]).unwrap().unwrap().id;
+        // Gone from the disk: what the line says is the index's.
+        std::fs::remove_file(&files[0]).unwrap();
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.views.index_ids = vec![Some(id), None];
+            st.views.index_reader = Some(lib);
+            st.sidecars[0].meta.time_shift = 9 * 3600;
+            st.work.export_last_folder = Some(dir.join("out"));
+        }
+        forget_shots();
+        let read = || SHOTS_READ.with(|n| *n.borrow());
+        let before = read();
+        let line = |pattern: &str| name_example(&state.borrow(), pattern, "", "JPEG");
+        assert_eq!(line("{date} {camera}"), "2024-08-25 Canon EOS R5.jpg");
+        assert_eq!(read(), before, "nothing read for an indexed file");
+        state.borrow_mut().current = Some(1);
+        line("{camera}");
+        line("{camera} {date}");
+        assert_eq!(read(), before + 1, "read once");
+        app.invoke_export_sheet_opened();
+        line("{camera}");
+        assert_eq!(read(), before + 2, "again once the sheet opens again");
+        // A pattern with neither reads nothing.
+        forget_shots();
+        line("{seq} {name}");
+        assert_eq!(read(), before + 2);
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// Where the element a screen reader knows as `label` is, and how

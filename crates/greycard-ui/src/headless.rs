@@ -328,8 +328,23 @@ pub(crate) fn plan(
 
     let (folder, settings, preset_name) = if into_folder {
         let sources = queue::sources_of(&frames);
-        for (frame, (out, moved_from)) in frames.iter_mut().zip(queue::named_of(
+        // Each file named by the sheet's Name, as the window names it;
+        // no window here, so a shot is read from each file.
+        let shots = crate::export_name::wants_shot(&sheet.name);
+        let shifted: Vec<_> = frames
+            .iter()
+            .map(|f| {
+                let shot = shots.then(|| crate::export_name::read_shot(&f.source));
+                (f.source.clone(), shot, f.time_shift)
+            })
+            .collect();
+        let (stems, problem) = crate::export_name::stems(&sheet.name, &shifted);
+        if let Some(problem) = problem {
+            tracing::warn!("{problem}");
+        }
+        for (frame, (out, moved_from)) in frames.iter_mut().zip(queue::named_as(
             &sources,
+            &stems,
             Some(target),
             None,
             sheet_settings.format,
@@ -1218,6 +1233,31 @@ mod tests {
             .collect();
         assert_eq!(exposures, [0.0, 1.0, 0.0]);
         assert_eq!(planned.folder.as_deref(), Some(target.as_path()));
+
+        // The sheet's Name, as the window would open with it, names
+        // each file.
+        let named = settings::Settings {
+            export: crate::sheet::Sheet {
+                name: "set-{seq}".into(),
+                ..Default::default()
+            },
+            ..remembered
+        };
+        let args = [
+            scratch.0.as_os_str(),
+            "--export".as_ref(),
+            target.as_os_str(),
+            "--also".as_ref(),
+            "3,0".as_ref(),
+            "--no-sidecars".as_ref(),
+        ];
+        let planned = plan(&cli(&args), &target, &named, None, None).unwrap();
+        let outs: Vec<String> = planned
+            .frames
+            .iter()
+            .map(|f| f.out.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(outs, ["set-1.jpg", "set-2.jpg", "set-3.jpg"]);
     }
 
     /// `--export DIR --all`: every frame of the folder, in its order,

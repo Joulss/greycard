@@ -59,8 +59,8 @@ mod window_fit;
 // The modules with no window in them, in the library beside this
 // binary; named here as they were when they were the binary's own.
 pub(crate) use greycard_ui::{
-    archive, carried, collections, delete, display, files, filter, gpu_marker, import, log, naming,
-    outline, preset_fit, rejects, scrolling, selection, tags, wheel, zoom,
+    archive, carried, collections, delete, display, export_name, files, filter, gpu_marker, import,
+    log, naming, outline, preset_fit, rejects, scrolling, selection, tags, wheel, zoom,
 };
 
 // What renders a developed frame into a picture or a file, in a crate

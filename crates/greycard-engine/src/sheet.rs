@@ -47,6 +47,10 @@ pub struct Sheet {
     /// one folder the sheet's Folder row shows.
     #[serde(rename = "export_subfolder")]
     pub subfolder: String,
+    /// The pattern each file is named by: `{name}`, `{seq}`, `{date}`,
+    /// and `{camera}` among literal text, filled in the window.
+    #[serde(rename = "export_name")]
+    pub name: String,
     /// All, No edit or None.
     #[serde(rename = "export_metadata")]
     pub metadata: String,
@@ -96,6 +100,7 @@ impl Default for Sheet {
             sharpen: Sharpen::default().name().into(),
             on_exists: OnExists::default().name().into(),
             subfolder: String::new(),
+            name: NAME.into(),
             metadata: Metadata::default().name().into(),
             mark: MARK_OFF.into(),
             mark_text: String::new(),
@@ -255,6 +260,10 @@ impl Sheet {
         }
         s.custom = s.custom.trim().to_string();
         s.subfolder = s.subfolder.trim().to_string();
+        s.name = s.name.trim().to_string();
+        if s.name.is_empty() {
+            s.name = NAME.into();
+        }
         s.mark_size = step(s.mark_size);
         s.mark_margin = step(s.mark_margin);
         s.mark_opacity = step(s.mark_opacity);
@@ -297,6 +306,9 @@ pub struct ExportPreset {
     #[serde(flatten)]
     pub sheet: Sheet,
 }
+
+/// The Name pattern that names each file as the source is named.
+pub const NAME: &str = "{name}";
 
 /// The picker's entry for no preset. No preset can take the name, in
 /// any case.
@@ -517,6 +529,42 @@ mod tests {
             border_color: "Match".into(),
             ..on.clone()
         }));
+    }
+
+    #[test]
+    fn a_preset_keeps_its_name_pattern_and_an_older_one_names_as_before() {
+        let preset = ExportPreset {
+            name: "Numbered".into(),
+            sheet: Sheet {
+                name: "{date}_{seq:101}".into(),
+                ..web()
+            },
+        };
+        let json = serde_json::to_string(&preset).unwrap();
+        assert!(
+            json.contains(r#""export_name":"{date}_{seq:101}""#),
+            "{json}"
+        );
+        let back: ExportPreset = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, preset);
+        // A preset or settings file from before names each file as the
+        // source is named.
+        let old: ExportPreset =
+            serde_json::from_str(r#"{"name":"Old","export_format":"PNG"}"#).unwrap();
+        assert_eq!(old.sheet.name, NAME);
+        // Another pattern writes another file; spaces round it and an
+        // empty field do not.
+        assert!(!back.sheet.same(&web()));
+        for typed in [" {name} ", ""] {
+            assert!(
+                Sheet {
+                    name: typed.into(),
+                    ..web()
+                }
+                .same(&web()),
+                "{typed:?}"
+            );
+        }
     }
 
     #[test]

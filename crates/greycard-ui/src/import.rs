@@ -308,7 +308,7 @@ pub fn folder_under(source: &Path, file: &Path) -> String {
 /// it with, near enough, when the EXIF says nothing. On a FAT card the
 /// time is stored without a zone and read through the mount's idea of
 /// one, so a frame taken near midnight can land on the day either side.
-fn modified_day(file: &Path) -> Day {
+pub(crate) fn modified_day(file: &Path) -> Day {
     use chrono::Datelike;
     let when = std::fs::metadata(file)
         .and_then(|m| m.modified())

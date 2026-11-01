@@ -800,6 +800,7 @@ mod tests {
             sharpen: "High".into(),
             on_exists: "Skip".into(),
             subfolder: "export".into(),
+            name: "{date}_{seq:101}".into(),
             metadata: "None".into(),
             mark: "Image".into(),
             mark_text: "© x".into(),

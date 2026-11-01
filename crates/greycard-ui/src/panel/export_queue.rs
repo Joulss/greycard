@@ -552,12 +552,13 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     // A subfolder the sheet was queued with that no longer reads as
     // one (a file edited by hand) goes beside each file, as an entry
     // with no folder always has.
-    let (folder, sub, settings, on_exists, preset) = (
+    let (folder, sub, settings, on_exists, preset, name) = (
         entry.folder.clone(),
         entry.sheet.subfolder().ok().flatten(),
         entry.sheet.settings(),
         entry.sheet.on_exists(),
         entry.preset.clone(),
+        entry.sheet.name.clone(),
     );
     // The deleted versions out of the entry, and the places of the rest
     // moved up with them; the entry's own fields were read above. An
@@ -621,9 +622,10 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     let after = st.work.export_queue.len() - index - 1;
     #[cfg(test)]
     let sent: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
-    let Some(set) =
-        crate::panel::deliver::start_set(st, app, frames, folder, sub, settings, on_exists, preset)
-    else {
+    let stems = crate::panel::deliver::set_stems(st, &frames, &name);
+    let Some(set) = crate::panel::deliver::start_set(
+        st, app, frames, folder, sub, settings, on_exists, preset, stems,
+    ) else {
         st.work.queue_run = None;
         show_queue(st, app);
         return;
