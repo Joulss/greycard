@@ -23,12 +23,19 @@ pub(super) fn learned_masks(
     // without, and said in the Look section's own words.
     if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
         && edit.look_lut.strength > 0.0
-        && edit.look_lut.look_under(edit.display_curve).is_none()
+        && edit
+            .look_lut
+            .look_under(&greycard_edit_io::Stores::user(), edit.display_curve)
+            .is_none()
     {
-        let why = if edit.look_lut.is_there() {
-            greycard_edit::look::mismatch(&greycard_edit::look::list(), name, edit.display_curve)
-                .map(|(why, _)| why)
-                .unwrap_or_else(|| "its table would not read".into())
+        let why = if greycard_edit_io::looks::is_there(&edit.look_lut) {
+            greycard_edit::look::mismatch(
+                &greycard_edit_io::looks::list(),
+                name,
+                edit.display_curve,
+            )
+            .map(|(why, _)| why)
+            .unwrap_or_else(|| "its table would not read".into())
         } else {
             "not in the look directory".into()
         };

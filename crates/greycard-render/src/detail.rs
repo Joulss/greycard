@@ -429,6 +429,7 @@ mod tests {
         sixteen(crate::export::render(
             image,
             edit,
+            &greycard_edit::NoStores,
             (image.width as u32, image.height as u32),
             &settings,
             &Default::default(),

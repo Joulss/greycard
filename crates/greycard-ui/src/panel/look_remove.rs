@@ -63,7 +63,7 @@ pub(crate) fn store() -> Option<PathBuf> {
     if let Some(dir) = crate::testing::LOOK_STORE.with(|s| s.borrow().clone()) {
         return Some(dir);
     }
-    look::store_dir()
+    greycard_edit_io::looks::store_dir()
 }
 
 /// The files of the look named, as `looks` lists them: its own file
@@ -537,7 +537,7 @@ pub(crate) fn land(st: &mut State, app: &App, done: Done) {
     tracing::info!("remove look: {status}");
     app.set_status(status.into());
     st.develop.looks = list_in(store());
-    look::forget();
+    greycard_edit_io::looks::forget();
     st.develop.look_for = None;
     show_looks(st, &st.develop.edit.look_lut, app);
     crate::edited::looks_moved(st);

@@ -381,11 +381,14 @@ pub(crate) fn look_for(
         name.strip_prefix(&prefix).is_some_and(|rest| {
             !rest.contains('.')
                 && style_key(rest) == want
-                && LookLut {
-                    lut: LutChoice::Named(name.clone()),
-                    strength: 1.0,
-                }
-                .look_under_in(store, curve)
+                && greycard_edit_io::looks::look_under_in(
+                    store,
+                    &LookLut {
+                        lut: LutChoice::Named(name.clone()),
+                        strength: 1.0,
+                    },
+                    curve,
+                )
                 .is_some()
         })
     })
@@ -1113,7 +1116,7 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
     if lenses.is_none() {
         eprintln!("measure lightroom: no lens database; the develop runs without lens corrections");
     }
-    let store = greycard_edit::look::store_dir();
+    let store = greycard_edit_io::looks::store_dir();
     if let Some(dir) = &opts.blocks {
         std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
     }

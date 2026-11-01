@@ -665,7 +665,7 @@ mod tests {
         assert!(!edit.noise.profiled_runs(), "the tier stands in for it");
         edit.noise.enabled = false;
         assert!(edit.noise.tier().is_none());
-        assert!(edit.settings().denoise.is_none());
+        assert!(edit.settings(&crate::NoStores).denoise.is_none());
 
         edit.vignette.amount = -1.0;
         assert!(!edit.vignette.is_off());
@@ -741,7 +741,10 @@ mod tests {
         // The engine is handed what was stored; it resolves at the
         // develop, so the stored choice is never rewritten by a read.
         let edit = Edit::default();
-        assert_eq!(edit.settings().demosaic, DemosaicMethod::AmazeVng4);
+        assert_eq!(
+            edit.settings(&crate::NoStores).demosaic,
+            DemosaicMethod::AmazeVng4
+        );
     }
 
     /// A Markesteijn name is written at schema 5 and read back; an

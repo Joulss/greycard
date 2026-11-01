@@ -1448,7 +1448,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // is drawn in its place while it stands.
                     let look_key = (edit.look_lut.clone(), edit.display_curve);
                     if st.develop.look_for.as_ref() != Some(&look_key) {
-                        st.develop.look = edit.look_lut.look_under(edit.display_curve);
+                        st.develop.look = edit
+                            .look_lut
+                            .look_under(&greycard_edit_io::Stores::user(), edit.display_curve);
                         st.develop.look_for = Some(look_key);
                     }
                     let look = crate::panel::look_preview::drawn(st, &app, &edit);
@@ -2718,6 +2720,7 @@ mod tests {
         let mut rendered = export::render(
             &image,
             &greycard_edit::Edit::default(),
+            &greycard_edit_io::Stores::user(),
             (w as u32, h as u32),
             &settings,
             &Default::default(),

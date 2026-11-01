@@ -277,7 +277,12 @@ pub(crate) fn white_profile(st: &mut State) -> Option<CameraProfile> {
         .is_none_or(|(had, _)| had != want)
     {
         let want = want.to_string();
-        let chosen = st.develop.edit.camera.profile().map(|p| p.camera.clone());
+        let chosen = st
+            .develop
+            .edit
+            .camera
+            .profile(&greycard_edit_io::Stores::user())
+            .map(|p| p.camera.clone());
         let embedded = st.develop.frame.as_ref().map(|(_, p)| (**p).clone());
         st.develop.white_profile = chosen.or(embedded).map(|p| (want, p));
         st.develop.white_cache = None;

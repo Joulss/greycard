@@ -638,7 +638,7 @@ pub fn stages(
         1
     };
     let mut s = Steps::default();
-    let settings = edit.settings();
+    let settings = edit.settings(&greycard_edit_io::Stores::user());
     match &facts.input {
         InputKind::Raw { pattern, .. } => {
             let tier = edit

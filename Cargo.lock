@@ -2044,6 +2044,8 @@ dependencies = [
 name = "greycard-edit-io"
 version = "0.9.1"
 dependencies = [
+ "blake3",
+ "dirs",
  "greycard-core",
  "greycard-edit",
  "log",

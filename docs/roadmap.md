@@ -617,11 +617,6 @@ touches.
       library once the worker's frame develop is the engine's (§471);
       explicit imports in place of the crate root's glob imports as
       each file moves
-- [ ] The profile and look stores out of greycard-edit: `settings()`
-      reads the camera profile and the look table through them, so a
-      loader handed in first, then the listing half to
-      greycard-edit-io (the split and the readers landed in §463;
-      sync stays, being data and conversion)
 - [ ] A one-page architecture document: each crate, what it may
       depend on, and which crate runs each pipeline stage, with the
       layer rule beside CLAUDE.md's core rule; §5 predates ai,

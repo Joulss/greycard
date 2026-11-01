@@ -179,7 +179,7 @@ pub fn settings(edit: &Edit, camera: greycard_core::raw::Orientation, turn: u8) 
     DevelopSettings {
         denoise: None,
         orientation: Some(camera.turned(i32::from(turn))),
-        ..edit.settings()
+        ..edit.settings(&greycard_edit_io::Stores::user())
     }
 }
 
@@ -388,7 +388,10 @@ pub fn develop(
 pub fn look_ready(edit: &Edit) -> Result<(), Why> {
     if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
         && edit.look_lut.strength > 0.0
-        && edit.look_lut.look_under(edit.display_curve).is_none()
+        && edit
+            .look_lut
+            .look_under(&greycard_edit_io::Stores::user(), edit.display_curve)
+            .is_none()
     {
         return Err(Why::Without(vec![format!("the look {name}")]));
     }
@@ -932,7 +935,10 @@ mod tests {
             s.orientation,
             Some(greycard_core::raw::Orientation::Rotate90)
         );
-        assert_eq!(s.demosaic, edit.settings().demosaic);
+        assert_eq!(
+            s.demosaic,
+            edit.settings(&greycard_edit_io::Stores::user()).demosaic
+        );
     }
 
     /// While editing, nothing begins until the window has been quiet
@@ -1216,7 +1222,7 @@ mod tests {
         // so its key names the lens database.
         let mut edit = Edit::default();
         edit.light.exposure = 1.0;
-        let wiped = edit.develop_key(Some("a lens database since wiped"));
+        let wiped = greycard_edit_io::key::develop_key(&edit, Some("a lens database since wiped"));
         let (frame, edited) = frame(&dir, "stale.png", &edit, Some(wiped));
         let key = edited.key_of(&edit);
         assert_ne!(key, wiped);

@@ -519,10 +519,14 @@ pub struct Rendered {
 /// `white` is the develop's white and the profile it was resolved
 /// through, which the masks' own white balances are made matrices
 /// from (`finish::Local::of`), as the viewport makes them.
+///
+/// `loader` reads the look's table the edit names, as the viewport's
+/// is read.
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     image: &WorkingImage,
     edit: &greycard_edit::Edit,
+    loader: &dyn greycard_edit::Loader,
     source: (u32, u32),
     settings: &Settings,
     learned: &std::collections::HashMap<(u64, usize), std::sync::Arc<Raster>>,
@@ -536,6 +540,7 @@ pub fn render(
         image,
         image.width as f32,
         edit,
+        loader,
         source,
         settings,
         learned,
@@ -561,6 +566,7 @@ pub fn render_framed(
     image: &WorkingImage,
     framed: f32,
     edit: &greycard_edit::Edit,
+    loader: &dyn greycard_edit::Loader,
     source: (u32, u32),
     settings: &Settings,
     learned: &std::collections::HashMap<(u64, usize), std::sync::Arc<Raster>>,
@@ -650,14 +656,14 @@ pub fn render_framed(
     };
     let m = settings.space.matrix();
     // The look table, read once for the whole image; the viewport is
-    // handed the same one (`edit::look` keeps it), so the two agree.
+    // handed the same one (the loader keeps it), so the two agree.
     // A look at no strength is no look, and skipping it here spares
     // the finish a branch a pixel.
     // A table fitted under another display curve is no look here, as
     // it is none in the viewport (`LookLut::look_under`).
     let look = edit
         .look_lut
-        .look_under(edit.display_curve)
+        .look_under(loader, edit.display_curve)
         .filter(|l| !l.is_off());
     // The plane is only read where a shift asks for it; the pixel's
     // own luminance is the same answer when none does, and skipping it
@@ -1133,6 +1139,7 @@ mod tests {
                 let rendered = render(
                     &image,
                     &edit,
+                    &greycard_edit::NoStores,
                     source,
                     &settings,
                     &Default::default(),
@@ -1193,6 +1200,7 @@ mod tests {
             let mut rendered = render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 (w as u32, h as u32),
                 &settings,
                 &Default::default(),
@@ -1295,6 +1303,7 @@ mod tests {
         let rendered = render(
             &image,
             &greycard_edit::Edit::default(),
+            &greycard_edit::NoStores,
             (w as u32, h as u32),
             &settings,
             &Default::default(),
@@ -1381,6 +1390,7 @@ mod tests {
             let rendered = render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 source,
                 &settings,
                 &Default::default(),
@@ -1468,6 +1478,7 @@ mod tests {
         let rendered = render(
             &image,
             &edit,
+            &greycard_edit::NoStores,
             source,
             &settings,
             &Default::default(),
@@ -1497,6 +1508,7 @@ mod tests {
             &render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 source,
                 &jpeg,
                 &Default::default(),
@@ -1553,6 +1565,7 @@ mod tests {
             let rendered = render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 source,
                 &settings,
                 &Default::default(),
@@ -1799,6 +1812,7 @@ mod tests {
             let rendered = render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 (w as u32, h as u32),
                 &settings,
                 &Default::default(),
@@ -1868,6 +1882,7 @@ mod tests {
             let mut r = render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 (w as u32, h as u32),
                 settings,
                 &Default::default(),
@@ -1953,6 +1968,7 @@ mod tests {
             let mut r = render(
                 &image,
                 &edit,
+                &greycard_edit::NoStores,
                 (w as u32, h as u32),
                 settings,
                 &Default::default(),

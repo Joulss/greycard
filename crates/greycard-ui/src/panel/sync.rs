@@ -258,7 +258,8 @@ pub(crate) struct Synced {
 /// since the learned tier is each file's own, so a preset click
 /// passes `None`.
 ///
-/// `profiles` is the profile directory as `camera::list` reads it:
+/// `profiles` is the profile directory as
+/// `greycard_edit_io::profiles::list` reads it:
 /// with Camera carried and a named profile on `preset`, each target
 /// is read for its body and a target the profile was not made for
 /// takes every other section and keeps its own profile.
@@ -760,7 +761,7 @@ fn shot_at(path: &Path, camera: &greycard_edit::camera::Camera) -> Option<TempTi
     let white = greycard_core::decode::white_path(path)
         .inspect_err(|e| tracing::warn!("{}: its as-shot white: {e}", file_name(path)))
         .ok()?;
-    let profile = match camera.profile() {
+    let profile = match camera.profile(&greycard_edit_io::Stores::user()) {
         Some(p) => p.camera.clone(),
         None => greycard_core::color::profile_from_calibrations(&white.calibrations).ok()?,
     };
@@ -813,7 +814,7 @@ fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
 /// directory are in hand: `panel::assets::on_preset_applied`'s own
 /// logic, pulled out here — as `sync_selection` already is — so a
 /// test can hand it fake bodies instead of going through
-/// `greycard_edit::camera::list` and a real file's metadata, which
+/// `greycard_edit_io::profiles::list` and a real file's metadata, which
 /// the Slint callback itself has no way to fake.
 ///
 /// The current frame takes the preset the way it always has (through
@@ -858,7 +859,7 @@ pub(crate) fn preset_pressed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>,
         "preset",
         Box::new(move |state, app, worker, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
-            let profiles = camera::list();
+            let profiles = greycard_edit_io::profiles::list();
             apply_preset_to(
                 &mut state.borrow_mut(),
                 app,
@@ -1585,7 +1586,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     "paste",
                     Box::new(move |state, app, worker, at| {
                         let chosen: Vec<usize> = at.into_iter().flatten().collect();
-                        let profiles = camera::list();
+                        let profiles = greycard_edit_io::profiles::list();
                         let start = std::time::Instant::now();
                         let synced = paste_onto(
                             &mut state.borrow_mut(),
@@ -1650,7 +1651,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         return;
                     };
                     let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
-                    let profiles = camera::list();
+                    let profiles = greycard_edit_io::profiles::list();
                     let start = std::time::Instant::now();
                     let mut st = state.borrow_mut();
                     let (synced, shift) = sync_onto(
@@ -3767,7 +3768,11 @@ mod tests {
     /// the develop and the export's finish, sixteen bits, RGB.
     fn card(path: &Path, edit: &Edit) -> [f64; 3] {
         let frame = greycard_core::decode::decode_path(path).unwrap();
-        let developed = greycard_core::develop::develop(&frame, &edit.settings()).unwrap();
+        let developed = greycard_core::develop::develop(
+            &frame,
+            &edit.settings(&greycard_edit_io::Stores::user()),
+        )
+        .unwrap();
         let image = developed.image;
         let settings = crate::export::Settings {
             format: crate::export::Format::Tiff,
@@ -3777,6 +3782,7 @@ mod tests {
         let rendered = crate::export::render(
             &image,
             edit,
+            &greycard_edit_io::Stores::user(),
             (image.width as u32, image.height as u32),
             &settings,
             &Default::default(),

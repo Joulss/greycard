@@ -462,8 +462,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .as_ref()
                 .map(|(f, _)| f.other_names.clone())
                 .unwrap_or_default();
-            st.develop.profiles = greycard_edit::camera::list();
-            st.develop.looks = greycard_edit::look::list();
+            st.develop.profiles = greycard_edit_io::profiles::list();
+            st.develop.looks = greycard_edit_io::looks::list();
             // Read on each open, so a look or a profile changed by hand
             // since is caught here too.
             crate::edited::looks_moved(&mut st);

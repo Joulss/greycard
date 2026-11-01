@@ -2093,7 +2093,10 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     // at the write (by its blend) has one too; a develop with no edit
     // to read gets the mark that says so.
     let develop_key = if p.current.is_some() {
-        Some(sidecar.develop_key(crate::lens_database().as_deref()))
+        Some(greycard_edit_io::key::develop_key(
+            &sidecar.current,
+            crate::lens_database().as_deref(),
+        ))
     } else if edited {
         Some(0)
     } else {
@@ -2112,7 +2115,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
                     .is_some_and(|c| !crate::is_default_edit(c, raw, None));
             VersionSummary {
                 develop_key: match &v.current {
-                    Some(c) => Some(c.develop_key(lenses.as_deref())),
+                    Some(c) => Some(greycard_edit_io::key::develop_key(c, lenses.as_deref())),
                     None => edited.then_some(0),
                 },
                 blend: v.current.as_ref().map(|c| c.noise.learned_strength),
@@ -5900,7 +5903,7 @@ pub(crate) mod tests {
             lib.index_folder(&dir, &mut quiet()).unwrap();
             assert_eq!(
                 key_of(&mut lib, &edited),
-                Some(brightened.develop_key(None) as i64),
+                Some(greycard_edit_io::key::develop_key(&brightened, None) as i64),
                 "the key is written with the row"
             );
             assert_eq!(key_of(&mut lib, &plain), None, "no sidecar, no key");
@@ -5923,7 +5926,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             key_of(&mut lib, &edited),
-            Some(brightened.develop_key(None) as i64)
+            Some(greycard_edit_io::key::develop_key(&brightened, None) as i64)
         );
         // Filled, the next pass reads nothing again.
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
@@ -5937,7 +5940,7 @@ pub(crate) mod tests {
         assert_eq!(report.meta_refreshed, 2, "{report:?}");
         assert_eq!(
             key_of(&mut lib, &edited),
-            Some(brightened.develop_key(Some("elsewhere 2026")) as i64)
+            Some(greycard_edit_io::key::develop_key(&brightened, Some("elsewhere 2026")) as i64)
         );
         drop(named);
         drop(lib);
@@ -6002,7 +6005,10 @@ pub(crate) mod tests {
         assert!(rows[0].edited, "a copy of an edit is edited");
         assert!(!rows[1].edited, "the defaults are not");
         assert!(!rows[0].exported && !rows[1].exported);
-        assert_eq!(rows[0].develop_key, Some(brightened.develop_key(None)));
+        assert_eq!(
+            rows[0].develop_key,
+            Some(greycard_edit_io::key::develop_key(&brightened, None))
+        );
         assert!(rows[1].develop_key.is_some(), "an edit to key");
         assert!(rows[0].made > 0);
         let entry = lib.by_path(&r5).unwrap().unwrap();

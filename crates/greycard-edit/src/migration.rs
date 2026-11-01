@@ -447,7 +447,7 @@ mod tests {
             "and the profiled pass is what it asked for"
         );
         assert_eq!(e.noise.strength, 2.0);
-        assert!(e.settings().denoise.is_some());
+        assert!(e.settings(&crate::NoStores).denoise.is_some());
         // Written back, it is version 2 and reads the same.
         let again = Edit::from_json(&e.to_json()).unwrap();
         assert_eq!(again, e);
@@ -455,7 +455,7 @@ mod tests {
         let new = r#"{"version": 2, "noise": {"enabled": false, "profiled": true}}"#;
         let e = Edit::from_json(new).unwrap();
         assert!(!e.noise.enabled && e.noise.profiled);
-        assert!(e.settings().denoise.is_none());
+        assert!(e.settings(&crate::NoStores).denoise.is_none());
     }
 
     #[test]

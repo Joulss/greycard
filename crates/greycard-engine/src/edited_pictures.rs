@@ -207,7 +207,7 @@ pub struct Edited {
     /// (`None`), or a test's.
     dirs: Mutex<Option<(PathBuf, PathBuf)>>,
     /// What the keys found so far were made under
-    /// (`greycard_edit::key::keys_made_under`): a look or a profile
+    /// (`greycard_edit_io::key::keys_made_under`): a look or a profile
     /// written, refitted, renamed or removed since moves it
     /// ([`Edited::files_moved`]).
     made_under: Mutex<String>,
@@ -367,12 +367,12 @@ impl Edited {
     fn under_now(&self) -> String {
         let lenses = self.lenses();
         match &*self.dirs.lock().expect("key dirs") {
-            Some((looks, profiles)) => greycard_edit::key::keys_made_under_in(
+            Some((looks, profiles)) => greycard_edit_io::key::keys_made_under_in(
                 Some(looks),
                 Some(profiles),
                 lenses.as_deref(),
             ),
-            None => greycard_edit::key::keys_made_under(lenses.as_deref()),
+            None => greycard_edit_io::key::keys_made_under(lenses.as_deref()),
         }
     }
 
@@ -412,10 +412,13 @@ impl Edited {
     pub fn key_of(&self, edit: &Edit) -> u64 {
         let lenses = self.lenses();
         match &*self.dirs.lock().expect("key dirs") {
-            Some((looks, profiles)) => {
-                edit.develop_key_in(Some(looks), Some(profiles), lenses.as_deref())
-            }
-            None => edit.develop_key(lenses.as_deref()),
+            Some((looks, profiles)) => greycard_edit_io::key::develop_key_in(
+                edit,
+                Some(looks),
+                Some(profiles),
+                lenses.as_deref(),
+            ),
+            None => greycard_edit_io::key::develop_key(edit, lenses.as_deref()),
         }
     }
 
@@ -1015,6 +1018,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
         image,
         frame_width,
         edit,
+        &greycard_edit_io::Stores::user(),
         finish.source,
         &settings,
         &finish.rasters,

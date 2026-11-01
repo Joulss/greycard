@@ -1272,7 +1272,7 @@ impl Shown {
                     && let Some(state) = STATE.with(|s| s.borrow().clone())
                 {
                     let mut st = state.borrow_mut();
-                    st.develop.looks = greycard_edit::look::list();
+                    st.develop.looks = greycard_edit_io::looks::list();
                     if let Some(first) = st.develop.looks.first().map(|e| e.name.clone()) {
                         app.set_look_name(first.into());
                     }
@@ -3183,8 +3183,11 @@ mod tests {
         // The white patch's middle as the edit on the panel develops it.
         let patch = |app: &App| {
             let edit = read_edit(app, &state.borrow().develop.edit, None);
-            let developed = greycard_core::develop::develop(&frame, &edit.settings())
-                .expect("the patch develops");
+            let developed = greycard_core::develop::develop(
+                &frame,
+                &edit.settings(&greycard_edit_io::Stores::user()),
+            )
+            .expect("the patch develops");
             developed.image.pixel(16, 16)
         };
         let neutral = patch(&app);

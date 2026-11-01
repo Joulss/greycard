@@ -575,14 +575,14 @@ fn develop_learned(
 /// says so in the log, a profile asked for outright and not found is an
 /// error: the picture would not be the one that was asked for.
 fn chosen_profile(name: &str) -> Result<Option<std::sync::Arc<greycard_core::Profile>>> {
-    use greycard_edit::camera::{self, ProfileChoice};
+    use greycard_edit::camera::ProfileChoice;
     let ProfileChoice::Named(name) = ProfileChoice::from_name(name) else {
         return Ok(None);
     };
     let path = if name.contains(['/', '\\']) || name.to_lowercase().ends_with(".dcp") {
         PathBuf::from(&name)
     } else {
-        camera::path_for(&name)
+        greycard_edit_io::profiles::path_for(&name)
             .with_context(|| format!("finding the profile directory for {name:?}"))?
     };
     let dcp = greycard_core::Dcp::load(&path)

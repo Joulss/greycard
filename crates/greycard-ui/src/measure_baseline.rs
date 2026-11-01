@@ -706,7 +706,7 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
     if lenses.is_none() {
         eprintln!("measure baseline: no lens database; the develop runs without lens corrections");
     }
-    let store = greycard_edit::look::store_dir().filter(|d| d.is_dir());
+    let store = greycard_edit_io::looks::store_dir().filter(|d| d.is_dir());
     std::fs::create_dir_all(&opts.out)?;
     let mut jsonl = std::fs::File::create(opts.out.join("frames.jsonl"))?;
     let todo: Vec<&Candidate> = chosen.iter().flat_map(|(_, s)| s).collect();

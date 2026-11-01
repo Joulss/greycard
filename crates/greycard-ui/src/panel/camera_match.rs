@@ -459,7 +459,7 @@ fn show(st: &State, app: &App) {
     app.set_match_summary(summary_line.into());
     match (&sheet.survey, sheet.groups()) {
         (Some(_), Some(groups)) => {
-            let existing = greycard_edit::look::store_dir()
+            let existing = greycard_edit_io::looks::store_dir()
                 .map(|d| fit::existing_in(&d))
                 .unwrap_or_default();
             let chosen = sheet.chosen(&groups);
@@ -632,7 +632,7 @@ fn start_run(st: &mut State, app: &App) {
     if st.camera_match.cancel.is_some() || groups.is_empty() {
         return;
     }
-    let Some(store) = greycard_edit::look::store_dir() else {
+    let Some(store) = greycard_edit_io::looks::store_dir() else {
         app.set_match_progress("There is no look directory on this machine.".into());
         app.set_match_fraction(-1.0);
         return;
@@ -780,7 +780,7 @@ fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
             // The new tables in the picker, and the look resolved
             // again: a refit replaces the table in place, and the
             // picture that asked for it now takes it.
-            st.develop.looks = greycard_edit::look::list();
+            st.develop.looks = greycard_edit_io::looks::list();
             st.develop.look_for = None;
             show_looks(st, &st.develop.edit.look_lut, app);
             // The frames not open that use a table it wrote show it

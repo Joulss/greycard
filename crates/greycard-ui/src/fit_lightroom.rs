@@ -256,12 +256,12 @@ fn load(dirs: &[PathBuf], store: Option<&Path>) -> Result<(Vec<Frame>, usize)> {
                     .entry((name.clone(), curve.key()))
                     .or_insert_with(|| {
                         let store = store?;
-                        LookLut {
+                        let look = LookLut {
                             lut: LutChoice::Named(name.clone()),
                             strength: 1.0,
-                        }
-                        .look_under_in(store, curve)
-                        .filter(|l| !l.is_off())
+                        };
+                        greycard_edit_io::looks::look_under_in(store, &look, curve)
+                            .filter(|l| !l.is_off())
                     })
                     .clone()
             });
@@ -846,7 +846,7 @@ fn scales_map(s: &Scales) -> BTreeMap<String, f32> {
 
 pub(crate) fn run(opts: &Options) -> Result<Report> {
     let start = Instant::now();
-    let store = greycard_edit::look::store_dir();
+    let store = greycard_edit_io::looks::store_dir();
     let (frames, name_pairs) = load(&opts.dirs, store.as_deref())?;
     anyhow::ensure!(
         !frames.is_empty(),

@@ -44,6 +44,7 @@ pub mod xmp;
 mod edit;
 mod frames;
 mod line;
+mod loader;
 mod migration;
 mod sections;
 mod sidecar;
@@ -74,6 +75,7 @@ pub use frames::{
     apply_preset_into, apply_preset_to_line, meta_into, sync_into, sync_learned, turn_into,
 };
 pub use line::{Exported, HISTORY, Line, Row, Snapshot, Step};
+pub use loader::{Loader, NoStores};
 pub use migration::migrate;
 pub use sections::{
     Demosaic, Detail, DisplayCurve, Learned, Light, Noise, Sharpen, Tone, WhiteBalance,

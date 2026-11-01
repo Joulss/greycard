@@ -1878,7 +1878,7 @@ mod tests {
         assert_eq!(sanitize("  "), "Camera look");
         assert_eq!(sanitize("a..b"), "a.b");
         let name = look_name("Canon EOS R5", "Canon", "Canon Unknown (0x87)");
-        assert!(greycard_edit::look::path_for(&name).is_some(), "{name}");
+        assert!(greycard_edit_io::looks::path_for(&name).is_some(), "{name}");
     }
 
     #[test]

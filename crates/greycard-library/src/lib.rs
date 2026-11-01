@@ -2420,7 +2420,7 @@ impl Library {
     }
 
     /// The develop keys in the rows against what keys are made under
-    /// now ([`greycard_edit::key::keys_made_under`], with the lens
+    /// now ([`greycard_edit_io::key::keys_made_under`], with the lens
     /// database as [`set_lens_database`] last named it): when the
     /// index's were made under something else (the recipe raised, the
     /// lens database fetched or its cache wiped, a look refitted while
@@ -2429,7 +2429,7 @@ impl Library {
     /// kept. `Some` with how many were cleared when they were; `None`
     /// when they stand.
     pub fn settle_develop_keys(&mut self) -> Result<Option<usize>> {
-        let under = greycard_edit::key::keys_made_under(lens_database().as_deref());
+        let under = greycard_edit_io::key::keys_made_under(lens_database().as_deref());
         self.settle_develop_keys_under(&under)
     }
 

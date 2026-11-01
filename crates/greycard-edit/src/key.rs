@@ -14,7 +14,9 @@
 //! match's fitted tables among them, and its variant for the edit's
 //! display curve) and a DCP camera profile; and, when the edit corrects
 //! the lens by its profile, the caller's name for the lens database it
-//! has (this crate does not know the database). A refit of a look
+//! has (this crate does not know the database). The files are read by
+//! the caller and handed in as [`Read`]s: greycard-edit-io's `key`
+//! reads them from the user's directories. A refit of a look
 //! changes the key of every frame that uses it and of no other, and a
 //! database fetched or updated changes the key of every frame whose
 //! lens it may correct.
@@ -31,14 +33,8 @@
 //! the key, and an undo and a redo back to the same edit give the key
 //! they gave before.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
-use std::time::SystemTime;
-
-use crate::look::LutChoice;
+use crate::Edit;
 use crate::mask::{LandscapeGroup, Shape};
-use crate::{Edit, Sidecar};
 
 /// The pipeline's own part of the key: raise it when the develop or
 /// the finish comes to make a different picture from the same edit (a
@@ -99,78 +95,24 @@ pub fn mask_pipelines(shape: &Shape) -> &'static [&'static str] {
     }
 }
 
-/// What the develop of `edit` reads outside the sidecar, with the
-/// directories it reads them from: the look directory and the profile
-/// directory. `None` for a directory there is none of.
-fn files_read(edit: &Edit, looks: Option<&Path>, profiles: Option<&Path>) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    if let (LutChoice::Named(name), Some(dir)) = (&edit.look_lut.lut, looks) {
-        // The look's own table, whichever extension is there, and its
-        // variant for the edit's display curve: `look_under` reads the
-        // variant when it declares the curve and the own table
-        // otherwise, so a change to either may change the picture.
-        files.extend(crate::look::tables_in(dir, name, edit.display_curve));
-    }
-    if let (crate::camera::ProfileChoice::Named(name), Some(dir)) = (&edit.camera.profile, profiles)
-    {
-        files.push(dir.join(format!("{name}.{}", crate::camera::EXTENSION)));
-    }
-    files
-}
-
-/// A file's contents as the key takes them: BLAKE3 of the whole file,
-/// kept by its path, length and modification time so a table read
-/// once is not hashed again for every frame that names it. A file
-/// written in the last two seconds is read again whatever the cache
-/// holds: a refit of the same length landing within one tick of the
-/// filesystem's time (coarse on Windows) would otherwise keep the old
-/// hash. `None` for a file that is not there or will not read.
-fn contents(path: &Path) -> Option<[u8; 32]> {
-    type Seen = HashMap<PathBuf, (u64, Option<SystemTime>, [u8; 32])>;
-    static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-    let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
-    let stat = (meta.len(), meta.modified().ok());
-    let settled = stat
-        .1
-        .and_then(|t| SystemTime::now().duration_since(t).ok())
-        .is_some_and(|age| age >= std::time::Duration::from_secs(2));
-    if settled
-        && let Some(&(len, time, hash)) = SEEN.lock().ok()?.get(path)
-        && (len, time) == stat
-    {
-        return Some(hash);
-    }
-    let bytes = std::fs::read(path).ok()?;
-    let hash = *blake3::hash(&bytes).as_bytes();
-    if let Ok(mut seen) = SEEN.lock() {
-        seen.insert(path.to_path_buf(), (stat.0, stat.1, hash));
-    }
-    Some(hash)
+/// A file the develop of an edit reads outside the sidecar, as the key
+/// takes it: its file name, and BLAKE3 of its contents, `None` for a
+/// file that is not there or will not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Read {
+    pub name: String,
+    pub contents: Option<[u8; 32]>,
 }
 
 impl Edit {
-    /// The key of the picture this edit makes, with the look and the
-    /// profile read from the user's directories. `lenses` names the lens
-    /// database the caller develops with (where it was found and when it
-    /// was made), `None` for none; it is in the key only while the edit
+    /// The key of the picture this edit makes, with `read` the files
+    /// its develop reads by name (greycard-edit-io's `key` reads them
+    /// from the user's directories). `lenses` names the lens database
+    /// the caller develops with (where it was found and when it was
+    /// made), `None` for none; it is in the key only while the edit
     /// corrects the lens by its profile. See the module.
-    pub fn develop_key(&self, lenses: Option<&str>) -> u64 {
-        self.develop_key_in(
-            crate::look::store_dir().as_deref(),
-            crate::camera::store_dir().as_deref(),
-            lenses,
-        )
-    }
-
-    /// [`Edit::develop_key`] with the look and profile directories
-    /// named: for the tests.
-    pub fn develop_key_in(
-        &self,
-        looks: Option<&Path>,
-        profiles: Option<&Path>,
-        lenses: Option<&str>,
-    ) -> u64 {
-        self.develop_key_by(looks, profiles, lenses, |shape| {
+    pub fn develop_key_with(&self, read: &[Read], lenses: Option<&str>) -> u64 {
+        self.develop_key_by(read, lenses, |shape| {
             mask_pipelines(shape)
                 .iter()
                 .map(|v| v.to_string())
@@ -178,12 +120,11 @@ impl Edit {
         })
     }
 
-    /// [`Edit::develop_key_in`] with the masks' stages as `pipelines`
-    /// names them: for the tests, which raise one.
+    /// [`Edit::develop_key_with`] with the masks' stages as
+    /// `pipelines` names them: for the tests, which raise one.
     fn develop_key_by(
         &self,
-        looks: Option<&Path>,
-        profiles: Option<&Path>,
+        read: &[Read],
         lenses: Option<&str>,
         pipelines: impl Fn(&Shape) -> Vec<String>,
     ) -> u64 {
@@ -219,15 +160,13 @@ impl Edit {
             hasher.update(&(stage.len() as u64).to_le_bytes());
             hasher.update(stage.as_bytes());
         }
-        for path in files_read(self, looks, profiles) {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            let name = name.unwrap_or_default();
+        for Read { name, contents } in read {
             hasher.update(&(name.len() as u64).to_le_bytes());
             hasher.update(name.as_bytes());
-            match contents(&path) {
+            match contents {
                 Some(hash) => {
                     hasher.update(&[1]);
-                    hasher.update(&hash);
+                    hasher.update(hash);
                 }
                 None => {
                     hasher.update(&[0]);
@@ -247,150 +186,70 @@ impl Edit {
     }
 }
 
-impl Sidecar {
-    /// The key of the picture the current edit makes of this frame: see
-    /// [`Edit::develop_key`].
-    pub fn develop_key(&self, lenses: Option<&str>) -> u64 {
-        self.current.develop_key(lenses)
-    }
-}
-
-/// What every develop key made now is made under, beside each edit's
-/// own: [`DEVELOP_RECIPE`], the learned masks' stages, the lens
-/// database's name as the caller gives
-/// it, and the look and profile directories as they stand (each file's
-/// name, length and modification time; not their contents, which only
-/// the files an edit names are read for). A store of keys made under
-/// another (the index's) holds keys that may no longer be the edits'
-/// own: a recipe or a mask's stages raised, a lens database fetched or wiped with its
-/// cache, a look refitted or a profile replaced.
-pub fn keys_made_under(lenses: Option<&str>) -> String {
-    keys_made_under_in(
-        crate::look::store_dir().as_deref(),
-        crate::camera::store_dir().as_deref(),
-        lenses,
-    )
-}
-
-/// [`keys_made_under`] with the directories named: for the tests.
-pub fn keys_made_under_in(
-    looks: Option<&Path>,
-    profiles: Option<&Path>,
-    lenses: Option<&str>,
-) -> String {
-    let mut hasher = blake3::Hasher::new();
-    for dir in [looks, profiles] {
-        hasher.update(b"\0dir\0");
-        let Some(dir) = dir else {
-            continue;
-        };
-        let mut files: Vec<(String, u64, u128)> = std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| {
-                let meta = e.metadata().ok().filter(|m| m.is_file())?;
-                let when = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                    .map_or(0, |d| d.as_nanos());
-                Some((
-                    e.file_name().to_string_lossy().into_owned(),
-                    meta.len(),
-                    when,
-                ))
-            })
-            .collect();
-        files.sort();
-        for (name, len, when) in files {
-            hasher.update(&(name.len() as u64).to_le_bytes());
-            hasher.update(name.as_bytes());
-            hasher.update(&len.to_le_bytes());
-            hasher.update(&when.to_le_bytes());
-        }
-    }
-    let files = hasher.finalize();
-    format!(
-        "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
-         {PERSON_EDGE}; lenses {lenses:?}; files {}",
-        &files.to_hex()[..16]
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::look::LookLut;
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "greycard-key-{name}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use crate::Sidecar;
 
     fn key(edit: &Edit, lenses: Option<&str>) -> u64 {
-        edit.develop_key_in(None, None, lenses)
+        edit.develop_key_with(&[], lenses)
     }
 
     #[test]
     fn an_undo_and_a_redo_back_to_the_same_picture_give_the_same_key() {
         let mut sidecar = Sidecar::default();
-        let before = sidecar.develop_key(None);
+        let before = key(&sidecar.current, None);
         let first = sidecar.current.clone();
         sidecar.current.light.exposure += 1.0;
-        let brightened = sidecar.develop_key(None);
+        let brightened = key(&sidecar.current, None);
         assert_ne!(before, brightened, "a brightening is another picture");
         // Undo: the edit as it was, from the history's copy.
         sidecar.current = first.clone();
-        assert_eq!(sidecar.develop_key(None), before);
+        assert_eq!(key(&sidecar.current, None), before);
         // Redo, by setting the same value again rather than by a copy.
         sidecar.current.light.exposure += 1.0;
-        assert_eq!(sidecar.develop_key(None), brightened);
+        assert_eq!(key(&sidecar.current, None), brightened);
         // Through the sidecar's own file and back.
         let json = serde_json::to_string(&sidecar).unwrap();
         let read: Sidecar = serde_json::from_str(&json).unwrap();
-        assert_eq!(read.develop_key(None), brightened);
+        assert_eq!(key(&read.current, None), brightened);
     }
 
     #[test]
     fn a_rating_a_name_and_the_turn_change_no_key_and_the_crop_does() {
         let mut sidecar = Sidecar::default();
         sidecar.current.light.exposure = 0.7;
-        let k = sidecar.develop_key(None);
+        let k = key(&sidecar.current, None);
         sidecar.meta.rating = 4;
         sidecar.meta.keywords.push("kept".into());
-        assert_eq!(sidecar.develop_key(None), k, "a rating is not the picture");
+        assert_eq!(
+            key(&sidecar.current, None),
+            k,
+            "a rating is not the picture"
+        );
         sidecar.current.version = 1;
-        assert_eq!(sidecar.develop_key(None), k, "nor is the schema version");
+        assert_eq!(key(&sidecar.current, None), k, "nor is the schema version");
         sidecar.current.adjustments.push(crate::Adjustment {
             id: 3,
             name: "Sky".into(),
             ..Default::default()
         });
-        let with = sidecar.develop_key(None);
+        let with = key(&sidecar.current, None);
         sidecar.current.adjustments[0].name = "The sky".into();
         assert_eq!(
-            sidecar.develop_key(None),
+            key(&sidecar.current, None),
             with,
             "a mask's name is not the picture"
         );
         sidecar.current.adjustments[0].enabled = false;
-        assert_ne!(sidecar.develop_key(None), with);
+        assert_ne!(key(&sidecar.current, None), with);
         sidecar.current.adjustments.clear();
-        assert_eq!(sidecar.develop_key(None), k);
+        assert_eq!(key(&sidecar.current, None), k);
 
         // The frame's turn is not the picture kept: that is the camera's
         // way up, and turned at draw time.
         sidecar.turn = 1;
-        assert_eq!(sidecar.develop_key(None), k, "the frame's turn is not");
+        assert_eq!(key(&sidecar.current, None), k, "the frame's turn is not");
         sidecar.turn = 0;
         sidecar.current.geometry.crop = Some(crate::geometry::Crop {
             x: 0.1,
@@ -398,7 +257,7 @@ mod tests {
             w: 0.9,
             h: 1.0,
         });
-        assert_ne!(sidecar.develop_key(None), k, "the crop is");
+        assert_ne!(key(&sidecar.current, None), k, "the crop is");
     }
 
     /// The lens database is in the key while the edit corrects the lens
@@ -457,55 +316,6 @@ mod tests {
         assert_eq!(key(&edit, None), on, "and back on, the same picture");
     }
 
-    #[test]
-    fn a_look_s_table_and_a_profile_are_in_the_key_by_their_contents() {
-        let dir = scratch("files");
-        let (looks, profiles) = (dir.join("looks"), dir.join("profiles"));
-        std::fs::create_dir_all(&looks).unwrap();
-        std::fs::create_dir_all(&profiles).unwrap();
-        let mut edit = Edit::default();
-        let plain = edit.develop_key_in(Some(&looks), Some(&profiles), None);
-        edit.look_lut = LookLut {
-            lut: LutChoice::Named("Fitted".into()),
-            strength: 1.0,
-        };
-        let missing = edit.develop_key_in(Some(&looks), Some(&profiles), None);
-        assert_ne!(plain, missing, "the name is in the edit");
-        let table = looks.join("Fitted.cube");
-        std::fs::write(&table, "LUT_3D_SIZE 2\n0 0 0\n").unwrap();
-        let fitted = edit.develop_key_in(Some(&looks), Some(&profiles), None);
-        assert_ne!(fitted, missing, "a table there is not a table missing");
-        assert_eq!(
-            edit.develop_key_in(Some(&looks), Some(&profiles), None),
-            fitted
-        );
-        // A refit: other contents, and the length moved too, so the
-        // kept hash is not taken.
-        std::fs::write(&table, "LUT_3D_SIZE 2\n0 0 0.5\n").unwrap();
-        let refit = edit.develop_key_in(Some(&looks), Some(&profiles), None);
-        assert_ne!(refit, fitted, "a refit is another picture");
-        // The variant for another curve is read when the edit is under
-        // that curve, and only then.
-        assert_eq!(edit.display_curve, crate::DisplayCurve::Channels);
-        std::fs::write(looks.join("Fitted.agx.cube"), "LUT_3D_SIZE 2\n1 1 1\n").unwrap();
-        assert_eq!(
-            edit.develop_key_in(Some(&looks), Some(&profiles), None),
-            refit
-        );
-
-        edit.camera.profile = crate::camera::ProfileChoice::Named("Body".into());
-        let without = edit.develop_key_in(Some(&looks), Some(&profiles), None);
-        std::fs::write(profiles.join("Body.dcp"), b"one").unwrap();
-        let with = edit.develop_key_in(Some(&looks), Some(&profiles), None);
-        assert_ne!(with, without);
-        std::fs::write(profiles.join("Body.dcp"), b"two").unwrap();
-        assert_ne!(
-            edit.develop_key_in(Some(&looks), Some(&profiles), None),
-            with
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
     /// A learned mask's stages raised changes the key of an edit with
     /// such a mask and of no other: a Sky's and a Foliage's when the
     /// sky's stages move, a Water's not.
@@ -530,8 +340,8 @@ mod tests {
         };
         let both = |edit: &Edit| {
             (
-                edit.develop_key_in(None, None, None),
-                edit.develop_key_by(None, None, None, raised),
+                edit.develop_key_with(&[], None),
+                edit.develop_key_by(&[], None, raised),
             )
         };
         let (a, b) = both(&with(Shape::Sky { picks: Vec::new() }));
@@ -549,47 +359,8 @@ mod tests {
         // And the stages are in the key at all: a Sky's key is not the
         // one it would have with no stages.
         assert_ne!(
-            with(Shape::Sky { picks: Vec::new() }).develop_key_in(None, None, None),
-            with(Shape::Sky { picks: Vec::new() }).develop_key_by(None, None, None, |_| Vec::new()),
+            with(Shape::Sky { picks: Vec::new() }).develop_key_with(&[], None),
+            with(Shape::Sky { picks: Vec::new() }).develop_key_by(&[], None, |_| Vec::new()),
         );
-    }
-
-    /// What a store of keys was made under moves with a refit of any
-    /// look (its length, or its time alone), with the lens database's
-    /// name (a fetch, or the cache it lives in wiped), and names the
-    /// recipe, so a raise of it is another; and it stands while nothing
-    /// moves.
-    #[test]
-    fn what_the_keys_are_made_under_moves_with_a_refit_the_lenses_and_the_recipe() {
-        let dir = scratch("made-under");
-        let (looks, profiles) = (dir.join("looks"), dir.join("profiles"));
-        std::fs::create_dir_all(&looks).unwrap();
-        std::fs::create_dir_all(&profiles).unwrap();
-        let table = looks.join("Fitted.cube");
-        std::fs::write(&table, "LUT_3D_SIZE 2\n").unwrap();
-        let under = |lenses| keys_made_under_in(Some(&looks), Some(&profiles), lenses);
-        let first = under(Some("lensfun 1"));
-        assert!(
-            first.starts_with(&format!("recipe {DEVELOP_RECIPE};")),
-            "{first}"
-        );
-        assert_eq!(under(Some("lensfun 1")), first, "nothing moved");
-        assert_ne!(under(None), first, "the lens database's cache wiped");
-        assert_ne!(under(Some("lensfun 2")), first, "another database");
-        // A refit of the same length: its time alone moves.
-        let file = std::fs::File::options().write(true).open(&table).unwrap();
-        file.set_modified(SystemTime::now() + std::time::Duration::from_secs(5))
-            .unwrap();
-        drop(file);
-        let refit = under(Some("lensfun 1"));
-        assert_ne!(refit, first, "a refit");
-        std::fs::write(profiles.join("Body.dcp"), b"one").unwrap();
-        assert_ne!(under(Some("lensfun 1")), refit, "a profile added");
-        assert_ne!(
-            keys_made_under_in(None, None, None),
-            keys_made_under_in(Some(&looks), None, None),
-            "a directory that is there with a file in it is not none"
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

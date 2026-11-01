@@ -3541,6 +3541,7 @@ fn display(
     let rendered = greycard_render::export::render(
         image,
         &edit,
+        &greycard_edit_io::Stores::user(),
         source,
         &settings,
         &HashMap::new(),

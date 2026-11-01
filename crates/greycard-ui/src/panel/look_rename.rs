@@ -1315,7 +1315,7 @@ fn settle(st: &mut State, app: &App) {
             "rename look: {status} ({:.2} s in all)",
             r.started.elapsed().as_secs_f64()
         );
-        look::forget();
+        greycard_edit_io::looks::forget();
         st.develop.looks = list_in(store());
         st.develop.look_for = None;
         show_looks(st, &st.develop.edit.look_lut, app);
@@ -1698,10 +1698,15 @@ mod tests {
         let every_look_is_there = || {
             for f in &frames {
                 let s = Sidecar::load(f).unwrap().unwrap();
-                assert!(s.current.look_lut.is_there_in(&store), "{}", f.display());
+                assert!(
+                    greycard_edit_io::looks::is_there_in(&store, &s.current.look_lut),
+                    "{}",
+                    f.display()
+                );
                 for curve in DisplayCurve::ALL {
                     assert!(
-                        s.current.look_lut.look_under_in(&store, curve).is_some(),
+                        greycard_edit_io::looks::look_under_in(&store, &s.current.look_lut, curve)
+                            .is_some(),
                         "{} under {curve:?}",
                         f.display()
                     );
@@ -1731,7 +1736,10 @@ mod tests {
         }
         assert!(unlink_old(&pairs).is_empty());
         every_look_is_there();
-        assert!(!named("Neon").is_there_in(&store));
+        assert!(!greycard_edit_io::looks::is_there_in(
+            &store,
+            &named("Neon")
+        ));
         crate::testing::remove_dir_retry(&dir);
     }
 

@@ -566,7 +566,7 @@ pub(super) fn base_settings(edit: &Edit, input: &Input, turn: u8) -> DevelopSett
             Input::Raw(f) => Some(f.orientation.turned(i32::from(turn))),
             Input::Picture { .. } => None,
         },
-        ..edit.settings()
+        ..edit.settings(&greycard_edit_io::Stores::user())
     }
 }
 

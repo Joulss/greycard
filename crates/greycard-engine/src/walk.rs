@@ -1678,7 +1678,7 @@ mod tests {
 
         let settings = DevelopSettings {
             orientation: Some(raw.orientation),
-            ..edit.settings()
+            ..edit.settings(&greycard_edit_io::Stores::user())
         };
         let prepared = prepare_with(&raw, &settings, false, None).unwrap();
         let radius = prepared.sharpen_radius;

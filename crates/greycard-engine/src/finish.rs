@@ -80,6 +80,7 @@ pub fn render(
     export::render(
         picture,
         edit,
+        &greycard_edit_io::Stores::user(),
         input.source,
         settings,
         &input.rasters,

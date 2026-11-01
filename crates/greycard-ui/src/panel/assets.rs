@@ -666,7 +666,7 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     app.set_camera_profile(chosen.into());
     app.set_camera_profile_note(
         match (st.develop.profiles.len(), hidden) {
-            (0, _) => match greycard_edit::camera::store_dir() {
+            (0, _) => match greycard_edit_io::profiles::store_dir() {
                 Some(dir) => format!("No profiles yet: put DCP files in {}.", dir.display()),
                 None => "No profile directory on this machine.".to_string(),
             },
@@ -794,7 +794,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
         // What the chosen table is: its kind, its size, and what it
         // says it was made in when that is not the usual sRGB.
         Some(entry) => entry.described(),
-        None if st.develop.looks.is_empty() => match greycard_edit::look::store_dir() {
+        None if st.develop.looks.is_empty() => match greycard_edit_io::looks::store_dir() {
             Some(dir) => format!(
                 "No looks yet. Add .cube or HaldCLUT .png files to {}.",
                 dir.display()
@@ -981,7 +981,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
-            st.develop.profiles = greycard_edit::camera::list();
+            st.develop.profiles = greycard_edit_io::profiles::list();
             show_profiles(&st, &st.develop.edit.camera.profile, &app);
             // A profile put there by hand is the edits' that name it.
             crate::edited::looks_moved(&mut st);
@@ -1004,9 +1004,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // The LOOK section opened: read the directory again, as the
     // profile directory's is read, and ask for the chosen table
     // again, so a file replaced in place is picked up. Asking is
-    // cheap: `look::load` hands back the same table unless its size
-    // or its clock moved, and the renderer re-uploads nothing for a
-    // table it already holds.
+    // cheap: `greycard_edit_io::looks::load` hands back the same table
+    // unless its size or its clock moved, and the renderer re-uploads
+    // nothing for a table it already holds.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_looks_wanted(move || {
@@ -1014,7 +1014,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
-            st.develop.looks = greycard_edit::look::list();
+            st.develop.looks = greycard_edit_io::looks::list();
             st.develop.look_for = None;
             show_looks(&st, &st.develop.edit.look_lut, &app);
             // A table put there or replaced by hand is the edits' that
@@ -1117,7 +1117,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // the edit, one brought in from a file, one removed. What a click
     // does is `sync::apply_preset`, so a test can drive the same
     // logic with fake bodies; this closure just resolves the preset
-    // and the profile directory `camera::list` reads for real.
+    // and the profile directory `greycard_edit_io::profiles::list`
+    // reads for real.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_preset_applied(move |i| {

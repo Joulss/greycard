@@ -8,8 +8,8 @@ use greycard_core::develop::denoise::{DenoiseOptions, Strength};
 
 use crate::{
     BlackWhite, Camera, Color, Curves, Demosaic, Detail, DisplayCurve, Geometry, Grading, Lens,
-    Light, LocalWhite, LookLut, Mask, Mixer, Noise, Result, Sharpen, Tint, VERSION, WhiteBalance,
-    grain, mask, migrate, retouch, vignette,
+    Light, Loader, LocalWhite, LookLut, Mask, Mixer, Noise, Result, Sharpen, Tint, VERSION,
+    WhiteBalance, grain, mask, migrate, retouch, vignette,
 };
 
 /// A development, described.
@@ -287,15 +287,16 @@ impl Default for Edit {
 }
 
 impl Edit {
-    /// The engine's settings for this edit. Exposure and the tone curve
-    /// are not the engine's; see [`Light`].
-    pub fn settings(&self) -> DevelopSettings {
+    /// The engine's settings for this edit, with the camera profile it
+    /// names read through `loader`. Exposure and the tone curve are not
+    /// the engine's; see [`Light`].
+    pub fn settings(&self, loader: &dyn Loader) -> DevelopSettings {
         DevelopSettings {
             white_point: self.white_balance.white_point(),
             // Read here, where every consumer's develop passes, so the
             // viewport and the export cannot disagree about it. The
-            // file is read once and kept (see [`camera`]).
-            profile: self.camera.profile(),
+            // loader reads the file once and keeps it (see [`camera`]).
+            profile: self.camera.profile(loader),
             demosaic: self.demosaic.method(),
             denoise: self.noise.profiled_runs().then(|| DenoiseOptions {
                 strength: Strength::Fixed(self.noise.strength),
@@ -719,14 +720,17 @@ mod tests {
     #[test]
     fn settings_follow_the_edit() {
         let mut edit = Edit::default();
-        assert!(edit.settings().denoise.is_none());
-        assert!(matches!(edit.settings().white_point, WhitePoint::AsShot));
+        assert!(edit.settings(&crate::NoStores).denoise.is_none());
+        assert!(matches!(
+            edit.settings(&crate::NoStores).white_point,
+            WhitePoint::AsShot
+        ));
         edit.noise.profiled = true;
         edit.white_balance = WhiteBalance::Custom {
             temperature: 5000.0,
             tint: 0.0,
         };
-        let s = edit.settings();
+        let s = edit.settings(&crate::NoStores);
         assert!(
             matches!(s.denoise, Some(DenoiseOptions { strength: Strength::Fixed(v), .. }) if v == 1.5)
         );
@@ -742,7 +746,10 @@ mod tests {
         assert!(!edit.same_develop(&other));
         // The engine's settings stop before the dehaze, which is a
         // stage of its own after the lens.
-        assert_eq!(edit.settings(), other.settings());
+        assert_eq!(
+            edit.settings(&crate::NoStores),
+            other.settings(&crate::NoStores)
+        );
         assert!(edit.detail.dehaze_options().is_none());
         assert_eq!(
             other.detail.dehaze_options(),

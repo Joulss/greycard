@@ -914,7 +914,7 @@ pub(crate) fn headless(opts: Options, preset: Option<&str>) -> Result<std::proce
         destination: import::resolve(&opts.destination),
         backup: opts.backup.as_deref().map(import::resolve),
         preset,
-        profiles: greycard_edit::camera::list(),
+        profiles: greycard_edit_io::profiles::list(),
         ..opts
     };
     // Checked before anything is made: a destination on the card is

@@ -6,9 +6,10 @@
 //! the renderer, so a preview is that table swapped and nothing else: no
 //! develop, no history step, no sidecar written, and the edit is never
 //! touched. The table is read on a thread through the same resolution
-//! and the same cache the chosen look's is (`LookLut::look_under_in`),
-//! so a click after a rest finds it read already; it is shown when it
-//! lands only if the pointer is still on its row.
+//! and the same cache the chosen look's is
+//! (`greycard_edit_io::looks::look_under_in`), so a click after a rest
+//! finds it read already; it is shown when it lands only if the
+//! pointer is still on its row.
 //!
 //! The preview ends when the pointer has left the list for as long as
 //! a rest takes, so a sweep from row to row goes from one look to the
@@ -187,7 +188,7 @@ fn ask(st: &mut State, app: &App, name: String) {
 /// chosen look's resolution and its cache, through the gate, so a table
 /// fitted under another curve is no look here either.
 fn resolve(store: Option<PathBuf>, want: &LookLut, curve: DisplayCurve) -> Option<Look> {
-    want.look_under_in(&store?, curve)
+    greycard_edit_io::looks::look_under_in(&store?, want, curve)
 }
 
 /// Read the table on a thread of its own and land it. An ask replaced

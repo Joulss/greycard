@@ -271,7 +271,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
     let measure = std::env::var("GREYCARD_REDUCED_MEASURE").is_ok();
     let honest = std::env::var("GREYCARD_REDUCED_HONEST").is_ok();
     let csv = std::env::var_os("GREYCARD_REDUCED_CSV").map(PathBuf::from);
-    let looks: Vec<String> = greycard_edit::look::list()
+    let looks: Vec<String> = greycard_edit_io::looks::list()
         .into_iter()
         .filter(|e| e.variant.is_none())
         .map(|e| e.name)

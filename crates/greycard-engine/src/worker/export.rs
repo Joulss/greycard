@@ -204,6 +204,7 @@ pub(super) fn finish_export(
     let rendered = greycard_render::export::render(
         image,
         edit,
+        &greycard_edit_io::Stores::user(),
         source,
         settings,
         &rasters,

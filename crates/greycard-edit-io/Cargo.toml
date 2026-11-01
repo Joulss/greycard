@@ -1,7 +1,7 @@
 [package]
 name = "greycard-edit-io"
 version.workspace = true
-description = "The edit's files on disk and from elsewhere: the sidecar as an open reads it, Lightroom presets and XMP, RawTherapee profiles, and the XMP beside a frame"
+description = "The edit's files on disk and from elsewhere: the sidecar as an open reads it, Lightroom presets and XMP, RawTherapee profiles, the XMP beside a frame, and the camera profile and look directories"
 license = "GPL-3.0-or-later"
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,10 @@ greycard-core = { path = "../greycard-core" }
 greycard-edit = { path = "../greycard-edit" }
 thiserror.workspace = true
 roxmltree.workspace = true
+# Where the profile and look directories are on each platform.
+dirs.workspace = true
+# The develop key's hash of the files an edit names.
+blake3.workspace = true
 # The kelvin and Duv of a chromaticity, for a RawTherapee profile's
 # white. Already in the tree through greycard-core.
 rawcolor.workspace = true
