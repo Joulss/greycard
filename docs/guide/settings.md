@@ -295,8 +295,9 @@ greycard makes it again, and downloads models again when needed.
 
 The settings file is `settings.json`, the export queue
 `export-queue.json` and the library index `library.sqlite`. The
-current log is `greycard-ui.log`, and the previous run's is kept as
-`greycard-ui.log.1`.
+current log is `greycard-ui.log`, and the three runs before are kept as
+`greycard-ui-1.log` (the latest), `greycard-ui-2.log`, and
+`greycard-ui-3.log`.
 
 The library index is kept out of the cache, because rebuilding a large
 library takes a long time.

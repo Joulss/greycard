@@ -186,7 +186,7 @@ export component GridSheet inherits Rectangle {
     in property <[FacetRow]> filter-facets-long;
     in property <[FacetRow]> filter-facets-short;
     in property <string> filter-facet-note;
-    callback filter-facet-toggled(int, string);
+    callback filter-facet-toggled(int, string, bool);
     /// The filter kept as a smart collection: its name asked for.
     callback filter-save-smart();
     /// Whether the bar offers Save...: not over a collection.
@@ -197,8 +197,8 @@ export component GridSheet inherits Rectangle {
     callback sort-turned(bool);
     in-out property <bool> sort-shown;
     callback filter-star-picked(int);
-    callback filter-flag-toggled(int);
-    callback filter-label-toggled(int);
+    callback filter-flag-toggled(int, bool);
+    callback filter-label-toggled(int, bool);
     callback filter-exact-toggled();
     callback filter-text-edited(string);
     callback filter-cleared();
@@ -456,15 +456,15 @@ export component GridSheet inherits Rectangle {
                     facets-long: root.filter-facets-long;
                     facets-short: root.filter-facets-short;
                     facet-note: root.filter-facet-note;
-                    facet-toggled(c, k) => { root.filter-facet-toggled(c, k); }
+                    facet-toggled(c, k, x) => { root.filter-facet-toggled(c, k, x); }
                     exact: root.filter-exact;
                     shown: root.filter-shown;
                     total: root.filter-total;
                     on: root.filter-on;
                     text <=> root.filter-text;
                     star-picked(i) => { root.filter-star-picked(i); }
-                    flag-toggled(i) => { root.filter-flag-toggled(i); }
-                    label-toggled(i) => { root.filter-label-toggled(i); }
+                    flag-toggled(i, x) => { root.filter-flag-toggled(i, x); }
+                    label-toggled(i, x) => { root.filter-label-toggled(i, x); }
                     exact-toggled => { root.filter-exact-toggled(); }
                     text-edited(t) => { root.filter-text-edited(t); }
                     cleared => { root.filter-cleared(); }

@@ -212,6 +212,8 @@ export struct FilterChip {
     text: string,
     count: int,
     on: bool,
+    /// Held out: the frames it names are hidden.
+    out: bool,
     code: int,
 }
 
@@ -231,6 +233,8 @@ export struct FacetChip {
     key: string,
     count: int,
     on: bool,
+    /// Held out: the frames it names are hidden.
+    out: bool,
 }
 
 /// The filter bar's Sort menu, as the view's choice has it: Rust owns

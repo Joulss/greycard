@@ -850,6 +850,11 @@ mod tests {
                 facets: [("camera".to_string(), vec!["Canon EOS R6m2".to_string()])]
                     .into_iter()
                     .collect(),
+                not_flags: vec![greycard_edit::meta::Flag::Reject],
+                not_labels: Vec::new(),
+                not_facets: [("iso".to_string(), vec!["6400".to_string()])]
+                    .into_iter()
+                    .collect(),
             },
             sort: crate::sort::Kept {
                 folder: Some("rating-desc".into()),

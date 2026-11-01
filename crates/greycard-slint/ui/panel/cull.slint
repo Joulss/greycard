@@ -34,11 +34,11 @@ export component CullSection inherits Section {
     in property <bool> filter-bar: true;
     in property <[FacetRow]> filter-facets;
     in property <string> filter-facet-note;
-    callback filter-facet-toggled(int, string);
+    callback filter-facet-toggled(int, string, bool);
     in-out property <bool> collapsed-culling;
     callback filter-star-picked(int);
-    callback filter-flag-toggled(int);
-    callback filter-label-toggled(int);
+    callback filter-flag-toggled(int, bool);
+    callback filter-label-toggled(int, bool);
     callback filter-exact-toggled();
     callback filter-text-edited(string);
     callback filter-cleared();
@@ -130,15 +130,15 @@ export component CullSection inherits Section {
         labels: root.filter-labels;
         facets: root.filter-facets;
         facet-note: root.filter-facet-note;
-        facet-toggled(c, k) => { root.filter-facet-toggled(c, k); }
+        facet-toggled(c, k, x) => { root.filter-facet-toggled(c, k, x); }
         exact: root.filter-exact;
         shown: root.filter-shown;
         total: root.filter-total;
         on: root.filter-on;
         text <=> root.filter-text;
         star-picked(i) => { root.filter-star-picked(i); }
-        flag-toggled(i) => { root.filter-flag-toggled(i); }
-        label-toggled(i) => { root.filter-label-toggled(i); }
+        flag-toggled(i, x) => { root.filter-flag-toggled(i, x); }
+        label-toggled(i, x) => { root.filter-label-toggled(i, x); }
         exact-toggled => { root.filter-exact-toggled(); }
         text-edited(t) => { root.filter-text-edited(t); }
         cleared => { root.filter-cleared(); }

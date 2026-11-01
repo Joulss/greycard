@@ -109,6 +109,35 @@ pub(crate) fn reveal_folder_command(path: &Path) -> std::process::Command {
     cmd
 }
 
+/// The command that opens the folder `path` itself in the file
+/// manager, its contents on show, where [`reveal_folder_command`]
+/// shows it chosen in its parent.
+#[cfg(not(windows))]
+pub(crate) fn open_folder_command(path: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    });
+    cmd.arg(absolute(path));
+    cmd
+}
+
+/// Explorer splits its command line on commas, so the path is quoted
+/// whole by hand, as [`explorer_select`] does.
+#[cfg(windows)]
+pub(crate) fn open_folder_command(path: &Path) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut cmd = std::process::Command::new("explorer");
+    cmd.raw_arg(format!("\"{}\"", absolute(path).display()));
+    cmd
+}
+
+/// Open the folder `path` in the file manager, without waiting on it.
+pub(crate) fn open_folder(path: &Path) -> std::io::Result<()> {
+    spawn_reveal(path, open_folder_command(path))
+}
+
 /// Show `path` in the file manager, without waiting on it.
 pub(crate) fn reveal(path: &Path) -> std::io::Result<()> {
     spawn_reveal(path, reveal_command(path))
@@ -309,6 +338,28 @@ mod tests {
         assert_eq!(cmd.get_program(), "xdg-open");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, [std::ffi::OsStr::new("/shoot/day one")]);
+    }
+
+    /// A Settings folder opens as itself, its contents on show, on
+    /// every platform.
+    #[test]
+    fn a_folder_opened_is_the_folder_itself() {
+        let dir = std::env::temp_dir().join("greycard caches");
+        let cmd = open_folder_command(&dir);
+        let program = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(windows) {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        assert_eq!(cmd.get_program(), program);
+        // Explorer's is a raw argument, which the test of the program
+        // alone covers, as the reveal's does.
+        if !cfg!(windows) {
+            let args: Vec<_> = cmd.get_args().collect();
+            assert_eq!(args, [dir.as_os_str()]);
+        }
     }
 
     #[cfg(target_os = "macos")]

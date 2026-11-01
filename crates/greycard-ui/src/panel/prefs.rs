@@ -542,11 +542,10 @@ pub(crate) fn jpegs_apart_changed(state: &Rc<Shared>, app: &App, worker: &Rc<Wor
     }
 }
 
-/// The folders the About category names: the settings', the library
-/// index's, the caches' and the log's, each as `path_shown` writes it,
-/// empty for one this machine has no place for.
-pub(crate) fn about_dirs() -> [String; 4] {
-    let shown = |p: Option<PathBuf>| p.map(|p| crate::report::path_shown(&p)).unwrap_or_default();
+/// The folders the About category names, in its rows' order: the
+/// settings', the library index's, the caches', and the log's, none
+/// for one this machine has no place for.
+fn about_paths() -> [Option<PathBuf>; 4] {
     let parent = |p: Option<PathBuf>| p.and_then(|p| p.parent().map(Path::to_path_buf));
     let caches = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -554,11 +553,16 @@ pub(crate) fn about_dirs() -> [String; 4] {
         .or_else(dirs::cache_dir)
         .map(|c| c.join("greycard"));
     [
-        shown(parent(settings::path())),
-        shown(parent(greycard_library::Library::user_path())),
-        shown(caches),
-        shown(crate::log::dir()),
+        parent(settings::path()),
+        parent(greycard_library::Library::user_path()),
+        caches,
+        crate::log::dir(),
     ]
+}
+
+/// The same, each as `path_shown` writes it, empty for none.
+pub(crate) fn about_dirs() -> [String; 4] {
+    about_paths().map(|p| p.map(|p| crate::report::path_shown(&p)).unwrap_or_default())
 }
 
 /// The About category's words, which hold for the run.
@@ -573,6 +577,22 @@ fn show_about(app: &App) {
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     show_about(app);
+    // An About folder clicked opens in the file manager; one not made
+    // yet (no log written, no cache kept) is made first, so the click
+    // never lands on nothing.
+    app.on_about_dir_clicked(|row| {
+        let Some(dir) = usize::try_from(row)
+            .ok()
+            .and_then(|r| about_paths().into_iter().nth(r).flatten())
+        else {
+            return;
+        };
+        if let Err(e) =
+            std::fs::create_dir_all(&dir).and_then(|()| crate::panel::menu::open_folder(&dir))
+        {
+            tracing::warn!("settings: {} would not open: {e}", dir.display());
+        }
+    });
     // The category the sheet shows, kept for its next opening.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());

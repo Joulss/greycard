@@ -135,6 +135,13 @@ impl SavedBar for Saved {
                 .filter(|f| !filter.chosen(**f).is_empty())
                 .map(|f| (f.field().to_string(), filter.chosen(*f).to_vec()))
                 .collect(),
+            not_flags: filter.not_flags.clone(),
+            not_labels: filter.not_labels.clone(),
+            not_facets: Facet::ALL
+                .iter()
+                .filter(|f| !filter.held_out(**f).is_empty())
+                .map(|f| (f.field().to_string(), filter.held_out(*f).to_vec()))
+                .collect(),
         }
     }
 
@@ -144,11 +151,18 @@ impl SavedBar for Saved {
             flags: self.flags.clone(),
             labels: self.labels.clone(),
             text: self.text.clone(),
+            not_flags: self.not_flags.clone(),
+            not_labels: self.not_labels.clone(),
             ..Filter::default()
         };
         for (field, values) in &self.facets {
             if let Some(facet) = Facet::from_field(field) {
                 filter.facets[facet_slot(facet)] = values.clone();
+            }
+        }
+        for (field, values) in &self.not_facets {
+            if let Some(facet) = Facet::from_field(field) {
+                filter.not_facets[facet_slot(facet)] = values.clone();
             }
         }
         filter
@@ -281,6 +295,12 @@ pub struct Filter {
     /// empty facet asks nothing. The values are the index's own
     /// ([`greycard_library::FacetCount::value`]).
     pub facets: [Vec<String>; Facet::ALL.len()],
+    /// The chips held out, a Ctrl+click each: none-of, within each
+    /// group, beside the any-of above, so "everything but the
+    /// rejects" is one chip. A chip is on, held out, or neither.
+    pub not_flags: Vec<Flag>,
+    pub not_labels: Vec<Label>,
+    pub not_facets: [Vec<String>; Facet::ALL.len()],
 }
 
 impl Filter {
@@ -311,11 +331,11 @@ impl Filter {
     /// Whether the flag chips are ticked; a frame's flag passes when
     /// none of them is.
     pub fn shows_flag(&self, flag: Flag) -> bool {
-        any_of(&self.flags, flag)
+        any_of(&self.flags, flag) && !self.not_flags.contains(&flag)
     }
 
     pub fn shows_label(&self, label: Label) -> bool {
-        any_of(&self.labels, label)
+        any_of(&self.labels, label) && !self.not_labels.contains(&label)
     }
 
     /// The text field read: words, the sidecar's terms, the index's
@@ -363,10 +383,33 @@ impl Filter {
         &self.facets[facet_slot(facet)]
     }
 
-    /// Press a facet's chip: on if it was off, off if it was on.
+    /// The chips of one facet held out.
+    pub fn held_out(&self, facet: Facet) -> &[String] {
+        &self.not_facets[facet_slot(facet)]
+    }
+
+    /// Press a facet's chip: on if it was off, off if it was on or
+    /// held out.
     pub fn toggle_facet(&mut self, facet: Facet, value: &str) {
-        let slot = &mut self.facets[facet_slot(facet)];
-        *slot = pressed(slot, value.to_string());
+        let at = facet_slot(facet);
+        press(
+            &mut self.facets[at],
+            &mut self.not_facets[at],
+            value.to_string(),
+            false,
+        );
+    }
+
+    /// Ctrl+click a facet's chip: held out if it was not, off if it
+    /// was.
+    pub fn exclude_facet(&mut self, facet: Facet, value: &str) {
+        let at = facet_slot(facet);
+        press(
+            &mut self.facets[at],
+            &mut self.not_facets[at],
+            value.to_string(),
+            true,
+        );
     }
 
     /// Whether the chips answered in hand ([`in_hand`]) pass this
@@ -378,11 +421,17 @@ impl Filter {
             .into_iter()
             .filter(|f| in_hand(*f) && Some(*f) != except)
             .all(|facet| {
-                let values = self.chosen(facet);
-                values.is_empty()
+                let (on, out) = (self.chosen(facet), self.held_out(facet));
+                (on.is_empty()
                     || Term::Facet {
                         facet,
-                        values: values.to_vec(),
+                        values: on.to_vec(),
+                    }
+                    .on_meta(frame.path, frame.meta)
+                    .unwrap_or(true))
+                    && Term::NotFacet {
+                        facet,
+                        values: out.to_vec(),
                     }
                     .on_meta(frame.path, frame.meta)
                     .unwrap_or(true)
@@ -395,14 +444,22 @@ impl Filter {
     pub fn index_filter(&self, typed: &Typed, except: Option<Facet>) -> greycard_library::Filter {
         let mut terms = typed.index.clone();
         for facet in Facet::ALL {
-            let values = self.chosen(facet);
-            if in_hand(facet) || Some(facet) == except || values.is_empty() {
+            if in_hand(facet) || Some(facet) == except {
                 continue;
             }
-            terms.push(Term::Facet {
-                facet,
-                values: values.to_vec(),
-            });
+            let (on, out) = (self.chosen(facet), self.held_out(facet));
+            if !on.is_empty() {
+                terms.push(Term::Facet {
+                    facet,
+                    values: on.to_vec(),
+                });
+            }
+            if !out.is_empty() {
+                terms.push(Term::NotFacet {
+                    facet,
+                    values: out.to_vec(),
+                });
+            }
         }
         greycard_library::Filter { terms }
     }
@@ -411,9 +468,9 @@ impl Filter {
     /// frame passes it and the index need not be asked.
     pub fn asks_index(&self, typed: &Typed) -> bool {
         !typed.index.is_empty()
-            || Facet::ALL
-                .iter()
-                .any(|f| !in_hand(*f) && !self.chosen(*f).is_empty())
+            || Facet::ALL.iter().any(|f| {
+                !in_hand(*f) && !(self.chosen(*f).is_empty() && self.held_out(*f).is_empty())
+            })
     }
 
     /// Whether the tests the frames in hand answer pass this frame:
@@ -461,13 +518,22 @@ impl Filter {
             .collect()
     }
 
-    /// Tick a flag chip on, or off if it was on.
+    /// Tick a flag chip on, or off if it was on or held out.
     pub fn toggle_flag(&mut self, flag: Flag) {
-        self.flags = pressed(&self.flags, flag);
+        press(&mut self.flags, &mut self.not_flags, flag, false);
+    }
+
+    /// Hold a flag chip out, or let it back if it was.
+    pub fn exclude_flag(&mut self, flag: Flag) {
+        press(&mut self.flags, &mut self.not_flags, flag, true);
     }
 
     pub fn toggle_label(&mut self, label: Label) {
-        self.labels = pressed(&self.labels, label);
+        press(&mut self.labels, &mut self.not_labels, label, false);
+    }
+
+    pub fn exclude_label(&mut self, label: Label) {
+        press(&mut self.labels, &mut self.not_labels, label, true);
     }
 
     /// The filter in words, for the log and the status line: what is
@@ -483,37 +549,58 @@ impl Filter {
             Stars::Exactly(1) => parts.push("exactly 1 star".to_string()),
             Stars::Exactly(n) => parts.push(format!("exactly {n} stars")),
         }
+        let label_name = |l: &Label| match l {
+            Label::None => "no label".to_string(),
+            _ => l.name().to_lowercase(),
+        };
         if !self.flags.is_empty() {
             parts.push(join(self.flags.iter().map(|f| f.name().to_lowercase())));
         }
+        if !self.not_flags.is_empty() {
+            parts.push(format!(
+                "not {}",
+                join(self.not_flags.iter().map(|f| f.name().to_lowercase()))
+            ));
+        }
         if !self.labels.is_empty() {
-            parts.push(join(self.labels.iter().map(|l| match l {
-                Label::None => "no label".to_string(),
-                _ => l.name().to_lowercase(),
-            })));
+            parts.push(join(self.labels.iter().map(label_name)));
+        }
+        // "No label" held out is every label, said so.
+        if self.not_labels.contains(&Label::None) {
+            parts.push("labeled".to_string());
+        }
+        let colors: Vec<&Label> = self
+            .not_labels
+            .iter()
+            .filter(|l| **l != Label::None)
+            .collect();
+        if !colors.is_empty() {
+            parts.push(format!("not {}", join(colors.into_iter().map(label_name))));
         }
         let text = self.text.trim();
         if !text.is_empty() {
             parts.push(format!("\"{text}\""));
         }
-        for facet in Facet::ALL {
-            let values = self.chosen(facet);
+        for (facet, values, not) in Facet::ALL
+            .into_iter()
+            .flat_map(|f| [(f, self.chosen(f), ""), (f, self.held_out(f), "not ")])
+        {
             if values.is_empty() {
                 continue;
             }
             let said = join(values.iter().cloned());
             parts.push(match facet {
-                Facet::Camera => format!("camera {said}"),
-                Facet::Lens => format!("lens {said}"),
+                Facet::Camera => format!("{not}camera {said}"),
+                Facet::Lens => format!("{not}lens {said}"),
                 Facet::Kind => format!(
-                    "kind {}",
+                    "{not}kind {}",
                     join(values.iter().map(|v| facet_chip_text(Facet::Kind, v)))
                 ),
-                Facet::Style => format!("style {said}"),
-                Facet::Iso => format!("ISO {said}"),
-                Facet::Focal => format!("{said} mm"),
-                Facet::Date => format!("taken {said}"),
-                Facet::Keyword => format!("keyword {said}"),
+                Facet::Style => format!("{not}style {said}"),
+                Facet::Iso => format!("{not}ISO {said}"),
+                Facet::Focal => format!("{not}{said} mm"),
+                Facet::Date => format!("{not}taken {said}"),
+                Facet::Keyword => format!("{not}keyword {said}"),
             });
         }
         if parts.is_empty() {
@@ -584,20 +671,27 @@ fn any_of<T: PartialEq>(set: &[T], value: T) -> bool {
     set.is_empty() || set.contains(&value)
 }
 
-/// The set a group would come to if `chip` were pressed: on if it was
-/// off, off if it was on, the order of the rest kept.
+/// A group's chips after `chip` is pressed, `on` the set ticked and
+/// `out` the set held out, the order of the rest kept. A chip held
+/// out comes back to neither, whichever the press; otherwise a plain
+/// press (`exclude` false) ticks it on or off, and a Ctrl+press holds
+/// it out, off the ticked set.
 ///
 /// This is what a click does. It is not what a chip's count counts;
 /// see [`Counts`] for why those are two different questions.
-fn pressed<T: PartialEq + Clone>(set: &[T], chip: T) -> Vec<T> {
-    let mut out = set.to_vec();
-    match out.iter().position(|v| *v == chip) {
-        Some(at) => {
-            out.remove(at);
+fn press<T: PartialEq>(on: &mut Vec<T>, out: &mut Vec<T>, chip: T, exclude: bool) {
+    if let Some(at) = out.iter().position(|v| *v == chip) {
+        out.remove(at);
+    } else if let Some(at) = on.iter().position(|v| *v == chip) {
+        on.remove(at);
+        if exclude {
+            out.push(chip);
         }
-        None => out.push(chip),
+    } else if exclude {
+        out.push(chip);
+    } else {
+        on.push(chip);
     }
-    out
 }
 
 /// "a", "a or b", "a, b or c".
@@ -730,6 +824,7 @@ impl Filter {
     pub fn only_flag(&self, flag: Flag) -> Filter {
         Filter {
             flags: vec![flag],
+            not_flags: Vec::new(),
             ..self.clone()
         }
     }
@@ -738,6 +833,7 @@ impl Filter {
     pub fn only_label(&self, label: Label) -> Filter {
         Filter {
             labels: vec![label],
+            not_labels: Vec::new(),
             ..self.clone()
         }
     }
@@ -1303,6 +1399,76 @@ mod tests {
         assert!(filter.is_empty());
     }
 
+    /// A Ctrl+click holds a chip out: "everything but the rejects" is
+    /// one chip, and a held-out chip beside ticked ones narrows them.
+    /// Any press on a held-out chip lets it back to neither.
+    #[test]
+    fn a_chip_held_out_hides_what_it_names() {
+        let folder = folder();
+        let frames = view(&folder);
+        let mut filter = Filter::default();
+        filter.exclude_flag(Flag::Reject);
+        assert_eq!(filter.not_flags, [Flag::Reject]);
+        assert_eq!(filter.apply(&frames), vec![0, 1, 2, 4]);
+        assert_eq!(filter.describe(), "not reject");
+        // The row still reads the shoot: a count sets its own group
+        // aside, held-out chips with the rest.
+        let counts = Counts::of(&filter, &frames);
+        assert_eq!(counts.flags, [2, 2, 1]);
+        assert_eq!(counts.shown, 4);
+        assert_eq!(
+            counts.flags[2],
+            filter.only_flag(Flag::Reject).apply(&frames).len()
+        );
+        // A plain click on it clears it; so does a second Ctrl+click.
+        filter.toggle_flag(Flag::Reject);
+        assert!(filter.is_empty());
+        filter.exclude_flag(Flag::Reject);
+        filter.exclude_flag(Flag::Reject);
+        assert!(filter.is_empty());
+        // A Ctrl+click on a ticked chip moves it across.
+        filter.toggle_label(Label::Red);
+        filter.exclude_label(Label::Red);
+        assert!(filter.labels.is_empty());
+        assert_eq!(filter.apply(&frames), vec![0, 2, 3]);
+        // Ticked and held out in one group: Red or None, but not
+        // what else is held out.
+        filter.toggle_label(Label::Red);
+        filter.toggle_label(Label::None);
+        filter.exclude_label(Label::Red);
+        assert_eq!(filter.labels, [Label::None]);
+        assert_eq!(filter.not_labels, [Label::Red]);
+        assert_eq!(filter.apply(&frames), vec![0, 3]);
+        assert_eq!(filter.describe(), "no label, not red");
+        filter.exclude_label(Label::None);
+        assert_eq!(filter.describe(), "labeled, not red");
+        filter.exclude_label(Label::None);
+
+        // A keyword held out is answered in hand, case folded.
+        let mut words = Filter::default();
+        words.exclude_facet(Facet::Keyword, "sunset");
+        assert!(!words.asks_index(&words.typed()));
+        assert_eq!(words.apply(&frames), vec![0, 1, 4]);
+        assert_eq!(words.describe(), "not keyword sunset");
+        // An ISO held out goes to the index, as none of its values,
+        // and its own count sets it aside.
+        let mut iso = Filter::default();
+        iso.exclude_facet(Facet::Iso, "6400");
+        let typed = iso.typed();
+        assert!(iso.asks_index(&typed));
+        assert_eq!(
+            iso.index_filter(&typed, None).terms,
+            [Term::NotFacet {
+                facet: Facet::Iso,
+                values: vec!["6400".into()],
+            }]
+        );
+        assert!(iso.index_filter(&typed, Some(Facet::Iso)).is_empty());
+        assert_eq!(iso.describe(), "not ISO 6400");
+        iso.toggle_facet(Facet::Iso, "6400");
+        assert!(iso.is_empty(), "a plain click clears it");
+    }
+
     #[test]
     fn the_rating_chips_are_named_for_the_reading_they_are_in() {
         let at_least: Vec<String> = (0..=STARS).map(|n| Stars::chip_name(n, false)).collect();
@@ -1363,10 +1529,16 @@ mod tests {
         filter.toggle_facet(Facet::Focal, "35");
         filter.toggle_facet(Facet::Keyword, "dusk");
         filter.toggle_facet(Facet::Kind, "raw");
+        filter.exclude_flag(Flag::Reject);
+        filter.exclude_label(Label::Purple);
+        filter.exclude_facet(Facet::Iso, "6400");
         let saved = Saved::of(&filter);
         let text = serde_json::to_string(&saved).unwrap();
         let back: Saved = serde_json::from_str(&text).unwrap();
         assert_eq!(back.filter(), filter);
+        // None held out writes the shape it always did.
+        let plain = serde_json::to_string(&Saved::of(&Filter::default())).unwrap();
+        assert!(!plain.contains("not_"), "{plain}");
         // Cleared, it is kept empty, and comes back empty.
         assert_eq!(Saved::of(&Filter::default()).filter(), Filter::default());
         assert!(Saved::of(&Filter::default()).facets.is_empty());

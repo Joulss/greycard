@@ -14,17 +14,30 @@
 
 use std::fs::File;
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
-/// The log's name; the previous run's is kept under `.1`, because a
-/// tester whose editor vanished opens it again before thinking of the
-/// log.
+/// The log's name; the runs before are kept beside it ([`kept`]),
+/// because a tester whose editor vanished opens it again before
+/// thinking of the log.
 pub const FILE: &str = "greycard-ui.log";
+
+/// How many runs before this one are kept: three, so the run that
+/// went wrong survives a relaunch to try again and another to report
+/// it, and the folder a tester drags from stays short.
+const KEPT: usize = 3;
+
+/// The name of the run `n` before this one, 1 the last: the number
+/// before the extension, since GitHub's form takes a `.log` and
+/// refuses a `.log.1`.
+pub fn kept(n: usize) -> String {
+    let stem = FILE.strip_suffix(".log").unwrap_or(FILE);
+    format!("{stem}-{n}.log")
+}
 
 /// The crates whose lines are ours: the file keeps them from info,
 /// and `-v` raises them. Everything else, the libraries, from warn.
@@ -83,12 +96,12 @@ pub fn start(verbose: u8) -> Option<PathBuf> {
     file.map(|(path, _)| path)
 }
 
-/// The file for this run, the previous one moved to `.1`, with a
+/// The file for this run, the earlier ones moved up a place, with a
 /// first line that says what was run even if nothing else follows.
 fn open(dir: PathBuf) -> Option<(PathBuf, File)> {
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(FILE);
-    let _ = std::fs::rename(&path, dir.join(format!("{FILE}.1")));
+    rotate(&dir);
     let mut file = File::create(&path).ok()?;
     writeln!(
         file,
@@ -99,6 +112,26 @@ fn open(dir: PathBuf) -> Option<(PathBuf, File)> {
     )
     .ok()?;
     Some((path, file))
+}
+
+/// Each kept run moved up a place, the oldest over the edge, and the
+/// last run made the first kept. Earlier builds kept the run before
+/// as `.log.1`, the run before the last; it is taken in second, ours
+/// moved up a place more to make room, since an older build run
+/// between two of ours made it newer than any of them.
+fn rotate(dir: &Path) {
+    let shift = |from: usize| {
+        for n in (from..KEPT).rev() {
+            let _ = std::fs::rename(dir.join(kept(n)), dir.join(kept(n + 1)));
+        }
+    };
+    shift(1);
+    let old = dir.join(format!("{FILE}.1"));
+    if old.exists() {
+        shift(2);
+        let _ = std::fs::rename(&old, dir.join(kept(2)));
+    }
+    let _ = std::fs::rename(dir.join(FILE), dir.join(kept(1)));
 }
 
 /// Libraries whose warnings are known and benign, kept to errors:
@@ -289,6 +322,41 @@ mod tests {
         assert_eq!(super::dir(), Some(platform));
     }
 
+    /// The runs before are kept three deep under names GitHub's form
+    /// takes, and the one an earlier build kept as `.log.1` is kept
+    /// in its turn.
+    #[test]
+    fn three_runs_are_kept_and_the_old_name_is_taken_up() {
+        let dir = std::env::temp_dir().join(format!("greycard-log-rotate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(kept(1), "greycard-ui-1.log");
+        std::fs::write(dir.join(FILE), "run a").unwrap();
+        std::fs::write(dir.join(format!("{FILE}.1")), "run before a").unwrap();
+        for run in ["b", "c", "d"] {
+            rotate(&dir);
+            std::fs::write(dir.join(FILE), format!("run {run}")).unwrap();
+        }
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
+        assert_eq!(read(FILE), "run d");
+        assert_eq!(read(&kept(1)), "run c");
+        assert_eq!(read(&kept(2)), "run b");
+        assert_eq!(read(&kept(3)), "run a");
+        assert!(!dir.join(format!("{FILE}.1")).exists());
+        assert!(!dir.join(kept(4)).exists(), "the oldest went over the edge");
+        // A downgrade and back: the older build moved our last run to
+        // the old name and wrote its own. Its run comes first, ours
+        // next, and the rest after, none written over out of turn.
+        std::fs::rename(dir.join(FILE), dir.join(format!("{FILE}.1"))).unwrap();
+        std::fs::write(dir.join(FILE), "older build").unwrap();
+        rotate(&dir);
+        assert_eq!(read(&kept(1)), "older build");
+        assert_eq!(read(&kept(2)), "run d");
+        assert_eq!(read(&kept(3)), "run c");
+        assert!(!dir.join(format!("{FILE}.1")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_filter_keeps_ours_and_quiets_the_rest() {
         let spec = filter("info").to_string();
@@ -340,7 +408,7 @@ mod tests {
         assert!(std::thread::spawn(move || panic!("{said}")).join().is_err());
 
         let now = std::fs::read_to_string(&path).unwrap();
-        let before = std::fs::read_to_string(dir.join(format!("{FILE}.1"))).unwrap();
+        let before = std::fs::read_to_string(dir.join(kept(1))).unwrap();
         assert!(now.starts_with("greycard-ui "), "{now:?}");
         assert!(now.contains("an info line"), "{now:?}");
         assert!(!now.contains("a debug line"), "{now:?}");

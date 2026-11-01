@@ -74,8 +74,9 @@ The most useful things you can send, in order:
    graphics chip, each picture it opened and how long each step
    took, and whatever went wrong. To get there: in Finder, Go menu,
    Go to Folder…, paste `~/Library/Logs/greycard` and press Return.
-   `greycard-ui.log` is the last run, `greycard-ui.log.1` the one
-   before, in case you opened it again after the trouble. Attach it.
+   `greycard-ui.log` is the last run, `greycard-ui-1.log` the one
+   before, and `-2` and `-3` before that, in case you opened it
+   again after the trouble. Attach it.
 3. **The raw file**, if a picture renders wrong, along with the
    camera it came from. A picture that looks wrong is the single
    most valuable report there is.

@@ -702,7 +702,7 @@ export component App inherits Window {
     in property <[FacetRow]> filter-facets-long: [];
     in property <[FacetRow]> filter-facets-short: [];
     in property <string> filter-facet-note: "";
-    callback filter-facet-toggled(int, string);
+    callback filter-facet-toggled(int, string, bool);
     /// The library's roots, in the left pane with the grid: each with
     /// its file count, the all-roots view, and whether the folder open
     /// can be added with a press.
@@ -887,8 +887,8 @@ export component App inherits Window {
     callback root-sheet-done();
     in-out property <bool> collapsed-culling: false;
     callback filter-star-picked(int);
-    callback filter-flag-toggled(int);
-    callback filter-label-toggled(int);
+    callback filter-flag-toggled(int, bool);
+    callback filter-label-toggled(int, bool);
     callback filter-exact-toggled();
     callback filter-text-edited(string);
     callback filter-cleared();
@@ -2059,6 +2059,9 @@ export component App inherits Window {
     in property <string> about-library-dir;
     in property <string> about-caches-dir;
     in property <string> about-log-dir;
+    /// A folder of the About rows clicked, by its row: 0 the
+    /// settings', 1 the library's, 2 the caches', 3 the log's.
+    callback about-dir-clicked(int);
     // However the sheet is closed — Done, Escape, a click outside — a
     // cap typed and not yet entered is taken; Rust ignores one that
     // did not change.
@@ -3212,11 +3215,11 @@ export component App inherits Window {
                             filter-focus <=> root.filter-focus;
                             filter-facets: root.filter-facets;
                             filter-facet-note: root.filter-facet-note;
-                            filter-facet-toggled(a, b) => { root.filter-facet-toggled(a, b); }
+                            filter-facet-toggled(a, b, x) => { root.filter-facet-toggled(a, b, x); }
                             collapsed-culling <=> root.collapsed-culling;
                             filter-star-picked(a) => { root.filter-star-picked(a); }
-                            filter-flag-toggled(a) => { root.filter-flag-toggled(a); }
-                            filter-label-toggled(a) => { root.filter-label-toggled(a); }
+                            filter-flag-toggled(a, x) => { root.filter-flag-toggled(a, x); }
+                            filter-label-toggled(a, x) => { root.filter-label-toggled(a, x); }
                             filter-exact-toggled => { root.filter-exact-toggled(); }
                             filter-text-edited(a) => { root.filter-text-edited(a); }
                             filter-cleared => { root.filter-cleared(); }
@@ -3985,10 +3988,10 @@ export component App inherits Window {
         filter-facets-long: root.filter-facets-long;
         filter-facets-short: root.filter-facets-short;
         filter-facet-note: root.filter-facet-note;
-        filter-facet-toggled(a, b) => { root.filter-facet-toggled(a, b); }
+        filter-facet-toggled(a, b, x) => { root.filter-facet-toggled(a, b, x); }
         filter-star-picked(a) => { root.filter-star-picked(a); }
-        filter-flag-toggled(a) => { root.filter-flag-toggled(a); }
-        filter-label-toggled(a) => { root.filter-label-toggled(a); }
+        filter-flag-toggled(a, x) => { root.filter-flag-toggled(a, x); }
+        filter-label-toggled(a, x) => { root.filter-label-toggled(a, x); }
         filter-exact-toggled => { root.filter-exact-toggled(); }
         filter-text-edited(a) => { root.filter-text-edited(a); }
         filter-save-smart => { root.filter-save-smart(); }
@@ -4847,6 +4850,7 @@ export component App inherits Window {
         library-dir: root.about-library-dir;
         caches-dir: root.about-caches-dir;
         log-dir: root.about-log-dir;
+        dir-clicked(i) => { root.about-dir-clicked(i); }
         sidecar-placement <=> root.sidecar-placement;
         xmp-sidecars <=> root.xmp-sidecars;
         jpegs-apart <=> root.jpegs-apart;

@@ -1582,6 +1582,35 @@ mod tests {
         greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
     }
 
+    /// A smart collection holding a chip out is written at shape 3,
+    /// which a build that knows no held-out chips leaves alone rather
+    /// than list what they hide; one without is written at 1.
+    #[test]
+    fn a_smart_collection_holding_a_chip_out_raises_the_shape() {
+        let dir = scratch("held-out-file").join(DIR);
+        let mut store = Store::load(dir.clone());
+        let mut filter = Filter::default();
+        filter.exclude_flag(greycard_edit::meta::Flag::Reject);
+        let s = Smart::new("No rejects", Saved::of(&filter), None);
+        let id = s.id.clone();
+        store.smart.push(s.clone());
+        store.save(&id);
+        let file = dir.join(format!("{id}.smart.json"));
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(v["version"], 3);
+        assert_eq!(Store::load(dir.clone()).smart, vec![s.clone()]);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(Store::load_reading(dir.clone(), 2).smart.is_empty());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        // Let back in: a plain one again.
+        store.smart[0].filter = Saved::default();
+        store.save(&id);
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(v["version"], 1);
+        assert_eq!(Store::load_reading(dir.clone(), 1).smart.len(), 1);
+        greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
+    }
+
     /// Two versions of a picture are two frames: each added once, each
     /// its own hint, each taken out alone; the file's own is a frame
     /// apart from them.

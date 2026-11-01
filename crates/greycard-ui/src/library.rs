@@ -1945,19 +1945,22 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
 }
 
 /// A facet's chips as the bar shows them: at most [`CHIPS_A_FACET`]
-/// of the values not on — every value held more often than the
-/// twelfth most held, then as many of those tied with it as there is
-/// room for, in the facet's order — and every value on, whatever its
-/// count, a value no frame holds any more among them at zero, since
-/// a chip on is how the filter is undone. `label_of` names such a
-/// value. The chips stand in the facet's own order.
+/// of the values neither on nor held out (`out`) — every value held
+/// more often than the twelfth most held, then as many of those tied
+/// with it as there is room for, in the facet's order — and every
+/// value on or held out, whatever its count, a value no frame holds
+/// any more among them at zero, since pressing the chip is how the
+/// filter is undone. `label_of` names such a value. The chips stand
+/// in the facet's own order.
 pub(crate) fn chips_of(
     facet: Facet,
     counts: &[FacetCount],
     on: &[String],
+    out: &[String],
     label_of: &dyn Fn(&str) -> String,
 ) -> Vec<FacetChip> {
-    let off: Vec<&FacetCount> = counts.iter().filter(|c| !on.contains(&c.value)).collect();
+    let held = |v: &String| on.contains(v) || out.contains(v);
+    let off: Vec<&FacetCount> = counts.iter().filter(|c| !held(&c.value)).collect();
     let keep: HashSet<&str> = if off.len() > CHIPS_A_FACET {
         let mut by_count: Vec<usize> = off.iter().map(|c| c.count).collect();
         by_count.sort_unstable_by(|a, b| b.cmp(a));
@@ -1979,21 +1982,23 @@ pub(crate) fn chips_of(
     };
     let mut chips: Vec<FacetChip> = counts
         .iter()
-        .filter(|c| on.contains(&c.value) || keep.contains(c.value.as_str()))
+        .filter(|c| held(&c.value) || keep.contains(c.value.as_str()))
         .map(|c| FacetChip {
             text: filter::facet_chip_text(facet, &c.label).into(),
             key: c.value.clone().into(),
             count: c.count as i32,
             on: on.contains(&c.value),
+            out: out.contains(&c.value),
         })
         .collect();
-    for value in on {
+    for value in on.iter().chain(out) {
         if !counts.iter().any(|c| c.value == *value) {
             chips.push(FacetChip {
                 text: filter::facet_chip_text(facet, &label_of(value)).into(),
                 key: value.clone().into(),
                 count: 0,
-                on: true,
+                on: on.contains(value),
+                out: out.contains(value),
             });
         }
     }
@@ -2029,13 +2034,14 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
         .into_iter()
         .filter_map(|(facet, counts)| {
             let on = st.views.filter.chosen(facet);
+            let out = st.views.filter.held_out(facet);
             let chips = if facet == Facet::Keyword {
-                chips_of(facet, &counts, on, &label_of)
+                chips_of(facet, &counts, on, out, &label_of)
             } else {
-                chips_of(facet, &counts, on, &|v| v.to_string())
+                chips_of(facet, &counts, on, out, &|v| v.to_string())
             };
-            let says_nothing =
-                chips.is_empty() || (facet == Facet::Kind && chips.len() == 1 && !chips[0].on);
+            let says_nothing = chips.is_empty()
+                || (facet == Facet::Kind && chips.len() == 1 && !chips[0].on && !chips[0].out);
             (!says_nothing).then(|| FacetRow {
                 name: filter::facet_caption(facet).into(),
                 code: filter::facet_slot(facet) as i32,
@@ -2879,6 +2885,7 @@ mod tests {
         app.invoke_filter_facet_toggled(
             filter::facet_slot(Facet::Camera) as i32,
             "Canon EOS R6m2".into(),
+            false,
         );
         assert_eq!(state.borrow().views.shown, [0, 1, 4]);
         assert_eq!(app.get_filter_shown(), 3);
@@ -3054,6 +3061,7 @@ mod tests {
                 key: format!("k{i}").into(),
                 count: 1,
                 on: false,
+                out: false,
             })
             .collect();
         app.set_filter_facets_short(ModelRc::new(VecModel::from(vec![FacetRow {
@@ -3063,7 +3071,7 @@ mod tests {
         }])));
         let pressed = Rc::new(RefCell::new(Vec::new()));
         let seen = pressed.clone();
-        app.on_filter_facet_toggled(move |_, key| seen.borrow_mut().push(key.to_string()));
+        app.on_filter_facet_toggled(move |_, key, _| seen.borrow_mut().push(key.to_string()));
         // With no camera or lens row, the short facets take the
         // first row's place: the header's third, under the selection's
         // line and the meta chips with the words; the sheet starts at
@@ -3713,7 +3721,7 @@ mod tests {
             })
             .collect();
         let on = vec!["400".to_string(), "99999".to_string()];
-        let chips = chips_of(Facet::Iso, &counts, &on, &|v| v.to_string());
+        let chips = chips_of(Facet::Iso, &counts, &on, &[], &|v| v.to_string());
         // Twelve by count, the one on kept past the cut, and a value
         // on that no frame holds any more, so it can be let go.
         assert_eq!(chips.len(), CHIPS_A_FACET + 2);
@@ -3733,9 +3741,16 @@ mod tests {
         sorted.sort();
         assert_eq!(keys, sorted);
         assert_eq!(
-            chips_of(Facet::Focal, &counts[..1], &[], &|v| v.to_string())[0].text,
+            chips_of(Facet::Focal, &counts[..1], &[], &[], &|v| v.to_string())[0].text,
             "100 mm"
         );
+        // A chip held out is kept past the cut as one on is, and says
+        // which it is.
+        let chips = chips_of(Facet::Iso, &counts, &[], &["2000".into()], &|v| {
+            v.to_string()
+        });
+        assert_eq!(chips.len(), CHIPS_A_FACET + 1);
+        assert!(chips.iter().any(|c| c.key == "2000" && c.out && !c.on));
     }
 
     /// Ties at the cut do not push out the values held more often:
@@ -3757,7 +3772,7 @@ mod tests {
                 count: n,
             });
         }
-        let chips = chips_of(Facet::Focal, &counts, &[], &|v| v.to_string());
+        let chips = chips_of(Facet::Focal, &counts, &[], &[], &|v| v.to_string());
         assert_eq!(chips.len(), CHIPS_A_FACET);
         for held in ["120", "200", "400"] {
             assert!(chips.iter().any(|c| c.key == held), "{held} mm kept");
@@ -3770,7 +3785,7 @@ mod tests {
             .collect();
         assert_eq!(ones, ["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
         // A keyword on that no frame holds is named as written.
-        let chips = chips_of(Facet::Keyword, &[], &["harbor".into()], &|_| {
+        let chips = chips_of(Facet::Keyword, &[], &["harbor".into()], &[], &|_| {
             "Harbor".into()
         });
         assert_eq!(chips[0].text, "Harbor");

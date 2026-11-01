@@ -191,6 +191,9 @@ export component SettingsSheet inherits Rectangle {
     in property <string> library-dir;
     in property <string> caches-dir;
     in property <string> log-dir;
+    /// A folder clicked, by its row (0 settings, 1 library, 2 caches,
+    /// 3 log): the host opens it in the file manager.
+    callback dir-clicked(int);
     property <[string]> categories: ["Interface", "Library", "Editing", "Keys", "About"];
     property <length> column-w: 132px;
     property <length> pane-w: 440px;
@@ -1048,9 +1051,13 @@ export component SettingsSheet inherits Rectangle {
                                 settings-path := Text {
                                     text: root.settings-dir;
                                     font-size: Theme.font-sm;
-                                    color: Theme.text-secondary;
+                                    color: settings-open.has-hover ? Theme.accent-text : Theme.text-secondary;
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
+                                    settings-open := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.dir-clicked(0); }
+                                    }
                                 }
                             }
                             if root.library-dir != "": HorizontalLayout {
@@ -1060,9 +1067,13 @@ export component SettingsSheet inherits Rectangle {
                                 library-path := Text {
                                     text: root.library-dir;
                                     font-size: Theme.font-sm;
-                                    color: Theme.text-secondary;
+                                    color: library-open.has-hover ? Theme.accent-text : Theme.text-secondary;
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
+                                    library-open := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.dir-clicked(1); }
+                                    }
                                 }
                             }
                             if root.caches-dir != "": HorizontalLayout {
@@ -1072,9 +1083,13 @@ export component SettingsSheet inherits Rectangle {
                                 caches-path := Text {
                                     text: root.caches-dir;
                                     font-size: Theme.font-sm;
-                                    color: Theme.text-secondary;
+                                    color: caches-open.has-hover ? Theme.accent-text : Theme.text-secondary;
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
+                                    caches-open := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.dir-clicked(2); }
+                                    }
                                 }
                             }
                             if root.log-dir != "": HorizontalLayout {
@@ -1084,9 +1099,13 @@ export component SettingsSheet inherits Rectangle {
                                 log-path := Text {
                                     text: root.log-dir;
                                     font-size: Theme.font-sm;
-                                    color: Theme.text-secondary;
+                                    color: log-open.has-hover ? Theme.accent-text : Theme.text-secondary;
                                     wrap: char-wrap;
                                     horizontal-stretch: 1;
+                                    log-open := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.dir-clicked(3); }
+                                    }
                                 }
                             }
                         }

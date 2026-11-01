@@ -127,6 +127,6 @@ fn term_text(term: &Term) -> Option<String> {
         Term::Missing(yes) => format!("missing:{}", if *yes { "yes" } else { "no" }),
         Term::HasVersions(yes) => format!("has{}versions", is(*yes)),
         Term::Kind { is: yes, kind } => format!("kind{}{kind}", is(*yes)),
-        Term::Facet { .. } => return None,
+        Term::Facet { .. } | Term::NotFacet { .. } => return None,
     })
 }

@@ -2434,6 +2434,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             text: filter::Stars::chip_name(n, exact).into(),
             count: counts.stars[n as usize] as i32,
             on: n == picked,
+            out: false,
             code: n as i32,
         })
         .collect();
@@ -2447,6 +2448,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             text: f.name().into(),
             count: counts.flags[n] as i32,
             on: st.views.filter.flags.contains(f),
+            out: st.views.filter.not_flags.contains(f),
             code: f.code(),
         })
         .collect();
@@ -2464,6 +2466,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             .into(),
             count: counts.labels[n] as i32,
             on: st.views.filter.labels.contains(l),
+            out: st.views.filter.not_labels.contains(l),
             code: l.code(),
         })
         .collect();
@@ -2716,27 +2719,41 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_filter_flag_toggled(move |chip| {
+        app.on_filter_flag_toggled(move |chip, out| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let Some(&flag) = meta::Flag::ALL.get(chip.max(0) as usize) else {
                 return;
             };
-            state.borrow_mut().views.filter.toggle_flag(flag);
+            {
+                let filter = &mut state.borrow_mut().views.filter;
+                if out {
+                    filter.exclude_flag(flag);
+                } else {
+                    filter.toggle_flag(flag);
+                }
+            }
             apply_filter(&state, &app);
         });
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_filter_label_toggled(move |chip| {
+        app.on_filter_label_toggled(move |chip, out| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let Some(&label) = meta::Label::ALL.get(chip.max(0) as usize) else {
                 return;
             };
-            state.borrow_mut().views.filter.toggle_label(label);
+            {
+                let filter = &mut state.borrow_mut().views.filter;
+                if out {
+                    filter.exclude_label(label);
+                } else {
+                    filter.toggle_label(label);
+                }
+            }
             apply_filter(&state, &app);
         });
     }
@@ -2756,14 +2773,21 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_filter_facet_toggled(move |code, value| {
+        app.on_filter_facet_toggled(move |code, value, out| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let Some(&facet) = filter::Facet::ALL.get(code.max(0) as usize) else {
                 return;
             };
-            state.borrow_mut().views.filter.toggle_facet(facet, &value);
+            {
+                let filter = &mut state.borrow_mut().views.filter;
+                if out {
+                    filter.exclude_facet(facet, &value);
+                } else {
+                    filter.toggle_facet(facet, &value);
+                }
+            }
             apply_filter(&state, &app);
         });
     }
@@ -4756,14 +4780,24 @@ mod tests {
         assert_eq!(flags.row_data(1).unwrap().text, "Pick");
         assert_eq!(flags.row_data(1).unwrap().count, 1);
         assert_eq!(flags.row_data(2).unwrap().count, 1);
-        app.invoke_filter_flag_toggled(1);
+        app.invoke_filter_flag_toggled(1, false);
         assert_eq!(state.borrow().views.shown, vec![1]);
         // Any-of: the rejects as well, and then neither again.
-        app.invoke_filter_flag_toggled(2);
+        app.invoke_filter_flag_toggled(2, false);
         assert_eq!(state.borrow().views.shown, vec![1, 4]);
-        app.invoke_filter_flag_toggled(1);
-        app.invoke_filter_flag_toggled(2);
+        app.invoke_filter_flag_toggled(1, false);
+        app.invoke_filter_flag_toggled(2, false);
         assert_eq!(state.borrow().views.shown, vec![1, 2, 4, 5]);
+        // Ctrl+click holds the rejects out, and the chip says so; a
+        // plain click lets them back.
+        app.invoke_filter_flag_toggled(2, true);
+        assert_eq!(state.borrow().views.shown, vec![1, 2, 5]);
+        let reject = app.get_filter_flags().row_data(2).unwrap();
+        assert!(reject.out && !reject.on);
+        assert_eq!(reject.count, 1, "the row still reads the shoot");
+        app.invoke_filter_flag_toggled(2, false);
+        assert_eq!(state.borrow().views.shown, vec![1, 2, 4, 5]);
+        assert!(!app.get_filter_flags().row_data(2).unwrap().out);
 
         // "Exactly" reads the same chip the other way.
         app.invoke_filter_exact_toggled();
@@ -4865,7 +4899,7 @@ mod tests {
 
         // A flag key that hides the frame says it the same way.
         app.invoke_meta_key("p".into());
-        app.invoke_filter_flag_toggled(1);
+        app.invoke_filter_flag_toggled(1, false);
         assert_eq!(state.borrow().views.shown, vec![2]);
         app.invoke_meta_key("u".into());
         assert!(state.borrow().views.shown.is_empty());

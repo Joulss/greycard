@@ -24,6 +24,9 @@ design note behind it.
 
 ### Library
 
+- Ctrl+click (Cmd on a Mac) on a filter chip holds it out, drawn in
+  red, so everything but the rejects is one click
+  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
 - Stack bursts, in the frame menu, puts frames seconds apart that
   look alike into one stack with the sharpest on top
   ([§473](https://github.com/jessolmstead/greycard/blob/master/docs/notes/473-bursts-into-stacks.md)).
@@ -34,6 +37,11 @@ design note behind it.
 
 ### Fixes
 
+- The last three runs' logs are kept as greycard-ui-1.log to -3.log,
+  names GitHub's issue form takes
+  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
+- The folder paths on Settings' About open in the file manager
+  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
 - A slider under a Windows precision touchpad or a GNOME touchpad set
   to natural scrolling moves with the fingers, as on a Mac
   ([§483](https://github.com/jessolmstead/greycard/blob/master/docs/notes/483-natural-scrolling-on-windows-and-gnome.md)).

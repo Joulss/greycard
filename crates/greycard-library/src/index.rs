@@ -2945,6 +2945,24 @@ pub(crate) mod tests {
             }],
         };
         assert_eq!(lib.count(&none).unwrap(), 4);
+        // A chip held out lists every file it did not count, a file
+        // with no value for the facet among them.
+        for facet in Facet::ALL {
+            for chip in lib.facet_counts(facet, None, &all).unwrap() {
+                let held_out = Filter {
+                    terms: vec![Term::NotFacet {
+                        facet,
+                        values: vec![chip.value.clone()],
+                    }],
+                };
+                assert_eq!(
+                    lib.count(&held_out).unwrap(),
+                    4 - chip.count,
+                    "{facet:?} {}",
+                    chip.value
+                );
+            }
+        }
 
         // The other tests narrow the count; `within` narrows the rows.
         assert_eq!(
@@ -3606,6 +3624,30 @@ pub(crate) mod tests {
         // No keywords is known, and `keyword!=` keeps such a file.
         assert_eq!(
             names(&lib, "keyword!=wedding"),
+            ["a7.tif", "bare.png", "r6.tif"]
+        );
+        // A chip held out is the other way: "everything but the R5"
+        // keeps what has no camera, or no ISO, to say.
+        let held_out = |facet, value: &str| -> Vec<String> {
+            let filter = Filter {
+                terms: vec![crate::filter::Term::NotFacet {
+                    facet,
+                    values: vec![value.to_string()],
+                }],
+            };
+            lib.query(&filter)
+                .unwrap()
+                .iter()
+                .map(Entry::name)
+                .collect()
+        };
+        use crate::filter::Facet;
+        assert_eq!(
+            held_out(Facet::Camera, "Canon EOS R5"),
+            ["a7.tif", "bare.png", "r6.tif"]
+        );
+        assert_eq!(
+            held_out(Facet::Iso, "100"),
             ["a7.tif", "bare.png", "r6.tif"]
         );
         std::fs::remove_dir_all(&dir).unwrap();

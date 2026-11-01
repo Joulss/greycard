@@ -268,7 +268,8 @@ filled in, and it shows the log file in your file manager so you can
 drag it into the form. In the report, include:
 
 1. What you did and what you expected, in a sentence each.
-2. The log. The previous run's log is kept as `greycard-ui.log.1`.
+2. The log. The three runs before are kept as `greycard-ui-1.log`
+   (the latest), `greycard-ui-2.log`, and `greycard-ui-3.log`.
 3. The raw file and the camera model, if a picture renders wrong. This
    is the most useful report you can send.
 

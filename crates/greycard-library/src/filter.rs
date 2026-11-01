@@ -105,6 +105,13 @@ pub enum Term {
         facet: Facet,
         values: Vec<String>,
     },
+    /// None of a facet's values: the bar's chips held out. A file
+    /// with no value for the facet passes. An empty list asks
+    /// nothing.
+    NotFacet {
+        facet: Facet,
+        values: Vec<String>,
+    },
 }
 
 /// A field the filter bar offers as chips, a chip a value, each
@@ -436,6 +443,14 @@ pub struct Saved {
     /// By the facet's field in the filter language: `camera`,
     /// `lens`, `kind`, `style`, `iso`, `focal`, `date`, `keyword`.
     pub facets: std::collections::BTreeMap<String, Vec<String>>,
+    /// The chips held out, by group as above; written only when one
+    /// is, so a filter without them keeps its old shape.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_flags: Vec<Flag>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_labels: Vec<Label>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub not_facets: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// The tokens of a filter: split on whitespace outside double
@@ -973,6 +988,18 @@ impl Term {
                     _ => format!("{} IN ({marks})", facet.key()),
                 }
             }
+            // A file with no value is NULL in the `IN`, and passes.
+            Term::NotFacet { facet, values } => {
+                if values.is_empty() {
+                    return "1".to_string();
+                }
+                let any = Term::Facet {
+                    facet: *facet,
+                    values: values.clone(),
+                }
+                .sql(params);
+                format!("NOT COALESCE(({any}), 0)")
+            }
         }
     }
 
@@ -1048,6 +1075,14 @@ impl Term {
                 facet: Facet::Kind,
                 values,
             } => values.is_empty() || kind_of(path).is_some_and(|k| values.iter().any(|v| v == k)),
+            Term::NotFacet { facet, values } => {
+                let any = Term::Facet {
+                    facet: *facet,
+                    values: values.clone(),
+                }
+                .on_meta(path, meta)?;
+                values.is_empty() || !any
+            }
             _ => return None,
         })
     }

@@ -79,7 +79,7 @@ body:
         The editor keeps `greycard-ui.log`: in `~/Library/Logs/greycard`
         on a Mac, `~/.local/state/greycard` on Linux,
         `%LOCALAPPDATA%\greycard\logs` on Windows. Drag it in here.
-        `greycard-ui.log.1` beside it is the run before, the one to send
+        `greycard-ui-1.log` beside it is the run before, the one to send
         if greycard closed on its own. For the command line, paste what
         it printed.
     validations:

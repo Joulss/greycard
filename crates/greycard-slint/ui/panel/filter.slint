@@ -9,11 +9,13 @@ import { PanelButton, Typing } from "../controls.slint";
 // A chip of the filter: a pill that says what it asks and how many
 // frames it would leave. A chip that leads nowhere is dimmed rather
 // than dropped, so the row does not move about under the pointer as
-// a cull goes on.
+// a cull goes on. A chip held out (Ctrl+click, Cmd on a Mac) is drawn
+// in red.
 component Chip inherits Rectangle {
     in property <string> text;
     in property <int> count;
     in property <bool> on;
+    in property <bool> out: false;
     in property <bool> has-dot: false;
     in property <bool> outlined: false;
     /// A chip that is a toggle rather than a question about the
@@ -23,12 +25,14 @@ component Chip inherits Rectangle {
     /// the panel is spelled closer.
     in property <bool> tight: false;
     in property <color> dot: Theme.text-muted;
-    callback clicked();
-    property <bool> nowhere: root.shows-count && root.count == 0 && !root.on;
+    /// Whether Ctrl (Cmd on a Mac) was held: the press holds the
+    /// chip out rather than ticking it.
+    callback clicked(bool);
+    property <bool> nowhere: root.shows-count && root.count == 0 && !root.on && !root.out;
     height: Theme.control-height - 4px;
     border-radius: (Theme.control-height - 4px) / 2;
     border-width: 1px;
-    border-color: root.on ? Theme.accent : Theme.border;
+    border-color: root.out ? Theme.warn-red : root.on ? Theme.accent : Theme.border;
     background: root.on ? Theme.selection : (ta.has-hover ? Theme.hover : Theme.base);
     opacity: root.nowhere ? 0.45 : 1;
     animate background { duration: Theme.quick; }
@@ -48,9 +52,9 @@ component Chip inherits Rectangle {
         }
         if root.text != "": Text {
             text: root.text;
-            color: root.on ? Theme.text : Theme.text-secondary;
+            color: root.out ? Theme.warn-red : root.on ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-xs;
-            font-weight: root.on ? Theme.weight-medium : Theme.weight-regular;
+            font-weight: root.on || root.out ? Theme.weight-medium : Theme.weight-regular;
             vertical-alignment: center;
         }
         if root.shows-count: Text {
@@ -61,8 +65,14 @@ component Chip inherits Rectangle {
         }
     }
     ta := TouchArea {
+        property <bool> ctrl;
         mouse-cursor: MouseCursor.pointer;
-        clicked => { root.clicked(); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                self.ctrl = e.modifiers.control;
+            }
+        }
+        clicked => { root.clicked(self.ctrl); }
     }
 }
 
@@ -89,7 +99,7 @@ component FacetChips inherits Rectangle {
     in property <[FacetRow]> facets;
     in property <string> note;
     in property <bool> tight: false;
-    callback toggled(int, string);
+    callback toggled(int, string, bool);
     height: Theme.control-height - 4px;
     clip: true;
     flick := Flickable {
@@ -127,8 +137,9 @@ component FacetChips inherits Rectangle {
                     text: chip.text;
                     count: chip.count;
                     on: chip.on;
+                    out: chip.out;
                     tight: root.tight;
-                    clicked => { root.toggled(facet.code, chip.key); }
+                    clicked(ctrl) => { root.toggled(facet.code, chip.key, ctrl); }
                 }
                 Rectangle { width: Theme.space-2; }
             }
@@ -233,11 +244,12 @@ export component FilterBar inherits Rectangle {
     in property <bool> takes-focus: true;
     in-out property <string> text;
     callback star-picked(int);
-    callback flag-toggled(int);
-    callback label-toggled(int);
+    /// A flag or label chip, and whether Ctrl held it out.
+    callback flag-toggled(int, bool);
+    callback label-toggled(int, bool);
     callback exact-toggled();
     /// A facet's chip, by the facet's code and the chip's value.
-    callback facet-toggled(int, string);
+    callback facet-toggled(int, string, bool);
     callback text-edited(string);
     callback cleared();
     /// Whether the bar offers to keep its filter as a smart
@@ -289,7 +301,7 @@ export component FilterBar inherits Rectangle {
                     shows-count: false;
                     tight: true;
                     on: root.exact;
-                    clicked => { root.exact-toggled(); }
+                    clicked(ctrl) => { root.exact-toggled(); }
                 }
             }
             HorizontalLayout {
@@ -300,7 +312,7 @@ export component FilterBar inherits Rectangle {
                     count: chip.count;
                     on: chip.on;
                     tight: true;
-                    clicked => { root.star-picked(i); }
+                    clicked(ctrl) => { root.star-picked(i); }
                 }
             }
             Text {
@@ -316,8 +328,9 @@ export component FilterBar inherits Rectangle {
                     text: chip.text;
                     count: chip.count;
                     on: chip.on;
+                    out: chip.out;
                     tight: true;
-                    clicked => { root.flag-toggled(i); }
+                    clicked(ctrl) => { root.flag-toggled(i, ctrl); }
                 }
             }
             Text {
@@ -333,9 +346,10 @@ export component FilterBar inherits Rectangle {
                     text: chip.text;
                     count: chip.count;
                     on: chip.on;
+                    out: chip.out;
                     tight: true;
                     label-code: chip.code;
-                    clicked => { root.label-toggled(i); }
+                    clicked(ctrl) => { root.label-toggled(i, ctrl); }
                 }
             }
             // A facet to a row here, each scrolled on its own: a
@@ -349,7 +363,7 @@ export component FilterBar inherits Rectangle {
             for facet in root.facets: FacetChips {
                 facets: [facet];
                 tight: true;
-                toggled(code, key) => { root.facet-toggled(code, key); }
+                toggled(code, key, ctrl) => { root.facet-toggled(code, key, ctrl); }
             }
         }
         HorizontalLayout {
@@ -374,13 +388,13 @@ export component FilterBar inherits Rectangle {
                         text: chip.text;
                         count: chip.count;
                         on: chip.on;
-                        clicked => { root.star-picked(i); }
+                        clicked(ctrl) => { root.star-picked(i); }
                     }
                     Chip {
                         text: root.exact ? "exactly" : "or more";
                         shows-count: false;
                         on: root.exact;
-                        clicked => { root.exact-toggled(); }
+                        clicked(ctrl) => { root.exact-toggled(); }
                     }
                     Rectangle { width: Theme.space-2; }
                     Rectangle { width: 1px; background: Theme.border; }
@@ -389,7 +403,8 @@ export component FilterBar inherits Rectangle {
                         text: chip.text;
                         count: chip.count;
                         on: chip.on;
-                        clicked => { root.flag-toggled(i); }
+                        out: chip.out;
+                        clicked(ctrl) => { root.flag-toggled(i, ctrl); }
                     }
                     Rectangle { width: Theme.space-2; }
                     Rectangle { width: 1px; background: Theme.border; }
@@ -398,8 +413,9 @@ export component FilterBar inherits Rectangle {
                         text: chip.text;
                         count: chip.count;
                         on: chip.on;
+                        out: chip.out;
                         label-code: chip.code;
-                        clicked => { root.label-toggled(i); }
+                        clicked(ctrl) => { root.label-toggled(i, ctrl); }
                     }
                 }
             }
@@ -483,11 +499,11 @@ export component FilterBar inherits Rectangle {
             || root.facet-note != ""): FacetChips {
             facets: root.facets-long;
             note: root.facet-note;
-            toggled(code, key) => { root.facet-toggled(code, key); }
+            toggled(code, key, ctrl) => { root.facet-toggled(code, key, ctrl); }
         }
         if !root.stacked && root.facets-short.length > 0: FacetChips {
             facets: root.facets-short;
-            toggled(code, key) => { root.facet-toggled(code, key); }
+            toggled(code, key, ctrl) => { root.facet-toggled(code, key, ctrl); }
         }
     }
 }

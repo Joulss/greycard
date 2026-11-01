@@ -37,10 +37,18 @@ pub const DIR: &str = "collections";
 
 /// What the files say their shape is: a later build that changes it
 /// bumps this, and this build leaves a file of a later one alone. 2 is
-/// a collection holding a version of a picture; a file without one is
-/// written at 1 as before, so a build that knows no versions goes on
-/// reading every collection that has none.
-pub const VERSION: u32 = 2;
+/// a collection holding a version of a picture, 3 a smart collection
+/// holding out a chip; a file with neither is written at 1 as before,
+/// so an older build goes on reading every file it can read whole.
+pub const VERSION: u32 = 3;
+
+/// The shape of a collection that holds a version of a picture.
+pub const PICTURE_VERSION: u32 = 2;
+
+/// The shape of a smart collection whose filter holds a chip out: a
+/// build that knows no held-out chips would drop them and list what
+/// they hide.
+pub const HELD_OUT_VERSION: u32 = 3;
 
 /// The shape a file without a version in it is written at.
 pub const PLAIN_VERSION: u32 = 1;
@@ -364,7 +372,7 @@ impl Collection {
     /// version, else 1, so a build that knows no versions reads it.
     fn file_version(&self) -> u32 {
         if self.refs.iter().any(|r| r.version.is_some()) {
-            VERSION
+            PICTURE_VERSION
         } else {
             PLAIN_VERSION
         }
@@ -405,8 +413,15 @@ impl Smart {
     }
 
     fn to_file(&self) -> SmartFile {
+        let f = &self.filter;
+        let held_out =
+            !(f.not_flags.is_empty() && f.not_labels.is_empty() && f.not_facets.is_empty());
         SmartFile {
-            version: PLAIN_VERSION,
+            version: if held_out {
+                HELD_OUT_VERSION
+            } else {
+                PLAIN_VERSION
+            },
             name: self.name.clone(),
             set: self.set.clone(),
             made: self.made,

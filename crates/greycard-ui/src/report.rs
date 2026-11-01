@@ -76,7 +76,7 @@ pub fn log_note(log: &str) -> String {
     format!(
         "The log is {log}, in the folder greycard opened beside this form. \
          Drag greycard-ui.log here. If greycard closed on its own before this, \
-         greycard-ui.log.1 is that run: drag it too."
+         greycard-ui-1.log is that run: drag it too."
     )
 }
 
