@@ -1083,6 +1083,28 @@ clears or a tester asks for it.
       camera-scanning workflow alongside digital raws (reddit,
       2026-10-31)
 
+- [ ] A mask's name shown as typed: the section heading style sets
+      every name in capitals (discussion 59, 2026-11-01)
+- [ ] Keys for the brush's Feather and Flow and for Show mask; the
+      wheel already sizes the brush and Space or Shift drags the
+      picture with a tool in hand since 0.10.0 (discussion 59,
+      2026-11-01)
+- [ ] Duplicate a mask within the frame, and copy one mask onto other
+      frames rather than the whole set (discussion 59, 2026-11-01)
+- [ ] An edge-aware refinement for a mask's edge, a guided filter on
+      the mask against the picture, so a brush's or an AI mask's edge
+      follows the subject's and two masks meet without a seam; the
+      guide gets a worked example of each fade (discussion 59,
+      2026-11-01)
+- [ ] The color pick's sample size shown and chosen; today it is the
+      5x5 mean at the viewport's scale, a few picture pixels at fit
+      (discussion 59, 2026-11-01)
+- [ ] Drawn shapes as masks: a polygon and a curved path with a
+      feathered edge, inverted and combined like the rest
+      (discussion 59, 2026-11-01)
+- [ ] A Midtones slider in Light between Highlights and Shadows, so
+      the middle lifts without the curve (discussion 59, 2026-11-01)
+
 ## Blocked
 
 Work that waits on someone outside the repo: a protocol reaching
