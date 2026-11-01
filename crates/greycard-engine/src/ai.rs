@@ -197,6 +197,42 @@ fn background_or_not(shape: &Shape, base: &[u8]) -> Vec<u8> {
 
 pub use crate::stages::prompted;
 
+/// Fetch `model`'s file for Core ML in the background where it has one
+/// the store lacks, once a process. A Mac that had a denoiser tier
+/// before its fp16 file was published gets it with no sheet, the
+/// tier's license having been shown when the tier came, from the same
+/// place under the same license; Core ML opens it from the tier's next
+/// load, and until then the tier's own file, as before.
+fn fetch_core_ml_quietly(store: &Store, model: &'static Model) {
+    static TRIED: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    if greycard_ai::registry::core_ml_file(model).is_none() || store.core_ml_path(model).is_some() {
+        return;
+    }
+    {
+        let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
+        if tried.contains(&model.id) {
+            return;
+        }
+        tried.push(model.id);
+    }
+    let store = store.clone();
+    let spawned = std::thread::Builder::new()
+        .name("core-ml-fetch".into())
+        .spawn(move || match store.fetch_core_ml(model, |_| {}) {
+            Ok(()) => log::info!(
+                "{}: its file for Core ML arrived; Core ML opens it from the next load",
+                model.name
+            ),
+            Err(e) => log::info!("{}: its file for Core ML did not arrive: {e}", model.name),
+        });
+    if let Err(e) = spawned {
+        log::info!(
+            "{}: no thread to fetch its file for Core ML: {e}",
+            model.name
+        );
+    }
+}
+
 /// The long side of the preview the models see.
 const PREVIEW: u32 = 2048;
 
@@ -287,6 +323,10 @@ pub struct Ai {
     /// Whether made rasters and fills are kept on disk (`cached_path`,
     /// `fill_path`); never for a test that runs the models.
     disk: bool,
+    /// Whether a denoiser tier's file for Core ML is fetched in the
+    /// background when the store lacks it ([`fetch_core_ml_quietly`]);
+    /// never for a test, whose store is its own.
+    quiet_fetch: bool,
     /// The Subject matte at the raster's size, of base develop
     /// `stamp`, and the provider that made it: run once and read by a
     /// Background sharing it, so a mask with both costs the model one
@@ -1097,6 +1137,7 @@ impl Ai {
             salt: None,
             other_side: Side::default(),
             disk: true,
+            quiet_fetch: true,
             subject_matte: None,
             #[cfg(any(test, feature = "testing"))]
             sams_edge_only: false,
@@ -1119,6 +1160,7 @@ impl Ai {
             store: Some(store),
             providers,
             disk: false,
+            quiet_fetch: false,
             ..Self::new()
         }
     }
@@ -1149,6 +1191,9 @@ impl Ai {
             let denoiser = Denoiser::from_store(&store, model, &self.providers)
                 .map_err(|e| NoDenoiser::Failed(e.to_string()))?;
             self.denoiser = Some((model.id, denoiser));
+            if self.quiet_fetch && self.providers.contains(&Provider::CoreMl) {
+                fetch_core_ml_quietly(&store, model);
+            }
         }
         Ok(&mut self
             .denoiser
@@ -1924,6 +1969,7 @@ impl Ai {
     pub fn for_test_on_disk(store: Store) -> Self {
         Self {
             store: Some(store),
+            quiet_fetch: false,
             ..Self::new()
         }
     }

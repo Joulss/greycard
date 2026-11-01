@@ -520,3 +520,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§505. The engine, part two: the window's develop on the kept points](notes/505-the-engine-part-two-the-windows-develop-on-the-kept-points.md) (2026-11-01)
 - [§506. The engine, part two: the open file's export, and the end of part two](notes/506-the-engine-part-two-the-open-files-export-and-the-end-of-part-two.md) (2026-11-01)
 - [§507. Structure, a wider and softer local contrast](notes/507-structure-a-wider-softer-local-contrast.md) (2026-11-01)
+- [§508. The fp16 denoisers on Core ML](notes/508-the-fp16-denoisers-on-core-ml.md) (2026-11-01)

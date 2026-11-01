@@ -169,6 +169,60 @@ impl Store {
             std::fs::rename(&part, &path)?;
         }
         std::fs::write(dir.join(model.license_file()), model.license_note())?;
+        // On a Mac the file Core ML opens comes too; the model is whole
+        // without it, so a failure here is said and the fetch stands.
+        if cfg!(target_os = "macos")
+            && let Err(e) = self.fetch_core_ml(model, &mut progress)
+        {
+            log::warn!("{}: its file for Core ML did not arrive: {e}", model.name);
+        }
+        Ok(())
+    }
+
+    /// The file Core ML opens for `model` ([`registry::core_ml_file`]),
+    /// where it has one and it is here at its published size.
+    ///
+    /// [`registry::core_ml_file`]: crate::registry::core_ml_file
+    pub fn core_ml_path(&self, model: &Model) -> Option<PathBuf> {
+        let file = crate::registry::core_ml_file(model)?;
+        self.extra_path(model, file)
+    }
+
+    /// Fetch the file Core ML opens for `model`, where it has one and it
+    /// is missing, checking its hash. Nothing else of the model's is
+    /// touched: a model already here is fetched no further. One such
+    /// fetch at a time a process, so a fetch with the model and one
+    /// started alone do not write the same part file.
+    pub fn fetch_core_ml(&self, model: &Model, progress: impl FnMut(Progress)) -> Result<()> {
+        match crate::registry::core_ml_file(model) {
+            Some(file) => self.fetch_extra(model, file, progress),
+            None => Ok(()),
+        }
+    }
+
+    fn extra_path(&self, model: &Model, file: &File) -> Option<PathBuf> {
+        let path = self.path(model, file);
+        std::fs::metadata(&path)
+            .is_ok_and(|m| m.is_file() && m.len() == file.bytes)
+            .then_some(path)
+    }
+
+    fn fetch_extra(
+        &self,
+        model: &Model,
+        file: &File,
+        mut progress: impl FnMut(Progress),
+    ) -> Result<()> {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        if self.extra_path(model, file).is_some() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(self.dir(model))?;
+        let path = self.path(model, file);
+        let part = path.with_file_name(format!("{}.part", file.name));
+        fetch_to(file, &part, &mut progress)?;
+        std::fs::rename(&part, &path)?;
         Ok(())
     }
 
@@ -688,6 +742,62 @@ mod tests {
                 .collect::<Vec<u8>>()
                 .into_boxed_slice(),
         )
+    }
+
+    /// The file Core ML opens sits in the model's directory, is had by
+    /// its size, and is not one the model needs to be had; fetched
+    /// alone, it comes once and nothing else of the model is touched.
+    #[test]
+    fn the_core_ml_file_is_fetched_beside_the_model_and_not_needed() {
+        use crate::registry::{DENOISE_BEST, core_ml_file};
+        let root = scratch("core-ml");
+        let store = Store::at(&root);
+        let own = DENOISE_BEST.files[0];
+        let fp16 = core_ml_file(&DENOISE_BEST).unwrap();
+        let size = |path: PathBuf, bytes: u64| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::File::create(path).unwrap().set_len(bytes).unwrap();
+        };
+        size(store.path(&DENOISE_BEST, &own), own.bytes);
+        assert!(store.have(&DENOISE_BEST), "had without the fp16 file");
+        assert_eq!(store.core_ml_path(&DENOISE_BEST), None);
+        size(store.path(&DENOISE_BEST, fp16), fp16.bytes - 1);
+        assert_eq!(store.core_ml_path(&DENOISE_BEST), None, "short: not had");
+        size(store.path(&DENOISE_BEST, fp16), fp16.bytes);
+        assert_eq!(
+            store.core_ml_path(&DENOISE_BEST),
+            Some(root.join(DENOISE_BEST.id).join(fp16.name))
+        );
+        // Had already: nothing fetched (its URL is not reached).
+        store
+            .fetch_core_ml(&DENOISE_BEST, |_| panic!("nothing to download"))
+            .unwrap();
+        // A model without one: nothing to fetch, and none had.
+        assert!(store.core_ml_path(&MODELS[0]).is_none());
+        store.fetch_core_ml(&MODELS[0], |_| panic!()).unwrap();
+
+        // Fetched from a server: the first answer is dropped halfway,
+        // which a small file does not keep; the second arrives whole,
+        // beside the model's own file, which is left as it was.
+        let body = body();
+        let (file, _) = serve(body, false);
+        let model = Model {
+            files: &[],
+            ..DENOISE_BEST
+        };
+        assert!(store.fetch_extra(&model, &file, |_| {}).is_err());
+        assert!(store.extra_path(&model, &file).is_none());
+        store.fetch_extra(&model, &file, |_| {}).unwrap();
+        let path = root.join(DENOISE_BEST.id).join(file.name);
+        assert_eq!(store.extra_path(&model, &file), Some(path.clone()));
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+        assert_eq!(
+            std::fs::metadata(store.path(&DENOISE_BEST, &own))
+                .unwrap()
+                .len(),
+            own.bytes
+        );
+        greycard_core::testing::remove_dir_retry(&root);
     }
 
     /// A large file whose download is dropped halfway keeps its part;

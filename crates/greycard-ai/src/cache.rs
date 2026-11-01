@@ -91,7 +91,13 @@ impl Cache {
         &self.dir
     }
 
-    /// The key of `model`'s answer for `prepared`, cut by `tiling`.
+    /// The key of `model`'s answer for `prepared`, cut by `tiling`. The
+    /// provider is not in it, nor the fp16 file Core ML may open in
+    /// place of the model's own ([`crate::registry::core_ml_file`]):
+    /// that is the same network, its answer within about 0.001 stops of
+    /// the fp32 file's (§481, §489), and kept as the tier's answer as
+    /// every provider's is, so the file arriving does not throw away a
+    /// Mac's answers.
     pub fn key(model: &Model, tiling: Tiling, prepared: &Prepared) -> Key {
         let mut h = Hasher::default();
         h.str(model.id);

@@ -49,7 +49,9 @@ pub enum Outcome {
 pub struct Entry {
     /// The registry's id for the model, e.g. `birefnet-lite-2024-fp16`.
     pub model: String,
-    /// The specific file's published sha256.
+    /// The specific file's published sha256, or two joined by `+` for
+    /// a load that hands Core ML a file of its own
+    /// (`Denoiser::from_store`).
     pub hash: String,
     /// `Provider::name()`.
     pub provider: String,

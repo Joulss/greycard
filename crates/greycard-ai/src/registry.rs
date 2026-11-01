@@ -76,16 +76,16 @@ impl Model {
 
     /// The note written beside the files.
     pub fn license_note(&self) -> String {
-        let files: Vec<String> = self
-            .files
-            .iter()
-            .map(|f| {
-                format!(
-                    "  {} ({} bytes, sha256 {})\n    from {}",
-                    f.name, f.bytes, f.sha256, f.url
-                )
-            })
-            .collect();
+        let line = |f: &File| {
+            format!(
+                "  {} ({} bytes, sha256 {})\n    from {}",
+                f.name, f.bytes, f.sha256, f.url
+            )
+        };
+        let mut files: Vec<String> = self.files.iter().map(line).collect();
+        if let Some(f) = core_ml_file(self) {
+            files.push(format!("{}\n    on a Mac, for Core ML", line(f)));
+        }
         let provenance = match self.modified {
             Some(m) => format!(
                 "Downloaded by greycard on first use. greycard publishes these files, modified from the original under its license: {what}\n\nThe original's license:\n\n{notice}",
@@ -577,6 +577,54 @@ pub const DENOISE_BEST: Model = Model {
     }],
 };
 
+/// The fp16 copies of the denoiser tiers, which Core ML runs 1.4 to
+/// 2.5 times quicker on an M5 and within 0.01 stops of the fp32 file
+/// but in the deepest shadows (§481, §489). Made from the fp32 files
+/// by `tools/denoise/fp16.py`. A tier retired must list its fp16 file
+/// in [`RETIRED`] too, or it stays in the store.
+const CORE_ML_FILES: &[(&str, File)] = &[
+    (
+        DENOISE_FAST.id,
+        File {
+            name: "denoise-v19-fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v19-fp16.onnx",
+            bytes: 2_476_627,
+            sha256: "a7b6df9f9e61cdb81c8a2413cf001e2d0a49f3c9c3645e97b28232f48b554b54",
+        },
+    ),
+    (
+        DENOISE_BALANCED.id,
+        File {
+            name: "denoise-v15-fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v15-fp16.onnx",
+            bytes: 4_528_894,
+            sha256: "53b96629dd6185e6a02f9fcab97e569a73bc1056a198bd2cdc466b128f3e214c",
+        },
+    ),
+    (
+        DENOISE_BEST.id,
+        File {
+            name: "denoise-v20-fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v20-fp16.onnx",
+            bytes: 10_158_848,
+            sha256: "bf9f584ba6a30114dd9df74854cadf0125ce760e39251d30835312a4c81f4dd7",
+        },
+    ),
+];
+
+/// The file Core ML opens in place of `model`'s own, where it has one:
+/// kept in the model's directory but not one of its [`Model::files`],
+/// so a store without it still has the model and every other provider
+/// keeps the model's own file. The store fetches it with the model on a
+/// Mac ([`crate::Store::fetch`]), or alone
+/// ([`crate::Store::fetch_core_ml`]).
+pub fn core_ml_file(model: &Model) -> Option<&'static File> {
+    CORE_ML_FILES
+        .iter()
+        .find(|(id, _)| *id == model.id)
+        .map(|(_, file)| file)
+}
+
 pub const MODELS: &[Model] = &[
     SUBJECT,
     SUBJECT_WEBGPU,
@@ -953,6 +1001,29 @@ mod tests {
         }
         assert!(tier_of(&SUBJECT).is_none());
         assert!(denoiser("off").is_none());
+    }
+
+    #[test]
+    fn each_tier_has_an_fp16_file_beside_its_own() {
+        for (name, model) in DENOISERS {
+            let f = core_ml_file(model).unwrap_or_else(|| panic!("{name} has no fp16 file"));
+            let own = model.files[0];
+            assert_eq!(f.name, own.name.replace(".onnx", "-fp16.onnx"));
+            assert_eq!(
+                f.url.rsplit_once('/').map(|(dir, _)| dir),
+                own.url.rsplit_once('/').map(|(dir, _)| dir),
+                "{name}'s fp16 file is published beside its own"
+            );
+            assert!(f.url.ends_with(f.name));
+            assert_eq!(f.sha256.len(), 64);
+            assert!(f.bytes > 0 && f.bytes < own.bytes);
+            assert!(!model.files.contains(f), "not one of the model's own files");
+            assert!(model.license_note().contains(f.sha256));
+        }
+        let others = MODELS
+            .iter()
+            .filter(|m| tier_of(m).is_none() && core_ml_file(m).is_some());
+        assert_eq!(others.count(), 0, "only the denoisers have one");
     }
 
     #[test]

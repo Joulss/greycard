@@ -89,6 +89,13 @@ design note behind it.
   holding it
   ([§472](https://github.com/jessolmstead/greycard/blob/master/docs/notes/472-the-library-over-a-network.md)).
 
+### Mac
+
+- The learned denoise runs 1.4 to 2.5 times as fast on Apple Silicon:
+  Core ML takes each tier's fp16 copy, fetched with the tier, or in the
+  background for a tier already fetched
+  ([§508](https://github.com/jessolmstead/greycard/blob/master/docs/notes/508-the-fp16-denoisers-on-core-ml.md)).
+
 ### Fixes
 
 - The window opens inside the Dock's, the task bar's, or the panel's

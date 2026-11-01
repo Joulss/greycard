@@ -167,7 +167,14 @@ fn fetch_models(
             model.files.len(),
             if model.files.len() == 1 { "" } else { "s" }
         );
-        if store.have(model) {
+        // On a Mac a denoiser's fp16 file comes with it, and comes alone
+        // for a tier already here without it.
+        let core_ml =
+            greycard_ai::registry::core_ml_file(model).filter(|_| cfg!(target_os = "macos"));
+        if let Some(f) = core_ml {
+            println!("  for Core ML {} ({} MB)", f.name, megabytes(f.bytes));
+        }
+        if store.have(model) && core_ml.is_none_or(|_| store.core_ml_path(model).is_some()) {
             println!("  already in  {}", store.dir(model).display());
             continue;
         }

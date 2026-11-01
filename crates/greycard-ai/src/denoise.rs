@@ -181,18 +181,19 @@ impl Denoiser {
     /// provider's answer for it is remembered; use
     /// [`Denoiser::from_store`] for that.
     pub fn load(path: &Path, providers: &[Provider]) -> Result<Self> {
-        Self::load_inner(path, providers, None, Tiling::default()).map(Self::choose)
+        Self::load_inner(path, None, providers, None, Tiling::default()).map(Self::choose)
     }
 
     /// [`Denoiser::load`] for runs at `tiling`, as given: nothing is
     /// chosen, and on Core ML the session takes that tiling's tile
     /// only. For a caller measuring one tiling against another.
     pub fn load_tiled(path: &Path, providers: &[Provider], tiling: Tiling) -> Result<Self> {
-        Self::load_inner(path, providers, None, tiling)
+        Self::load_inner(path, None, providers, None, tiling)
     }
 
     fn load_inner(
         path: &Path,
+        core_ml: Option<&Path>,
         providers: &[Provider],
         remember: Option<runtime::Remembered<'_>>,
         tiling: Tiling,
@@ -208,6 +209,7 @@ impl Denoiser {
         let side = packed as i64;
         let loaded = runtime::open_fixed(
             path,
+            core_ml,
             GraphOptimizationLevel::Level3,
             providers,
             remember,
@@ -236,18 +238,32 @@ impl Denoiser {
 
     /// A registered tier from the store; [`Error::Missing`] when it
     /// has not been fetched. Its tiling is chosen as
-    /// [`Denoiser::load`]'s is.
+    /// [`Denoiser::load`]'s is. Core ML opens the tier's fp16 file
+    /// where the store has it ([`Store::core_ml_path`]), and the tier's
+    /// own file where it does not; the other providers always open the
+    /// tier's own. What is remembered of a load is kept under both
+    /// files' hashes when the fp16 file is in it, so neither load
+    /// settles on the other's record.
     pub fn from_store(store: &Store, model: &Model, providers: &[Provider]) -> Result<Self> {
         if !store.have(model) {
             return Err(Error::Missing(model.name));
         }
+        let core_ml = providers
+            .contains(&Provider::CoreMl)
+            .then(|| store.core_ml_path(model))
+            .flatten();
+        let hash = match (&core_ml, crate::registry::core_ml_file(model)) {
+            (Some(_), Some(fp16)) => format!("{}+{}", model.files[0].sha256, fp16.sha256),
+            _ => model.files[0].sha256.to_string(),
+        };
         let remember = runtime::Remembered {
             store_root: store.root(),
             model: model.id,
-            hash: model.files[0].sha256,
+            hash: &hash,
         };
         Self::load_inner(
             &store.path(model, &model.files[0]),
+            core_ml.as_deref(),
             providers,
             Some(remember),
             Tiling::default(),

@@ -859,7 +859,7 @@ pub fn open(
     remember: Option<Remembered<'_>>,
     warm: impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> Result<Loaded> {
-    open_fixed(path, level, providers, remember, &[], warm)
+    open_fixed(path, None, level, providers, remember, &[], warm)
 }
 
 /// A model's sessions being opened, counted across threads, and who
@@ -945,8 +945,15 @@ pub fn on_loading(listener: impl Fn(bool) + Send + Sync + 'static) {
 /// providers keep the graph's free dimensions. `warm` should then run
 /// the fixed shape, on every provider, so the timing in `open` compares
 /// like with like.
+///
+/// `core_ml`, where given, is the file Core ML opens in place of
+/// `path`, the same network at fp16 for the denoiser
+/// ([`crate::registry::core_ml_file`]); every other provider opens
+/// `path`. A `remember` for such a load should name both files in its
+/// hash, so a record of `path` alone on Core ML is not taken for it.
 pub fn open_fixed(
     path: &Path,
+    core_ml: Option<&Path>,
     level: GraphOptimizationLevel,
     providers: &[Provider],
     remember: Option<Remembered<'_>>,
@@ -962,6 +969,9 @@ pub fn open_fixed(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    if let Some(file) = core_ml.filter(|_| providers.contains(&Provider::CoreMl)) {
+        log::info!("{name}: Core ML opens {}", file.display());
+    }
     let build = record::build_fingerprint(providers);
     let shape = record::shape(fixed);
     // Read once, lazily, and only with `remember` set: for a list that
@@ -1027,7 +1037,11 @@ pub fn open_fixed(
         }
         let skip_warm = skip_warm(last, provider);
 
-        let outcome = try_open(path, level, provider, fixed, skip_warm, timed, &mut warm);
+        let file = match core_ml {
+            Some(file) if provider == Provider::CoreMl => file,
+            _ => path,
+        };
+        let outcome = try_open(file, level, provider, fixed, skip_warm, timed, &mut warm);
         if let (Some(r), Some(adapter)) = (remember, &adapter) {
             let entries = entries.get_or_insert_with(|| record::read(r.store_root));
             let recorded = match &outcome {
