@@ -546,21 +546,35 @@ the user.
 
 ### Merge
 
-A bracket, a focus stack or a panorama becomes a linear DNG beside
-its sources. The plan and the sizes are in §71; the brackets to shoot
-for testing are in `docs/test-frames.md`.
+A bracket, a focus stack, or a panorama becomes a linear DNG beside
+its sources, through one pipeline (§523): each frame to camera RGB,
+registered onto a reference, put on one scale, merged by weights,
+written as a float DNG with its headroom and a noise profile. The
+brackets and the panorama to shoot for testing are in
+`docs/test-frames.md`.
 
-- [ ] HDR merge of a tripod bracket: exposure-scaled weighted average,
-      clipped samples dropped, written with headroom; develop skips
-      highlight reconstruction and the white-level clip for it (§71)
-- [ ] HDR merge handheld: alignment and reference-frame deghosting
-      (§71)
-- [ ] A merge action over the selection, with progress; the new DNG
-      appears beside its sources (§71). The selection is there since
-      §156
-- [ ] Panorama stitching: feature matching and RANSAC for the coarse
-      homography, registration for refinement, multi-band blend from
-      the focus stack (§71)
+- [ ] Phase 1, the tripod bracket (§523): the `MergeInput` purpose,
+      exposure from EXIF refined on the frames, inverse-variance
+      weights, clipped samples dropped and what every frame clipped
+      reconstructed, the half-float Deflate DNG through the rawler pin
+      (dnglab/dnglab#896), the `NoiseProfile`, the develop pinned to
+      the reference frame's, `greycard merge hdr`, and the "Merge to
+      HDR..." action over the selection, stacked with its sources
+- [ ] Phase 2, the panorama (§523): the lens correction composed into
+      the one warp, features and RANSAC, a homography model in
+      `register.rs`, the cylinder past 90 degrees, the seam finder for
+      parallax, the multi-band blend accumulated frame by frame, the
+      crop, the merged-file tag the lens stage reads; the per-frame
+      learned denoise on by default. Open: a canvas cap or strips, and
+      the uncropped output
+- [ ] Phase 3, the handheld bracket (§523): the similarity fit, a
+      better resampling kernel in `stack.rs` and `register.rs` (the
+      Engine pool's warps item, pulled forward), and reference-frame
+      deghosting, on by default
+- [ ] Focus through the Merge action and `greycard merge focus`, after
+      phase 1 (§125, §523)
+- [ ] A bracket finder: a burst whose EXIF exposures step marked as a
+      bracket, so the merge can be asked of a whole card (§523)
 - [ ] A center for the vignette: two sliders or a drag on the picture
       to move the shape off the frame's middle, as darktable has and
       Lightroom has not; the center kept as fractions of the frame so
@@ -575,8 +589,6 @@ for testing are in `docs/test-frames.md`.
       merged bracket written with headroom; waits on the guided plane's
       halo measurement in the feel track, since one slider moving the whole
       plane makes any halo count
-- [ ] Float samples in the DNG writer, for brackets deeper than 16 bits
-      hold. Waits on someone needing it (§71)
 
 ### The engine
 
