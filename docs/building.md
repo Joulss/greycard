@@ -200,6 +200,9 @@ The two libraries (`.dylib` on a Mac) are symlinks into
 themselves, and it finds Dawn beside itself, so if you copy them
 anywhere, copy both libraries too — dereferenced.
 
+The workspace's other crates, what each owns and what each may
+depend on, are in [architecture.md](architecture.md).
+
 ## 5. Run it
 
 ```sh

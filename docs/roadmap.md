@@ -15,6 +15,11 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] A settings.json that fails to parse is written over with the
+      defaults: the close's write always writes, and three sites load
+      then save (update.rs, panel/assets.rs, panel/camera_match.rs),
+      where the minute's write skips a broken file (§514's review,
+      2026-11-01). Keep the broken file aside and say so in the log
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
       them in 1.5 to 2.6 s from a warm cache. The window says
@@ -588,13 +593,6 @@ touches.
       library, now that the worker's frame develop is the engine's
       (§471, §506, §514); explicit imports in place of the crate root's
       glob imports as each file moves
-- [ ] A one-page architecture document: each crate, what it may
-      depend on, and which crate runs each pipeline stage, with the
-      layer rule beside CLAUDE.md's core rule; §5 predates ai,
-      render, and gpu, and building.md names no crate. Written last,
-      against the layout the moves above leave
-- [ ] The architecture document (in the pool below) written first,
-      since it is the map the move is planned on
 
 ---
 
@@ -706,13 +704,6 @@ clears or a tester asks for it.
       largest files are 4,700 to 6,500 lines (cull, index, edit's
       lib, the catalog reader, browser) and the first to split are
       startup and mask
-- [ ] An architecture document, docs/architecture.md: the crates and
-      what each owns, the window's State by owner, the worker and its
-      handles, the sidecar and index formats, and the rules (core
-      knows nothing, edit and library on it, the window on
-      everything), written from the code as it is with the notes as
-      the why. The one concrete item of an outside review's
-      "contributor readiness", 2026-10-19
 - [ ] A missing camera profile said where the user looks: the
       status line, the export's report of what the edit went without
       (with the headless export's exit code 2 as for a missing
