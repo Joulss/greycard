@@ -1,0 +1,2126 @@
+//! The walk: one function that runs a list of steps, from the last
+//! point a walk before it kept, with each stage on the CPU or the
+//! device as a plan places it.
+//!
+//! What a walk keeps is data: at each [`Keep`] it passes it stores the
+//! picture, what the develop measured of it, the taps so far, the
+//! steps up to there, and where each ran. The next walk starts from
+//! the last kept point whose steps are its own and whose places its
+//! plan allows, so an export, whose plan is all CPU, never starts from
+//! a picture the device touched.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
+
+use greycard_core::develop::ca::{self, CaStats};
+use greycard_core::develop::dehaze::{self, DehazeStats};
+use greycard_core::develop::denoise;
+use greycard_core::develop::local_contrast::{LocalContrastStats, local_contrast};
+use greycard_core::develop::retouch::Region;
+use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
+use greycard_core::develop::{
+    self as core_develop, DemosaicMethod, DevelopSettings, Prepared, demosaic_prepared,
+    prepare_with,
+};
+use greycard_core::image::WorkingImage;
+use greycard_core::picture::Picture;
+use greycard_core::raw::{Orientation, RawFrame};
+use greycard_core::{CameraProfile, WhiteBalance};
+use greycard_edit::retouch::{Patch, Retouch};
+use greycard_edit::{DetailWants, WhiteShift};
+use greycard_gpu::wgpu;
+use greycard_render::detail::DetailPlanes;
+use greycard_render::finish::{Guide, Source, guide_plane};
+
+use crate::stages::{Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
+
+/// The open file: a raw to develop, or a picture already in the
+/// working space, its image shared rather than copied.
+#[derive(Clone)]
+pub enum Input {
+    Raw(Arc<RawFrame>),
+    Picture {
+        image: Arc<WorkingImage>,
+        meta: Arc<Picture>,
+    },
+}
+
+impl Input {
+    /// What the list is derived from, at the frame's `turn`.
+    pub fn facts(&self, turn: u8) -> Facts {
+        match self {
+            Input::Raw(frame) => Facts::raw(frame, turn),
+            Input::Picture { image, meta } => Facts::picture(
+                (image.width, image.height),
+                &meta.make,
+                &meta.model,
+                &meta.shot,
+                turn,
+            ),
+        }
+    }
+}
+
+/// Where a step runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    Cpu,
+    Gpu,
+}
+
+/// Where each step of `steps` runs for `purpose`, with a device `lent`
+/// or not: every stage with a device version on it for the viewport
+/// and the prefetch, everything on the CPU for the rest, which are
+/// the reference.
+pub fn plan(steps: &Steps, purpose: &Purpose, lent: bool) -> Vec<Place> {
+    let device = lent && matches!(purpose, Purpose::Viewport | Purpose::Prefetch);
+    steps
+        .steps
+        .iter()
+        .map(|step| match step {
+            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if device => Place::Gpu,
+            Step::Op(stage) if device && stage.device() => Place::Gpu,
+            _ => Place::Cpu,
+        })
+        .collect()
+}
+
+/// What the picture is between two steps.
+pub enum Buf {
+    /// One sample a site, balanced, in camera space.
+    Mosaic(Prepared),
+    /// Camera RGB, with what the move into the working space reads of
+    /// the prepare.
+    Camera {
+        prepared: Prepared,
+        rgb: Vec<f32>,
+    },
+    /// The learned denoiser's camera RGB and the plain demosaic's.
+    CameraPair {
+        prepared: Prepared,
+        network: Vec<f32>,
+        plain: Vec<f32>,
+    },
+    /// The pair in the working space.
+    Pair {
+        model: Arc<WorkingImage>,
+        plain: Arc<WorkingImage>,
+    },
+    Working(Arc<WorkingImage>),
+    /// A picture on the device.
+    Device(Arc<greycard_gpu::Image>),
+    /// The viewport's texture, which a run ending at the shader wrote.
+    Texture(wgpu::Texture),
+}
+
+/// What the develop measured of the picture, carried beside it.
+#[derive(Debug, Clone)]
+pub struct Meta {
+    /// A raw's white; none for a picture already rendered.
+    pub white: Option<WhiteBalance>,
+    /// The working-space value a channel clips at.
+    pub clip_level: f32,
+    /// The point spread the mosaic suggests, for an automatic sharpen.
+    pub radius: Option<f32>,
+    /// A raw's scene or a picture already rendered, for the finish.
+    pub source: Source,
+    /// The camera profile a raw's white was resolved through.
+    pub profile: Option<Arc<CameraProfile>>,
+    /// The full develop's size as it stands, before any bin.
+    pub full: (u32, u32),
+    /// The bin the picture was made at.
+    pub bin: usize,
+    /// Why the demosaic the edit chose did not run, when one of the
+    /// frame's own stood in.
+    pub gave_way: Option<String>,
+}
+
+impl Meta {
+    /// The masks' white balances are made from this develop's white
+    /// and the profile it was resolved through.
+    pub fn white_shift(&self) -> Option<WhiteShift> {
+        let (profile, wb) = (self.profile.as_ref()?, self.white.as_ref()?);
+        let cols = wb.matrix_f32();
+        let rows = std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r]));
+        Some(WhiteShift::from_parts(
+            (**profile).clone(),
+            wb.coefficients_f32(),
+            rows,
+            wb.temp_tint,
+        ))
+    }
+}
+
+/// The products read off the picture so far.
+#[derive(Clone, Default)]
+pub struct Taps {
+    pub guide: Option<Arc<Guide>>,
+    pub planes: Option<Arc<DetailPlanes>>,
+    /// The picture the learned masks are made on, and how.
+    pub masks: Option<(Masks, Arc<WorkingImage>)>,
+}
+
+/// The rasters of the learned masks, by adjustment id and component.
+pub type Rasters = std::collections::HashMap<(u64, usize), Arc<greycard_edit::brush::Raster>>;
+
+/// Why the learned denoiser did not run.
+#[derive(Debug, Clone)]
+pub enum NoLearned {
+    /// Its model is not in the store.
+    Missing(&'static greycard_ai::Model),
+    /// It could not run.
+    Failed(String),
+}
+
+/// The models a walk runs, lent by whoever holds them.
+pub trait Models {
+    /// The learned denoiser's camera RGB of `prepared`.
+    fn denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+        frame: &RawFrame,
+        prepared: &Prepared,
+    ) -> Result<Vec<f32>, NoLearned>;
+
+    /// A fill's pixels for `patch` over `region` of `picture`; none
+    /// leaves the patch as it was.
+    fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>>;
+
+    /// Whether a fill left unmade in `retouch` could be made now.
+    fn could_fill_more(&self, retouch: &Retouch, picture: &WorkingImage) -> bool;
+
+    /// The learned masks' rasters, made on `base` (and on `patched`
+    /// where a patch meets a shape) as `how` says.
+    fn rasters(
+        &mut self,
+        how: Masks,
+        base: &Arc<WorkingImage>,
+        patched: Option<&Arc<WorkingImage>>,
+        meta: &Meta,
+    ) -> Rasters;
+}
+
+/// No models at all: the command line's, and a test's.
+pub struct NoModels;
+
+impl Models for NoModels {
+    fn denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+        _: &RawFrame,
+        _: &Prepared,
+    ) -> Result<Vec<f32>, NoLearned> {
+        Err(NoLearned::Missing(model))
+    }
+
+    fn fill(&mut self, _: &Patch, _: &Region, _: &WorkingImage) -> Option<Vec<f32>> {
+        None
+    }
+
+    fn could_fill_more(&self, _: &Retouch, _: &WorkingImage) -> bool {
+        false
+    }
+
+    fn rasters(
+        &mut self,
+        _: Masks,
+        _: &Arc<WorkingImage>,
+        _: Option<&Arc<WorkingImage>>,
+        _: &Meta,
+    ) -> Rasters {
+        Rasters::new()
+    }
+}
+
+/// The background work a develop holds, and the give-way the prefetch
+/// asks between its steps.
+pub trait Hold {
+    /// Hold the background work while a walk runs, or let it go.
+    fn hold(&self, _on: bool) {}
+
+    /// Asked before each stage: whether to stop the walk there.
+    fn give_way(&self, _next: &Stage) -> bool {
+        false
+    }
+}
+
+/// Nothing to hold and never a give-way: headless export's and the
+/// command line's.
+pub struct NoHold;
+
+impl Hold for NoHold {}
+
+/// What a kept point holds of the picture.
+#[derive(Clone)]
+enum KeptBuf {
+    Pair {
+        model: Arc<WorkingImage>,
+        plain: Arc<WorkingImage>,
+    },
+    Working(Arc<WorkingImage>),
+    Device(Arc<greycard_gpu::Image>),
+}
+
+impl KeptBuf {
+    fn buf(&self) -> Buf {
+        match self {
+            KeptBuf::Pair { model, plain } => Buf::Pair {
+                model: model.clone(),
+                plain: plain.clone(),
+            },
+            KeptBuf::Working(image) => Buf::Working(image.clone()),
+            KeptBuf::Device(image) => Buf::Device(image.clone()),
+        }
+    }
+}
+
+/// One point a walk kept.
+#[derive(Clone)]
+struct Point {
+    keep: Keep,
+    steps: Vec<Step>,
+    places: Vec<Place>,
+    buf: KeptBuf,
+    meta: Meta,
+    taps: Taps,
+    /// The retouch this point's picture carries, and whether every
+    /// fill in it was made; none before the retouch.
+    retouch: Option<(Retouch, bool)>,
+}
+
+/// What walks keep for the walks after them.
+#[derive(Default)]
+pub struct Kept {
+    points: Vec<Point>,
+    /// The masks' bands, with the steps to the picture they were made
+    /// from and what was asked of them.
+    planes: Option<KeptPlanes>,
+    /// A picture's upload, with the steps to it.
+    uploaded: Option<(Vec<Step>, Arc<greycard_gpu::Image>)>,
+    /// The dehaze's reduced copy on the device's picture, with the
+    /// steps to the picture it was read off.
+    haze: Option<(Vec<Step>, Arc<dehaze::Reduced>)>,
+}
+
+#[derive(Clone)]
+struct KeptPlanes {
+    steps: Vec<Step>,
+    wants: DetailWants,
+    haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
+    planes: Arc<DetailPlanes>,
+}
+
+/// Whether a point that ran at `kept` may serve a plan of `plan`: a
+/// step the device ran serves only a plan that puts it there.
+fn allowed(kept: &[Place], plan: &[Place]) -> bool {
+    kept.iter()
+        .zip(plan)
+        .all(|(k, p)| *k == Place::Cpu || *k == *p)
+}
+
+impl Kept {
+    /// Nothing kept.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether anything is kept at `keep`.
+    pub fn holds(&self, keep: Keep) -> bool {
+        self.points.iter().any(|p| p.keep == keep)
+    }
+
+    /// Whether a point kept for `steps` serves `plan` at `keep`.
+    pub fn serves(&self, steps: &Steps, plan: &[Place], keep: Keep) -> bool {
+        let Some(at) = steps.at(keep) else {
+            return false;
+        };
+        self.points.iter().any(|p| {
+            p.keep == keep && p.steps[..] == steps.steps[..=at] && allowed(&p.places, plan)
+        })
+    }
+
+    /// The point a walk of `steps` under `plan` starts from: the last
+    /// one whose steps are its own prefix and whose places the plan
+    /// allows, its patched picture only while no fill left unmade in it
+    /// could be made now. The points past it are let go, as they were
+    /// another list's.
+    fn resume(&mut self, steps: &Steps, plan: &[Place], models: &dyn Models) -> Option<usize> {
+        let found = self
+            .points
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                let n = p.steps.len();
+                n <= steps.steps.len()
+                    && p.steps[..] == steps.steps[..n]
+                    && allowed(&p.places, plan)
+                    // A picture on the device serves only a walk that
+                    // goes on there: the viewport's texture is made by
+                    // a run, not from a picture left on the device.
+                    && (!matches!(p.buf, KeptBuf::Device(_))
+                        || (plan.get(n) == Some(&Place::Gpu)
+                            && !matches!(steps.steps.get(n), Some(Step::Op(Stage::Finish(_))))))
+                    && match (&p.retouch, &p.buf) {
+                        (Some((r, false)), KeptBuf::Working(image)) => {
+                            !models.could_fill_more(r, image)
+                        }
+                        _ => true,
+                    }
+            })
+            .max_by_key(|(_, p)| p.steps.len())
+            .map(|(i, _)| i);
+        match found {
+            Some(i) => {
+                let keep = self.points[i].steps.len();
+                self.points.retain(|p| {
+                    p.steps.len() <= keep && p.steps[..] == steps.steps[..p.steps.len()]
+                });
+                self.points.iter().position(|p| p.steps.len() == keep)
+            }
+            None => None,
+        }
+    }
+
+    /// A kept base or pair made at another turn, turned to this one
+    /// where nothing after the turn minds which way up it is: the
+    /// index of the point, now turned.
+    fn turned(&mut self, steps: &Steps, plan: &[Place]) -> Option<usize> {
+        let want = turnless(&steps.steps);
+        let i = self.points.iter().position(|p| {
+            matches!(p.keep, Keep::Base | Keep::Pair)
+                && allowed(&p.places, plan)
+                && turnless(&p.steps) == want[..turnless(&p.steps).len().min(want.len())]
+                && commutes_after_turn(&p.steps)
+        })?;
+        let p = &self.points[i];
+        let from = turn_of(&p.steps)?;
+        let to = turn_of(&steps.steps[..])?;
+        let q = relative(from, to)?;
+        let o = quarters(q).expect("a turn that moves");
+        let n = steps
+            .steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| matches!(s, Step::Keep(k) if *k == p.keep))
+            .map(|(i, _)| i)
+            .next()?;
+        let mut p = self.points.swap_remove(i);
+        let turn = |image: &Arc<WorkingImage>| Arc::new(core_develop::orient((**image).clone(), o));
+        p.buf = match &p.buf {
+            KeptBuf::Pair { model, plain } => KeptBuf::Pair {
+                model: turn(model),
+                plain: turn(plain),
+            },
+            KeptBuf::Working(image) => KeptBuf::Working(turn(image)),
+            KeptBuf::Device(_) => return None,
+        };
+        if q % 2 == 1 {
+            p.meta.full = (p.meta.full.1, p.meta.full.0);
+        }
+        p.taps.masks = None;
+        p.steps = steps.steps[..=n].to_vec();
+        p.places = plan[..=n].to_vec();
+        self.points.clear();
+        self.planes = None;
+        self.uploaded = None;
+        self.haze = None;
+        self.points.push(p);
+        Some(0)
+    }
+
+    fn put(&mut self, point: Point) {
+        self.points.retain(|p| p.keep != point.keep);
+        self.points.push(point);
+    }
+
+    /// Let go of everything kept on the device: its context is gone.
+    pub fn forget_device(&mut self) {
+        self.points.retain(|p| !matches!(p.buf, KeptBuf::Device(_)));
+        self.uploaded = None;
+        self.haze = None;
+    }
+}
+
+/// The steps with every turn left out: what two lists that differ only
+/// in the frame's turn share.
+fn turnless(steps: &[Step]) -> Vec<Step> {
+    steps
+        .iter()
+        .filter(|s| !matches!(s, Step::Op(Stage::Orient(_))))
+        .map(|s| match s {
+            Step::Op(Stage::IntoWorking { profile, .. }) => Step::Op(Stage::IntoWorking {
+                profile: profile.clone(),
+                orientation: Orientation::Normal,
+            }),
+            s => s.clone(),
+        })
+        .collect()
+}
+
+/// Whether everything after the turn in `steps` gives the same picture
+/// turned, to the bit, and no tap made data on the unturned picture.
+fn commutes_after_turn(steps: &[Step]) -> bool {
+    steps.iter().all(|s| match s {
+        Step::Op(stage) => stage.commutes_with_turn(),
+        Step::Tap(Tap::Masks(m)) => *m == Masks::OnAsk,
+        Step::Tap(_) => false,
+        Step::Keep(_) => true,
+    })
+}
+
+/// The orientation a list shows its frame in: a raw's move into the
+/// working space, or a picture's turn (none for none).
+fn turn_of(steps: &[Step]) -> Option<Option<Orientation>> {
+    for s in steps {
+        match s {
+            Step::Op(Stage::IntoWorking { orientation, .. }) => return Some(Some(*orientation)),
+            Step::Op(Stage::Orient(o)) => return Some(Some(*o)),
+            _ => {}
+        }
+    }
+    // A picture at no turn has no step for it.
+    Some(None)
+}
+
+/// The quarter turns that take a picture shown at `from` to `to`.
+fn relative(from: Option<Orientation>, to: Option<Orientation>) -> Option<u8> {
+    let from = from.unwrap_or(Orientation::Normal);
+    let to = to.unwrap_or(Orientation::Normal);
+    (1..4u8).find(|q| from.turned(i32::from(*q)) == to)
+}
+
+/// How a walk did not end at its last step.
+#[derive(Debug)]
+pub enum Stopped {
+    /// It gave way before this stage.
+    GaveWay(&'static str),
+    /// A stage failed.
+    Failed(String),
+}
+
+impl std::fmt::Display for Stopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Stopped::GaveWay(stage) => write!(f, "gave way before the {stage}"),
+            Stopped::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+/// What a walk made.
+pub struct Walked {
+    /// The picture where the walk stopped: before the finish, or the
+    /// viewport's texture a run on the device wrote.
+    pub buf: Buf,
+    pub meta: Meta,
+    pub taps: Taps,
+    /// The learned masks' rasters, made at the end from the tap.
+    pub rasters: Rasters,
+    /// The sharpen's blend, of the CPU's sharpen, for the viewport to
+    /// paint where it acted.
+    pub sharpen_mask: Option<Vec<f32>>,
+    pub ca: Option<CaStats>,
+    pub detail: Option<LocalContrastStats>,
+    pub dehaze: Option<DehazeStats>,
+    pub sharpen: Option<SharpenStats>,
+    /// The patches with the sources the retouch chose for them.
+    pub sources: Vec<Patch>,
+    /// What was left of the edit: a fill refused, by name.
+    pub without: Vec<String>,
+    /// Why the learned denoiser did not run, when the engine's own
+    /// path stood in for it.
+    pub stood_in: Option<NoLearned>,
+    /// The kept point the walk started from; none for the decode.
+    pub from: Option<Keep>,
+    /// Where each step ran, the kept ones as they ran then.
+    pub places: Vec<Place>,
+    /// The seconds each stage took, in order, for the log.
+    pub seconds: Vec<(&'static str, f64)>,
+}
+
+/// The state a walk carries between its steps.
+struct State {
+    buf: Buf,
+    meta: Meta,
+    taps: Taps,
+    retouch: Option<(Retouch, bool)>,
+    /// The prepare's settings, which the demosaic, the denoise, and
+    /// the move into the working space read.
+    settings: DevelopSettings,
+}
+
+/// An attempt's walk, and the planes still being made beside it.
+struct Out {
+    walked: Walked,
+    planes: Option<PlanesJob>,
+}
+
+/// Run `steps` under `plan` on `input`, from what `kept` holds,
+/// keeping at each keep; the models are `models`'s, the device `gpu`'s,
+/// asked of `hold` between steps whether to give way. A device op the
+/// picture is too much for (`Unsupported`) runs its run again on the
+/// CPU, the context kept; any other device error lets the context go
+/// and runs the rest on the CPU. A learned denoiser that is not to be
+/// had stands in the engine's own path.
+pub fn walk(
+    steps: &Steps,
+    plan: &[Place],
+    input: &Input,
+    kept: &mut Kept,
+    models: &mut dyn Models,
+    gpu: &mut Option<greycard_gpu::Context>,
+    hold: &dyn Hold,
+) -> Result<Walked, Stopped> {
+    hold.hold(true);
+    let out = walk_held(steps, plan, input, kept, models, gpu, hold);
+    hold.hold(false);
+    out
+}
+
+fn walk_held(
+    steps: &Steps,
+    plan: &[Place],
+    input: &Input,
+    kept: &mut Kept,
+    models: &mut dyn Models,
+    gpu: &mut Option<greycard_gpu::Context>,
+    hold: &dyn Hold,
+) -> Result<Walked, Stopped> {
+    let mut steps = steps.clone();
+    let mut plan = plan.to_vec();
+    if gpu.is_none() {
+        plan.iter_mut().for_each(|p| *p = Place::Cpu);
+    }
+    let mut stood_in = None;
+    loop {
+        match attempt(&steps, &mut plan, input, kept, models, gpu, hold) {
+            Ok(mut out) => {
+                let mut walked = out.walked;
+                if let Some(job) = out.planes.take() {
+                    walked.taps.planes = job.land(kept);
+                }
+                if let Some((how, base)) = walked.taps.masks.clone() {
+                    let patched = kept
+                        .points
+                        .iter()
+                        .find(|p| p.keep == Keep::Patched)
+                        .and_then(|p| match &p.buf {
+                            KeptBuf::Working(image) => Some(image.clone()),
+                            _ => None,
+                        });
+                    walked.rasters = models.rasters(how, &base, patched.as_ref(), &walked.meta);
+                }
+                walked.stood_in = stood_in;
+                return Ok(walked);
+            }
+            Err(Retry::Learned(why)) => {
+                log::info!("the learned denoiser: {why:?}; the engine's own path stands in");
+                let lent = plan.contains(&Place::Gpu);
+                steps = steps.without_learned();
+                plan = steps
+                    .steps
+                    .iter()
+                    .map(|s| match s {
+                        Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if lent => {
+                            Place::Gpu
+                        }
+                        Step::Op(stage) if lent && stage.device() => Place::Gpu,
+                        _ => Place::Cpu,
+                    })
+                    .collect();
+                stood_in = Some(why);
+            }
+            Err(Retry::Cpu { from, keep_context }) => {
+                if !keep_context && let Some(ctx) = gpu.take() {
+                    ctx.release();
+                    kept.forget_device();
+                }
+                let rest = if keep_context { from.1 } else { plan.len() };
+                plan[from.0..rest].iter_mut().for_each(|p| *p = Place::Cpu);
+            }
+            Err(Retry::Stop(stopped)) => return Err(stopped),
+        }
+    }
+}
+
+/// Why an attempt at a walk is to be made again, or not.
+enum Retry {
+    /// The learned denoiser is not to be had.
+    Learned(NoLearned),
+    /// A run on the device declined or failed: the steps `from` (a
+    /// range) go to the CPU, and the context stays when the decline
+    /// was the picture's.
+    Cpu {
+        from: (usize, usize),
+        keep_context: bool,
+    },
+    Stop(Stopped),
+}
+
+fn failed(e: impl std::fmt::Display) -> Retry {
+    Retry::Stop(Stopped::Failed(e.to_string()))
+}
+
+/// The start of a walk: a kept point, a kept base turned, or the
+/// decode.
+fn start(
+    steps: &Steps,
+    plan: &[Place],
+    input: &Input,
+    kept: &mut Kept,
+    models: &dyn Models,
+) -> Result<(usize, State, Option<Keep>, Vec<Place>), Retry> {
+    let point = kept
+        .resume(steps, plan, models)
+        .or_else(|| kept.turned(steps, plan));
+    if let Some(i) = point {
+        let p = &kept.points[i];
+        let settings = steps
+            .ops()
+            .find_map(|s| match s {
+                Stage::Prepare(p) => Some(p.settings.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        return Ok((
+            p.steps.len(),
+            State {
+                buf: p.buf.buf(),
+                meta: p.meta.clone(),
+                taps: p.taps.clone(),
+                retouch: p.retouch.clone(),
+                settings,
+            },
+            Some(p.keep),
+            p.places.clone(),
+        ));
+    }
+    kept.points.clear();
+    let (buf, meta) = match input {
+        Input::Raw(frame) => (
+            // Made by the prepare, which reads the frame itself.
+            Buf::Working(Arc::new(WorkingImage::new(0, 0))),
+            Meta {
+                white: None,
+                clip_level: f32::INFINITY,
+                radius: None,
+                source: Source::raw(&frame.make, &frame.model),
+                profile: None,
+                full: (0, 0),
+                bin: 1,
+                gave_way: None,
+            },
+        ),
+        Input::Picture { image, meta } => (
+            Buf::Working(image.clone()),
+            Meta {
+                white: None,
+                clip_level: meta.clip_level(),
+                radius: None,
+                source: Source::Display,
+                profile: None,
+                full: (image.width as u32, image.height as u32),
+                bin: 1,
+                gave_way: None,
+            },
+        ),
+    };
+    Ok((
+        0,
+        State {
+            buf,
+            meta,
+            taps: Taps::default(),
+            retouch: None,
+            settings: DevelopSettings::default(),
+        },
+        None,
+        Vec::new(),
+    ))
+}
+
+fn attempt(
+    steps: &Steps,
+    plan: &mut [Place],
+    input: &Input,
+    kept: &mut Kept,
+    models: &mut dyn Models,
+    gpu: &mut Option<greycard_gpu::Context>,
+    hold: &dyn Hold,
+) -> Result<Out, Retry> {
+    let (begin, mut st, from, mut places) = start(steps, plan, input, kept, models)?;
+    let mut walked = Walked {
+        buf: Buf::Working(Arc::new(WorkingImage::new(0, 0))),
+        meta: st.meta.clone(),
+        taps: Taps::default(),
+        rasters: Rasters::new(),
+        sharpen_mask: None,
+        ca: None,
+        detail: None,
+        dehaze: None,
+        sharpen: None,
+        sources: Vec::new(),
+        without: Vec::new(),
+        stood_in: None,
+        from,
+        places: Vec::new(),
+        seconds: Vec::new(),
+    };
+    let mut planes = None;
+    let mut i = begin;
+    while i < steps.steps.len() {
+        let step = &steps.steps[i];
+        if let Step::Op(stage) = step
+            && !matches!(stage, Stage::Finish(_))
+            && hold.give_way(stage)
+        {
+            return Err(Retry::Stop(Stopped::GaveWay(stage.name())));
+        }
+        match step {
+            Step::Keep(keep) => {
+                places.push(Place::Cpu);
+                let buf = match &st.buf {
+                    Buf::Pair { model, plain } => KeptBuf::Pair {
+                        model: model.clone(),
+                        plain: plain.clone(),
+                    },
+                    Buf::Working(image) => KeptBuf::Working(image.clone()),
+                    Buf::Device(image) => KeptBuf::Device(image.clone()),
+                    _ => unreachable!("a keep follows a picture"),
+                };
+                kept.put(Point {
+                    keep: *keep,
+                    steps: steps.steps[..=i].to_vec(),
+                    places: places.clone(),
+                    buf,
+                    meta: st.meta.clone(),
+                    taps: st.taps.clone(),
+                    retouch: st.retouch.clone(),
+                });
+                i += 1;
+            }
+            Step::Tap(tap) => {
+                places.push(Place::Cpu);
+                let Buf::Working(image) = &st.buf else {
+                    unreachable!("a tap reads a picture in memory")
+                };
+                match tap {
+                    Tap::Guide => {
+                        let started = Instant::now();
+                        st.taps.guide = Some(Arc::new(guide_plane(image)));
+                        walked
+                            .seconds
+                            .push(("guide", started.elapsed().as_secs_f64()));
+                    }
+                    Tap::Masks(how) => st.taps.masks = Some((*how, image.clone())),
+                    Tap::Planes {
+                        wants,
+                        haze_after,
+                        beside,
+                    } => {
+                        let to = steps.steps[..i].to_vec();
+                        let kept_planes = kept.planes.as_ref().filter(|k| k.steps == to);
+                        match kept_planes {
+                            Some(k)
+                                if k.wants.covers(wants)
+                                    && (!wants.haze || k.haze_after == *haze_after) =>
+                            {
+                                st.taps.planes = Some(k.planes.clone());
+                            }
+                            k => {
+                                let reuse = k.map(|k| k.planes.clone());
+                                kept.planes = None;
+                                if *beside {
+                                    planes = PlanesJob::start(
+                                        image.clone(),
+                                        to,
+                                        *haze_after,
+                                        st.meta.clip_level,
+                                        *wants,
+                                        reuse,
+                                    );
+                                } else {
+                                    st.taps.planes = DetailPlanes::make(
+                                        image,
+                                        *haze_after,
+                                        st.meta.clip_level,
+                                        *wants,
+                                    )
+                                    .map(Arc::new);
+                                }
+                            }
+                        }
+                    }
+                }
+                i += 1;
+            }
+            Step::Op(Stage::Finish(_)) => {
+                // The finish is the caller's: the shader's, or the
+                // render crate's on what the walk yields.
+                places.push(plan[i]);
+                i += 1;
+            }
+            Step::Op(_) if plan[i] == Place::Gpu => {
+                let end = run_end(steps, plan, i);
+                let ctx = gpu.as_ref().expect("a plan on the device has a context");
+                let inline = matches!(step, Step::Op(Stage::Ca(_) | Stage::Lens(_)));
+                match device_run(steps, i, end, ctx, &mut st, kept, &mut places, &mut walked) {
+                    Ok(()) => i = end,
+                    // The CA and the lens read a picture still in hand:
+                    // their run again on the CPU is the stage itself.
+                    Err(e) if inline => {
+                        let Step::Op(stage) = step else {
+                            unreachable!()
+                        };
+                        match e {
+                            greycard_gpu::Error::Unsupported(why) => {
+                                log::info!("the {} on the CPU: {why}", stage.name());
+                            }
+                            e => {
+                                log::warn!(
+                                    "the GPU's {}: {e}; the CPU's from now on",
+                                    stage.name()
+                                );
+                                if let Some(ctx) = gpu.take() {
+                                    ctx.release();
+                                }
+                                kept.forget_device();
+                                plan[i..].iter_mut().for_each(|p| *p = Place::Cpu);
+                            }
+                        }
+                        places.push(Place::Cpu);
+                        let started = Instant::now();
+                        cpu_op(stage, input, &mut st, models, &mut walked)?;
+                        walked
+                            .seconds
+                            .push((stage.name(), started.elapsed().as_secs_f64()));
+                        i += 1;
+                    }
+                    Err(greycard_gpu::Error::Unsupported(why)) => {
+                        log::info!("the {} on the CPU: {why}", steps_name(steps, i));
+                        ctx.release();
+                        return Err(Retry::Cpu {
+                            from: (i, end),
+                            keep_context: true,
+                        });
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "the GPU's {}: {e}; the CPU's from now on",
+                            steps_name(steps, i)
+                        );
+                        return Err(Retry::Cpu {
+                            from: (i, end),
+                            keep_context: false,
+                        });
+                    }
+                }
+            }
+            Step::Op(stage) => {
+                places.push(Place::Cpu);
+                let started = Instant::now();
+                cpu_op(stage, input, &mut st, models, &mut walked)?;
+                walked
+                    .seconds
+                    .push((stage.name(), started.elapsed().as_secs_f64()));
+                i += 1;
+            }
+        }
+    }
+    walked.buf = st.buf;
+    walked.meta = st.meta;
+    walked.taps = st.taps;
+    walked.places = places;
+    Ok(Out { walked, planes })
+}
+
+fn steps_name(steps: &Steps, i: usize) -> &'static str {
+    match &steps.steps[i] {
+        Step::Op(stage) => stage.name(),
+        _ => "step",
+    }
+}
+
+/// The end of the run on the device that begins at `i`: the steps
+/// after it the plan puts there, and the keeps between them.
+fn run_end(steps: &Steps, plan: &[Place], i: usize) -> usize {
+    let mut end = i + 1;
+    // The CA and the lens run on pictures in memory, one at a time.
+    if matches!(steps.steps[i], Step::Op(Stage::Ca(_) | Stage::Lens(_))) {
+        return end;
+    }
+    while end < steps.steps.len() {
+        match &steps.steps[end] {
+            Step::Keep(_) => end += 1,
+            Step::Op(Stage::Ca(_) | Stage::Lens(_) | Stage::Finish(_)) => break,
+            Step::Op(_) if plan[end] == Place::Gpu => end += 1,
+            _ => break,
+        }
+    }
+    end
+}
+
+/// A stage on the CPU.
+fn cpu_op(
+    stage: &Stage,
+    input: &Input,
+    st: &mut State,
+    models: &mut dyn Models,
+    walked: &mut Walked,
+) -> Result<(), Retry> {
+    let take =
+        |buf: &mut Buf| std::mem::replace(buf, Buf::Working(Arc::new(WorkingImage::new(0, 0))));
+    match stage {
+        Stage::Prepare(options) => {
+            let Input::Raw(frame) = input else {
+                unreachable!("a prepare is a raw's")
+            };
+            st.settings = options.settings.clone();
+            let prepared = prepare_with(frame, &options.settings, options.measure_noise, None)
+                .map_err(failed)?;
+            st.meta.white = Some(prepared.white_balance);
+            st.meta.radius = prepared.sharpen_radius;
+            st.meta.profile = options
+                .settings
+                .profile
+                .as_ref()
+                .map(|p| p.camera.clone())
+                .or_else(|| greycard_core::color::profile_from_frame(frame).ok())
+                .map(Arc::new);
+            st.meta.full = (prepared.width as u32, prepared.height as u32);
+            st.meta.gave_way = Some(prepared.demosaic)
+                .filter(|ran| {
+                    *ran != options.settings.demosaic
+                        && options.settings.demosaic != DemosaicMethod::default()
+                        && prepared.pattern.is_some()
+                })
+                .map(|ran| {
+                    format!(
+                        "the demosaic: {} is not one for this raw's mosaic; {} instead",
+                        options.settings.demosaic.name(),
+                        ran.name()
+                    )
+                });
+            st.buf = Buf::Mosaic(prepared);
+        }
+        Stage::Ca(options) => {
+            let Buf::Mosaic(prepared) = &mut st.buf else {
+                unreachable!("the CA is the mosaic's")
+            };
+            let pattern = prepared.pattern.as_ref().expect("a CA is a mosaic's");
+            let (samples, stats) = ca::correct_ca(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                pattern,
+                options,
+            )
+            .map_err(failed)?;
+            prepared.samples = samples;
+            prepared.chromatic_aberration = Some(stats);
+            walked.ca = Some(stats);
+        }
+        Stage::Demosaic(..) => {
+            let Buf::Mosaic(prepared) = take(&mut st.buf) else {
+                unreachable!("the demosaic is the mosaic's")
+            };
+            let settings = DevelopSettings {
+                denoise: None,
+                ..st.settings.clone()
+            };
+            let (rgb, _, _) = demosaic_prepared(&prepared, &settings).map_err(failed)?;
+            st.buf = Buf::Camera { prepared, rgb };
+        }
+        Stage::Bin(bin) => {
+            let Buf::Mosaic(prepared) = take(&mut st.buf) else {
+                unreachable!("the bin is the mosaic's")
+            };
+            let pattern = prepared.pattern.as_ref().expect("a bin is a mosaic's");
+            let (rgb, width, height) = core_develop::reduced::bin_mosaic(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                pattern,
+                *bin,
+            );
+            st.meta.bin = *bin;
+            st.buf = Buf::Camera {
+                prepared: Prepared {
+                    samples: Vec::new(),
+                    width,
+                    height,
+                    pattern: None,
+                    ..prepared
+                },
+                rgb,
+            };
+        }
+        Stage::Learned(model) => {
+            let Input::Raw(frame) = input else {
+                unreachable!("the learned denoiser is a raw's")
+            };
+            let Buf::Mosaic(prepared) = take(&mut st.buf) else {
+                unreachable!("the learned denoiser is the mosaic's")
+            };
+            let network = models
+                .denoise(model, frame, &prepared)
+                .map_err(Retry::Learned)?;
+            let (plain, _, _) = demosaic_prepared(&prepared, &st.settings).map_err(failed)?;
+            st.buf = Buf::CameraPair {
+                prepared,
+                network,
+                plain,
+            };
+        }
+        Stage::Denoise(options) => {
+            let Buf::Camera { prepared, rgb } = &mut st.buf else {
+                unreachable!("the denoise is camera RGB's")
+            };
+            if let Some(model) = prepared.noise_model() {
+                denoise::denoise_profiled(rgb, prepared.width, prepared.height, &model, options)
+                    .map_err(failed)?;
+            }
+        }
+        Stage::IntoWorking { orientation, .. } => {
+            let swapped = |o: Orientation| {
+                matches!(
+                    o,
+                    Orientation::Transpose
+                        | Orientation::Rotate90
+                        | Orientation::Transverse
+                        | Orientation::Rotate270
+                )
+            };
+            if swapped(*orientation) {
+                st.meta.full = (st.meta.full.1, st.meta.full.0);
+            }
+            match take(&mut st.buf) {
+                Buf::Camera { mut prepared, rgb } => {
+                    prepared.orientation = *orientation;
+                    let d = core_develop::finish(prepared, rgb, None, None, &st.settings)
+                        .map_err(failed)?;
+                    st.meta.clip_level = d.clip_level;
+                    st.buf = Buf::Working(Arc::new(d.image));
+                }
+                Buf::CameraPair {
+                    mut prepared,
+                    network,
+                    plain,
+                } => {
+                    prepared.orientation = *orientation;
+                    let p = core_develop::finish(prepared.clone(), plain, None, None, &st.settings)
+                        .map_err(failed)?;
+                    let m = core_develop::finish(prepared, network, None, None, &st.settings)
+                        .map_err(failed)?;
+                    st.meta.clip_level = m.clip_level;
+                    st.buf = Buf::Pair {
+                        model: Arc::new(m.image),
+                        plain: Arc::new(p.image),
+                    };
+                }
+                _ => unreachable!("the move into the working space is camera RGB's"),
+            }
+        }
+        Stage::Blend(strength) => {
+            let Buf::Pair { model, plain } = take(&mut st.buf) else {
+                unreachable!("the blend is the pair's")
+            };
+            st.buf = Buf::Working(blend(&model, &plain, *strength));
+        }
+        Stage::Orient(o) => {
+            let image = working(&mut st.buf);
+            st.buf = Buf::Working(Arc::new(core_develop::orient(owned(image), *o)));
+            if swaps(*o) {
+                st.meta.full = (st.meta.full.1, st.meta.full.0);
+            }
+        }
+        Stage::Reduce(bin) => {
+            let image = working(&mut st.buf);
+            st.meta.bin = *bin;
+            st.buf = Buf::Working(Arc::new(greycard_render::reduce::reduce(&image, *bin)));
+        }
+        Stage::Lens(corrections) => {
+            let mut image = owned(working(&mut st.buf));
+            for c in corrections {
+                image = greycard_core::develop::lens::correct(&image, c).0;
+            }
+            st.buf = Buf::Working(Arc::new(image));
+        }
+        Stage::Defringe(options) => {
+            let mut image = owned(working(&mut st.buf));
+            greycard_core::develop::defringe::defringe(&mut image, options);
+            st.buf = Buf::Working(Arc::new(image));
+        }
+        Stage::Retouch(retouch, fills) => {
+            let image = working(&mut st.buf);
+            let chosen = retouch.choose_sources(&image);
+            let applied = retouch.with_sources(&chosen);
+            walked.sources = applied.chosen_patches(&chosen);
+            let mut picture = (*image).clone();
+            let mut whole = true;
+            applied.apply_with(&mut picture, |patch, region, before| match fills {
+                Fills::Run => {
+                    let made = models.fill(patch, region, before);
+                    whole &= made.is_some();
+                    made
+                }
+                Fills::Refuse => {
+                    walked.without.push(format!("the fill {}", patch.name()));
+                    whole = false;
+                    None
+                }
+            });
+            st.retouch = Some((applied, whole));
+            st.buf = Buf::Working(Arc::new(picture));
+        }
+        Stage::LocalContrast(options) => {
+            let mut image = owned(working(&mut st.buf));
+            walked.detail = Some(local_contrast(&mut image, options, st.meta.clip_level));
+            st.buf = Buf::Working(Arc::new(image));
+        }
+        Stage::Dehaze(options) => {
+            let mut image = owned(working(&mut st.buf));
+            walked.dehaze = Some(dehaze::dehaze(&mut image, options));
+            st.buf = Buf::Working(Arc::new(image));
+        }
+        Stage::Sharpen(options) => {
+            let mut image = owned(working(&mut st.buf));
+            let (stats, mask) =
+                sharpen_with_mask(&mut image, options, st.meta.radius, st.meta.clip_level);
+            walked.sharpen = Some(stats);
+            walked.sharpen_mask = Some(mask);
+            st.buf = Buf::Working(Arc::new(image));
+        }
+        Stage::Finish(_) => unreachable!("the finish is the caller's"),
+    }
+    Ok(())
+}
+
+/// A run of stages on the device, from `i` to `end`: the CA and the
+/// lens one at a time on pictures in memory, the Detail section and the
+/// sharpen as one run with one upload at its head and the device's
+/// picture between, a run ending at the shader writing its texture.
+#[allow(clippy::too_many_arguments)]
+fn device_run(
+    steps: &Steps,
+    i: usize,
+    end: usize,
+    ctx: &greycard_gpu::Context,
+    st: &mut State,
+    kept: &mut Kept,
+    places: &mut Vec<Place>,
+    walked: &mut Walked,
+) -> greycard_gpu::Result<()> {
+    match &steps.steps[i] {
+        Step::Op(Stage::Ca(options)) => {
+            let Buf::Mosaic(prepared) = &mut st.buf else {
+                unreachable!("the CA is the mosaic's")
+            };
+            let started = Instant::now();
+            let pattern = prepared.pattern.clone().expect("a CA is a mosaic's");
+            let (samples, stats) = ctx.correct_ca(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                &pattern,
+                options,
+            )?;
+            prepared.samples = samples;
+            prepared.chromatic_aberration = Some(stats);
+            walked.ca = Some(stats);
+            walked.seconds.push(("CA", started.elapsed().as_secs_f64()));
+            places.push(Place::Gpu);
+            return Ok(());
+        }
+        Step::Op(Stage::Lens(corrections)) => {
+            let started = Instant::now();
+            let Buf::Working(input) = &st.buf else {
+                unreachable!("the lens is the working picture's")
+            };
+            let mut image: Option<WorkingImage> = None;
+            for c in corrections {
+                let from = image.as_ref().unwrap_or(input);
+                // A correction that moves nothing is a multiply a
+                // pixel, quicker on the CPU than the trip to the device.
+                image = Some(if c.moves() {
+                    ctx.correct_lens(from, c)?.0
+                } else {
+                    greycard_core::develop::lens::correct(from, c).0
+                });
+            }
+            if let Some(image) = image {
+                st.buf = Buf::Working(Arc::new(image));
+            }
+            walked
+                .seconds
+                .push(("lens", started.elapsed().as_secs_f64()));
+            places.push(Place::Gpu);
+            return Ok(());
+        }
+        _ => {}
+    }
+    let shader = matches!(
+        steps.steps.get(end),
+        Some(Step::Op(Stage::Finish(crate::stages::Finish::Shader)))
+    );
+    // The last op of the run writes the viewport's texture when the
+    // shader is next.
+    let last = (i..end)
+        .rev()
+        .find(|&j| matches!(steps.steps[j], Step::Op(_)))
+        .expect("a run holds an op");
+    let mut image = match &st.buf {
+        Buf::Device(image) => image.clone(),
+        Buf::Working(picture) => {
+            let to = steps.steps[..i].to_vec();
+            match &kept.uploaded {
+                Some((s, image)) if *s == to => image.clone(),
+                _ => {
+                    kept.uploaded = None;
+                    let started = Instant::now();
+                    let image = Arc::new(ctx.upload(picture)?);
+                    walked
+                        .seconds
+                        .push(("upload", started.elapsed().as_secs_f64()));
+                    kept.uploaded = Some((to, image.clone()));
+                    image
+                }
+            }
+        }
+        _ => unreachable!("a run on the device begins at a picture"),
+    };
+    let texture = shader.then(|| ctx.viewport_texture(image.width(), image.height()));
+    // Once the texture is written there is no picture to keep.
+    let mut written = None;
+    for j in i..end {
+        match &steps.steps[j] {
+            Step::Keep(_) if written.is_some() => places.push(Place::Cpu),
+            Step::Keep(keep) => {
+                places.push(Place::Cpu);
+                kept.put(Point {
+                    keep: *keep,
+                    steps: steps.steps[..=j].to_vec(),
+                    places: places.clone(),
+                    buf: KeptBuf::Device(image.clone()),
+                    meta: st.meta.clone(),
+                    taps: st.taps.clone(),
+                    retouch: st.retouch.clone(),
+                });
+            }
+            Step::Op(Stage::LocalContrast(options)) => {
+                match texture.as_ref().filter(|_| j == last) {
+                    Some(out) => {
+                        walked.detail = Some(ctx.local_contrast_to_viewport(
+                            &image,
+                            options,
+                            st.meta.clip_level,
+                            out,
+                        )?);
+                        written = Some(out.clone());
+                    }
+                    None => {
+                        let (out, stats) =
+                            ctx.local_contrast(&image, options, st.meta.clip_level)?;
+                        walked.detail = Some(stats);
+                        image = Arc::new(out);
+                    }
+                }
+                places.push(Place::Gpu);
+            }
+            Step::Op(Stage::Dehaze(options)) => {
+                let to = steps.steps[..j].to_vec();
+                let reduced = match &kept.haze {
+                    Some((s, reduced)) if *s == to => reduced.clone(),
+                    _ => {
+                        kept.haze = None;
+                        let reduced = Arc::new(ctx.dehaze_reduced(&image)?);
+                        kept.haze = Some((to, reduced.clone()));
+                        reduced
+                    }
+                };
+                let Some(model) = reduced.model(options) else {
+                    return Err(greycard_gpu::Error::Unsupported(format!(
+                        "a strength of zero at {}",
+                        options.amount
+                    )));
+                };
+                match texture.as_ref().filter(|_| j == last) {
+                    Some(out) => {
+                        walked.dehaze = Some(ctx.dehaze_to_viewport(&image, &model, out)?);
+                        written = Some(out.clone());
+                    }
+                    None => {
+                        let (out, stats) = ctx.dehaze(&image, &model)?;
+                        walked.dehaze = Some(stats);
+                        image = Arc::new(out);
+                    }
+                }
+                places.push(Place::Gpu);
+            }
+            Step::Op(Stage::Sharpen(options)) => {
+                let out = match &texture {
+                    Some(out) => out.clone(),
+                    None => ctx.viewport_texture(image.width(), image.height()),
+                };
+                walked.sharpen =
+                    Some(ctx.sharpen(&image, options, st.meta.radius, st.meta.clip_level, &out)?);
+                places.push(Place::Gpu);
+                written = Some(out);
+            }
+            Step::Op(stage) => unreachable!("no device version of the {}", stage.name()),
+            Step::Tap(_) => unreachable!("a run holds no tap"),
+        }
+    }
+    st.buf = match (written, texture) {
+        (Some(out), _) => Buf::Texture(out),
+        // Neither the Detail section nor the sharpen wrote it: the
+        // upload goes to the viewport as it is.
+        (None, Some(_)) => {
+            return Err(greycard_gpu::Error::Unsupported(
+                "nothing on the device to write the viewport's texture".into(),
+            ));
+        }
+        (None, None) => Buf::Device(image),
+    };
+    Ok(())
+}
+
+/// The working picture out of `buf`.
+fn working(buf: &mut Buf) -> Arc<WorkingImage> {
+    match std::mem::replace(buf, Buf::Working(Arc::new(WorkingImage::new(0, 0)))) {
+        Buf::Working(image) => image,
+        _ => unreachable!("a stage on the working picture"),
+    }
+}
+
+/// The picture to change in place: its own when nothing else holds
+/// it, a copy otherwise.
+fn owned(image: Arc<WorkingImage>) -> WorkingImage {
+    Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone())
+}
+
+fn swaps(o: Orientation) -> bool {
+    matches!(
+        o,
+        Orientation::Transpose
+            | Orientation::Rotate90
+            | Orientation::Transverse
+            | Orientation::Rotate270
+    )
+}
+
+/// `plain` taken `strength` of the way to `model`, per sample: the two
+/// are one picture in one space, so the mix is that much of the
+/// denoise. At the ends no copy is made.
+pub fn blend(
+    model: &Arc<WorkingImage>,
+    plain: &Arc<WorkingImage>,
+    strength: f32,
+) -> Arc<WorkingImage> {
+    let s = strength.clamp(0.0, 1.0);
+    if s >= 1.0 {
+        return model.clone();
+    }
+    if s <= 0.0 {
+        return plain.clone();
+    }
+    let mut out = (**plain).clone();
+    for (o, m) in out.data.iter_mut().zip(&model.data) {
+        *o += (m - *o) * s;
+    }
+    Arc::new(out)
+}
+
+/// The masks' bands being made on a thread of their own beside the
+/// walk: on the device's path the CPU is otherwise idle.
+struct PlanesJob {
+    made: std::sync::mpsc::Receiver<Option<DetailPlanes>>,
+    cancel: Arc<AtomicBool>,
+    steps: Vec<Step>,
+    wants: DetailWants,
+    haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
+    started: Instant,
+}
+
+impl Drop for PlanesJob {
+    /// A walk that ends without taking the planes up stops them.
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+impl PlanesJob {
+    /// A thread and not the pool's, whose panic would end the process;
+    /// a panic here drops the sender, and the walk goes on without the
+    /// planes.
+    fn start(
+        patched: Arc<WorkingImage>,
+        steps: Vec<Step>,
+        haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
+        clip_level: f32,
+        wants: DetailWants,
+        reuse: Option<Arc<DetailPlanes>>,
+    ) -> Option<Self> {
+        let (send, made) = std::sync::mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = cancel.clone();
+        let spawned = std::thread::Builder::new()
+            .name("detail planes".into())
+            .spawn(move || {
+                let planes = DetailPlanes::make_with(
+                    &patched,
+                    haze_after,
+                    clip_level,
+                    wants,
+                    reuse.as_deref(),
+                    &stop,
+                );
+                if !stop.load(Ordering::Relaxed) {
+                    let _ = send.send(planes);
+                }
+            });
+        match spawned {
+            Ok(_) => Some(Self {
+                made,
+                cancel,
+                steps,
+                wants,
+                haze_after,
+                started: Instant::now(),
+            }),
+            Err(e) => {
+                log::warn!("the masks' detail bands: no thread to make them on: {e}");
+                None
+            }
+        }
+    }
+
+    /// The planes, waited for, and kept for the next walk.
+    fn land(self, kept: &mut Kept) -> Option<Arc<DetailPlanes>> {
+        let waited = Instant::now();
+        let planes = match self.made.recv() {
+            Ok(planes) => planes.map(Arc::new),
+            Err(_) => {
+                log::warn!(
+                    "the masks' detail bands: the thread making them died; developing without them"
+                );
+                None
+            }
+        };
+        log::info!(
+            "the masks' detail bands in {:.3} s, {:.3} s of it waited for",
+            self.started.elapsed().as_secs_f64(),
+            waited.elapsed().as_secs_f64()
+        );
+        kept.planes = planes.clone().map(|planes| KeptPlanes {
+            steps: self.steps.clone(),
+            wants: self.wants,
+            haze_after: self.haze_after,
+            planes,
+        });
+        planes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use greycard_core::develop::defringe::defringe;
+    use greycard_core::raw::{
+        Calibration, CfaColor, CfaPattern, LevelPattern, Levels, Samples, SensorLayout,
+    };
+    use greycard_edit::Edit;
+
+    use super::*;
+    use crate::stages::{self, Purpose};
+
+    /// A small Bayer raw with edges and texture for every stage to
+    /// bite on: a ramp, a bright disk, and a fine checker.
+    fn frame() -> Arc<RawFrame> {
+        frame_of(160, 120, [1.0, 1.0])
+    }
+
+    /// A Bayer raw `w` by `h`, its red and blue drawn from the scene at
+    /// `scale` times their radius from the center: a lateral chromatic
+    /// aberration for the CA to find.
+    fn frame_of(w: usize, h: usize, scale: [f32; 2]) -> Arc<RawFrame> {
+        let pattern = CfaPattern::rggb();
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        let scene = |x: f32, y: f32| {
+            let ramp = 200.0 + 2400.0 * x / w as f32;
+            let (dx, dy) = (x - w as f32 * 0.6, y - h as f32 * 0.4);
+            let r = (w.min(h) as f32 / 6.0).powi(2);
+            let disk = if dx * dx + dy * dy < r { 1200.0 } else { 0.0 };
+            let checker = if ((x / 3.0).floor() + (y / 3.0).floor()) as i64 % 2 == 0 {
+                150.0
+            } else {
+                0.0
+            };
+            ramp + disk + checker
+        };
+        let mut samples = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let (gain, k) = match pattern.color_at(y, x) {
+                    CfaColor::Red => (0.55, scale[0]),
+                    CfaColor::Green => (1.0, 1.0),
+                    CfaColor::Blue => (0.4, scale[1]),
+                    CfaColor::Other(_) => unreachable!(),
+                };
+                let (fx, fy) = (cx + (x as f32 - cx) * k, cy + (y as f32 - cy) * k);
+                samples.push((scene(fx, fy) * gain).min(4000.0) as u16);
+            }
+        }
+        Arc::new(RawFrame {
+            make: "Test".into(),
+            model: "Cam".into(),
+            other_names: Vec::new(),
+            width: w,
+            height: h,
+            channels: 1,
+            layout: SensorLayout::Cfa(pattern),
+            samples: Samples::U16(samples),
+            levels: Levels {
+                black: LevelPattern::uniform(64.0, 1),
+                white: LevelPattern::uniform(4095.0, 1),
+            },
+            as_shot_coefficients: Some([2.0, 1.0, 1.6]),
+            calibrations: vec![Calibration {
+                illuminant: 21,
+                color_matrix: vec![
+                    0.9766, -0.2953, -0.1254, -0.4276, 1.2116, 0.2433, -0.0437, 0.1336, 0.5131,
+                ],
+                forward_matrix: None,
+            }],
+            crop: None,
+            orientation: Orientation::Normal,
+            shot: Default::default(),
+            dng: Default::default(),
+        })
+    }
+
+    /// An edit with every CPU stage after the base on.
+    fn edit() -> Edit {
+        let mut edit = Edit::default();
+        edit.noise.profiled = true;
+        edit.lens.defringe = true;
+        edit.detail.texture = 0.3;
+        edit.detail.clarity = 0.4;
+        edit.detail.dehaze = 0.25;
+        edit
+    }
+
+    fn walk_cpu(
+        edit: &Edit,
+        purpose: &Purpose,
+        input: &Input,
+        turn: u8,
+        kept: &mut Kept,
+    ) -> Walked {
+        let steps = stages::stages(edit, purpose, &input.facts(turn), None);
+        let plan = plan(&steps, purpose, false);
+        walk(
+            &steps,
+            &plan,
+            input,
+            kept,
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .expect("walks")
+    }
+
+    /// A device of the tests' own, none where there is no adapter;
+    /// under CI (GREYCARD_REQUIRE_GPU) a missing one fails the test
+    /// rather than pass it.
+    fn device() -> Option<Option<greycard_gpu::Context>> {
+        match greycard_gpu::Context::own() {
+            Ok(ctx) => Some(Some(ctx)),
+            Err(e) => {
+                assert!(
+                    std::env::var_os("GREYCARD_REQUIRE_GPU").is_none_or(|v| v.is_empty()),
+                    "no device for the walk ({e}) and GREYCARD_REQUIRE_GPU is set"
+                );
+                eprintln!("SKIPPED: no device for the walk ({e})");
+                None
+            }
+        }
+    }
+
+    fn picture(w: &Walked) -> Arc<WorkingImage> {
+        match &w.buf {
+            Buf::Working(image) => image.clone(),
+            _ => panic!("a CPU walk ends at a picture in memory"),
+        }
+    }
+
+    /// The walk on the CPU is the stages run by hand in their order:
+    /// the engine's develop with its CA inside the prepare and its
+    /// denoise inside the demosaic, then the defringe, the local
+    /// contrast, the dehaze, and the sharpen, to the bit.
+    #[test]
+    fn a_walk_on_the_cpu_is_the_stages_run_by_hand() {
+        // Past the CA's smallest side, with an aberration for it to
+        // correct, so its half of the split is held too.
+        let raw = frame_of(640, 480, [1.004, 0.996]);
+        let edit = edit();
+        let walked = walk_cpu(
+            &edit,
+            &Purpose::Viewport,
+            &Input::Raw(raw.clone()),
+            0,
+            &mut Kept::new(),
+        );
+
+        let settings = DevelopSettings {
+            orientation: Some(raw.orientation),
+            ..edit.settings()
+        };
+        let prepared = prepare_with(&raw, &settings, false, None).unwrap();
+        let radius = prepared.sharpen_radius;
+        let (rgb, dual, denoised) = demosaic_prepared(&prepared, &settings).unwrap();
+        assert!(denoised.is_some(), "the profiled denoise ran");
+        let d = core_develop::finish(prepared, rgb, dual, denoised, &settings).unwrap();
+        let mut want = d.image;
+        defringe(&mut want, &edit.lens.defringe().unwrap());
+        local_contrast(&mut want, &edit.detail.options().unwrap(), d.clip_level);
+        dehaze::dehaze(&mut want, &edit.detail.dehaze_options().unwrap());
+        let (_, mask) = sharpen_with_mask(
+            &mut want,
+            &edit.sharpen.options().unwrap(),
+            radius,
+            d.clip_level,
+        );
+
+        let got = picture(&walked);
+        assert_eq!((got.width, got.height), (want.width, want.height));
+        assert!(got.data == want.data, "the walk is the stages by hand");
+        assert_eq!(walked.sharpen_mask.as_deref(), Some(&mask[..]));
+        assert_eq!(walked.meta.clip_level, d.clip_level);
+        assert!(walked.taps.guide.is_some());
+        assert!(walked.ca.is_some_and(|c| c.corrected), "the CA corrected");
+        assert_eq!(walked.from, None);
+        assert!(walked.places.iter().all(|p| *p == Place::Cpu));
+    }
+
+    /// A walk after another starts from the last point they share: a
+    /// sharpen moved starts at the picture before the sharpen, a
+    /// Detail move at the patched picture, a white balance at the
+    /// decode; and what each makes is what a walk from nothing makes.
+    #[test]
+    fn a_kept_prefix_is_reused_and_a_changed_stage_past_it_is_not() {
+        let input = Input::Raw(frame());
+        let mut kept = Kept::new();
+        let first = walk_cpu(&edit(), &Purpose::Viewport, &input, 0, &mut kept);
+        assert_eq!(first.from, None);
+
+        let again = walk_cpu(&edit(), &Purpose::Viewport, &input, 0, &mut kept);
+        assert_eq!(again.from, Some(Keep::Developed));
+        assert!(Arc::ptr_eq(&picture(&again), &picture(&first)));
+
+        // An edit's change, and the point the walk after it starts at.
+        type Case<'a> = (&'a dyn Fn(&mut Edit), Option<Keep>);
+        let cases: [Case; 3] = [
+            (&|e| e.sharpen.iterations = 5, Some(Keep::PreSharpen)),
+            (&|e| e.detail.clarity = -0.2, Some(Keep::Patched)),
+            (
+                &|e| {
+                    e.white_balance = greycard_edit::WhiteBalance::Custom {
+                        temperature: 4300.0,
+                        tint: 0.0,
+                    }
+                },
+                None,
+            ),
+        ];
+        for (change, from) in cases {
+            let mut e = edit();
+            change(&mut e);
+            let walked = walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut kept);
+            assert_eq!(walked.from, from);
+            let fresh = walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut Kept::new());
+            assert!(picture(&walked).data == picture(&fresh).data);
+            assert!(picture(&walked).data != picture(&first).data);
+        }
+
+        // An export of the same edit takes the developed picture: the
+        // list is the viewport's up to the finish, and all of it ran on
+        // the CPU.
+        let mut kept = Kept::new();
+        let viewport = walk_cpu(&edit(), &Purpose::Viewport, &input, 0, &mut kept);
+        let export = walk_cpu(
+            &edit(),
+            &Purpose::Export(Box::default()),
+            &input,
+            0,
+            &mut kept,
+        );
+        assert_eq!(export.from, Some(Keep::Developed));
+        assert!(Arc::ptr_eq(&picture(&export), &picture(&viewport)));
+    }
+
+    /// A plan all on the CPU never starts from a point the device
+    /// touched, however much of its list it shares; a plan that puts
+    /// the same step on the device does.
+    #[test]
+    fn the_all_cpu_plan_never_matches_a_kept_buffer_the_device_touched() {
+        let input = Input::Raw(frame());
+        let edit = edit();
+        let mut kept = Kept::new();
+        let first = walk_cpu(&edit, &Purpose::Viewport, &input, 0, &mut kept);
+        let steps = stages::stages(&edit, &Purpose::Viewport, &input.facts(0), None);
+        let ca = steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Ca(_))))
+            .unwrap();
+        // As the viewport's CA would have left them, on the device.
+        for p in &mut kept.points {
+            p.places[ca] = Place::Gpu;
+        }
+        let cpu = plan(&steps, &Purpose::Viewport, false);
+        let device = plan(&steps, &Purpose::Viewport, true);
+        assert_eq!(device[ca], Place::Gpu);
+        assert!(!kept.serves(&steps, &cpu, Keep::Base));
+        assert!(kept.serves(&steps, &device, Keep::Base));
+        let export = stages::stages(
+            &edit,
+            &Purpose::Export(Box::default()),
+            &input.facts(0),
+            None,
+        );
+        let export_plan = plan(&export, &Purpose::Export(Box::default()), true);
+        assert!(export_plan.iter().all(|p| *p == Place::Cpu));
+        assert!(!kept.serves(&export, &export_plan, Keep::Base));
+        let walked = walk(
+            &export,
+            &export_plan,
+            &input,
+            &mut kept,
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        assert_eq!(walked.from, None);
+        assert!(picture(&walked).data == picture(&first).data);
+    }
+
+    /// A turn of the frame with nothing after it that minds which way
+    /// up the picture is permutes the kept base rather than develop it
+    /// again, and the picture is the one a develop at that turn makes,
+    /// to the bit. With a defringe on, it develops again.
+    #[test]
+    fn a_turn_permutes_the_kept_base() {
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        let mut kept = Kept::new();
+        walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut kept);
+        let turned = walk_cpu(&e, &Purpose::Viewport, &input, 1, &mut kept);
+        assert_eq!(turned.from, Some(Keep::Base));
+        let fresh = walk_cpu(&e, &Purpose::Viewport, &input, 1, &mut Kept::new());
+        let (a, b) = (picture(&turned), picture(&fresh));
+        assert_eq!((a.width, a.height), (120, 160));
+        assert!(a.data == b.data);
+        assert_eq!(turned.meta.full, fresh.meta.full);
+
+        let mut kept = Kept::new();
+        walk_cpu(&edit(), &Purpose::Viewport, &input, 0, &mut kept);
+        let turned = walk_cpu(&edit(), &Purpose::Viewport, &input, 1, &mut kept);
+        assert_eq!(turned.from, None);
+    }
+
+    /// The give-way is asked before each stage, and a walk told to
+    /// stop says before which.
+    #[test]
+    fn a_walk_gives_way_between_its_stages() {
+        struct Before(&'static str, Cell<usize>);
+        impl Hold for Before {
+            fn give_way(&self, next: &Stage) -> bool {
+                self.1.set(self.1.get() + 1);
+                next.name() == self.0
+            }
+        }
+        let input = Input::Raw(frame());
+        let steps = stages::stages(&edit(), &Purpose::Prefetch, &input.facts(0), None);
+        let plan = plan(&steps, &Purpose::Prefetch, false);
+        let hold = Before("demosaic", Cell::new(0));
+        let mut kept = Kept::new();
+        let stopped = walk(
+            &steps,
+            &plan,
+            &input,
+            &mut kept,
+            &mut NoModels,
+            &mut None,
+            &hold,
+        );
+        assert!(matches!(stopped, Err(Stopped::GaveWay("demosaic"))));
+        assert_eq!(
+            hold.1.get(),
+            3,
+            "asked before the prepare, the CA, and the demosaic"
+        );
+        assert!(!kept.holds(Keep::Base));
+        let walked = walk(
+            &steps,
+            &plan,
+            &input,
+            &mut kept,
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        assert_eq!(walked.from, None);
+        assert!(kept.holds(Keep::Base));
+    }
+
+    /// A learned tier whose model is not to be had stands the engine's
+    /// own path in, and says why.
+    #[test]
+    fn a_missing_learned_model_stands_the_engine_in() {
+        let input = Input::Raw(frame());
+        let mut learned = edit();
+        learned.noise.learned = greycard_edit::Learned::Fast;
+        let walked = walk_cpu(&learned, &Purpose::Viewport, &input, 0, &mut Kept::new());
+        assert!(matches!(walked.stood_in, Some(NoLearned::Missing(_))));
+        let mut plain = learned.clone();
+        plain.noise.learned = greycard_edit::Learned::Off;
+        plain.noise.profiled = false;
+        let engine = walk_cpu(&plain, &Purpose::Viewport, &input, 0, &mut Kept::new());
+        assert!(picture(&walked).data == picture(&engine).data);
+    }
+
+    /// The reduced develop is the same walk under its purpose: the
+    /// mosaic binned, the defringe's radius over the bin, no sharpen.
+    #[test]
+    fn the_reduced_walk_bins_and_leaves_the_sharpen_out() {
+        let raw = frame();
+        let input = Input::Raw(raw.clone());
+        // Small enough that no bin is taken; a bin of two by hand.
+        let walked = walk_cpu(&edit(), &Purpose::Reduced, &input, 0, &mut Kept::new());
+        assert_eq!(walked.meta.bin, 1);
+        assert!(walked.sharpen.is_none());
+        assert!(walked.sharpen_mask.is_none());
+
+        let mut steps = stages::stages(&edit(), &Purpose::Reduced, &input.facts(0), None);
+        for s in &mut steps.steps {
+            if let Step::Op(stage @ Stage::Demosaic(..)) = s {
+                *stage = Stage::Bin(2);
+            }
+        }
+        let plan = plan(&steps, &Purpose::Reduced, false);
+        let binned = walk(
+            &steps,
+            &plan,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        let got = picture(&binned);
+        assert_eq!((got.width, got.height), (80, 60));
+        assert_eq!(binned.meta.full, (160, 120));
+        assert_eq!(binned.meta.bin, 2);
+    }
+
+    /// On a device, the viewport's walk runs the CA, the Detail
+    /// section, and the sharpen there and ends at the viewport's
+    /// texture; a sharpen moved starts from the picture before it, kept
+    /// on the device; and an export after it, all on the CPU, takes
+    /// none of it and makes the reference's picture. Skipped where no
+    /// adapter is, unless GREYCARD_REQUIRE_GPU says one must be.
+    #[test]
+    fn on_a_device_the_viewport_s_run_ends_at_its_texture() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        let mut kept = Kept::new();
+        let go = |e: &Edit,
+                  purpose: &Purpose,
+                  kept: &mut Kept,
+                  gpu: &mut Option<greycard_gpu::Context>| {
+            let steps = stages::stages(e, purpose, &input.facts(0), None);
+            let plan = plan(&steps, purpose, gpu.is_some());
+            walk(&steps, &plan, &input, kept, &mut NoModels, gpu, &NoHold).unwrap()
+        };
+        let first = go(&e, &Purpose::Viewport, &mut kept, &mut gpu);
+        assert!(matches!(first.buf, Buf::Texture(_)));
+        assert!(first.places.contains(&Place::Gpu));
+        assert!(first.sharpen.is_some() && first.sharpen_mask.is_none());
+
+        e.sharpen.iterations = 5;
+        let sharper = go(&e, &Purpose::Viewport, &mut kept, &mut gpu);
+        assert_eq!(sharper.from, Some(Keep::PreSharpen));
+        assert!(matches!(sharper.buf, Buf::Texture(_)));
+
+        let export = go(&e, &Purpose::Export(Box::default()), &mut kept, &mut gpu);
+        assert_eq!(export.from, None);
+        assert!(export.places.iter().all(|p| *p == Place::Cpu));
+        let reference = go(
+            &e,
+            &Purpose::Export(Box::default()),
+            &mut Kept::new(),
+            &mut None,
+        );
+        assert!(picture(&export).data == picture(&reference).data);
+    }
+
+    /// A reduce drops the pixels past its last whole block, which a
+    /// turn puts on another edge: an odd-sized picture's kept base is
+    /// developed again at a new turn, not permuted, and is the picture
+    /// a walk from nothing makes.
+    #[test]
+    fn a_reduced_picture_of_an_odd_size_is_not_permuted() {
+        let mut image = WorkingImage::new(9, 7);
+        for (i, v) in image.data.iter_mut().enumerate() {
+            *v = (i % 23) as f32 / 23.0;
+        }
+        let input = Input::Picture {
+            image: Arc::new(image),
+            meta: Arc::new(Picture {
+                image: WorkingImage::new(0, 0),
+                make: String::new(),
+                model: String::new(),
+                shot: Default::default(),
+                metadata: Default::default(),
+                space: "sRGB".into(),
+                bits: 16,
+            }),
+        };
+        let edit = Edit::default();
+        let reduced = |turn: u8| {
+            let mut steps = stages::stages(&edit, &Purpose::Reduced, &input.facts(turn), None);
+            // Too small for the reduced develop's own bin: one by hand.
+            let at = steps
+                .steps
+                .iter()
+                .position(|s| matches!(s, Step::Keep(Keep::Base)))
+                .unwrap();
+            steps.steps.insert(at, Step::Op(Stage::Reduce(2)));
+            steps
+        };
+        let go = |turn: u8, kept: &mut Kept| {
+            let steps = reduced(turn);
+            let plan = plan(&steps, &Purpose::Reduced, false);
+            walk(
+                &steps,
+                &plan,
+                &input,
+                kept,
+                &mut NoModels,
+                &mut None,
+                &NoHold,
+            )
+            .unwrap()
+        };
+        let mut kept = Kept::new();
+        go(0, &mut kept);
+        let turned = go(1, &mut kept);
+        assert_eq!(turned.from, None);
+        let fresh = go(1, &mut Kept::new());
+        let (a, b) = (picture(&turned), picture(&fresh));
+        assert_eq!((a.width, a.height), (3, 4));
+        assert!(a.data == b.data);
+    }
+
+    /// A device op that declines the picture (a dehaze whose strength
+    /// comes to zero has no model to apply) runs its whole run again on
+    /// the CPU, the context kept, and the picture is the CPU's.
+    #[test]
+    fn a_declined_run_runs_again_on_the_cpu_with_the_context_kept() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        let mut steps = stages::stages(&e, &Purpose::Viewport, &input.facts(0), None);
+        for s in &mut steps.steps {
+            if let Step::Op(Stage::Dehaze(o)) = s {
+                o.amount = 0.0;
+            }
+        }
+        let device_plan = plan(&steps, &Purpose::Viewport, true);
+        let walked = walk(
+            &steps,
+            &device_plan,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .unwrap();
+        assert!(gpu.is_some(), "the context is kept");
+        let dehaze = steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Dehaze(_))))
+            .unwrap();
+        assert_eq!(walked.places[dehaze], Place::Cpu);
+        assert!(
+            walked.sharpen_mask.is_some(),
+            "the sharpen ran on the CPU too"
+        );
+        let cpu_plan = plan(&steps, &Purpose::Viewport, false);
+        let cpu = walk(
+            &steps,
+            &cpu_plan,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        assert!(picture(&walked).data == picture(&cpu).data);
+    }
+
+    /// The sharpen switched off after it ran on the device: the Detail
+    /// section's run writes the viewport's texture itself, from the
+    /// patched picture, and not from the picture before the sharpen
+    /// left on the device.
+    #[test]
+    fn the_sharpen_switched_off_on_a_device_ends_at_the_detail_s_texture() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        let mut kept = Kept::new();
+        let mut go = |e: &Edit, kept: &mut Kept| {
+            let steps = stages::stages(e, &Purpose::Viewport, &input.facts(0), None);
+            let plan = plan(&steps, &Purpose::Viewport, true);
+            walk(
+                &steps,
+                &plan,
+                &input,
+                kept,
+                &mut NoModels,
+                &mut gpu,
+                &NoHold,
+            )
+            .unwrap()
+        };
+        let on = go(&e, &mut kept);
+        assert!(on.sharpen.is_some());
+        e.sharpen.enabled = false;
+        let off = go(&e, &mut kept);
+        assert_eq!(off.from, Some(Keep::Patched));
+        assert!(matches!(off.buf, Buf::Texture(_)));
+        assert!(off.sharpen.is_none());
+        assert!(off.dehaze.is_some());
+    }
+}

@@ -554,12 +554,9 @@ pub(super) fn develop_job(
 }
 
 /// The engine's settings a fresh base is made under for `edit` at the
-/// frame's `turn`: the edit's own, less the sharpen and the dehaze,
-/// which come after the base.
+/// frame's `turn`: the edit's own, its orientation turned.
 pub(super) fn base_settings(edit: &Edit, input: &Input, turn: u8) -> DevelopSettings {
     DevelopSettings {
-        sharpen: None,
-        dehaze: None,
         // The frame's quarter turns, composed onto the camera's tag:
         // the engine's one orientation step does both, so nothing
         // after it can disagree about which way up the picture is. A

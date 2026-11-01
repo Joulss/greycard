@@ -627,10 +627,7 @@ fn a_real_frame_region_matches_the_reference() {
     };
     let path = std::path::Path::new(&dir).join("5M0A3976.CR3");
     let frame = greycard_core::decode::decode_path(&path).expect("the sample decodes");
-    let settings = greycard_core::develop::DevelopSettings {
-        sharpen: None,
-        ..Default::default()
-    };
+    let settings = greycard_core::develop::DevelopSettings::default();
     let developed = greycard_core::develop::develop(&frame, &settings).expect("develops");
     // A region from the middle, tall enough for a few bands of tiles.
     let (rw, rh) = (2048usize, 1536usize);

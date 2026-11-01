@@ -172,8 +172,7 @@ pub(crate) struct Developed {
 pub(crate) type Rasters = std::collections::HashMap<(u64, usize), Arc<Raster>>;
 
 /// The engine's settings for the reduced develop of `edit`: the edit's
-/// own, less what the reduced develop leaves out (the sharpen, the
-/// denoisers) and what runs after it here (the dehaze), with the
+/// own, less what the reduced develop leaves out (the denoisers), with the
 /// frame's quarter turns on the camera's tag as the window has them.
 /// The grain is the finish's, and stays.
 pub(crate) fn settings(
@@ -182,8 +181,6 @@ pub(crate) fn settings(
     turn: u8,
 ) -> DevelopSettings {
     DevelopSettings {
-        sharpen: None,
-        dehaze: None,
         denoise: None,
         orientation: Some(camera.turned(i32::from(turn))),
         ..edit.settings()
@@ -930,8 +927,7 @@ mod tests {
         edit.detail.dehaze = 0.5;
         edit.noise.strength = 0.5;
         let s = settings(&edit, greycard_core::raw::Orientation::Normal, 1);
-        assert!(s.sharpen.is_none());
-        assert!(s.dehaze.is_none());
+        // The sharpen and the dehaze are no engine settings at all.
         assert!(s.denoise.is_none());
         assert_eq!(
             s.orientation,

@@ -2052,6 +2052,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "greycard-engine"
+version = "0.9.1"
+dependencies = [
+ "anyhow",
+ "greycard-ai",
+ "greycard-core",
+ "greycard-edit",
+ "greycard-gpu",
+ "greycard-lens",
+ "greycard-render",
+ "log",
+]
+
+[[package]]
 name = "greycard-gpu"
 version = "0.9.1"
 dependencies = [

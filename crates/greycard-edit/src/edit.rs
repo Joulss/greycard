@@ -301,8 +301,6 @@ impl Edit {
                 strength: Strength::Fixed(self.noise.strength),
                 ..Default::default()
             }),
-            sharpen: self.sharpen.options(),
-            dehaze: self.detail.dehaze_options(),
             ..Default::default()
         }
     }
@@ -742,11 +740,17 @@ mod tests {
         other.detail.dehaze = 0.5;
         assert!(edit.same_patched(&other), "the dehaze is after the base");
         assert!(!edit.same_develop(&other));
-        assert!(edit.settings().dehaze.is_none());
-        assert_eq!(other.settings().dehaze, Some(DehazeOptions { amount: 0.5 }));
+        // The engine's settings stop before the dehaze, which is a
+        // stage of its own after the lens.
+        assert_eq!(edit.settings(), other.settings());
+        assert!(edit.detail.dehaze_options().is_none());
+        assert_eq!(
+            other.detail.dehaze_options(),
+            Some(DehazeOptions { amount: 0.5 })
+        );
         // The section's switch takes the dehaze with it.
         other.detail.enabled = false;
-        assert!(other.settings().dehaze.is_none());
+        assert!(other.detail.dehaze_options().is_none());
         assert!(other.detail.options().is_none());
     }
 

@@ -68,24 +68,6 @@ pub struct DevelopSettings {
     /// repair takes a site only when the other colors round it sit at
     /// their background, which a glint or a catchlight never does.
     pub hot_pixels: Option<hotpixels::HotPixelOptions>,
-    /// Capture sharpening on the working image, last; `None` leaves the
-    /// picture as the lens and the demosaic made it.
-    ///
-    /// Last of [`develop`], that is: [`finish`] runs it straight after
-    /// the matrix and the orientation, which is before any geometry a
-    /// consumer puts on top. A consumer that corrects a lens, or
-    /// otherwise resamples, must leave this `None` and call
-    /// [`sharpen::sharpen`] itself once the picture has stopped
-    /// moving: a resample blurs what was sharpened, and the point
-    /// spread the deconvolution assumes is the one measured on the
-    /// mosaic, which a resample changes.
-    pub sharpen: Option<sharpen::SharpenOptions>,
-    /// Haze removal on the working image, before the sharpen; `None`
-    /// leaves the air as it was. Placed as the sharpen is: a consumer
-    /// with geometry of its own leaves it `None` and calls
-    /// [`dehaze::dehaze`] after that geometry, before its sharpen, so
-    /// the viewport and the export read one order.
-    pub dehaze: Option<dehaze::DehazeOptions>,
     /// The orientation to show the frame in, in place of the tag the
     /// file carries. `None` is the file's own, which is what every
     /// path but the editor's wants; the editor passes the camera's
@@ -110,8 +92,6 @@ impl Default for DevelopSettings {
             dual_contrast: dual::DualContrast::default(),
             denoise: None,
             hot_pixels: Some(hotpixels::HotPixelOptions::default()),
-            sharpen: None,
-            dehaze: None,
             orientation: None,
         }
     }
@@ -443,10 +423,6 @@ pub struct Developed {
     /// The working-space value at or above which a channel is taken as
     /// clipped: what a sharpen after the develop should leave alone.
     pub clip_level: f32,
-    /// What the sharpen did, when it ran.
-    pub sharpen: Option<sharpen::SharpenStats>,
-    /// What the dehaze did, when it ran.
-    pub dehaze: Option<dehaze::DehazeStats>,
     /// The demosaic that ran, resolved for the frame's mosaic; `None`
     /// for a frame with no mosaic.
     pub demosaic: Option<DemosaicMethod>,
@@ -491,7 +467,9 @@ pub struct Prepared {
     /// The demosaic the frame takes: the settings' resolved for its
     /// mosaic ([`resolve_settings`]).
     pub demosaic: DemosaicMethod,
-    orientation: Orientation,
+    /// The orientation the move into the working space shows the frame
+    /// in: the settings' or the file's own tag.
+    pub orientation: Orientation,
 }
 
 impl Prepared {
@@ -672,13 +650,13 @@ pub fn demosaic_prepared(
 }
 
 /// Everything [`develop`] does after the demosaic: the matrix into the
-/// working space, the orientation, and the dehaze and the sharpen when the settings
-/// carry one. `rgb` is interleaved camera RGB of the prepared frame's
-/// size, in its units.
+/// working space, the camera profile's map, and the orientation. `rgb`
+/// is interleaved camera RGB of the prepared frame's size, in its
+/// units.
 ///
-/// A consumer with geometry of its own leaves
-/// [`DevelopSettings::sharpen`] `None` and sharpens after it; see that
-/// field.
+/// The dehaze and the capture sharpen are not here: they read the
+/// picture once it has stopped moving, after whatever geometry a
+/// consumer puts on top ([`dehaze::dehaze`], [`sharpen::sharpen`]).
 pub fn finish(
     prepared: Prepared,
     rgb: Vec<f32>,
@@ -698,16 +676,8 @@ pub fn finish(
     {
         profile::MapStage::new(map)?.apply(&mut image);
     }
-    let mut image = orient(image, prepared.orientation);
+    let image = orient(image, prepared.orientation);
     let clip_level = prepared.ceiling * CLIP_FRACTION;
-    let dehaze_stats = settings
-        .dehaze
-        .as_ref()
-        .map(|options| dehaze::dehaze(&mut image, options));
-    let sharpen_stats = settings
-        .sharpen
-        .as_ref()
-        .map(|options| sharpen::sharpen(&mut image, options, prepared.sharpen_radius, clip_level));
     Ok(Developed {
         image,
         white_balance: prepared.white_balance,
@@ -720,8 +690,6 @@ pub fn finish(
         hot_pixels: prepared.hot_pixels,
         sharpen_radius: prepared.sharpen_radius,
         clip_level,
-        sharpen: sharpen_stats,
-        dehaze: dehaze_stats,
         demosaic: prepared.pattern.as_ref().map(|_| prepared.demosaic),
     })
 }

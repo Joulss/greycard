@@ -53,10 +53,7 @@ fn main() -> anyhow::Result<()> {
     let runs: usize = args.next().map(|s| s.parse()).transpose()?.unwrap_or(3);
     let iterations: Option<usize> = args.next().map(|s| s.parse()).transpose()?;
     let frame = greycard_core::decode::decode_path(std::path::Path::new(&path))?;
-    let settings = DevelopSettings {
-        sharpen: None,
-        ..Default::default()
-    };
+    let settings = DevelopSettings::default();
     let t = Instant::now();
     let developed = develop(&frame, &settings)?;
     let image = developed.image;

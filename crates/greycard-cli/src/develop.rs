@@ -313,6 +313,24 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         clarity,
         dehaze: dehaze / 100.0,
     };
+    // The dehaze and the sharpen are not the engine's: they go after
+    // the lens correction, as `correct_and_sharpen` says and as the
+    // editor has them.
+    let after = After {
+        dehaze: detail_edit.dehaze_options(),
+        sharpen: sharpen.then_some(sharpen::SharpenOptions {
+            radius: match sharpen_radius.0 {
+                Some(r) => sharpen::Radius::Fixed(r),
+                None => sharpen::Radius::Auto,
+            },
+            iterations: sharpen_iterations,
+            contrast: match sharpen_contrast.0 {
+                Some(c) => sharpen::Threshold::Fixed(c / 100.0),
+                None => sharpen::Threshold::Auto,
+            },
+            stop_early: true,
+        }),
+    };
     let settings = DevelopSettings {
         white_point,
         profile: chosen_profile(&camera_profile)?,
@@ -334,19 +352,6 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
             ratio: hot_ratio,
             others: hot_others,
         }),
-        sharpen: sharpen.then_some(sharpen::SharpenOptions {
-            radius: match sharpen_radius.0 {
-                Some(r) => sharpen::Radius::Fixed(r),
-                None => sharpen::Radius::Auto,
-            },
-            iterations: sharpen_iterations,
-            contrast: match sharpen_contrast.0 {
-                Some(c) => sharpen::Threshold::Fixed(c / 100.0),
-                None => sharpen::Threshold::Auto,
-            },
-            stop_early: true,
-        }),
-        dehaze: detail_edit.dehaze_options(),
         dual_contrast: if dual_contrast == "auto" {
             DualContrast::Auto
         } else if dual_contrast == "tiles" {
@@ -396,6 +401,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         &file,
         &outputs,
         &settings,
+        after,
         demosaic,
         exposure,
         ai_denoise.as_ref(),
@@ -720,10 +726,8 @@ fn correct_lens(
 /// The sharpen is last because the correction resamples. Sharpening
 /// first would leave the resample to blur what had just been
 /// sharpened, and the point spread the deconvolution assumes, measured
-/// on the mosaic, would no longer be the picture's.
-/// [`DevelopSettings::sharpen`] runs it inside `finish`, before any
-/// geometry, so the CLI keeps it out of the engine's settings and runs
-/// it here instead, where the worker has it (notes §21, §74).
+/// on the mosaic, would no longer be the picture's. So it runs here,
+/// where the worker has it.
 ///
 /// `db` is the lens database [`lens_database`] read before the decode,
 /// or none when no profile is asked for.
@@ -896,11 +900,19 @@ fn demosaic_for(layout: &SensorLayout, asked: Option<DemosaicMethod>) -> Result<
     }
 }
 
+/// What the CLI runs after the engine's develop and its lens: the
+/// dehaze, then the sharpen.
+struct After {
+    dehaze: Option<greycard_core::develop::dehaze::DehazeOptions>,
+    sharpen: Option<sharpen::SharpenOptions>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_develop(
     file: &std::path::Path,
     outputs: &Outputs<'_>,
     settings: &DevelopSettings,
+    after: After,
     demosaic_asked: Option<DemosaicMethod>,
     exposure: f64,
     ai_denoise: Option<&(PathBuf, Option<&'static greycard_ai::Model>)>,
@@ -919,8 +931,8 @@ fn run_develop(
             outputs,
             lens,
             detail,
-            settings.dehaze,
-            settings.sharpen,
+            after.dehaze,
+            after.sharpen,
             exposure,
         );
     }
@@ -934,14 +946,7 @@ fn run_develop(
     let (frame, metadata) = RawlerDecoder
         .decode_path_with_metadata(file)
         .with_context(|| format!("decoding {}", file.display()))?;
-    // The dehaze and the sharpen are not the engine's to run here:
-    // they go after the lens correction, as `correct_and_sharpen`
-    // says and as the editor's worker has it.
-    let dehazing = settings.dehaze;
-    let sharpening = settings.sharpen;
     let settings = &DevelopSettings {
-        sharpen: None,
-        dehaze: None,
         demosaic: demosaic_for(&frame.layout, demosaic_asked)?,
         ..settings.clone()
     };
@@ -950,15 +955,15 @@ fn run_develop(
         None => develop(&frame, settings).map_err(anyhow::Error::from),
     }
     .with_context(|| format!("developing {}", file.display()))?;
-    developed.sharpen = correct_and_sharpen(
+    let sharpened = correct_and_sharpen(
         &mut developed.image,
         (&frame.make, &frame.model, &frame.shot, true),
         lens,
         db.as_ref(),
         detail,
-        dehazing,
+        after.dehaze,
         targets.dehaze_map.as_deref(),
-        sharpening,
+        after.sharpen,
         developed.sharpen_radius,
         developed.clip_level,
     )?;
@@ -1025,7 +1030,7 @@ fn run_develop(
             h.dead
         );
     }
-    if let Some(s) = &developed.sharpen {
+    if let Some(s) = &sharpened {
         tracing::info!(
             "sharpened: radius {:.2} (the mosaic says {}), {} iterations, contrast threshold {:.0}%, {:.0}% of the picture, {:.2}% clipped",
             s.radius,
