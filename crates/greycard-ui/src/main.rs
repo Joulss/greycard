@@ -880,6 +880,7 @@ impl State {
                 show_developed: false,
                 developed: None,
                 notice_timer: slint::Timer::default(),
+                badge_timer: slint::Timer::default(),
                 tags: tags::History::default(),
                 hold: None,
                 placeholder: None,

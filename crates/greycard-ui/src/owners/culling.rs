@@ -28,6 +28,9 @@ pub(crate) struct Culling {
     /// again; nothing else does, so an arrow pressed after the key
     /// leaves the word up for its second.
     pub(crate) notice_timer: slint::Timer,
+    /// Takes the frame's badge over the picture down again in the
+    /// develop view, a moment after the key that put it up.
+    pub(crate) badge_timer: slint::Timer,
     /// The session's rating, flag and label changes: culling's undo.
     pub(crate) tags: tags::History,
     /// The camera's pictures the develop view keeps: what the mode

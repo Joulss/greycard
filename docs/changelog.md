@@ -39,6 +39,9 @@ design note behind it.
   and a landscape wide, with a small gap between: about twice as many
   frames on screen, and the strip a little shorter
   ([§518](https://github.com/jessolmstead/greycard/blob/master/docs/notes/518-the-strips-cells-sized-to-their-pictures.md)).
+- In the develop view a rating, flag, or label key shows the frame's
+  badge over the picture for two seconds, and it stays while the strip
+  is hidden ([§519](https://github.com/jessolmstead/greycard/blob/master/docs/notes/519-the-badge-over-the-picture-in-develop.md)).
 
 ### Color
 

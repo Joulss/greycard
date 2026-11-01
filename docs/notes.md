@@ -531,3 +531,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§516. The lens picker by maker, and a filter](notes/516-the-lens-picker-by-maker-and-a-filter.md) (2026-11-01)
 - [§517. The camera match holds unseen greys, and the library refuses a narrow fit](notes/517-the-camera-match-holds-unseen-greys.md) (2026-11-01)
 - [§518. The strip's cells sized to their pictures](notes/518-the-strips-cells-sized-to-their-pictures.md) (2026-11-01)
+- [§519. The badge over the picture in Develop](notes/519-the-badge-over-the-picture-in-develop.md) (2026-11-01)

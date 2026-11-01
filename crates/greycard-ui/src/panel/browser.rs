@@ -2258,6 +2258,9 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     else {
         return;
     };
+    if st.current != Some(i) {
+        end_flash(st, app);
+    }
     st.views.picked = if extend {
         selection::union(&chosen_frames(st), &[i])
     } else {
@@ -3071,6 +3074,22 @@ fn meta_on(
             format!("{word}; hidden by the filter")
         };
         say_notice(&mut st, app, word);
+    } else if settled.is_key()
+        && !app.get_grid_open()
+        && !app.get_lightbox()
+        && st.current.is_some_and(|c| {
+            row_of(&st, c).is_some()
+                && st
+                    .file_at(c)
+                    .is_some_and(|f| st.files_of(frames).contains(&f))
+        })
+    {
+        // The develop view: the frame on screen's badge over the
+        // picture for a moment, the strip tile's being small or put
+        // away. Not for a key that took the frame out of the filtered
+        // list: the selection moves on, and the badge would be the
+        // next frame's.
+        flash_badge(&mut st, app);
     }
     let said = match hidden.as_slice() {
         [] => None,
@@ -3125,6 +3144,32 @@ pub(crate) fn say_notice(st: &mut State, app: &App, text: String) {
                 app.set_notice_on(false);
             }
         });
+}
+
+/// How long the frame's badge stays over the picture in the develop
+/// view after a key, before it fades.
+const BADGE_UP: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Put the frame's badge up over the picture in the develop view and
+/// start the timer that takes it down; a key while it is up starts
+/// the timer again.
+fn flash_badge(st: &mut State, app: &App) {
+    app.set_badge_flash(true);
+    let app_weak = app.as_weak();
+    st.culling
+        .badge_timer
+        .start(slint::TimerMode::SingleShot, BADGE_UP, move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.set_badge_flash(false);
+            }
+        });
+}
+
+/// Take the badge's flash down at once: it answered a key on the frame
+/// that was open, and is not the next frame's.
+fn end_flash(st: &State, app: &App) {
+    st.culling.badge_timer.stop();
+    app.set_badge_flash(false);
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
@@ -4994,6 +5039,119 @@ mod tests {
         assert_eq!(*zooms.borrow(), 1);
         assert!(!app.get_grid_open());
         assert_eq!(pressed.borrow().len(), 9);
+    }
+
+    /// A rating, a flag, or a label key in the develop view puts the
+    /// frame's badge up over the picture, and its timer takes it down;
+    /// a second key while it is up starts the timer again. Library,
+    /// Cull, and the lightbox show badges of their own and get no
+    /// flash, and culling's is as it was. With the strip put away the
+    /// badge is up in the develop view without a key.
+    #[test]
+    fn a_key_in_the_develop_view_puts_the_badge_up_for_a_moment() {
+        use i_slint_backend_testing::{ElementHandle, mock_elapsed_time};
+        use std::time::Duration;
+        let app = window(0);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(4));
+        // How many of the element `id` are on the window, once the
+        // layout has settled into what the last change asked for.
+        let here = |id: &str| {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+            ElementHandle::find_by_element_id(&app, id).count()
+        };
+        app.invoke_select(1);
+        assert_eq!(state.borrow().current, Some(1));
+        assert!(!app.get_badge_flash() && !app.get_develop_badge());
+
+        app.invoke_meta_key("p".into());
+        assert_eq!(app.get_frame_flag(), meta::Flag::Pick.code());
+        assert!(app.get_badge_flash() && app.get_develop_badge());
+        // The badge is the develop view's; a badge with nothing to
+        // say is not drawn, so it is looked for once the key landed.
+        assert_eq!(here("Viewport::develop-badge"), 1);
+        assert_eq!(here("Viewport::cull-badge"), 0);
+        mock_elapsed_time(Duration::from_millis(1500));
+        app.invoke_meta_key("3".into());
+        assert_eq!(app.get_frame_rating(), 3);
+        mock_elapsed_time(Duration::from_millis(1500));
+        assert!(app.get_badge_flash(), "the second key started it again");
+        mock_elapsed_time(Duration::from_millis(600));
+        assert!(!app.get_badge_flash() && !app.get_develop_badge());
+
+        // Library, the lightbox and Cull: the key lands, no flash.
+        app.set_grid_open(true);
+        app.invoke_meta_key("x".into());
+        assert_eq!(app.get_frame_flag(), meta::Flag::Reject.code());
+        app.set_grid_open(false);
+        app.set_lightbox(true);
+        app.invoke_meta_key("u".into());
+        app.set_lightbox(false);
+        assert_eq!(app.get_frame_flag(), 0);
+        app.invoke_cull_toggled();
+        assert!(app.get_cull_mode());
+        app.invoke_meta_key("6".into());
+        assert!(app.get_frame_label() > 0);
+        assert!(!app.get_badge_flash());
+        // Culling's own badge, in place of this one, and the strip
+        // put away there changes nothing of it.
+        app.set_strip_hidden(true);
+        assert!(!app.get_develop_badge());
+        assert_eq!(here("Viewport::cull-badge"), 1);
+        assert_eq!(here("Viewport::develop-badge"), 0);
+
+        // Back in Develop with the strip still away: up, no key.
+        app.invoke_cull_leave();
+        assert!(!app.get_cull_mode());
+        assert!(!app.get_badge_flash() && app.get_develop_badge());
+        assert_eq!(here("Viewport::develop-badge"), 1);
+        app.set_strip_hidden(false);
+        assert!(!app.get_develop_badge());
+
+        // P, then an arrow within the moment: the flash answered the
+        // last frame, and goes with it.
+        app.invoke_select(0);
+        app.invoke_meta_key("p".into());
+        assert!(app.get_badge_flash());
+        app.invoke_step(1, false);
+        assert_eq!(state.borrow().current, Some(1));
+        assert!(!app.get_badge_flash() && !app.get_develop_badge());
+
+        // P, then Library and back within the moment: nothing of it
+        // is left to see.
+        app.invoke_meta_key("p".into());
+        assert!(app.get_badge_flash());
+        app.set_grid_open(true);
+        mock_elapsed_time(Duration::from_millis(100));
+        app.set_grid_open(false);
+        mock_elapsed_time(Duration::from_millis(100));
+        assert!(!app.get_badge_flash() && !app.get_develop_badge());
+
+        // X under the Picks filter, 1 and 3 the picks and 1 open: 1
+        // leaves the list and the selection moves on to 3, whose pick
+        // is not the key's answer, so nothing flashes.
+        {
+            let mut st = state.borrow_mut();
+            for (i, flag) in [
+                meta::Flag::None,
+                meta::Flag::Pick,
+                meta::Flag::None,
+                meta::Flag::Pick,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                st.sidecars[i].meta.flag = flag;
+            }
+        }
+        app.invoke_filter_flag_toggled(1, false);
+        assert_eq!(state.borrow().views.shown, vec![1, 3]);
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().current, Some(3), "the selection moved on");
+        assert_eq!(app.get_frame_flag(), meta::Flag::Pick.code());
+        assert!(!app.get_badge_flash() && !app.get_develop_badge());
     }
 
     #[test]

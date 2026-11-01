@@ -31,6 +31,9 @@ export component Viewport inherits Rectangle {
     /// Culling: the frame on screen's badge in the corner, or one on
     /// each compared tile, and a word for the last key pressed.
     in property <bool> culling;
+    /// Out of culling: the frame's badge over the picture, as
+    /// culling's, while this is true, and fading out after.
+    in property <bool> develop-badge;
     /// While the soft proof is on: its name for a pill in the corner,
     /// and a click on the pill turns it off. Empty for none.
     in property <string> proof-badge;
@@ -526,7 +529,7 @@ export component Viewport inherits Rectangle {
     // picture, the strip tile's badge at a size that reads from a
     // chair back, and with the strip put away by Tab. The compared
     // frames carry their own below; one frame alone carries this.
-    if root.culling && root.compare-tiles.length == 0: ThumbBadges {
+    if root.culling && root.compare-tiles.length == 0: cull-badge := ThumbBadges {
         x: parent.width - self.width - Theme.space-3;
         y: Theme.space-3;
         glyph: 16px;
@@ -534,6 +537,29 @@ export component Viewport inherits Rectangle {
         flag: root.frame-flag;
         label: root.frame-label;
         stars: root.meta-stars;
+    }
+    // The same badge in the develop view, where the strip tile's is
+    // otherwise the only answer to a key: up for a moment after one,
+    // and for as long as the strip is put away. It takes no pointer,
+    // as culling's does not.
+    if !root.culling: develop-badge := ThumbBadges {
+        x: parent.width - self.width - Theme.space-3;
+        y: Theme.space-3;
+        glyph: 16px;
+        rating: root.frame-rating;
+        flag: root.frame-flag;
+        label: root.frame-label;
+        stars: root.meta-stars;
+        // Up at once, the key's answer; only the way down fades.
+        opacity: 0;
+        states [
+            up when root.develop-badge: {
+                opacity: 1;
+                out {
+                    animate opacity { duration: 250ms; easing: ease-out; }
+                }
+            }
+        ]
     }
     // The soft proof, named, in the top left corner: a stray S looks
     // like a broken render without it. The pill is the only part of

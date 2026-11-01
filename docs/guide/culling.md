@@ -75,7 +75,9 @@ Small badges over each thumbnail show the flag, the stars and the
 label. A labeled frame's tile in the grid is also tinted toward its
 label's color, so a run of red frames stands out. In the filmstrip,
 which sits beside the picture you are judging, the label shows as a
-thin colored line under the thumbnail instead of a tint.
+thin colored line under the thumbnail instead of a tint. In the
+develop view the badge also shows over the picture for a moment after
+a key, and stays while the strip is hidden.
 
 Ratings, flags and labels are saved in the frame's `.gcd`. With
 **Write XMP sidecars** on in Settings, ratings and labels go into the

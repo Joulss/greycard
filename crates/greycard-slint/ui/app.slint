@@ -657,6 +657,23 @@ export component App inherits Window {
     in property <int> frame-rating: 0;
     in property <int> frame-flag: 0;
     in property <int> frame-label: 0;
+    /// The badge's answer to a rating, a flag, or a label key in the
+    /// Loupe's Develop, where the culling badge is not: Rust puts it
+    /// up on the key and takes it down on a timer of its own, or on
+    /// another frame opened; leaving the view takes it down here.
+    in-out property <bool> badge-flash: false;
+    /// The Loupe's Develop: not Library, Cull, or the lightbox, which
+    /// show badges of their own.
+    property <bool> develop-view: !root.cull-mode && !root.grid-open && !root.lightbox;
+    /// The badge over the picture in the Loupe's Develop: for a moment
+    /// after a key, and held while the strip is put away, the strip
+    /// tile's badge being out of sight then.
+    out property <bool> develop-badge: root.develop-view && (root.badge-flash || root.strip-hidden);
+    // A flash left running is not the next visit's: back within its
+    // moment, the badge would answer a key pressed before.
+    changed develop-view => {
+        if (!root.develop-view) { root.badge-flash = false; }
+    }
     /// The METADATA section (`panel/words.rs`): whether a frame is
     /// chosen, the title the selection shares (empty, and mixed, when
     /// two differ) and its keywords, each marked for whether every
@@ -3013,6 +3030,7 @@ export component App inherits Window {
                 compare-tiles: root.compare-tiles;
                 // The badge and the key's word: either Cull's.
                 culling: root.cull-mode;
+                develop-badge: root.develop-badge;
                 proof-badge: root.proof-badge;
                 proof-off => { root.proofing = false; root.proof-changed(); }
                 frame-rating: root.frame-rating;
