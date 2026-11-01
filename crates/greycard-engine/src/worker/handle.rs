@@ -687,12 +687,29 @@ impl Worker {
     }
 
     /// The cells of the rows near those on screen
-    /// ([`crate::thumbpool::near_rows`]): the edit's pictures are made
-    /// for these alone.
+    /// ([`crate::thumbpool::near_rows`]): the edit's pictures, and the
+    /// previews outside culling, are made for these alone.
     pub fn near_thumbnails(&self, cells: std::collections::HashSet<usize>) {
         if let Some(pool) = self.pool() {
             pool.set_near(cells);
         }
+    }
+
+    /// Make the local previews of these cells as well as the near ones
+    /// (culling), or of the near ones alone (`None`): see
+    /// `thumbpool::Pool::previews_ahead`.
+    pub fn previews_ahead(&self, cells: Option<std::collections::HashSet<usize>>) {
+        if let Some(pool) = self.pool() {
+            pool.previews_ahead(cells);
+        }
+    }
+
+    /// The cells whose previews are made ahead now.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn previews_ahead_of(&self) -> std::collections::HashSet<usize> {
+        self.pool()
+            .map(|p| p.previews_ahead_of())
+            .unwrap_or_default()
     }
 
     /// Another folder's list: the thumbnails still waiting are
@@ -724,12 +741,18 @@ impl Worker {
     /// path), and a frame whose job was among them would never get its
     /// picture, which is how a merge blanked the grid.
     /// `wanted`, the files on screen, are made first, as the grid's
-    /// range would have them.
-    pub fn replace_thumbnails(&self, list: Vec<(usize, Frame)>, wanted: Option<(usize, usize)>) {
+    /// range would have them. `cells` numbers every frame of the list
+    /// now, for what waits behind the thumbnails.
+    pub fn replace_thumbnails(
+        &self,
+        list: Vec<(usize, Frame)>,
+        wanted: Option<(usize, usize)>,
+        cells: &std::collections::HashMap<Frame, usize>,
+    ) {
         let Some(pool) = self.pool() else {
             return;
         };
-        pool.forget();
+        pool.renumber_to(cells);
         pool.push_all(list);
         if let Some((first, last)) = wanted {
             pool.want(first, last);

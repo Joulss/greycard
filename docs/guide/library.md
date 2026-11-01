@@ -553,7 +553,9 @@ yourself.
 greycard keeps the thumbnails it makes on disk, so a folder you open
 again, move or rename fills in at once. Frames under a root also get
 a **local preview**, a picture 2048 px on its long side, made in the
-background while the drive is there. It lets you cull
+background while the drive is there: for the frames you scroll past
+in the grid or the strip, and, while you cull in the Cull view or the
+lightbox, for the frames around the one you are on. It lets you cull
 an offline drive, and a shoot on a NAS without reading each raw over
 the network. An edited frame's pictures of its edit are kept in the
 same cache, beside the camera's.

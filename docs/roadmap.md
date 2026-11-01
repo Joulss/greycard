@@ -21,12 +21,11 @@ the reasoning lives in `docs/notes.md`.
       "preparing..." while it loads and the load starts when the Fill
       is taken in hand (§490). Time the editor's own first fill, cold,
       before taking this off
-- [ ] The Library's camera thumbnails and the previews behind them
-      are still made for the whole root at its first open, about a
-      quarter of a CPU second a cold frame, an hour on a 12515-file
-      root and more for raws with no embedded JPEG, where each preview
-      is a develop; shown now (§452). The previews on the near-screen
-      rule, or made only while culling (discussion 51, 2026-10-29)
+- [ ] The Library's camera thumbnails are still made for the whole
+      root at its first open, about a tenth of a CPU second a cold
+      frame, twenty minutes on a 12515-file root; the previews behind
+      them follow the near-screen rule since §495 (discussion 51,
+      2026-10-29)
 - [ ] The window at rest holds a third of a laptop's GPU on Windows,
       in the Library after a frame was opened (an RTX 5060 Laptop at
       2.3x, discussion 51, 2026-10-29); the same path here draws

@@ -15,9 +15,11 @@
 //! thumbnail's lookup already has the file's hash and stamp in hand,
 //! and notes here a frame under a root with no preview kept
 //! ([`Previews::note`]); the pool then makes it at its lowest priority
-//! ([`Previews::make`]). A frame the culling loupe decodes from its file
-//! meanwhile has its preview made from the picture in hand
-//! ([`Previews::make_from`]), with no second read.
+//! ([`Previews::make`]), for the frames near the screen, and while
+//! culling for those within a long reach of the one shown. A frame
+//! the culling loupe decodes from its file meanwhile has its preview
+//! made from the picture in hand ([`Previews::make_from`]), with no
+//! second read.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -18,8 +18,12 @@
 //!
 //! Behind the thumbnails, and only when no thumbnail is waiting to be
 //! begun, each frame whose thumbnail found no local preview kept has
-//! one made (`previews`): never while the pool is held, and in the
-//! thumbnails' order, the frames shown first. Behind those again, each
+//! one made (`previews`): never while the pool is held, in the
+//! thumbnails' order, the frames shown first, and only for the frames
+//! near the screen, as the edit's pictures below are; while culling,
+//! where the frames are seen one after another, for those within a
+//! long reach of the one shown as well ([`Pool::previews_ahead`]).
+//! Behind those again, each
 //! frame whose thumbnail found its edit's pictures not kept has them
 //! made by the reduced develop (`reduced`): the lowest thing the pool
 //! does, never while it is held, the frames shown first, and a thread
@@ -45,7 +49,7 @@
 //! for as many as pile up before the window takes them, and the
 //! window takes them a slice at a time, the files it shows first.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -358,8 +362,12 @@ struct Pending {
     edits_busy: usize,
     edits_alone: bool,
     /// The cells of the rows near those the window shows, as it last
-    /// said ([`Pool::set_near`]): an edit is begun only for one of these.
+    /// said ([`Pool::set_near`]): an edit is begun only for one of these,
+    /// and a preview too, unless it is one of `ahead`.
     near: HashSet<usize>,
+    /// The cells whose previews are made ahead while culling, as the
+    /// window last said ([`Pool::previews_ahead`]); none otherwise.
+    ahead: HashSet<usize>,
     /// What has been made since the pool last had nothing in hand.
     pass: Option<Pass>,
     /// How many times a thread has looked at all of the above and found
@@ -402,8 +410,29 @@ impl Pending {
         if self.jobs.iter().any(|(_, f)| !self.missed.contains(f)) {
             return Making::Uncounted;
         }
-        let edits = self.edits.iter().filter(|(i, _)| self.near.contains(i));
-        Making::Left(self.previews.len() + edits.count() + self.jobs.len() + self.busy)
+        Making::Left(self.previews_due() + self.edits_due() + self.jobs.len() + self.busy)
+    }
+
+    /// Whether the preview waiting for cell `index` may be begun: near
+    /// the screen, or made ahead while culling.
+    fn preview_due(&self, index: usize) -> bool {
+        self.near.contains(&index) || self.ahead.contains(&index)
+    }
+
+    /// How many of the previews waiting may be begun.
+    fn previews_due(&self) -> usize {
+        self.previews
+            .iter()
+            .filter(|(i, _)| self.preview_due(*i))
+            .count()
+    }
+
+    /// How many of the edits waiting are near the screen.
+    fn edits_due(&self) -> usize {
+        self.edits
+            .iter()
+            .filter(|(i, _)| self.near.contains(i))
+            .count()
     }
 
     /// One of `what` made: counted into the pass, which begins with the
@@ -412,8 +441,7 @@ impl Pending {
     fn count_made(&mut self, what: What) -> Option<Making> {
         let left = self.left();
         if self.pass.is_none() {
-            let edits = self.edits.iter().filter(|(i, _)| self.near.contains(i));
-            let waiting = self.jobs.len() + self.previews.len() + edits.count();
+            let waiting = self.jobs.len() + self.previews_due() + self.edits_due();
             tracing::info!("the thumbnails' pool: making pictures, {waiting} waiting");
         }
         let pass = self.pass.get_or_insert_with(Pass::new);
@@ -611,17 +639,40 @@ impl Pool {
     }
 
     /// The cells near the rows the window shows ([`near_rows`]): the
-    /// edit's pictures are made for these alone from now on. Others
-    /// brought near, a thread waiting with only far ones queued looks
-    /// again.
+    /// edit's pictures, and the previews unless they are made ahead,
+    /// are made for these alone from now on. Others brought near, a
+    /// thread waiting with only far ones queued looks again; those
+    /// scrolled away wait, queued, for the view to come back.
     pub fn set_near(&self, cells: HashSet<usize>) {
         let mut q = self.lock();
         if q.near != cells {
             q.near = cells;
-            if !q.edits.is_empty() {
+            if !q.edits.is_empty() || !q.previews.is_empty() {
                 self.shared.cv.notify_all();
             }
         }
+    }
+
+    /// Make the previews of these cells as well as the near ones, or
+    /// of the near ones alone (`None`). Culling sees the frames one
+    /// after another, so the window hands it those within a long reach
+    /// of the one shown; browsing and editing see what is near the
+    /// screen. In the order [`Pool::want`] sets, the nearest first.
+    pub fn previews_ahead(&self, cells: Option<HashSet<usize>>) {
+        let cells = cells.unwrap_or_default();
+        let mut q = self.lock();
+        if q.ahead != cells {
+            q.ahead = cells;
+            if !q.previews.is_empty() {
+                self.shared.cv.notify_all();
+            }
+        }
+    }
+
+    /// The cells whose previews are made ahead now.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn previews_ahead_of(&self) -> HashSet<usize> {
+        self.lock().ahead.clone()
     }
 
     /// The long edge to make pictures at from the next one begun.
@@ -637,16 +688,53 @@ impl Pool {
     /// Another folder: what is waiting is dropped, and a picture in
     /// hand is not delivered when it is done.
     pub fn forget(&self) {
+        self.renumber(None);
+    }
+
+    /// The same list renumbered under the window (a merge): as
+    /// [`Pool::forget`], but the previews and the edit's pictures
+    /// waiting for a frame still in the list keep their places under
+    /// its new number in `cells`. The window asks again only for the
+    /// thumbnails it has no picture for, and those are what queue the
+    /// rest, so a frame shown before the merge would otherwise never
+    /// have them made.
+    pub fn renumber_to(&self, cells: &HashMap<Key, usize>) {
+        self.renumber(Some(cells));
+    }
+
+    fn renumber(&self, cells: Option<&HashMap<Key, usize>>) {
         let mut q = self.lock();
+        let previews = std::mem::take(&mut q.previews);
+        let edits = std::mem::take(&mut q.edits);
         q.jobs.clear();
         q.missed.clear();
         q.wanted = None;
-        q.previews.clear();
         q.previews_wanted = None;
-        q.edits.clear();
         q.edits_queued.clear();
         q.edits_wanted = None;
         q.epoch += 1;
+        if let Some(cells) = cells {
+            // A preview is the file's, whichever of its frames brought
+            // it: under the file's first cell, its own or a version's
+            // (a collection may hold a version alone).
+            let mut files: HashMap<&Path, usize> = HashMap::new();
+            for (frame, &cell) in cells {
+                files
+                    .entry(frame.path.as_path())
+                    .and_modify(|c| *c = (*c).min(cell))
+                    .or_insert(cell);
+            }
+            q.previews = previews
+                .into_iter()
+                .filter_map(|(_, path)| Some((*files.get(path.as_path())?, path)))
+                .collect();
+            q.edits = edits
+                .into_iter()
+                .filter_map(|(_, frame)| Some((*cells.get(&frame)?, frame)))
+                .collect();
+            q.edits_queued = q.edits.iter().map(|(_, f)| f.clone()).collect();
+            self.shared.cv.notify_all();
+        }
         drop(q);
         // Finished for the old list and not yet taken in: the window
         // would only throw each away on its path.
@@ -781,9 +869,9 @@ fn serve(
                 let at = preview
                     .then(|| {
                         let p = &*q;
-                        p.previews
-                            .iter()
-                            .position(|(_, f)| !p.making.iter().any(|m| m.path == *f))
+                        p.previews.iter().position(|(i, f)| {
+                            p.preview_due(*i) && !p.making.iter().any(|m| m.path == *f)
+                        })
                     })
                     .flatten();
                 if let Some(at) = at {
@@ -1221,6 +1309,7 @@ mod tests {
         });
         let (deliver, rx) = collector();
         let pool = Pool::new(2, make, deliver).with_previews(preview_hooks(log.clone(), &[3]));
+        pool.set_near((0..6).collect());
         pool.set_limit(0);
         for i in 0..6 {
             pool.push(i, file(i));
@@ -1240,7 +1329,8 @@ mod tests {
     }
 
     /// The previews waiting are made in the thumbnails' order about the
-    /// range shown, one at a time on a pool of two.
+    /// range shown, one at a time on a pool of two: made ahead, as while
+    /// culling, the whole list's.
     #[test]
     fn the_previews_of_the_frames_shown_are_made_first() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1254,6 +1344,7 @@ mod tests {
         }
         receive(&rx, 6);
         pool.want(2, 3);
+        pool.previews_ahead(Some((0..6).collect()));
         pool.hold(false);
         assert_eq!(until_logged(&log, 5), ["p2", "p1", "p0", "p4", "p5"]);
     }
@@ -1279,6 +1370,7 @@ mod tests {
         };
         let (deliver, rx) = collector();
         let pool = Pool::new(2, instant(), deliver).with_previews(hooks);
+        pool.set_near([0, 1, 5].into());
         pool.push(0, file(0));
         pool.push(1, file(1));
         receive(&rx, 2);
@@ -1303,6 +1395,7 @@ mod tests {
         let (deliver, rx) = collector();
         let pool = Pool::with_lookup(2, lookup, instant(), deliver)
             .with_previews(preview_hooks(log.clone(), &[]));
+        pool.previews_ahead(Some([0, 1, 2, 7].into()));
         pool.hold(true);
         for i in 0..3 {
             pool.push(i, file(i));
@@ -1659,6 +1752,150 @@ mod tests {
             .collect();
         made.sort();
         assert_eq!(made, (32..40).collect::<Vec<_>>());
+    }
+
+    /// The previews, like the edit's pictures, are made only for the
+    /// cells near the rows shown; those scrolled away wait, queued, and
+    /// are made when the view comes back. Made ahead (culling), those
+    /// the window hands over follow, nearest the range shown first, and
+    /// no others.
+    #[test]
+    fn the_previews_are_made_near_the_rows_shown_and_ahead_while_culling() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (deliver, rx) = collector();
+        // Two threads: one preview at a time, so the log is the pool's
+        // order.
+        let pool = Pool::new(2, instant(), deliver).with_previews(preview_hooks(log.clone(), &[]));
+        pool.hold(true);
+        for i in 0..40 {
+            pool.push(i, file(i));
+        }
+        pool.want(0, 3);
+        pool.set_near((0..8).collect());
+        pool.hold(false);
+        receive(&rx, 40);
+        until_logged(&log, 8);
+        until_idle(&pool);
+        settled(&pool);
+        let mut made: Vec<usize> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|p| p[1..].parse().unwrap())
+            .collect();
+        made.sort();
+        assert_eq!(made, (0..8).collect::<Vec<_>>(), "the near rows' alone");
+        // Scrolled away and back: what was near and made is not made
+        // again, and the new rows' are made.
+        pool.set_near((20..28).collect());
+        until_logged(&log, 16);
+        until_idle(&pool);
+        settled(&pool);
+        pool.set_near((0..8).collect());
+        settled(&pool);
+        assert_eq!(log.lock().unwrap().len(), 16, "nothing far, nothing twice");
+        // Culling: those within reach not made yet, nearest the range
+        // shown first, and nothing past the reach.
+        pool.want(30, 31);
+        pool.previews_ahead(Some((26..36).collect()));
+        let order = until_logged(&log, 24);
+        until_idle(&pool);
+        settled(&pool);
+        let rest: Vec<usize> = log.lock().unwrap()[16..]
+            .iter()
+            .map(|p| p[1..].parse().unwrap())
+            .collect();
+        assert_eq!(rest, [30, 31, 29, 28, 32, 33, 34, 35], "{order:?}");
+        assert_eq!(pool.lock().previews.len(), 16, "the rest wait");
+        // Out of culling: the near rule alone again.
+        pool.previews_ahead(None);
+        settled(&pool);
+        assert_eq!(log.lock().unwrap().len(), 24);
+    }
+
+    /// A merge renumbers the list under the pool: the previews and the
+    /// edit's pictures waiting for a frame still in it keep their
+    /// places under its new number, so a frame shown before the merge,
+    /// whose thumbnail the window does not ask for again, still has
+    /// them made; a frame gone from the list has neither. Nothing is
+    /// begun while held, so the queues are read as the merge left them.
+    #[test]
+    fn a_merge_keeps_what_waits_behind_the_thumbnails_under_the_new_numbers() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let lookup: Lookup = Arc::new(|_, _| Some(picture()));
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(4, lookup, instant(), deliver)
+            .with_previews(preview_hooks(log.clone(), &[]))
+            .with_edits(edit_hooks(log.clone(), &[]));
+        pool.hold(true);
+        for i in 0..4 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 4);
+        settled(&pool);
+        // Two frames come in at the front; file 3 is gone.
+        let cells: HashMap<Key, usize> = [(file(0), 2), (file(1), 3), (file(2), 4)].into();
+        pool.renumber_to(&cells);
+        let q = pool.lock();
+        let mut previews: Vec<(usize, usize)> = q
+            .previews
+            .iter()
+            .map(|(i, p)| (*i, index_of_path(p)))
+            .collect();
+        previews.sort();
+        assert_eq!(previews, [(2, 0), (3, 1), (4, 2)]);
+        let mut edits: Vec<(usize, usize)> =
+            q.edits.iter().map(|(i, f)| (*i, index_of(f))).collect();
+        edits.sort();
+        assert_eq!(edits, [(2, 0), (3, 1), (4, 2)]);
+        assert_eq!(q.edits_queued.len(), 3);
+        drop(q);
+        // A forget is another folder: nothing is kept.
+        pool.forget();
+        let q = pool.lock();
+        assert!(q.previews.is_empty() && q.edits.is_empty() && q.edits_queued.is_empty());
+    }
+
+    /// A preview is the file's, whichever of its frames brought it: a
+    /// merge keeps one brought by a version under that version's cell
+    /// when the file's own frame is not in the list (a collection holding
+    /// the version alone).
+    #[test]
+    fn a_merge_keeps_a_preview_brought_by_a_version() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let lookup: Lookup = Arc::new(|_, _| Some(picture()));
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(4, lookup, instant(), deliver)
+            .with_previews(preview_hooks(log.clone(), &[]));
+        pool.hold(true);
+        let version = Key::of(file(0).path, Some("v1"));
+        pool.push(0, version.clone());
+        receive(&rx, 1);
+        settled(&pool);
+        assert_eq!(pool.lock().previews.len(), 1);
+        pool.renumber_to(&[(version, 3)].into());
+        let q = pool.lock();
+        let kept: Vec<(usize, usize)> = q
+            .previews
+            .iter()
+            .map(|(i, p)| (*i, index_of_path(p)))
+            .collect();
+        assert_eq!(kept, [(3, 0)]);
+    }
+
+    /// Off the near rows, the status line's count leaves the far
+    /// previews out: only what will be made is said to be left.
+    #[test]
+    fn far_previews_are_not_counted_as_left() {
+        let mut q = Pending::default();
+        for i in 0..10 {
+            q.previews
+                .push_back((i, PathBuf::from(format!("IMG_{i:04}.CR3"))));
+        }
+        q.near = (0..3).collect();
+        assert_eq!(q.left(), Making::Left(3));
+        q.ahead = (2..6).collect();
+        assert_eq!(q.left(), Making::Left(6));
     }
 
     /// The words of the pool's making, as the window hears them.

@@ -76,9 +76,13 @@ pub(crate) fn ask_owed(st: &State, worker: &Worker) {
     let (offline, online): (Vec<_>, Vec<_>) = owed_thumbnails(st)
         .into_iter()
         .partition(|(i, _)| rows::is_offline(st, *i));
-    worker.replace_thumbnails(online, on_screen(st));
+    let cells = (0..st.cells.len())
+        .filter_map(|c| Some((st.key_of(c)?, c)))
+        .collect();
+    worker.replace_thumbnails(online, on_screen(st), &cells);
     // The list renumbered: the cells near the rows on screen again.
     worker.near_thumbnails(crate::panel::browser::near_cells(st));
+    crate::panel::browser::previews_ahead(st, worker);
     for (i, _) in offline {
         worker.send(rows::thumb_job(st, i));
     }

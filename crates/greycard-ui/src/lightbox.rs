@@ -554,6 +554,7 @@ fn changed(st: &mut State, app: &App, worker: &Worker) {
             fetch.want(Vec::new());
         }
     }
+    crate::panel::browser::previews_ahead(st, worker);
 }
 
 pub(crate) fn install(app: &App, state: &std::rc::Rc<crate::Shared>, worker: &std::rc::Rc<Worker>) {
@@ -1275,5 +1276,41 @@ mod tests {
         assert_eq!(kept_order(512), vec![BIG, 360, 256, 176, 128]);
         assert_eq!(kept_order(256), vec![256, 360, BIG, 176, 128]);
         assert_eq!(kept_order(4096), vec![BIG, 360, 256, 176, 128]);
+    }
+
+    /// The local previews are made ahead while culling, in the Cull view
+    /// and in the lightbox, for the shown rows within reach of those on
+    /// screen and never the whole list; near the screen otherwise.
+    #[test]
+    fn the_previews_are_made_ahead_only_while_culling_and_within_reach() {
+        use crate::panel::browser::{PREVIEWS_AHEAD, near_shown};
+        let app = window(4);
+        let (state, _) = state_for(&app, folder(1000));
+        let worker = std::rc::Rc::new(Worker::new(|_| {}));
+        let st = &mut *state.borrow_mut();
+        near_shown(st, &worker, 0, 1);
+        assert!(worker.previews_ahead_of().is_empty(), "browsing");
+        crate::WORKER.with(|w| *w.borrow_mut() = Some(worker.clone()));
+        crate::panel::cull::enter_cull(st, &app, 1);
+        crate::WORKER.with(|w| *w.borrow_mut() = None);
+        let reach: std::collections::HashSet<usize> = (0..PREVIEWS_AHEAD + 2).collect();
+        assert_eq!(worker.previews_ahead_of(), reach, "the Cull view");
+        // A filter shows every other frame: only shown cells, by row.
+        st.views.shown = (0..1000).step_by(2).collect();
+        near_shown(st, &worker, 250, 251);
+        let ahead = worker.previews_ahead_of();
+        assert_eq!(ahead.len(), 2 * PREVIEWS_AHEAD + 2);
+        assert!(ahead.iter().all(|c| c % 2 == 0));
+        let (first, last) = (2 * (250 - PREVIEWS_AHEAD), 2 * (251 + PREVIEWS_AHEAD));
+        assert_eq!(ahead.iter().min(), Some(&first));
+        assert_eq!(ahead.iter().max(), Some(&last));
+        crate::panel::cull::leave_cull(st, &app, &worker, None);
+        assert!(worker.previews_ahead_of().is_empty(), "out of it");
+        app.set_lightbox(true);
+        changed(st, &app, &worker);
+        assert!(!worker.previews_ahead_of().is_empty(), "the lightbox");
+        app.set_lightbox(false);
+        changed(st, &app, &worker);
+        assert!(worker.previews_ahead_of().is_empty(), "out of it");
     }
 }

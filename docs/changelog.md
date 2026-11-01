@@ -40,6 +40,11 @@ design note behind it.
 
 ### Library
 
+- The previews behind the Library's thumbnails are made for the
+  frames near the screen and around the one being culled, not for
+  the whole root at its first open; a frame shown before the list
+  finished growing gets its preview too
+  ([§495](https://github.com/jessolmstead/greycard/blob/master/docs/notes/495-previews-near-the-screen-and-around-the-cull.md)).
 - Collections, smart collections, and stacks travel with their frames
   through a backup or an archive and join on another machine, a
   conflict kept as both

@@ -291,6 +291,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     // No frame is being edited while culling.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
         worker.set_open_frame(None);
+        crate::panel::browser::previews_ahead(st, &worker);
     }
     // Fitted, as a file opens; at the start the command line's zoom
     // stands, so `--zoom 1` opens the loupe at 1:1.
@@ -320,6 +321,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // finds it no longer the pick.
     crate::rows::pick_over(st, app);
     st.culling.prefetch.want(Vec::new());
+    crate::panel::browser::previews_ahead(st, worker);
     app.set_culling(false);
     app.set_panel_tab(cull.tab_kept.clone());
     sync_rows(&st.culling.compare_tiles, Vec::new());
@@ -2374,14 +2376,14 @@ pub(crate) fn drop_files(
     // A rejects folder made or emptied under a folder of no root: its
     // tiles read again, as the index tells the tree for a root's.
     crate::tree::loose_changed(st, app);
-    // The rows are the old list's until the rebuild below, so none are
-    // put first.
-    crate::roots::ask_owed(st, worker);
     // The set was numbered by the old list; the frame on screen is
     // what is left of it.
     st.views.picked.clear();
     let next = rebuild_browser(st, app)
         .or_else(|| stand_in.and_then(|f| crate::cull::nearest_row(&st.views.shown, f)));
+    // After the rebuild, so the rows put first and the rows near the
+    // screen are the new list's.
+    crate::roots::ask_owed(st, worker);
     app.set_status(status.into());
     match (st.current, next) {
         (Some(c), _) => {

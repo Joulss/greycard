@@ -1376,6 +1376,43 @@ pub(crate) fn grid_breaks(st: &State, app: &App) -> Vec<i32> {
 pub(crate) fn near_shown(st: &mut State, worker: &Worker, first: usize, last: usize) {
     st.views.near_rows = Some((first, last));
     worker.near_thumbnails(near_cells(st));
+    previews_ahead(st, worker);
+}
+
+/// How many rows either side of those on screen culling has the local
+/// previews made for.
+pub(crate) const PREVIEWS_AHEAD: usize = 200;
+
+/// Culling, in the Cull view or the lightbox, goes through the frames
+/// one after another, so the pool makes the local previews of the rows
+/// within [`PREVIEWS_AHEAD`] of those on screen there, the nearest
+/// first; elsewhere only those near the screen. Never the whole list:
+/// the loupe reads a file that is there itself, so these are for a cull
+/// that goes on once the root is away, and a root of thousands would
+/// take an hour of the machine for them.
+pub(crate) fn previews_ahead(st: &State, worker: &Worker) {
+    let culling = st.culling.cull.is_some() || st.culling.lightbox.is_some();
+    worker.previews_ahead(culling.then(|| ahead_cells(st)));
+}
+
+/// The cells of the rows within [`PREVIEWS_AHEAD`] of those last on
+/// screen, or of the selected frame's row before any was: by row, so a
+/// filter's hidden cells are never among them.
+pub(crate) fn ahead_cells(st: &State) -> std::collections::HashSet<usize> {
+    let rows = st.views.near_rows.or_else(|| {
+        let c = st.current?;
+        let row = st.views.shown.iter().position(|&s| s == c)?;
+        Some((row, row))
+    });
+    let Some((first, last)) = rows else {
+        return Default::default();
+    };
+    let end = last
+        .saturating_add(PREVIEWS_AHEAD + 1)
+        .min(st.views.shown.len());
+    (first.saturating_sub(PREVIEWS_AHEAD).min(end)..end)
+        .map(|row| st.views.shown[row])
+        .collect()
 }
 
 /// The cells of the rows near those last on screen
@@ -1412,6 +1449,7 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     // Other rows under the ones on screen: other cells near them.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
         worker.near_thumbnails(near_cells(st));
+        previews_ahead(st, &worker);
     }
 
     show_filter(st, app);
