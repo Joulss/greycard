@@ -7,8 +7,9 @@ license = "GPL-3.0-or-later"
 dependencies = ["torch", "numpy", "onnx", "onnxruntime"]
 
 [project.optional-dependencies]
-# fp16.py, which needs neither torch nor onnxruntime.
+# fp16.py and compare.py need neither torch nor onnxruntime.
 fp16 = ["onnxconverter-common"]
+compare = ["numpy", "tifffile", "imagecodecs"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
