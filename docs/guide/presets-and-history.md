@@ -42,7 +42,8 @@ everything they set.
 3. Give the preset a name.
 4. Check what it should carry. The sections are listed in the
    Develop tab's order, each a heading with its parts under it
-   (Detail: Texture, Clarity, Dehaze), each part with its own check.
+   (Detail: Texture, Clarity, Structure, and Dehaze), each part with its
+   own check.
    The heading's check takes or leaves the whole section, and shows a
    dash when only some of it is checked. They start checked where
    your edit differs from the defaults, so the preset holds what you

@@ -24,21 +24,34 @@ fn weights(t: f32) -> [f32; 4] {
 /// clamped, Catmull-Rom.
 #[inline]
 pub fn sample_cubic(image: &WorkingImage, x: f32, y: f32) -> [f32; 3] {
-    let (w, h) = (image.width as i64, image.height as i64);
+    sample_cubic_of::<3>(&image.data, image.width, image.height, x, y)
+}
+
+/// [`sample_cubic`] on `N` interleaved channels of a `width` by
+/// `height` plane.
+#[inline]
+fn sample_cubic_of<const N: usize>(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+) -> [f32; N] {
+    let (w, h) = (width as i64, height as i64);
     let fx = (x - 0.5).floor();
     let fy = (y - 0.5).floor();
     let wx = weights(x - 0.5 - fx);
     let wy = weights(y - 0.5 - fy);
-    let mut out = [0f32; 3];
+    let mut out = [0f32; N];
     for (j, wyj) in wy.iter().enumerate() {
         let sy = (fy as i64 + j as i64 - 1).clamp(0, h - 1) as usize;
         for (i, wxi) in wx.iter().enumerate() {
             let sx = (fx as i64 + i as i64 - 1).clamp(0, w - 1) as usize;
-            let k = (sy * image.width + sx) * 3;
+            let k = (sy * width + sx) * N;
             let wgt = wxi * wyj;
-            out[0] += wgt * image.data[k];
-            out[1] += wgt * image.data[k + 1];
-            out[2] += wgt * image.data[k + 2];
+            for (c, o) in out.iter_mut().enumerate() {
+                *o += wgt * data[k + c];
+            }
         }
     }
     out
@@ -49,16 +62,44 @@ pub fn apply(image: &WorkingImage, geometry: &Geometry) -> WorkingImage {
     if geometry.is_identity() {
         return image.clone();
     }
-    let (w, h) = (image.width as f32, image.height as f32);
+    let (data, width, height) = frame_of::<3>(&image.data, image.width, image.height, geometry);
+    WorkingImage {
+        width,
+        height,
+        data,
+    }
+}
+
+/// [`apply`] on a plane of one channel, `width` by `height`: its data,
+/// width and height in the frame.
+pub fn apply_plane(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    geometry: &Geometry,
+) -> (Vec<f32>, usize, usize) {
+    if geometry.is_identity() {
+        return (data.to_vec(), width, height);
+    }
+    frame_of::<1>(data, width, height, geometry)
+}
+
+/// The frame of `geometry` cut from `N` interleaved channels.
+fn frame_of<const N: usize>(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    geometry: &Geometry,
+) -> (Vec<f32>, usize, usize) {
+    let (w, h) = (width as f32, height as f32);
     let frame = geometry.frame(w, h);
     let (ow, oh) = (frame.size.0 as usize, frame.size.1 as usize);
-    let mut out = WorkingImage::new(ow, oh);
+    let mut out = vec![0.0f32; ow * oh * N];
     let turned = geometry.resamples();
-    out.data
-        .par_chunks_mut(ow * 3)
+    out.par_chunks_mut((ow * N).max(1))
         .enumerate()
         .for_each(|(oy, row)| {
-            for (ox, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            for (ox, px) in row.as_chunks_mut::<N>().0.iter_mut().enumerate() {
                 let r = (
                     frame.origin.0 + ox as f32 + 0.5,
                     frame.origin.1 + oy as f32 + 0.5,
@@ -66,19 +107,19 @@ pub fn apply(image: &WorkingImage, geometry: &Geometry) -> WorkingImage {
                 let s = geometry.to_source(r, w, h);
                 *px = if turned {
                     if s.0 < 0.0 || s.1 < 0.0 || s.0 >= w || s.1 >= h {
-                        [0.0; 3]
+                        [0.0; N]
                     } else {
-                        sample_cubic(image, s.0, s.1)
+                        sample_cubic_of::<N>(data, width, height, s.0, s.1)
                     }
                 } else {
-                    let sx = (s.0.floor() as i64).clamp(0, image.width as i64 - 1) as usize;
-                    let sy = (s.1.floor() as i64).clamp(0, image.height as i64 - 1) as usize;
-                    let k = (sy * image.width + sx) * 3;
-                    [image.data[k], image.data[k + 1], image.data[k + 2]]
+                    let sx = (s.0.floor() as i64).clamp(0, width as i64 - 1) as usize;
+                    let sy = (s.1.floor() as i64).clamp(0, height as i64 - 1) as usize;
+                    let k = (sy * width + sx) * N;
+                    std::array::from_fn(|c| data[k + c])
                 }
             }
         });
-    out
+    (out, ow, oh)
 }
 
 #[cfg(test)]

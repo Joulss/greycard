@@ -29,8 +29,9 @@
 //! its own in their place when the frame is opened. The grain stays: it
 //! is laid on by the finish at 2048, placed by the output's pixels, on
 //! both develops alike. Every op measured in pixels is
-//! measured on the half-size picture: Texture's and Clarity's radii and
-//! the dehaze's window are fractions of the long edge already, the
+//! measured on the half-size picture: Texture's, Clarity's, and
+//! Structure's radii and the dehaze's window are fractions of the long
+//! edge already, the
 //! guide plane is made at its fixed 1024 texels, the masks and the
 //! vignette are placed by the frame in `render_framed`, the retouch's
 //! patches are in units of the picture's width, and the defringe's

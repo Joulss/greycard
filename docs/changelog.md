@@ -38,6 +38,10 @@ design note behind it.
 
 ### Color
 
+- Detail gains Structure under Clarity, in the global section and in
+  a mask: a local contrast about three times wider than Clarity and
+  soft, so shapes separate across a face or a landscape without halos
+  ([§507](https://github.com/jessolmstead/greycard/blob/master/docs/notes/507-structure-a-wider-softer-local-contrast.md)).
 - A mask gains Refine edge, under Show mask and Invert: its edge is
   fitted to the picture's, so a brush's or an AI mask's edge follows
   the subject's and two masks meet without a seam

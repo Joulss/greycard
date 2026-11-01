@@ -23,7 +23,7 @@ pub enum Section {
     Light,
     WhiteBalance,
     Noise,
-    /// Local contrast: Texture and Clarity.
+    /// The Detail section: Texture, Clarity, Structure, and Dehaze.
     Detail,
     Sharpen,
     Curves,
@@ -287,6 +287,7 @@ pub enum Part {
     LensDefringe,
     DetailTexture,
     DetailClarity,
+    DetailStructure,
     DetailDehaze,
     VignetteAmount,
     VignetteMidpoint,
@@ -351,6 +352,7 @@ impl Part {
         Part::LensDefringe,
         Part::DetailTexture,
         Part::DetailClarity,
+        Part::DetailStructure,
         Part::DetailDehaze,
         Part::VignetteAmount,
         Part::VignetteMidpoint,
@@ -383,7 +385,7 @@ impl Part {
             | LensDistortion
             | LensScale
             | LensDefringe => Section::Lens,
-            DetailTexture | DetailClarity | DetailDehaze => Section::Detail,
+            DetailTexture | DetailClarity | DetailStructure | DetailDehaze => Section::Detail,
             VignetteAmount | VignetteMidpoint | VignetteFeather | VignetteRoundness => {
                 Section::Vignette
             }
@@ -433,6 +435,7 @@ impl Part {
             LensDefringe => "lens.defringe",
             DetailTexture => "detail.texture",
             DetailClarity => "detail.clarity",
+            DetailStructure => "detail.structure",
             DetailDehaze => "detail.dehaze",
             VignetteAmount => "vignette.amount",
             VignetteMidpoint => "vignette.midpoint",
@@ -486,6 +489,7 @@ impl Part {
             LensDefringe => "Defringe",
             DetailTexture => "Texture",
             DetailClarity => "Clarity",
+            DetailStructure => crate::STRUCTURE,
             DetailDehaze => "Dehaze",
             VignetteAmount => "Amount",
             VignetteMidpoint => "Midpoint",
@@ -586,6 +590,7 @@ impl Part {
             }
             DetailTexture => o.detail.texture = f.detail.texture,
             DetailClarity => o.detail.clarity = f.detail.clarity,
+            DetailStructure => o.detail.structure = f.detail.structure,
             DetailDehaze => o.detail.dehaze = f.detail.dehaze,
             VignetteAmount => o.vignette.amount = f.vignette.amount,
             VignetteMidpoint => o.vignette.midpoint = f.vignette.midpoint,
@@ -1764,6 +1769,7 @@ mod tests {
         e.light.tone.blacks = -0.1;
         e.detail.texture = 0.3;
         e.detail.clarity = 0.4;
+        e.detail.structure = 0.6;
         e.detail.dehaze = 0.5;
         e.curves.red = vec![[0.0, 0.0], [0.5, 0.62], [1.0, 1.0]];
         e.curves.blue = vec![[0.0, 0.1], [1.0, 0.9]];
@@ -1832,6 +1838,25 @@ mod tests {
         want.detail.dehaze = 0.5;
         assert_eq!(out, want);
         assert!(!out.detail.enabled, "the switch goes only with the whole");
+
+        // Structure alone, by its own name in the file.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                parts: vec![Part::DetailStructure],
+                ..Choice::default()
+            },
+        );
+        let out = p.applied(&onto);
+        let mut want = onto.clone();
+        want.detail.structure = 0.6;
+        assert_eq!(out, want);
+        assert_eq!(
+            Part::from_name("detail.structure"),
+            Some(Part::DetailStructure)
+        );
+        assert_eq!(Part::DetailStructure.title(), crate::STRUCTURE);
 
         // One curve: the red, and not the blue the frame has its own of.
         let p = Preset::from_choice(

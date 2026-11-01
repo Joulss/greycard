@@ -697,6 +697,7 @@ mod tests {
             "Strength",
             "Texture",
             "Clarity",
+            greycard_edit::STRUCTURE,
             "Dehaze",
             "Radius",
             "Iterations",

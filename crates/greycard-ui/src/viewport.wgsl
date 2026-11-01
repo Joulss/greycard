@@ -164,8 +164,9 @@ struct Params {
     // The masks' Detail (`detail.rs`): the airlight in xyz and in w
     // whether there are planes to read; Texture's and Clarity's gains,
     // the dehaze's full strength and its floor on the transmission;
-    // the develop's clip level in x (none under zero) and where the
-    // fade toward it starts, as a share of it, in y.
+    // the develop's clip level in x (none under zero), where the fade
+    // toward it starts, as a share of it, in y, and Structure's gain
+    // in z.
     detail: vec4<f32>,
     detail_k: vec4<f32>,
     detail_clip: vec4<f32>,
@@ -202,8 +203,8 @@ struct Local {
     pad0: f32,
     // This adjustment's tint as a vector, in xy.
     tint: vec4<f32>,
-    // Its own Texture, Clarity and Dehaze amounts, in xyz: nothing
-    // while its section is off.
+    // Its own Texture, Clarity, and Dehaze amounts, in xyz, and its
+    // Structure in w: nothing while its section is off.
     detail: vec4<f32>,
     // Its own white balance: the rows of the working-space matrix that
     // takes the developed picture to it, in xyz, and in white0.w
@@ -322,9 +323,9 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // not. Two nodes an axis of identity when there is no look.
 @group(0) @binding(11) var look_lut: texture_3d<f32>;
 // The masks' detail planes at the source's size, read where the source
-// is: Texture's band, Clarity's (its mid-tone weight in it), both in
-// stops, and the haze (`DetailPlanes` in `detail.rs`). A texel of
-// nothing when no mask asks.
+// is: Texture's band, Clarity's (its mid-tone weight in it), in
+// stops, the haze, and Structure's band, in stops (`DetailPlanes` in
+// `detail.rs`). A texel of nothing when no mask asks.
 @group(0) @binding(12) var detail_planes: texture_2d<f32>;
 
 @vertex
@@ -436,15 +437,15 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var whited = false;
     // The masks' Detail amounts here, summed by their weights, as
     // `detail::amounts` sums them.
-    var detail_k = vec3<f32>(0.0);
+    var detail_k = vec4<f32>(0.0);
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
         weights[k] = m;
         let w = m * f32(l.enabled);
         if (w <= 0.0) { continue; }
-        if (any(l.detail.xyz != vec3<f32>(0.0))) {
-            detail_k = detail_k + w * l.detail.xyz;
+        if (any(l.detail != vec4<f32>(0.0))) {
+            detail_k = detail_k + w * l.detail;
         }
         if (l.white0.w > 0.5) {
             wm0 = wm0 + w * (l.white0.xyz - p.w0.xyz);
@@ -484,10 +485,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Through the threshold as `detail::soft`: nothing under
     // `NEGLIGIBLE`, a ramp to twice it, then the amount as it is.
     let ka = abs(detail_k);
-    let ramp = sign(detail_k) * 2.0 * (ka - vec3<f32>(DETAIL_NEGLIGIBLE));
-    detail_k = select(detail_k, ramp, ka < vec3<f32>(2.0 * DETAIL_NEGLIGIBLE));
-    detail_k = select(detail_k, vec3<f32>(0.0), ka < vec3<f32>(DETAIL_NEGLIGIBLE));
-    let detailed = any(detail_k != vec3<f32>(0.0));
+    let ramp = sign(detail_k) * 2.0 * (ka - vec4<f32>(DETAIL_NEGLIGIBLE));
+    detail_k = select(detail_k, ramp, ka < vec4<f32>(2.0 * DETAIL_NEGLIGIBLE));
+    detail_k = select(detail_k, vec4<f32>(0.0), ka < vec4<f32>(DETAIL_NEGLIGIBLE));
+    let detailed = any(detail_k != vec4<f32>(0.0));
     var td = t;
     if (detailed && p.detail.w > 0.5 && all(textureDimensions(detail_planes) == textureDimensions(src))) {
         var bands: vec4<f32>;
@@ -496,7 +497,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         } else {
             bands = sample_cubic(detail_planes, tex_at);
         }
-        td = detail_at(t, bands.xyz, detail_k);
+        td = detail_at(t, bands, detail_k);
     }
     var c = vec3<f32>(dot(wm0, td), dot(wm1, td), dot(wm2, td)) * exp2(look.exposure);
     // The pass only where it would change something, as
@@ -1263,12 +1264,13 @@ fn detail_fade(c: vec3<f32>) -> f32 {
 }
 
 // The masks' Detail at a pixel, as `detail::apply`: Texture's band as
-// a gain under the fade, then Clarity's with the fade read again, then
-// the haze cleared by the transmission at the summed amount, bounded
-// as the engine's dehaze bounds the global's (`local_clearing`), and
+// a gain under the fade, then Clarity's and Structure's with the fade
+// read again before each, then the haze cleared by the transmission at
+// the summed amount, bounded as the engine's dehaze bounds the
+// global's (`local_clearing`), and
 // put on as what it takes off the transmission, `u`, as that has it.
 // `k` is the masks' amounts summed by their weights.
-fn detail_at(c_in: vec3<f32>, bands: vec3<f32>, k: vec3<f32>) -> vec3<f32> {
+fn detail_at(c_in: vec3<f32>, bands: vec4<f32>, k: vec4<f32>) -> vec3<f32> {
     var c = c_in;
     let kt = k.x * p.detail_k.x;
     if (kt != 0.0) {
@@ -1277,6 +1279,10 @@ fn detail_at(c_in: vec3<f32>, bands: vec3<f32>, k: vec3<f32>) -> vec3<f32> {
     let kc = k.y * p.detail_k.y;
     if (kc != 0.0) {
         c = c * exp2(detail_fade(c) * kc * bands.y);
+    }
+    let ks = k.w * p.detail_clip.z;
+    if (ks != 0.0) {
+        c = c * exp2(detail_fade(c) * ks * bands.w);
     }
     let s = clamp(k.z, -1.0, 1.0) * p.detail_k.z;
     if (s != 0.0) {

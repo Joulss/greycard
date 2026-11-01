@@ -763,6 +763,7 @@ fn draw(r: &mut Rng) -> Drawn {
         let options = LocalContrastOptions {
             texture: r.signed(-1.0, 1.0),
             clarity: r.signed(-1.0, 1.0),
+            ..Default::default()
         };
         let clip = match r.below(4) {
             0 => f32::INFINITY,

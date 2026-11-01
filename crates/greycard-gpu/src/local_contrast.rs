@@ -1,6 +1,6 @@
-//! The local contrast (Texture and Clarity) on the GPU: the passes of
-//! `greycard_core::develop::local_contrast`, one kernel each, in the
-//! reference's order, so that a Detail slider costs about what a
+//! The local contrast (Texture, Clarity, and Structure) on the GPU:
+//! the passes of `greycard_core::develop::local_contrast`, one kernel
+//! each, in the reference's order, so that a Detail slider costs about what a
 //! sharpen move does and the viewport shows what the export will.
 //!
 //! The order is the reference's: the log luminance is taken once,
@@ -10,9 +10,13 @@
 //! runs on that, exact at full size under the reference's
 //! `COARSE_FROM_RADIUS` and on the reference's grid of blocks from it,
 //! with the same block sums, the same count-weighted short blocks,
-//! the same grid radius and the same bilinear taps. One last pass
-//! puts both gains on the picture: Texture's first, then Clarity's,
-//! whose clip fade reads the brightest channel after Texture's gain.
+//! the same grid radius and the same bilinear taps. When Structure is
+//! on, Clarity's base is written to a plane of its own, the top of
+//! Structure's band, and Structure's guided filter runs on that as
+//! the reference's does, exact or on its own grid. One last pass puts
+//! the gains on the picture: Texture's first, then Clarity's, then
+//! Structure's, each clip fade reading the brightest channel after the
+//! gains before it.
 //!
 //! The box means are separable, a pass along the rows and one down
 //! the columns, each reading its window whole from workgroup memory,
@@ -25,8 +29,9 @@
 //!
 //! The planes are R32Float textures, only those the run's sliders
 //! need: Texture's gain when Texture is on, the full-size slope and
-//! intercept when Texture or Clarity's exact filter takes them, the
-//! grid's when Clarity takes the grid. On a discrete GPU they are kept
+//! intercept when Texture or an exact filter takes them, the grid's
+//! when Clarity takes the grid, and Structure's top and grid when it
+//! is on. On a discrete GPU they are kept
 //! between runs on a picture of one size, as the sharpen keeps its
 //! own, and [`Context::release`] lets them go; on an integrated or
 //! unified-memory GPU, which shares the machine's memory, they are
@@ -64,21 +69,27 @@ struct Params {
     fade: [f32; 4],
     floor: f32,
     clip_fade: f32,
-    _pad: [u32; 2],
+    structure_k: f32,
+    structure_step: u32,
+    knee: f32,
+    _pad: [u32; 3],
 }
 
-const _: () = assert!(std::mem::size_of::<Params>() == 96);
+const _: () = assert!(std::mem::size_of::<Params>() == 112);
 
 /// The apply's modes, as the shader reads them.
 const MODE_TEXTURE: u32 = 1;
 const MODE_CLARITY: u32 = 2;
 const MODE_COARSE: u32 = 4;
+const MODE_STRUCTURE: u32 = 8;
+const MODE_STRUCTURE_COARSE: u32 = 16;
 
 /// The widest window a box pass reads: the shader's workgroup memory
-/// is sized for it. The widest a run asks for is the grid's radius,
-/// 102 on a 16384-pixel frame (Texture's is 8 there, and Clarity's
-/// exact filter stops under 64); the grid's passes 128 from a long
-/// edge of about 41,000 pixels, past any device's texture limit. So
+/// is sized for it. The widest a run asks for is Clarity's grid's
+/// radius, 102 on a 16384-pixel frame (Texture's is 8 there,
+/// Structure's grid's 85, and the exact filters stop under 64);
+/// Clarity's grid's passes 128 from a long edge of about 41,000
+/// pixels, past any device's texture limit. So
 /// the `Unsupported` it guards cannot be reached on a picture the
 /// device takes; it stays as a guard should the radii change.
 const MAX_RADIUS: usize = 128;
@@ -98,6 +109,7 @@ pub(crate) struct Pipelines {
     coef_layout: wgpu::BindGroupLayout,
     grid_coef_layout: wgpu::BindGroupLayout,
     gain_layout: wgpu::BindGroupLayout,
+    top_layout: wgpu::BindGroupLayout,
     apply_layout: wgpu::BindGroupLayout,
     log_lum: wgpu::ComputePipeline,
     box_rows: wgpu::ComputePipeline,
@@ -107,6 +119,7 @@ pub(crate) struct Pipelines {
     block_sums: wgpu::ComputePipeline,
     grid_coefficients: wgpu::ComputePipeline,
     grid_divide: wgpu::ComputePipeline,
+    structure_top: wgpu::ComputePipeline,
     apply_half: wgpu::ComputePipeline,
     apply_full: wgpu::ComputePipeline,
     /// Stand-ins for bindings a run has no plane for.
@@ -173,6 +186,19 @@ impl Pipelines {
                 (12, SAMPLED),
             ],
         );
+        let top_layout = layout_at(
+            device,
+            "local contrast structure top",
+            &[
+                (0, uniform(true)),
+                (2, write()),
+                (10, SAMPLED),
+                (11, SAMPLED),
+                (12, SAMPLED),
+                (14, SAMPLED),
+                (15, SAMPLED),
+            ],
+        );
         let apply_layout = layout_at(
             device,
             "local contrast apply",
@@ -187,6 +213,9 @@ impl Pipelines {
                 (15, SAMPLED),
                 (16, storage_texture(Rgba16Float, WriteOnly)),
                 (17, storage_texture(Rgba32Float, WriteOnly)),
+                (18, SAMPLED),
+                (19, SAMPLED),
+                (20, SAMPLED),
             ],
         );
         let pipeline_layout = |label: &str, l: &wgpu::BindGroupLayout| {
@@ -201,6 +230,7 @@ impl Pipelines {
         let coef_pl = pipeline_layout("local contrast coefficients", &coef_layout);
         let grid_coef_pl = pipeline_layout("local contrast grid coefficients", &grid_coef_layout);
         let gain_pl = pipeline_layout("local contrast gain", &gain_layout);
+        let top_pl = pipeline_layout("local contrast structure top", &top_layout);
         let apply_pl = pipeline_layout("local contrast apply", &apply_layout);
         let spare = |label: &str, format: wgpu::TextureFormat| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -227,6 +257,7 @@ impl Pipelines {
             block_sums: pipeline(device, &module, &blocks_pl, "block_sums"),
             grid_coefficients: pipeline(device, &module, &grid_coef_pl, "grid_coefficients"),
             grid_divide: pipeline(device, &module, &grid_coef_pl, "grid_divide"),
+            structure_top: pipeline(device, &module, &top_pl, "structure_top"),
             apply_half: pipeline(device, &module, &apply_pl, "apply_half"),
             apply_full: pipeline(device, &module, &apply_pl, "apply_full"),
             spare_plane: spare("local contrast spare plane", R32Float),
@@ -237,6 +268,7 @@ impl Pipelines {
             coef_layout,
             grid_coef_layout,
             gain_layout,
+            top_layout,
             apply_layout,
             keep: AtomicBool::new(keep),
             work: Mutex::new(None),
@@ -268,9 +300,9 @@ impl Pipelines {
 
 /// The working planes for a picture of one size: the reference's
 /// `log` and its scratch, and those the run's sliders need beside
-/// them: the slope and intercept (`a`, `b`) for Texture or Clarity's
-/// exact filter, Texture's gain, and the coarse grid's planes when
-/// Clarity takes the grid at this size.
+/// them: the slope and intercept (`a`, `b`) for Texture or an exact
+/// filter, Texture's gain, the coarse grid's planes when Clarity takes
+/// the grid at this size, and Structure's top and its own grid.
 struct Work {
     width: u32,
     height: u32,
@@ -280,6 +312,8 @@ struct Work {
     b: Option<wgpu::Texture>,
     gain: Option<wgpu::Texture>,
     grid: Option<Grid>,
+    top: Option<wgpu::Texture>,
+    structure_grid: Option<Grid>,
 }
 
 /// The coarse grid's planes: the block sums of the log and its
@@ -304,6 +338,9 @@ struct Needs {
     ab: bool,
     gain: bool,
     grid: bool,
+    /// Structure's top, Clarity's base.
+    top: bool,
+    structure_grid: bool,
 }
 
 fn plane(device: &wgpu::Device, label: &str, w: u32, h: u32) -> wgpu::Texture {
@@ -326,25 +363,59 @@ fn plane(device: &wgpu::Device, label: &str, w: u32, h: u32) -> wgpu::Texture {
 }
 
 impl Grid {
-    fn new(device: &wgpu::Device, width: u32, height: u32) -> Option<Self> {
-        let (_, clarity_radius) = reference::radii(width as usize, height as usize);
-        let step = reference::clarity_step(clarity_radius);
+    /// Clarity's grid at this size, or none for its exact filter.
+    fn clarity(device: &wgpu::Device, width: u32, height: u32) -> Option<Self> {
+        let (_, radius) = reference::radii(width as usize, height as usize);
+        let step = reference::clarity_step(radius);
+        Self::new(device, width, height, radius, step, "local contrast grid")
+    }
+
+    /// Structure's.
+    fn structure(device: &wgpu::Device, width: u32, height: u32) -> Option<Self> {
+        let radius = reference::structure_radius(width as usize, height as usize);
+        let step = reference::structure_step(radius);
+        Self::new(
+            device,
+            width,
+            height,
+            radius,
+            step,
+            "local contrast structure grid",
+        )
+    }
+
+    fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        radius: usize,
+        step: usize,
+        name: &str,
+    ) -> Option<Self> {
         (step > 1).then(|| {
-            let radius = reference::coarse_radius(clarity_radius, step) as u32;
+            let radius = reference::coarse_radius(radius, step) as u32;
             let step = step as u32;
             let (gw, gh) = (width.div_ceil(step), height.div_ceil(step));
+            let plane = |what: &str| plane(device, &format!("{name} {what}"), gw, gh);
             Grid {
                 width: gw,
                 height: gh,
                 step,
                 radius,
-                mean: plane(device, "local contrast grid mean", gw, gh),
-                sq: plane(device, "local contrast grid squares", gw, gh),
-                share: plane(device, "local contrast grid share", gw, gh),
-                held: plane(device, "local contrast grid held", gw, gh),
-                tmp: plane(device, "local contrast grid scratch", gw, gh),
+                mean: plane("mean"),
+                sq: plane("squares"),
+                share: plane("share"),
+                held: plane("held"),
+                tmp: plane("scratch"),
             }
         })
+    }
+
+    fn bytes(&self) -> u64 {
+        [&self.mean, &self.sq, &self.share, &self.held, &self.tmp]
+            .into_iter()
+            .map(crate::plumbing::texture_bytes)
+            .sum()
     }
 }
 
@@ -359,6 +430,8 @@ impl Work {
             b: None,
             gain: None,
             grid: None,
+            top: None,
+            structure_grid: None,
         };
         work.fit(device, needs);
         work
@@ -378,33 +451,39 @@ impl Work {
         want(&mut self.a, needs.ab, "local contrast a");
         want(&mut self.b, needs.ab, "local contrast b");
         want(&mut self.gain, needs.gain, "local contrast texture gain");
+        want(&mut self.top, needs.top, "local contrast structure top");
         if !needs.grid {
             self.grid = None;
         } else if self.grid.is_none() {
-            self.grid = Grid::new(device, w, h);
+            self.grid = Grid::clarity(device, w, h);
+        }
+        if !needs.structure_grid {
+            self.structure_grid = None;
+        } else if self.structure_grid.is_none() {
+            self.structure_grid = Grid::structure(device, w, h);
         }
     }
 
     fn bytes(&self) -> u64 {
         use crate::plumbing::texture_bytes;
-        let grid = self.grid.as_ref().map_or(0, |g| {
-            [&g.mean, &g.sq, &g.share, &g.held, &g.tmp]
-                .into_iter()
-                .map(texture_bytes)
-                .sum()
-        });
+        let grids = [self.grid.as_ref(), self.structure_grid.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(Grid::bytes)
+            .sum::<u64>();
         [
             Some(&self.log),
             Some(&self.tmp),
             self.a.as_ref(),
             self.b.as_ref(),
             self.gain.as_ref(),
+            self.top.as_ref(),
         ]
         .into_iter()
         .flatten()
         .map(texture_bytes)
         .sum::<u64>()
-            + grid
+            + grids
     }
 }
 
@@ -764,16 +843,24 @@ impl Context {
         let p = &self.local_contrast;
         let (w, h) = (image.width, image.height);
         let (texture_radius, clarity_radius) = reference::radii(w as usize, h as usize);
+        let structure_radius = reference::structure_radius(w as usize, h as usize);
         let stats = LocalContrastStats {
             texture_radius,
             clarity_radius,
+            structure_radius,
         };
         let step = reference::clarity_step(clarity_radius);
-        let widest = if step > 1 {
-            texture_radius.max(reference::coarse_radius(clarity_radius, step))
-        } else {
-            texture_radius.max(clarity_radius)
+        let structure_step = reference::structure_step(structure_radius);
+        let reach = |radius: usize, step: usize| {
+            if step > 1 {
+                reference::coarse_radius(radius, step)
+            } else {
+                radius
+            }
         };
+        let widest = texture_radius
+            .max(reach(clarity_radius, step))
+            .max(reach(structure_radius, structure_step));
         // Not reached on a picture any device takes; see MAX_RADIUS.
         if widest > MAX_RADIUS {
             return Err(Error::Unsupported(format!(
@@ -782,10 +869,18 @@ impl Context {
         }
         let texture_on = options.texture != 0.0;
         let clarity_on = options.clarity != 0.0;
+        let structure_on = options.structure != 0.0;
+        // Structure's top is Clarity's base, so Clarity's filter runs
+        // for either.
+        let clarity_filter = clarity_on || structure_on;
         let needs = Needs {
-            ab: texture_on || (clarity_on && step == 1),
+            ab: texture_on
+                || (clarity_filter && step == 1)
+                || (structure_on && structure_step == 1),
             gain: texture_on,
-            grid: clarity_on && step > 1,
+            grid: clarity_filter && step > 1,
+            top: structure_on,
+            structure_grid: structure_on && structure_step > 1,
         };
 
         // The planes this run needs: on a discrete GPU those kept from
@@ -825,9 +920,10 @@ impl Context {
             fade: [shadow.0, shadow.1, highlight.0, highlight.1],
             floor: reference::FLOOR,
             clip_fade: reference::CLIP_FADE,
+            knee: reference::STRUCTURE_KNEE,
             ..Default::default()
         };
-        let uniforms = Uniforms::new(&self.device, "local contrast params", 48);
+        let uniforms = Uniforms::new(&self.device, "local contrast params", 64);
         let passes = Passes {
             ctx: self,
             uniforms: &uniforms,
@@ -905,8 +1001,10 @@ impl Context {
                 );
                 pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
             }
-            if clarity_on {
-                mode |= MODE_CLARITY;
+            if clarity_filter {
+                if clarity_on {
+                    mode |= MODE_CLARITY;
+                }
                 // The log is done with: low-passed in place, it is the
                 // top of Clarity's band, and the guided filter of it
                 // the bottom.
@@ -942,8 +1040,94 @@ impl Context {
                     ),
                 }
             }
-            // Both gains onto the picture.
+            let top = work.top.as_ref();
+            if let Some(top) = top {
+                // Clarity's base into a plane of its own, Structure's
+                // top, and its guided filter of that: exact into the
+                // slope and intercept, whose Clarity coefficients the
+                // apply no longer reads, or on Structure's own grid.
+                mode |= MODE_STRUCTURE;
+                let view = |t: &wgpu::Texture| t.create_view(&Default::default());
+                let (grid_intercept, grid_slope, grid_step) = match work.grid.as_ref() {
+                    Some(g) => (&g.mean, &g.sq, g.step),
+                    None => (&p.spare_plane, &p.spare_plane, 1),
+                };
+                let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("local contrast structure top"),
+                    layout: &p.top_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniforms.binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(&view(top)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 10,
+                            resource: wgpu::BindingResource::TextureView(&view(&work.log)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 11,
+                            resource: wgpu::BindingResource::TextureView(&or_spare(
+                                work.a.as_ref(),
+                            )),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 12,
+                            resource: wgpu::BindingResource::TextureView(&or_spare(
+                                work.b.as_ref(),
+                            )),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 14,
+                            resource: wgpu::BindingResource::TextureView(&view(grid_intercept)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 15,
+                            resource: wgpu::BindingResource::TextureView(&view(grid_slope)),
+                        },
+                    ],
+                });
+                pass.set_pipeline(&p.structure_top);
+                pass.set_bind_group(
+                    0,
+                    &group,
+                    &[uniforms.push(
+                        &self.queue,
+                        &Params {
+                            mode: mode & MODE_COARSE,
+                            step: grid_step,
+                            ..base
+                        },
+                    )],
+                );
+                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+                match work.structure_grid.as_ref() {
+                    Some(grid) => {
+                        mode |= MODE_STRUCTURE_COARSE;
+                        passes.coarse_guided_filter(
+                            &mut pass,
+                            top,
+                            grid,
+                            size,
+                            reference::STRUCTURE_EPSILON,
+                        );
+                    }
+                    None => passes.guided_filter(
+                        &mut pass,
+                        top,
+                        work,
+                        size,
+                        structure_radius as u32,
+                        reference::STRUCTURE_EPSILON,
+                    ),
+                }
+            }
+            // The gains onto the picture.
             let k = options.clarity.clamp(-1.0, 1.0) * reference::CLARITY_GAIN;
+            let structure_k = options.structure.clamp(-1.0, 1.0) * reference::STRUCTURE_GAIN;
             let (out_half, out_full) = match out {
                 Output::Half(t) => (t, &p.spare_full),
                 Output::Full(t) => (&p.spare_half, t),
@@ -952,6 +1136,11 @@ impl Context {
                 Some(g) => (&g.mean, &g.sq, g.step),
                 None => (&p.spare_plane, &p.spare_plane, 1),
             };
+            let (structure_intercept, structure_slope, structure_step) =
+                match work.structure_grid.as_ref() {
+                    Some(g) => (&g.mean, &g.sq, g.step),
+                    None => (&p.spare_plane, &p.spare_plane, 1),
+                };
             let apply = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("local contrast apply"),
                 layout: &p.apply_layout,
@@ -996,6 +1185,18 @@ impl Context {
                         binding: 17,
                         resource: wgpu::BindingResource::TextureView(&view(out_full)),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 18,
+                        resource: wgpu::BindingResource::TextureView(&or_spare(top)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 19,
+                        resource: wgpu::BindingResource::TextureView(&view(structure_intercept)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: wgpu::BindingResource::TextureView(&view(structure_slope)),
+                    },
                 ],
             });
             pass.set_pipeline(match out {
@@ -1011,6 +1212,8 @@ impl Context {
                         k,
                         mode,
                         step,
+                        structure_k,
+                        structure_step,
                         ..base
                     },
                 )],
@@ -1058,7 +1261,26 @@ mod tests {
         assert_eq!(offset_of!(Params, fade), 64);
         assert_eq!(offset_of!(Params, floor), 80);
         assert_eq!(offset_of!(Params, clip_fade), 84);
-        assert_eq!(std::mem::size_of::<Params>(), 96);
+        assert_eq!(offset_of!(Params, structure_k), 88);
+        assert_eq!(offset_of!(Params, structure_step), 92);
+        assert_eq!(offset_of!(Params, knee), 96);
+        assert_eq!(std::mem::size_of::<Params>(), 112);
+        // And the shader's struct is the same size.
+        let source = include_str!("local_contrast.wgsl");
+        let module = naga::front::wgsl::parse_str(source).expect("the shader parses");
+        let mut layouter = naga::proc::Layouter::default();
+        layouter
+            .update(module.to_ctx())
+            .expect("the shader lays out");
+        let (handle, _) = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some("Params"))
+            .expect("the shader's Params");
+        assert_eq!(
+            layouter[handle].size as usize,
+            std::mem::size_of::<Params>()
+        );
     }
 
     /// The shader's workgroup memory holds the widest window the host

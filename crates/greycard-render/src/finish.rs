@@ -46,11 +46,12 @@ pub struct Baked {
     /// is in the develop. Made by [`Local::of`], which has the
     /// develop's white to make it from.
     pub white: Option<Matrix3>,
-    /// A local's own Texture, Clarity and Dehaze amounts, each held to
-    /// the slider's ends, and nothing while its section is off. Never
-    /// the global's, whose Detail is in the develop. Put on at the
-    /// finish from the develop's bands (`crate::detail`).
-    pub detail: [f32; 3],
+    /// A local's own Texture, Clarity, Dehaze, and Structure amounts,
+    /// in the planes' order, each held to the slider's ends, and
+    /// nothing while its section is off. Never the global's, whose
+    /// Detail is in the develop. Put on at the finish from the
+    /// develop's bands (`crate::detail`).
+    pub detail: [f32; 4],
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -169,10 +170,15 @@ impl Baked {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: if look.detail.enabled {
-                [look.detail.texture, look.detail.clarity, look.detail.dehaze]
-                    .map(|v| v.clamp(-1.0, 1.0))
+                [
+                    look.detail.texture,
+                    look.detail.clarity,
+                    look.detail.dehaze,
+                    look.detail.structure,
+                ]
+                .map(|v| v.clamp(-1.0, 1.0))
             } else {
-                [0.0; 3]
+                [0.0; 4]
             },
         }
     }
@@ -596,7 +602,7 @@ pub fn finish_pixel_with(
     grain: Option<[f32; 3]>,
     reference: Option<[f32; 2]>,
     guide: Option<(f32, [f32; 2])>,
-    detail: Option<([f32; 3], &DetailMeta)>,
+    detail: Option<([f32; 4], &DetailMeta)>,
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
@@ -1557,8 +1563,8 @@ pub(crate) fn decode(v: f32) -> f32 {
 /// `detail` is the develop's bands for the masks' Detail
 /// ([`crate::detail::DetailPlanes`]) brought into the frame with the
 /// picture, by the same geometry and resize, so a pixel's bands are at
-/// that pixel of it: three channels, texture, clarity and haze, the
-/// size of `image`.
+/// that pixel of it: texture, clarity, haze, and structure, the size of
+/// `image`.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_with<T: Copy + Default + Send>(
     image: &WorkingImage,
@@ -1568,7 +1574,7 @@ pub fn finish_with<T: Copy + Default + Send>(
     position: impl Fn(usize, usize) -> (f32, f32) + Sync,
     frame: impl Fn(usize, usize) -> (f32, Option<[f32; 3]>) + Sync,
     guide: Option<(&Guide, f32)>,
-    detail: Option<(&WorkingImage, &DetailMeta)>,
+    detail: Option<(&crate::detail::BandImages, &DetailMeta)>,
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
     quantize: impl Fn(f32) -> T + Sync,
@@ -1598,10 +1604,15 @@ pub fn finish_with<T: Copy + Default + Send>(
         .filter(|_| {
             locals
                 .iter()
-                .any(|l| l.enabled && l.baked.detail != [0.0; 3])
+                .any(|l| l.enabled && l.baked.detail != [0.0; 4])
         })
         .filter(|(d, _)| {
-            crate::detail::fits((d.width, d.height), image.width, image.height, "the finish")
+            crate::detail::fits(
+                (d.width(), d.height()),
+                image.width,
+                image.height,
+                "the finish",
+            )
         });
     let mut out = vec![T::default(); image.width * image.height * 3];
     out.par_chunks_mut(image.width * 3)
@@ -1640,7 +1651,7 @@ pub fn finish_with<T: Copy + Default + Send>(
                     g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
                 }
                 let (stops, grain) = frame(x, y);
-                let bands = detail.map(|(d, meta)| (d.pixel(x, y), meta));
+                let bands = detail.map(|(d, meta)| (d.at(x, y), meta));
                 *o = finish_pixel_with(*px, global, &on, stops, grain, ab, g, bands, look, to_out)
                     .map(&quantize);
             }
@@ -1811,7 +1822,7 @@ mod tests {
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
-            detail: [0.0; 3],
+            detail: [0.0; 4],
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -1834,7 +1845,7 @@ mod tests {
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
-            detail: [0.0; 3],
+            detail: [0.0; 4],
         }
     }
 
@@ -2592,7 +2603,7 @@ mod tests {
                 source,
                 display_curve: curve,
                 white: None,
-                detail: [0.0; 3],
+                detail: [0.0; 4],
             };
             let mut last = -1.0;
             for i in 0..=1400 {
@@ -2869,7 +2880,7 @@ mod tests {
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
-            detail: [0.0; 3],
+            detail: [0.0; 4],
         };
         let g = guide.map(|g| (g.at(x as f32 + 0.5, y as f32 + 0.5), g.range));
         let px = image.pixel(x, y);
@@ -3900,7 +3911,7 @@ mod tests {
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
-            detail: [0.0; 3],
+            detail: [0.0; 4],
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -3941,7 +3952,7 @@ mod tests {
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
-            detail: [0.0; 3],
+            detail: [0.0; 4],
         };
         let bare = Baked {
             tint: idle,
@@ -4024,7 +4035,7 @@ mod tests {
             source: Source::SCENE,
             display_curve: DisplayCurve::Channels,
             white: None,
-            detail: [0.0; 3],
+            detail: [0.0; 4],
         };
         let local = Baked {
             tint,

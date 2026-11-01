@@ -2309,6 +2309,7 @@ fn random_case(
             texture: rng.slider(0.5, -1.0, 1.0, 0.0),
             clarity: rng.slider(0.5, -1.0, 1.0, 0.0),
             dehaze: rng.slider(0.5, -1.0, 1.0, 0.0),
+            structure: rng.slider(0.5, -1.0, 1.0, 0.0),
         };
         if has("local detail") {
             a.look.detail = detail;
@@ -2335,7 +2336,8 @@ fn random_case(
 }
 
 /// Detail planes for the parity test: bands of a few stops either
-/// way and a haze from nothing to most of the way, varying pixel to
+/// way (Structure's within its knee) and a haze from nothing to most
+/// of the way, varying pixel to
 /// pixel, so a plane read at the wrong texel shows; the airlight
 /// warm, and the clip at one, where the frame has highlights past.
 fn parity_planes(w: usize, h: usize) -> crate::detail::DetailPlanes {
@@ -2346,7 +2348,7 @@ fn parity_planes(w: usize, h: usize) -> crate::detail::DetailPlanes {
                 rng.range(-1.5, 1.5),
                 rng.range(-1.0, 1.0),
                 rng.range(0.0, 0.9),
-                0.0,
+                rng.range(-0.3, 0.3),
             ]
         })
         .map(half::f16::from_f32)
@@ -2363,6 +2365,7 @@ fn parity_planes(w: usize, h: usize) -> crate::detail::DetailPlanes {
             texture: true,
             clarity: true,
             haze: true,
+            structure: true,
         },
     }
 }
@@ -2684,6 +2687,7 @@ fn a_masks_detail_timed_on_the_gpu() {
                 texture: true,
                 clarity: true,
                 haze: true,
+                structure: true,
             },
         });
         let mut renderer = Renderer::new(&device, &queue);
@@ -2693,6 +2697,7 @@ fn a_masks_detail_timed_on_the_gpu() {
                 enabled: true,
                 texture: -0.5,
                 clarity: 0.3,
+                structure: 0.4,
                 dehaze: 0.3,
             },
             ..Default::default()
@@ -2733,7 +2738,7 @@ fn a_masks_detail_timed_on_the_gpu() {
         let with = draw(&mut renderer);
         eprintln!(
             "{w}x{h}: the planes up in {:.0} ms; a {vw}x{vh} draw {:.1} ms without them, \
-             {:.1} ms with a mask's three",
+             {:.1} ms with a mask's four",
             upload * 1e3,
             without * 1e3,
             with * 1e3
@@ -2741,10 +2746,10 @@ fn a_masks_detail_timed_on_the_gpu() {
     }
 }
 
-/// A mask's Detail on both sides: Texture, Clarity and Dehaze over
-/// the whole frame from the planes of the picture, the shader the
-/// CPU's to two levels; nothing without the planes, and nothing
-/// with the section off.
+/// A mask's Detail on both sides: Texture, Clarity, Structure, and
+/// Dehaze over the whole frame from the planes of the picture, the
+/// shader the CPU's to two levels; nothing without the planes, and
+/// nothing with the section off; and Structure alone.
 #[test]
 fn a_masks_detail_on_both_sides() {
     let Some((device, queue)) = device("the masks' Detail check") else {
@@ -2759,6 +2764,7 @@ fn a_masks_detail_on_both_sides() {
             texture: true,
             clarity: true,
             haze: true,
+            structure: true,
         },
     )
     .map(Arc::new)
@@ -2768,6 +2774,7 @@ fn a_masks_detail_on_both_sides() {
             enabled: true,
             texture: 0.8,
             clarity: -0.6,
+            structure: 0.9,
             dehaze: 0.7,
         },
         ..Default::default()
@@ -2785,6 +2792,15 @@ fn a_masks_detail_on_both_sides() {
         .map(|(a, b)| a.abs_diff(*b))
         .max();
     assert!(worst <= Some(2), "{worst:?}");
+    let mut alone = edit.clone();
+    alone.adjustments[0].look.detail = greycard_edit::Detail {
+        structure: -1.0,
+        ..Default::default()
+    };
+    let (cpu, gpu) = both_sides_with(&device, &queue, &image, &alone, Some(&planes));
+    assert!(cpu != bare, "Structure did nothing");
+    let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+    assert!(worst <= Some(2), "Structure alone: {worst:?}");
     edit.adjustments[0].look.detail.enabled = false;
     let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
     assert_eq!(off, bare);

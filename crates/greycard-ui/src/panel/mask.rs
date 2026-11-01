@@ -740,10 +740,10 @@ pub(crate) fn look_edited(st: &mut State, app: &App) {
 }
 
 /// Whether the panel's edit asks for a detail plane the shown develop
-/// did not come with: a mask's Texture, Clarity or Dehaze moved off
-/// zero (or its section, its adjustment or a shape switched on under
-/// one) where no mask asked for that plane before. Its amounts are
-/// the finish's and need no develop; a plane does. One no longer
+/// did not come with: a mask's Texture, Clarity, Structure, or Dehaze
+/// moved off zero (or its section, its adjustment, or a shape
+/// switched on under one) where no mask asked for that plane before.
+/// Its amounts are the finish's and need no develop; a plane does. One no longer
 /// asked for is left where it is until the next develop.
 /// A plane already asked for and on its way counts as there, so a
 /// slider dragged on while that develop runs asks for no second one;
@@ -755,6 +755,7 @@ pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
         texture: has.texture || asked.texture,
         clarity: has.clarity || asked.clarity,
         haze: has.haze || asked.haze,
+        structure: has.structure || asked.structure,
     };
     if coming.covers(&wants) {
         return false;

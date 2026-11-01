@@ -93,6 +93,11 @@ fn drawn(seed: u64, k: u64, looks: &[String]) -> Edit {
     if r.chance(0.5) {
         edit.detail.dehaze = r.signed(-1.0, 1.0);
     }
+    // Structure takes a coarser grid on the full develop than on the
+    // half-size one (a step of 16 at 6000 pixels, 4 at 3000).
+    if r.chance(0.5) {
+        edit.detail.structure = r.signed(-1.0, 1.0);
+    }
     if r.chance(0.4) {
         edit.lens.ca_red = r.signed(-0.005, 0.005);
         edit.lens.ca_blue = r.signed(-0.005, 0.005);
@@ -281,7 +286,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
         .and_then(|s| s.load())
         .map(|(db, _)| db);
     let mut rows = vec![
-        "file,case,size,mean,p99,texture,clarity,dehaze,angle,crop,mask,vignette,look,grain,\
+        "file,case,size,mean,p99,texture,clarity,structure,dehaze,angle,crop,mask,vignette,look,grain,\
          ref_w,ref_h,ours_w,ours_h,bin,reduced_ms,full_ms"
             .to_string(),
     ];
@@ -395,9 +400,10 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
             let made = crate::edited_pictures::make(&developed.image, &finish);
             let reduced_ms = started.elapsed().as_secs_f64() * 1e3;
             let describe = format!(
-                "{:.2},{:.2},{:.2},{:.1},{},{},{:.2},{},{:.2}",
+                "{:.2},{:.2},{:.2},{:.2},{:.1},{},{},{:.2},{},{:.2}",
                 edit.detail.texture,
                 edit.detail.clarity,
+                edit.detail.structure,
                 edit.detail.dehaze,
                 edit.geometry.angle,
                 edit.geometry.crop.is_some() as u8,

@@ -347,8 +347,14 @@ impl Learned {
     }
 }
 
-/// Local contrast: the engine's Texture and Clarity, each -1 to 1
-/// (the panel shows ±100), negative smoothing instead.
+/// The panel's word for the Detail section's widest band, in one place
+/// so it is renamed in one place: the history's rows and the copy
+/// settings sheet's part read it, as the panel's slider reads its
+/// constant in the Slint.
+pub const STRUCTURE: &str = "Structure";
+
+/// Local contrast: the engine's Texture, Clarity, and Structure, each
+/// -1 to 1 (the panel shows ±100), negative smoothing instead.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Detail {
@@ -359,6 +365,10 @@ pub struct Detail {
     pub texture: f32,
     /// The coarse, mid-tone weighted scale.
     pub clarity: f32,
+    /// The widest scale, soft-kneed. Left out of a sidecar at zero, so
+    /// every sidecar and develop key written before it is unchanged.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub structure: f32,
     /// Haze removal, the engine's dark channel prior: -1 to 1 (the
     /// panel shows ±100), how much haze to take out; negative puts
     /// haze in. Zero is nothing. Runs after the local contrast and
@@ -372,9 +382,14 @@ impl Default for Detail {
             enabled: true,
             texture: 0.0,
             clarity: 0.0,
+            structure: 0.0,
             dehaze: 0.0,
         }
     }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 impl Detail {
@@ -383,12 +398,13 @@ impl Detail {
         *self == Self::default()
     }
 
-    /// The engine's options, or none when off or when both sliders
-    /// rest, which is the same picture.
+    /// The engine's options, or none when off or when the three
+    /// sliders rest, which is the same picture.
     pub fn options(&self) -> Option<LocalContrastOptions> {
         let options = LocalContrastOptions {
             texture: self.texture.clamp(-1.0, 1.0),
             clarity: self.clarity.clamp(-1.0, 1.0),
+            structure: self.structure.clamp(-1.0, 1.0),
         };
         (self.enabled && !options.is_identity()).then_some(options)
     }
@@ -639,6 +655,34 @@ mod tests {
         e.detail.texture = -3.0;
         assert_eq!(e.detail.options().unwrap().texture, -1.0);
         assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+    }
+
+    #[test]
+    fn structure_is_in_the_sidecar_and_the_key_only_when_set() {
+        // At zero the section writes what it always wrote, so a
+        // sidecar and a develop key from before are unchanged.
+        let mut e = Edit::default();
+        e.detail.clarity = 0.3;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert!(json["detail"].get("structure").is_none(), "{json}");
+        let before = e.develop_key_with(&[], None);
+        // Set, it is written, read back, asked of the engine, and
+        // another picture.
+        e.detail.structure = -0.4;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert!(json["detail"].get("structure").is_some(), "{json}");
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+        assert_eq!(e.detail.options().unwrap().structure, -0.4);
+        assert_ne!(e.develop_key_with(&[], None), before);
+        e.detail.structure = 0.0;
+        assert_eq!(e.develop_key_with(&[], None), before);
+        // Alone it asks the engine for the op; past the end it is held.
+        let mut e = Edit::default();
+        e.detail.structure = 2.0;
+        assert_eq!(e.detail.options().unwrap().structure, 1.0);
+        // A sidecar from a build before it reads as none.
+        let old = r#"{"version": 3, "detail": {"texture": 0.2, "clarity": 0.1}}"#;
+        assert_eq!(Edit::from_json(old).unwrap().detail.structure, 0.0);
     }
 
     #[test]

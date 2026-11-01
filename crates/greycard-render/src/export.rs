@@ -534,7 +534,7 @@ pub fn render(
     guide: Option<&finish::Guide>,
     kind: finish::Source,
     white: Option<&greycard_edit::WhiteShift>,
-    detail: Option<(&WorkingImage, &crate::detail::DetailMeta)>,
+    detail: Option<(&crate::detail::BandImages, &crate::detail::DetailMeta)>,
 ) -> Rendered {
     render_framed(
         image,
@@ -574,7 +574,7 @@ pub fn render_framed(
     guide: Option<&finish::Guide>,
     kind: finish::Source,
     white: Option<&greycard_edit::WhiteShift>,
-    detail: Option<(&WorkingImage, &crate::detail::DetailMeta)>,
+    detail: Option<(&crate::detail::BandImages, &crate::detail::DetailMeta)>,
 ) -> Rendered {
     // The bands with the picture through its resize, when one reads
     // them and they are the picture's size.
@@ -585,9 +585,14 @@ pub fn render_framed(
                 .any(|a| a.enabled && !a.mask.is_empty() && a.look.detail.enabled)
         })
         .filter(|(d, _)| {
-            crate::detail::fits((d.width, d.height), image.width, image.height, "the export")
+            crate::detail::fits(
+                (d.width(), d.height()),
+                image.width,
+                image.height,
+                "the export",
+            )
         });
-    let detail_fitted = detail.and_then(|(d, _)| fit(d, settings.long_edge));
+    let detail_fitted = detail.and_then(|(d, _)| d.fit(settings.long_edge));
     let fitted;
     // The range masks read the picture from before the output
     // sharpen, so an export at any size samples the stage the
@@ -860,15 +865,22 @@ pub fn reads_guide(edit: &greycard_edit::Edit) -> bool {
 /// The image no larger than `long_edge` on its long side, in linear
 /// light, Lanczos; none when it already fits.
 pub(crate) fn fit(image: &WorkingImage, long_edge: Option<u32>) -> Option<WorkingImage> {
-    let long = image.width.max(image.height) as u32;
+    let (w, h) = fit_size(image.width, image.height, long_edge)?;
+    fit_exact(image, w, h)
+}
+
+/// The size [`fit`] takes a picture of this size to, or none when it
+/// already fits.
+pub(crate) fn fit_size(width: usize, height: usize, long_edge: Option<u32>) -> Option<(u32, u32)> {
+    let long = width.max(height) as u32;
     let edge = long_edge?;
     if edge >= long {
         return None;
     }
     let scale = edge as f64 / long as f64;
-    let w = ((image.width as f64 * scale).round() as u32).max(1);
-    let h = ((image.height as f64 * scale).round() as u32).max(1);
-    fit_exact(image, w, h)
+    let w = ((width as f64 * scale).round() as u32).max(1);
+    let h = ((height as f64 * scale).round() as u32).max(1);
+    Some((w, h))
 }
 
 /// `image` resampled to `w` by `h` as [`fit`] resamples it, up or down;
@@ -885,6 +897,24 @@ pub fn fit_exact(image: &WorkingImage, w: u32, h: u32) -> Option<WorkingImage> {
         height: h as usize,
         data: out.into_raw(),
     })
+}
+
+/// [`fit_exact`] on a plane of one channel, `width` by `height`, by
+/// the same filter: what it does to each channel of a picture.
+pub fn fit_exact_plane(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    w: u32,
+    h: u32,
+) -> Option<Vec<f32>> {
+    if (width as u32, height as u32) == (w, h) {
+        return None;
+    }
+    let src: image::ImageBuffer<image::Luma<f32>, &[f32]> =
+        image::ImageBuffer::from_raw(width as u32, height as u32, data)?;
+    let out = image::imageops::resize(&src, w, h, image::imageops::FilterType::Lanczos3);
+    Some(out.into_raw())
 }
 
 /// What an export says about itself beyond the source's tags: where

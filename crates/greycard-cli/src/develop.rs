@@ -132,6 +132,10 @@ pub(crate) struct DevelopArgs {
     /// edge, weighted to the mid-tones: -1 to 1, negative softening
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     clarity: f32,
+    /// Local contrast at the widest scale, a twelfth of the long edge,
+    /// soft-kneed and weighted to the mid-tones: -1 to 1
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+    structure: f32,
     /// Haze removal by the dark channel prior, -100 to 100 as the
     /// panel has it; negative puts haze in
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
@@ -262,6 +266,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         sharpen_contrast,
         texture,
         clarity,
+        structure,
         dehaze,
         dehaze_map,
         dual_contrast,
@@ -318,6 +323,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         enabled: true,
         texture,
         clarity,
+        structure,
         dehaze: dehaze / 100.0,
     };
     // The dehaze and the sharpen are not the engine's: they go after
@@ -833,12 +839,15 @@ fn correct_and_sharpen(
         let start = std::time::Instant::now();
         let stats = local_contrast(image, &options, clip_level);
         tracing::info!(
-            "local contrast in {:.2} s: texture {:+.2} at {} px, clarity {:+.2} at {} px",
+            "local contrast in {:.2} s: texture {:+.2} at {} px, clarity {:+.2} at {} px, \
+             structure {:+.2} at {} px",
             start.elapsed().as_secs_f32(),
             options.texture,
             stats.texture_radius,
             options.clarity,
             stats.clarity_radius,
+            options.structure,
+            stats.structure_radius,
         );
     }
     // After the local contrast and before the sharpen, whose contrast

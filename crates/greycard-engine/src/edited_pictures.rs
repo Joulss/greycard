@@ -997,12 +997,12 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
             // full-size copy of three f32 channels in between.
             let bands = planes.to_image_reduced(factor_for(finish.full, &edit.geometry));
             let (rw, rh) = (reduced.width as u32, reduced.height as u32);
-            greycard_render::export::fit_exact(&bands, rw, rh).unwrap_or(bands)
+            bands.fit_exact(rw, rh).unwrap_or(bands)
         };
         if !edit.geometry.is_identity() {
-            bands = greycard_render::geometry::apply(&bands, &edit.geometry);
+            bands = bands.framed(&edit.geometry);
         }
-        greycard_render::export::fit_exact(&bands, w, h).unwrap_or(bands)
+        bands.fit_exact(w, h).unwrap_or(bands)
     });
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
     let frame_width = edit.geometry.frame(sw, sh).size.0;

@@ -321,19 +321,24 @@ fn ops_alone() {
     }
     // Clarity alone and with Texture beside it, each as its radius
     // chooses and with the exact filter forced, which is the op as it
-    // was before the coarse grid, to the bit.
-    for (name, texture, step) in [
-        ("clarity", 0.0, None),
-        ("clarity_exact", 0.0, Some(1)),
-        ("local_contrast", 0.5, None),
-        ("local_contrast_exact", 0.5, Some(1)),
+    // was before the coarse grid, to the bit; Structure alone, with
+    // Clarity, and with both others.
+    for (name, texture, clarity, structure, step) in [
+        ("clarity", 0.0, 0.5, 0.0, None),
+        ("clarity_exact", 0.0, 0.5, 0.0, Some(1)),
+        ("local_contrast", 0.5, 0.5, 0.0, None),
+        ("local_contrast_exact", 0.5, 0.5, 0.0, Some(1)),
+        ("structure", 0.0, 0.0, 0.5, None),
+        ("clarity_structure", 0.0, 0.5, 0.5, None),
+        ("local_contrast_all", 0.5, 0.5, 0.5, None),
     ] {
         if !wants(name) {
             continue;
         }
         let options = local_contrast::LocalContrastOptions {
             texture,
-            clarity: 0.5,
+            clarity,
+            structure,
         };
         time(name, runs, || {
             let mut im = image.clone();

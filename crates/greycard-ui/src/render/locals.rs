@@ -37,8 +37,8 @@ pub(super) struct LocalGpu {
     pad0: f32,
     /// This adjustment's tint as a vector, in x and y.
     tint: [f32; 4],
-    /// Its own Texture, Clarity and Dehaze amounts (`Baked::detail`),
-    /// put on from the detail planes.
+    /// Its own Texture, Clarity, Dehaze, and Structure amounts
+    /// (`Baked::detail`), put on from the detail planes.
     detail: [f32; 4],
     /// Its own white balance's matrix, rows, in the first three of
     /// each; the first row's fourth is one when it has one.
@@ -249,7 +249,7 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
                 let v = b.tint.vector();
                 [v[0], v[1], 0.0, 0.0]
             },
-            detail: [b.detail[0], b.detail[1], b.detail[2], 0.0],
+            detail: b.detail,
             white: match &b.white {
                 Some(m) => [
                     [m[0][0], m[0][1], m[0][2], 1.0],

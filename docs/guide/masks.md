@@ -313,16 +313,16 @@ as the global one does.
 
 ### Detail in a mask
 
-The mask's **DETAIL** has **Texture**, **Clarity** and **Dehaze**, as
-the Develop tab's does: smooth the skin of a face and leave the rest
-sharp, or clear the haze from a distant ridge and leave the
-foreground. It shows in the viewport, the export and the thumbnails
+The mask's **DETAIL** has **Texture**, **Clarity**, **Structure**, and
+**Dehaze**, as the Develop tab's does: smooth the skin of a face and
+leave the rest sharp, or clear the haze from a distant ridge and leave
+the foreground. It shows in the viewport, the export, and the thumbnails
 alike, and its steps land in the history like any other.
 
 A mask over the whole frame gives the same picture as the global
 slider, one slider at a time. A mask's **Dehaze** used together with
-the same mask's **Texture** or **Clarity** comes out a little
-differently from the global pair, since the mask reads the haze
+the same mask's **Texture**, **Clarity**, or **Structure** comes out a
+little differently from the global pair, since the mask reads the haze
 before its own detail is applied.
 
 ### White balance in a mask

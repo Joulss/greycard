@@ -453,7 +453,17 @@ different lens fault from the colored edges above.
 |---|---|---|
 | **Texture** | −100 to +100 | Fine detail: skin, fabric, foliage. Negative smooths it. |
 | **Clarity** | −100 to +100 | Larger-scale contrast in the mid-tones. Negative softens it. |
+| **Structure** | −100 to +100 | The broadest tonal shapes, gently. Negative flattens them. |
 | **Dehaze** | −100 to +100 | Removes haze. Negative adds it. |
+
+**Structure** works at a wider scale than Clarity, about a twelfth of
+the picture's long edge: the lit side of a face against its shadow
+side, a field against the hill behind it. It is soft by design. A
+horizon or a hairline gets no halo, and its effect levels off on
+strong contrasts instead of growing with them, so even at +100 it
+reads as a quiet separation of tones, never as an HDR look. Like
+Clarity, it leaves the brightest highlights and the deepest shadows
+alone.
 
 ## Sharpen
 

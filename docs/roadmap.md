@@ -969,8 +969,9 @@ clears or a tester asks for it.
       tiles are with plus and minus (pixls, 2026-10-22)
 - [ ] Saturation in the shadows or the highlights alone, with the
       hue held (pixls, 2026-10-24)
-- [ ] A local contrast at a larger scale than Clarity, soft rather
-      than crunchy (pixls, 2026-10-24)
+- [ ] Structure's strength judged on real frames (§507): +100 reads
+      as about Clarity +35; the gain is one constant (1.5; the review
+      suggests 2.5 to 3, or epsilon 0.1 with 2)
 - [ ] Color noise reduced on its own, the luminance noise left
       (pixls, 2026-10-24)
 - [ ] A mask's adjustments nested under the mask, so a folded mask

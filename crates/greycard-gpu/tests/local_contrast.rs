@@ -1,5 +1,6 @@
-//! The GPU local contrast against its CPU reference and against an
-//! f64 port of that reference, on the same pictures. The f64 port is
+//! The GPU local contrast (Texture, Clarity, and Structure) against
+//! its CPU reference and against an f64 port of that reference, on
+//! the same pictures. The f64 port is
 //! the truth the two f32 paths round from: the GPU, reading each box
 //! window whole, stays within a few 1e-6 of it, where the CPU's
 //! running sums drift up to about 1e-4 on a large plane, so the GPU
@@ -13,7 +14,7 @@ mod common;
 use common::{Rng, Sweep};
 use greycard_core::develop::local_contrast::{
     self as reference, COARSE_FROM_RADIUS, LocalContrastOptions, LocalContrastStats,
-    local_contrast, radii,
+    STRUCTURE_COARSE_FROM_RADIUS, local_contrast, radii, structure_radius,
 };
 use greycard_core::develop::sharpen::{SharpenOptions, Threshold, sharpen_with_mask};
 use greycard_core::image::WorkingImage;
@@ -197,8 +198,8 @@ fn check(
 /// The CPU op in f64, step for step: the box means as exact prefix
 /// sums over the window the edge leaves, the guided filter, the coarse
 /// grid with its count-weighted short blocks and bilinear taps, and
-/// both gains with their fades. Written for these tests from
-/// `greycard_core::develop::local_contrast`.
+/// the three gains with their fades and Structure's knee. Written for
+/// these tests from `greycard_core::develop::local_contrast`.
 fn f64_local_contrast(
     image: &WorkingImage,
     options: &LocalContrastOptions,
@@ -226,9 +227,9 @@ fn f64_local_contrast(
             texture_radius,
             f64::from(reference::TEXTURE_EPSILON),
         );
-        f64_apply(&mut px, &log, &base, clip_level, |_| k);
+        f64_apply(&mut px, &log, &base, clip_level, |u, b| k * (u - b));
     }
-    if options.clarity != 0.0 {
+    if options.clarity != 0.0 || options.structure != 0.0 {
         f64_box_mean(&mut log, w, h, texture_radius);
         f64_box_mean(&mut log, w, h, texture_radius);
         let k = f64::from(options.clarity.clamp(-1.0, 1.0) * reference::CLARITY_GAIN);
@@ -238,16 +239,38 @@ fn f64_local_contrast(
         } else {
             f64_guided(&log, w, h, clarity_radius, epsilon)
         };
-        let (shadow, highlight) = (
-            reference::CLARITY_SHADOW_FADE,
-            reference::CLARITY_HIGHLIGHT_FADE,
-        );
-        f64_apply(&mut px, &log, &base, clip_level, |b| {
-            k * smoothstep(f64::from(shadow.0), f64::from(shadow.1), b)
-                * (1.0 - smoothstep(f64::from(highlight.0), f64::from(highlight.1), b))
-        });
+        if options.clarity != 0.0 {
+            f64_apply(&mut px, &log, &base, clip_level, |u, b| {
+                k * midtone(b) * (u - b)
+            });
+        }
+        if options.structure != 0.0 {
+            let radius = structure_radius(w, h);
+            let step = reference::structure_step(radius);
+            let epsilon = f64::from(reference::STRUCTURE_EPSILON);
+            let bottom = if step > 1 {
+                f64_coarse(&base, w, h, radius, epsilon, step)
+            } else {
+                f64_guided(&base, w, h, radius, epsilon)
+            };
+            let k = f64::from(options.structure.clamp(-1.0, 1.0) * reference::STRUCTURE_GAIN);
+            let knee = f64::from(reference::STRUCTURE_KNEE);
+            f64_apply(&mut px, &base, &bottom, clip_level, |u, b| {
+                k * knee * (midtone(b) * (u - b) / knee).clamp(-9.0, 9.0).tanh()
+            });
+        }
     }
     px
+}
+
+/// Clarity's and Structure's mid-tone weight at a base in stops.
+fn midtone(b: f64) -> f64 {
+    let (shadow, highlight) = (
+        reference::CLARITY_SHADOW_FADE,
+        reference::CLARITY_HIGHLIGHT_FADE,
+    );
+    smoothstep(f64::from(shadow.0), f64::from(shadow.1), b)
+        * (1.0 - smoothstep(f64::from(highlight.0), f64::from(highlight.1), b))
 }
 
 fn f64_box_mean(data: &mut [f64], w: usize, h: usize, radius: usize) {
@@ -382,9 +405,15 @@ fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// One band's gain on the picture: `2^(fade * k(base) * (log - base))`,
-/// the fade the clip guard's on the pixel's brightest channel.
-fn f64_apply(px: &mut [f64], log: &[f64], base: &[f64], clip_level: f32, k: impl Fn(f64) -> f64) {
+/// One band's gain on the picture: `2^(fade * shift(top, base))`, the
+/// fade the clip guard's on the pixel's brightest channel.
+fn f64_apply(
+    px: &mut [f64],
+    top: &[f64],
+    base: &[f64],
+    clip_level: f32,
+    shift: impl Fn(f64, f64) -> f64,
+) {
     let from = f64::from(clip_level * reference::CLIP_FADE);
     for (i, p) in px.chunks_mut(3).enumerate() {
         let brightest = p[0].max(p[1]).max(p[2]);
@@ -393,7 +422,7 @@ fn f64_apply(px: &mut [f64], log: &[f64], base: &[f64], clip_level: f32, k: impl
         } else {
             1.0
         };
-        let gain = (fade * k(base[i]) * (log[i] - base[i])).exp2();
+        let gain = (fade * shift(top[i], base[i])).exp2();
         for v in p.iter_mut() {
             *v *= gain;
         }
@@ -405,19 +434,38 @@ const NO_CLIP: f32 = f32::INFINITY;
 fn texture(amount: f32) -> LocalContrastOptions {
     LocalContrastOptions {
         texture: amount,
-        clarity: 0.0,
+        ..Default::default()
     }
 }
 
 fn clarity(amount: f32) -> LocalContrastOptions {
     LocalContrastOptions {
-        texture: 0.0,
         clarity: amount,
+        ..Default::default()
+    }
+}
+
+fn structure(amount: f32) -> LocalContrastOptions {
+    LocalContrastOptions {
+        structure: amount,
+        ..Default::default()
     }
 }
 
 fn both(texture: f32, clarity: f32) -> LocalContrastOptions {
-    LocalContrastOptions { texture, clarity }
+    LocalContrastOptions {
+        texture,
+        clarity,
+        ..Default::default()
+    }
+}
+
+fn all(texture: f32, clarity: f32, structure: f32) -> LocalContrastOptions {
+    LocalContrastOptions {
+        texture,
+        clarity,
+        structure,
+    }
 }
 
 /// A picture under the grid's radius, so Clarity takes the exact
@@ -441,6 +489,17 @@ fn a_small_picture_matches_the_reference_through_the_exact_filter() {
     check(&ctx, "both", &image, &both(0.6, 0.8), NO_CLIP);
     check(&ctx, "both, clip at 4", &image, &both(0.6, 0.8), 4.0);
     check(&ctx, "both, clip at 1", &image, &both(-0.4, 1.0), 1.0);
+    assert!(structure_radius(523, 389) < COARSE_FROM_RADIUS);
+    check(&ctx, "structure +1", &image, &structure(1.0), NO_CLIP);
+    check(&ctx, "structure -0.6", &image, &structure(-0.6), NO_CLIP);
+    check(&ctx, "all three", &image, &all(0.5, -0.7, 0.9), NO_CLIP);
+    check(
+        &ctx,
+        "all three, clip at 1",
+        &image,
+        &all(0.3, 0.6, -1.0),
+        1.0,
+    );
 }
 
 /// A picture large enough for Clarity to take the quarter grid, with
@@ -466,7 +525,38 @@ fn a_large_picture_matches_the_reference_through_the_grid() {
             &both(0.5, -1.0),
             4.0,
         );
+        // Structure on Clarity's step of grid at these sizes.
+        assert!(structure_radius(w, h) < STRUCTURE_COARSE_FROM_RADIUS);
+        check(
+            &ctx,
+            &what("structure +1"),
+            &image,
+            &structure(1.0),
+            NO_CLIP,
+        );
+        check(&ctx, &what("all three"), &image, &all(0.4, 0.5, -0.8), 4.0);
     }
+}
+
+/// A picture long enough for Structure to take its own, coarser grid,
+/// with sides that cut its last blocks short.
+#[test]
+fn a_wide_picture_matches_the_reference_through_structure_s_grid() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (3101usize, 517usize);
+    assert!(structure_radius(w, h) >= STRUCTURE_COARSE_FROM_RADIUS);
+    let image = scene(w, h);
+    check(
+        &ctx,
+        "3101x517 structure +1",
+        &image,
+        &structure(1.0),
+        NO_CLIP,
+    );
+    check(&ctx, "3101x517 structure -1", &image, &structure(-1.0), 2.0);
+    check(&ctx, "3101x517 all three", &image, &all(0.5, 0.5, 0.5), 4.0);
 }
 
 /// A tall picture, so the grid's last row is the one cut short and
@@ -653,6 +743,8 @@ fn the_edge_sizes_match_the_reference() {
         ("both", both(0.5, 0.5)),
         ("texture +1", texture(1.0)),
         ("clarity -1", clarity(-1.0)),
+        ("structure +1", structure(1.0)),
+        ("all three", all(-0.5, 0.5, -0.5)),
     ];
     for (w, h) in sizes {
         let image = scene(w, h);
@@ -690,6 +782,8 @@ fn the_planes_are_those_the_sliders_need_kept_or_not() {
     let plane = u64::from(w * h) * 4;
     let (gw, gh) = (w.div_ceil(4), h.div_ceil(4));
     let grid = 5 * u64::from(gw * gh) * 4;
+    // Structure's radius is 213 here, so it takes Clarity's step.
+    assert_eq!(reference::structure_step(structure_radius(2560, 400)), 4);
     let run = |options: &LocalContrastOptions| {
         let mut out = image.clone();
         ctx.local_contrast_image(&mut out, options, 2.0)
@@ -702,6 +796,10 @@ fn the_planes_are_those_the_sliders_need_kept_or_not() {
         // The log, its scratch and the grid.
         (clarity(0.5), 2 * plane + grid),
         (both(0.5, 0.5), 5 * plane + grid),
+        // The log, its scratch, Clarity's grid for the top, the top,
+        // and Structure's grid.
+        (structure(0.5), 3 * plane + 2 * grid),
+        (all(0.5, 0.5, 0.5), 6 * plane + 2 * grid),
     ];
     ctx.keep_local_contrast_planes(true);
     let kept: Vec<_> = cases
@@ -1000,6 +1098,7 @@ fn draw(r: &mut Rng) -> Drawn {
     let options = LocalContrastOptions {
         texture: r.signed(-1.0, 1.0),
         clarity: r.signed(-1.0, 1.0),
+        structure: r.signed(-1.0, 1.0),
     };
     // The clip level is the frame's ceiling's, at least 0.98, or none.
     let clip_level = match r.below(20) {
@@ -1019,8 +1118,9 @@ fn draw(r: &mut Rng) -> Drawn {
 }
 
 /// The GPU local contrast against the reference and the f64 port at
-/// random settings, on random pictures: Texture and Clarity over the
-/// panel's range with their ends, zero and small values weighted, the
+/// random settings, on random pictures: Texture, Clarity, and
+/// Structure over the panel's range with their ends, zero and small
+/// values weighted, the
 /// clip level or none, and the picture's size (both filters, the
 /// grid's start, Texture's radius steps, odd sides) and kind. Held to
 /// the fixed tests' `compare`.

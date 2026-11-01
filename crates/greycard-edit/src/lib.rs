@@ -78,7 +78,7 @@ pub use line::{Exported, HISTORY, Line, Row, Snapshot, Step};
 pub use loader::{Loader, NoStores};
 pub use migration::migrate;
 pub use sections::{
-    Demosaic, Detail, DisplayCurve, Learned, Light, Noise, Sharpen, Tone, WhiteBalance,
+    Demosaic, Detail, DisplayCurve, Learned, Light, Noise, STRUCTURE, Sharpen, Tone, WhiteBalance,
 };
 #[cfg(feature = "testing")]
 pub use sidecar::synced_writes;

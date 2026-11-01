@@ -259,8 +259,9 @@ pub struct Renderer {
     /// whether there is a plane to read.
     guide_cover: [f32; 4],
     /// The masks' detail planes, Rgba16Float at the source's size:
-    /// texture, clarity and haze (`crate::detail::DetailPlanes`). A
-    /// texel of nothing when there are none.
+    /// texture, clarity, haze, and structure
+    /// (`crate::detail::DetailPlanes`). A texel of nothing when there
+    /// are none.
     detail: gpu::Texture,
     /// The planes it holds, to know them again (`set_detail`).
     detail_of: Option<std::sync::Weak<crate::detail::DetailPlanes>>,

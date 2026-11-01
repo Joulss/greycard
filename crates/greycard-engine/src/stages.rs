@@ -1240,6 +1240,9 @@ mod tests {
         let mut dehaze = edit.clone();
         dehaze.detail.dehaze = 0.5;
         assert!(!same(&edit, &dehaze));
+        let mut structure = edit.clone();
+        structure.detail.structure = 0.5;
+        assert!(!same(&edit, &structure));
         let masked = |texture: f32, refine: f32| {
             let mut e = edit.clone();
             let mut a = greycard_edit::Adjustment {
@@ -1256,6 +1259,15 @@ mod tests {
         };
         assert!(!same(&edit, &masked(-0.5, 0.0)), "the bands asked for");
         assert!(same(&masked(-0.5, 0.0), &masked(-0.8, 0.0)), "their amount");
+        let mut wide = masked(-0.5, 0.0);
+        wide.adjustments[0].look.detail.structure = 0.4;
+        assert!(
+            !same(&masked(-0.5, 0.0), &wide),
+            "Structure's band asked for"
+        );
+        let mut wider = wide.clone();
+        wider.adjustments[0].look.detail.structure = -0.9;
+        assert!(same(&wide, &wider), "Structure's amount");
         assert!(same(&masked(0.0, 0.0), &masked(0.0, 0.3)), "a refined edge");
         let mut subject = masked(0.0, 0.0);
         subject.adjustments[0].mask.components[0].shape = greycard_edit::mask::Shape::Subject {};

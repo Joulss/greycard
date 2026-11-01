@@ -258,6 +258,7 @@ fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
         x.texture != y.texture,
         x.clarity != y.clarity,
         x.dehaze != y.dehaze,
+        x.structure != y.structure,
     ];
     if moved.iter().filter(|&&m| m).count() != 1 {
         return "Detail".to_string();
@@ -268,6 +269,8 @@ fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
         format!("Texture {:+.0}", y.texture * 100.0)
     } else if moved[2] {
         format!("Clarity {:+.0}", y.clarity * 100.0)
+    } else if moved[4] {
+        format!("{} {:+.0}", crate::STRUCTURE, y.structure * 100.0)
     } else {
         format!("Dehaze {:+.0}", y.dehaze * 100.0)
     }
@@ -754,6 +757,9 @@ mod tests {
         let mut f = e.clone();
         f.detail.clarity = -0.25;
         assert_eq!(describe(&e, &f, &[]), "Clarity -25");
+        let mut g = f.clone();
+        g.detail.structure = 0.4;
+        assert_eq!(describe(&f, &g, &[]), "Structure +40");
         f.detail.enabled = false;
         assert_eq!(describe(&e, &f, &[]), "Detail");
         assert_eq!(describe(&f, &e, &[]), "Detail");
@@ -939,6 +945,9 @@ mod tests {
         let mut clear = smooth.clone();
         clear.adjustments[0].look.detail.clarity = 0.3;
         assert_eq!(describe(&smooth, &clear, &[]), "Sky: Clarity +30");
+        let mut wide = clear.clone();
+        wide.adjustments[0].look.detail.structure = -0.5;
+        assert_eq!(describe(&clear, &wide, &[]), "Sky: Structure -50");
         let mut hazed = clear.clone();
         hazed.adjustments[0].look.detail.dehaze = 0.25;
         assert_eq!(describe(&clear, &hazed, &[]), "Sky: Dehaze +25");

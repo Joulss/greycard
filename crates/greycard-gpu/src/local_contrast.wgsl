@@ -1,6 +1,6 @@
-// The local contrast (Texture and Clarity) on the GPU: the passes of
-// `greycard_core::develop::local_contrast`, one kernel each, on
-// planes of R32Float. The constants come in through the uniform from
+// The local contrast (Texture, Clarity, and Structure) on the GPU:
+// the passes of `greycard_core::develop::local_contrast`, one kernel
+// each, on planes of R32Float. The constants come in through the uniform from
 // the reference's own, so the two cannot drift apart.
 //
 // Every box pass is separable, one kernel along the rows and one
@@ -28,7 +28,8 @@ struct Params {
     // The coarse grid: its size and its block's side in pixels.
     grid: vec2<u32>,
     step: u32,
-    // The apply: TEXTURE, CLARITY and COARSE below.
+    // The apply: TEXTURE, CLARITY, COARSE, STRUCTURE and
+    // STRUCTURE_COARSE below.
     mode: u32,
     // The luminance weights, and mid grey in w.
     luma: vec4<f32>,
@@ -38,12 +39,23 @@ struct Params {
     // of the clip level.
     floor: f32,
     clip_fade: f32,
-    pad: vec2<u32>,
+    // Structure's gain times the slider, its grid's block side, and
+    // the soft knee its band goes through.
+    structure_k: f32,
+    structure_step: u32,
+    knee: f32,
+    // Three words, not a vec3, which would align to sixteen and make
+    // the struct 128 bytes against the host's 112.
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 }
 
 const TEXTURE: u32 = 1u;
 const CLARITY: u32 = 2u;
 const COARSE: u32 = 4u;
+const STRUCTURE: u32 = 8u;
+const STRUCTURE_COARSE: u32 = 16u;
 
 @group(0) @binding(0) var<uniform> p: Params;
 
@@ -95,6 +107,11 @@ fn midtone_weight(stops: f32) -> f32 {
 // The apply's outputs: the viewport's half floats, or full floats.
 @group(0) @binding(16) var out_half: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(17) var out_full: texture_storage_2d<rgba32float, write>;
+// Structure's top, Clarity's base, and its own grid's averaged
+// coefficients (its exact filter's are `intercept` and `slope`).
+@group(0) @binding(18) var top: texture_2d<f32>;
+@group(0) @binding(19) var structure_intercept: texture_2d<f32>;
+@group(0) @binding(20) var structure_slope: texture_2d<f32>;
 
 // ---- The log luminance: the picture (`src`) into a plane (`dst`).
 
@@ -346,23 +363,71 @@ fn from_grid(g: texture_2d<f32>, tx: Tap, ty: Tap) -> f32 {
     return a + tx.t * (b - a);
 }
 
+// Clarity's base at a pixel whose low-passed log is `u`, from its
+// grid when COARSE is set in `p.mode` and its exact coefficients else.
+fn clarity_base(at: vec2<i32>, u: f32) -> f32 {
+    if (p.mode & COARSE) != 0u {
+        let step = i32(p.step);
+        let tx = tap_at(at.x, i32(p.size.x), step);
+        let ty = tap_at(at.y, i32(p.size.y), step);
+        return from_grid(grid_slope, tx, ty) * u + from_grid(grid_intercept, tx, ty);
+    }
+    return textureLoad(intercept, at, 0).r + textureLoad(slope, at, 0).r * u;
+}
+
+// ---- Structure's top: Clarity's base into `dst`, from the low-passed
+// log and Clarity's coefficients.
+
+@compute @workgroup_size(16, 16, 1)
+fn structure_top(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= p.size.x || gid.y >= p.size.y {
+        return;
+    }
+    let at = vec2<i32>(gid.xy);
+    let u = textureLoad(log_lum_in, at, 0).r;
+    textureStore(dst, at, vec4<f32>(clarity_base(at, u), 0.0, 0.0, 0.0));
+}
+
+// Structure's band from its top and its base, as the reference's
+// `structure_band`: the difference under the mid-tone weight, through
+// the soft knee. The tanh's argument is held to nine, where it is one
+// to the float, so that no device's tanh overflows on a far one.
+fn structure_band(u: f32, base: f32) -> f32 {
+    let x = midtone_weight(base) * (u - base);
+    return p.knee * tanh(clamp(x / p.knee, -9.0, 9.0));
+}
+
 fn applied(at: vec2<i32>) -> vec3<f32> {
     var px = textureLoad(pic, at, 0).rgb;
     if (p.mode & TEXTURE) != 0u {
         px *= textureLoad(gain, at, 0).r;
     }
+    let structured = (p.mode & STRUCTURE) != 0u;
     if (p.mode & CLARITY) != 0u {
         let u = textureLoad(log_lum_in, at, 0).r;
+        // With Structure on, Clarity's base is in its top, and the
+        // exact coefficients are Structure's.
         var base: f32;
-        if (p.mode & COARSE) != 0u {
-            let step = i32(p.step);
+        if structured {
+            base = textureLoad(top, at, 0).r;
+        } else {
+            base = clarity_base(at, u);
+        }
+        px *= exp2(clip_weight(px) * (p.k * midtone_weight(base)) * (u - base));
+    }
+    if structured {
+        let u = textureLoad(top, at, 0).r;
+        var base: f32;
+        if (p.mode & STRUCTURE_COARSE) != 0u {
+            let step = i32(p.structure_step);
             let tx = tap_at(at.x, i32(p.size.x), step);
             let ty = tap_at(at.y, i32(p.size.y), step);
-            base = from_grid(grid_slope, tx, ty) * u + from_grid(grid_intercept, tx, ty);
+            base = from_grid(structure_slope, tx, ty) * u
+                + from_grid(structure_intercept, tx, ty);
         } else {
             base = textureLoad(intercept, at, 0).r + textureLoad(slope, at, 0).r * u;
         }
-        px *= exp2(clip_weight(px) * (p.k * midtone_weight(base)) * (u - base));
+        px *= exp2(clip_weight(px) * p.structure_k * structure_band(u, base));
     }
     return px;
 }

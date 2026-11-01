@@ -420,13 +420,20 @@ mod tests {
         let mut checks = Checks::new(Vec::new(), |s| s == Section::Detail);
         let d = at(Section::Detail);
         assert_eq!(checks.state(d), State::On);
-        // Texture off: Clarity and Dehaze go, as parts.
+        // Texture off: Clarity, Structure, and Dehaze go, as parts.
         checks.toggle(Target::Part(d, 0));
         assert_eq!(part_at(d, 0), Some(Part::DetailTexture));
         assert_eq!(checks.state(d), State::Partly);
         let choice = checks.choice();
         assert!(choice.sections.is_empty());
-        assert_eq!(choice.parts, vec![Part::DetailClarity, Part::DetailDehaze]);
+        assert_eq!(
+            choice.parts,
+            vec![
+                Part::DetailClarity,
+                Part::DetailStructure,
+                Part::DetailDehaze
+            ]
+        );
         // The heading of a section partly on turns it all on, then off.
         checks.toggle(Target::Section(d));
         assert_eq!(checks.state(d), State::On);
@@ -524,7 +531,7 @@ mod tests {
         let d = at(Section::Detail);
         let dehaze = &rows
             .iter()
-            .find(|(t, _)| *t == Target::Part(d, 2))
+            .find(|(t, _)| *t == Target::Part(d, 3))
             .unwrap()
             .1;
         assert_eq!(dehaze.label, "Dehaze");

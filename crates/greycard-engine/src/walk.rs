@@ -2224,8 +2224,9 @@ mod tests {
 
     /// A walk after another starts from the last point they share: a
     /// sharpen moved starts at the picture before the sharpen, a
-    /// Detail move at the patched picture, a white balance at the
-    /// decode; and what each makes is what a walk from nothing makes.
+    /// Detail move (Structure's as Clarity's) at the patched picture,
+    /// a white balance at the decode; and what each makes is what a
+    /// walk from nothing makes.
     #[test]
     fn a_kept_prefix_is_reused_and_a_changed_stage_past_it_is_not() {
         let input = Input::Raw(frame());
@@ -2239,9 +2240,10 @@ mod tests {
 
         // An edit's change, and the point the walk after it starts at.
         type Case<'a> = (&'a dyn Fn(&mut Edit), Option<Keep>);
-        let cases: [Case; 3] = [
+        let cases: [Case; 4] = [
             (&|e| e.sharpen.iterations = 5, Some(Keep::PreSharpen)),
             (&|e| e.detail.clarity = -0.2, Some(Keep::Patched)),
+            (&|e| e.detail.structure = 0.6, Some(Keep::Patched)),
             (
                 &|e| {
                     e.white_balance = greycard_edit::WhiteBalance::Custom {

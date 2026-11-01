@@ -26,8 +26,8 @@ pub struct Edit {
     pub display_curve: DisplayCurve,
     pub white_balance: WhiteBalance,
     pub noise: Noise,
-    /// Local contrast, Texture and Clarity, on the developed picture
-    /// after the retouch and before the sharpen.
+    /// Local contrast, Texture, Clarity, and Structure, on the
+    /// developed picture after the retouch and before the sharpen.
     pub detail: Detail,
     pub sharpen: Sharpen,
     /// The parametric and point curves on the encoded picture, after
@@ -95,30 +95,31 @@ pub struct Look {
     /// [`white`]: crate::white
     #[serde(skip_serializing_if = "LocalWhite::is_off")]
     pub white_balance: LocalWhite,
-    /// A mask's own Texture, Clarity and Dehaze, put on at the finish
-    /// by its weight from the bands the develop keeps beside the
-    /// picture. Never read on the global look, whose Detail is the
-    /// edit's own, before the sharpen. Left out of a sidecar at its
-    /// default.
+    /// A mask's own Texture, Clarity, Structure, and Dehaze, put on at
+    /// the finish by its weight from the bands the develop keeps
+    /// beside the picture. Never read on the global look, whose
+    /// Detail is the edit's own, before the sharpen. Left out of a
+    /// sidecar at its default.
     #[serde(skip_serializing_if = "Detail::is_default")]
     pub detail: Detail,
 }
 
 /// Which of the detail bands some mask asks the develop for: the
-/// texture and clarity bands and the haze, each made only when an
-/// enabled mask with something in it has that slider off zero under
-/// its section's switch.
+/// texture, clarity, and structure bands and the haze, each made only
+/// when an enabled mask with something in it has that slider off zero
+/// under its section's switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DetailWants {
     pub texture: bool,
     pub clarity: bool,
     pub haze: bool,
+    pub structure: bool,
 }
 
 impl DetailWants {
     /// Whether any band is wanted at all.
     pub fn any(&self) -> bool {
-        self.texture || self.clarity || self.haze
+        self.texture || self.clarity || self.haze || self.structure
     }
 
     /// Whether planes made for these hold every one `other` asks for.
@@ -126,6 +127,7 @@ impl DetailWants {
         (self.texture || !other.texture)
             && (self.clarity || !other.clarity)
             && (self.haze || !other.haze)
+            && (self.structure || !other.structure)
     }
 }
 
@@ -252,6 +254,7 @@ impl Edit {
             let d = &a.look.detail;
             wants.texture |= d.texture != 0.0;
             wants.clarity |= d.clarity != 0.0;
+            wants.structure |= d.structure != 0.0;
             wants.haze |= d.dehaze != 0.0;
         }
         wants
@@ -558,6 +561,7 @@ mod tests {
         let all = masked(Detail {
             texture: 0.1,
             clarity: 0.2,
+            structure: 0.4,
             dehaze: -0.3,
             ..Detail::default()
         });
@@ -567,8 +571,22 @@ mod tests {
                 texture: true,
                 clarity: true,
                 haze: true,
+                structure: true,
             }
         );
+        let structure = masked(Detail {
+            structure: -0.2,
+            ..Detail::default()
+        });
+        assert_eq!(
+            structure.detail_wants(),
+            DetailWants {
+                structure: true,
+                ..Default::default()
+            }
+        );
+        assert!(all.detail_wants().covers(&structure.detail_wants()));
+        assert!(!quiet.detail_wants().covers(&structure.detail_wants()));
     }
 
     /// A control reached in culling: its change alone goes over the

@@ -486,6 +486,7 @@ pub(crate) fn read_look(app: &App) -> Look {
             enabled: app.get_local_detail_enabled(),
             texture: app.get_local_texture(),
             clarity: app.get_local_clarity(),
+            structure: app.get_local_structure(),
             dehaze: app.get_local_dehaze(),
         },
     }
@@ -673,6 +674,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         enabled: app.get_detail_enabled(),
         texture: app.get_detail_texture(),
         clarity: app.get_detail_clarity(),
+        structure: app.get_detail_structure(),
         dehaze: app.get_detail_dehaze(),
     };
     edit.sharpen.enabled = app.get_sharpen();
@@ -879,10 +881,12 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_local_detail_enabled(look.detail.enabled);
     app.set_local_texture(look.detail.texture);
     app.set_local_clarity(look.detail.clarity);
+    app.set_local_structure(look.detail.structure);
     app.set_local_dehaze(look.detail.dehaze);
     app.set_detail_enabled(edit.detail.enabled);
     app.set_detail_texture(edit.detail.texture);
     app.set_detail_clarity(edit.detail.clarity);
+    app.set_detail_structure(edit.detail.structure);
     app.set_detail_dehaze(edit.detail.dehaze);
     app.set_sharpen(edit.sharpen.enabled);
     app.set_sharpen_auto_radius(edit.sharpen.auto_radius);
@@ -1120,6 +1124,34 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 mod tests {
     use super::*;
     use crate::testing::window;
+
+    /// The Detail section's widest band has one name on both sides:
+    /// the Slint's slider reads its global, the history and the copy
+    /// sheet the edit crate's constant. And its slider reads and
+    /// writes the edit's field, the global's and a mask's.
+    #[test]
+    fn structure_has_one_name_and_its_sliders_carry_it() {
+        let app = window(1);
+        assert_eq!(
+            app.global::<crate::DetailWords>().get_structure(),
+            greycard_edit::STRUCTURE
+        );
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let mut edit = state.borrow().develop.edit.clone();
+        edit.detail.structure = 0.35;
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        edit.adjustments[0].look.detail.structure = -0.6;
+        show_edit(&state.borrow(), &edit, &app, Some(0));
+        assert_eq!(app.get_detail_structure(), 0.35);
+        assert_eq!(app.get_local_structure(), -0.6);
+        let read = read_edit(&app, &edit, Some(0));
+        assert_eq!(read.detail.structure, 0.35);
+        assert_eq!(read.adjustments[0].look.detail.structure, -0.6);
+    }
 
     /// One section open at a time: off, sections open side by side;
     /// on, opening one, by its header or by the settings' restore,

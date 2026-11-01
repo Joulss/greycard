@@ -1,4 +1,5 @@
-//! Local contrast: Texture and Clarity, one op at two scales.
+//! Local contrast: Texture, Clarity, and Structure, one op at three
+//! scales.
 //!
 //! Each is a band of the log luminance, scaled by the slider and put
 //! back as a single gain on all three channels, so a color keeps its
@@ -30,6 +31,21 @@
 //! so a hard edge comes out where it went in. Its own artifact, that
 //! a window holding one strong edge protects the texture beside it
 //! too, is the tradeoff taken.
+//!
+//! Structure is the band above Clarity's: Clarity's guided base less
+//! a guided base of it at a radius a twelfth of the long edge, so the
+//! three bands and the last base add up to the low-passed log and no
+//! scale is lifted twice. Both ends of it are edge-keepers, so a
+//! horizon or a hairline passes through both and leaves next to
+//! nothing in the band; what is left are the wide, soft shapes of the
+//! light, a cheek against the shadow side of a face, a field against
+//! the hill behind it. The band is taken through a soft knee, a tanh
+//! that is about the band itself under a tenth of a stop and never
+//! more than [`STRUCTURE_KNEE`], so what an edge still leaks into it is
+//! not pushed further the harder the edge, and the slider reads as a
+//! quiet separation of the tones and never as the crunch of an HDR
+//! tone map. It takes the mid-tone weight and the fade toward the
+//! clip Clarity takes.
 
 use crate::image::WorkingImage;
 use rayon::prelude::*;
@@ -51,6 +67,17 @@ pub const MIN_TEXTURE_RADIUS: usize = 2;
 /// 6000-pixel picture.
 pub const CLARITY_RADIUS_FRACTION: f32 = 1.0 / 40.0;
 pub const MIN_CLARITY_RADIUS: usize = 8;
+/// Structure's radius as a fraction of the long edge: 500 pixels on a
+/// 6000-pixel picture, three and a third times Clarity's.
+pub const STRUCTURE_RADIUS_FRACTION: f32 = 1.0 / 12.0;
+pub const MIN_STRUCTURE_RADIUS: usize = 24;
+/// From this radius up, Structure's guided filter takes its grid at
+/// [`STRUCTURE_COARSE_STEP`] rather than [`COARSE_STEP`], so that the
+/// grid's radius stays under the 128 blocks the GPU's box passes hold
+/// at any size a device takes: 85 at a 16384-pixel long edge, where
+/// Clarity's step would make it 341.
+pub const STRUCTURE_COARSE_FROM_RADIUS: usize = 256;
+pub const STRUCTURE_COARSE_STEP: usize = 16;
 
 /// From this radius up, Clarity's guided filter takes its coefficients
 /// on a grid of blocks [`COARSE_STEP`] pixels on a side and applies
@@ -74,6 +101,16 @@ pub const COARSE_STEP: usize = 4;
 /// at the price of that halo.
 pub const TEXTURE_EPSILON: f32 = 0.05;
 pub const CLARITY_EPSILON: f32 = 0.25;
+/// Structure's epsilon, in stops squared, a fifth of Clarity's: at a
+/// window this wide nearly every one that holds an edge holds a stop
+/// or more of variance, and the halo a step gets grows about in
+/// proportion to epsilon, while the wide, soft shapes the slider is
+/// for have a few hundredths of a stop squared and are lifted the
+/// more the smaller it is against them. Measured on a band alone, a
+/// three-stop step's halo against a half-stop swell's lift: 0.19 to
+/// 0.20 stops at 0.25, 0.10 to 0.18 at 0.1, 0.05 to 0.16 here, 0.02
+/// to 0.12 at 0.02; under this the swell goes too.
+pub const STRUCTURE_EPSILON: f32 = 0.05;
 
 /// The band at an amount of one, as a multiple of itself: Texture at
 /// +1 doubles the fine band; Clarity at +1 adds this much of the
@@ -81,6 +118,15 @@ pub const CLARITY_EPSILON: f32 = 0.25;
 /// so it is set above one to read about as it did.
 pub const TEXTURE_GAIN: f32 = 1.0;
 pub const CLARITY_GAIN: f32 = 1.5;
+/// Structure at +1 adds this much of its band, after the knee: half
+/// as much again, as Clarity's, for the band its small epsilon keeps
+/// back.
+pub const STRUCTURE_GAIN: f32 = 1.5;
+/// The soft knee Structure's band is taken through, in stops: the
+/// band is `knee * tanh(band / knee)`, itself while it is small and
+/// never past the knee, so at +1 Structure moves a pixel by at most
+/// `STRUCTURE_GAIN * STRUCTURE_KNEE` stops however hard the edge.
+pub const STRUCTURE_KNEE: f32 = 0.3;
 
 /// Where Clarity's weight fades out, in stops about mid grey: full
 /// between the two inner values, nothing beyond the outer ones. Scene
@@ -105,12 +151,13 @@ pub const CLIP_FADE: f32 = 0.75;
 pub struct LocalContrastOptions {
     pub texture: f32,
     pub clarity: f32,
+    pub structure: f32,
 }
 
 impl LocalContrastOptions {
     /// Whether the op would leave the picture as it is.
     pub fn is_identity(&self) -> bool {
-        self.texture == 0.0 && self.clarity == 0.0
+        self.texture == 0.0 && self.clarity == 0.0 && self.structure == 0.0
     }
 }
 
@@ -121,6 +168,8 @@ pub struct LocalContrastStats {
     pub texture_radius: usize,
     /// Clarity's.
     pub clarity_radius: usize,
+    /// Structure's.
+    pub structure_radius: usize,
 }
 
 /// The radii for a picture of this size: the same fractions of the
@@ -133,6 +182,67 @@ pub fn radii(width: usize, height: usize) -> (usize, usize) {
     (texture, clarity)
 }
 
+/// Structure's radius for a picture of this size, a fraction of the
+/// long edge as the other two are.
+pub fn structure_radius(width: usize, height: usize) -> usize {
+    let long = width.max(height) as f32;
+    ((long * STRUCTURE_RADIUS_FRACTION).round() as usize).max(MIN_STRUCTURE_RADIUS)
+}
+
+/// The step of the grid Structure's guided filter takes its
+/// coefficients on, at its radius: the exact filter under
+/// [`COARSE_FROM_RADIUS`], Clarity's step under
+/// [`STRUCTURE_COARSE_FROM_RADIUS`], and the coarser one from it.
+pub fn structure_step(structure_radius: usize) -> usize {
+    if structure_radius >= STRUCTURE_COARSE_FROM_RADIUS {
+        STRUCTURE_COARSE_STEP
+    } else {
+        clarity_step(structure_radius)
+    }
+}
+
+/// The steps of the two coarse filters a picture of this size takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Steps {
+    pub clarity: usize,
+    pub structure: usize,
+}
+
+impl Steps {
+    /// As the radii choose them.
+    pub fn of(width: usize, height: usize) -> Self {
+        Self {
+            clarity: clarity_step(radii(width, height).1),
+            structure: structure_step(structure_radius(width, height)),
+        }
+    }
+}
+
+/// Which bands to make beside the op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Wanted {
+    pub texture: bool,
+    pub clarity: bool,
+    pub structure: bool,
+}
+
+impl Wanted {
+    pub fn any(&self) -> bool {
+        self.texture || self.clarity || self.structure
+    }
+}
+
+/// Structure's band from its top, Clarity's guided base, and its own
+/// base, in stops: the difference under the mid-tone weight of the
+/// base, through the soft knee. The tanh's argument is held to nine,
+/// where it is one to the float, as the shader holds it so that no
+/// device's tanh overflows on a far one.
+#[inline]
+pub fn structure_band(top: f32, base: f32) -> f32 {
+    let x = midtone_weight(base) * (top - base);
+    STRUCTURE_KNEE * (x / STRUCTURE_KNEE).clamp(-9.0, 9.0).tanh()
+}
+
 /// Apply the local contrast in place. `clip_level` is the value at
 /// or above which a channel counts as clipped, the develop's, as the
 /// sharpen takes it; the gain fades to nothing there. Infinite for a
@@ -142,8 +252,8 @@ pub fn local_contrast(
     options: &LocalContrastOptions,
     clip_level: f32,
 ) -> LocalContrastStats {
-    let (_, clarity_radius) = radii(image.width, image.height);
-    local_contrast_with_step(image, options, clip_level, clarity_step(clarity_radius))
+    let steps = Steps::of(image.width, image.height);
+    local_contrast_with_steps(image, options, clip_level, steps)
 }
 
 /// The step of the grid Clarity's guided filter takes its
@@ -159,21 +269,37 @@ pub fn clarity_step(clarity_radius: usize) -> usize {
 
 /// [`local_contrast`] with Clarity's grid step given rather than
 /// chosen by its radius, so the coarse filter can be had on a small
-/// picture and the exact one on a large.
+/// picture and the exact one on a large; Structure's as its radius
+/// chooses.
+#[cfg(test)]
 pub(crate) fn local_contrast_with_step(
     image: &mut WorkingImage,
     options: &LocalContrastOptions,
     clip_level: f32,
     clarity_step: usize,
 ) -> LocalContrastStats {
-    with_bands_at_step(image, options, clip_level, clarity_step, false, false).0
+    let steps = Steps {
+        clarity: clarity_step,
+        ..Steps::of(image.width, image.height)
+    };
+    local_contrast_with_steps(image, options, clip_level, steps)
 }
 
-/// The two bands of a picture, each in stops, one value a pixel: what
-/// the op puts on as a gain at an amount, before the amount and the
-/// fade toward the clip. A mask's Texture and Clarity are put on from
-/// these at the finish, by the mask's weight, where the global's are
-/// put on here.
+/// [`local_contrast`] with both grid steps given.
+pub(crate) fn local_contrast_with_steps(
+    image: &mut WorkingImage,
+    options: &LocalContrastOptions,
+    clip_level: f32,
+    steps: Steps,
+) -> LocalContrastStats {
+    with_bands_at_steps(image, options, clip_level, steps, Wanted::default()).0
+}
+
+/// The three bands of a picture, each in stops, one value a pixel:
+/// what the op puts on as a gain at an amount, before the amount and
+/// the fade toward the clip. A mask's Texture, Clarity, and Structure
+/// are put on from these at the finish, by the mask's weight, where
+/// the global's are put on here.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Bands {
     /// Texture's band: the log luminance less its guided base at the
@@ -183,20 +309,23 @@ pub struct Bands {
     /// clarity radius, times the mid-tone weight of that base. The
     /// global puts on `k * clarity` stops.
     pub clarity: Option<Vec<f32>>,
+    /// Structure's band: Clarity's guided base less its own guided
+    /// base at the structure radius, under the mid-tone weight of that
+    /// base and through the soft knee ([`structure_band`]). The global
+    /// puts on `k * structure` stops.
+    pub structure: Option<Vec<f32>>,
 }
 
 /// The bands of `image` that are asked for, and the op left undone.
-pub fn bands(image: &WorkingImage, texture: bool, clarity: bool) -> Bands {
-    let (_, clarity_radius) = radii(image.width, image.height);
-    let log = (texture || clarity).then(|| log_of(image));
+pub fn bands(image: &WorkingImage, wanted: Wanted) -> Bands {
+    let log = wanted.any().then(|| log_of(image));
     run_bands(
         log,
         image.width,
         image.height,
         None,
-        clarity_step(clarity_radius),
-        texture,
-        clarity,
+        Steps::of(image.width, image.height),
+        wanted,
     )
 }
 
@@ -207,45 +336,29 @@ pub fn local_contrast_with_bands(
     image: &mut WorkingImage,
     options: &LocalContrastOptions,
     clip_level: f32,
-    texture: bool,
-    clarity: bool,
+    wanted: Wanted,
 ) -> (LocalContrastStats, Bands) {
-    let (_, clarity_radius) = radii(image.width, image.height);
-    with_bands_at_step(
-        image,
-        options,
-        clip_level,
-        clarity_step(clarity_radius),
-        texture,
-        clarity,
-    )
+    let steps = Steps::of(image.width, image.height);
+    with_bands_at_steps(image, options, clip_level, steps, wanted)
 }
 
-fn with_bands_at_step(
+fn with_bands_at_steps(
     image: &mut WorkingImage,
     options: &LocalContrastOptions,
     clip_level: f32,
-    clarity_step: usize,
-    want_texture: bool,
-    want_clarity: bool,
+    steps: Steps,
+    wanted: Wanted,
 ) -> (LocalContrastStats, Bands) {
     let (w, h) = (image.width, image.height);
     let (texture_radius, clarity_radius) = radii(w, h);
     let stats = LocalContrastStats {
         texture_radius,
         clarity_radius,
+        structure_radius: structure_radius(w, h),
     };
-    let runs = !options.is_identity() || want_texture || want_clarity;
+    let runs = !options.is_identity() || wanted.any();
     let log = runs.then(|| log_of(image));
-    let bands = run_bands(
-        log,
-        w,
-        h,
-        Some((image, options, clip_level)),
-        clarity_step,
-        want_texture,
-        want_clarity,
-    );
+    let bands = run_bands(log, w, h, Some((image, options, clip_level)), steps, wanted);
     (stats, bands)
 }
 
@@ -269,27 +382,30 @@ fn run_bands(
     w: usize,
     h: usize,
     mut apply: Option<(&mut WorkingImage, &LocalContrastOptions, f32)>,
-    clarity_step: usize,
-    want_texture: bool,
-    want_clarity: bool,
+    steps: Steps,
+    wanted: Wanted,
 ) -> Bands {
     let mut bands = Bands::default();
     let (texture_radius, clarity_radius) = radii(w, h);
     let amounts = apply
         .as_ref()
         .map_or(LocalContrastOptions::default(), |(_, o, _)| **o);
-    let texture = amounts.texture != 0.0 || want_texture;
-    let clarity = amounts.clarity != 0.0 || want_clarity;
+    let texture = amounts.texture != 0.0 || wanted.texture;
+    let structure = amounts.structure != 0.0 || wanted.structure;
+    // Structure's top is Clarity's base, so Clarity's filter runs for
+    // either.
+    let clarity = amounts.clarity != 0.0 || wanted.clarity || structure;
     let Some(mut log) = log.filter(|_| (texture || clarity) && w > 0 && h > 0) else {
-        bands.texture = want_texture.then(|| vec![0.0; w * h]);
-        bands.clarity = want_clarity.then(|| vec![0.0; w * h]);
+        bands.texture = wanted.texture.then(|| vec![0.0; w * h]);
+        bands.clarity = wanted.clarity.then(|| vec![0.0; w * h]);
+        bands.structure = wanted.structure.then(|| vec![0.0; w * h]);
         return bands;
     };
     let n = w * h;
 
     // Each band is a shift in stops put on as a gain, a power of two
-    // of it, on all three channels, and the two gains compose. The
-    // op holds the log and the three scratch planes, four in all.
+    // of it, on all three channels, and the gains compose. The op
+    // holds the log and the three scratch planes, four in all.
     let mut scratch = Scratch::new(n);
     if texture {
         scratch.guided_filter(&log, w, h, texture_radius, TEXTURE_EPSILON);
@@ -297,9 +413,11 @@ fn run_bands(
             && amounts.texture != 0.0
         {
             let k = amounts.texture.clamp(-1.0, 1.0) * TEXTURE_GAIN;
-            apply_shift(image, &log, &scratch.a, *clip_level, |_| k);
+            apply_shift(image, &log, &scratch.a, *clip_level, |clip, u, b| {
+                clip * k * (u - b)
+            });
         }
-        if want_texture {
+        if wanted.texture {
             bands.texture = Some(
                 log.par_iter()
                     .zip(scratch.a.par_iter())
@@ -314,24 +432,46 @@ fn run_bands(
         for _ in 0..2 {
             box_mean(&mut log, &mut scratch.tmp, w, h, texture_radius);
         }
-        if clarity_step > 1 {
-            scratch.coarse_guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON, clarity_step);
-        } else {
-            scratch.guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON);
-        }
+        scratch.filter(&log, w, h, clarity_radius, CLARITY_EPSILON, steps.clarity);
         if let Some((image, _, clip_level)) = apply.as_mut()
             && amounts.clarity != 0.0
         {
             let k = amounts.clarity.clamp(-1.0, 1.0) * CLARITY_GAIN;
-            apply_shift(image, &log, &scratch.a, *clip_level, |b| {
-                k * midtone_weight(b)
+            apply_shift(image, &log, &scratch.a, *clip_level, |clip, u, b| {
+                clip * (k * midtone_weight(b)) * (u - b)
             });
         }
-        if want_clarity {
+        if wanted.clarity {
             bands.clarity = Some(
                 log.par_iter()
                     .zip(scratch.a.par_iter())
                     .map(|(&u, &b)| midtone_weight(b) * (u - b))
+                    .collect(),
+            );
+        }
+    }
+    if structure {
+        // The low-passed log is done with too: Clarity's base into it
+        // is the top of Structure's band, and the guided filter of
+        // that at the wide radius the bottom.
+        log.par_iter_mut()
+            .zip(scratch.a.par_iter())
+            .for_each(|(l, &b)| *l = b);
+        let radius = structure_radius(w, h);
+        scratch.filter(&log, w, h, radius, STRUCTURE_EPSILON, steps.structure);
+        if let Some((image, _, clip_level)) = apply.as_mut()
+            && amounts.structure != 0.0
+        {
+            let k = amounts.structure.clamp(-1.0, 1.0) * STRUCTURE_GAIN;
+            apply_shift(image, &log, &scratch.a, *clip_level, |clip, u, b| {
+                clip * k * structure_band(u, b)
+            });
+        }
+        if wanted.structure {
+            bands.structure = Some(
+                log.par_iter()
+                    .zip(scratch.a.par_iter())
+                    .map(|(&u, &b)| structure_band(u, b))
                     .collect(),
             );
         }
@@ -351,14 +491,16 @@ pub fn clip_fade(brightest: f32, clip_level: f32) -> f32 {
     }
 }
 
-/// Put `k(base) * (upper - base)` stops on the picture as a gain,
-/// faded out toward the clip.
+/// Put `shift(fade, upper, base)` stops on the picture as a gain,
+/// `fade` the fade toward the clip at the pixel. The fade goes into
+/// the shift so that each band keeps the order of its multiplies, the
+/// shader's, to the bit: `fade * k * band`.
 fn apply_shift(
     image: &mut WorkingImage,
     upper: &[f32],
     base: &[f32],
     clip_level: f32,
-    k: impl Fn(f32) -> f32 + Sync,
+    shift: impl Fn(f32, f32, f32) -> f32 + Sync,
 ) {
     image
         .data
@@ -367,7 +509,7 @@ fn apply_shift(
         .zip(base.par_iter())
         .for_each(|((px, &u), &b)| {
             let clip = clip_fade(px[0].max(px[1]).max(px[2]), clip_level);
-            let gain = (clip * k(b) * (u - b)).exp2();
+            let gain = shift(clip, u, b).exp2();
             px[0] *= gain;
             px[1] *= gain;
             px[2] *= gain;
@@ -403,6 +545,24 @@ impl Scratch {
             a: vec![0.0; n],
             b: vec![0.0; n],
             tmp: vec![0.0; n],
+        }
+    }
+
+    /// The guided filter on the grid of `step`, the exact one at a
+    /// step of one.
+    fn filter(
+        &mut self,
+        input: &[f32],
+        width: usize,
+        height: usize,
+        radius: usize,
+        epsilon: f32,
+        step: usize,
+    ) {
+        if step > 1 {
+            self.coarse_guided_filter(input, width, height, radius, epsilon, step);
+        } else {
+            self.guided_filter(input, width, height, radius, epsilon);
         }
     }
 
@@ -674,6 +834,61 @@ mod tests {
     /// choose it.
     const STEPS: [usize; 2] = [1, COARSE_STEP];
 
+    /// The most a three-stop step's sides move under Structure at
+    /// either end, in stops: measured 0.080 on the exact filter, 0.082
+    /// on Clarity's grid and 0.085 on Structure's own.
+    const STEP_BOUND: f32 = 0.09;
+    /// The least a half-stop swell's spread is multiplied by at +1,
+    /// and divided by at -1: measured 1.58 to 1.59 up, 1.91 to 1.96
+    /// down.
+    const SWELL_LIFT: f32 = 1.5;
+    /// The most a one-stop hairline or the field beside it moves, in
+    /// stops: measured 0.019 on the line and 0.019 beside it, the
+    /// field lifted a little a hundred pixels each way as the line
+    /// pulls the wide base down by its share of the window.
+    const HAIRLINE_BOUND: f32 = 0.025;
+    /// The most Structure on each grid is from the exact filter over a
+    /// whole picture, its edges included, in stops: measured 0.0039 on
+    /// Clarity's step and 0.0116 on Structure's own (0.0034 and 0.0090
+    /// away from the edges, held to 0.01 there), the edges a little
+    /// worse where the cut blocks' centers sit off the pixels'.
+    const COARSE_WHOLE_BOUND: f32 = 0.005;
+    const STRUCTURE_COARSE_WHOLE_BOUND: f32 = 0.015;
+
+    /// Every band.
+    const ALL: Wanted = Wanted {
+        texture: true,
+        clarity: true,
+        structure: true,
+    };
+
+    /// Structure's filter the three ways it is had: exact, on
+    /// Clarity's grid, and on its own coarser one.
+    const STRUCTURE_STEPS: [usize; 3] = [1, COARSE_STEP, STRUCTURE_COARSE_STEP];
+
+    fn structure(amount: f32) -> LocalContrastOptions {
+        LocalContrastOptions {
+            structure: amount,
+            ..Default::default()
+        }
+    }
+
+    /// Structure at `amount` with its filter on the grid of `step`.
+    fn structure_at(image: &mut WorkingImage, amount: f32, clip: f32, step: usize) {
+        let steps = Steps {
+            structure: step,
+            ..Steps::of(image.width, image.height)
+        };
+        local_contrast_with_steps(image, &structure(amount), clip, steps);
+    }
+
+    /// The log luminance of a row, in stops about mid grey.
+    fn row_stops(image: &WorkingImage, y: usize) -> Vec<f32> {
+        (0..image.width)
+            .map(|x| (luminance(&image.data[(y * image.width + x) * 3..]) / MID_GREY).log2())
+            .collect()
+    }
+
     fn luminance(px: &[f32]) -> f32 {
         LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2]
     }
@@ -681,14 +896,14 @@ mod tests {
     fn texture(amount: f32) -> LocalContrastOptions {
         LocalContrastOptions {
             texture: amount,
-            clarity: 0.0,
+            ..Default::default()
         }
     }
 
     fn clarity(amount: f32) -> LocalContrastOptions {
         LocalContrastOptions {
-            texture: 0.0,
             clarity: amount,
+            ..Default::default()
         }
     }
 
@@ -845,6 +1060,7 @@ mod tests {
             LocalContrastOptions {
                 texture: -0.5,
                 clarity: 0.7,
+                ..Default::default()
             },
         ] {
             for step in STEPS {
@@ -910,6 +1126,7 @@ mod tests {
                 &LocalContrastOptions {
                     texture: 1.0,
                     clarity: 1.0,
+                    ..Default::default()
                 },
                 NO_CLIP,
                 step,
@@ -1080,6 +1297,7 @@ mod tests {
                 &LocalContrastOptions {
                     texture: 0.8,
                     clarity: 0.6,
+                    ..Default::default()
                 },
                 NO_CLIP,
                 step,
@@ -1270,28 +1488,41 @@ mod tests {
             LocalContrastOptions {
                 texture: -0.5,
                 clarity: 0.8,
+                ..Default::default()
+            },
+            structure(0.9),
+            LocalContrastOptions {
+                texture: 0.3,
+                clarity: -0.4,
+                structure: -0.7,
             },
         ] {
             let mut op = image.clone();
             local_contrast(&mut op, &options, clip);
             let mut with = image.clone();
-            let (_, made) = local_contrast_with_bands(&mut with, &options, clip, true, true);
+            let (_, made) = local_contrast_with_bands(&mut with, &options, clip, ALL);
             assert_eq!(with.data, op.data, "asking for the bands moved the op");
-            let alone = bands(&image, true, true);
+            let alone = bands(&image, ALL);
             assert_eq!(alone, made);
-            let (tb, cb) = (made.texture.unwrap(), made.clarity.unwrap());
+            let (tb, cb, sb) = (
+                made.texture.unwrap(),
+                made.clarity.unwrap(),
+                made.structure.unwrap(),
+            );
             let mut by_hand = image.clone();
-            for ((px, &t), &c) in by_hand
+            for (((px, &t), &c), &s) in by_hand
                 .data
                 .as_chunks_mut::<3>()
                 .0
                 .iter_mut()
                 .zip(&tb)
                 .zip(&cb)
+                .zip(&sb)
             {
                 for (k, band) in [
                     (options.texture * TEXTURE_GAIN, t),
                     (options.clarity * CLARITY_GAIN, c),
+                    (options.structure * STRUCTURE_GAIN, s),
                 ] {
                     let fade = clip_fade(px[0].max(px[1]).max(px[2]), clip);
                     let gain = (fade * k * band).exp2();
@@ -1306,9 +1537,305 @@ mod tests {
             }
         }
         // Only what is asked for.
-        let only = bands(&image, false, true);
-        assert!(only.texture.is_none() && only.clarity.is_some());
-        assert_eq!(bands(&image, false, false), Bands::default());
+        let only = bands(
+            &image,
+            Wanted {
+                clarity: true,
+                ..Default::default()
+            },
+        );
+        assert!(only.texture.is_none() && only.clarity.is_some() && only.structure.is_none());
+        assert_eq!(bands(&image, Wanted::default()), Bands::default());
+    }
+
+    #[test]
+    fn structure_at_zero_is_the_identity_and_a_flat_field_stays_flat() {
+        let (w, h) = (300, 40);
+        let mut image = grey(w, h, |x, y| 0.05 + 0.4 * (x * y % 7) as f32 / 7.0);
+        let before = image.clone();
+        let stats = local_contrast(&mut image, &structure(0.0), NO_CLIP);
+        assert_eq!(image, before);
+        assert_eq!(stats.structure_radius, 25);
+        assert_eq!(
+            local_contrast(&mut image, &structure(1.0), NO_CLIP).structure_radius,
+            25
+        );
+        for step in STRUCTURE_STEPS {
+            for amount in [1.0, -1.0] {
+                let mut flat = grey(w, h, |_, _| 0.3);
+                structure_at(&mut flat, amount, NO_CLIP, step);
+                for px in flat.pixels() {
+                    for v in px {
+                        assert!((v - 0.3).abs() < 1e-5, "{amount} step {step}: {px:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A wide picture: Structure's radius 100 pixels, Clarity's 30.
+    const WIDE: (usize, usize) = (1200, 24);
+
+    #[test]
+    fn structure_puts_no_halo_on_a_step() {
+        // Three stops, from a shadow to mid grey, across the middle;
+        // at either end of the slider, on each filter.
+        let (w, h) = WIDE;
+        assert_eq!((radii(w, h).1, structure_radius(w, h)), (30, 100));
+        let dark = MID_GREY / 8.0;
+        let scene = |x: usize, _| if x < w / 2 { dark } else { MID_GREY };
+        for step in STRUCTURE_STEPS {
+            for amount in [1.0f32, -1.0] {
+                let mut image = grey(w, h, scene);
+                structure_at(&mut image, amount, NO_CLIP, step);
+                let l = row_stops(&image, h / 2);
+                // How far each side moved off where it was, the worst
+                // pixel: a halo is the bright side lifted beside the
+                // edge and the dark side pushed down.
+                let bright = l[w / 2..].iter().map(|v| v.abs()).fold(0.0, f32::max);
+                let shadow = l[..w / 2]
+                    .iter()
+                    .map(|v| (v + 3.0).abs())
+                    .fold(0.0, f32::max);
+                eprintln!("step {step} amount {amount}: bright {bright} dark {shadow}");
+                assert!(
+                    bright < STEP_BOUND && shadow < STEP_BOUND,
+                    "step {step} amount {amount}: {bright} bright, {shadow} dark"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structure_lifts_a_slow_swell() {
+        // A swell of half a stop with a sigma of 40 pixels, under half
+        // Structure's radius, on a mid grey field: lifted at +1 and
+        // flattened at -1.
+        let (w, h) = WIDE;
+        let scene = |x: usize, _| {
+            let d = (x as f32 - 600.0) / 40.0;
+            MID_GREY * (0.5 * (-d * d / 2.0).exp()).exp2()
+        };
+        for step in STRUCTURE_STEPS {
+            let plain = grey(w, h, scene);
+            let before = spread(&plain, h / 2, 400, 800);
+            let mut up = plain.clone();
+            structure_at(&mut up, 1.0, NO_CLIP, step);
+            let mut down = plain.clone();
+            structure_at(&mut down, -1.0, NO_CLIP, step);
+            let (up, down) = (spread(&up, h / 2, 400, 800), spread(&down, h / 2, 400, 800));
+            eprintln!("step {step}: swell {before} -> {up} and {down}");
+            assert!(up > before * SWELL_LIFT, "step {step}: {before} -> {up}");
+            assert!(
+                down < before / SWELL_LIFT,
+                "step {step}: {before} -> {down}"
+            );
+        }
+    }
+
+    #[test]
+    fn structure_leaves_a_straight_ramp_and_clarity_s_scale_alone() {
+        // A ramp of two stops across the picture: every window's line
+        // fits it, so the base is the ramp and there is nothing to
+        // lift but at the ends, where the window is cut.
+        let (w, h) = WIDE;
+        let ramp = |x: usize, _| MID_GREY * (2.0 * x as f32 / w as f32 - 1.0).exp2();
+        let plain = grey(w, h, ramp);
+        let mut image = plain.clone();
+        local_contrast(&mut image, &structure(1.0), NO_CLIP);
+        let (a, b) = (row_stops(&plain, h / 2), row_stops(&image, h / 2));
+        // Inside twice the radius of the ends, where no window
+        // averaged reaches past them.
+        let r = 2 * structure_radius(w, h);
+        let inside = (r..w - r).map(|x| (a[x] - b[x]).abs()).fold(0.0, f32::max);
+        eprintln!("ramp: {inside} stops inside");
+        assert!(inside < 0.01, "{inside} stops");
+
+        // Clarity's soft bump, six pixels of sigma, is Clarity's and
+        // not Structure's: its spread moves a fifth as much at most
+        // (measured 0.15 of it), the part of the bump Clarity's base
+        // keeps where its window's variance protects it.
+        let bump = |x: usize, _| {
+            let d = (x as f32 - 600.0) / 6.0;
+            MID_GREY * (1.0 + 0.26 * (-d * d).exp())
+        };
+        let plain = grey(w, h, bump);
+        let before = spread(&plain, h / 2, 560, 640);
+        let moved = |options: &LocalContrastOptions| {
+            let mut image = plain.clone();
+            local_contrast(&mut image, options, NO_CLIP);
+            spread(&image, h / 2, 560, 640) - before
+        };
+        let (by_clarity, by_structure) = (moved(&clarity(1.0)), moved(&structure(1.0)));
+        eprintln!("bump: clarity {by_clarity}, structure {by_structure}");
+        assert!(by_structure.abs() < by_clarity * 0.2);
+    }
+
+    #[test]
+    fn structure_puts_no_rim_on_a_hairline() {
+        // A dark hairline a pixel wide, a stop under a mid grey field,
+        // and a bright one a stop over: neither gets a rim, and the
+        // line itself stays where it was.
+        let (w, h) = WIDE;
+        for (line, name) in [(0.5f32, "dark"), (2.0, "bright")] {
+            let scene = |x: usize, _| if x == 600 { MID_GREY * line } else { MID_GREY };
+            for step in STRUCTURE_STEPS {
+                for amount in [1.0f32, -1.0] {
+                    let mut image = grey(w, h, scene);
+                    structure_at(&mut image, amount, NO_CLIP, step);
+                    let l = row_stops(&image, h / 2);
+                    let rim = (0..w)
+                        .filter(|&x| x != 600)
+                        .map(|x| l[x].abs())
+                        .fold(0.0, f32::max);
+                    let on = (l[600] - line.log2()).abs();
+                    eprintln!("{name} step {step} amount {amount}: rim {rim} line {on}");
+                    assert!(
+                        rim < HAIRLINE_BOUND && on < HAIRLINE_BOUND,
+                        "{name} step {step} amount {amount}: rim {rim}, line {on}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn structure_s_band_is_bounded_by_its_knee() {
+        // A picture with everything in it, hard edges of three stops
+        // included: the band never passes the knee, nor the shift at
+        // either end of the slider the gain times it.
+        let (w, h) = (1200, 300);
+        let log = textured_log(w, h);
+        let mut image = WorkingImage::new(w, h);
+        for (px, &l) in image.pixels_mut().zip(&log) {
+            *px = [MID_GREY * l.exp2(); 3];
+        }
+        let made = bands(
+            &image,
+            Wanted {
+                structure: true,
+                ..Default::default()
+            },
+        );
+        let band = made.structure.unwrap();
+        let worst = band.iter().map(|v| v.abs()).fold(0.0, f32::max);
+        eprintln!("band at most {worst} stops");
+        assert!(worst <= STRUCTURE_KNEE, "{worst}");
+        assert!(worst > STRUCTURE_KNEE * 0.25, "a band of nothing: {worst}");
+        for amount in [1.0f32, -1.0] {
+            let mut out = image.clone();
+            local_contrast(&mut out, &structure(amount), NO_CLIP);
+            let moved = out
+                .pixels()
+                .zip(image.pixels())
+                .map(|(a, b)| (luminance(a) / luminance(b)).log2().abs())
+                .fold(0.0, f32::max);
+            assert!(
+                moved <= STRUCTURE_GAIN * STRUCTURE_KNEE + 1e-4,
+                "{amount}: {moved}"
+            );
+        }
+        // The knee: the band itself while it is small, never past it.
+        assert!((structure_band(0.05, 0.0) - 0.05).abs() < 0.002);
+        assert!((structure_band(5.0, 0.0) - STRUCTURE_KNEE).abs() < 1e-4);
+        assert_eq!(structure_band(-5.0, 0.0), -structure_band(5.0, 0.0));
+    }
+
+    #[test]
+    fn structure_leaves_the_clipped_and_the_ends_of_the_scale_alone() {
+        let (w, h) = WIDE;
+        let swell = |x: usize| {
+            let d = (x as f32 - 600.0) / 40.0;
+            0.5 * (-d * d / 2.0).exp()
+        };
+        let moved = |level: f32| {
+            let mut image = grey(w, h, |x, _| level * swell(x).exp2());
+            let before = spread(&image, h / 2, 400, 800);
+            local_contrast(&mut image, &structure(1.0), NO_CLIP);
+            spread(&image, h / 2, 400, 800) - before
+        };
+        let (mid, bright, dark) = (moved(MID_GREY), moved(0.9), moved(0.0005));
+        assert!(
+            bright < mid * 0.2 && dark < mid * 0.2,
+            "{mid} {bright} {dark}"
+        );
+        // Nothing over the clip, and a plateau at it left as it was.
+        let clip = 0.4;
+        let scene = |x: usize, _| {
+            if (560..640).contains(&x) {
+                clip
+            } else {
+                MID_GREY * swell(x).exp2()
+            }
+        };
+        let plain = grey(w, h, scene);
+        let mut image = plain.clone();
+        local_contrast(&mut image, &structure(1.0), clip);
+        for x in 560..640 {
+            assert_eq!(image.pixel(x, h / 2), plain.pixel(x, h / 2), "at {x}");
+        }
+        let brightest = image.data.iter().cloned().fold(0.0, f32::max);
+        assert!(brightest <= clip, "{brightest}");
+    }
+
+    #[test]
+    fn structure_s_coarse_filters_are_the_exact_one() {
+        // Structure at either end on each grid against the exact
+        // filter, in stops of the luminance, over the whole picture,
+        // its edges included, and away from them. Sides that are not
+        // multiples of either step, so the last blocks are cut short.
+        let (w, h) = (1203, 601);
+        let log = textured_log(w, h);
+        let mut image = WorkingImage::new(w, h);
+        for (px, &l) in image.pixels_mut().zip(&log) {
+            *px = [MID_GREY * l.exp2(); 3];
+        }
+        let r = structure_radius(w, h);
+        for amount in [1.0, -1.0] {
+            let mut exact = image.clone();
+            structure_at(&mut exact, amount, NO_CLIP, 1);
+            for (step, whole_bound) in [
+                (COARSE_STEP, COARSE_WHOLE_BOUND),
+                (STRUCTURE_COARSE_STEP, STRUCTURE_COARSE_WHOLE_BOUND),
+            ] {
+                let mut coarse = image.clone();
+                structure_at(&mut coarse, amount, NO_CLIP, step);
+                let (mut whole, mut inside) = (0.0f32, 0.0f32);
+                for y in 0..h {
+                    for x in 0..w {
+                        let (a, b) = (exact.pixel(x, y), coarse.pixel(x, y));
+                        let d = (luminance(&a) / luminance(&b)).log2().abs();
+                        whole = whole.max(d);
+                        if (r..w - r).contains(&x) && (r..h - r).contains(&y) {
+                            inside = inside.max(d);
+                        }
+                    }
+                }
+                eprintln!("structure {amount} step {step}: {whole} stops, {inside} inside");
+                assert!(
+                    inside < 0.01,
+                    "structure {amount} step {step}: {inside} inside"
+                );
+                assert!(
+                    whole < whole_bound,
+                    "structure {amount} step {step}: {whole}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structure_s_steps_follow_its_radius() {
+        assert_eq!(structure_radius(6000, 4000), 500);
+        assert_eq!(structure_radius(8256, 5504), 688);
+        assert_eq!(structure_radius(100, 100), MIN_STRUCTURE_RADIUS);
+        assert_eq!(structure_step(63), 1);
+        assert_eq!(structure_step(64), COARSE_STEP);
+        assert_eq!(structure_step(255), COARSE_STEP);
+        assert_eq!(structure_step(256), STRUCTURE_COARSE_STEP);
+        // The grid's radius on the largest frame a device takes.
+        assert!(coarse_radius(structure_radius(16384, 16384), STRUCTURE_COARSE_STEP) < 128);
+        assert!(coarse_radius(255, COARSE_STEP) < 128);
     }
 
     #[test]

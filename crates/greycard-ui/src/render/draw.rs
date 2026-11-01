@@ -110,7 +110,8 @@ struct Params {
     /// The masks' Detail (`crate::detail`): the airlight in xyz and in
     /// w whether there are planes to read; the gains and the dehaze's
     /// strength and floor; the develop's clip level in x (none under
-    /// zero) and the fade's start as a share of it in y.
+    /// zero), the fade's start as a share of it in y, and Structure's
+    /// gain in z.
     detail: [f32; 4],
     detail_k: [f32; 4],
     detail_clip: [f32; 4],
@@ -321,7 +322,12 @@ impl Renderer {
                 greycard_core::develop::dehaze::FULL_STRENGTH,
                 greycard_core::develop::dehaze::MIN_TRANSMISSION,
             ],
-            detail_clip: self.detail_clip,
+            detail_clip: [
+                self.detail_clip[0],
+                self.detail_clip[1],
+                greycard_core::develop::local_contrast::STRUCTURE_GAIN,
+                0.0,
+            ],
             white: [display.white, display.stops, display.gain, agx[4]],
             agx: [agx[0], agx[1], agx[2], agx[3]],
         };

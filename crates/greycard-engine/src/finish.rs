@@ -74,7 +74,7 @@ pub fn render(
         if edit.geometry.is_identity() {
             bands
         } else {
-            greycard_render::geometry::apply(&bands, &edit.geometry)
+            bands.framed(&edit.geometry)
         }
     });
     export::render(
