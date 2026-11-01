@@ -952,6 +952,9 @@ mod tests {
             folders: &[(PathBuf::from("/s"), PathBuf::from("/u"))],
             rehashed: &[],
         }));
+        // A hint after a rename is joined by the platform, so the
+        // expected ones are too (a backslash on Windows).
+        let at = |folder: &str, name: &str| hint_of(&PathBuf::from(folder).join(name));
         let hints = |store: &Store, id: &str| -> Vec<String> {
             store
                 .stack(id)
@@ -961,10 +964,10 @@ mod tests {
                 .map(|r| r.hint.clone())
                 .collect()
         };
-        assert_eq!(hints(&store, &fourth), ["/u/h", "/u/i"]);
+        assert_eq!(hints(&store, &fourth), [at("/u", "h"), at("/u", "i")]);
         assert_eq!(hints(&store, &fifth), ["/s/in/j", "/s/in/k"]);
-        assert_eq!(hints(&store, &second), ["/u/d2", "/u/b"]);
-        assert!(store.by_hint.contains_key("/u/h"));
+        assert_eq!(hints(&store, &second), [at("/u", "d2"), at("/u", "b")]);
+        assert!(store.by_hint.contains_key(&at("/u", "h")));
         assert_eq!(Store::load(dir.clone()).list, store.list, "written");
         assert!(!store.heal(Found {
             moved: &[],
@@ -975,14 +978,14 @@ mod tests {
         assert!(store.unstack(&fifth));
         // Carried onto a frame another stack holds, it leaves its own.
         let sixth = store.make(vec![r("/v/m", None), r("/v/n", None), r("/v/o", None)]);
-        let seventh = store.make(vec![r("/w/m", None), r("/w/p", None)]);
+        let seventh = store.make(vec![r(&at("/w", "m"), None), r(&at("/w", "p"), None)]);
         assert!(store.heal(Found {
             moved: &[],
             folders: &[(PathBuf::from("/v"), PathBuf::from("/w"))],
             rehashed: &[],
         }));
-        assert_eq!(hints(&store, &sixth), ["/w/n", "/w/o"]);
-        assert_eq!(hints(&store, &seventh), ["/w/m", "/w/p"]);
+        assert_eq!(hints(&store, &sixth), [at("/w", "n"), at("/w", "o")]);
+        assert_eq!(hints(&store, &seventh), [at("/w", "m"), at("/w", "p")]);
         assert!(store.unstack(&sixth));
         assert!(store.unstack(&seventh));
         let hints: Vec<&str> = store
@@ -992,10 +995,10 @@ mod tests {
             .iter()
             .map(|r| r.hint.as_str())
             .collect();
-        assert_eq!(hints, ["/u/e", "/u/f"]);
+        assert_eq!(hints, [at("/u", "e"), at("/u", "f")]);
         // e deleted by the window: one left, no stack.
         assert!(!store.left(&[PathBuf::from("/nowhere")]));
-        assert!(store.left(&[PathBuf::from("/u/e")]));
+        assert!(store.left(&[PathBuf::from("/u").join("e")]));
         assert!(store.stack(&third).is_none());
         assert!(store.unstack(&second));
         assert!(store.list.is_empty());
