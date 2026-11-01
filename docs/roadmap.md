@@ -227,10 +227,10 @@ seconds.
       through the parser, but the Neural Engine's compile ran past
       25 min and the GPU alone is four times slower than WebGPU
       (§477); waits on a compile that finishes in seconds
-- [ ] The denoisers at fp16 on the Neural Engine: 0.08 s a tile
-      against fp32's 0.21 s on the M5, a first compile of 112 s, and
-      answers up to 2.6e-3 off (§477); waits on a comparison on real
-      raws and a compile done before the first denoise
+- [ ] The denoisers at fp16 on Core ML: twice to 2.5 times quicker
+      on the M5, and on real raws within 0.01 stops of fp32 but in the
+      deepest shadows (§477, §481). Waits on an fp16 file a tier
+      published beside the fp32 one, and Core ML offered it
 - [ ] The generative remove on Core ML: on WebGPU over Metal a UNet
       call is 2.5 s on an M5 and 8.7 s on an M1, so Best is 71 s and
       230 s warm, Fast 18 s and 70 s, and the first load 17 s and
