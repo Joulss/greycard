@@ -40,6 +40,10 @@ for the develop, the stand-in clears the scopes (`show_overlays` in
 `panel/cull.rs`), and if no analysis follows when it comes down they
 stay blank. A Mac run decides.
 
+A Mac run (an M5 on macOS 27, 2026-10-31) did not reproduce it
+either: the scopes filled over a queued frame. The item is closed
+with no change; if it comes back, the lead above is where to start.
+
 ## Review
 
 A fresh review found the row's first place, at the foot of

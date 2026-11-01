@@ -15,9 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Blank scopes over a queued frame on a Mac (2026-10-25): not
-      reproduced on Linux; the lead is the camera's stand-in clearing
-      the scopes with no analysis after (§430). A Mac run decides
 - [ ] A model's first run on a Mac is a compile with no word in the
       window: Sky and the denoisers on Core ML (§422), tens of seconds
       with every thread of the app asleep and no line logged, then a
