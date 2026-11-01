@@ -1,37 +1,5 @@
 use super::*;
-
-/// An X-Trans frame asked for the learned denoiser is told it does not
-/// run, before anything is prepared; a Bayer one is not, and the
-/// profiled denoise runs on both.
-#[test]
-fn the_learned_denoiser_on_x_trans_is_unavailable_and_said_so() {
-    use greycard_core::raw::{CfaPattern, LevelPattern, Levels, Samples, SensorLayout};
-    let mut frame = RawFrame {
-        make: "Test".into(),
-        model: "Cam".into(),
-        other_names: Vec::new(),
-        width: 2,
-        height: 2,
-        channels: 1,
-        layout: SensorLayout::Cfa(CfaPattern::rggb()),
-        samples: Samples::U16(vec![0; 4]),
-        levels: Levels {
-            black: LevelPattern::uniform(0.0, 1),
-            white: LevelPattern::uniform(1.0, 1),
-        },
-        as_shot_coefficients: None,
-        calibrations: Vec::new(),
-        crop: None,
-        orientation: greycard_core::raw::Orientation::Normal,
-        shot: Default::default(),
-        dng: Default::default(),
-    };
-    assert_eq!(denoise_unavailable(&frame, true), None);
-    assert_eq!(denoise_unavailable(&frame, false), None);
-    frame.layout = SensorLayout::Cfa(CfaPattern::xtrans());
-    assert!(denoise_unavailable(&frame, true).is_some());
-    assert_eq!(denoise_unavailable(&frame, false), None);
-}
+use crate::stages::Keep;
 
 #[test]
 fn the_strip_s_own_frames_are_made_first_then_the_ones_beside_them() {
@@ -403,7 +371,7 @@ pub(super) fn aberrated_frame(width: usize, height: usize) -> RawFrame {
 /// from `base`: the outcome and the picture.
 fn develop_once(
     frame: &Arc<RawFrame>,
-    base: &mut Option<Base>,
+    base: &mut Option<FrameKept>,
     gpu: &mut Option<greycard_gpu::Context>,
 ) -> (Outcome, Option<Arc<WorkingImage>>) {
     let deliver: Deliver = Arc::new(|_| {});
@@ -413,7 +381,6 @@ fn develop_once(
         0,
         1,
         base,
-        &mut None,
         &mut Ai::new(),
         None,
         None,
@@ -428,7 +395,7 @@ fn develop_turned(
     frame: &Arc<RawFrame>,
     edit: &Edit,
     turn: u8,
-    base: &mut Option<Base>,
+    base: &mut Option<FrameKept>,
 ) -> Arc<WorkingImage> {
     let deliver: Deliver = Arc::new(|_| {});
     let (outcome, image) = develop_job(
@@ -437,7 +404,6 @@ fn develop_turned(
         turn,
         1,
         base,
-        &mut None,
         &mut Ai::new(),
         None,
         None,
@@ -448,34 +414,31 @@ fn develop_turned(
     image.expect("a picture on the CPU")
 }
 
-/// A base turned where it stands is the base the engine makes at
-/// the new turn, to the bit, and so is its guide plane: for a
-/// frame whose tag is a plain turn and one whose tag mirrors, for
-/// a quarter each way and a half. And a develop that finds a base
-/// at another turn turns it rather than making it again, and
-/// develops what a fresh one would.
+/// A develop that finds its base at another turn turns it rather than
+/// making it again, and the base, its guide plane, and the develop are
+/// the ones a develop at the new turn makes, to the bit: for a frame
+/// whose tag is a plain turn and one whose tag mirrors, for a quarter
+/// each way and a half.
 #[test]
 fn a_base_turned_in_place_is_the_base_developed_at_that_turn() {
     use greycard_core::raw::Orientation;
     let edit = Edit::default();
-    assert!(
-        turns_exactly(&edit, None),
-        "the check would not reach the turn"
-    );
     for tag in [Orientation::Normal, Orientation::FlipHorizontal] {
         let mut frame = aberrated_frame(120, 80);
         frame.orientation = tag;
         let frame = Arc::new(frame);
         for (from, to) in [(0u8, 1u8), (1, 0), (0, 3), (1, 3), (2, 0)] {
-            let mut kept = None;
-            develop_turned(&frame, &edit, from, &mut kept);
-            let mut b = kept.take().expect("a base");
-            let stamp = b.stamp;
-            turn_base(&mut b, &mut None, to, stamp + 1, None);
-            let mut fresh = None;
-            develop_turned(&frame, &edit, to, &mut fresh);
-            let fresh = fresh.expect("a base");
             let what = format!("{tag:?}, {from} to {to}");
+            let mut base = None;
+            develop_turned(&frame, &edit, from, &mut base);
+            let made = base.as_ref().map(|b| b.stamp);
+            let image = develop_turned(&frame, &edit, to, &mut base);
+            let b = base.as_ref().expect("a base");
+            assert_eq!(b.turn, to);
+            assert_eq!(Some(b.stamp), made.map(|s| s + 1), "{what}");
+            let mut fresh = None;
+            let reference = develop_turned(&frame, &edit, to, &mut fresh);
+            let fresh = fresh.expect("a base");
             assert_eq!(
                 (b.image.width, b.image.height),
                 (fresh.image.width, fresh.image.height),
@@ -486,134 +449,9 @@ fn a_base_turned_in_place_is_the_base_developed_at_that_turn() {
                 "{what}: the pixels differ"
             );
             assert_eq!(b.guide.data, fresh.guide.data, "{what}: the guide differs");
-            assert_eq!((b.turn, b.stamp), (to, stamp + 1));
-            assert!(b.patched.is_none() && b.pre.is_none());
-
-            // Through the develop: the base found at `from` is
-            // turned and kept, not made again, and the develop is
-            // the fresh one's.
-            let mut base = None;
-            develop_turned(&frame, &edit, from, &mut base);
-            let made = base.as_ref().map(|b| b.stamp);
-            let image = develop_turned(&frame, &edit, to, &mut base);
-            let b = base.as_ref().expect("a base");
-            assert_eq!(b.turn, to);
-            assert_eq!(Some(b.stamp), made.map(|s| s + 1));
-            let reference = develop_turned(&frame, &edit, to, &mut None);
             assert!(image.data == reference.data, "{what}: the develop differs");
         }
     }
-}
-
-/// The learned denoiser's pair turns with the base: at either end
-/// of the strength the base is one of the pair itself, and stays
-/// shared with it once both are turned rather than turned twice
-/// or copied; in between it is a blend of its own, turned. A pair
-/// made at another turn than the base's is not the base's, and is
-/// left for `learned_base` to make again.
-#[test]
-fn a_turned_base_takes_the_learned_pair_with_it() {
-    use greycard_core::develop::orient;
-    use greycard_core::raw::Orientation;
-    let frame = Arc::new(aberrated_frame(120, 80));
-    let edit = Edit::default();
-    let mut made = None;
-    develop_turned(&frame, &edit, 0, &mut made);
-    let base = made.expect("a base");
-    let plain = base.image.clone();
-    let model = Arc::new(WorkingImage {
-        data: plain.data.iter().map(|v| v * 0.5 + 0.1).collect(),
-        ..(*plain).clone()
-    });
-    let pair = |turn: u8| LearnedBase {
-        edit: edit.clone(),
-        turn,
-        model: Arc::new((*model).clone()),
-        plain: Arc::new((*plain).clone()),
-        white: WhiteBase::IDENTITY,
-        radius: None,
-        clip_level: 1.0,
-        ca_on_gpu: false,
-    };
-    let turned = |image: &WorkingImage| orient(image.clone(), Orientation::Rotate90);
-    for strength in [0.0f32, 0.5, 1.0] {
-        let mut learned = Some(pair(0));
-        let l = learned.as_ref().unwrap();
-        let image = blend(&l.model, &l.plain, strength);
-        let expected = turned(&image);
-        let mut b = Base {
-            edit: edit.clone(),
-            turn: 0,
-            image,
-            guide: Arc::new(greycard_render::finish::Guide::NONE),
-            white: WhiteBase::IDENTITY,
-            radius: None,
-            clip_level: 1.0,
-            source: greycard_render::finish::Source::SCENE,
-            stamp: 1,
-            patched: None,
-            pre: None,
-            uploaded: None,
-            haze: None,
-            planes: None,
-            on_gpu: false,
-            stand_in: None,
-            gave_way: None,
-            profile: None,
-            from_shelf: false,
-            mask_picture: None,
-        };
-        turn_base(&mut b, &mut learned, 1, 2, None);
-        let l = learned.as_ref().unwrap();
-        assert_eq!(l.turn, 1, "strength {strength}");
-        assert!(
-            l.model.data == turned(&model).data,
-            "strength {strength}: the model"
-        );
-        assert!(
-            l.plain.data == turned(&plain).data,
-            "strength {strength}: the plain"
-        );
-        assert_eq!((b.image.width, b.image.height), (80, 120));
-        assert!(
-            b.image.data == expected.data,
-            "strength {strength}: the base"
-        );
-        match strength {
-            1.0 => assert!(Arc::ptr_eq(&b.image, &l.model), "the model, shared"),
-            0.0 => assert!(Arc::ptr_eq(&b.image, &l.plain), "the plain, shared"),
-            _ => assert!(!Arc::ptr_eq(&b.image, &l.model) && !Arc::ptr_eq(&b.image, &l.plain)),
-        }
-    }
-    // A pair at another turn stays as it was.
-    let mut learned = Some(pair(3));
-    let mut b = Base {
-        edit: edit.clone(),
-        turn: 0,
-        image: plain.clone(),
-        guide: Arc::new(greycard_render::finish::Guide::NONE),
-        white: WhiteBase::IDENTITY,
-        radius: None,
-        clip_level: 1.0,
-        source: greycard_render::finish::Source::SCENE,
-        stamp: 1,
-        patched: None,
-        pre: None,
-        uploaded: None,
-        haze: None,
-        planes: None,
-        on_gpu: false,
-        stand_in: None,
-        gave_way: None,
-        profile: None,
-        from_shelf: false,
-        mask_picture: None,
-    };
-    turn_base(&mut b, &mut learned, 1, 2, None);
-    let l = learned.as_ref().unwrap();
-    assert_eq!(l.turn, 3);
-    assert!(l.plain.data == plain.data && l.model.data == model.data);
-    assert!(b.image.data == turned(&plain).data);
 }
 
 /// A context on a device of our own with `limits`, for driving
@@ -679,69 +517,39 @@ fn an_export_after_a_gpu_base_develops_the_reference_s() {
     assert_eq!(again.data, reference.data);
 }
 
-/// The planes' thread can end three ways, and the develop lands
-/// without the bands in two of them: the maker declined (it sent
-/// `None`), or the thread died without sending (a panic, which
-/// drops the sender). Both leave nothing kept for the next develop,
-/// so neither can serve a stale base; the second is said in the log
-/// as a warning, where the first says its reason itself.
+/// The upload is of the very picture a run on the device starts from:
+/// after a develop without the device (the open file's export) made
+/// the base again with the CA on the CPU, the upload of the old one is
+/// let go with it, and the window's next develop uploads the new
+/// picture rather than run on the GPU's, whose steps are the same; one
+/// that changes nothing before the upload keeps it.
 #[test]
-fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
-    let image = Arc::new(WorkingImage::new(4, 4));
-    let mut base = Base {
-        edit: Edit::default(),
-        turn: 0,
-        image: image.clone(),
-        guide: Arc::new(greycard_render::finish::Guide::NONE),
-        white: WhiteBase::IDENTITY,
-        radius: None,
-        clip_level: 1.0,
-        source: greycard_render::finish::Source::SCENE,
-        stamp: 0,
-        patched: None,
-        pre: None,
-        uploaded: None,
-        haze: None,
-        planes: None,
-        on_gpu: false,
-        stand_in: None,
-        gave_way: None,
-        profile: None,
-        from_shelf: false,
-        mask_picture: None,
+fn a_picture_made_again_is_uploaded_again() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the upload's picture");
+        return;
     };
-    let wants = greycard_edit::DetailWants {
-        texture: true,
-        clarity: false,
-        haze: false,
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let mut gpu = Some(ctx);
+    let mut base = None;
+    let upload = |base: &Option<FrameKept>| {
+        base.as_ref()
+            .and_then(|b| b.kept.upload())
+            .expect("uploaded")
+            .clone()
     };
-    let making = |made| PlanesJob::Making {
-        made,
-        _cancel: CancelOnDrop(Arc::new(std::sync::atomic::AtomicBool::new(false))),
-        patched: image.clone(),
-        wants,
-        haze_after: None,
-        started: Instant::now(),
-    };
-
-    // Declined: the maker sent None.
-    let (send, made) = std::sync::mpsc::channel();
-    send.send(None).unwrap();
-    let mut job = making(made);
-    assert!(job.land(&mut base).is_none());
+    develop_once(&frame, &mut base, &mut gpu);
+    let first = upload(&base);
+    develop_once(&frame, &mut base, &mut None);
     assert!(
-        base.planes.is_none(),
-        "nothing kept to serve the next develop"
+        base.as_ref().unwrap().kept.upload().is_none(),
+        "let go with its picture"
     );
-    assert!(matches!(job, PlanesJob::Nothing));
-
-    // Died: the sender dropped without a word, as a panic drops it.
-    let (send, made) = std::sync::mpsc::channel::<Option<greycard_render::detail::DetailPlanes>>();
-    drop(send);
-    let mut job = making(made);
-    assert!(job.land(&mut base).is_none());
-    assert!(base.planes.is_none());
-    assert!(matches!(job, PlanesJob::Nothing));
+    develop_once(&frame, &mut base, &mut gpu);
+    let again = upload(&base);
+    assert!(!Arc::ptr_eq(&again, &first), "the CPU's picture uploaded");
+    develop_once(&frame, &mut base, &mut gpu);
+    assert!(Arc::ptr_eq(&upload(&base), &again), "kept");
 }
 
 /// A learned pair whose CA ran on the GPU serves a develop with a
@@ -750,34 +558,76 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
 /// learned settings still have to match.
 #[test]
 fn a_gpu_ca_learned_pair_is_not_served_to_an_export() {
-    let edit = Edit::default();
-    let image = Arc::new(WorkingImage::new(4, 4));
-    let pair = |ca_on_gpu: bool| LearnedBase {
-        edit: edit.clone(),
-        turn: 0,
-        model: image.clone(),
-        plain: image.clone(),
-        white: WhiteBase::IDENTITY,
-        radius: None,
-        clip_level: 1.0,
-        ca_on_gpu,
+    use crate::stages::{Keep, Stage};
+    let mut edit = Edit::default();
+    edit.noise.learned = greycard_edit::Learned::Fast;
+    let input = Input::Raw(Arc::new(aberrated_frame(64, 48)));
+    let walked = || FrameKept::walked_with(&input.walked(), &edit, 0, &mut LearnedFake);
+    let serves = |b: &FrameKept, edit: &Edit, turn: u8, lent: bool| {
+        let (steps, plan) = window_steps(edit, &b.facts_at(turn), None, lent);
+        b.kept.serves(&steps, &plan, Keep::Pair)
     };
-    let gpu = pair(true);
-    assert!(pair_serves(&gpu, 0, &edit, true));
-    assert!(
-        !pair_serves(&gpu, 0, &edit, false),
-        "the export makes it again"
-    );
-    let cpu = pair(false);
-    assert!(pair_serves(&cpu, 0, &edit, true));
-    assert!(pair_serves(&cpu, 0, &edit, false));
-    assert!(!pair_serves(&cpu, 1, &edit, false), "another turn");
+    let mut gpu = walked();
+    gpu.kept.as_if_on_device(|s| matches!(s, Stage::Ca(_)));
+    assert!(serves(&gpu, &edit, 0, true));
+    assert!(!serves(&gpu, &edit, 0, false), "the export makes it again");
+    let cpu = walked();
+    assert!(serves(&cpu, &edit, 0, true));
+    assert!(serves(&cpu, &edit, 0, false));
+    assert!(!serves(&cpu, &edit, 1, false), "another turn");
     let mut other = edit.clone();
     other.noise.learned = greycard_edit::Learned::Best;
-    assert!(
-        !pair_serves(&cpu, 0, &other, false),
-        "other learned settings"
-    );
+    assert!(!serves(&cpu, &other, 0, false), "other learned settings");
+}
+
+/// Models whose network is the plain demosaic, for a learned pair
+/// without a model.
+struct LearnedFake;
+
+impl crate::walk::Models for LearnedFake {
+    fn can_denoise(
+        &mut self,
+        _: &'static greycard_ai::Model,
+    ) -> Result<(), crate::walk::NoLearned> {
+        Ok(())
+    }
+
+    fn denoise(
+        &mut self,
+        _: &'static greycard_ai::Model,
+        _: &RawFrame,
+        prepared: &greycard_core::develop::Prepared,
+    ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+        greycard_core::develop::demosaic_prepared(
+            prepared,
+            &greycard_core::develop::DevelopSettings::default(),
+        )
+        .map(|(rgb, _, _)| rgb)
+        .map_err(|e| crate::walk::NoLearned::Failed(e.to_string()))
+    }
+
+    fn fill(
+        &mut self,
+        _: &greycard_edit::retouch::Patch,
+        _: &greycard_core::develop::retouch::Region,
+        _: &WorkingImage,
+    ) -> Option<Vec<f32>> {
+        None
+    }
+
+    fn could_fill_more(&mut self, _: &greycard_edit::retouch::Retouch, _: &WorkingImage) -> bool {
+        false
+    }
+
+    fn rasters(
+        &mut self,
+        _: crate::stages::Masks,
+        _: &Arc<WorkingImage>,
+        _: Option<crate::walk::Patched<'_>>,
+        _: &crate::walk::Meta,
+    ) -> crate::walk::Rasters {
+        crate::walk::Rasters::new()
+    }
 }
 
 /// The export, with no window and no panel, makes a mask's white
@@ -972,7 +822,10 @@ fn an_export_does_not_reuse_a_gpu_ca_develop() {
     let mut base = None;
     let (_, image) = develop_once(&frame, &mut base, &mut None);
     let image = image.unwrap();
-    base.as_mut().unwrap().on_gpu = true;
+    let b = base.as_mut().unwrap();
+    b.on_gpu = true;
+    b.kept
+        .as_if_on_device(|s| matches!(s, crate::stages::Stage::Ca(_)));
     let wrong = Arc::new(
         WorkingImage::from_data(image.width, image.height, vec![0.5; image.data.len()]).unwrap(),
     );
@@ -985,18 +838,16 @@ fn an_export_does_not_reuse_a_gpu_ca_develop() {
             message: String::new(),
         },
     ));
-    let mut learned = None;
     let mut ai = Ai::new();
     let deliver: Deliver = Arc::new(|_| {});
     let input = Input::Raw(frame.clone());
-    let mut export = |last: &mut Option<Last>, base: &mut Option<Base>, ai: &mut Ai| {
+    let export = |last: &mut Option<Last>, base: &mut Option<FrameKept>, ai: &mut Ai| {
         open_picture(
             &Edit::default(),
             0,
             Some(&input),
             last,
             base,
-            &mut learned,
             ai,
             None,
             None,
@@ -1078,36 +929,14 @@ fn lens_edit() -> Edit {
     edit
 }
 
-/// A fresh base as the CPU makes it before its lens step, `frame`
-/// under `edit`, for the step to be run on by each side.
-fn base_before_lens(frame: &Arc<RawFrame>, edit: &Edit) -> Base {
+/// The base the CPU makes of `frame` under `edit` with the lens
+/// switched off: a picture for the lens alone to move.
+fn picture_before_lens(frame: &Arc<RawFrame>, edit: &Edit) -> Arc<WorkingImage> {
     let mut before = edit.clone();
     before.lens.enabled = false;
     let mut base = None;
     develop_turned(frame, &before, 0, &mut base);
-    let mut b = base.expect("a base");
-    b.edit = edit.clone();
-    b
-}
-
-/// The lens step of a fresh base on `gpu`: the base after it, the
-/// stage it timed, and the device's error when it had one.
-fn lens_stepped(
-    frame: &Arc<RawFrame>,
-    edit: &Edit,
-    gpu: Option<&greycard_gpu::Context>,
-) -> (Base, Stages, Option<greycard_gpu::Error>) {
-    let mut b = base_before_lens(frame, edit);
-    let mut stages = Stages::new();
-    let failed = super::develop::lens_step(
-        &mut b,
-        &Input::Raw(frame.clone()),
-        edit,
-        None,
-        gpu,
-        &mut stages,
-    );
-    (b, stages, failed)
+    base.expect("a base").image
 }
 
 /// `image` as a picture that is not a raw: no CA correction runs on
@@ -1132,7 +961,7 @@ fn picture_input(image: &Arc<WorkingImage>) -> Input {
 fn develop_picture(
     input: &Input,
     edit: &Edit,
-    base: &mut Option<Base>,
+    base: &mut Option<FrameKept>,
     gpu: &mut Option<greycard_gpu::Context>,
 ) -> Option<Arc<WorkingImage>> {
     let deliver: Deliver = Arc::new(|_| {});
@@ -1142,7 +971,6 @@ fn develop_picture(
         0,
         1,
         base,
-        &mut None,
         &mut Ai::new(),
         None,
         None,
@@ -1153,10 +981,12 @@ fn develop_picture(
     image
 }
 
-/// The base's lens step on the GPU is the reference's within the GPU
-/// op's own tolerance (greycard-gpu's lens tests say why 1e-4 of a
-/// value in 0 to 1), the stage is timed as "lens" either way, and a
-/// base it ran in says so, so the export makes its own.
+/// The base's lens on the GPU is the reference's within the GPU op's
+/// own tolerance (greycard-gpu's lens tests say why 1e-4 of a value in
+/// 0 to 1), and a base it ran in says so, so the export makes its own.
+/// On a picture that is not a raw, which has no CA correction, so only
+/// the lens can have marked it; the sharpen off, so the develop ends
+/// on the CPU.
 #[test]
 fn a_base_with_the_gpu_lens_is_the_cpu_s() {
     let Some(ctx) = greycard_gpu::Context::own().ok() else {
@@ -1164,62 +994,61 @@ fn a_base_with_the_gpu_lens_is_the_cpu_s() {
         return;
     };
     let frame = Arc::new(aberrated_frame(400, 320));
-    let edit = lens_edit();
-    let (gpu, gpu_stages, failed) = lens_stepped(&frame, &edit, Some(&ctx));
-    assert!(failed.is_none());
-    let (cpu, cpu_stages, _) = lens_stepped(&frame, &edit, None);
-    assert!(gpu.on_gpu && !cpu.on_gpu);
-    for stages in [&gpu_stages, &cpu_stages] {
-        assert_eq!(stages.iter().filter(|(n, _)| *n == "lens").count(), 1);
-    }
-    let before = base_before_lens(&frame, &edit);
-    assert_ne!(
-        cpu.image.data, before.image.data,
-        "the lens moved something"
-    );
-    let scale = cpu.image.data.iter().fold(1f32, |m, v| m.max(v.abs()));
-    let worst = cpu
+    let mut edit = lens_edit();
+    edit.sharpen.enabled = false;
+    let before = picture_before_lens(&frame, &edit);
+    let input = picture_input(&before);
+    let develop = |base: &mut Option<FrameKept>, gpu: &mut Option<greycard_gpu::Context>| {
+        develop_picture(&input, &edit, base, gpu)
+    };
+    let mut gpu = Some(ctx);
+    let mut on_gpu = None;
+    develop(&mut on_gpu, &mut gpu);
+    let mut on_cpu = None;
+    develop(&mut on_cpu, &mut None);
+    let (g, c) = (on_gpu.as_ref().unwrap(), on_cpu.as_ref().unwrap());
+    assert!(g.on_gpu && !c.on_gpu);
+    let lens = |s: &crate::stages::Stage| matches!(s, crate::stages::Stage::Lens(_));
+    assert!(g.kept.ran_on_device(crate::stages::Keep::Base, lens));
+    assert_ne!(c.image.data, before.data, "the lens moved something");
+    let scale = c.image.data.iter().fold(1f32, |m, v| m.max(v.abs()));
+    let worst = c
         .image
         .data
         .iter()
-        .zip(&gpu.image.data)
+        .zip(&g.image.data)
         .map(|(a, b)| (a - b).abs())
         .fold(0f32, f32::max);
     assert!(worst <= 1e-4 * scale, "{worst} apart, values up to {scale}");
 
-    // A whole develop with the GPU marks its base, and the export's
-    // develop, which has none, makes the reference's afresh. On a
-    // picture that is not a raw, which has no CA correction, so only
-    // the lens can have marked it.
-    let input = picture_input(&before.image);
-    let develop = |base: &mut Option<Base>, gpu: &mut Option<greycard_gpu::Context>| {
-        develop_picture(&input, &edit, base, gpu)
-    };
-    let mut gpu = Some(ctx);
-    let mut base = None;
-    develop(&mut base, &mut gpu);
-    assert!(base.as_ref().is_some_and(|b| b.on_gpu));
-    let exported = develop(&mut base, &mut None).expect("a picture on the CPU");
-    assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
+    // The export's develop, which has no GPU, makes the reference's
+    // afresh from the base the GPU marked.
+    let exported = develop(&mut on_gpu, &mut None).expect("a picture on the CPU");
+    assert!(on_gpu.as_ref().is_some_and(|b| !b.on_gpu));
     let reference = develop(&mut None, &mut None).expect("a picture on the CPU");
     assert_eq!(exported.data, reference.data);
 }
 
-/// A device error in the lens step falls back to the reference for
-/// that base, the base the CPU's to the bit and not marked, and is
-/// returned; a develop then drops the context for the session, as it
-/// does after the CA's. A picture the device cannot hold falls back
-/// the same way and is not an error: the context stays. A device
-/// allowed 20 workgroups a dimension cannot run the 400x320's 25
-/// across; one whose textures stop at 256 a side cannot hold it.
+/// A device error in the lens falls back to the reference for that
+/// base, the base the CPU's to the bit and not marked, and the develop
+/// drops the context for the session, as it does after the CA's. A
+/// picture the device cannot hold falls back the same way and is not
+/// an error: the context stays. A device allowed 20 workgroups a
+/// dimension cannot run the 400x320's 25 across; one whose textures
+/// stop at 256 a side cannot hold it. On a picture that is not a raw,
+/// where only the lens would run on the device, with the sharpen off,
+/// so that no op but the lens asks the device for anything; without
+/// the lens the same develop keeps it.
 #[test]
 fn a_gpu_error_in_the_lens_falls_back_and_an_unsupported_size_keeps_the_context() {
     use greycard_gpu::wgpu::Limits;
     let frame = Arc::new(aberrated_frame(400, 320));
-    let edit = lens_edit();
-    let (cpu, _, _) = lens_stepped(&frame, &edit, None);
-    let small = WorkingImage::new(8, 8);
-    let identity = greycard_core::develop::lens::LensCorrection::default();
+    let mut lensed = lens_edit();
+    lensed.sharpen.enabled = false;
+    let input = picture_input(&picture_before_lens(&frame, &lensed));
+    let mut cpu = None;
+    develop_picture(&input, &lensed, &mut cpu, &mut None);
+    let cpu = cpu.expect("a base");
     for (limits, device_error) in [
         (
             Limits {
@@ -1240,29 +1069,16 @@ fn a_gpu_error_in_the_lens_falls_back_and_an_unsupported_size_keeps_the_context(
             skipped("the lens fallback check");
             return;
         };
-        let (b, stages, failed) = lens_stepped(&frame, &edit, Some(&ctx));
-        assert!(!b.on_gpu);
-        assert_eq!(b.image.data, cpu.image.data);
-        assert!(stages.iter().any(|(n, _)| *n == "lens"));
-        assert_eq!(failed.is_some(), device_error, "{failed:?} on {limits:?}");
-        // The step leaves the context for its caller to decide on.
-        assert!(ctx.correct_lens(&small, &identity).is_ok());
-        // A whole develop of a picture that is not a raw, where only
-        // the lens would run on the device, drops it after a device
-        // error and keeps it after a size it declines.
-        // The sharpen off, so that no op but the lens asks the device
-        // for anything; without the lens the same develop keeps it.
-        let input = picture_input(&base_before_lens(&frame, &edit).image);
         let mut quiet = Edit::default();
         quiet.sharpen.enabled = false;
         let mut gpu = Some(ctx);
         develop_picture(&input, &quiet, &mut None, &mut gpu);
         assert!(gpu.is_some(), "{limits:?}");
-        let mut lensed = edit.clone();
-        lensed.sharpen.enabled = false;
         let mut base = None;
         develop_picture(&input, &lensed, &mut base, &mut gpu);
-        assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
+        let b = base.expect("a base");
+        assert!(!b.on_gpu, "{limits:?}");
+        assert_eq!(b.image.data, cpu.image.data, "{limits:?}");
         assert_eq!(gpu.is_none(), device_error, "{limits:?}");
     }
 }
@@ -1295,14 +1111,13 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     let deliver: Deliver = Arc::new(|_| {});
     let mut gpu = Some(ctx);
     let mut base = None;
-    let develop = |edit: &Edit, base: &mut Option<Base>, gpu: &mut Option<_>| {
+    let develop = |edit: &Edit, base: &mut Option<FrameKept>, gpu: &mut Option<_>| {
         develop_job(
             &Input::Raw(frame.clone()),
             edit,
             0,
             1,
             base,
-            &mut None,
             &mut Ai::new(),
             None,
             None,
@@ -1329,12 +1144,11 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     assert!(image.is_none());
     let b = base.as_ref().unwrap();
     let uploaded = b
-        .uploaded
-        .as_ref()
+        .kept
+        .upload()
         .expect("the patched picture is kept")
-        .1
         .clone();
-    assert!(b.pre.as_ref().is_some_and(|p| p.detail_stats.is_some()));
+    assert!(b.kept.on_device(Keep::PreSharpen));
     // A plane of the picture's size; Clarity's exact filter at this
     // size takes the log, its scratch, and the slope and intercept.
     let plane = u64::from(uploaded.width()) * u64::from(uploaded.height()) * 4;
@@ -1354,8 +1168,8 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
         }
     ));
     let b = base.as_ref().unwrap();
-    assert!(Arc::ptr_eq(&b.uploaded.as_ref().unwrap().1, &uploaded));
-    assert!(b.pre.as_ref().is_some_and(|p| p.detail == edit.detail));
+    assert!(Arc::ptr_eq(b.kept.upload().unwrap(), &uploaded));
+    assert!(b.kept.on_device(Keep::PreSharpen));
     // A sharpen move keeps the picture before it, and says so.
     edit.sharpen.iterations += 1;
     let (outcome, _) = develop(&edit, &mut base, &mut gpu);
@@ -1377,31 +1191,35 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     edit.detail.clarity = 0.0;
     develop(&edit, &mut base, &mut gpu);
     let b = base.as_ref().unwrap();
-    assert!(Arc::ptr_eq(&b.pre.as_ref().unwrap().image, &uploaded));
+    assert!(Arc::ptr_eq(b.kept.upload().unwrap(), &uploaded));
     assert_eq!(kept(&gpu).local_contrast, 0, "no Detail, no planes");
     // The dehaze after the local contrast, both on the GPU from the
     // kept upload; its reduced copy kept with what it was made from.
     edit.detail.clarity = -0.5;
     develop(&edit, &mut base, &mut gpu);
     assert_eq!(kept(&gpu).local_contrast, planes(4));
-    assert!(base.as_ref().unwrap().haze.is_none());
+    assert!(!base.as_ref().unwrap().kept.has_haze());
     edit.detail.dehaze = 0.5;
+    // The dehaze goes on from the local contrast's picture kept on
+    // the device, which a slider after it left as it was.
     let (outcome, _) = develop(&edit, &mut base, &mut gpu);
     let Outcome::Developed {
         image: Developed::Texture(_),
-        detail: Some((_, DetailRan::Gpu)),
+        detail: Some((_, DetailRan::Kept)),
         dehaze: Some(first),
         ..
     } = outcome
     else {
-        panic!("the local contrast and the dehaze on the GPU");
+        panic!("the dehaze on the GPU after the kept local contrast");
     };
     let b = base.as_ref().unwrap();
-    assert!(Arc::ptr_eq(&b.uploaded.as_ref().unwrap().1, &uploaded));
-    assert!(b.pre.as_ref().is_some_and(|p| p.dehaze_stats.is_some()));
-    let haze = b.haze.as_ref().expect("the reduced copy is kept");
-    assert_eq!(haze.detail, edit.detail.options());
-    let reduced = haze.reduced.clone();
+    assert!(Arc::ptr_eq(b.kept.upload().unwrap(), &uploaded));
+    assert!(b.kept.on_device(Keep::PreSharpen));
+    let reduced = b
+        .kept
+        .haze_copy()
+        .expect("the reduced copy is kept")
+        .clone();
     assert_eq!(kept(&gpu).local_contrast, planes(4));
     assert!(kept(&gpu).sharpen > 0);
     // A move of the Dehaze alone fits again from the kept copy, so
@@ -1416,7 +1234,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
         panic!("a Dehaze move");
     };
     let b = base.as_ref().unwrap();
-    assert!(Arc::ptr_eq(&b.haze.as_ref().unwrap().reduced, &reduced));
+    assert!(Arc::ptr_eq(b.kept.haze_copy().unwrap(), &reduced));
     assert_eq!(second.airlight, first.airlight);
     assert!(second.strength > first.strength);
     // A sharpen move keeps the picture before it, dehaze and all.
@@ -1434,7 +1252,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     edit.detail.clarity = -0.3;
     develop(&edit, &mut base, &mut gpu);
     let b = base.as_ref().unwrap();
-    assert!(!Arc::ptr_eq(&b.haze.as_ref().unwrap().reduced, &reduced));
+    assert!(!Arc::ptr_eq(b.kept.haze_copy().unwrap(), &reduced));
     // The dehaze alone: from the upload, the local contrast's planes
     // let go.
     edit.detail.clarity = 0.0;
@@ -1448,8 +1266,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
             ..
         }
     ));
-    let b = base.as_ref().unwrap();
-    assert_eq!(b.haze.as_ref().unwrap().detail, None);
+    assert!(base.as_ref().unwrap().kept.has_haze());
     assert_eq!(kept(&gpu).local_contrast, 0, "no local contrast, no planes");
     // With the sharpen off, the dehaze writes the viewport's
     // texture, after the local contrast or alone.
@@ -1471,7 +1288,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
         );
         assert!(image.is_none());
         let b = base.as_ref().unwrap();
-        assert!(b.pre.is_none() && b.haze.is_some());
+        assert!(!b.kept.on_device(Keep::PreSharpen) && b.kept.has_haze());
         assert_eq!(kept(&gpu).sharpen, 0);
     }
     edit.sharpen.enabled = true;
@@ -1495,7 +1312,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     );
     assert!(image.is_none());
     let b = base.as_ref().unwrap();
-    assert!(b.uploaded.is_some() && b.pre.is_none());
+    assert!(b.kept.has_upload() && !b.kept.on_device(Keep::PreSharpen));
     assert_eq!(kept(&gpu).sharpen, 0, "the sharpen's planes are let go");
     assert_eq!(kept(&gpu).local_contrast, planes(4));
     // Neither op: the CPU's halves, and nothing kept on the device.
@@ -1512,7 +1329,7 @@ fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     ));
     assert!(image.is_some());
     let b = base.as_ref().unwrap();
-    assert!(b.uploaded.is_none() && b.pre.is_none());
+    assert!(!b.kept.has_upload() && !b.kept.on_device(Keep::PreSharpen));
     assert_eq!(kept(&gpu), greycard_gpu::KeptBytes::default());
     assert!(gpu.is_some(), "the context is kept throughout");
 }
@@ -1548,7 +1365,6 @@ fn the_detail_section_on_the_gpu_is_the_cpus() {
                 0,
                 1,
                 &mut base,
-                &mut None,
                 &mut Ai::new(),
                 None,
                 None,
@@ -1631,7 +1447,6 @@ fn a_gpu_error_in_the_dehaze_takes_the_session_to_the_cpu() {
                 0,
                 1,
                 &mut base,
-                &mut None,
                 &mut Ai::new(),
                 None,
                 None,
@@ -1681,7 +1496,7 @@ fn a_picture_the_device_cannot_hold_is_the_cpus_for_that_develop() {
             edit.detail.clarity = 0.5;
             edit.detail.dehaze = dehaze;
             let develop = |frame: &Arc<RawFrame>,
-                           base: &mut Option<Base>,
+                           base: &mut Option<FrameKept>,
                            gpu: &mut Option<greycard_gpu::Context>| {
                 develop_job(
                     &Input::Raw(frame.clone()),
@@ -1689,7 +1504,6 @@ fn a_picture_the_device_cannot_hold_is_the_cpus_for_that_develop() {
                     0,
                     1,
                     base,
-                    &mut None,
                     &mut Ai::new(),
                     None,
                     None,
@@ -1715,7 +1529,12 @@ fn a_picture_the_device_cannot_hold_is_the_cpus_for_that_develop() {
             let (_, reference) = develop(&large, &mut None, &mut None);
             assert_eq!(image.unwrap().data, reference.unwrap().data, "{what}");
             let b = base.as_ref().unwrap();
-            assert!(b.uploaded.is_none() && b.pre.is_none() && b.haze.is_none());
+            assert!(
+                !b.kept.has_upload() && !b.kept.on_device(Keep::PreSharpen) && !b.kept.has_haze()
+            );
+            // Nor the CPU's picture before the sharpen, the size of
+            // the frame, kept on the frames largest.
+            assert!(!b.kept.holds(Keep::PreSharpen), "{what}");
             let (outcome, _) = develop(&small, &mut None, &mut gpu);
             assert!(
                 matches!(
@@ -1730,6 +1549,239 @@ fn a_picture_the_device_cannot_hold_is_the_cpus_for_that_develop() {
             );
         }
     }
+}
+
+/// A move of the sharpen alone goes on from the picture before it,
+/// kept on the device, and gives the texture a develop made afresh
+/// gives, to the bit; so does a move of the light, which goes on from
+/// the same point. A move of the Detail section goes back to the
+/// patched picture's upload.
+#[test]
+fn a_sharpen_move_from_the_kept_picture_is_a_fresh_develop() {
+    use crate::stages::Keep;
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the sharpen move's picture");
+        return;
+    };
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut gpu = Some(ctx);
+    let develop =
+        |edit: &Edit, base: &mut Option<FrameKept>, gpu: &mut Option<greycard_gpu::Context>| {
+            let (outcome, _) = develop_job(
+                &Input::Raw(frame.clone()),
+                edit,
+                0,
+                1,
+                base,
+                &mut Ai::new(),
+                None,
+                None,
+                gpu,
+                &deliver,
+            );
+            let Outcome::Developed {
+                image: Developed::Texture(texture),
+                detail: Some((_, ran)),
+                sharpen: Some(_),
+                ..
+            } = outcome
+            else {
+                panic!("the local contrast and the sharpen on the GPU, into a texture");
+            };
+            (texture, ran)
+        };
+    let mut edit = Edit::default();
+    edit.detail.clarity = 0.5;
+    let mut base = None;
+    let (_, ran) = develop(&edit, &mut base, &mut gpu);
+    assert_eq!(ran, DetailRan::Gpu);
+    let b = base.as_ref().unwrap();
+    assert!(b.kept.on_device(Keep::PreSharpen) && b.kept.has_upload());
+    let mut moves = Vec::new();
+    edit.sharpen.iterations += 1;
+    moves.push((edit.clone(), DetailRan::Kept));
+    edit.light.exposure = 0.7;
+    moves.push((edit.clone(), DetailRan::Kept));
+    edit.detail.clarity = 0.2;
+    moves.push((edit.clone(), DetailRan::Gpu));
+    for (edit, expected) in moves {
+        let (moved, ran) = develop(&edit, &mut base, &mut gpu);
+        assert_eq!(ran, expected);
+        let (fresh, _) = develop(&edit, &mut None, &mut gpu);
+        let ctx = gpu.as_ref().unwrap();
+        let (moved, fresh) = (read_viewport(ctx, &moved), read_viewport(ctx, &fresh));
+        assert!(
+            moved.data == fresh.data,
+            "{expected:?}: the move's picture is not a fresh develop's"
+        );
+    }
+}
+
+/// A mask's Detail reads bands made beside the run on the device,
+/// which land after the run's keeps are put: a sharpen move, and a
+/// Dehaze move that goes on from the local contrast kept on the device,
+/// still hand the window the bands, so a mask's Texture does not go.
+#[test]
+fn a_masks_detail_bands_outlive_a_move_after_them() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the masks' bands on a move after them");
+        return;
+    };
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut gpu = Some(ctx);
+    let mut edit = Edit::default();
+    edit.detail.clarity = 0.4;
+    let mut a = greycard_edit::Adjustment {
+        id: 1,
+        ..Default::default()
+    };
+    a.mask
+        .components
+        .push(greycard_edit::mask::Component::default());
+    a.look.detail.texture = -0.5;
+    edit.adjustments.push(a);
+    let mut base = None;
+    let mut develop = |edit: &Edit| {
+        let (outcome, _) = develop_job(
+            &Input::Raw(frame.clone()),
+            edit,
+            0,
+            1,
+            &mut base,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut gpu,
+            &deliver,
+        );
+        let Outcome::Developed {
+            planes,
+            detail: Some((_, ran)),
+            ..
+        } = outcome
+        else {
+            panic!("developed, with the local contrast");
+        };
+        (planes.is_some(), ran)
+    };
+    assert_eq!(develop(&edit), (true, DetailRan::Gpu));
+    edit.sharpen.iterations += 1;
+    assert_eq!(develop(&edit), (true, DetailRan::Kept), "a sharpen move");
+    edit.detail.dehaze = 0.5;
+    assert_eq!(develop(&edit), (true, DetailRan::Kept), "a Dehaze move");
+}
+
+/// A Dehaze set with the sharpen on goes on from the local contrast's
+/// picture kept on the device (one moved runs the local contrast
+/// again, there being no keep between the two), and gives the texture a develop made
+/// afresh gives, to the bit.
+#[test]
+fn a_dehaze_from_the_kept_local_contrast_is_a_fresh_develop() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the Dehaze after the kept local contrast");
+        return;
+    };
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut gpu = Some(ctx);
+    let develop =
+        |edit: &Edit, base: &mut Option<FrameKept>, gpu: &mut Option<greycard_gpu::Context>| {
+            let (outcome, _) = develop_job(
+                &Input::Raw(frame.clone()),
+                edit,
+                0,
+                1,
+                base,
+                &mut Ai::new(),
+                None,
+                None,
+                gpu,
+                &deliver,
+            );
+            let Outcome::Developed {
+                image: Developed::Texture(texture),
+                detail: Some((_, ran)),
+                sharpen: Some(_),
+                ..
+            } = outcome
+            else {
+                panic!("the Detail section and the sharpen on the GPU, into a texture");
+            };
+            (texture, ran)
+        };
+    let mut edit = Edit::default();
+    edit.detail.clarity = 0.5;
+    let mut base = None;
+    for dehaze in [0.4, 0.9] {
+        edit.detail.dehaze = 0.0;
+        develop(&edit, &mut base, &mut gpu);
+        edit.detail.dehaze = dehaze;
+        let (moved, ran) = develop(&edit, &mut base, &mut gpu);
+        assert_eq!(ran, DetailRan::Kept, "{dehaze}");
+        let (fresh, _) = develop(&edit, &mut None, &mut gpu);
+        let ctx = gpu.as_ref().unwrap();
+        let (moved, fresh) = (read_viewport(ctx, &moved), read_viewport(ctx, &fresh));
+        assert!(
+            moved.data == fresh.data,
+            "Dehaze {dehaze}: the move's picture is not a fresh develop's"
+        );
+    }
+}
+
+/// A walk nobody waits on (a prefetch) that meets a device error short
+/// of a lost device goes on on the CPU and leaves the session its
+/// context; the window's walk under the same error lets it go. Either
+/// way the picture is the CPU's. A device allowed 20 workgroups a
+/// dimension cannot run the 400x320's CA.
+#[test]
+fn a_prefetch_s_device_error_leaves_the_session_its_device() {
+    use crate::stages::{Purpose, stages};
+    use crate::walk::{Buf, Hold, Kept, NoHold, NoModels, plan, walk};
+    struct Speculative;
+    impl Hold for Speculative {
+        fn keeps_device(&self) -> bool {
+            true
+        }
+    }
+    let limits = greycard_gpu::wgpu::Limits {
+        max_compute_workgroups_per_dimension: 20,
+        ..greycard_gpu::wgpu::Limits::default()
+    };
+    let Some(ctx) = context_with(limits.clone()) else {
+        skipped("the prefetch's device error");
+        return;
+    };
+    let input = crate::walk::Input::Raw(Arc::new(aberrated_frame(400, 320)));
+    let purpose = Purpose::Prefetch;
+    let steps = stages(&Edit::default(), &purpose, &input.facts(0), None);
+    let picture = |hold: &dyn Hold, gpu: &mut Option<greycard_gpu::Context>| {
+        let places = plan(&steps, &purpose, gpu.is_some());
+        let walked = walk(
+            &steps,
+            &places,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            gpu,
+            hold,
+        )
+        .expect("walks");
+        match walked.buf {
+            Buf::Working(image) => image,
+            _ => panic!("a prefetch ends at a picture in memory"),
+        }
+    };
+    let reference = picture(&NoHold, &mut None);
+    let mut gpu = Some(ctx);
+    let fetched = picture(&Speculative, &mut gpu);
+    assert!(gpu.is_some(), "the session keeps its device");
+    assert!(fetched.data == reference.data);
+    let mut gpu = context_with(limits);
+    let window = picture(&NoHold, &mut gpu);
+    assert!(gpu.is_none(), "the window's walk lets it go");
+    assert!(window.data == reference.data);
 }
 
 /// A move of the Dehaze alone, which fits again from the kept
@@ -1750,14 +1802,13 @@ fn a_dehaze_move_from_the_kept_copy_is_a_fresh_develop() {
         edit.sharpen.enabled = sharpen;
         edit.detail.texture = 0.3;
         edit.detail.clarity = 0.5;
-        let mut develop = |edit: &Edit, base: &mut Option<Base>| {
+        let mut develop = |edit: &Edit, base: &mut Option<FrameKept>| {
             let (outcome, _) = develop_job(
                 &Input::Raw(frame.clone()),
                 edit,
                 0,
                 1,
                 base,
-                &mut None,
                 &mut Ai::new(),
                 None,
                 None,
@@ -1777,17 +1828,10 @@ fn a_dehaze_move_from_the_kept_copy_is_a_fresh_develop() {
         let mut base = None;
         edit.detail.dehaze = 0.4;
         develop(&edit, &mut base);
-        let reduced = base
-            .as_ref()
-            .unwrap()
-            .haze
-            .as_ref()
-            .unwrap()
-            .reduced
-            .clone();
+        let reduced = base.as_ref().unwrap().kept.haze_copy().unwrap().clone();
         edit.detail.dehaze = 0.9;
         let moved = develop(&edit, &mut base);
-        let kept = &base.as_ref().unwrap().haze.as_ref().unwrap().reduced;
+        let kept = base.as_ref().unwrap().kept.haze_copy().unwrap();
         assert!(
             Arc::ptr_eq(kept, &reduced),
             "the move fitted from the kept copy"
@@ -1800,17 +1844,6 @@ fn a_dehaze_move_from_the_kept_copy_is_a_fresh_develop() {
             "sharpen {sharpen}: the move's picture is not a fresh develop's"
         );
     }
-}
-
-#[test]
-fn the_blend_is_linear_and_shares_at_the_ends() {
-    let model = Arc::new(WorkingImage::from_data(2, 1, vec![1.0; 6]).unwrap());
-    let plain = Arc::new(WorkingImage::from_data(2, 1, vec![0.0; 6]).unwrap());
-    assert!(Arc::ptr_eq(&blend(&model, &plain, 1.0), &model));
-    assert!(Arc::ptr_eq(&blend(&model, &plain, 0.0), &plain));
-    assert!(Arc::ptr_eq(&blend(&model, &plain, 2.0), &model));
-    let half = blend(&model, &plain, 0.25);
-    assert!(half.data.iter().all(|v| (*v - 0.25).abs() < 1e-6));
 }
 
 pub(super) fn thumb_scratch(name: &str) -> PathBuf {
@@ -2354,20 +2387,10 @@ fn a_kept_stand_in_base_still_says_its_denoiser_was_missing() {
     edit.noise.learned = greycard_edit::Learned::Fast;
     let deliver: Deliver = Arc::new(|_| {});
     let input = Input::Raw(frame);
-    let (mut base, mut learned) = (None, None);
-    let mut develop = |edit: &Edit, base: &mut Option<Base>| {
+    let mut base = None;
+    let mut develop = |edit: &Edit, base: &mut Option<FrameKept>| {
         develop_job(
-            &input,
-            edit,
-            0,
-            1,
-            base,
-            &mut learned,
-            &mut ai,
-            None,
-            None,
-            &mut None,
-            &deliver,
+            &input, edit, 0, 1, base, &mut ai, None, None, &mut None, &deliver,
         )
         .0
     };
@@ -2487,14 +2510,14 @@ fn a_raw_s_develop_carries_its_body_s_baseline() {
     develop_once(&Arc::new(frame.clone()), &mut base, &mut None);
     let b = greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"));
     assert_eq!(
-        base.as_ref().expect("a base").source,
+        base.as_ref().expect("a base").meta.source,
         greycard_render::finish::Source::Scene(greycard_render::finish::Baseline::of_stops(b))
     );
     (frame.make, frame.model) = ("Canon".into(), "Canon EOS R5 Mark II".into());
     let mut base = None;
     develop_once(&Arc::new(frame), &mut base, &mut None);
     assert_eq!(
-        base.expect("a base").source,
+        base.expect("a base").meta.source,
         greycard_render::finish::Source::SCENE
     );
 }
@@ -2522,31 +2545,31 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     let edit = Edit::default();
     let key = shelf_key("a.CR3", &frame);
     let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-    let (mut base, mut learned) = (None, None);
+    let mut base = None;
     let first = develop_turned(&frame, &edit, 0, &mut base);
     let made = base.as_ref().expect("a base").image.clone();
 
     // Away to another file, whose base is made, and back.
     swap_base(
         &mut base,
-        &mut learned,
         &mut shelf,
         Some(key.clone()),
         None,
         &edit,
         0,
         None,
+        None,
     );
     assert!(base.is_none());
     develop_turned(&Arc::new(aberrated_frame(64, 48)), &edit, 0, &mut base);
     swap_base(
         &mut base,
-        &mut learned,
         &mut shelf,
         None,
         Some(&key),
         &edit,
         0,
+        None,
         None,
     );
     assert!(base.as_ref().is_some_and(|b| b.from_shelf));
@@ -2574,12 +2597,12 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     };
     swap_base(
         &mut base,
-        &mut learned,
         &mut shelf,
         Some(key.clone()),
         Some(&key),
         &warmer,
         0,
+        None,
         None,
     );
     assert!(base.is_none());
@@ -2614,42 +2637,42 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
         _ => panic!("a texture on the device"),
     };
     let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-    let (mut base, mut learned) = (None, None);
+    let mut base = None;
     let first = texture(develop_once(&frame, &mut base, &mut gpu).0);
     let b = base.as_ref().expect("a base");
-    assert!(b.on_gpu && b.pre.is_some() && b.uploaded.is_some());
+    assert!(b.on_gpu && b.kept.has_upload());
     let made = b.image.clone();
     drop(first);
 
     swap_base(
         &mut base,
-        &mut learned,
         &mut shelf,
         Some(key.clone()),
         None,
         &edit,
         0,
         gpu.as_ref(),
+        None,
     );
     develop_once(&Arc::new(aberrated_frame(200, 160)), &mut base, &mut gpu);
     swap_base(
         &mut base,
-        &mut learned,
         &mut shelf,
         None,
         Some(&key),
         &edit,
         0,
         gpu.as_ref(),
+        None,
     );
     let b = base.as_ref().expect("taken back");
     assert!(Arc::ptr_eq(&b.image, &made) && b.from_shelf);
-    assert!(b.pre.is_none() && b.uploaded.is_none() && b.haze.is_none());
+    assert!(!b.kept.on_device(Keep::PreSharpen) && !b.kept.has_upload() && !b.kept.has_haze());
 
     let back = texture(develop_once(&frame, &mut base, &mut gpu).0);
     let b = base.as_ref().expect("the base");
     assert!(Arc::ptr_eq(&b.image, &made), "kept, not made again");
-    assert!(b.pre.is_some() && b.uploaded.is_some(), "uploaded again");
+    assert!(b.kept.has_upload(), "uploaded again");
     let ctx = gpu.as_ref().expect("the device kept");
     let back = read_viewport(ctx, &back);
 
@@ -2702,7 +2725,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
     let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
     let n = neighbor_at(b, edit.clone(), Side::Next);
     assert_eq!(
-        prefetch(&n, None, &mut shelf, None, None, &|| Ahead::Nothing),
+        prefetch(&n, None, &mut shelf, &mut None, None, &|_| Ahead::Nothing),
         Fetched::Landed
     );
     assert_eq!(shelf.len(), 1);
@@ -2718,14 +2741,13 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
             |l| l.starts_with("prefetched pf-took-B.dng, the next frame: decode ")
                 && l.contains(", prepare ")
                 && l.contains(", demosaic ")
-                && l.contains(", finish ")
-                && l.contains(", guide ")
+                && l.contains(", move into the working space ")
                 && l.contains("; the shelf: 1 base(s)")
         ),
         "{lines:?}"
     );
     assert!(matches!(
-        prefetch(&n, None, &mut shelf, None, None, &|| Ahead::Nothing),
+        prefetch(&n, None, &mut shelf, &mut None, None, &|_| Ahead::Nothing),
         Fetched::Skipped(why) if why == "its base is on the shelf"
     ));
     assert_eq!(shelf.len(), 1);
@@ -2734,15 +2756,15 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
     // decode, the base taken back, and the develop from it.
     let (input, _) = open(b).expect("our DNG decodes");
     let key = FileKey::of(b).expect("on the disk").decoded(&input);
-    let (mut base, mut learned) = (None, None);
+    let mut base = None;
     swap_base(
         &mut base,
-        &mut learned,
         &mut shelf,
         None,
         Some(&key),
         &edit,
         0,
+        None,
         None,
     );
     assert!(base.as_ref().is_some_and(|b| b.from_shelf), "taken back");
@@ -2753,14 +2775,13 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
     );
     let taken = base.as_ref().unwrap().image.clone();
     let deliver: Deliver = Arc::new(|_| {});
-    let develop = |base: &mut Option<Base>| {
+    let develop = |base: &mut Option<FrameKept>| {
         develop_job(
             &input,
             &edit,
             0,
             1,
             base,
-            &mut None,
             &mut Ai::new(),
             None,
             None,
@@ -2784,7 +2805,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
 
 /// Anything asked for while a prefetch is in hand stops it at the next
 /// stage, and nothing of it is kept: before the prepare (after the
-/// decode), the demosaic, the finish, and the lens step. The open of
+/// decode), the demosaic, and the move into the working space. The open of
 /// the very frame it is making does not; that is said once, and the
 /// base lands.
 #[test]
@@ -2793,10 +2814,14 @@ fn a_request_stops_a_prefetch_between_its_stages() {
     use super::shelf::{Budget, Shelf};
     let (dir, paths) = dngs("prefetch-stop", &["pf-stop-B.dng"], 96, 64);
     let n = neighbor_at(&paths[0], Edit::default(), Side::Previous);
-    for (asked, stage) in [(1, "prepare"), (2, "demosaic"), (3, "finish"), (4, "lens")] {
+    for (asked, stage) in [
+        (1, "prepare"),
+        (2, "demosaic"),
+        (3, "move into the working space"),
+    ] {
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
         let calls = std::cell::Cell::new(0);
-        let ahead = || {
+        let ahead = |_: &crate::stages::Facts| {
             calls.set(calls.get() + 1);
             if calls.get() >= asked {
                 Ahead::Work
@@ -2804,10 +2829,10 @@ fn a_request_stops_a_prefetch_between_its_stages() {
                 Ahead::Nothing
             }
         };
-        assert_eq!(
-            prefetch(&n, None, &mut shelf, None, None, &ahead),
-            Fetched::Abandoned(stage)
-        );
+        assert!(matches!(
+            prefetch(&n, None, &mut shelf, &mut None, None, &ahead),
+            Fetched::Abandoned(at, _) if at == stage
+        ));
         assert_eq!(shelf.len(), 0, "nothing kept when stopped before {stage}");
         assert_eq!(calls.get(), asked, "asked once a stage");
     }
@@ -2817,7 +2842,7 @@ fn a_request_stops_a_prefetch_between_its_stages() {
 
     let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
     assert_eq!(
-        prefetch(&n, None, &mut shelf, None, None, &|| Ahead::ItsOpen),
+        prefetch(&n, None, &mut shelf, &mut None, None, &|_| Ahead::ItsOpen),
         Fetched::Landed
     );
     assert_eq!(shelf.len(), 1);
@@ -2860,9 +2885,9 @@ fn a_learned_frame_and_the_open_one_are_not_prefetched() {
             &neighbor_at(&nowhere, learned, Side::Next),
             None,
             &mut shelf,
+            &mut None,
             None,
-            None,
-            &|| Ahead::Nothing
+            &|_| Ahead::Nothing
         ),
         Fetched::Skipped("its edit asks for the learned denoiser".into())
     );
@@ -2887,9 +2912,9 @@ fn a_learned_frame_and_the_open_one_are_not_prefetched() {
             &neighbor_at(&paths[0], Edit::default(), Side::Next),
             Some((paths[0].as_path(), open_one)),
             &mut shelf,
+            &mut None,
             None,
-            None,
-            &|| Ahead::Nothing
+            &|_| Ahead::Nothing
         ),
         Fetched::Skipped(why) if why == "its base is the open frame's"
     ));
@@ -3476,7 +3501,7 @@ fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
         let redo = super::engine::lose_gpu(&mut gpu, &mut base, &mut shown, &mut last, again);
         assert!(gpu.is_none() && shown.is_none());
         let b = base.as_ref().unwrap();
-        assert!(b.uploaded.is_none() && b.pre.is_none());
+        assert!(!b.kept.has_upload() && !b.kept.on_device(Keep::PreSharpen));
         if !again {
             assert!(redo.is_none());
             continue;
@@ -3643,7 +3668,7 @@ fn the_guide_is_made_after_the_retouch() {
     );
     develop_picture(&input, &edit, &mut base, &mut None);
     let b = base.as_ref().unwrap();
-    let (_, patched, _, _) = b.patched.as_ref().expect("the retouch is kept");
+    let patched = b.kept.patched().expect("the retouch is kept").image;
     let px = &patched.data[(128 * 256 + 128) * 3..][..3];
     assert!((px[1] - 0.4).abs() < 1e-3, "the clone took the bar: {px:?}");
     let at = (b.guide.at(bar.0, bar.1), b.guide.at(beside.0, beside.1));
@@ -3668,7 +3693,7 @@ fn a_cleared_retouch_brings_back_the_bases_guide() {
     assert_ne!(base.as_ref().unwrap().guide.data, own);
     develop_picture(&input, &Edit::default(), &mut base, &mut None);
     let b = base.as_ref().unwrap();
-    assert!(b.patched.is_none());
+    assert!(b.kept.patched().is_none());
     assert_eq!(b.guide.data, own);
 }
 
@@ -3693,19 +3718,9 @@ fn develop_and_walk(
     };
     let deliver: Deliver = Arc::new(|_| {});
     let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
-    let (mut base, mut learned) = (None, None);
+    let mut base = None;
     let (outcome, image) = develop_job(
-        input,
-        edit,
-        turn,
-        0,
-        &mut base,
-        &mut learned,
-        &mut ai,
-        None,
-        None,
-        &mut None,
-        &deliver,
+        input, edit, turn, 0, &mut base, &mut ai, None, None, &mut None, &deliver,
     );
     let mut said = left_out_of(&outcome, base.as_ref());
     let (mut developed, masks) =
@@ -3718,7 +3733,7 @@ fn develop_and_walk(
         input.clone(),
         edit,
         turn,
-        &mut super::export::ExportModels::new(&mut ai, None, &deliver, 0),
+        &mut super::base::WorkerModels::new(&mut ai, None, &deliver, 0),
         None,
         &settings,
     )
@@ -3947,7 +3962,6 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
         0,
         1,
         &mut base,
-        &mut None,
         &mut Ai::new(),
         None,
         None,
@@ -3961,7 +3975,7 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     let developed = image.unwrap();
     assert!(*picture == greycard_render::refine::mask_picture(&developed));
     let b = base.as_ref().unwrap();
-    let patched = b.patched.as_ref().map_or(b.image.clone(), |p| p.1.clone());
+    let patched = b.patched_picture();
     assert!(*picture != greycard_render::refine::mask_picture(&patched));
     assert!(b.mask_picture.is_some());
     // The open frame's own pictures (`keep`) are made against it too.
@@ -3988,7 +4002,6 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
         0,
         2,
         &mut base,
-        &mut None,
         &mut Ai::new(),
         None,
         None,
@@ -4008,6 +4021,44 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     assert!(*made == *picture);
     assert!(masks::kept_picture(b, &edit).is_some());
     assert!(masks::picture_for(b, &plain, None).is_none());
+}
+
+/// On the CPU a move after the picture before the sharpen (the
+/// sharpen itself) taps the refined masks' picture no more: the one
+/// kept is handed out again.
+#[test]
+fn a_sharpen_move_keeps_the_refined_masks_picture() {
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let mut develop = |edit: &Edit| {
+        let (outcome, _) = develop_job(
+            &Input::Raw(frame.clone()),
+            edit,
+            0,
+            1,
+            &mut base,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut None,
+            &deliver,
+        );
+        let Outcome::Developed { guide, .. } = outcome else {
+            panic!("developed")
+        };
+        guide.picture.clone().expect("a picture beside the guide")
+    };
+    let mut edit = refining(0.4);
+    edit.sharpen.enabled = true;
+    let first = develop(&edit);
+    edit.sharpen.iterations += 1;
+    assert!(Arc::ptr_eq(&develop(&edit), &first), "kept");
+    edit.detail.dehaze = 0.6;
+    assert!(
+        !Arc::ptr_eq(&develop(&edit), &first),
+        "a Dehaze move taps it again"
+    );
 }
 
 /// A set frame's walk makes the refined masks' picture after the
@@ -4145,7 +4196,6 @@ fn with_the_gpu_the_refined_masks_picture_is_read_back() {
             0,
             1,
             &mut base,
-            &mut None,
             &mut Ai::new(),
             None,
             None,

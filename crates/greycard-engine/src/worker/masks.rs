@@ -12,7 +12,7 @@ type Rasters = std::collections::HashMap<(u64, usize), Arc<Raster>>;
 /// whose model is not downloaded or failed.
 pub(super) fn learned_masks(
     edit: &Edit,
-    base: Option<&Base>,
+    base: Option<&FrameKept>,
     ai: &mut Ai,
 ) -> (Rasters, Vec<String>) {
     let mut left_out: Vec<String> = look_left_out(edit).into_iter().collect();
@@ -27,7 +27,7 @@ pub(super) fn learned_masks(
             image: &b.image,
             retouched: retouched_of(b, Some(edit)),
             edit: &b.edit,
-            source: b.source,
+            source: b.meta.source,
             turn: b.turn,
         },
     );
@@ -137,17 +137,17 @@ pub(super) fn learned_rasters(edit: &Edit, ai: &mut Ai, on: &On<'_>) -> (Rasters
 /// retouch (any edit for `None`): the picture a learned shape a patch
 /// meets is made on ([`Ai::raster_retouched`]).
 pub(super) fn retouched_of<'a>(
-    b: &'a Base,
+    b: &'a FrameKept,
     edit: Option<&Edit>,
 ) -> Option<crate::ai::Retouched<'a>> {
-    let (retouch, image, _, unmade) = b.patched.as_ref()?;
-    if edit.is_some_and(|e| !same_retouch(&e.retouch, retouch)) {
+    let patched = b.kept.patched()?;
+    if edit.is_some_and(|e| !same_retouch(&e.retouch, patched.retouch)) {
         return None;
     }
     Some(crate::ai::Retouched {
-        retouch,
-        image,
-        unmade,
+        retouch: patched.retouch,
+        image: patched.image,
+        unmade: patched.unmade,
     })
 }
 
@@ -173,7 +173,7 @@ pub(super) fn same_retouch(edit: &Retouch, applied: &Retouch) -> bool {
 /// again, behind the develop.
 pub(super) fn to_ask_again(
     edit: &Edit,
-    base: Option<&Base>,
+    base: Option<&FrameKept>,
     ai: &Ai,
 ) -> Vec<(Key, Shape, Option<&'static greycard_ai::Model>)> {
     let Some(b) = base else {
@@ -346,7 +346,7 @@ pub(super) fn person_on(
 
 /// The picture before the sharpen, where a develop has it.
 pub(super) enum Pre<'a> {
-    /// On the CPU.
+    /// In memory.
     Cpu(&'a WorkingImage),
     /// The viewport's texture the GPU's Detail section wrote, with the
     /// sharpen off: the picture before the sharpen as it is shown.
@@ -368,7 +368,7 @@ const BAND: usize = 256;
 /// is read back a band at a time, straight into the masks' grid. Kept
 /// on the base for the next develop of the same picture and section.
 pub(super) fn mask_picture(
-    b: &mut Base,
+    b: &mut FrameKept,
     patched: &Arc<WorkingImage>,
     edit: &Edit,
     pre: Pre<'_>,
@@ -401,16 +401,21 @@ pub(super) fn mask_picture(
             })
         }
         Pre::Find(gpu) => gpu
-            .zip(b.pre.as_ref())
-            .filter(|(_, p)| Arc::ptr_eq(&p.patched, patched) && p.detail == edit.detail)
-            .and_then(|(ctx, p)| {
-                let (w, h) = (p.image.width() as usize, p.image.height() as usize);
+            .zip(b.kept.device_picture(crate::stages::Keep::PreSharpen))
+            .filter(|_| {
+                b.pre
+                    .as_ref()
+                    .is_some_and(|(p, detail)| Arc::ptr_eq(p, patched) && *detail == edit.detail)
+            })
+            .and_then(|(ctx, image)| {
+                let (w, h) = (image.width() as usize, image.height() as usize);
                 mask_picture_by_bands(w, h, BAND, |y, n| {
-                    ctx.download_rows(&p.image, y as u32, n as u32).ok()
+                    ctx.download_rows(image, y as u32, n as u32).ok()
                 })
             }),
     };
-    let picture = Arc::new(read.unwrap_or_else(|| made(&pre_sharpen(patched, edit, b.clip_level))));
+    let picture =
+        Arc::new(read.unwrap_or_else(|| made(&pre_sharpen(patched, edit, b.meta.clip_level))));
     tracing::info!(
         "the refined masks' picture: {:.3} s",
         started.elapsed().as_secs_f64()
@@ -427,16 +432,13 @@ pub(super) fn mask_picture(
 /// it: when the edit refines a mask and the kept one is of the base's
 /// patched picture under the edit's Detail section. None otherwise.
 pub(super) fn kept_picture(
-    b: &Base,
+    b: &FrameKept,
     edit: &Edit,
 ) -> Option<Arc<greycard_render::refine::MaskPicture>> {
     if !greycard_render::refine::refines(edit) {
         return None;
     }
-    let patched = b
-        .patched
-        .as_ref()
-        .map_or_else(|| b.image.clone(), |p| p.1.clone());
+    let patched = b.patched_picture();
     b.mask_picture
         .as_ref()
         .filter(|k| Arc::ptr_eq(&k.patched, &patched) && k.detail == edit.detail)
@@ -447,17 +449,14 @@ pub(super) fn kept_picture(
 /// or made now from the base's patched picture (read back from the
 /// GPU's when that is it): None when the edit refines no mask.
 pub(super) fn picture_for(
-    b: &mut Base,
+    b: &mut FrameKept,
     edit: &Edit,
     gpu: Option<&greycard_gpu::Context>,
 ) -> Option<Arc<greycard_render::refine::MaskPicture>> {
     if !greycard_render::refine::refines(edit) {
         return None;
     }
-    let patched = b
-        .patched
-        .as_ref()
-        .map_or_else(|| b.image.clone(), |p| p.1.clone());
+    let patched = b.patched_picture();
     Some(mask_picture(b, &patched, edit, Pre::Find(gpu)))
 }
 
@@ -475,10 +474,10 @@ pub(super) fn pre_sharpen<'a>(
     }
     let mut image = (**patched).clone();
     if let Some(options) = local {
-        local_contrast(&mut image, &options, clip_level);
+        greycard_core::develop::local_contrast::local_contrast(&mut image, &options, clip_level);
     }
     if let Some(options) = haze {
-        dehaze::dehaze(&mut image, &options);
+        greycard_core::develop::dehaze::dehaze(&mut image, &options);
     }
     std::borrow::Cow::Owned(image)
 }
@@ -486,7 +485,7 @@ pub(super) fn pre_sharpen<'a>(
 /// `b`'s guide plane with the refined masks' `picture` beside it, when
 /// there is one: a plane of its own, so the base's stays without.
 pub(super) fn guide_with(
-    b: &Base,
+    b: &FrameKept,
     picture: Option<Arc<greycard_render::refine::MaskPicture>>,
 ) -> Arc<greycard_render::finish::Guide> {
     match picture {

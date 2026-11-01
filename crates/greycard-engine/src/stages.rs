@@ -780,6 +780,17 @@ pub fn stages(
     s
 }
 
+/// Whether `a` and `b` make the same base of the frame `facts`
+/// describes: the same steps to it, as a prefetch would take them.
+pub fn same_base(
+    a: &Edit,
+    b: &Edit,
+    facts: &Facts,
+    lenses: Option<&greycard_lens::Database>,
+) -> bool {
+    stages(a, &Purpose::Prefetch, facts, lenses) == stages(b, &Purpose::Prefetch, facts, lenses)
+}
+
 /// The long edge of the edit's pictures.
 pub const BIG: u32 = 2048;
 

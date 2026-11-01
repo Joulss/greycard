@@ -141,6 +141,21 @@ pub struct Meta {
 }
 
 impl Meta {
+    /// Nothing measured yet.
+    pub fn empty() -> Self {
+        Self {
+            white: None,
+            clip_level: f32::INFINITY,
+            radius: None,
+            source: Source::default(),
+            profile: None,
+            full: (0, 0),
+            bin: 1,
+            gave_way: None,
+            stood_in: None,
+        }
+    }
+
     /// The masks' white balances are made from this develop's white
     /// and the profile it was resolved through.
     pub fn white_shift(&self) -> Option<WhiteShift> {
@@ -282,6 +297,21 @@ pub trait Hold {
     fn give_way(&self, _next: &Stage) -> bool {
         false
     }
+
+    /// Whether a device error short of a lost device leaves the
+    /// session its context, this walk going on on the CPU: a walk
+    /// nobody waits on (a prefetch) is not worth the session's device
+    /// over a failure that may be its own, such as running out of
+    /// memory on a large neighbor.
+    fn keeps_device(&self) -> bool {
+        false
+    }
+}
+
+/// Whether `e`, met by a walk under `hold`, leaves the session its
+/// context.
+fn keeps_device(hold: &dyn Hold, e: &greycard_gpu::Error) -> bool {
+    hold.keeps_device() && !matches!(e, greycard_gpu::Error::Lost(_))
 }
 
 /// Nothing to hold and never a give-way: headless export's and the
@@ -324,6 +354,28 @@ struct Applied {
     unmade: Vec<u64>,
 }
 
+/// What the stages up to a kept point measured, and the sources the
+/// retouch chose: a walk that starts from the point reports them as
+/// its own, since its picture is theirs.
+#[derive(Clone, Default)]
+struct Ran {
+    ca: Option<CaStats>,
+    detail: Option<LocalContrastStats>,
+    dehaze: Option<DehazeStats>,
+    sources: Vec<Patch>,
+}
+
+impl Ran {
+    fn of(walked: &Walked) -> Self {
+        Self {
+            ca: walked.ca,
+            detail: walked.detail,
+            dehaze: walked.dehaze,
+            sources: walked.sources.clone(),
+        }
+    }
+}
+
 /// One point a walk kept.
 #[derive(Clone)]
 struct Point {
@@ -336,6 +388,7 @@ struct Point {
     /// The retouch this point's picture carries; none before the
     /// retouch.
     retouch: Option<Applied>,
+    ran: Ran,
 }
 
 /// What walks keep for the walks after them.
@@ -345,11 +398,17 @@ pub struct Kept {
     /// The masks' bands, with the steps to the picture they were made
     /// from and what was asked of them.
     planes: Option<KeptPlanes>,
-    /// A picture's upload, with the steps to it.
-    uploaded: Option<(Vec<Step>, Arc<greycard_gpu::Image>)>,
+    /// A picture's upload, with the picture it was made from: the very
+    /// one, not one of the same steps, since a picture made again with
+    /// a step in another place (the CA on the CPU for an export) is not
+    /// the same to the bit.
+    uploaded: Option<(Arc<WorkingImage>, Arc<greycard_gpu::Image>)>,
     /// The dehaze's reduced copy on the device's picture, with the
     /// steps to the picture it was read off.
     haze: Option<(Vec<Step>, Arc<dehaze::Reduced>)>,
+    /// The refined masks' picture, with the steps to the picture it
+    /// was tapped from.
+    mask_picture: Option<(Vec<Step>, Arc<greycard_render::refine::MaskPicture>)>,
 }
 
 #[derive(Clone)]
@@ -358,6 +417,21 @@ struct KeptPlanes {
     wants: DetailWants,
     haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
     planes: Arc<DetailPlanes>,
+}
+
+impl KeptPlanes {
+    /// Whether these are the bands of the picture `to` makes, with
+    /// every band `wants` asks for and a haze read after `haze_after`.
+    fn serves(
+        &self,
+        to: &[Step],
+        wants: &DetailWants,
+        haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
+    ) -> bool {
+        same_picture(&self.steps, to)
+            && self.wants.covers(wants)
+            && (!wants.haze || self.haze_after == haze_after)
+    }
 }
 
 /// Whether a point that ran at `kept` may serve a plan of `plan`: a
@@ -484,59 +558,111 @@ impl Kept {
         let index = keep[..best].iter().filter(|k| **k).count();
         let mut flags = keep.into_iter();
         self.points.retain(|_| flags.next().unwrap_or(false));
+        self.drop_orphaned_upload();
         Some(index)
     }
 
-    /// A kept base or pair made at another turn, turned to this one
-    /// where nothing after the turn minds which way up it is: the
-    /// index of the point, now turned.
+    /// The kept base and the learned pair made at another turn, each
+    /// turned to this one where nothing after the turn minds which way
+    /// up it is: the index of the later of them, now turned. A base
+    /// blended at an end of the strength shares the pair's picture, and
+    /// still does turned. The masks' tap reads the base, so it reads the
+    /// turned one.
     fn turned(&mut self, steps: &Steps, plan: &[Place]) -> Option<usize> {
         let want = turnless(&steps.steps);
-        let i = self.points.iter().position(|p| {
+        let to = turn_of(&steps.steps[..])?;
+        let fits = |p: &Point| {
             matches!(p.keep, Keep::Base | Keep::Pair)
+                && !matches!(p.buf, KeptBuf::Device(_))
                 && allowed(&p.places, plan)
                 && turnless(&p.steps) == want[..turnless(&p.steps).len().min(want.len())]
                 && commutes_after_turn(&p.steps)
-        })?;
-        let p = &self.points[i];
-        let from = turn_of(&p.steps)?;
-        let to = turn_of(&steps.steps[..])?;
-        let q = relative(from, to)?;
-        let o = quarters(q).expect("a turn that moves");
-        let n = steps
-            .steps
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| matches!(s, Step::Keep(k) if *k == p.keep))
-            .map(|(i, _)| i)
-            .next()?;
-        let mut p = self.points.swap_remove(i);
-        let turn = |image: &Arc<WorkingImage>| Arc::new(core_develop::orient((**image).clone(), o));
-        p.buf = match &p.buf {
-            KeptBuf::Pair { model, plain } => KeptBuf::Pair {
-                model: turn(model),
-                plain: turn(plain),
-            },
-            KeptBuf::Working(image) => KeptBuf::Working(turn(image)),
-            KeptBuf::Device(_) => return None,
+                && steps.at(p.keep).is_some()
+                && turn_of(&p.steps)
+                    .and_then(|from| relative(from, to))
+                    .is_some()
         };
-        if q % 2 == 1 {
-            p.meta.full = (p.meta.full.1, p.meta.full.0);
+        if !self.points.iter().any(fits) {
+            return None;
         }
-        p.taps.masks = None;
-        p.steps = steps.steps[..=n].to_vec();
-        p.places = plan[..=n].to_vec();
-        self.points.clear();
+        let mut points: Vec<Point> = std::mem::take(&mut self.points)
+            .into_iter()
+            .filter(fits)
+            .collect();
+        points.sort_by_key(|p| p.steps.len());
+        // Each picture turned once, and shared on where it was shared.
+        let mut done: Vec<(*const WorkingImage, Arc<WorkingImage>)> = Vec::new();
+        for p in &mut points {
+            let from = turn_of(&p.steps).expect("fits");
+            let q = relative(from, to).expect("fits");
+            let o = quarters(q).expect("a turn that moves");
+            let mut turn = |image: &Arc<WorkingImage>| {
+                let at = Arc::as_ptr(image);
+                if let Some((_, t)) = done.iter().find(|(p, _)| *p == at) {
+                    return t.clone();
+                }
+                let t = Arc::new(core_develop::orient((**image).clone(), o));
+                done.push((at, t.clone()));
+                t
+            };
+            p.buf = match &p.buf {
+                KeptBuf::Pair { model, plain } => KeptBuf::Pair {
+                    model: turn(model),
+                    plain: turn(plain),
+                },
+                KeptBuf::Working(image) => KeptBuf::Working(turn(image)),
+                KeptBuf::Device(_) => unreachable!("fits"),
+            };
+            if let (KeptBuf::Working(image), Some((_, tapped))) = (&p.buf, p.taps.masks.as_mut()) {
+                *tapped = image.clone();
+            }
+            if q % 2 == 1 {
+                p.meta.full = (p.meta.full.1, p.meta.full.0);
+            }
+            let n = steps.at(p.keep).expect("fits");
+            p.steps = steps.steps[..=n].to_vec();
+            p.places = plan[..=n].to_vec();
+        }
         self.planes = None;
         self.uploaded = None;
         self.haze = None;
-        self.points.push(p);
-        Some(0)
+        self.points = points;
+        Some(self.points.len() - 1)
     }
 
     fn put(&mut self, point: Point) {
         self.points.retain(|p| p.keep != point.keep);
         self.points.push(point);
+        self.drop_orphaned_upload();
+    }
+
+    /// The upload, and the dehaze's copy read off its run, let go once
+    /// no point holds the picture it was made from: that picture was
+    /// made again (an export's, with the CA on the CPU), and the upload
+    /// would hold the old one for nothing until the next run.
+    fn drop_orphaned_upload(&mut self) {
+        let held = |from: &Arc<WorkingImage>| {
+            self.points
+                .iter()
+                .any(|p| matches!(&p.buf, KeptBuf::Working(image) if Arc::ptr_eq(image, from)))
+        };
+        if self.uploaded.as_ref().is_some_and(|(from, _)| !held(from)) {
+            self.uploaded = None;
+            self.haze = None;
+        }
+    }
+
+    /// Take the picture kept in memory at `keep` out of what is kept.
+    pub fn take_working(&mut self, keep: Keep) -> Option<Arc<WorkingImage>> {
+        let i = self
+            .points
+            .iter()
+            .position(|p| p.keep == keep && matches!(p.buf, KeptBuf::Working(_)))?;
+        let KeptBuf::Working(image) = self.points.remove(i).buf else {
+            unreachable!("found in memory")
+        };
+        self.drop_orphaned_upload();
+        Some(image)
     }
 
     /// Let go of everything kept on the device: its context is gone.
@@ -544,6 +670,174 @@ impl Kept {
         self.points.retain(|p| !matches!(p.buf, KeptBuf::Device(_)));
         self.uploaded = None;
         self.haze = None;
+    }
+
+    /// What a frame left behind keeps: the learned pair, the base, and
+    /// the patched picture, in memory. Everything on the device goes,
+    /// which it would hold for a frame not on screen, and the masks'
+    /// bands, which are made again beside the develop and cost as much
+    /// as the base.
+    pub fn shelve(&mut self) {
+        self.forget_device();
+        self.points
+            .retain(|p| matches!(p.keep, Keep::Pair | Keep::Base | Keep::Patched));
+        self.planes = None;
+        self.mask_picture = None;
+    }
+
+    /// Nothing kept at all.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The picture kept at `keep`, when it is one in memory.
+    pub fn picture(&self, keep: Keep) -> Option<&Arc<WorkingImage>> {
+        self.points
+            .iter()
+            .find(|p| p.keep == keep)
+            .and_then(|p| match &p.buf {
+                KeptBuf::Working(image) => Some(image),
+                _ => None,
+            })
+    }
+
+    /// What the develop measured of the picture kept at `keep`.
+    pub fn meta(&self, keep: Keep) -> Option<&Meta> {
+        self.points.iter().find(|p| p.keep == keep).map(|p| &p.meta)
+    }
+
+    /// The patched picture, when a retouch made it, with the retouch as
+    /// it was applied and the Fill patches it left as they were.
+    pub fn patched(&self) -> Option<Patched<'_>> {
+        let p = self.points.iter().find(|p| p.keep == Keep::Patched)?;
+        match (&p.buf, &p.retouch) {
+            (KeptBuf::Working(image), Some(applied)) => Some(Patched {
+                image,
+                retouch: &applied.retouch,
+                unmade: &applied.unmade,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The masks' bands kept, when they hold every band `wants` asks
+    /// for, with the haze read after `haze_after` when it asks for one.
+    pub fn planes_for(
+        &self,
+        wants: &DetailWants,
+        haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
+    ) -> Option<Arc<DetailPlanes>> {
+        self.planes
+            .as_ref()
+            .filter(|k| k.wants.covers(wants) && (!wants.haze || k.haze_after == haze_after))
+            .map(|k| k.planes.clone())
+    }
+
+    /// Whether the base kept here and the one `other` keeps are the
+    /// same picture: made by the same steps.
+    pub fn same_base(&self, other: &Kept) -> bool {
+        let steps = |k: &Kept| {
+            k.points
+                .iter()
+                .find(|p| p.keep == Keep::Base)
+                .map(|p| p.steps.clone())
+        };
+        match (steps(self), steps(other)) {
+            (Some(a), Some(b)) => same_picture(&a, &b),
+            _ => false,
+        }
+    }
+
+    /// The refined masks' picture a walk on the CPU tapped.
+    pub fn mask_picture(&self) -> Option<&Arc<greycard_render::refine::MaskPicture>> {
+        self.mask_picture.as_ref().map(|(_, picture)| picture)
+    }
+
+    /// The bytes of the pictures kept in memory, each counted once
+    /// however many points share it, and the refined masks' picture.
+    pub fn bytes(&self) -> u64 {
+        let mut seen: Vec<*const WorkingImage> = Vec::new();
+        let mut total = 0u64;
+        let mut count = |image: &Arc<WorkingImage>| {
+            let at = Arc::as_ptr(image);
+            if !seen.contains(&at) {
+                seen.push(at);
+                total += (image.data.len() * std::mem::size_of::<f32>()) as u64;
+            }
+        };
+        for p in &self.points {
+            match &p.buf {
+                KeptBuf::Pair { model, plain } => {
+                    count(model);
+                    count(plain);
+                }
+                KeptBuf::Working(image) => count(image),
+                KeptBuf::Device(_) => {}
+            }
+        }
+        total + self.mask_picture().map_or(0, |p| p.bytes())
+    }
+
+    /// Whether the point at `keep` is a picture on the device.
+    pub fn on_device(&self, keep: Keep) -> bool {
+        self.points
+            .iter()
+            .any(|p| p.keep == keep && matches!(p.buf, KeptBuf::Device(_)))
+    }
+
+    /// The steps for which `stage` holds marked as run on the device,
+    /// as a run there would have left them: for the tests of what a
+    /// device's points serve.
+    #[cfg(test)]
+    pub(crate) fn as_if_on_device(&mut self, stage: impl Fn(&Stage) -> bool) {
+        for p in &mut self.points {
+            for (s, place) in p.steps.iter().zip(p.places.iter_mut()) {
+                if matches!(s, Step::Op(op) if stage(op)) {
+                    *place = Place::Gpu;
+                }
+            }
+        }
+    }
+
+    /// The patched picture's upload, for the tests of what is kept.
+    #[cfg(test)]
+    pub(crate) fn upload(&self) -> Option<&Arc<greycard_gpu::Image>> {
+        self.uploaded.as_ref().map(|(_, image)| image)
+    }
+
+    /// The dehaze's reduced copy, for the tests of what is kept.
+    #[cfg(test)]
+    pub(crate) fn haze_copy(&self) -> Option<&Arc<dehaze::Reduced>> {
+        self.haze.as_ref().map(|(_, reduced)| reduced)
+    }
+
+    /// The picture kept on the device at `keep`.
+    pub fn device_picture(&self, keep: Keep) -> Option<&Arc<greycard_gpu::Image>> {
+        self.points.iter().find_map(|p| match &p.buf {
+            KeptBuf::Device(image) if p.keep == keep => Some(image),
+            _ => None,
+        })
+    }
+
+    /// Whether the patched picture's upload is kept on the device.
+    pub fn has_upload(&self) -> bool {
+        self.uploaded.is_some()
+    }
+
+    /// Whether the dehaze's reduced copy is kept.
+    pub fn has_haze(&self) -> bool {
+        self.haze.is_some()
+    }
+
+    /// Whether the step `stage` of the point kept at `keep` ran on the
+    /// device.
+    pub fn ran_on_device(&self, keep: Keep, stage: impl Fn(&Stage) -> bool) -> bool {
+        self.points.iter().any(|p| {
+            p.keep == keep
+                && p.steps.iter().zip(&p.places).any(|(s, place)| {
+                    matches!(s, Step::Op(op) if stage(op)) && *place == Place::Gpu
+                })
+        })
     }
 }
 
@@ -635,6 +929,9 @@ pub struct Walked {
     pub without: Vec<String>,
     /// The kept point the walk started from; none for the decode.
     pub from: Option<Keep>,
+    /// The step the walk started at: the ones before it are the kept
+    /// point's, and their stats are what it measured then.
+    pub begin: usize,
     /// Where each step ran, the kept ones as they ran then.
     pub places: Vec<Place>,
     /// The seconds each stage took, in order, for the log.
@@ -647,6 +944,8 @@ struct Carried {
     meta: Meta,
     taps: Taps,
     retouch: Option<Applied>,
+    /// What the stages before the walk's start measured.
+    ran: Ran,
     /// The prepare's settings, which the demosaic, the denoise, and
     /// the move into the working space read.
     settings: DevelopSettings,
@@ -814,6 +1113,24 @@ fn start(
         if let (Some(how), Some((made, _))) = (how, taps.masks.as_mut()) {
             *made = how;
         }
+        // The masks' bands are made beside the run on the device and land
+        // after its keeps are put: a point kept there holds none, and the
+        // walk resumed from it does not pass their tap again.
+        if taps.planes.is_none() {
+            taps.planes = steps.steps[..at]
+                .iter()
+                .enumerate()
+                .find_map(|(t, s)| match s {
+                    Step::Tap(Tap::Planes {
+                        wants, haze_after, ..
+                    }) => kept
+                        .planes
+                        .as_ref()
+                        .filter(|k| k.serves(&steps.steps[..t], wants, *haze_after))
+                        .map(|k| k.planes.clone()),
+                    _ => None,
+                });
+        }
         let settings = steps
             .ops()
             .find_map(|s| match s {
@@ -828,6 +1145,7 @@ fn start(
                 meta: p.meta.clone(),
                 taps,
                 retouch: p.retouch.clone(),
+                ran: p.ran.clone(),
                 settings,
             },
             Some(p.keep),
@@ -873,6 +1191,7 @@ fn start(
             meta,
             taps: Taps::default(),
             retouch: None,
+            ran: Ran::default(),
             settings: DevelopSettings::default(),
         },
         None,
@@ -896,19 +1215,21 @@ fn attempt(
     // edit without the learned denoiser makes, so a point kept by the
     // one serves the other, and must not say a stand-in it never had.
     st.meta.stood_in = stood_in.clone();
+    let ran = std::mem::take(&mut st.ran);
     let mut walked = Walked {
         buf: Buf::Working(Arc::new(WorkingImage::new(0, 0))),
         meta: st.meta.clone(),
         taps: Taps::default(),
         rasters: Rasters::new(),
         sharpen_mask: None,
-        ca: None,
-        detail: None,
-        dehaze: None,
+        ca: ran.ca,
+        detail: ran.detail,
+        dehaze: ran.dehaze,
         sharpen: None,
-        sources: Vec::new(),
+        sources: ran.sources,
         without: Vec::new(),
         from,
+        begin,
         places: Vec::new(),
         seconds: Vec::new(),
     };
@@ -942,6 +1263,7 @@ fn attempt(
                     meta: st.meta.clone(),
                     taps: st.taps.clone(),
                     retouch: st.retouch.clone(),
+                    ran: Ran::of(&walked),
                 });
                 i += 1;
             }
@@ -960,12 +1282,22 @@ fn attempt(
                     }
                     Tap::Masks(how) => st.taps.masks = Some((*how, image.clone())),
                     Tap::MaskPicture => {
-                        let started = Instant::now();
-                        st.taps.picture =
-                            Some(Arc::new(greycard_render::refine::mask_picture(image)));
-                        walked
-                            .seconds
-                            .push(("mask picture", started.elapsed().as_secs_f64()));
+                        let to = &steps.steps[..i];
+                        match &kept.mask_picture {
+                            Some((s, picture)) if same_picture(s, to) => {
+                                st.taps.picture = Some(picture.clone());
+                            }
+                            _ => {
+                                let started = Instant::now();
+                                let picture =
+                                    Arc::new(greycard_render::refine::mask_picture(image));
+                                kept.mask_picture = Some((to.to_vec(), picture.clone()));
+                                st.taps.picture = Some(picture);
+                                walked
+                                    .seconds
+                                    .push(("mask picture", started.elapsed().as_secs_f64()));
+                            }
+                        }
                     }
                     Tap::Planes {
                         wants,
@@ -976,10 +1308,7 @@ fn attempt(
                         let kept_planes =
                             kept.planes.as_ref().filter(|k| same_picture(&k.steps, &to));
                         match kept_planes {
-                            Some(k)
-                                if k.wants.covers(wants)
-                                    && (!wants.haze || k.haze_after == *haze_after) =>
-                            {
+                            Some(k) if k.serves(&to, wants, *haze_after) => {
                                 st.taps.planes = Some(k.planes.clone());
                             }
                             k => {
@@ -1031,6 +1360,14 @@ fn attempt(
                             greycard_gpu::Error::Unsupported(why) => {
                                 log::info!("the {} on the CPU: {why}", stage.name());
                             }
+                            e if keeps_device(hold, &e) => {
+                                log::warn!(
+                                    "the GPU's {}: {e}; this frame on the CPU",
+                                    stage.name()
+                                );
+                                ctx.release();
+                                plan[i..].iter_mut().for_each(|p| *p = Place::Cpu);
+                            }
                             e => {
                                 log::warn!(
                                     "the GPU's {}: {e}; the CPU's from now on",
@@ -1056,6 +1393,17 @@ fn attempt(
                         ctx.release();
                         return Err(Retry::Cpu {
                             from: (i, end),
+                            keep_context: true,
+                        });
+                    }
+                    Err(e) if keeps_device(hold, &e) => {
+                        log::warn!(
+                            "the GPU's {}: {e}; this frame on the CPU",
+                            steps_name(steps, i)
+                        );
+                        ctx.release();
+                        return Err(Retry::Cpu {
+                            from: (i, plan.len()),
                             keep_context: true,
                         });
                     }
@@ -1433,22 +1781,21 @@ fn device_run(
         .expect("a run holds an op");
     let mut image = match &st.buf {
         Buf::Device(image) => image.clone(),
-        Buf::Working(picture) => {
-            let to = steps.steps[..i].to_vec();
-            match &kept.uploaded {
-                Some((s, image)) if same_picture(s, &to) => image.clone(),
-                _ => {
-                    kept.uploaded = None;
-                    let started = Instant::now();
-                    let image = Arc::new(ctx.upload(picture)?);
-                    walked
-                        .seconds
-                        .push(("upload", started.elapsed().as_secs_f64()));
-                    kept.uploaded = Some((to, image.clone()));
-                    image
-                }
+        Buf::Working(picture) => match &kept.uploaded {
+            Some((from, image)) if Arc::ptr_eq(from, picture) => image.clone(),
+            _ => {
+                // The dehaze's copy was read off the old upload's run.
+                kept.uploaded = None;
+                kept.haze = None;
+                let started = Instant::now();
+                let image = Arc::new(ctx.upload(picture)?);
+                walked
+                    .seconds
+                    .push(("upload", started.elapsed().as_secs_f64()));
+                kept.uploaded = Some((picture.clone(), image.clone()));
+                image
             }
-        }
+        },
         _ => unreachable!("a run on the device begins at a picture"),
     };
     let texture = shader.then(|| ctx.viewport_texture(image.width(), image.height()));
@@ -1467,6 +1814,7 @@ fn device_run(
                     meta: st.meta.clone(),
                     taps: st.taps.clone(),
                     retouch: st.retouch.clone(),
+                    ran: Ran::of(walked),
                 });
             }
             Step::Op(Stage::LocalContrast(options)) => {
@@ -2341,7 +2689,18 @@ mod tests {
         kept: &mut Kept,
         models: &mut dyn Models,
     ) -> Walked {
-        let steps = stages::stages(edit, purpose, &input.facts(0), None);
+        walk_at(edit, purpose, input, 0, kept, models)
+    }
+
+    fn walk_at(
+        edit: &Edit,
+        purpose: &Purpose,
+        input: &Input,
+        turn: u8,
+        kept: &mut Kept,
+        models: &mut dyn Models,
+    ) -> Walked {
+        let steps = stages::stages(edit, purpose, &input.facts(turn), None);
         let plan = plan(&steps, purpose, false);
         walk(&steps, &plan, input, kept, models, &mut None, &NoHold).expect("walks")
     }
@@ -2494,5 +2853,79 @@ mod tests {
         );
         assert!(learned.meta.stood_in.is_none());
         assert_eq!(learned.meta.gave_way, None);
+    }
+
+    /// The learned pair turns with the base: at either end of the
+    /// strength the base is one of the pair itself and stays shared
+    /// with it, turned once; in between it is a blend of its own,
+    /// turned. Each is the picture a walk at the new turn makes.
+    #[test]
+    fn a_turned_base_takes_the_learned_pair_with_it() {
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        e.noise.learned = greycard_edit::Learned::Fast;
+        let pair = |kept: &Kept| match &kept
+            .points
+            .iter()
+            .find(|p| p.keep == Keep::Pair)
+            .expect("a pair")
+            .buf
+        {
+            KeptBuf::Pair { model, plain } => (model.clone(), plain.clone()),
+            _ => panic!("a pair in memory"),
+        };
+        for strength in [0.0f32, 0.5, 1.0] {
+            e.noise.learned_strength = strength;
+            let mut models = Fake {
+                there: true,
+                ..Fake::default()
+            };
+            let mut kept = Kept::new();
+            walk_at(&e, &Purpose::Viewport, &input, 0, &mut kept, &mut models);
+            let turned = walk_at(&e, &Purpose::Viewport, &input, 1, &mut kept, &mut models);
+            assert_eq!(turned.from, Some(Keep::Base), "strength {strength}");
+            let mut fresh = Kept::new();
+            let made = walk_at(&e, &Purpose::Viewport, &input, 1, &mut fresh, &mut models);
+            assert!(
+                picture(&turned).data == picture(&made).data,
+                "strength {strength}"
+            );
+            let ((model, plain), (fresh_model, fresh_plain)) = (pair(&kept), pair(&fresh));
+            assert!(model.data == fresh_model.data && plain.data == fresh_plain.data);
+            let base = kept.picture(Keep::Base).expect("a base");
+            assert!(base.data == fresh.picture(Keep::Base).unwrap().data);
+            match strength {
+                1.0 => assert!(Arc::ptr_eq(base, &model), "the model, shared"),
+                0.0 => assert!(Arc::ptr_eq(base, &plain), "the plain, shared"),
+                _ => assert!(!Arc::ptr_eq(base, &model) && !Arc::ptr_eq(base, &plain)),
+            }
+        }
+    }
+
+    /// A walk resumed from a turned base still makes its masks: the
+    /// masks' tap is turned with the base, not left behind.
+    #[test]
+    fn a_turned_base_still_makes_the_masks() {
+        let input = Input::Raw(frame());
+        let mut e = with_subject(edit());
+        e.lens.defringe = false;
+        let mut models = Fake::default();
+        let mut kept = Kept::new();
+        walk_at(&e, &Purpose::Viewport, &input, 0, &mut kept, &mut models);
+        let turned = walk_at(&e, &Purpose::Viewport, &input, 1, &mut kept, &mut models);
+        assert_eq!(turned.from, Some(Keep::Base));
+        assert_eq!(models.unmade.len(), 2, "the masks made at each turn");
+    }
+
+    #[test]
+    fn the_blend_is_linear_and_shares_at_the_ends() {
+        let model = Arc::new(WorkingImage::from_data(2, 1, vec![1.0; 6]).unwrap());
+        let plain = Arc::new(WorkingImage::from_data(2, 1, vec![0.0; 6]).unwrap());
+        assert!(Arc::ptr_eq(&blend(&model, &plain, 1.0), &model));
+        assert!(Arc::ptr_eq(&blend(&model, &plain, 0.0), &plain));
+        assert!(Arc::ptr_eq(&blend(&model, &plain, 2.0), &model));
+        let half = blend(&model, &plain, 0.25);
+        assert!(half.data.iter().all(|v| (*v - 0.25).abs() < 1e-6));
     }
 }

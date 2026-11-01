@@ -27,12 +27,12 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::develop::{
-    CaRan, CaRun, base_settings, ca_out_of_prepare, guide_step, lens_step, resolved_profile,
-};
+use super::develop::CaRan;
 use super::engine::file_label;
-use super::shelf::{FileKey, Shelf, bytes_of};
+use super::shelf::{FileKey, Shelf};
 use super::*;
+use crate::stages::{Facts, Purpose, Stage, Step, stages};
+use crate::walk::{Hold, Kept, NoModels, Place, Stopped, plan, walk};
 
 /// Which way from the open frame a neighbor is, in the strip's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,8 +123,8 @@ pub(super) const BEHIND_REDUCED: Duration = Duration::from_millis(250);
 pub(super) struct Idle<'a> {
     /// The generation of the last open whose develop landed.
     pub landed: Option<u64>,
-    /// The base in hand.
-    pub open: Option<&'a Base>,
+    /// What the open frame's walks kept.
+    pub open: Option<&'a FrameKept>,
     /// A save of the open frame waits on a develop still to come.
     pub waiting: bool,
     pub shelf: Option<&'a Shelf>,
@@ -170,7 +170,7 @@ pub(super) fn due(queued: &mut Option<Neighbors>, now: &Idle<'_>) -> Due {
     if now.idle < neighbors.quiet {
         return Due::Wait(neighbors.quiet - now.idle);
     }
-    let room = shelf.room_for(bytes_of(open, None));
+    let room = shelf.room_for(open.base_bytes());
     if room < 2 {
         for n in &neighbors.waiting {
             note(format!(
@@ -252,7 +252,14 @@ pub(super) enum Ahead {
 /// (culling, the grid) is a prefetch no longer wanted, and while one is
 /// the masks of frames not open wait in any case, so they are not
 /// counted.
-pub(super) fn ahead(q: &Queue, frame_open: bool, n: &Neighbor) -> Ahead {
+/// `facts` are the frame's, and `lenses` the database its list reads.
+pub(super) fn ahead(
+    q: &Queue,
+    frame_open: bool,
+    n: &Neighbor,
+    facts: &Facts,
+    lenses: Option<&greycard_lens::Database>,
+) -> Ahead {
     let others = !frame_open
         || q.stopping
         || q.lenses.is_some()
@@ -262,7 +269,7 @@ pub(super) fn ahead(q: &Queue, frame_open: bool, n: &Neighbor) -> Ahead {
         || !q.masks.is_empty()
         || !q.exports.is_empty()
         || !q.people_on.is_empty()
-        || moved_under(q, n);
+        || moved_under(q, n, facts, lenses);
     if others {
         return Ahead::Work;
     }
@@ -278,7 +285,15 @@ pub(super) fn ahead(q: &Queue, frame_open: bool, n: &Neighbor) -> Ahead {
         }) if *path == n.path
             && turn % 4 == n.turn % 4
             && *seed_blend == n.seed_blend
-            && edit.same_base(&n.edit) =>
+            && crate::stages::same_base(
+                edit,
+                &n.edit,
+                &Facts {
+                    turn: n.turn % 4,
+                    ..facts.clone()
+                },
+                lenses,
+            ) =>
         {
             Ahead::ItsOpen
         }
@@ -290,12 +305,20 @@ pub(super) fn ahead(q: &Queue, frame_open: bool, n: &Neighbor) -> Ahead {
 /// as the queue's latest word on the file says, so that the base made
 /// for it is not one an open of it would take. A change after the base
 /// (an exposure synced onto it) is no such change.
-pub(super) fn moved_under(q: &Queue, n: &Neighbor) -> bool {
+pub(super) fn moved_under(
+    q: &Queue,
+    n: &Neighbor,
+    facts: &Facts,
+    lenses: Option<&greycard_lens::Database>,
+) -> bool {
     q.edits_changed
         .iter()
         .rev()
         .find(|(path, _)| *path == n.path)
-        .is_some_and(|(_, now)| !now.as_ref().is_some_and(|now| now.serves(&n.edit, n.turn)))
+        .is_some_and(|(_, now)| {
+            !now.as_ref()
+                .is_some_and(|now| now.serves(&n.edit, n.turn, facts, lenses))
+        })
 }
 
 /// How a prefetch ended.
@@ -303,8 +326,9 @@ pub(super) fn moved_under(q: &Queue, n: &Neighbor) -> bool {
 pub(super) enum Fetched {
     /// Its base is on the shelf.
     Landed,
-    /// It gave way before this stage.
-    Abandoned(&'static str),
+    /// It gave way before this stage, with what the decode said of
+    /// the frame.
+    Abandoned(&'static str, Facts),
     /// Not begun, or its base not made, for this reason.
     Skipped(String),
 }
@@ -315,20 +339,22 @@ pub(super) enum Fetched {
 /// seconds and cannot stop part way, and whose pair would be a
 /// gigabyte on the shelf), a picture's file (whose base is its decode),
 /// a frame whose base is the one in hand (`in_hand`, the open file and
-/// its base), or one already on the shelf. `ahead` is asked between
-/// the stages what has been asked of the worker since; on anything but
-/// the open of this frame the prefetch stops there and nothing is
-/// kept. The CA and the lens correction run on `gpu` when there is
-/// one, which holds nothing of the base after; a device error in
-/// either leaves the context to the next develop, which finds out
-/// whether the device is lost, and this base takes the CPU's.
+/// what its walks kept), or one already on the shelf. The base is a
+/// walk of the frame's list to it ([`Purpose::Prefetch`]); `ahead` is
+/// asked before each stage what has been asked of the worker since,
+/// and on anything but the open of this frame the prefetch stops there
+/// and nothing is kept. The CA and the lens correction run on `gpu`
+/// when there is one, which holds nothing of the base after; a device
+/// that declines the picture leaves this base to the CPU, and any other
+/// device error lets the context go for the session, as a develop's
+/// does.
 pub(super) fn prefetch(
     n: &Neighbor,
-    in_hand: Option<(&Path, &Base)>,
+    in_hand: Option<(&Path, &FrameKept)>,
     shelf: &mut Shelf,
-    gpu: Option<&greycard_gpu::Context>,
+    gpu: &mut Option<greycard_gpu::Context>,
     lenses: Option<&greycard_lens::Database>,
-    ahead: &dyn Fn() -> Ahead,
+    ahead: &dyn Fn(&Facts) -> Ahead,
 ) -> Fetched {
     let name = file_label(&n.path);
     let side = n.side.word();
@@ -350,8 +376,7 @@ pub(super) fn prefetch(
     };
     if let Some((path, b)) = in_hand
         && path == n.path
-        && b.turn == turn
-        && b.edit.same_base(&n.edit)
+        && b.serves(&n.edit, turn, lenses, gpu.is_some())
     {
         return skipped("its base is the open frame's".into());
     }
@@ -362,93 +387,126 @@ pub(super) fn prefetch(
         n.seed_blend,
         turn,
         gpu.is_some(),
+        lenses,
     ) {
         return skipped("its base is on the shelf".into());
     }
-    // Asked between the stages: whether to stop before `stage`, said
-    // once when the open of this very frame is what came.
-    let told = Cell::new(false);
-    let stopped = Cell::new(None::<&'static str>);
-    let stop = |stage: &'static str| {
-        at_check(&n.path, stage);
-        match ahead() {
-            Ahead::Nothing => false,
-            Ahead::ItsOpen => {
-                if !told.replace(true) {
-                    note(format!(
-                        "the prefetch of {name} goes on before its {stage}: \
-                         it is the frame being opened"
-                    ));
-                }
-                false
-            }
-            Ahead::Work => {
-                stopped.set(Some(stage));
-                true
-            }
-        }
-    };
-    let abandoned = |stage: &'static str| {
-        note(format!(
-            "the prefetch of the {side} frame, {name}, abandoned before its {stage}: \
-             the worker was asked for something"
-        ));
-        Fetched::Abandoned(stage)
-    };
     note(format!("prefetching the {side} frame, {name}"));
     let started = Instant::now();
-    let mut stages = Stages::new();
-    let input = match timed(&mut stages, "decode", || super::decode::open(&n.path)) {
+    let mut stages_ran = Stages::new();
+    let input = match timed(&mut stages_ran, "decode", || super::decode::open(&n.path)) {
         Ok((input, _)) => input,
         Err(e) => return skipped(format!("its decode failed: {e:#}")),
     };
-    let Input::Raw(frame) = &input else {
+    if !input.is_raw() {
         return skipped("it is not a raw".into());
-    };
-    if stop("prepare") {
-        return abandoned("prepare");
     }
+    let walking = input.walked();
+    let facts = walking.facts(turn);
+    // Asked before each stage: whether to stop there, said once when
+    // the open of this very frame is what came.
+    struct Asked<'a> {
+        path: &'a Path,
+        name: &'a str,
+        facts: &'a Facts,
+        ahead: &'a dyn Fn(&Facts) -> Ahead,
+        told: Cell<bool>,
+    }
+    impl Hold for Asked<'_> {
+        fn give_way(&self, next: &Stage) -> bool {
+            let stage = next.name();
+            at_check(self.path, stage);
+            match (self.ahead)(self.facts) {
+                Ahead::Nothing => false,
+                Ahead::ItsOpen => {
+                    if !self.told.replace(true) {
+                        note(format!(
+                            "the prefetch of {} goes on before its {stage}: \
+                             it is the frame being opened",
+                            self.name
+                        ));
+                    }
+                    false
+                }
+                Ahead::Work => true,
+            }
+        }
+
+        // A neighbor nobody waits on does not cost the session its
+        // device over its own failure.
+        fn keeps_device(&self) -> bool {
+            true
+        }
+    }
+    let asked = Asked {
+        path: &n.path,
+        name: &name,
+        facts: &facts,
+        ahead,
+        told: Cell::new(false),
+    };
     let edit = seeded(&n.edit, n.seed_blend, Some(&input));
-    let settings = base_settings(&edit, &input, turn);
-    let ca_run = CaRun::new(gpu);
-    let run_ca =
-        |samples: &[f32], w: usize, h: usize, pattern: &CfaPattern, options: &CaOptions| {
-            ca_run.correct(samples, w, h, pattern, options)
-        };
-    let made = engine_base_or_stop(
-        frame,
-        &edit,
-        turn,
-        &settings,
-        1,
-        Some(&run_ca),
-        &mut stages,
-        &stop,
-    );
-    let (ca, failed) = ca_run.into_parts();
-    if let Some(e) = failed {
-        tracing::warn!("the GPU CA correction, prefetching {name}: {e}; the CPU's for this frame");
-    }
-    ca_out_of_prepare(&mut stages, ca);
-    let mut b = match made {
-        Ok(Some(b)) => b,
-        Ok(None) => return abandoned(stopped.get().unwrap_or("demosaic")),
-        Err(e) => return skipped(format!("its base failed: {e:#}")),
+    let purpose = Purpose::Prefetch;
+    let steps = stages(&edit, &purpose, &facts, lenses);
+    let places = plan(&steps, &purpose, gpu.is_some());
+    let mut kept = Kept::new();
+    let walked = match walk(
+        &steps,
+        &places,
+        &walking,
+        &mut kept,
+        &mut NoModels,
+        gpu,
+        &asked,
+    ) {
+        Ok(walked) => walked,
+        Err(Stopped::GaveWay(stage)) => {
+            note(format!(
+                "the prefetch of the {side} frame, {name}, abandoned before its {stage}: \
+                 the worker was asked for something"
+            ));
+            return Fetched::Abandoned(stage, facts);
+        }
+        Err(Stopped::Failed(e)) => return skipped(format!("its base failed: {e}")),
     };
-    b.on_gpu = matches!(ca, Some((CaRan::Gpu, _)));
-    b.profile = resolved_profile(&settings, frame);
-    if stop("lens") {
-        return abandoned("lens");
+    let ca = steps
+        .steps
+        .iter()
+        .zip(&walked.places)
+        .find(|(s, _)| matches!(s, Step::Op(Stage::Ca(_))))
+        .map(|(_, place)| {
+            let ran = if *place == Place::Gpu {
+                CaRan::Gpu
+            } else {
+                CaRan::Cpu
+            };
+            let s = walked
+                .seconds
+                .iter()
+                .filter(|(n, _)| *n == "CA")
+                .map(|(_, s)| s)
+                .sum::<f64>();
+            (ran, s)
+        });
+    stages_ran.extend(walked.seconds.iter().filter(|(n, _)| *n != "CA").copied());
+    let mut held = FrameKept::new(&facts);
+    held.on_gpu = steps
+        .steps
+        .iter()
+        .zip(&walked.places)
+        .any(|(s, p)| *p == Place::Gpu && matches!(s, Step::Op(Stage::Ca(_) | Stage::Lens(_))));
+    held.kept = kept;
+    held.edit = edit;
+    held.turn = turn;
+    held.stamp = 1;
+    held.meta = walked.meta;
+    if let Some(image) = held.kept.picture(crate::stages::Keep::Base) {
+        held.image = image.clone();
     }
-    if let Some(e) = lens_step(&mut b, &input, &edit, lenses, gpu, &mut stages) {
-        tracing::warn!(
-            "the GPU lens correction, prefetching {name}: {e}; the CPU's for this frame"
-        );
-    }
-    guide_step(&mut b, &mut stages);
     let key = key.decoded(&input);
     drop(input);
-    if !shelf.put(key, b, None) {
+    drop(walking);
+    if !shelf.put(key, held) {
         return skipped("its base is over the shelf's whole budget".into());
     }
     let gone = shelf.fit();
@@ -456,7 +514,7 @@ pub(super) fn prefetch(
         &name,
         side,
         ca,
-        &stages,
+        &stages_ran,
         started.elapsed().as_secs_f64(),
         &shelf.said(),
         gone,
@@ -603,30 +661,19 @@ mod tests {
     use super::super::shelf::Budget;
     use super::*;
 
-    /// A raw base of `width` by `height` under the default edit.
-    fn base(width: usize, height: usize) -> Base {
-        Base {
-            edit: Edit::default(),
-            turn: 0,
-            image: Arc::new(WorkingImage::new(width, height)),
-            guide: Arc::new(greycard_render::finish::Guide::NONE),
-            white: WhiteBase::IDENTITY,
-            radius: None,
-            clip_level: 1.0,
-            source: greycard_render::finish::Source::SCENE,
-            stamp: 1,
-            patched: None,
-            pre: None,
-            uploaded: None,
-            haze: None,
-            planes: None,
-            on_gpu: false,
-            stand_in: None,
-            gave_way: None,
-            profile: None,
-            from_shelf: false,
-            mask_picture: None,
-        }
+    /// The window's keep of a raw of `width` by `height` under the
+    /// default edit.
+    fn base(width: usize, height: usize) -> FrameKept {
+        FrameKept::walked(
+            &Arc::new(super::super::tests::aberrated_frame(width, height)),
+            &Edit::default(),
+            0,
+        )
+    }
+
+    /// What the list reads of the raw [`base`] makes.
+    fn facts() -> Facts {
+        crate::walk::Input::Raw(Arc::new(super::super::tests::aberrated_frame(40, 30))).facts(0)
     }
 
     fn neighbor(path: &str, side: Side) -> Neighbor {
@@ -642,7 +689,7 @@ mod tests {
     /// The worker idle with a frame open in the editor.
     fn now<'a>(
         landed: Option<u64>,
-        open: Option<&'a Base>,
+        open: Option<&'a FrameKept>,
         waiting: bool,
         shelf: Option<&'a Shelf>,
         idle: Duration,
@@ -667,9 +714,10 @@ mod tests {
         ))
     }
 
-    /// The bytes of a base of `width` by `height`.
+    /// The bytes of a base of `width` by `height`, as the shelf counts
+    /// the open frame's.
     fn size(width: usize, height: usize) -> u64 {
-        (width * height * 3 * 4) as u64
+        base(width, height).base_bytes()
     }
 
     /// Only once the open's develop has landed, no save waits on a
@@ -878,23 +926,31 @@ mod tests {
             iso: None,
         };
         let mut q = Queue::default();
-        assert_eq!(ahead(&q, true, &n), Ahead::Nothing);
+        assert_eq!(ahead(&q, true, &n, &facts(), None), Ahead::Nothing);
         q.masks_for.push_back(Frame::file("c.CR3"));
         assert_eq!(
-            ahead(&q, true, &n),
+            ahead(&q, true, &n, &facts(), None),
             Ahead::Nothing,
             "waits behind the open frame"
         );
-        assert_eq!(ahead(&q, false, &n), Ahead::Work);
+        assert_eq!(ahead(&q, false, &n, &facts(), None), Ahead::Work);
         q.masks_for.clear();
 
         q.develop = Some(open("b.CR3", Edit::default()));
-        assert_eq!(ahead(&q, true, &n), Ahead::ItsOpen);
+        assert_eq!(ahead(&q, true, &n, &facts(), None), Ahead::ItsOpen);
         q.keeps.push_back(keep());
-        assert_eq!(ahead(&q, true, &n), Ahead::ItsOpen, "the frame left's save");
+        assert_eq!(
+            ahead(&q, true, &n, &facts(), None),
+            Ahead::ItsOpen,
+            "the frame left's save"
+        );
         q.keeps.clear();
         q.develop = Some(open("c.CR3", Edit::default()));
-        assert_eq!(ahead(&q, true, &n), Ahead::Work, "another frame's open");
+        assert_eq!(
+            ahead(&q, true, &n, &facts(), None),
+            Ahead::Work,
+            "another frame's open"
+        );
         let warmer = Edit {
             white_balance: greycard_edit::WhiteBalance::Custom {
                 temperature: 6500.0,
@@ -903,27 +959,43 @@ mod tests {
             ..Edit::default()
         };
         q.develop = Some(open("b.CR3", warmer));
-        assert_eq!(ahead(&q, true, &n), Ahead::Work, "under another base");
+        assert_eq!(
+            ahead(&q, true, &n, &facts(), None),
+            Ahead::Work,
+            "under another base"
+        );
         q.develop = Some(Job::Develop {
             edit: Edit::default(),
             generation: 9,
             turn: 0,
         });
-        assert_eq!(ahead(&q, true, &n), Ahead::Work, "a slider's develop");
+        assert_eq!(
+            ahead(&q, true, &n, &facts(), None),
+            Ahead::Work,
+            "a slider's develop"
+        );
         q.develop = None;
 
         q.keeps.push_back(keep());
-        assert_eq!(ahead(&q, true, &n), Ahead::Work, "a save");
+        assert_eq!(ahead(&q, true, &n, &facts(), None), Ahead::Work, "a save");
         q.keeps.clear();
         q.exports.push_back(Job::Landscape);
-        assert_eq!(ahead(&q, true, &n), Ahead::Work, "an export");
+        assert_eq!(
+            ahead(&q, true, &n, &facts(), None),
+            Ahead::Work,
+            "an export"
+        );
         q.exports.clear();
         q.people = true;
-        assert_eq!(ahead(&q, true, &n), Ahead::Work);
+        assert_eq!(ahead(&q, true, &n, &facts(), None), Ahead::Work);
         q.people = false;
-        assert_eq!(ahead(&q, false, &n), Ahead::Work, "the editor left");
+        assert_eq!(
+            ahead(&q, false, &n, &facts(), None),
+            Ahead::Work,
+            "the editor left"
+        );
         q.stopping = true;
-        assert_eq!(ahead(&q, true, &n), Ahead::Work, "leaving");
+        assert_eq!(ahead(&q, true, &n, &facts(), None), Ahead::Work, "leaving");
     }
 
     /// The landed line names the frame, its CA after its decode, each

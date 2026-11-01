@@ -10,15 +10,21 @@ use super::*;
 /// them, as the window shows it, and says so. `base` is the base the
 /// develop ran on: one kept from an earlier develop reports `Kept`,
 /// and the stand-in it may be is said from what it carries.
-pub(super) fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String> {
+pub(super) fn left_out_of(outcome: &Outcome, base: Option<&FrameKept>) -> Vec<String> {
     let Outcome::Developed { learned, fills, .. } = outcome else {
         return Vec::new();
     };
-    let learned = match (learned, base.and_then(|b| b.stand_in.as_ref())) {
+    let stood_in = base
+        .and_then(|b| b.meta.stood_in.as_ref())
+        .map(|why| match why {
+            crate::walk::NoLearned::Missing(model) => LearnedReport::Missing(model),
+            crate::walk::NoLearned::Failed(why) => LearnedReport::Failed(why.clone()),
+        });
+    let learned = match (learned, stood_in.as_ref()) {
         (LearnedReport::Kept, Some(stood_in)) => stood_in,
         (report, _) => report,
     };
-    left_out_words(learned, base.and_then(|b| b.gave_way.as_ref()), fills)
+    left_out_words(learned, base.and_then(|b| b.meta.gave_way.as_ref()), fills)
 }
 
 /// [`left_out_of`]'s words for a develop's learned denoiser, the
@@ -115,12 +121,9 @@ pub(super) fn run(
     // The last develop, kept for an export under the same settings
     // and the same turn.
     let mut last: Option<Last> = None;
-    // The last develop before its dehaze and sharpen, so a change to
-    // either costs only those.
-    let mut base: Option<Base> = None;
-    // The learned denoiser's answer, kept beside the base so its
-    // strength is a blend and not another run of the network.
-    let mut learned: Option<LearnedBase> = None;
+    // What the open frame's walks kept, so a change to a later stage
+    // costs only the stages from it.
+    let mut base: Option<FrameKept> = None;
     // The bases of the frames left behind, for a return to one to
     // skip its base (`shelf`). Made by the first open, so a worker that
     // never opens a frame (an export's from the command line) has none,
@@ -186,7 +189,7 @@ pub(super) fn run(
                     lenses = Some(db);
                     set_lenses(lenses.clone());
                     edited.set_lenses(crate::edited_pictures::lens_database());
-                    forget_bases(&mut base, &mut learned, &mut shelf, gpu.as_ref());
+                    forget_bases(&mut base, &mut shelf, gpu.as_ref());
                 }
                 if let Some(d) = q.gpu.take()
                     && !gpu_gone
@@ -194,7 +197,7 @@ pub(super) fn run(
                     device = Some(d);
                 }
                 for (path, now) in std::mem::take(&mut q.edits_changed) {
-                    drop_changed(shelf.as_mut(), &path, now.as_ref());
+                    drop_changed(shelf.as_mut(), &path, now.as_ref(), lenses.as_deref());
                 }
                 if q.forget_subject {
                     q.forget_subject = false;
@@ -289,22 +292,29 @@ pub(super) fn run(
                         let generation = landed;
                         let in_hand = opened_path.as_deref().zip(base.as_ref());
                         let shelf = shelf.as_mut().expect("a shelf is due to have one");
-                        let ahead = || {
+                        let ahead = |facts: &crate::stages::Facts| {
                             let q = lock.lock().expect("worker queue");
-                            prefetch::ahead(&q, edited.any_open(), &n)
+                            prefetch::ahead(&q, edited.any_open(), &n, facts, lenses.as_deref())
                         };
                         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             prefetch::prefetch(
                                 &n,
                                 in_hand,
                                 shelf,
-                                gpu.as_ref(),
+                                &mut gpu,
                                 lenses.as_deref(),
                                 &ahead,
                             )
                         }));
                         edited.set_prefetching(false);
                         wake();
+                        // A device the prefetch let go is gone for the open
+                        // frame too.
+                        if gpu.is_none()
+                            && let Some(b) = base.as_mut()
+                        {
+                            b.kept.forget_device();
+                        }
                         q = lock.lock().expect("worker queue");
                         match held {
                             // Given way to a request on the open frame:
@@ -316,8 +326,9 @@ pub(super) fn run(
                             // new one, and made under the old it would sit
                             // on the shelf past the drop, taking the room
                             // of the frame just left.
-                            Ok(Fetched::Abandoned(_)) => {
-                                let moved = prefetch::moved_under(&q, &n);
+                            Ok(Fetched::Abandoned(_, facts)) => {
+                                let moved =
+                                    prefetch::moved_under(&q, &n, &facts, lenses.as_deref());
                                 if moved {
                                     prefetch::note(format!(
                                         "the prefetch of {} let go: its edit changed",
@@ -371,6 +382,11 @@ pub(super) fn run(
                         ctx.name()
                     );
                     gpu = Some(ctx);
+                    // What the open frame kept on a device before is of
+                    // no use on this one.
+                    if let Some(b) = base.as_mut() {
+                        b.kept.forget_device();
+                    }
                 }
                 Err(e) => tracing::warn!("engine ops stay on the CPU: {e}"),
             }
@@ -538,7 +554,6 @@ pub(super) fn run(
                                 input.as_ref(),
                                 &mut last,
                                 &mut base,
-                                &mut learned,
                                 &mut ai,
                                 cache.as_ref(),
                                 lenses.as_deref(),
@@ -603,7 +618,6 @@ pub(super) fn run(
                 // finished before they were put there and no job
                 // touches them, so they stay.
                 discard_base(&mut base, gpu.as_ref());
-                learned = None;
                 last = None;
                 ai.forget(opened_path.clone());
                 set_ai = None;
@@ -738,13 +752,13 @@ pub(super) fn run(
                         let coming = coming.map(|k| k.decoded(&opened));
                         swap_base(
                             &mut base,
-                            &mut learned,
                             shelf.get_or_insert_with(Shelf::user),
                             opened_file.take(),
                             coming.as_ref(),
                             &edit,
                             turn,
                             gpu.as_ref(),
+                            lenses.as_deref(),
                         );
                         ai.forget(Some(path.clone()));
                         // The file is the worker's before the develop, so
@@ -760,7 +774,6 @@ pub(super) fn run(
                             turn,
                             generation,
                             &mut base,
-                            &mut learned,
                             &mut ai,
                             cache.as_ref(),
                             lenses.as_deref(),
@@ -801,7 +814,6 @@ pub(super) fn run(
                         turn,
                         generation,
                         &mut base,
-                        &mut learned,
                         &mut ai,
                         cache.as_ref(),
                         lenses.as_deref(),
@@ -827,7 +839,7 @@ pub(super) fn run(
                             &b.image,
                             masks::retouched_of(b, None),
                             &b.edit,
-                            b.source,
+                            b.meta.source,
                             b.turn,
                             key,
                             &shape,
@@ -894,7 +906,7 @@ pub(super) fn run(
                 picking = true;
                 let people = match &base {
                     Some(b) => ai
-                        .people(b.stamp, &b.image, b.source, b.turn)
+                        .people(b.stamp, &b.image, b.meta.source, b.turn)
                         .map(|(found, provider, seconds)| (found, provider.label(), seconds)),
                     None => Err("nothing developed yet".into()),
                 };
@@ -906,7 +918,7 @@ pub(super) fn run(
             Job::Landscape => {
                 let offers = match &base {
                     Some(b) => ai
-                        .landscape(b.stamp, &b.image, &b.edit, b.source)
+                        .landscape(b.stamp, &b.image, &b.edit, b.meta.source)
                         .map(|(found, provider, seconds)| (found, provider.label(), seconds)),
                     None => Err("nothing developed yet".into()),
                 };
@@ -948,7 +960,6 @@ pub(super) fn run(
             // The base in hand is not trusted; the shelf's stay, as
             // after a panic in a set's frame.
             discard_base(&mut base, gpu.as_ref());
-            learned = None;
             last = None;
             shown = None;
             // The next stamp restarts with the base; what was cached
@@ -1014,7 +1025,7 @@ pub(super) fn file_label(path: &std::path::Path) -> String {
 /// CPU under the same generation, so the window gets its picture back.
 pub(super) fn lose_gpu(
     gpu: &mut Option<greycard_gpu::Context>,
-    base: &mut Option<Base>,
+    base: &mut Option<FrameKept>,
     shown: &mut Option<ShownTexture>,
     last: &mut Option<Last>,
     again: bool,
@@ -1023,9 +1034,7 @@ pub(super) fn lose_gpu(
         ctx.mark_lost();
     }
     if let Some(b) = base.as_mut() {
-        b.pre = None;
-        b.uploaded = None;
-        b.haze = None;
+        b.kept.forget_device();
     }
     let on_screen = shown.take();
     let redo = on_screen.filter(|_| again).map(|s| Job::Develop {
@@ -1049,7 +1058,7 @@ pub(super) fn lose_gpu(
 
 /// Forget the base, and with it the ops' working textures on the GPU:
 /// a develop that panicked is not trusted, and develops afresh.
-fn discard_base(base: &mut Option<Base>, gpu: Option<&greycard_gpu::Context>) {
+fn discard_base(base: &mut Option<FrameKept>, gpu: Option<&greycard_gpu::Context>) {
     if base.take().is_some()
         && let Some(gpu) = gpu
     {
@@ -1062,13 +1071,11 @@ fn discard_base(base: &mut Option<Base>, gpu: Option<&greycard_gpu::Context>) {
 /// them go, the learned pair with them, as the base alone went before
 /// there was a shelf. A shelf not made yet stays unmade.
 pub(super) fn forget_bases(
-    base: &mut Option<Base>,
-    learned: &mut Option<LearnedBase>,
+    base: &mut Option<FrameKept>,
     shelf: &mut Option<Shelf>,
     gpu: Option<&greycard_gpu::Context>,
 ) {
     discard_base(base, gpu);
-    *learned = None;
     if let Some(shelf) = shelf {
         shelf.clear();
     }
@@ -1083,11 +1090,12 @@ pub(super) fn drop_changed(
     shelf: Option<&mut Shelf>,
     path: &std::path::Path,
     now: Option<&FileNow>,
+    lenses: Option<&greycard_lens::Database>,
 ) {
     let Some(shelf) = shelf else {
         return;
     };
-    let gone = shelf.drop_changed(path, now);
+    let gone = shelf.drop_changed(path, now, lenses);
     if gone > 0 {
         prefetch::note(format!(
             "shelved base of {} dropped: edit changed{}",
@@ -1102,10 +1110,10 @@ pub(super) fn drop_changed(
 }
 
 /// The open frame's base set aside for the frame `coming` to be
-/// opened under `edit` at `turn`: the base in hand put on the shelf as
-/// the frame `leaving`'s, with the learned pair it was blended from,
-/// and the coming frame's base taken back from the shelf when it is
-/// there for the same file, the same edit's base, and the same turn.
+/// opened under `edit` at `turn`: what the frame in hand kept put on
+/// the shelf as the frame `leaving`'s, its learned pair with it, and
+/// the coming frame's taken back from the shelf when it is there for
+/// the same file with a base the walk of `edit` at `turn` starts from.
 /// Whatever the GPU held for the base in hand goes, as when the base
 /// was discarded; a base taken back is uploaded again by its develop.
 ///
@@ -1116,32 +1124,30 @@ pub(super) fn drop_changed(
 /// not answer for (`None`) is not shelved or taken.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn swap_base(
-    base: &mut Option<Base>,
-    learned: &mut Option<LearnedBase>,
+    base: &mut Option<FrameKept>,
     shelf: &mut Shelf,
     leaving: Option<FileKey>,
     coming: Option<&FileKey>,
     edit: &Edit,
     turn: u8,
     gpu: Option<&greycard_gpu::Context>,
+    lenses: Option<&greycard_lens::Database>,
 ) {
-    let pair = learned.take();
     if let Some(b) = base.take() {
         if let Some(gpu) = gpu {
             gpu.release();
         }
         if let Some(file) = leaving {
-            shelf.put(file, b, pair);
+            shelf.put(file, b);
         }
     }
     if let Some(file) = coming
-        && let Some((b, l)) = shelf.take(file, edit, turn, gpu.is_some())
+        && let Some(b) = shelf.take(file, edit, turn, gpu.is_some(), lenses)
     {
         let line = format!("the base of {} from the shelf", file_label(&file.path));
         tracing::info!("{line}");
         prefetch::tap(&line);
         *base = Some(b);
-        *learned = l;
     }
     let gone = shelf.fit();
     tracing::info!(

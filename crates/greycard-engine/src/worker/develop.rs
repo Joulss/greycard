@@ -1,37 +1,29 @@
-//! The develop: a job's picture from the base.
+//! The develop: the open frame's picture, a walk of the window's list
+//! from what its last walks kept.
 
 use super::*;
+use crate::stages::{Keep, LEARNED_DENOISER, Skip, Stage, Step};
+use crate::walk::{Buf, NoHold, NoLearned, Place, walk};
 
-/// Develop `edit`: the base from the cache when only the local
-/// contrast, the dehaze or the sharpen differs, else the engine,
-/// then those three on a copy, in that order: the sharpen's
-/// contrast threshold is measured on the picture it gets, which
-/// should be the one with its haze gone. With the
-/// learned denoiser on, its answer is kept and blended by strength;
-/// when it is not to be had the engine's own path stands in. A
-/// picture that is not a raw is its own base: nothing before the lens
-/// applies to it.
-///
-/// With `gpu`, the Detail section and the sharpen run there: the
-/// patched picture is uploaded once and kept with the base, the local
-/// contrast and the dehaze make the picture before the sharpen from it
-/// on a Detail move and that is kept too, and the result is a texture
-/// the viewport draws as it is, so a Detail slider costs the Detail
-/// section and the sharpen alone, and a sharpen slider the sharpen
-/// alone. The dehaze's fit runs on the CPU between its two GPU halves,
-/// from a reduced copy the GPU makes, which is kept for the next
-/// Dehaze move. No CPU picture comes back then; the export, which
-/// passes no `gpu`, develops its own on the reference path. A GPU
-/// error (out of memory, a lost device) is warned once and the context
-/// is dropped: the session stays on the CPU from then on.
+/// Develop `edit` on the open frame at `turn`: a walk of the window's
+/// list ([`window_steps`]) from the last point `held` kept whose steps
+/// are this list's, with `ai`'s models. With `gpu`, every stage with a
+/// version on the device runs there: the CA and the lens one at a time
+/// on pictures in memory, the Detail section and the sharpen as one
+/// run with the picture before the sharpen kept on the device, ending
+/// at the viewport's texture, so a sharpen slider costs the sharpen
+/// alone. Without it (the export of the open frame), the reference's
+/// path from points the device never touched, and the picture comes
+/// back with its half floats. A device that declines a picture runs
+/// that run on the CPU with its context kept; any other device error
+/// lets the context go for the session.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn develop_job(
     input: &Input,
     edit: &Edit,
     turn: u8,
     generation: u64,
-    base: &mut Option<Base>,
-    learned: &mut Option<LearnedBase>,
+    held: &mut Option<FrameKept>,
     ai: &mut Ai,
     cache: Option<&greycard_ai::DenoiseCache>,
     lenses: Option<&greycard_lens::Database>,
@@ -39,940 +31,279 @@ pub(super) fn develop_job(
     deliver: &Deliver,
 ) -> (Outcome, Option<Arc<WorkingImage>>) {
     let start = Instant::now();
-    let stamp = base.as_ref().map_or(1, |b| b.stamp + 1);
-    let mut report = LearnedReport::Off;
-    let mut ca_note = None;
-    // Only the frame's turn moved, and nothing in the base cares
-    // which way up the picture is: the base is turned where it
-    // stands, a permutation of its pixels, and is then kept below.
-    if let Some(b) = base.as_mut()
-        && b.turn != turn
-        && b.edit.same_base(edit)
-        && (gpu.is_some() || !b.on_gpu)
-        && turns_exactly(edit, lenses)
-    {
-        let started = Instant::now();
-        turn_base(b, learned, turn, stamp, gpu.as_ref());
-        tracing::info!(
-            "base turned to {turn} quarter turns in {:.2} s",
-            started.elapsed().as_secs_f64()
-        );
+    let walking = input.walked();
+    let facts = walking.facts(turn);
+    let (steps, plan) = window_steps(edit, &facts, lenses, gpu.is_some());
+    let h = match held {
+        Some(h) if h.facts == FrameKept::new(&facts).facts => h,
+        _ => held.insert(FrameKept::new(&facts)),
+    };
+    let from_shelf = std::mem::take(&mut h.from_shelf);
+    let mut models = WorkerModels::new(ai, cache, deliver, generation);
+    models.edit = edit.clone();
+    models.turn = turn;
+    let walked = match walk(
+        &steps,
+        &plan,
+        &walking,
+        &mut h.kept,
+        &mut models,
+        gpu,
+        &NoHold,
+    ) {
+        Ok(walked) => walked,
+        Err(e) => {
+            return (
+                Outcome::Failed {
+                    generation,
+                    message: e.to_string(),
+                },
+                None,
+            );
+        }
+    };
+    // A base made in this walk is a new picture for the masks; one
+    // turned where it stood is too, though it is the base kept.
+    let turned = walked.from == Some(Keep::Base) && h.turn != turn && h.stamp > 0;
+    let made = matches!(walked.from, None | Some(Keep::Pair));
+    if made || turned {
+        h.stamp += 1;
     }
-    // A base is kept while its edit's base is the same, and, without
-    // a GPU (the export), only if neither its CA correction nor its
-    // lens correction was the GPU's: the export's picture is the
-    // reference's, so it makes the base afresh on the CPU, and the
-    // session keeps that one.
-    let fresh_base = !base
-        .as_ref()
-        .is_some_and(|b| b.edit.same_base(edit) && b.turn == turn && (gpu.is_some() || !b.on_gpu));
-    // Where the base came from, for the log line: one taken back from
-    // the shelf says so on its first develop, and is kept after.
-    let from = if fresh_base {
+    if turned {
+        tracing::info!("base turned to {turn} quarter turns");
+    }
+    let from = if made {
         BaseFrom::Made
-    } else if base
-        .as_mut()
-        .is_some_and(|b| std::mem::take(&mut b.from_shelf))
-    {
+    } else if from_shelf {
         BaseFrom::Shelf
     } else {
         BaseFrom::Kept
     };
-    let mut stages = Stages::new();
-    if fresh_base {
-        let settings = base_settings(edit, input, turn);
-        let tier = edit
-            .noise
-            .tier()
-            .map(|t| greycard_ai::denoiser(t).expect("the edit's tiers are the registry's"));
-        let ca_run = CaRun::new(gpu.as_ref());
-        let run_ca =
-            |samples: &[f32], w: usize, h: usize, pattern: &CfaPattern, options: &CaOptions| {
-                ca_run.correct(samples, w, h, pattern, options)
-            };
-        let ca: Option<CaCorrector<'_>> = Some(&run_ca);
-        let made = match (input, tier) {
-            (Input::Picture { image, meta }, _) => Ok(Base {
-                edit: edit.clone(),
-                turn,
-                image: match quarters(turn) {
-                    Some(o) => Arc::new(greycard_core::develop::orient((**image).clone(), o)),
-                    None => image.clone(),
-                },
-                guide: Arc::new(greycard_render::finish::Guide::NONE),
-                white: WhiteBase {
-                    clip: meta.clip_level(),
-                    ..WhiteBase::IDENTITY
-                },
-                radius: None,
-                clip_level: meta.clip_level(),
-                source: greycard_render::finish::Source::Display,
-                stamp,
-                patched: None,
-                pre: None,
-                uploaded: None,
-                haze: None,
-                planes: None,
-                on_gpu: false,
-                stand_in: None,
-                gave_way: None,
-                profile: None,
-                from_shelf: false,
-                mask_picture: None,
-            }),
-            (Input::Raw(frame), tier)
-                if let Some(why) = denoise_unavailable(frame, tier.is_some()) =>
-            {
-                // Nothing to try: the engine's develop, as a learned
-                // tier that is not downloaded falls back to it, said so.
-                report = LearnedReport::Unavailable(why);
-                engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
-            }
-            (Input::Raw(frame), Some(model)) => {
-                match learned_base(
-                    frame,
-                    edit,
-                    turn,
-                    &settings,
-                    model,
-                    learned,
-                    ai,
-                    cache,
-                    stamp,
-                    ca,
-                    gpu.is_some(),
-                    &mut stages,
-                ) {
-                    Ok((b, r)) => {
-                        report = r;
-                        Ok(b)
-                    }
-                    Err(r) => {
-                        // The line times the base that stands in.
-                        report = r;
-                        stages.clear();
-                        engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
-                    }
-                }
-            }
-            (Input::Raw(frame), None) => {
-                engine_base(frame, edit, turn, &settings, stamp, ca, &mut stages)
-            }
-        };
-        let (ran, failed) = ca_run.into_parts();
-        if let Some(e) = failed {
-            // Once is enough: the device is not trusted again this
-            // session, and every op from here is the CPU's.
-            tracing::warn!("the GPU CA correction: {e}; the CPU's from now on");
-            if let Some(ctx) = gpu.take() {
-                ctx.release();
-            }
-        }
-        ca_note = ran;
-        ca_out_of_prepare(&mut stages, ca_note);
-        let ca_on_gpu = matches!(ca_note, Some((CaRan::Gpu, _)));
-        // A learned pair made in this develop carries this develop's
-        // CA; a pair kept from an earlier one already says where its
-        // own ran, and the base took that from it.
-        if ca_on_gpu
-            && matches!(
-                report,
-                LearnedReport::Ran { .. } | LearnedReport::Cached { .. }
-            )
-            && let Some(l) = learned.as_mut()
-        {
-            l.ca_on_gpu = true;
-        }
-        match made {
-            Ok(mut b) => {
-                b.on_gpu |= ca_on_gpu;
-                // The profile the develop resolved its white through,
-                // chosen as `white_balance_for` in the engine chooses
-                // it: the edit's DCP, else the file's own.
-                if let Input::Raw(frame) = input {
-                    b.profile = resolved_profile(&settings, frame);
-                }
-                b.stand_in = matches!(
-                    report,
-                    LearnedReport::Missing(_)
-                        | LearnedReport::Failed(_)
-                        | LearnedReport::Unavailable(_)
-                )
-                .then(|| report.clone());
-                if let Some(e) = lens_step(&mut b, input, edit, lenses, gpu.as_ref(), &mut stages) {
-                    // As the CA's: the device is not trusted again
-                    // this session.
-                    tracing::warn!("the GPU lens correction: {e}; the CPU's from now on");
-                    if let Some(ctx) = gpu.take() {
-                        ctx.release();
-                    }
-                }
-                guide_step(&mut b, &mut stages);
-                *base = Some(b)
-            }
-            Err(e) => {
-                return (
-                    Outcome::Failed {
-                        generation,
-                        message: e.to_string(),
-                    },
-                    None,
-                );
-            }
-        }
-    } else if edit.noise.tier().is_some() {
-        report = LearnedReport::Kept;
+    // The masks' models see the base under the edit it was made for,
+    // as their cache keeps it by the base's stamp.
+    if made || turned || h.stamp == 0 {
+        h.edit = edit.clone();
     }
-    let b = base.as_mut().expect("a base was just made");
-    // The retouch, its patches given sources where they had none,
-    // applied on a copy of the base and kept for the next develop.
-    let chosen = edit.retouch.choose_sources(&b.image);
-    let retouch = edit.retouch.with_sources(&chosen);
-    let sources = retouch.chosen_patches(&chosen);
-    let mut fills = FillReport::default();
-    // A kept picture with fills left unmade serves while none of them
-    // can be made, and no longer once one can, by either engine.
-    let patched = if retouch.is_empty() {
-        // None kept: what is kept is always the last develop's retouch,
-        // which the learned masks read (`masks::retouched_of`). A
-        // retouch just cleared gives the guide back to the base.
-        if b.patched.take().is_some() {
-            guide_step(b, &mut stages);
-        }
-        b.image.clone()
-    } else if let Some((r, image, whole, _)) = &b.patched
-        && *r == retouch
-        && (*whole || !ai.could_fill_more(&retouch, &b.image))
-    {
-        image.clone()
+    h.turn = turn;
+    h.meta = walked.meta.clone();
+    if let Some(image) = h.kept.picture(Keep::Base) {
+        h.image = image.clone();
+    }
+    h.guide = walked
+        .taps
+        .guide
+        .clone()
+        .unwrap_or_else(|| Arc::new(greycard_render::finish::Guide::NONE));
+    h.planes = walked.taps.planes.clone();
+    // Where each stage ran, and whether this walk ran it.
+    let at = |want: &dyn Fn(&Stage) -> bool| {
+        steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(stage) if want(stage)))
+    };
+    let on_device = |i: usize| walked.places.get(i) == Some(&Place::Gpu);
+    let seconds_of = |name: &str| {
+        walked
+            .seconds
+            .iter()
+            .filter(|(n, _)| *n == name)
+            .map(|(_, s)| s)
+            .sum::<f64>()
+    };
+    h.on_gpu = steps
+        .steps
+        .iter()
+        .zip(&walked.places)
+        .any(|(s, p)| *p == Place::Gpu && matches!(s, Step::Op(Stage::Ca(_) | Stage::Lens(_))));
+    // A develop with a device lent that came back in memory ran
+    // nothing of the edit there past the inline ops: what the device
+    // holds was for another edit, and goes. One without a device (the
+    // open file's export) leaves the window's as they are.
+    if gpu.is_some() && !matches!(walked.buf, Buf::Texture(_)) {
+        h.kept.forget_device();
+    }
+    // A run the device declined went on on the CPU, which kept its
+    // picture before the sharpen in memory: a picture the size of the
+    // frame on the frames largest, which the window keeps only on the
+    // device. The refined masks' picture is read from it, then it goes.
+    // (With the Detail section off it is the patched picture itself,
+    // which costs nothing more.)
+    let declined = gpu
+        .as_ref()
+        .and_then(|_| h.kept.picture(Keep::PreSharpen))
+        .is_some_and(|pre| !Arc::ptr_eq(pre, &h.patched_picture()))
+        .then(|| h.kept.take_working(Keep::PreSharpen))
+        .flatten();
+    // What the picture kept on the device before the sharpen was made
+    // from, for the refined masks' picture to be read back from it.
+    let patched = h.patched_picture();
+    h.pre = h
+        .kept
+        .on_device(Keep::PreSharpen)
+        .then(|| (patched.clone(), edit.detail));
+    // The refined masks' picture, made only for an edit that refines a
+    // mask, and let go when it no longer does: tapped by a walk on the
+    // CPU, read back from the device's picture before the sharpen.
+    let mask_picture = if !greycard_render::refine::refines(edit) {
+        h.mask_picture = None;
+        None
+    } else if let Some(picture) = walked.taps.picture.clone() {
+        h.mask_picture = Some(KeptMaskPicture {
+            patched: patched.clone(),
+            detail: edit.detail,
+            picture: picture.clone(),
+        });
+        Some(picture)
     } else {
-        // Timed with its fills, which have a part of their own too.
-        let started = Instant::now();
-        let mut image = (*b.image).clone();
-        // The fills left as they were, by id, for the learned masks.
-        let mut unmade = Vec::new();
-        retouch.apply_with(&mut image, |patch, region, picture| {
-            // A fill the model has to make is said so before it
-            // starts, since it takes a while.
-            let kept = ai.fill_kept(patch, region, picture);
-            if !kept && ai.engine(patch, region, picture).is_ok() {
-                deliver(Outcome::Filling {
-                    generation,
-                    name: patch.name(),
-                });
+        use super::masks::{Pre, mask_picture};
+        let pre = match (&walked.buf, gpu.as_ref()) {
+            _ if declined.is_some() => Pre::Cpu(declined.as_deref().expect("declined")),
+            // The sharpen is off: the texture is the picture before it.
+            (Buf::Texture(texture), Some(ctx)) if walked.sharpen.is_none() => {
+                Pre::Viewport(ctx, texture)
             }
-            let started = Instant::now();
-            match ai.fill(patch, region, picture) {
-                Ok((data, engine)) => {
-                    if !kept {
-                        fills.made.push(patch.name());
-                        fills.seconds += started.elapsed().as_secs_f64();
-                    }
-                    fills.engines.push((patch.id, engine));
-                    Some(data)
-                }
-                Err(NoFill::Missing(model)) => {
-                    unmade.push(patch.id);
-                    fills.missing.push((patch.name(), model));
-                    None
-                }
-                Err(NoFill::NoGpu) => {
-                    unmade.push(patch.id);
-                    fills.no_gpu.push(patch.name());
-                    None
-                }
-                Err(NoFill::Failed(why)) => {
-                    unmade.push(patch.id);
-                    fills.failed.push((patch.name(), why));
-                    None
-                }
-            }
-        });
-        let image = Arc::new(image);
-        let whole = fills.missing.is_empty() && fills.failed.is_empty();
-        // The guide follows the patches: a dark object taken out of a
-        // bright surround moves its region's mean far more than the
-        // guide's scale can miss, and a guide still holding it would
-        // have the tone sliders draw its ghost back.
-        b.guide = Arc::new(greycard_render::finish::guide_plane(&image));
-        b.patched = Some((retouch, image.clone(), whole, unmade));
-        stages.push(("retouch", started.elapsed().as_secs_f64()));
-        image
+            _ => Pre::Find(gpu.as_ref()),
+        };
+        Some(mask_picture(h, &patched, edit, pre))
     };
-    // The masks' bands, when a mask asks for one: kept from the last
-    // develop when they were made from this picture and hold every
-    // band asked for, made otherwise on the CPU on a thread of their
-    // own while the develop goes on, whichever path the picture takes,
-    // and taken up where the develop is delivered (`PlanesJob::land`).
-    //
-    // The haze is read after the global's local contrast, as the
-    // global's dehaze is fitted; a move of the global's Texture or
-    // Clarity makes the haze again and keeps the bands.
-    let wants = edit.detail_wants();
-    let global = edit.detail.options();
-    let mut planes = match &b.planes {
-        _ if !wants.any() => {
-            b.planes = None;
-            PlanesJob::Nothing
-        }
-        Some(k) if k.serve(&patched, &wants, global) => PlanesJob::Kept(k.planes.clone()),
-        kept => {
-            let reuse = kept
-                .as_ref()
-                .filter(|k| Arc::ptr_eq(&k.patched, &patched))
-                .map(|k| k.planes.clone());
-            b.planes = None;
-            PlanesJob::start(patched.clone(), global, b.clip_level, wants, reuse)
-        }
-    };
-    // The local contrast and the dehaze on one copy of the patched
-    // picture, on the CPU; none when neither is asked for.
-    // The refined masks' picture, made only for an edit that refines
-    // a mask; let go when it no longer does.
-    let refines = greycard_render::refine::refines(edit);
-    if !refines {
-        b.mask_picture = None;
-    }
-    let clip_level = b.clip_level;
-    let before_sharpen = |copy: &mut Option<WorkingImage>| {
-        let detail = edit.detail.options().map(|options| {
-            let started = Instant::now();
-            let image = copy.get_or_insert_with(|| (*patched).clone());
-            let stats = local_contrast(image, &options, clip_level);
-            (stats, started.elapsed().as_secs_f64())
-        });
-        let dehaze_stats = edit.detail.dehaze_options().map(|options| {
-            let image = copy.get_or_insert_with(|| (*patched).clone());
-            dehaze::dehaze(image, &options)
-        });
-        (detail, dehaze_stats)
-    };
-    // The ops on the GPU, when there is one. With the sharpen on, the
-    // picture before it is kept on the device from the last develop
-    // when nothing before the sharpen changed, and is made there by
-    // the Detail section from the patched picture's upload when the
-    // section moved. With the sharpen off, the Detail section writes
-    // the viewport's texture itself; with neither on, the ops'
-    // textures are let go.
-    match (gpu.as_ref(), edit.sharpen.options()) {
-        (Some(ctx), Some(options)) => {
-            let kept = b
-                .pre
-                .as_ref()
-                .is_some_and(|p| Arc::ptr_eq(&p.patched, &patched) && p.detail == edit.detail);
-            let mut ran = Ran::default();
-            let made = if kept {
-                Ok(())
-            } else {
-                make_pre_sharpen(ctx, b, &patched, edit, &before_sharpen, &mut ran)
-            };
-            let sharpened = made.and_then(|()| {
-                let pre = b.pre.as_ref().expect("made, or kept");
-                let texture = ctx.viewport_texture(pre.image.width(), pre.image.height());
-                ctx.sharpen(&pre.image, &options, b.radius, b.clip_level, &texture)
-                    .map(|stats| (stats, texture))
-            });
-            match sharpened {
-                Ok((stats, texture)) => {
-                    let planes = planes.land(b);
-                    let picture = refines.then(|| {
-                        let pre = super::masks::Pre::Find(Some(ctx));
-                        super::masks::mask_picture(b, &patched, edit, pre)
-                    });
-                    let guide = super::masks::guide_with(b, picture);
-                    let pre = b.pre.as_ref().expect("made, or kept");
-                    let seconds = start.elapsed().as_secs_f64();
-                    stages.extend(ran.upload.map(|s| ("upload", s)));
-                    note_developed(
-                        pre.image.width(),
-                        pre.image.height(),
-                        from,
-                        ca_note,
-                        &report,
-                        &fills,
-                        &stages,
-                        ran.detail,
-                        pre.dehaze_stats
-                            .map(|_| ran.dehaze.unwrap_or(DehazeRan::Kept)),
-                        Some(Sharpened::Gpu),
-                        seconds,
-                    );
-                    return (
-                        Outcome::Developed {
-                            generation,
-                            turn,
-                            image: Developed::Texture(texture),
-                            kind: b.source,
-                            guide,
-                            planes,
-                            white: b.white,
-                            seconds,
-                            detail: pre
-                                .detail_stats
-                                .map(|s| (s, ran.detail.unwrap_or(DetailRan::Kept))),
-                            sharpen: Some(stats),
-                            dehaze: pre.dehaze_stats,
-                            sources,
-                            learned: report,
-                            fills,
-                        },
-                        None,
-                    );
-                }
-                Err(greycard_gpu::Error::Unsupported(why)) => {
-                    // This picture's, not the device's (one it cannot
-                    // hold): the CPU for this develop, the context kept.
-                    tracing::info!("the ops on the CPU: {why}");
-                    b.pre = None;
-                    b.uploaded = None;
-                    b.haze = None;
-                    ctx.release();
-                }
-                Err(e) => {
-                    // Once is enough: the device is not trusted again
-                    // this session, and every develop from here is the
-                    // CPU's.
-                    tracing::warn!("the GPU ops: {e}; the CPU's from now on");
-                    b.pre = None;
-                    b.uploaded = None;
-                    b.haze = None;
-                    if let Some(ctx) = gpu.take() {
-                        ctx.release();
-                    }
-                }
-            }
-        }
-        (Some(ctx), None) => {
-            // The sharpen is off: its input and its planes go, whichever
-            // path the develop takes.
-            b.pre = None;
+    if let Some(ctx) = gpu.as_ref() {
+        // What the device holds for a stage that is off goes.
+        if edit.sharpen.options().is_none() {
             ctx.release_sharpen();
-            if edit.detail.options().is_some() || edit.detail.dehaze_options().is_some() {
-                let mut ran = Ran::default();
-                match detail_on_gpu(ctx, b, &patched, edit, true, &mut ran) {
-                    Ok(Some(made)) => {
-                        let planes = planes.land(b);
-                        let texture = made.texture.expect("a viewport texture was asked for");
-                        // The sharpen is off: the texture is the
-                        // picture before it.
-                        let picture = refines.then(|| {
-                            let pre = super::masks::Pre::Viewport(ctx, &texture);
-                            super::masks::mask_picture(b, &patched, edit, pre)
-                        });
-                        let guide = super::masks::guide_with(b, picture);
-                        let seconds = start.elapsed().as_secs_f64();
-                        stages.extend(ran.upload.map(|s| ("upload", s)));
-                        note_developed(
-                            texture.width(),
-                            texture.height(),
-                            from,
-                            ca_note,
-                            &report,
-                            &fills,
-                            &stages,
-                            ran.detail,
-                            ran.dehaze,
-                            None,
-                            seconds,
-                        );
-                        return (
-                            Outcome::Developed {
-                                generation,
-                                turn,
-                                image: Developed::Texture(texture),
-                                kind: b.source,
-                                guide,
-                                planes,
-                                white: b.white,
-                                seconds,
-                                detail: made.detail.map(|s| (s, DetailRan::Gpu)),
-                                sharpen: None,
-                                dehaze: made.dehaze,
-                                sources,
-                                learned: report,
-                                fills,
-                            },
-                            None,
-                        );
-                    }
-                    Ok(None) => {
-                        // This picture's, not the device's: the CPU for
-                        // this develop, the context kept.
-                        b.uploaded = None;
-                        b.haze = None;
-                        ctx.release();
-                    }
-                    Err(e) => {
-                        tracing::warn!("the GPU Detail section: {e}; the CPU's from now on");
-                        b.uploaded = None;
-                        b.haze = None;
-                        if let Some(ctx) = gpu.take() {
-                            ctx.release();
-                        }
-                    }
-                }
-            } else {
-                // The CPU's develop: nothing on the device is of use.
-                b.uploaded = None;
-                b.haze = None;
-                ctx.release();
-            }
         }
-        (None, _) => {}
+        if edit.detail.options().is_none() {
+            ctx.release_local_contrast();
+        }
     }
-    let mut copy: Option<WorkingImage> = None;
-    let (detail, dehaze_stats) = before_sharpen(&mut copy);
-    let picture = refines.then(|| {
-        let pre = copy.as_ref().unwrap_or(&*patched);
-        super::masks::mask_picture(b, &patched, edit, super::masks::Pre::Cpu(pre))
-    });
-    let (stats, mask) = match edit.sharpen.options() {
-        Some(options) => {
-            let image = copy.get_or_insert_with(|| (*patched).clone());
-            let (stats, mask) = sharpen_with_mask(image, &options, b.radius, b.clip_level);
-            (Some(stats), Some(mask))
+    let ca = at(&|s| matches!(s, Stage::Ca(_)))
+        .filter(|&i| i >= walked.begin)
+        .map(|i| {
+            let ran = if on_device(i) { CaRan::Gpu } else { CaRan::Cpu };
+            (ran, seconds_of("CA"))
+        });
+    let detail_ran = at(&|s| matches!(s, Stage::LocalContrast(_))).map(|i| {
+        if i < walked.begin {
+            DetailRan::Kept
+        } else if on_device(i) {
+            DetailRan::Gpu
+        } else {
+            DetailRan::Cpu(seconds_of("local contrast"))
         }
-        None => (None, None),
+    });
+    let dehaze_ran = at(&|s| matches!(s, Stage::Dehaze(_))).map(|i| {
+        if i < walked.begin {
+            DehazeRan::Kept
+        } else if on_device(i) {
+            DehazeRan::Gpu
+        } else {
+            DehazeRan::Cpu
+        }
+    });
+    let sharpened = at(&|s| matches!(s, Stage::Sharpen(_)))
+        .filter(|_| walked.sharpen.is_some())
+        .map(|i| {
+            if on_device(i) {
+                Sharpened::Gpu
+            } else {
+                Sharpened::Cpu
+            }
+        });
+    let learned = learned_report(
+        edit,
+        &steps,
+        &walked,
+        std::mem::replace(&mut models.learned, LearnedReport::Off),
+    );
+    let fills = std::mem::take(&mut models.fills);
+    let mut stages: Stages = walked
+        .seconds
+        .iter()
+        .filter(|(n, _)| !matches!(*n, "CA" | "local contrast" | "dehaze" | "sharpen"))
+        .copied()
+        .collect();
+    let (image, picture) = match walked.buf {
+        Buf::Texture(texture) => (Developed::Texture(texture), None),
+        Buf::Working(image) => {
+            let halves = Arc::new(timed(&mut stages, "halves", || {
+                Halves::from_image(&image, walked.sharpen_mask.as_deref())
+            }));
+            (Developed::Halves(halves), Some(image))
+        }
+        _ => {
+            return (
+                Outcome::Failed {
+                    generation,
+                    message: "the develop ended on the device with no texture".into(),
+                },
+                None,
+            );
+        }
     };
-    let image = match copy {
-        Some(image) => Arc::new(image),
-        None => patched,
+    let (width, height) = match &image {
+        Developed::Texture(t) => (t.width(), t.height()),
+        Developed::Halves(h) => (h.width, h.height),
     };
-    let halves = Arc::new(timed(&mut stages, "halves", || {
-        Halves::from_image(&image, mask.as_deref())
-    }));
     let seconds = start.elapsed().as_secs_f64();
     note_developed(
-        image.width as u32,
-        image.height as u32,
+        width,
+        height,
         from,
-        ca_note,
-        &report,
+        ca,
+        &learned,
         &fills,
         &stages,
-        detail.as_ref().map(|(_, s)| DetailRan::Cpu(*s)),
-        dehaze_stats.map(|_| DehazeRan::Cpu),
-        stats.map(|_| Sharpened::Cpu),
+        detail_ran,
+        walked.dehaze.and(dehaze_ran),
+        sharpened,
         seconds,
     );
     (
         Outcome::Developed {
             generation,
             turn,
-            image: Developed::Halves(halves),
-            kind: b.source,
-            guide: super::masks::guide_with(b, picture),
-            planes: planes.land(b),
-            white: b.white,
+            image,
+            kind: walked.meta.source,
+            guide: super::masks::guide_with(h, mask_picture),
+            planes: h.planes.clone(),
+            white: h.white(),
             seconds,
-            detail: detail.map(|(s, secs)| (s, DetailRan::Cpu(secs))),
-            sharpen: stats,
-            dehaze: dehaze_stats,
-            sources,
-            learned: report,
+            detail: walked.detail.zip(detail_ran),
+            sharpen: walked.sharpen,
+            dehaze: walked.dehaze,
+            sources: walked.sources,
+            learned,
             fills,
         },
-        Some(image),
+        picture,
     )
 }
 
-/// The engine's settings a fresh base is made under for `edit` at the
-/// frame's `turn`: the edit's own, its orientation turned.
-pub(super) fn base_settings(edit: &Edit, input: &Input, turn: u8) -> DevelopSettings {
-    DevelopSettings {
-        // The frame's quarter turns, composed onto the camera's tag:
-        // the engine's one orientation step does both, so nothing
-        // after it can disagree about which way up the picture is. A
-        // file that is not a raw was turned at decode, so its turn is
-        // applied to the picture by the caller.
-        orientation: match input {
-            Input::Raw(f) => Some(f.orientation.turned(i32::from(turn))),
-            Input::Picture { .. } => None,
-        },
-        ..edit.settings(&greycard_edit_io::Stores::user())
-    }
-}
-
-/// The CA correction of a fresh base: on the GPU when there is one,
-/// the reference's otherwise and on any error. A picture the device
-/// cannot hold is this op's to decline, on the CPU for this base and
-/// with the context kept; a device error is remembered for the caller
-/// to act on after the base. What ran and how long is noted for the
-/// log.
-pub(super) struct CaRun<'a> {
-    ctx: Option<&'a greycard_gpu::Context>,
-    ran: std::cell::Cell<Option<(CaRan, f64)>>,
-    failed: std::cell::Cell<Option<greycard_gpu::Error>>,
-}
-
-impl<'a> CaRun<'a> {
-    pub(super) fn new(ctx: Option<&'a greycard_gpu::Context>) -> Self {
-        Self {
-            ctx,
-            ran: std::cell::Cell::new(None),
-            failed: std::cell::Cell::new(None),
-        }
-    }
-
-    /// The correction of one mosaic, as the engine's `CaCorrector`.
-    pub(super) fn correct(
-        &self,
-        samples: &[f32],
-        w: usize,
-        h: usize,
-        pattern: &CfaPattern,
-        options: &CaOptions,
-    ) -> greycard_core::Result<(Vec<f32>, CaStats)> {
-        if let Some(ctx) = self.ctx {
-            let started = Instant::now();
-            match ctx.correct_ca(samples, w, h, pattern, options) {
-                Ok(out) => {
-                    self.ran
-                        .set(Some((CaRan::Gpu, started.elapsed().as_secs_f64())));
-                    return Ok(out);
-                }
-                Err(greycard_gpu::Error::Unsupported(why)) => {
-                    tracing::info!("the CA correction on the CPU: {why}");
-                }
-                Err(e) => self.failed.set(Some(e)),
-            }
-        }
-        let started = Instant::now();
-        let out = correct_ca(samples, w, h, pattern, options);
-        self.ran
-            .set(Some((CaRan::Cpu, started.elapsed().as_secs_f64())));
-        out
-    }
-
-    /// Where the CA ran and its seconds, when it ran, and the device's
-    /// error, when it had one.
-    pub(super) fn into_parts(self) -> (Option<(CaRan, f64)>, Option<greycard_gpu::Error>) {
-        (self.ran.take(), self.failed.take())
-    }
-}
-
-/// The CA runs inside the prepare and has a part of its own on the
-/// line: the prepare's is the rest of it.
-pub(super) fn ca_out_of_prepare(stages: &mut Stages, ca: Option<(CaRan, f64)>) {
-    if let Some((_, ca)) = ca
-        && let Some((_, s)) = stages.iter_mut().find(|(name, _)| *name == "prepare")
-    {
-        *s = (*s - ca).max(0.0);
-    }
-}
-
-/// The profile a raw's develop resolved its white through, chosen as
-/// `white_balance_for` in the engine chooses it: the edit's DCP, else
-/// the file's own.
-pub(super) fn resolved_profile(
-    settings: &DevelopSettings,
-    frame: &RawFrame,
-) -> Option<Arc<CameraProfile>> {
-    settings
-        .profile
-        .as_ref()
-        .map(|p| p.camera.clone())
-        .or_else(|| profile_from_frame(frame).ok())
-        .map(Arc::new)
-}
-
-/// A fresh base's lens step: the edit's lens corrections, then its
-/// defringe, timed as "lens" when either runs. A correction that moves
-/// the picture runs on `gpu` when there is one, and the base says so
-/// (`on_gpu`). A picture the device cannot hold is this op's to
-/// decline, on the CPU with the context kept; a device error falls
-/// back to the reference for the rest of this base and is returned,
-/// for the caller to act on as it does the CA's.
-pub(super) fn lens_step(
-    b: &mut Base,
-    input: &Input,
+/// What the learned denoiser did for a walk of `edit`'s `steps`, as
+/// the window says it: its answer kept when the walk started past it,
+/// none on a mosaic it has no version for, why the engine's own stood
+/// in, or how `ran` had the network's answer.
+fn learned_report(
     edit: &Edit,
-    lenses: Option<&greycard_lens::Database>,
-    gpu: Option<&greycard_gpu::Context>,
-    stages: &mut Stages,
-) -> Option<greycard_gpu::Error> {
-    let corrects = !edit.lens.is_identity(lenses.is_some());
-    let defringe = edit.lens.defringe();
-    if !corrects && defringe.is_none() {
-        return None;
+    steps: &crate::stages::Steps,
+    walked: &crate::walk::Walked,
+    ran: LearnedReport,
+) -> LearnedReport {
+    if edit.noise.tier().is_none() {
+        return LearnedReport::Off;
     }
-    let mut failed = None;
-    let started = Instant::now();
-    let held = std::mem::replace(&mut b.image, Arc::new(WorkingImage::new(0, 0)));
-    let mut image = Arc::try_unwrap(held).unwrap_or_else(|a| (*a).clone());
-    if corrects {
-        let mut gpu = gpu;
-        let mut on_gpu = false;
-        for c in lens_corrections(image.width, image.height, input, b.turn, edit, lenses) {
-            // A correction that moves nothing is a multiply a pixel,
-            // quicker on the CPU than the frame's trip to the device
-            // and back, and the export can then keep the base.
-            let gpu_here = gpu.filter(|_| c.moves());
-            image = match gpu_here.map(|ctx| ctx.correct_lens(&image, &c)) {
-                Some(Ok((out, _))) => {
-                    on_gpu = true;
-                    out
-                }
-                Some(Err(e)) => {
-                    match e {
-                        greycard_gpu::Error::Unsupported(why) => {
-                            tracing::info!("the lens correction on the CPU: {why}");
-                        }
-                        e => failed = Some(e),
-                    }
-                    gpu = None;
-                    greycard_core::develop::lens::correct(&image, &c).0
-                }
-                None => greycard_core::develop::lens::correct(&image, &c).0,
-            };
-        }
-        if on_gpu {
-            b.on_gpu = true;
-            tracing::info!("lens on the GPU");
-        }
+    if walked.from.is_some() {
+        return LearnedReport::Kept;
     }
-    // After the geometry, so the resample does not smear a chroma just
-    // neutralized, and before the retouch and the sharpen.
-    if let Some(options) = defringe {
-        greycard_core::develop::defringe::defringe(&mut image, &options);
-    }
-    b.image = Arc::new(image);
-    stages.push(("lens", started.elapsed().as_secs_f64()));
-    failed
-}
-
-/// A base's guide plane, after the lens and the defringe and before
-/// the sharpen: the geometry has not moved a pixel yet, so the plane
-/// is in the developed picture's own coordinates, which is where the
-/// viewport and the export both read it. A retouch makes its own from
-/// the patched picture, as a patch can move a region's mean a long
-/// way; the sharpen moves none by anything the guide's scale can see.
-pub(super) fn guide_step(b: &mut Base, stages: &mut Stages) {
-    b.guide = Arc::new(timed(stages, "guide", || {
-        greycard_render::finish::guide_plane(&b.image)
-    }));
-}
-
-/// What the CPU's steps before the sharpen report: the local
-/// contrast's stats and seconds, and the dehaze's stats, each when it
-/// ran.
-type BeforeSharpen = (Option<(LocalContrastStats, f64)>, Option<DehazeStats>);
-
-/// The patched picture on the device: the one kept with the base
-/// when it is this picture's, else uploaded now and kept.
-fn uploaded_patched(
-    ctx: &greycard_gpu::Context,
-    b: &mut Base,
-    patched: &Arc<WorkingImage>,
-    ran: &mut Ran,
-) -> greycard_gpu::Result<Arc<greycard_gpu::Image>> {
-    if let Some((p, image)) = b.uploaded.as_ref()
-        && Arc::ptr_eq(p, patched)
-    {
-        return Ok(image.clone());
-    }
-    b.uploaded = None;
-    let image = Arc::new(ran.upload(|| ctx.upload(patched))?);
-    b.uploaded = Some((patched.clone(), image.clone()));
-    Ok(image)
-}
-
-/// Where this develop's local contrast and dehaze ran, for the log;
-/// none for an op that did not run in it. And the seconds its uploads
-/// of a picture to the device took, none when nothing went up.
-#[derive(Default)]
-struct Ran {
-    detail: Option<DetailRan>,
-    dehaze: Option<DehazeRan>,
-    upload: Option<f64>,
-}
-
-impl Ran {
-    /// `send`, an upload, timed into `upload`: the worker's side of
-    /// it, the interleave to four channels and the copies into the
-    /// queue's staging a band at a time, which is what the develop
-    /// waits on.
-    fn upload<T>(&mut self, send: impl FnOnce() -> T) -> T {
-        let started = Instant::now();
-        let out = send();
-        *self.upload.get_or_insert(0.0) += started.elapsed().as_secs_f64();
-        out
-    }
-}
-
-/// The picture before the sharpen, on the GPU, for `edit`'s Detail
-/// section on `patched`, into `b.pre`: [`detail_on_gpu`]'s picture,
-/// or, for a picture the ops decline (`Unsupported`), the CPU's local
-/// contrast and dehaze (`before_sharpen`), uploaded, with the patched
-/// picture's upload, the dehaze's reduced copy and the local
-/// contrast's planes let go, since that path has no use for them. The
-/// last picture before the sharpen goes first, so that two are never
-/// held at once (716 MB at 45 MP). Any other GPU error is the
-/// caller's to act on.
-fn make_pre_sharpen(
-    ctx: &greycard_gpu::Context,
-    b: &mut Base,
-    patched: &Arc<WorkingImage>,
-    edit: &Edit,
-    before_sharpen: &dyn Fn(&mut Option<WorkingImage>) -> BeforeSharpen,
-    ran: &mut Ran,
-) -> greycard_gpu::Result<()> {
-    b.pre = None;
-    if let Some(made) = detail_on_gpu(ctx, b, patched, edit, false, ran)? {
-        b.pre = Some(PreSharpen {
-            patched: patched.clone(),
-            detail: edit.detail,
-            image: made.image.expect("no viewport texture was given"),
-            detail_stats: made.detail,
-            dehaze_stats: made.dehaze,
-        });
-        return Ok(());
-    }
-    b.uploaded = None;
-    b.haze = None;
-    ctx.release_local_contrast();
-    let mut copy = None;
-    let (detail, dehaze_stats) = before_sharpen(&mut copy);
-    ran.detail = detail.map(|(_, s)| DetailRan::Cpu(s));
-    ran.dehaze = dehaze_stats.map(|_| DehazeRan::Cpu);
-    let image: &WorkingImage = copy.as_ref().unwrap_or(patched);
-    let image = Arc::new(ran.upload(|| ctx.upload(image))?);
-    b.pre = Some(PreSharpen {
-        patched: patched.clone(),
-        detail: edit.detail,
-        image,
-        detail_stats: detail.map(|(s, _)| s),
-        dehaze_stats,
+    let unavailable = steps.skipped.iter().find_map(|(name, why)| match why {
+        Skip::Unavailable(why) if *name == LEARNED_DENOISER => Some(*why),
+        _ => None,
     });
-    Ok(())
-}
-
-/// What the Detail section made on the device: the picture after it,
-/// or the viewport's texture it went into, and its ops' stats.
-struct OnGpu {
-    image: Option<Arc<greycard_gpu::Image>>,
-    texture: Option<greycard_gpu::wgpu::Texture>,
-    detail: Option<LocalContrastStats>,
-    dehaze: Option<DehazeStats>,
-}
-
-/// `edit`'s Detail section on the device, from the patched picture's
-/// upload: the local contrast when a slider of it is set, then the
-/// dehaze when it is on, each reading the last one's output, as the
-/// reference runs them. The dehaze sums the blocks of its input there
-/// and reads them back, fits its model on the CPU from them (the
-/// reference's own fit), and applies the model there; the reduced
-/// copy is kept, so a move of the Dehaze alone fits again from it. With
-/// `viewport`, the last op writes a viewport texture, made once the
-/// upload has found the picture fits the device; else the result is a
-/// new picture for the sharpen, the upload itself when neither op is
-/// set. None for a picture the device or an op declines
-/// (`Unsupported`: one larger than the device's textures, or an amount
-/// so small its strength is zero, which the CPU's path leaves alone),
-/// to take the CPU for this develop.
-fn detail_on_gpu(
-    ctx: &greycard_gpu::Context,
-    b: &mut Base,
-    patched: &Arc<WorkingImage>,
-    edit: &Edit,
-    viewport: bool,
-    ran: &mut Ran,
-) -> greycard_gpu::Result<Option<OnGpu>> {
-    let declined = |op: &str, why: String| {
-        tracing::info!("the {op} on the CPU: {why}");
-        Ok(None)
-    };
-    let uploaded = match uploaded_patched(ctx, b, patched, ran) {
-        Ok(uploaded) => uploaded,
-        Err(greycard_gpu::Error::Unsupported(why)) => return declined("Detail section", why),
-        Err(e) => return Err(e),
-    };
-    let texture = viewport.then(|| ctx.viewport_texture(uploaded.width(), uploaded.height()));
-    let viewport = texture.as_ref();
-    let local = edit.detail.options();
-    let dehaze = edit.detail.dehaze_options();
-    let (image, detail) = match (local, dehaze, viewport) {
-        (None, _, _) => {
-            ctx.release_local_contrast();
-            (uploaded, None)
-        }
-        // The local contrast last, into the viewport's texture.
-        (Some(options), None, Some(out)) => {
-            return match ctx.local_contrast_to_viewport(&uploaded, &options, b.clip_level, out) {
-                Ok(stats) => {
-                    ran.detail = Some(DetailRan::Gpu);
-                    b.haze = None;
-                    Ok(Some(OnGpu {
-                        image: None,
-                        texture,
-                        detail: Some(stats),
-                        dehaze: None,
-                    }))
-                }
-                Err(greycard_gpu::Error::Unsupported(why)) => declined("local contrast", why),
-                Err(e) => Err(e),
-            };
-        }
-        (Some(options), _, _) => match ctx.local_contrast(&uploaded, &options, b.clip_level) {
-            Ok((image, stats)) => {
-                ran.detail = Some(DetailRan::Gpu);
-                (Arc::new(image), Some(stats))
-            }
-            Err(greycard_gpu::Error::Unsupported(why)) => return declined("local contrast", why),
-            Err(e) => return Err(e),
-        },
-    };
-    let Some(options) = dehaze else {
-        b.haze = None;
-        return Ok(Some(OnGpu {
-            image: Some(image),
-            texture,
-            detail,
-            dehaze: None,
-        }));
-    };
-    // The reduced copy: kept from the last develop when it was made
-    // from this picture through the same local contrast, else summed
-    // here and read back.
-    let reduced = match b.haze.as_ref() {
-        Some(k) if Arc::ptr_eq(&k.patched, patched) && k.detail == local => k.reduced.clone(),
-        _ => {
-            b.haze = None;
-            let reduced = Arc::new(ctx.dehaze_reduced(&image)?);
-            b.haze = Some(KeptHaze {
-                patched: patched.clone(),
-                detail: local,
-                reduced: reduced.clone(),
-            });
-            reduced
-        }
-    };
-    let Some(model) = reduced.model(&options) else {
-        return declined(
-            "dehaze",
-            format!("a strength of zero at {}", options.amount),
-        );
-    };
-    let applied = match viewport {
-        Some(out) => ctx
-            .dehaze_to_viewport(&image, &model, out)
-            .map(|stats| (None, stats)),
-        None => ctx
-            .dehaze(&image, &model)
-            .map(|(image, stats)| (Some(Arc::new(image)), stats)),
-    };
-    match applied {
-        Ok((image, stats)) => {
-            ran.dehaze = Some(DehazeRan::Gpu);
-            Ok(Some(OnGpu {
-                image,
-                texture,
-                detail,
-                dehaze: Some(stats),
-            }))
-        }
-        Err(greycard_gpu::Error::Unsupported(why)) => declined("dehaze", why),
-        Err(e) => Err(e),
+    match (&walked.meta.stood_in, unavailable) {
+        (_, Some(why)) => LearnedReport::Unavailable(why),
+        (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
+        (Some(NoLearned::Failed(why)), _) => LearnedReport::Failed(why.clone()),
+        (None, None) => ran,
     }
 }
 

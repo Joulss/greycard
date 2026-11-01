@@ -40,7 +40,6 @@ fn the_edit_s_pictures_of_the_samples() {
             0,
             1,
             &mut base,
-            &mut None,
             &mut Ai::new(),
             None,
             None,
@@ -57,9 +56,9 @@ fn the_edit_s_pictures_of_the_samples() {
             source,
             full: source,
             rasters: Default::default(),
-            clip_level: b.clip_level,
+            clip_level: b.meta.clip_level,
             guide: Some(b.guide.clone()),
-            kind: b.source,
+            kind: b.meta.source,
             white: b.white_shift(),
             detail: None,
         };
@@ -232,7 +231,6 @@ fn the_sky_over_real_frames() {
             0,
             1,
             &mut base,
-            &mut None,
             &mut develop_ai,
             None,
             None,
@@ -254,7 +252,7 @@ fn the_sky_over_real_frames() {
                     b.stamp,
                     &b.image,
                     &b.edit,
-                    b.source,
+                    b.meta.source,
                     b.turn,
                     (1, 0),
                     &shape,
@@ -350,7 +348,7 @@ fn the_sky_over_real_frames() {
         println!("{line}");
         lines.push(line);
         if let Some(out) = &out {
-            let rgb = crate::ai::preview(&b.image, &b.edit, b.source);
+            let rgb = crate::ai::preview(&b.image, &b.edit, b.meta.source);
             image::save_buffer(
                 out.join(format!("{stem}.jpg")),
                 &rgb.data,
@@ -469,7 +467,6 @@ fn the_landscape_over_real_frames() {
             0,
             1,
             &mut base,
-            &mut None,
             &mut develop_ai,
             None,
             None,
@@ -483,7 +480,7 @@ fn the_landscape_over_real_frames() {
         ai.forget(Some(path.clone()));
         let runs = ai.scene_runs;
         let (offers, provider, seconds) = ai
-            .landscape(b.stamp, &b.image, &b.edit, b.source)
+            .landscape(b.stamp, &b.image, &b.edit, b.meta.source)
             .unwrap_or_else(|e| panic!("{stem}: {e}"));
         let (mut made, mut rasters) = (Vec::new(), Vec::new());
         for (i, offer) in offers.iter().enumerate() {
@@ -495,7 +492,7 @@ fn the_landscape_over_real_frames() {
                     b.stamp,
                     &b.image,
                     &b.edit,
-                    b.source,
+                    b.meta.source,
                     b.turn,
                     (1, i),
                     &shape,
@@ -553,7 +550,7 @@ fn the_landscape_over_real_frames() {
         }
         // Pressed again: the offer from the scene kept.
         let (again, _, _) = ai
-            .landscape(b.stamp, &b.image, &b.edit, b.source)
+            .landscape(b.stamp, &b.image, &b.edit, b.meta.source)
             .unwrap_or_else(|e| panic!("{stem}: {e}"));
         assert_eq!(again, offers, "{stem}: the second press");
         assert_eq!(
@@ -577,7 +574,7 @@ fn the_landscape_over_real_frames() {
         println!("{line}");
         lines.push(line);
         if let Some(out) = &out {
-            let rgb = crate::ai::preview(&b.image, &b.edit, b.source);
+            let rgb = crate::ai::preview(&b.image, &b.edit, b.meta.source);
             image::save_buffer(
                 out.join(format!("{stem}.jpg")),
                 &rgb.data,
@@ -647,7 +644,6 @@ fn parts_on_real_frames() {
             turn,
             1,
             &mut base,
-            &mut None,
             &mut develop_ai,
             None,
             None,
@@ -721,7 +717,7 @@ fn parts_on_real_frames() {
     // A portrait: every part of everyone, timed; the first run
     // pays for the load and the encoding.
     let b = develop("DSCF0835", &plain, 0, &mut ai);
-    let (people, provider, seconds) = ai.people(b.stamp, &b.image, b.source, b.turn).unwrap();
+    let (people, provider, seconds) = ai.people(b.stamp, &b.image, b.meta.source, b.turn).unwrap();
     println!(
         "DSCF0835: {} people on {} in {seconds:.2}s (load and encode)",
         people.len(),
@@ -736,7 +732,7 @@ fn parts_on_real_frames() {
                 b.stamp,
                 &b.image,
                 &b.edit,
-                b.source,
+                b.meta.source,
                 b.turn,
                 (1, i),
                 &shape,
@@ -766,7 +762,7 @@ fn parts_on_real_frames() {
             b.stamp,
             &b.image,
             &b.edit,
-            b.source,
+            b.meta.source,
             b.turn,
             (1, PARTS.len()),
             &part("Lips", Some(her.clone())),
@@ -787,7 +783,7 @@ fn parts_on_real_frames() {
             b.stamp,
             &b.image,
             &b.edit,
-            b.source,
+            b.meta.source,
             b.turn,
             (1, 0),
             &part("Whole person", None),
@@ -800,7 +796,7 @@ fn parts_on_real_frames() {
             b.stamp,
             &b.image,
             &b.edit,
-            b.source,
+            b.meta.source,
             b.turn,
             (1, PARTS.len() + 1),
             &part("Whole person", Some(her.clone())),
@@ -834,7 +830,7 @@ fn parts_on_real_frames() {
                 b.stamp,
                 &b.image,
                 &b.edit,
-                b.source,
+                b.meta.source,
                 b.turn,
                 (1, PARTS.len() + 2),
                 &Shape::Subject {},
@@ -860,7 +856,7 @@ fn parts_on_real_frames() {
     // The group: each person's Top on her own picture is decided
     // alone, and hers.
     let g = develop("5M0A4169", &plain, 0, &mut ai);
-    let (group, _, seconds) = ai.people(g.stamp, &g.image, g.source, g.turn).unwrap();
+    let (group, _, seconds) = ai.people(g.stamp, &g.image, g.meta.source, g.turn).unwrap();
     println!("5M0A4169: {} people in {seconds:.2}s", group.len());
     assert_eq!(group.len(), 5, "the group frame");
     assert!(group.iter().all(|p| p.picture.is_some()));
@@ -875,7 +871,7 @@ fn parts_on_real_frames() {
                 g.stamp,
                 &g.image,
                 &g.edit,
-                g.source,
+                g.meta.source,
                 g.turn,
                 (2, i),
                 &shape,
@@ -935,7 +931,7 @@ fn parts_on_real_frames() {
                 g.stamp,
                 &g.image,
                 &g.edit,
-                g.source,
+                g.meta.source,
                 g.turn,
                 (9, i),
                 &part("Whole person", Some(p.person())),
@@ -972,7 +968,7 @@ fn parts_on_real_frames() {
                 g.stamp,
                 &g.image,
                 &g.edit,
-                g.source,
+                g.meta.source,
                 g.turn,
                 (9, group.len() + 1),
                 &Shape::Subject {},
@@ -1003,7 +999,7 @@ fn parts_on_real_frames() {
                 g.stamp,
                 &g.image,
                 &g.edit,
-                g.source,
+                g.meta.source,
                 g.turn,
                 (10, i),
                 &part("Whole person", Some(p.person())),
@@ -1039,7 +1035,7 @@ fn parts_on_real_frames() {
             g.stamp,
             &g.image,
             &g.edit,
-            g.source,
+            g.meta.source,
             g.turn,
             (9, group.len()),
             &part("Whole person", None),
@@ -1066,7 +1062,7 @@ fn parts_on_real_frames() {
     let mut bright = Edit::default();
     bright.light.exposure = 0.7;
     let e = develop("5M0A4169", &bright, 0, &mut ai);
-    let (again, _, _) = ai.people(e.stamp, &e.image, e.source, e.turn).unwrap();
+    let (again, _, _) = ai.people(e.stamp, &e.image, e.meta.source, e.turn).unwrap();
     for (a, b) in again.iter().zip(&group) {
         let most = a
             .signature
@@ -1082,7 +1078,7 @@ fn parts_on_real_frames() {
             e.stamp,
             &e.image,
             &bright,
-            e.source,
+            e.meta.source,
             e.turn,
             (7, 0),
             &part("Top", Some(first.clone())),
@@ -1108,7 +1104,7 @@ fn parts_on_real_frames() {
             t.stamp,
             &t.image,
             &t.edit,
-            t.source,
+            t.meta.source,
             t.turn,
             (8, 0),
             &turned,
@@ -1148,7 +1144,7 @@ fn parts_on_real_frames() {
             g.stamp,
             &g.image,
             &g.edit,
-            g.source,
+            g.meta.source,
             g.turn,
             (3, 0),
             &part("Lips", Some(her.clone())),
@@ -1171,7 +1167,7 @@ fn parts_on_real_frames() {
             o.stamp,
             &o.image,
             &o.edit,
-            o.source,
+            o.meta.source,
             o.turn,
             (4, 0),
             &part("Lips", Some(her)),
@@ -1197,7 +1193,7 @@ fn parts_on_real_frames() {
             b.stamp,
             &b.image,
             &b.edit,
-            b.source,
+            b.meta.source,
             b.turn,
             (5, 0),
             &part("Hair", Some(group[0].person())),
@@ -1227,7 +1223,7 @@ fn parts_on_real_frames() {
     let mut couples = Vec::new();
     for stem in ["4Z4A3846", "5M0A0504"] {
         let c = develop(stem, &plain, 0, &mut ai);
-        let (people, _, _) = ai.people(c.stamp, &c.image, c.source, c.turn).unwrap();
+        let (people, _, _) = ai.people(c.stamp, &c.image, c.meta.source, c.turn).unwrap();
         println!("{stem}: {} people", people.len());
         dump(stem, &people);
         couples.push((c, people));
@@ -1238,7 +1234,7 @@ fn parts_on_real_frames() {
             c.stamp,
             &c.image,
             &c.edit,
-            c.source,
+            c.meta.source,
             c.turn,
             (6, 0),
             &part("Lips", Some(couples[0].1[0].person())),
@@ -1316,14 +1312,13 @@ fn the_dehaze_viewport_against_the_export_on_real_frames() {
         };
         let mut base = None;
         for (name, edit) in &cases {
-            let run = |base: &mut Option<Base>, gpu: &mut Option<greycard_gpu::Context>| {
+            let run = |base: &mut Option<FrameKept>, gpu: &mut Option<greycard_gpu::Context>| {
                 develop_job(
                     &input,
                     edit,
                     0,
                     1,
                     base,
-                    &mut None,
                     &mut Ai::new(),
                     None,
                     None,
@@ -1363,7 +1358,7 @@ fn the_dehaze_viewport_against_the_export_on_real_frames() {
                 }
             };
             let b = base.as_ref().unwrap();
-            let global = greycard_render::finish::Baked::global(edit, b.source);
+            let global = greycard_render::finish::Baked::global(edit, b.meta.source);
             let to_out = greycard_render::export::Space::Srgb.matrix();
             let finish = |image: &WorkingImage| -> Vec<u8> {
                 greycard_render::finish::finish_with(
@@ -1525,7 +1520,6 @@ fn dump_the_models_inputs() {
             0,
             1,
             &mut base,
-            &mut None,
             &mut develop_ai,
             None,
             None,
@@ -1537,7 +1531,7 @@ fn dump_the_models_inputs() {
             continue;
         };
         let develop = t.elapsed().as_secs_f64();
-        let rgb = crate::ai::preview(&b.image, &b.edit, b.source);
+        let rgb = crate::ai::preview(&b.image, &b.edit, b.meta.source);
         image::RgbImage::from_raw(rgb.width as u32, rgb.height as u32, rgb.data.clone())
             .unwrap()
             .save(out.join(format!("{stem}.png")))
@@ -1620,7 +1614,6 @@ fn the_remove_fills_a_spot_on_a_raw() {
         0,
         1,
         &mut base,
-        &mut None,
         &mut ai,
         None,
         None,

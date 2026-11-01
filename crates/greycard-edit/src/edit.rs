@@ -382,36 +382,15 @@ impl Edit {
 
     /// Whether two edits develop the same image; the rest is the viewport's.
     pub fn same_develop(&self, other: &Edit) -> bool {
-        self.same_patched(other)
-            && self.detail == other.detail
-            && self.sharpen == other.sharpen
-            && self.detail_wants() == other.detail_wants()
-    }
-
-    /// Whether the developed picture before its local contrast, its
-    /// dehaze and its sharpen is the same: the base and the retouch.
-    pub fn same_patched(&self, other: &Edit) -> bool {
-        self.same_base(other) && self.retouch == other.retouch
-    }
-
-    /// Whether two edits develop the same image before the sharpen,
-    /// which a consumer may cache and apply on its own.
-    pub fn same_base(&self, other: &Edit) -> bool {
         self.white_balance == other.white_balance
             && self.noise == other.noise
             && self.demosaic == other.demosaic
             && self.camera == other.camera
             && self.lens == other.lens
-    }
-
-    /// Whether the learned denoiser would answer the same for both:
-    /// the same mosaic and tier. Its strength is a blend a consumer
-    /// applies on the answer it has.
-    pub fn same_learned(&self, other: &Edit) -> bool {
-        self.white_balance == other.white_balance
-            && self.demosaic == other.demosaic
-            && self.camera == other.camera
-            && self.noise.learned == other.noise.learned
+            && self.retouch == other.retouch
+            && self.detail == other.detail
+            && self.sharpen == other.sharpen
+            && self.detail_wants() == other.detail_wants()
     }
 
     pub fn to_json(&self) -> String {
@@ -832,7 +811,6 @@ mod tests {
         assert!(!edit.same_develop(&other));
         let mut other = edit.clone();
         other.detail.dehaze = 0.5;
-        assert!(edit.same_patched(&other), "the dehaze is after the base");
         assert!(!edit.same_develop(&other));
         // The engine's settings stop before the dehaze, which is a
         // stage of its own after the lens.

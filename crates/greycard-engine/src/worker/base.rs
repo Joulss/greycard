@@ -1,82 +1,12 @@
-//! Making the base a develop starts from: the engine's, the learned
-//! denoiser's, or the last one turned.
+//! A frame's develop as its walks kept it, and the models those walks
+//! run.
+
+use greycard_core::develop::retouch::Region;
+use greycard_edit::retouch::Patch;
 
 use super::*;
-
-/// Whether a base made at one frame turn, turned by a permutation of
-/// its pixels, is the base made at another, to the bit.
-///
-/// Everything the engine does before its orientation step reads the
-/// mosaic, which a turn does not touch, and the step itself is a
-/// permutation (`develop::orient`), so the engine's picture at one
-/// turn is its picture at another permuted. What comes after it on
-/// the turned picture is the question. The lens correction is
-/// radial about the center, and the defringe's blur and its test
-/// against the frame's mean deviation are symmetric, so each is the
-/// same picture turned in exact arithmetic; in floats neither is,
-/// since a turn changes the order of the sums and which side of a
-/// half a coordinate rounds to. A frame with either on is developed
-/// afresh at its new turn, as it always was.
-pub(super) fn turns_exactly(edit: &Edit, lenses: Option<&greycard_lens::Database>) -> bool {
-    edit.lens.is_identity(lenses.is_some()) && edit.lens.defringe().is_none()
-}
-
-/// The kept base, and the learned denoiser's pair beside it when it
-/// was made at the same turn, turned to the frame's `turn`: their
-/// pixels permuted, the guide plane read again off the turned
-/// picture, and everything kept after the base let go, since the
-/// retouch's patches and the picture before the sharpen were placed
-/// on the base the other way up. A new `stamp`, so the learned masks
-/// made on the old base are not taken for this one's.
-pub(super) fn turn_base(
-    b: &mut Base,
-    learned: &mut Option<LearnedBase>,
-    turn: u8,
-    stamp: u64,
-    gpu: Option<&greycard_gpu::Context>,
-) {
-    let Some(o) = quarters((turn % 4 + 4 - b.turn % 4) % 4) else {
-        return;
-    };
-    let turned = |image: Arc<WorkingImage>| {
-        let image = Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone());
-        Arc::new(greycard_core::develop::orient(image, o))
-    };
-    // The blend at either end of its strength is one of the pair
-    // itself, shared rather than copied: turned once, and shared on.
-    let mut image = std::mem::replace(&mut b.image, Arc::new(WorkingImage::new(0, 0)));
-    if let Some(l) = learned.as_mut().filter(|l| l.turn == b.turn) {
-        let is_model = Arc::ptr_eq(&image, &l.model);
-        let is_plain = Arc::ptr_eq(&image, &l.plain);
-        if is_model || is_plain {
-            image = Arc::new(WorkingImage::new(0, 0));
-        }
-        let empty = || Arc::new(WorkingImage::new(0, 0));
-        l.model = turned(std::mem::replace(&mut l.model, empty()));
-        l.plain = turned(std::mem::replace(&mut l.plain, empty()));
-        l.turn = turn;
-        if is_model {
-            image = l.model.clone();
-        } else if is_plain {
-            image = l.plain.clone();
-        } else {
-            image = turned(image);
-        }
-    } else {
-        image = turned(image);
-    }
-    b.image = image;
-    b.guide = Arc::new(greycard_render::finish::guide_plane(&b.image));
-    b.turn = turn;
-    b.stamp = stamp;
-    b.patched = None;
-    b.haze = None;
-    b.planes = None;
-    let kept = b.pre.take().is_some() | b.uploaded.take().is_some();
-    if kept && let Some(ctx) = gpu {
-        ctx.release();
-    }
-}
+use crate::stages::{Facts, Keep, Purpose, Step, Steps, Tap, stages};
+use crate::walk::{Kept, Meta, NoLearned, Place};
 
 /// The seconds each stage of a develop took, in the order they ran,
 /// for its log line ([`super::develop`]'s `note_developed`).
@@ -90,213 +20,356 @@ pub(super) fn timed<T>(stages: &mut Stages, name: &'static str, run: impl FnOnce
     out
 }
 
-/// The engine's own develop of `edit`, before its sharpen, its CA
-/// correction by `ca` when one is given (the GPU's). The engine's
-/// `develop_with` a stage at a time, each timed into `stages`: the
-/// prepare (the levels, the hot pixels, the highlights, the radius,
-/// and the CA), the demosaic (with the engine's denoise when it is
-/// on), and the finish (the matrix, the profile's map, and the
-/// orientation).
-pub(super) fn engine_base(
-    frame: &RawFrame,
-    edit: &Edit,
-    turn: u8,
-    settings: &DevelopSettings,
-    stamp: u64,
-    ca: Option<CaCorrector<'_>>,
-    stages: &mut Stages,
-) -> anyhow::Result<Base> {
-    engine_base_or_stop(frame, edit, turn, settings, stamp, ca, stages, &|_| false)
-        .map(|made| made.expect("a base that is never stopped is made"))
+/// A frame's develop as its walks kept it: the points they kept, and
+/// what the window's asks (its masks, its people, its pictures, its
+/// export) read of the last one. The open frame's, and each frame's
+/// left behind on the shelf.
+pub(super) struct FrameKept {
+    pub kept: Kept,
+    /// What the frame's decode said, which its lists are derived from,
+    /// at no turn.
+    pub facts: Facts,
+    /// The edit the base was made under, which the masks' models see
+    /// it through, and the quarter turns of the last walk.
+    pub edit: Edit,
+    pub turn: u8,
+    /// Counts the base pictures made of the frame, for the learned
+    /// masks to know theirs.
+    pub stamp: u64,
+    /// Taken back from the shelf and not walked from since: the next
+    /// develop's line says where its base came from.
+    pub from_shelf: bool,
+    /// The base picture of the last walk.
+    pub image: Arc<WorkingImage>,
+    /// What the last walk measured of the picture.
+    pub meta: Meta,
+    /// The last walk's guide plane, and the masks' bands it made.
+    pub guide: Arc<greycard_render::finish::Guide>,
+    pub planes: Option<Arc<greycard_render::detail::DetailPlanes>>,
+    /// Whether the CA or the lens in the base ran on the device: the
+    /// export's picture is the reference's.
+    pub on_gpu: bool,
+    /// The picture the refined masks are made against, with what it
+    /// was made from: made only for an edit that refines a mask
+    /// ([`super::masks::mask_picture`]), kept for the next develop of
+    /// it, and shelved with the base.
+    pub mask_picture: Option<KeptMaskPicture>,
+    /// What the picture kept on the device before the sharpen was made
+    /// from: the patched picture and the Detail section run on it, for
+    /// the refined masks' picture to be read back from it.
+    pub pre: Option<(Arc<WorkingImage>, greycard_edit::Detail)>,
 }
 
-/// [`engine_base`], asking `stop` before the demosaic and before the
-/// finish, with the name of the stage to come, whether to go on: `None`
-/// when it said to stop, and what was made so far is let go. The
-/// engine has no way to stop inside a stage, so this is as soon as the
-/// base can give way to something else (the neighbors' prefetch).
-#[allow(clippy::too_many_arguments)]
-pub(super) fn engine_base_or_stop(
-    frame: &RawFrame,
-    edit: &Edit,
-    turn: u8,
-    settings: &DevelopSettings,
-    stamp: u64,
-    ca: Option<CaCorrector<'_>>,
-    stages: &mut Stages,
-    stop: &dyn Fn(&'static str) -> bool,
-) -> anyhow::Result<Option<Base>> {
-    let prepared = timed(stages, "prepare", || {
-        prepare_with(frame, settings, false, ca)
-    })?;
-    if stop("demosaic") {
-        return Ok(None);
-    }
-    let (rgb, dual, denoise) = timed(stages, "demosaic", || {
-        demosaic_prepared(&prepared, settings)
-    })?;
-    if stop("finish") {
-        return Ok(None);
-    }
-    let d = timed(stages, "finish", || {
-        finish(prepared, rgb, dual, denoise, settings)
-    })?;
-    let gave_way = d
-        .demosaic
-        .filter(|ran| *ran != settings.demosaic && settings.demosaic != DemosaicMethod::default())
-        .map(|ran| {
-            format!(
-                "the demosaic: {} is not one for this raw's mosaic; {} instead",
-                settings.demosaic.name(),
-                ran.name()
-            )
-        });
-    Ok(Some(Base {
-        edit: edit.clone(),
-        turn,
-        image: Arc::new(d.image),
-        guide: Arc::new(greycard_render::finish::Guide::NONE),
-        white: WhiteBase::from(&d.white_balance, d.clip_level),
-        radius: d.sharpen_radius,
-        clip_level: d.clip_level,
-        source: greycard_render::finish::Source::of_frame(frame),
-        stamp,
-        patched: None,
-        pre: None,
-        uploaded: None,
-        haze: None,
-        planes: None,
-        on_gpu: false,
-        stand_in: None,
-        gave_way,
-        profile: None,
-        from_shelf: false,
-        mask_picture: None,
-    }))
+/// The refined masks' picture ([`greycard_render::refine::MaskPicture`])
+/// with what it was made from: the patched picture and the Detail
+/// section run on it before the sharpen.
+pub(super) struct KeptMaskPicture {
+    pub patched: Arc<WorkingImage>,
+    pub detail: greycard_edit::Detail,
+    pub picture: Arc<greycard_render::refine::MaskPicture>,
 }
 
-/// The base with the learned denoiser: its answer from `learned` when
-/// that was made for the same mosaic and tier, else from the disk
-/// cache, else the network run once and kept; then the blend by the
-/// edit's strength. The error is why the engine's path must stand in.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn learned_base(
-    frame: &RawFrame,
-    edit: &Edit,
-    turn: u8,
-    settings: &DevelopSettings,
-    model: &'static greycard_ai::Model,
-    learned: &mut Option<LearnedBase>,
-    ai: &mut Ai,
-    cache: Option<&greycard_ai::DenoiseCache>,
-    stamp: u64,
-    ca: Option<CaCorrector<'_>>,
-    has_gpu: bool,
-    stages: &mut Stages,
-) -> Result<(Base, LearnedReport), LearnedReport> {
-    let report = if learned
-        .as_ref()
-        .is_some_and(|l| pair_serves(l, turn, edit, has_gpu))
-    {
-        LearnedReport::Kept
-    } else {
-        let denoiser = ai.denoiser(model).map_err(|e| match e {
-            NoDenoiser::Missing => LearnedReport::Missing(model),
-            NoDenoiser::Failed(m) => LearnedReport::Failed(m),
-        })?;
-        // The network is the demosaic and the denoise both.
-        let settings = DevelopSettings {
-            denoise: None,
-            ..settings.clone()
-        };
-        let (made, report) = run_learned(
-            frame, edit, turn, &settings, model, denoiser, cache, ca, stages,
-        )
-        .map_err(|e| LearnedReport::Failed(e.to_string()))?;
-        *learned = Some(made);
-        report
-    };
-    let l = learned
-        .as_ref()
-        .expect("a learned base was just made or kept");
-    // Timed only when it makes a picture of its own: at either end of
-    // the strength it is one of the pair.
-    let started = Instant::now();
-    let image = blend(&l.model, &l.plain, edit.noise.learned_strength);
-    if !Arc::ptr_eq(&image, &l.model) && !Arc::ptr_eq(&image, &l.plain) {
-        stages.push(("blend", started.elapsed().as_secs_f64()));
-    }
-    Ok((
-        Base {
-            edit: edit.clone(),
-            turn,
-            image,
-            guide: Arc::new(greycard_render::finish::Guide::NONE),
-            white: l.white,
-            radius: l.radius,
-            clip_level: l.clip_level,
-            source: greycard_render::finish::Source::of_frame(frame),
-            stamp,
-            patched: None,
-            pre: None,
-            uploaded: None,
-            haze: None,
-            planes: None,
-            on_gpu: l.ca_on_gpu,
-            stand_in: None,
-            gave_way: None,
-            profile: None,
+impl FrameKept {
+    /// Nothing kept yet of a frame `facts` describes.
+    pub(super) fn new(facts: &Facts) -> Self {
+        Self {
+            kept: Kept::new(),
+            facts: Facts {
+                turn: 0,
+                ..facts.clone()
+            },
+            edit: Edit::default(),
+            turn: 0,
+            stamp: 0,
             from_shelf: false,
+            image: Arc::new(WorkingImage::new(0, 0)),
+            meta: Meta::empty(),
+            guide: Arc::new(greycard_render::finish::Guide::NONE),
+            planes: None,
+            on_gpu: false,
             mask_picture: None,
-        },
-        report,
-    ))
+            pre: None,
+        }
+    }
+
+    /// The picture the retouch made, or the base where there is none:
+    /// what the Detail section and the sharpen run on.
+    pub(super) fn patched_picture(&self) -> Arc<WorkingImage> {
+        self.kept
+            .patched()
+            .map_or_else(|| self.image.clone(), |p| p.image.clone())
+    }
+
+    /// The bytes of the guide plane and the refined masks' picture,
+    /// unless that is the one the walk's own count has.
+    fn beside_bytes(&self) -> u64 {
+        let picture = self
+            .mask_picture
+            .as_ref()
+            .filter(|k| {
+                !self
+                    .kept
+                    .mask_picture()
+                    .is_some_and(|p| Arc::ptr_eq(p, &k.picture))
+            })
+            .map_or(0, |k| k.picture.bytes());
+        (self.guide.data.len() * std::mem::size_of::<f32>()) as u64 + picture
+    }
+
+    /// The frame's facts at `turn`.
+    pub(super) fn facts_at(&self, turn: u8) -> Facts {
+        Facts {
+            turn,
+            ..self.facts.clone()
+        }
+    }
+
+    /// The white balance the last walk used, as the window reads it.
+    pub(super) fn white(&self) -> WhiteBase {
+        match &self.meta.white {
+            Some(wb) => WhiteBase::from(wb, self.meta.clip_level),
+            None => WhiteBase {
+                clip: self.meta.clip_level,
+                ..WhiteBase::IDENTITY
+            },
+        }
+    }
+
+    /// What the masks' white balances are made matrices from.
+    pub(super) fn white_shift(&self) -> Option<greycard_edit::WhiteShift> {
+        self.meta.white_shift()
+    }
+
+    /// The masks' bands kept, when they hold what `edit`'s masks read.
+    pub(super) fn planes_for(
+        &self,
+        edit: &Edit,
+    ) -> Option<Arc<greycard_render::detail::DetailPlanes>> {
+        let wants = edit.detail_wants();
+        self.kept
+            .planes_for(&wants, edit.detail.options().filter(|_| wants.haze))
+    }
+
+    /// The bytes the frame's develop holds in memory: its pictures, the
+    /// guide plane, and the refined masks' picture.
+    pub(super) fn bytes(&self) -> u64 {
+        self.kept.bytes() + self.beside_bytes()
+    }
+
+    /// The bytes of the base and the patched picture, the guide plane,
+    /// and the refined masks' picture: what a frame of this size puts
+    /// on the shelf without a learned pair.
+    pub(super) fn base_bytes(&self) -> u64 {
+        let base = self.kept.picture(Keep::Base);
+        let patched = self.kept.patched().map(|p| p.image);
+        let size =
+            |image: &Arc<WorkingImage>| (image.data.len() * std::mem::size_of::<f32>()) as u64;
+        let mut total = base.map_or(0, size);
+        if let Some(p) = patched
+            && !base.is_some_and(|b| Arc::ptr_eq(b, p))
+        {
+            total += size(p);
+        }
+        total + self.beside_bytes()
+    }
+
+    /// Whether the base kept here serves a develop of `edit` at `turn`,
+    /// with a device `lent` or not, as the window's walk would resume
+    /// from it.
+    pub(super) fn serves(
+        &self,
+        edit: &Edit,
+        turn: u8,
+        lenses: Option<&greycard_lens::Database>,
+        lent: bool,
+    ) -> bool {
+        let (steps, plan) = window_steps(edit, &self.facts_at(turn), lenses, lent);
+        self.kept.serves(&steps, &plan, Keep::Base)
+    }
 }
 
-/// The engine's develop with the network between `prepare` and
-/// `finish`, and the plain demosaic of the same mosaic beside it. The
-/// network's answer comes from the disk cache when it is there, and
-/// goes into it when it is not.
-#[allow(clippy::too_many_arguments)]
-fn run_learned(
-    frame: &RawFrame,
+/// The window's list for `edit` on the frame `facts` describes, and
+/// where each step runs with a device `lent` or not. The window keeps
+/// no developed picture (the next develop is of another edit), and its
+/// picture before the sharpen only on the device, where it is what a
+/// sharpen move starts from; on the CPU that would be one more picture
+/// the size of the frame, held for a slider the CPU's sharpen is
+/// quick at. On the device the refined masks' picture is read back
+/// from the picture kept before the sharpen rather than tapped from
+/// one in memory, which a run there does not have.
+pub(super) fn window_steps(
     edit: &Edit,
-    turn: u8,
-    settings: &DevelopSettings,
-    model: &'static greycard_ai::Model,
-    denoiser: &mut greycard_ai::Denoiser,
-    cache: Option<&greycard_ai::DenoiseCache>,
-    ca: Option<CaCorrector<'_>>,
-    stages: &mut Stages,
-) -> anyhow::Result<(LearnedBase, LearnedReport)> {
-    bayer_only(frame)?;
-    let prepared = timed(stages, "prepare", || {
-        prepare_with(frame, settings, true, ca)
-    })?;
-    let (rgb, report) = network(frame, &prepared, model, denoiser, cache)?;
-    let (plain_rgb, dual, _) = timed(stages, "demosaic", || {
-        demosaic_prepared(&prepared, settings)
-    })?;
-    // The two finishes, the plain and the network's, as one stage.
-    let (plain, model) = timed(stages, "finish", || {
-        let plain = finish(prepared.clone(), plain_rgb, dual, None, settings)?;
-        let model = finish(prepared, rgb, None, None, settings)?;
-        anyhow::Ok((plain, model))
-    })?;
-    Ok((
-        LearnedBase {
-            edit: edit.clone(),
-            turn,
-            model: Arc::new(model.image),
-            plain: Arc::new(plain.image),
-            white: WhiteBase::from(&model.white_balance, model.clip_level),
-            radius: model.sharpen_radius,
-            clip_level: model.clip_level,
-            // Set by the caller once it knows where the CA ran.
-            ca_on_gpu: false,
-        },
-        report,
-    ))
+    facts: &Facts,
+    lenses: Option<&greycard_lens::Database>,
+    lent: bool,
+) -> (Steps, Vec<Place>) {
+    let purpose = Purpose::Viewport;
+    let mut steps = stages(edit, &purpose, facts, lenses);
+    steps.steps.retain(|s| match s {
+        Step::Keep(Keep::Developed) => false,
+        Step::Keep(Keep::PreSharpen) => lent,
+        Step::Tap(Tap::MaskPicture) => !lent,
+        _ => true,
+    });
+    let plan = crate::walk::plan(&steps, &purpose, lent);
+    (steps, plan)
+}
+
+/// Why the learned denoiser is not to be had, as the walk says it.
+fn no_learned(e: NoDenoiser, model: &'static greycard_ai::Model) -> NoLearned {
+    match e {
+        NoDenoiser::Missing => NoLearned::Missing(model),
+        NoDenoiser::Failed(why) => NoLearned::Failed(why),
+    }
+}
+
+/// The models a walk of the worker's runs, lent from the `Ai` it is
+/// given: the learned denoiser through the disk cache, the fills, and
+/// the learned masks an export makes, each one that could not be had
+/// noted in the words the window and the export say it in.
+pub(super) struct WorkerModels<'a> {
+    ai: &'a mut Ai,
+    cache: Option<&'a greycard_ai::DenoiseCache>,
+    deliver: &'a Deliver,
+    /// The job's generation, which its fills are said under.
+    generation: u64,
+    /// The edit and the turn the walk is of.
+    pub edit: Edit,
+    pub turn: u8,
+    /// How the learned denoiser's answer was had, for the log line.
+    pub learned: LearnedReport,
+    pub fills: FillReport,
+    /// Each learned mask not made, in words.
+    pub masks: Vec<String>,
+}
+
+impl<'a> WorkerModels<'a> {
+    pub(super) fn new(
+        ai: &'a mut Ai,
+        cache: Option<&'a greycard_ai::DenoiseCache>,
+        deliver: &'a Deliver,
+        generation: u64,
+    ) -> Self {
+        Self {
+            ai,
+            cache,
+            deliver,
+            generation,
+            edit: Edit::default(),
+            turn: 0,
+            learned: LearnedReport::Off,
+            fills: FillReport::default(),
+            masks: Vec::new(),
+        }
+    }
+}
+
+impl WorkerModels<'_> {
+    /// The learned denoiser `model`, loaded now if it is not yet; why
+    /// not when it cannot be.
+    fn denoiser(
+        &mut self,
+        model: &'static greycard_ai::Model,
+    ) -> Result<&mut greycard_ai::Denoiser, NoLearned> {
+        self.ai.denoiser(model).map_err(|e| no_learned(e, model))
+    }
+}
+
+/// What the models' cache knows an export's picture by: each frame of
+/// a set is the first picture made of it.
+const EXPORT_STAMP: u64 = 1;
+
+impl crate::walk::Models for WorkerModels<'_> {
+    fn can_denoise(&mut self, model: &'static greycard_ai::Model) -> Result<(), NoLearned> {
+        self.ai
+            .denoiser_there(model)
+            .map_err(|e| no_learned(e, model))
+    }
+
+    fn denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+        frame: &RawFrame,
+        prepared: &Prepared,
+    ) -> Result<Vec<f32>, NoLearned> {
+        let cache = self.cache;
+        let denoiser = self.denoiser(model)?;
+        let (rgb, report) = network(frame, prepared, model, denoiser, cache)
+            .map_err(|e| NoLearned::Failed(e.to_string()))?;
+        self.learned = report;
+        Ok(rgb)
+    }
+
+    fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>> {
+        // A fill the model has to make is said so before it starts,
+        // since it takes a while.
+        let kept = self.ai.fill_kept(patch, region, picture);
+        if !kept && self.ai.engine(patch, region, picture).is_ok() {
+            (self.deliver)(Outcome::Filling {
+                generation: self.generation,
+                name: patch.name(),
+            });
+        }
+        let started = Instant::now();
+        match self.ai.fill(patch, region, picture) {
+            Ok((data, engine)) => {
+                if !kept {
+                    self.fills.made.push(patch.name());
+                    self.fills.seconds += started.elapsed().as_secs_f64();
+                }
+                self.fills.engines.push((patch.id, engine));
+                Some(data)
+            }
+            Err(NoFill::Missing(model)) => {
+                self.fills.missing.push((patch.name(), model));
+                None
+            }
+            Err(NoFill::NoGpu) => {
+                self.fills.no_gpu.push(patch.name());
+                None
+            }
+            Err(NoFill::Failed(why)) => {
+                self.fills.failed.push((patch.name(), why));
+                None
+            }
+        }
+    }
+
+    fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool {
+        self.ai.could_fill_more(retouch, picture)
+    }
+
+    fn rasters(
+        &mut self,
+        how: crate::stages::Masks,
+        base: &Arc<WorkingImage>,
+        patched: Option<crate::walk::Patched<'_>>,
+        meta: &crate::walk::Meta,
+    ) -> crate::walk::Rasters {
+        // The window asks for its masks on their own job, when it
+        // shows them; only an export makes them beside the develop.
+        if how != crate::stages::Masks::Make {
+            return crate::walk::Rasters::new();
+        }
+        let (rasters, left_out) = super::masks::learned_rasters(
+            &self.edit,
+            self.ai,
+            &super::masks::On {
+                stamp: EXPORT_STAMP,
+                image: base,
+                retouched: patched.map(|p| crate::ai::Retouched {
+                    retouch: p.retouch,
+                    image: p.image,
+                    unmade: p.unmade,
+                }),
+                edit: &self.edit,
+                source: meta.source,
+                turn: self.turn,
+            },
+        );
+        self.masks = left_out;
+        rasters
+    }
 }
 
 /// The learned denoiser's network takes a packed 2x2 Bayer mosaic.
@@ -362,24 +435,51 @@ pub(super) fn network(
     Ok((rgb, report))
 }
 
-/// `plain` taken `strength` of the way to `model`, per sample: the
-/// two are one picture in one space, so the mix is that much of the
-/// denoise. At the ends no copy is made.
-pub(super) fn blend(
-    model: &Arc<WorkingImage>,
-    plain: &Arc<WorkingImage>,
-    strength: f32,
-) -> Arc<WorkingImage> {
-    let s = strength.clamp(0.0, 1.0);
-    if s >= 1.0 {
-        return model.clone();
+#[cfg(test)]
+impl FrameKept {
+    /// What the window's walk of `edit` at `turn` on `input` keeps, on
+    /// the CPU, with `models`: for the tests of what holds it.
+    pub(super) fn walked_with(
+        input: &crate::walk::Input,
+        edit: &Edit,
+        turn: u8,
+        models: &mut dyn crate::walk::Models,
+    ) -> FrameKept {
+        let facts = input.facts(turn);
+        let (steps, plan) = window_steps(edit, &facts, None, false);
+        let mut held = FrameKept::new(&facts);
+        let walked = crate::walk::walk(
+            &steps,
+            &plan,
+            input,
+            &mut held.kept,
+            models,
+            &mut None,
+            &crate::walk::NoHold,
+        )
+        .expect("the walk");
+        held.edit = edit.clone();
+        held.turn = turn;
+        held.stamp = 1;
+        held.meta = walked.meta;
+        held.guide = walked
+            .taps
+            .guide
+            .unwrap_or_else(|| Arc::new(greycard_render::finish::Guide::NONE));
+        held.planes = walked.taps.planes;
+        if let Some(image) = held.kept.picture(Keep::Base) {
+            held.image = image.clone();
+        }
+        held
     }
-    if s <= 0.0 {
-        return plain.clone();
+
+    /// [`FrameKept::walked_with`] a raw, with no models.
+    pub(super) fn walked(frame: &Arc<RawFrame>, edit: &Edit, turn: u8) -> FrameKept {
+        Self::walked_with(
+            &crate::walk::Input::Raw(frame.clone()),
+            edit,
+            turn,
+            &mut crate::walk::NoModels,
+        )
     }
-    let mut out = (**plain).clone();
-    for (o, m) in out.data.iter_mut().zip(&model.data) {
-        *o += (m - *o) * s;
-    }
-    Arc::new(out)
 }

@@ -8,20 +8,13 @@ use std::time::Instant;
 
 use greycard_core::CameraProfile;
 use greycard_core::color::{as_shot_temp_tint, profile_from_frame};
-use greycard_core::develop::ca::{CaOptions, CaStats, correct_ca};
-use greycard_core::develop::dehaze::{self, DehazeStats, Reduced};
+use greycard_core::develop::dehaze::DehazeStats;
 use greycard_core::develop::lens::LensCorrection;
-use greycard_core::develop::local_contrast::{
-    LocalContrastOptions, LocalContrastStats, local_contrast,
-};
-use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
-use greycard_core::develop::{
-    CaCorrector, DemosaicMethod, DevelopSettings, Prepared, demosaic_prepared, develop, finish,
-    prepare_with,
-};
+use greycard_core::develop::local_contrast::LocalContrastStats;
+use greycard_core::develop::sharpen::SharpenStats;
+use greycard_core::develop::{DemosaicMethod, DevelopSettings, Prepared, develop};
 use greycard_core::image::WorkingImage;
 use greycard_core::picture::{Picture, decode_picture_path, is_picture_path};
-use greycard_core::raw::CfaPattern;
 use greycard_core::raw::{Shot, ShotSummary};
 use greycard_library::thumbs::{Tag, Thumb, Thumbs};
 
@@ -42,12 +35,10 @@ mod tests;
 mod thumbs;
 
 #[cfg(test)]
-use self::{base::blend, decode::open};
+use self::decode::open;
 use self::{
-    base::{
-        Stages, engine_base, engine_base_or_stop, learned_base, timed, turn_base, turns_exactly,
-    },
-    decode::{lens_corrections, lens_report, open_told, timed_open},
+    base::{FrameKept, KeptMaskPicture, Stages, WorkerModels, timed, window_steps},
+    decode::{lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, left_out_words, run},
     export::{export_other, finish_export, open_picture, scene_export, seeded, write_export},
@@ -290,15 +281,6 @@ pub enum LearnedReport {
     /// The learned denoiser does not take this frame's mosaic (X-Trans):
     /// the edit asked for it, and the develop ran without it. Says why.
     Unavailable(&'static str),
-}
-
-/// Why the learned denoiser does not run on `frame`, when the edit asks
-/// for it: its network takes a packed 2x2 Bayer mosaic, and has no
-/// X-Trans version. Read from the layout before anything is prepared
-/// or loaded. The profiled denoise runs on X-Trans as on Bayer.
-fn denoise_unavailable(frame: &RawFrame, learned: bool) -> Option<&'static str> {
-    let xtrans = matches!(&frame.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans());
-    (xtrans && learned).then_some("the learned denoiser has no X-Trans version yet")
 }
 
 /// What the fill model did for a develop's Fill patches, by name.
@@ -758,13 +740,13 @@ struct Last {
 impl Last {
     /// The develop that just finished, from the base it ran on, and
     /// its outcome.
-    fn made(edit: Edit, base: &Base, image: Arc<WorkingImage>, outcome: &Outcome) -> Self {
+    fn made(edit: Edit, held: &FrameKept, image: Arc<WorkingImage>, outcome: &Outcome) -> Self {
         Self {
             edit,
-            turn: base.turn,
+            turn: held.turn,
             image,
-            on_gpu: base.on_gpu,
-            left_out: left_out_of(outcome, Some(base)),
+            on_gpu: held.on_gpu,
+            left_out: left_out_of(outcome, Some(held)),
         }
     }
 }
@@ -796,7 +778,7 @@ struct ShownTexture {
 impl ShownTexture {
     /// The texture a develop's outcome carries, for `edit` at `turn`,
     /// from `base`.
-    fn of(edit: &Edit, turn: u8, outcome: &Outcome, base: Option<&Base>) -> Option<Self> {
+    fn of(edit: &Edit, turn: u8, outcome: &Outcome, base: Option<&FrameKept>) -> Option<Self> {
         match outcome {
             Outcome::Developed {
                 image: Developed::Texture(texture),
@@ -820,7 +802,7 @@ struct InHand<'a> {
     opened: Option<&'a std::path::Path>,
     last: Option<&'a Last>,
     shown: Option<&'a ShownTexture>,
-    base: Option<&'a mut Base>,
+    base: Option<&'a mut FrameKept>,
     gpu: Option<&'a greycard_gpu::Context>,
 }
 
@@ -832,7 +814,7 @@ struct InHand<'a> {
 /// under `edit` is [`FrameDevelop::finish`].
 pub struct FrameDevelop {
     image: Arc<WorkingImage>,
-    base: Option<Base>,
+    base: Option<FrameKept>,
     ai: Ai,
 }
 
@@ -853,7 +835,7 @@ impl FrameDevelop {
         let mut base = None;
         let deliver: Deliver = Arc::new(|_| {});
         match develop_job(
-            &input, edit, 0, 0, &mut base, &mut None, &mut ai, None, lenses, &mut None, &deliver,
+            &input, edit, 0, 0, &mut base, &mut ai, None, lenses, &mut None, &deliver,
         ) {
             (_, Some(image)) => Ok(FrameDevelop { image, base, ai }),
             (Outcome::Failed { message, .. }, None) => Err(message),
@@ -875,7 +857,10 @@ impl FrameDevelop {
     /// What the finish is handed: a raw's develop and its body's
     /// baseline, as the export finishes it.
     pub fn source(&self) -> greycard_render::finish::Source {
-        self.base.as_ref().map(|b| b.source).unwrap_or_default()
+        self.base
+            .as_ref()
+            .map(|b| b.meta.source)
+            .unwrap_or_default()
     }
 
     /// The developed picture finished under `edit` (whose develop is
@@ -1004,6 +989,17 @@ enum Input {
 }
 
 impl Input {
+    /// The file as a walk takes it, sharing its picture.
+    fn walked(&self) -> crate::walk::Input {
+        match self {
+            Input::Raw(f) => crate::walk::Input::Raw(f.clone()),
+            Input::Picture { image, meta } => crate::walk::Input::Picture {
+                image: image.clone(),
+                meta: meta.clone(),
+            },
+        }
+    }
+
     /// Whether the file is the sensor's data rather than a rendered
     /// picture.
     fn is_raw(&self) -> bool {
@@ -1017,293 +1013,6 @@ impl Input {
             Input::Picture { meta, .. } => (&meta.make, &meta.model, &meta.shot),
         }
     }
-}
-
-/// A develop before its dehaze and sharpen, and what the sharpen
-/// needs to know.
-struct Base {
-    edit: Edit,
-    /// The frame's quarter turns this base was made at: a turn is
-    /// not part of the edit, so `same_base` cannot see it.
-    turn: u8,
-    image: Arc<WorkingImage>,
-    /// The tone equalizer's read of the scene, of the patched picture
-    /// when there is one and of the base otherwise, made once with
-    /// each: the Light sliders never re-develop, so a slider move
-    /// must not pay for it, and neither must a sharpen change. Every
-    /// way of making a base leaves [`greycard_render::finish::Guide::NONE`] here
-    /// and `develop_job` fills it in after the lens, and again with
-    /// each fresh retouch or a retouch cleared.
-    guide: Arc<greycard_render::finish::Guide>,
-    white: WhiteBase,
-    radius: Option<f32>,
-    clip_level: f32,
-    /// A raw's scene or a picture already rendered, for the finish.
-    source: greycard_render::finish::Source,
-    /// Counts the bases made, for the learned masks to know theirs.
-    stamp: u64,
-    /// The base with its retouch applied, for the retouch it was,
-    /// whether every fill in it was made, and the Fill patches left as
-    /// they were, by id.
-    patched: Option<(Retouch, Arc<WorkingImage>, bool, Vec<u64>)>,
-    /// The picture before its sharpen, on the GPU, for the sharpen's
-    /// slider: made once, re-read on every move.
-    pre: Option<PreSharpen>,
-    /// The patched picture on the GPU, for the Detail section there
-    /// on every Detail move, held with the `Arc` it was made from so
-    /// its identity cannot be reused. Kept while the GPU path is the
-    /// one taken; let go when a picture the ops decline takes the
-    /// develop to the CPU, or when neither the Detail section nor the
-    /// sharpen is on.
-    uploaded: Option<(Arc<WorkingImage>, Arc<greycard_gpu::Image>)>,
-    /// The dehaze's reduced copy of the picture it read on the GPU,
-    /// for a Dehaze move to fit again from without summing the blocks
-    /// and reading them back again.
-    haze: Option<KeptHaze>,
-    /// Whether the CA or the lens correction in this base ran on the GPU.
-    /// The export's picture is the reference's, and both are in the base
-    /// (unlike the sharpen, which the export re-runs), so an export
-    /// makes a fresh base on the CPU when this is set.
-    on_gpu: bool,
-    /// The learned denoiser's report when this base is the engine's
-    /// stand-in for it (its model missing, or failing): a develop that
-    /// keeps the base reports `Kept`, and an export of it must still
-    /// say what it went without (`left_out_of`).
-    stand_in: Option<LearnedReport>,
-    /// Why the demosaic the edit chose did not run, when it was a
-    /// method of the other mosaic and the frame's default ran in its
-    /// place: said with what an export left out (`left_out_of`). Not
-    /// for the engine's own default, which an edit stores when nobody
-    /// chose.
-    gave_way: Option<String>,
-    /// The camera profile a raw's white was resolved through, which a
-    /// mask's own white balance is resolved through too
-    /// ([`Base::white_shift`]); `None` for a picture that is not a raw.
-    profile: Option<Arc<CameraProfile>>,
-    /// The bands the masks' Detail reads, with what they were made
-    /// from, kept for the next develop: a mask's slider moves no
-    /// develop, and a move elsewhere that leaves these alone should
-    /// not make them again.
-    planes: Option<KeptPlanes>,
-    /// The picture the refined masks are made against, with what it
-    /// was made from: made only for an edit that refines a mask
-    /// ([`masks::mask_picture`]), kept for the next develop of it.
-    mask_picture: Option<KeptMaskPicture>,
-    /// Taken back from the shelf of frames left behind
-    /// ([`shelf::Shelf::take`]) and not developed from since: the next
-    /// develop's log line says where its base came from, and clears
-    /// this.
-    from_shelf: bool,
-}
-
-/// The refined masks' picture ([`greycard_render::refine::MaskPicture`])
-/// with what it was made from: the patched picture and the Detail
-/// section run on it before the sharpen.
-struct KeptMaskPicture {
-    patched: Arc<WorkingImage>,
-    detail: greycard_edit::Detail,
-    picture: Arc<greycard_render::refine::MaskPicture>,
-}
-
-/// The masks' bands ([`greycard_render::detail::DetailPlanes`]) with what they
-/// were made from: the patched picture, the bands asked for, and the
-/// global's local contrast the haze was read after (none without a
-/// haze, or with the global's Texture and Clarity at rest).
-struct KeptPlanes {
-    patched: Arc<WorkingImage>,
-    wants: greycard_edit::DetailWants,
-    haze_after: Option<LocalContrastOptions>,
-    planes: Arc<greycard_render::detail::DetailPlanes>,
-}
-
-impl KeptPlanes {
-    /// Whether these serve a develop of `patched` asking for `wants`
-    /// with the global's local contrast `global`: the same picture,
-    /// every band asked for, and a haze read after that contrast.
-    fn serve(
-        &self,
-        patched: &Arc<WorkingImage>,
-        wants: &greycard_edit::DetailWants,
-        global: Option<LocalContrastOptions>,
-    ) -> bool {
-        Arc::ptr_eq(&self.patched, patched)
-            && self.wants.covers(wants)
-            && (!wants.haze || self.haze_after == global)
-    }
-
-    /// Whether these hold what `edit`'s masks read, for a finish of
-    /// the picture they were made beside.
-    fn serves_edit(&self, edit: &Edit) -> bool {
-        let wants = edit.detail_wants();
-        self.wants.covers(&wants) && (!wants.haze || self.haze_after == edit.detail.options())
-    }
-}
-
-/// The masks' bands for a develop: none asked for, kept from the last,
-/// or being made on a thread of their own beside the develop.
-enum PlanesJob {
-    Nothing,
-    Kept(Arc<greycard_render::detail::DetailPlanes>),
-    Making {
-        made: std::sync::mpsc::Receiver<Option<greycard_render::detail::DetailPlanes>>,
-        // Held for its drop alone.
-        _cancel: CancelOnDrop,
-        patched: Arc<WorkingImage>,
-        wants: greycard_edit::DetailWants,
-        haze_after: Option<LocalContrastOptions>,
-        started: Instant,
-    },
-}
-
-impl PlanesJob {
-    /// Start making the planes of `patched` on a thread of their own:
-    /// on the GPU's path the CPU is otherwise idle while the device
-    /// works, so they cost the develop nothing they do not overlap. A
-    /// thread and not the pool's `spawn`, whose panic would end the
-    /// process; a panic here drops the sender, and the develop goes on
-    /// without the planes. The bands `reuse` holds (planes of the same
-    /// picture whose haze was read after another global local
-    /// contrast) are taken from it, so a move of the global's Texture
-    /// or Clarity makes the haze alone again. A develop that ends
-    /// without taking the planes up cancels them (`Drop`).
-    fn start(
-        patched: Arc<WorkingImage>,
-        global: Option<LocalContrastOptions>,
-        clip_level: f32,
-        wants: greycard_edit::DetailWants,
-        reuse: Option<Arc<greycard_render::detail::DetailPlanes>>,
-    ) -> Self {
-        let (send, made) = std::sync::mpsc::channel();
-        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let haze_after = global.filter(|_| wants.haze);
-        let (picture, stop) = (patched.clone(), cancel.clone());
-        let spawned = std::thread::Builder::new()
-            .name("detail planes".into())
-            .spawn(move || {
-                let planes = greycard_render::detail::DetailPlanes::make_with(
-                    &picture,
-                    haze_after,
-                    clip_level,
-                    wants,
-                    reuse.as_deref(),
-                    &stop,
-                );
-                if stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    tracing::debug!("the masks' detail bands: the develop ended; dropped");
-                } else if send.send(planes).is_err() {
-                    tracing::debug!("the masks' detail bands: nobody waiting; dropped");
-                }
-            });
-        match spawned {
-            Ok(_) => Self::Making {
-                made,
-                _cancel: CancelOnDrop(cancel),
-                patched,
-                wants,
-                haze_after,
-                started: Instant::now(),
-            },
-            Err(e) => {
-                tracing::warn!("the masks' detail bands: no thread to make them on: {e}");
-                Self::Nothing
-            }
-        }
-    }
-
-    /// The planes for the develop being delivered, waited for if they
-    /// are still being made, and kept in `b` for the next.
-    fn land(&mut self, b: &mut Base) -> Option<Arc<greycard_render::detail::DetailPlanes>> {
-        match std::mem::replace(self, Self::Nothing) {
-            Self::Nothing => None,
-            Self::Kept(planes) => Some(planes),
-            Self::Making {
-                made,
-                patched,
-                wants,
-                haze_after,
-                started,
-                ..
-            } => {
-                let waited = Instant::now();
-
-                let planes = match made.recv() {
-                    Ok(Some(planes)) => Some(Arc::new(planes)),
-                    Ok(None) => None,
-                    Err(_) => {
-                        tracing::warn!(
-                            "the masks' detail bands: the thread making them died; developing without them"
-                        );
-                        None
-                    }
-                };
-                tracing::info!(
-                    "the masks' detail bands in {:.3} s, {:.3} s of it waited for",
-                    started.elapsed().as_secs_f64(),
-                    waited.elapsed().as_secs_f64()
-                );
-                b.planes = planes.clone().map(|planes| KeptPlanes {
-                    patched,
-                    wants,
-                    haze_after,
-                    planes,
-                });
-                planes
-            }
-        }
-    }
-}
-
-/// The planes' thread's stop, set when the job that started it goes:
-/// a develop that fails or is given up before its delivery stops the
-/// planes it started, and the thread gives up between the bands and
-/// the haze and sends nothing. Set after a landing too, when the
-/// thread is done and it stops nothing.
-struct CancelOnDrop(Arc<std::sync::atomic::AtomicBool>);
-
-impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl Base {
-    /// What the masks' white balances are made matrices from: this
-    /// develop's white and the profile it was resolved through.
-    fn white_shift(&self) -> Option<greycard_edit::WhiteShift> {
-        let profile = self.profile.as_ref()?;
-        Some(greycard_edit::WhiteShift::from_parts(
-            (**profile).clone(),
-            self.white.gains,
-            self.white.matrix,
-            self.white.temp_tint?,
-        ))
-    }
-}
-
-/// The picture the sharpen reads, on the GPU, with what it was made
-/// from and what the steps before the sharpen reported. The image is
-/// the Detail section's output on the device (the dehaze's, or the
-/// local contrast's when the dehaze is off), the patched picture's
-/// own upload when nothing before the sharpen is set, or the CPU's
-/// picture uploaded when the ops declined the picture.
-struct PreSharpen {
-    patched: Arc<WorkingImage>,
-    detail: greycard_edit::Detail,
-    image: Arc<greycard_gpu::Image>,
-    detail_stats: Option<LocalContrastStats>,
-    dehaze_stats: Option<DehazeStats>,
-}
-
-/// The dehaze's reduced copy, with what it was made from: the patched
-/// picture and the local contrast the GPU ran on it. The GPU's local
-/// contrast gives the same picture from the same inputs, run to run,
-/// so a move of the Dehaze alone runs the local contrast again (a few
-/// ms, where keeping its output would hold another picture on the
-/// device, 716 MB at 45 MP) and fits from this copy.
-struct KeptHaze {
-    patched: Arc<WorkingImage>,
-    detail: Option<LocalContrastOptions>,
-    reduced: Arc<Reduced>,
 }
 
 /// Where a develop's dehaze ran, as [`DetailRan`] says it of the
@@ -1324,39 +1033,6 @@ pub enum DetailRan {
     Cpu(f64),
     Gpu,
     Kept,
-}
-
-/// The learned denoiser's answer and the plain demosaic of the same
-/// mosaic, both finished, for the edit they were made for; a strength
-/// is a blend of the two.
-struct LearnedBase {
-    edit: Edit,
-    /// The frame's quarter turns this pair was made at. `Edit` has
-    /// no turn in it, so `same_learned` cannot see one move; without
-    /// this the network's picture and the plain one beside it would
-    /// both stay the way up they were and the viewport would show an
-    /// unturned frame while every other part of the window said
-    /// turned.
-    turn: u8,
-    model: Arc<WorkingImage>,
-    plain: Arc<WorkingImage>,
-    white: WhiteBase,
-    radius: Option<f32>,
-    clip_level: f32,
-    /// Whether the CA correction in this pair ran on the GPU. The
-    /// correction is applied to the mosaic before the network sees
-    /// it, so it is in both pictures and in every base blended from
-    /// them; a develop without a GPU (the export) makes the pair
-    /// again on the CPU rather than serve it, as the base's own check
-    /// does for the base.
-    ca_on_gpu: bool,
-}
-
-/// Whether a kept learned pair can serve a develop at `turn` under
-/// `edit`: the same turn and the same learned settings, and, without a
-/// GPU, only a pair whose CA correction was not the GPU's.
-fn pair_serves(l: &LearnedBase, turn: u8, edit: &Edit, has_gpu: bool) -> bool {
-    l.turn == turn && l.edit.same_learned(edit) && (has_gpu || !l.ca_on_gpu)
 }
 
 #[cfg(test)]

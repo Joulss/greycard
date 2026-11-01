@@ -129,33 +129,7 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
     }
 }
 
-/// The edit's lens corrections for a picture `width` by `height`, the
-/// frame at `turn` quarter turns: the profile's from the database or
-/// the one picked, the manual one, in the order the edit gives them.
-/// None when there is nothing to do.
-pub(super) fn lens_corrections(
-    width: usize,
-    height: usize,
-    input: &Input,
-    turn: u8,
-    edit: &Edit,
-    db: Option<&greycard_lens::Database>,
-) -> Vec<LensCorrection> {
-    let (make, model, shot) = input.identity();
-    let orientation = match input {
-        Input::Raw(f) => f.orientation.turned(i32::from(turn)),
-        Input::Picture { .. } => quarters(turn).unwrap_or_default(),
-    };
-    lens_corrections_of(
-        (width, height),
-        orientation,
-        (make, model, shot, input.is_raw()),
-        edit,
-        db,
-    )
-}
-
-/// [`lens_corrections`] for a frame named by its body, its shot, and
+/// The edit's lens corrections for a frame named by its body, its shot, and
 /// whether it is a raw, standing at `orientation` from the sensor.
 fn lens_corrections_of(
     size: (usize, usize),

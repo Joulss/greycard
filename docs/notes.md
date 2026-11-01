@@ -517,3 +517,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§502. No bare folder removal in a test](notes/502-no-bare-folder-removal-in-a-test.md) (2026-11-01)
 - [§503. Refine edge on a mask](notes/503-refine-edge-on-a-mask.md) (2026-11-01)
 - [§504. One instance](notes/504-one-instance.md) (2026-11-01)
+- [§505. The engine, part two: the window's develop on the kept points](notes/505-the-engine-part-two-the-windows-develop-on-the-kept-points.md) (2026-11-01)

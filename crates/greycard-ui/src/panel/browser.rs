@@ -2513,7 +2513,7 @@ impl NeighborsSent {
                     && a.side == b.side
                     && a.turn % 4 == b.turn % 4
                     && a.seed_blend == b.seed_blend
-                    && a.edit.same_base(&b.edit)
+                    && same_base(&a.edit, &b.edit)
             })
     }
 
@@ -2526,6 +2526,18 @@ impl NeighborsSent {
                 .zip(now)
                 .all(|(a, b)| a.path == b.path && a.side == b.side)
     }
+}
+
+/// Whether a neighbor's base would be the same under `a` as under `b`,
+/// so far as the window can tell without the frame: the sections a base
+/// is made from. The worker's own test is the frame's list, after the
+/// decode; this one only saves sending what has not moved.
+fn same_base(a: &Edit, b: &Edit) -> bool {
+    a.white_balance == b.white_balance
+        && a.noise == b.noise
+        && a.demosaic == b.demosaic
+        && a.camera == b.camera
+        && a.lens == b.lens
 }
 
 /// The open frame's neighbors sent to the worker again when they are no

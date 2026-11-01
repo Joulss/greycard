@@ -318,7 +318,6 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 0,
                 1,
                 &mut base,
-                &mut None,
                 &mut ai,
                 None,
                 lenses.as_ref(),
@@ -696,10 +695,10 @@ fn a_masks_detail_on_the_gpu_path_timed() {
         let mut base = None;
         let mut ai = Ai::new();
         let deliver: Deliver = Arc::new(|_| {});
-        let mut run = |edit: &Edit, base: &mut Option<Base>| {
+        let mut run = |edit: &Edit, base: &mut Option<FrameKept>| {
             let started = Instant::now();
             let (outcome, _) = develop_job(
-                &input, edit, 0, 1, base, &mut None, &mut ai, None, None, &mut gpu, &deliver,
+                &input, edit, 0, 1, base, &mut ai, None, None, &mut gpu, &deliver,
             );
             assert!(matches!(outcome, Outcome::Developed { .. }));
             started.elapsed().as_secs_f64()
@@ -716,7 +715,7 @@ fn a_masks_detail_on_the_gpu_path_timed() {
         a.look.detail = all;
         masked.adjustments.push(a);
         // The white moved each time, so the patched picture is new.
-        let mut moved = |edit: &Edit, base: &mut Option<Base>| {
+        let mut moved = |edit: &Edit, base: &mut Option<FrameKept>| {
             let mut best = f64::INFINITY;
             for k in 0..4 {
                 let mut e = edit.clone();

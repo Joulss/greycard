@@ -12,17 +12,17 @@
 //! A base on the shelf is keyed by its file ([`FileKey`]: its path,
 //! what the file system says of it when it was opened, and what its
 //! decode said of the frame, so a file written since is another file)
-//! and by what it was made under: the edit's base
-//! ([`Edit::same_base`]) and the frame's quarter turns. The base keeps
-//! the retouch's patched picture when it has one, so the fills are not
-//! made again, and the learned denoiser's pair when the base was
-//! blended from it, so a move of the strength after the return is a
-//! blend again and not a run of the network. It lets go of everything
-//! on the GPU (the picture before the sharpen, the patched picture's
-//! upload, and the dehaze's reduced copy), which the device would have
-//! to hold for frames not on screen, and of the masks' detail bands,
-//! which are made again beside the develop and would cost the shelf as
-//! much as the base.
+//! and by what it was made under: the steps of the frame's list to it,
+//! which say the edit's base and the frame's quarter turns. The frame
+//! keeps the retouch's patched picture when it has one, so the fills
+//! are not made again, and the learned denoiser's pair when the base
+//! was blended from it, so a move of the strength after the return is
+//! a blend again and not a run of the network ([`crate::walk::Kept::shelve`]). It
+//! lets go of everything on the GPU (the picture before the sharpen,
+//! the patched picture's upload, and the dehaze's reduced copy), which
+//! the device would have to hold for frames not on screen, and of the
+//! masks' detail bands, which are made again beside the develop and
+//! would cost the shelf as much as the base.
 //!
 //! What is held is held under a budget of bytes ([`Budget::user`]),
 //! the least recently left going first. The base of the open frame is
@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use greycard_core::raw::Orientation;
 
 use super::*;
+use crate::stages::Facts;
 
 /// The most the shelf holds, however much memory the machine has: at
 /// 45 MP seven bases, fewer with a retouch or a learned pair.
@@ -185,11 +186,10 @@ impl FileKey {
     }
 }
 
-/// A base left behind, and the learned pair it was blended from.
+/// What a frame left behind kept.
 pub(super) struct Shelved {
     file: FileKey,
-    base: Base,
-    learned: Option<LearnedBase>,
+    held: FrameKept,
     bytes: u64,
 }
 
@@ -203,23 +203,33 @@ pub struct FileNow {
 }
 
 impl FileNow {
-    /// Whether a base made under `edit` at `turn` is still one an open
-    /// of the file would take: the same turn, and one of its edits with
-    /// the same base. A base made under no learned tier does not depend
-    /// on the learned strength, which a frame never developed seeds at
-    /// its open and not in its sidecar, so a strength alone keeps it
-    /// there; a base made under a tier is kept only at the strength the
-    /// sidecar says, so one shelved from a seeded frame never saved goes
-    /// on the next save of the file (a base made again, never a wrong
-    /// one).
-    pub fn serves(&self, edit: &Edit, turn: u8) -> bool {
+    /// Whether a base made under `edit` at `turn` of the frame `facts`
+    /// describes is still one an open of the file would take: the same
+    /// turn, and one of its edits with the same steps to the base. A
+    /// base made under no learned tier does not depend on the learned
+    /// strength, which a frame never developed seeds at its open and
+    /// not in its sidecar, so a strength alone keeps it there; a base
+    /// made under a tier is kept only at the strength the sidecar says,
+    /// so one shelved from a seeded frame never saved goes on the next
+    /// save of the file (a base made again, never a wrong one).
+    pub(super) fn serves(
+        &self,
+        edit: &Edit,
+        turn: u8,
+        facts: &Facts,
+        lenses: Option<&greycard_lens::Database>,
+    ) -> bool {
+        let facts = Facts {
+            turn: turn % 4,
+            ..facts.clone()
+        };
         self.turn % 4 == turn % 4
             && self.edits.iter().any(|now| {
                 let mut as_made = now.clone();
                 if now.noise.tier().is_none() && edit.noise.tier().is_none() {
                     as_made.noise.learned_strength = edit.noise.learned_strength;
                 }
-                edit.same_base(&as_made)
+                crate::stages::same_base(edit, &as_made, &facts, lenses)
             })
     }
 }
@@ -262,89 +272,74 @@ impl Shelf {
     /// not one standing in for a learned denoiser that was missing or
     /// failed, whose model may be there by the time the frame is
     /// opened again.
-    fn takes(base: &Base) -> bool {
-        base.source != greycard_render::finish::Source::Display && base.stand_in.is_none()
+    fn takes(held: &FrameKept) -> bool {
+        held.meta.source != greycard_render::finish::Source::Display
+            && held.meta.stood_in.is_none()
+            && held.kept.picture(crate::stages::Keep::Base).is_some()
     }
 
-    /// Put `base`, the frame `file`'s, on the shelf, with `learned`
-    /// when the base was blended from it; the shelf is not brought
-    /// under its budget until [`Shelf::fit`]. Whatever it holds on the
-    /// GPU, and the masks' bands, are let go here; the caller lets the
-    /// ops' working textures go. A base over the whole budget on its
-    /// own is not put at all, so it cannot push out the bases that fit.
-    /// A base already there for the same file, edit, and turn is the
-    /// older of two and goes, as does one of the same path made from
-    /// what the file was before. Whether the base was put.
-    pub(super) fn put(
-        &mut self,
-        file: FileKey,
-        mut base: Base,
-        learned: Option<LearnedBase>,
-    ) -> bool {
-        if !Self::takes(&base) {
+    /// Put what the frame `file` kept on the shelf ([`crate::walk::Kept::shelve`]);
+    /// the shelf is not brought under its budget until [`Shelf::fit`].
+    /// The caller lets the ops' working textures go. A frame over the
+    /// whole budget on its own is not put at all, so it cannot push out
+    /// the bases that fit. A base already there for the same file and
+    /// the same steps at the same turn is the older of two and goes, as
+    /// does one of the same path made from what the file was before.
+    /// Whether the base was put.
+    pub(super) fn put(&mut self, file: FileKey, mut held: FrameKept) -> bool {
+        if !Self::takes(&held) {
             return false;
         }
-        let learned = learned.filter(|l| {
-            base.edit.noise.tier().is_some() && pair_serves(l, base.turn, &base.edit, true)
-        });
-        let bytes = bytes_of(&base, learned.as_ref());
+        held.kept.shelve();
+        held.planes = None;
+        held.from_shelf = false;
+        let bytes = held.bytes();
         if !self.budget.holds(1, bytes) {
             return false;
         }
-        base.pre = None;
-        base.uploaded = None;
-        base.haze = None;
-        base.planes = None;
-        base.from_shelf = false;
         self.held.retain(|s| {
             s.file.path != file.path
                 || (s.file == file
-                    && !(s.base.turn == base.turn && s.base.edit.same_base(&base.edit)))
+                    && !(s.held.turn == held.turn && s.held.kept.same_base(&held.kept)))
         });
-        self.held.push_front(Shelved {
-            file,
-            base,
-            learned,
-            bytes,
-        });
+        self.held.push_front(Shelved { file, held, bytes });
         true
     }
 
-    /// The base of `file` made under `edit`'s base at `turn`, taken off
-    /// the shelf, and the learned pair kept with it. With `has_gpu`
-    /// false (no device), only a base whose CA correction was not the
-    /// GPU's, as `develop_job` keeps one. A base of the same path from
-    /// before the file changed is dropped on the way.
+    /// What the frame `file` kept, taken off the shelf, when a walk of
+    /// `edit` at `turn` starts from its base: with `has_gpu` false (no
+    /// device), only a base whose CA and lens were not the GPU's. A
+    /// base of the same path from before the file changed is dropped on
+    /// the way.
     pub(super) fn take(
         &mut self,
         file: &FileKey,
         edit: &Edit,
         turn: u8,
         has_gpu: bool,
-    ) -> Option<(Base, Option<LearnedBase>)> {
+        lenses: Option<&greycard_lens::Database>,
+    ) -> Option<FrameKept> {
         self.held
             .retain(|s| s.file.path != file.path || s.file == *file);
-        let at = self.held.iter().position(|s| {
-            s.file == *file
-                && s.base.turn == turn
-                && s.base.edit.same_base(edit)
-                && (has_gpu || !s.base.on_gpu)
-        })?;
-        let Shelved {
-            mut base, learned, ..
-        } = self.held.remove(at)?;
-        base.from_shelf = true;
-        Some((base, learned))
+        let at = self
+            .held
+            .iter()
+            .position(|s| s.file == *file && s.held.serves(edit, turn, lenses, has_gpu))?;
+        let Shelved { mut held, .. } = self.held.remove(at)?;
+        held.from_shelf = true;
+        Some(held)
     }
 
     /// Whether a base of the file at `path`, as the file system now
-    /// says it is (`stat`), made under `edit`'s base at `turn`, is on
-    /// the shelf for an open to take: [`Shelf::take`]'s test without
-    /// the decode's word on the frame, which a prefetch asks before it
-    /// decodes. With `seeded`, the edit's learned blend is still to be
-    /// seeded from the frame's ISO, so the strength of the base found is
-    /// taken for the edit's: the edits are otherwise the same, and a
-    /// base made without a learned tier does not depend on it.
+    /// says it is (`stat`), that a walk of `edit` at `turn` starts
+    /// from, is on the shelf for an open to take: [`Shelf::take`]'s test
+    /// without the decode's word on the frame, which a prefetch asks
+    /// before it decodes. With `seeded`, the edit's learned blend is
+    /// still to be seeded from the frame's ISO, so the strength of the
+    /// base found is taken for the edit's: the edits are otherwise the
+    /// same, and a base made without a learned tier does not depend on
+    /// it.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn holds(
         &self,
         path: &Path,
@@ -353,18 +348,18 @@ impl Shelf {
         seeded: bool,
         turn: u8,
         has_gpu: bool,
+        lenses: Option<&greycard_lens::Database>,
     ) -> bool {
         self.held.iter().any(|s| {
             let edit_as_made = seeded.then(|| {
                 let mut e = edit.clone();
-                e.noise.learned_strength = s.base.edit.noise.learned_strength;
+                e.noise.learned_strength = s.held.edit.noise.learned_strength;
                 e
             });
             s.file.path == path
                 && s.file.stat == *stat
-                && s.base.turn == turn
-                && s.base.edit.same_base(edit_as_made.as_ref().unwrap_or(edit))
-                && (has_gpu || !s.base.on_gpu)
+                && s.held
+                    .serves(edit_as_made.as_ref().unwrap_or(edit), turn, lenses, has_gpu)
         })
     }
 
@@ -373,10 +368,16 @@ impl Shelf {
     /// sync, a paste, a sidecar written by another hand), and what it
     /// holds `now` serves none of them ([`FileNow::serves`]). With
     /// nothing at hand, every base of the file goes. How many went.
-    pub(super) fn drop_changed(&mut self, path: &Path, now: Option<&FileNow>) -> usize {
+    pub(super) fn drop_changed(
+        &mut self,
+        path: &Path,
+        now: Option<&FileNow>,
+        lenses: Option<&greycard_lens::Database>,
+    ) -> usize {
         let before = self.held.len();
         self.held.retain(|s| {
-            s.file.path != path || now.is_some_and(|n| n.serves(&s.base.edit, s.base.turn))
+            s.file.path != path
+                || now.is_some_and(|n| n.serves(&s.held.edit, s.held.turn, &s.held.facts, lenses))
         });
         before - self.held.len()
     }
@@ -426,62 +427,22 @@ impl Shelf {
     }
 }
 
-/// The bytes of the pictures a shelved base holds: its own, its
-/// patched picture, the learned pair, the guide plane, and the refined
-/// masks' picture when one was made, each picture
-/// counted once however many of them share it (a blend at either end
-/// of its strength is one of the pair).
-pub(super) fn bytes_of(base: &Base, learned: Option<&LearnedBase>) -> u64 {
-    let mut seen: Vec<*const WorkingImage> = Vec::new();
-    let mut total = 0u64;
-    let mut count = |image: &Arc<WorkingImage>| {
-        let at = Arc::as_ptr(image);
-        if !seen.contains(&at) {
-            seen.push(at);
-            total += (image.data.len() * std::mem::size_of::<f32>()) as u64;
-        }
-    };
-    count(&base.image);
-    if let Some((_, patched, _, _)) = &base.patched {
-        count(patched);
-    }
-    if let Some(l) = learned {
-        count(&l.model);
-        count(&l.plain);
-    }
-    let picture = base.mask_picture.as_ref().map_or(0, |k| k.picture.bytes());
-    total + (base.guide.data.len() * std::mem::size_of::<f32>()) as u64 + picture
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::engine::{forget_bases, swap_base};
     use super::*;
+    use crate::stages::{Keep, Masks, Stage};
+    use crate::walk::{Meta, Models, NoLearned, Patched, Rasters};
 
-    /// A raw's base of `width` by `height` under `edit` at `turn`.
-    fn base(edit: &Edit, turn: u8, width: usize, height: usize) -> Base {
-        Base {
-            edit: edit.clone(),
-            turn,
-            image: Arc::new(WorkingImage::new(width, height)),
-            guide: Arc::new(greycard_render::finish::Guide::NONE),
-            white: WhiteBase::IDENTITY,
-            radius: None,
-            clip_level: 1.0,
-            source: greycard_render::finish::Source::SCENE,
-            stamp: 1,
-            patched: None,
-            pre: None,
-            uploaded: None,
-            haze: None,
-            planes: None,
-            on_gpu: false,
-            stand_in: None,
-            gave_way: None,
-            profile: None,
-            from_shelf: false,
-            mask_picture: None,
-        }
+    /// A raw of `width` by `height`.
+    fn raw(width: usize, height: usize) -> Arc<RawFrame> {
+        Arc::new(super::super::tests::aberrated_frame(width, height))
+    }
+
+    /// What the window's walk of a raw of `width` by `height` keeps under
+    /// `edit` at `turn`.
+    fn base(edit: &Edit, turn: u8, width: usize, height: usize) -> FrameKept {
+        FrameKept::walked(&raw(width, height), edit, turn)
     }
 
     fn file(name: &str) -> FileKey {
@@ -503,12 +464,6 @@ mod tests {
         }
     }
 
-    /// The bytes of a base of `width` by `height`, as the shelf counts
-    /// them.
-    fn size(width: usize, height: usize) -> u64 {
-        (width * height * 3 * 4) as u64
-    }
-
     fn warmer() -> Edit {
         Edit {
             white_balance: greycard_edit::WhiteBalance::Custom {
@@ -519,35 +474,98 @@ mod tests {
         }
     }
 
+    /// The learned denoiser as the plain demosaic, for a pair to be had
+    /// without a model.
+    struct Network;
+
+    impl Models for Network {
+        fn can_denoise(&mut self, _: &'static greycard_ai::Model) -> Result<(), NoLearned> {
+            Ok(())
+        }
+
+        fn denoise(
+            &mut self,
+            _: &'static greycard_ai::Model,
+            _: &RawFrame,
+            prepared: &Prepared,
+        ) -> Result<Vec<f32>, NoLearned> {
+            greycard_core::develop::demosaic_prepared(prepared, &DevelopSettings::default())
+                .map(|(rgb, _, _)| rgb)
+                .map_err(|e| NoLearned::Failed(e.to_string()))
+        }
+
+        fn fill(
+            &mut self,
+            _: &greycard_edit::retouch::Patch,
+            _: &greycard_core::develop::retouch::Region,
+            _: &WorkingImage,
+        ) -> Option<Vec<f32>> {
+            None
+        }
+
+        fn could_fill_more(&mut self, _: &Retouch, _: &WorkingImage) -> bool {
+            false
+        }
+
+        fn rasters(
+            &mut self,
+            _: Masks,
+            _: &Arc<WorkingImage>,
+            _: Option<Patched<'_>>,
+            _: &Meta,
+        ) -> Rasters {
+            Rasters::new()
+        }
+    }
+
+    /// An edit with the learned denoiser at `strength`.
+    fn learned(strength: f32) -> Edit {
+        let mut edit = Edit::default();
+        edit.noise.enabled = true;
+        edit.noise.learned = greycard_edit::Learned::Fast;
+        edit.noise.learned_strength = strength;
+        edit
+    }
+
+    /// A raw's develop under the learned denoiser at `strength`, its
+    /// pair kept.
+    fn paired(strength: f32) -> FrameKept {
+        FrameKept::walked_with(
+            &crate::walk::Input::Raw(raw(32, 24)),
+            &learned(strength),
+            0,
+            &mut Network,
+        )
+    }
+
     /// A base shelved is taken back for its file under an edit with
     /// the same base at the same turn, the very picture it was, said
-    /// to be from the shelf; what it held on the GPU and the masks'
-    /// bands are not on the shelf with it, and it is off the shelf
-    /// once taken.
+    /// to be from the shelf; the masks' bands are not on the shelf with
+    /// it, and it is off the shelf once taken.
     #[test]
     fn a_base_shelved_is_taken_back_for_the_same_edit_and_turn() {
         let edit = Edit::default();
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
         let b = base(&edit, 1, 40, 30);
         let image = b.image.clone();
-        shelf.put(file("a.CR3"), b, None);
+        let bytes = b.bytes();
+        shelf.put(file("a.CR3"), b);
         assert_eq!(shelf.len(), 1);
-        assert_eq!(shelf.bytes(), size(40, 30));
+        assert_eq!(shelf.bytes(), bytes);
 
         // A move after the base (the sharpen and the light) is the same base.
         let mut later = edit.clone();
         later.sharpen.enabled = !later.sharpen.enabled;
         later.light.exposure += 1.0;
-        let (b, learned) = shelf
-            .take(&file("a.CR3"), &later, 1, true)
+        let b = shelf
+            .take(&file("a.CR3"), &later, 1, true, None)
             .expect("taken back");
-        assert!(Arc::ptr_eq(&b.image, &image));
+        assert!(Arc::ptr_eq(b.kept.picture(Keep::Base).unwrap(), &image));
         assert!(b.from_shelf);
-        assert!(learned.is_none());
-        assert!(b.pre.is_none() && b.uploaded.is_none() && b.haze.is_none());
+        assert!(!b.kept.holds(Keep::Pair));
         assert!(b.planes.is_none());
         assert_eq!(shelf.len(), 0);
-        assert!(shelf.take(&file("a.CR3"), &edit, 1, true).is_none());
+        assert!(shelf.take(&file("a.CR3"), &edit, 1, true, None).is_none());
     }
 
     /// Not taken back under an edit whose base differs, at another
@@ -558,21 +576,25 @@ mod tests {
     fn a_base_is_not_taken_back_when_anything_it_was_made_from_differs() {
         let edit = Edit::default();
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-        shelf.put(file("a.CR3"), base(&edit, 0, 8, 8), None);
-        assert!(shelf.take(&file("a.CR3"), &warmer(), 0, true).is_none());
-        assert!(shelf.take(&file("a.CR3"), &edit, 1, true).is_none());
-        assert!(shelf.take(&file("b.CR3"), &edit, 0, true).is_none());
+        shelf.put(file("a.CR3"), base(&edit, 0, 32, 24));
+        assert!(
+            shelf
+                .take(&file("a.CR3"), &warmer(), 0, true, None)
+                .is_none()
+        );
+        assert!(shelf.take(&file("a.CR3"), &edit, 1, true, None).is_none());
+        assert!(shelf.take(&file("b.CR3"), &edit, 0, true, None).is_none());
         assert_eq!(shelf.len(), 1, "still there for its own edit and turn");
 
-        let mut gpu_ca = base(&edit, 0, 8, 8);
-        gpu_ca.on_gpu = true;
-        shelf.put(file("c.CR3"), gpu_ca, None);
-        assert!(shelf.take(&file("c.CR3"), &edit, 0, false).is_none());
-        assert!(shelf.take(&file("c.CR3"), &edit, 0, true).is_some());
+        let mut gpu_ca = base(&edit, 0, 32, 24);
+        gpu_ca.kept.as_if_on_device(|s| matches!(s, Stage::Ca(_)));
+        shelf.put(file("c.CR3"), gpu_ca);
+        assert!(shelf.take(&file("c.CR3"), &edit, 0, false, None).is_none());
+        assert!(shelf.take(&file("c.CR3"), &edit, 0, true, None).is_some());
 
         let mut written = file("a.CR3");
         written.stat.modified += 1;
-        assert!(shelf.take(&written, &edit, 0, true).is_none());
+        assert!(shelf.take(&written, &edit, 0, true, None).is_none());
         assert_eq!(shelf.len(), 0, "the base of the file as it was is gone");
     }
 
@@ -590,14 +612,14 @@ mod tests {
         ];
         for rewrite in rewrites {
             let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-            shelf.put(file("a.CR3"), base(&edit, 0, 8, 8), None);
+            shelf.put(file("a.CR3"), base(&edit, 0, 32, 24));
             let mut rewritten = file("a.CR3");
             rewrite(&mut rewritten);
             assert_eq!(
                 (rewritten.stat.len, rewritten.stat.modified),
                 (file("a.CR3").stat.len, file("a.CR3").stat.modified)
             );
-            assert!(shelf.take(&rewritten, &edit, 0, true).is_none());
+            assert!(shelf.take(&rewritten, &edit, 0, true, None).is_none());
             assert_eq!(shelf.len(), 0);
         }
     }
@@ -627,20 +649,20 @@ mod tests {
         assert!(FileKey::of(&dir.join("gone")).is_none());
     }
 
-    /// Two versions of one file keep a base each; the same file, edit,
+    /// Two versions of one file keep a base each; the same file, steps,
     /// and turn shelved again replaces the older.
     #[test]
     fn a_file_keeps_a_base_per_edit_and_the_newer_of_two_the_same() {
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-        shelf.put(file("a.CR3"), base(&Edit::default(), 0, 8, 8), None);
-        shelf.put(file("a.CR3"), base(&warmer(), 0, 8, 8), None);
+        shelf.put(file("a.CR3"), base(&Edit::default(), 0, 32, 24));
+        shelf.put(file("a.CR3"), base(&warmer(), 0, 32, 24));
         assert_eq!(shelf.len(), 2);
-        let newer = base(&Edit::default(), 0, 8, 8);
+        let newer = base(&Edit::default(), 0, 32, 24);
         let image = newer.image.clone();
-        shelf.put(file("a.CR3"), newer, None);
+        shelf.put(file("a.CR3"), newer);
         assert_eq!(shelf.len(), 2);
-        let (b, _) = shelf
-            .take(&file("a.CR3"), &Edit::default(), 0, true)
+        let b = shelf
+            .take(&file("a.CR3"), &Edit::default(), 0, true, None)
             .unwrap();
         assert!(Arc::ptr_eq(&b.image, &image));
     }
@@ -650,22 +672,23 @@ mod tests {
     #[test]
     fn the_shelf_lets_the_least_recently_left_go_over_its_budget() {
         let edit = Edit::default();
-        let mut shelf = Shelf::new(Budget::Bytes(2 * size(10, 10)));
+        let one = base(&edit, 0, 32, 24).bytes();
+        let mut shelf = Shelf::new(Budget::Bytes(2 * one));
         for name in ["a", "b", "c"] {
-            shelf.put(file(name), base(&edit, 0, 10, 10), None);
+            shelf.put(file(name), base(&edit, 0, 32, 24));
         }
         assert_eq!(shelf.fit(), 1);
         assert_eq!(shelf.len(), 2);
-        assert!(shelf.take(&file("a"), &edit, 0, true).is_none());
-        assert!(shelf.take(&file("b"), &edit, 0, true).is_some());
-        assert!(shelf.take(&file("c"), &edit, 0, true).is_some());
+        assert!(shelf.take(&file("a"), &edit, 0, true, None).is_none());
+        assert!(shelf.take(&file("b"), &edit, 0, true, None).is_some());
+        assert!(shelf.take(&file("c"), &edit, 0, true, None).is_some());
 
         let mut one = Shelf::new(Budget::One);
-        one.put(file("a"), base(&edit, 0, 2000, 2000), None);
+        one.put(file("a"), base(&edit, 0, 64, 48));
         assert_eq!(one.fit(), 0);
-        one.put(file("b"), base(&edit, 0, 10, 10), None);
+        one.put(file("b"), base(&edit, 0, 32, 24));
         assert_eq!(one.fit(), 1);
-        assert!(one.take(&file("b"), &edit, 0, true).is_some());
+        assert!(one.take(&file("b"), &edit, 0, true, None).is_some());
     }
 
     /// A base over the whole budget on its own is not kept, and does
@@ -673,64 +696,78 @@ mod tests {
     #[test]
     fn a_base_over_the_whole_budget_leaves_the_others_where_they_are() {
         let edit = Edit::default();
-        let mut shelf = Shelf::new(Budget::Bytes(2 * size(10, 10)));
-        assert!(shelf.put(file("small"), base(&edit, 0, 10, 10), None));
+        let small = base(&edit, 0, 32, 24);
+        let mut shelf = Shelf::new(Budget::Bytes(2 * small.bytes()));
+        assert!(shelf.put(file("small"), small));
         assert!(
-            !shelf.put(file("big"), base(&edit, 0, 20, 20), None),
+            !shelf.put(file("big"), base(&edit, 0, 96, 72)),
             "said not put"
         );
         assert_eq!(shelf.fit(), 0);
         assert_eq!(shelf.len(), 1);
-        assert!(shelf.take(&file("big"), &edit, 0, true).is_none());
-        assert!(shelf.take(&file("small"), &edit, 0, true).is_some());
+        assert!(shelf.take(&file("big"), &edit, 0, true, None).is_none());
+        assert!(shelf.take(&file("small"), &edit, 0, true, None).is_some());
 
         // A shelf turned off keeps nothing.
         let mut off = Shelf::new(Budget::Bytes(0));
-        assert!(!off.put(file("a"), base(&edit, 0, 1, 1), None));
+        assert!(!off.put(file("a"), base(&edit, 0, 32, 24)));
         assert_eq!(off.len(), 0);
     }
 
     /// `holds` answers as `take` would before the decode has said what
-    /// the frame is: the path and the stat, the edit's base, the turn,
-    /// and a GPU-CA base only with a GPU. With the seed still to come,
+    /// the frame is: the path and the stat, the steps to the base, the
+    /// turn, and a GPU-CA base only with a GPU. A learned strength is
+    /// part of the base only under a tier; with the seed still to come,
     /// the strength of the base found stands for the edit's.
     #[test]
     fn the_shelf_says_what_it_holds_before_a_decode() {
         let edit = Edit::default();
-        let mut shelf = Shelf::new(Budget::Bytes(1 << 20));
+        let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
         let a = file("a");
-        let mut seeded = edit.clone();
-        seeded.noise.learned_strength = 0.4;
-        assert!(shelf.put(a.clone(), base(&seeded, 1, 10, 10), None));
-        let holds = |edit: &Edit, seed: bool, turn: u8, has_gpu: bool| {
-            shelf.holds(&a.path, &a.stat, edit, seed, turn, has_gpu)
+        let mut strength = edit.clone();
+        strength.noise.learned_strength = 0.4;
+        assert!(shelf.put(a.clone(), base(&strength, 1, 32, 24)));
+        let holds = |shelf: &Shelf, edit: &Edit, seed: bool, turn: u8, has_gpu: bool| {
+            shelf.holds(&a.path, &a.stat, edit, seed, turn, has_gpu, None)
         };
-        assert!(holds(&seeded, false, 1, true));
-        assert!(holds(&seeded, false, 1, false), "a CPU-CA base either way");
-        assert!(!holds(&edit, false, 1, true), "another strength, as made");
-        assert!(holds(&edit, true, 1, true), "the strength still to seed");
-        assert!(!holds(&seeded, false, 0, true), "another turn");
-        assert!(!holds(&warmer(), true, 1, true), "another base");
+        assert!(holds(&shelf, &strength, false, 1, true));
+        assert!(
+            holds(&shelf, &strength, false, 1, false),
+            "a CPU-CA base either way"
+        );
+        assert!(holds(&shelf, &edit, false, 1, true), "no tier reads it");
+        assert!(!holds(&shelf, &strength, false, 0, true), "another turn");
+        assert!(!holds(&shelf, &warmer(), true, 1, true), "another base");
         let other = Stat {
             modified: 8,
             ..a.stat.clone()
         };
-        assert!(!shelf.holds(&a.path, &other, &seeded, false, 1, true));
-        assert!(!shelf.holds(Path::new("b"), &a.stat, &seeded, false, 1, true));
+        assert!(!shelf.holds(&a.path, &other, &strength, false, 1, true, None));
+        assert!(!shelf.holds(Path::new("b"), &a.stat, &strength, false, 1, true, None));
 
-        let mut gpu = base(&edit, 0, 10, 10);
-        gpu.on_gpu = true;
-        assert!(shelf.put(file("g"), gpu, None));
+        let mut gpu = base(&edit, 0, 32, 24);
+        gpu.kept.as_if_on_device(|s| matches!(s, Stage::Ca(_)));
+        assert!(shelf.put(file("g"), gpu));
         let g = file("g");
-        assert!(shelf.holds(&g.path, &g.stat, &edit, false, 0, true));
-        assert!(!shelf.holds(&g.path, &g.stat, &edit, false, 0, false));
+        assert!(shelf.holds(&g.path, &g.stat, &edit, false, 0, true, None));
+        assert!(!shelf.holds(&g.path, &g.stat, &edit, false, 0, false, None));
+
+        // Under a tier the strength is the base's blend.
+        let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+        assert!(shelf.put(a.clone(), paired(0.4)));
+        assert!(holds(&shelf, &learned(0.4), false, 0, true));
+        assert!(!holds(&shelf, &learned(0.35), false, 0, true), "as made");
+        assert!(
+            holds(&shelf, &learned(0.35), true, 0, true),
+            "still to seed"
+        );
     }
 
     /// How many bases of a size the budget holds: none for a shelf
     /// turned off, one when the memory is not known.
     #[test]
     fn the_shelf_says_how_many_bases_of_a_size_it_has_room_for() {
-        let one = size(10, 10);
+        let one = 1200;
         assert_eq!(Shelf::new(Budget::Bytes(5 * one)).room_for(one), 5);
         assert_eq!(Shelf::new(Budget::Bytes(5 * one - 1)).room_for(one), 4);
         assert_eq!(Shelf::new(Budget::Bytes(0)).room_for(one), 0);
@@ -746,20 +783,19 @@ mod tests {
     #[test]
     fn the_open_frame_s_base_is_never_let_go_by_the_shelf() {
         let edit = Edit::default();
-        let mut shelf = Shelf::new(Budget::Bytes(size(10, 10)));
-        let a = base(&edit, 0, 10, 10);
+        let a = base(&edit, 0, 32, 24);
+        let mut shelf = Shelf::new(Budget::Bytes(a.bytes()));
         let a_image = a.image.clone();
-        shelf.put(file("a"), a, None);
-        let mut held = Some(base(&edit, 0, 20, 20));
-        let mut learned = None;
+        shelf.put(file("a"), a);
+        let mut held = Some(base(&edit, 0, 64, 48));
         swap_base(
             &mut held,
-            &mut learned,
             &mut shelf,
             Some(file("b")),
             Some(&file("a")),
             &edit,
             0,
+            None,
             None,
         );
         let b = held.as_ref().expect("A in hand");
@@ -769,28 +805,19 @@ mod tests {
         // A opened again, as another version of it would be.
         swap_base(
             &mut held,
-            &mut learned,
             &mut shelf,
             Some(file("a")),
             Some(&file("a")),
             &edit,
             0,
             None,
+            None,
         );
         assert!(Arc::ptr_eq(&held.as_ref().unwrap().image, &a_image));
 
         // A file that cannot be read for its stat is neither shelved
         // nor taken.
-        swap_base(
-            &mut held,
-            &mut learned,
-            &mut shelf,
-            None,
-            None,
-            &edit,
-            0,
-            None,
-        );
+        swap_base(&mut held, &mut shelf, None, None, &edit, 0, None, None);
         assert!(held.is_none());
         assert_eq!(shelf.len(), 0);
     }
@@ -801,19 +828,18 @@ mod tests {
     fn a_new_lens_database_empties_the_shelf() {
         let edit = Edit::default();
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-        shelf.put(file("a"), base(&edit, 0, 8, 8), None);
-        shelf.put(file("b"), base(&edit, 0, 8, 8), None);
+        shelf.put(file("a"), base(&edit, 0, 32, 24));
+        shelf.put(file("b"), base(&edit, 0, 32, 24));
         let mut shelf = Some(shelf);
-        let mut held = Some(base(&edit, 0, 8, 8));
-        let mut learned = None;
-        forget_bases(&mut held, &mut learned, &mut shelf, None);
+        let mut held = Some(base(&edit, 0, 32, 24));
+        forget_bases(&mut held, &mut shelf, None);
         assert!(held.is_none());
         let shelf = shelf.as_mut().expect("still made");
         assert_eq!(shelf.len(), 0);
-        assert!(shelf.take(&file("a"), &edit, 0, true).is_none());
+        assert!(shelf.take(&file("a"), &edit, 0, true, None).is_none());
 
         let mut none = None;
-        forget_bases(&mut held, &mut learned, &mut none, None);
+        forget_bases(&mut held, &mut none, None);
         assert!(none.is_none(), "not made by the change");
     }
 
@@ -827,9 +853,9 @@ mod tests {
     fn a_base_whose_edit_changed_under_it_is_dropped() {
         let edit = Edit::default();
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-        shelf.put(file("a"), base(&edit, 0, 8, 8), None);
-        shelf.put(file("a"), base(&warmer(), 0, 8, 8), None);
-        shelf.put(file("b"), base(&edit, 0, 8, 8), None);
+        shelf.put(file("a"), base(&edit, 0, 32, 24));
+        shelf.put(file("a"), base(&warmer(), 0, 32, 24));
+        shelf.put(file("b"), base(&edit, 0, 32, 24));
         assert_eq!(shelf.len(), 3);
 
         let mut after = edit.clone();
@@ -837,86 +863,131 @@ mod tests {
         after.noise.learned_strength += 0.25;
         let now = |edits: Vec<Edit>, turn: u8| FileNow { edits, turn };
         assert_eq!(
-            shelf.drop_changed(Path::new("a"), Some(&now(vec![after.clone(), warmer()], 4))),
+            shelf.drop_changed(
+                Path::new("a"),
+                Some(&now(vec![after.clone(), warmer()], 4)),
+                None
+            ),
             0,
             "the main line's base and the version's both still taken"
         );
         assert_eq!(
-            shelf.drop_changed(Path::new("a"), Some(&now(vec![after.clone()], 0))),
+            shelf.drop_changed(Path::new("a"), Some(&now(vec![after.clone()], 0)), None),
             1
         );
-        assert!(shelf.take(&file("a"), &warmer(), 0, true).is_none());
-        assert!(shelf.holds(Path::new("a"), &file("a").stat, &edit, false, 0, true));
+        assert!(shelf.take(&file("a"), &warmer(), 0, true, None).is_none());
+        assert!(shelf.holds(Path::new("a"), &file("a").stat, &edit, false, 0, true, None));
         // Turned by a paste: no open takes the unturned base.
         assert_eq!(
-            shelf.drop_changed(Path::new("a"), Some(&now(vec![after], 1))),
+            shelf.drop_changed(Path::new("a"), Some(&now(vec![after], 1)), None),
             1
         );
-        shelf.put(file("a"), base(&edit, 0, 8, 8), None);
-        assert_eq!(shelf.drop_changed(Path::new("a"), None), 1);
+        shelf.put(file("a"), base(&edit, 0, 32, 24));
+        assert_eq!(shelf.drop_changed(Path::new("a"), None, None), 1);
         assert_eq!(shelf.len(), 1);
-        assert!(shelf.take(&file("b"), &edit, 0, true).is_some(), "b's own");
+        assert!(
+            shelf.take(&file("b"), &edit, 0, true, None).is_some(),
+            "b's own"
+        );
     }
 
     /// The learned pair goes on the shelf with a base blended from it,
     /// counted once where the base is one of the pair, and comes back
-    /// with it; a pair the base was not made from is not kept. A base
-    /// standing in for a missing denoiser, and a picture's, are not
-    /// shelved at all.
+    /// with it. A base standing in for a missing denoiser, and a
+    /// picture's, are not shelved at all.
     #[test]
     fn the_learned_pair_is_shelved_with_its_base_and_a_stand_in_is_not() {
-        let mut edit = Edit::default();
-        edit.noise.enabled = true;
-        edit.noise.learned = greycard_edit::Learned::Fast;
-        assert!(edit.noise.tier().is_some());
-        let plain = Arc::new(WorkingImage::new(10, 10));
-        let pair = || LearnedBase {
-            edit: edit.clone(),
-            turn: 0,
-            model: Arc::new(WorkingImage::new(10, 10)),
-            plain: plain.clone(),
-            white: WhiteBase::IDENTITY,
-            radius: None,
-            clip_level: 1.0,
-            ca_on_gpu: false,
-        };
-        let mut b = base(&edit, 0, 10, 10);
-        b.image = plain.clone();
-        assert_eq!(bytes_of(&b, Some(&pair())), 2 * size(10, 10));
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-        shelf.put(file("a"), b, Some(pair()));
-        assert_eq!(shelf.bytes(), 2 * size(10, 10));
-        let (b, l) = shelf.take(&file("a"), &edit, 0, true).unwrap();
-        let l = l.expect("the pair came back");
-        assert!(Arc::ptr_eq(&b.image, &l.plain));
+        // At the end of the strength the base is the network's picture.
+        let b = paired(1.0);
+        let one = b.image.data.len() as u64 * 4;
+        let guide = b.bytes() - b.kept.bytes();
+        assert_eq!(b.kept.bytes(), 2 * one, "the pair, the base one of it");
+        shelf.put(file("a"), b);
+        assert_eq!(shelf.bytes(), 2 * one + guide);
+        let b = shelf
+            .take(&file("a"), &learned(1.0), 0, true, None)
+            .unwrap();
+        assert!(b.kept.holds(Keep::Pair), "the pair came back");
 
-        // The denoiser off: the pair is not the base's.
-        let off = Edit::default();
-        shelf.put(file("a"), base(&off, 0, 10, 10), Some(pair()));
-        assert_eq!(shelf.bytes(), size(10, 10));
-        assert!(shelf.take(&file("a"), &off, 0, true).unwrap().1.is_none());
-
-        let mut stand_in = base(&edit, 0, 10, 10);
-        stand_in.stand_in = Some(LearnedReport::Missing(&greycard_ai::DENOISE_FAST));
-        shelf.put(file("a"), stand_in, None);
-        let mut picture = base(&off, 0, 10, 10);
-        picture.source = greycard_render::finish::Source::Display;
-        shelf.put(file("p.tif"), picture, None);
+        let stand_in = base(&learned(0.5), 0, 32, 24);
+        assert!(stand_in.meta.stood_in.is_some());
+        assert!(!shelf.put(file("a"), stand_in));
+        let picture = FrameKept::walked_with(
+            &crate::walk::Input::Picture {
+                image: Arc::new(WorkingImage::new(32, 24)),
+                meta: Arc::new(greycard_core::picture::Picture {
+                    image: WorkingImage::new(0, 0),
+                    make: String::new(),
+                    model: String::new(),
+                    shot: Default::default(),
+                    metadata: Default::default(),
+                    space: "sRGB".into(),
+                    bits: 16,
+                }),
+            },
+            &Edit::for_picture(),
+            0,
+            &mut crate::walk::NoModels,
+        );
+        assert!(!shelf.put(file("p.tif"), picture));
         assert_eq!(shelf.len(), 0);
+    }
+
+    /// The refined masks' picture goes on the shelf with its base,
+    /// counted, and serves the frame's edit again when it comes back.
+    #[test]
+    fn the_refined_masks_picture_travels_with_its_base() {
+        let mut edit = Edit::default();
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 3,
+            mask: greycard_edit::mask::Mask {
+                components: vec![greycard_edit::mask::Component::default()],
+                refine: 0.2,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        // The walk on the CPU tapped it; the develop keeps it beside
+        // the base as well, counted once.
+        let mut b = base(&edit, 0, 32, 24);
+        let picture = b.kept.mask_picture().expect("tapped").clone();
+        let with = b.bytes();
+        let size = picture.bytes();
+        assert!(size > 0);
+        b.mask_picture = Some(super::super::KeptMaskPicture {
+            patched: b.patched_picture(),
+            detail: edit.detail,
+            picture: picture.clone(),
+        });
+        assert_eq!(b.bytes(), with, "counted once");
+        let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+        shelf.put(file("a"), b);
+        assert_eq!(shelf.bytes(), with, "still counted, with the base");
+        let b = shelf.take(&file("a"), &edit, 0, true, None).unwrap();
+        let kept = super::super::masks::kept_picture(&b, &edit).expect("kept");
+        assert!(Arc::ptr_eq(&kept, &picture));
     }
 
     /// A retouch's patched picture stays with its base and counts.
     #[test]
     fn the_patched_picture_stays_with_its_base() {
-        let edit = Edit::default();
-        let mut b = base(&edit, 0, 10, 10);
-        let patched = Arc::new(WorkingImage::new(10, 10));
-        b.patched = Some((Retouch::default(), patched.clone(), true, Vec::new()));
+        let mut edit = Edit::default();
+        edit.retouch.patches.push(greycard_edit::retouch::Patch {
+            id: 3,
+            points: vec![[0.5, 0.5]],
+            radius: 0.1,
+            ..Default::default()
+        });
+        let b = base(&edit, 0, 32, 24);
+        let patched = b.kept.patched().expect("a retouch").image.clone();
+        let one = b.image.data.len() as u64 * 4;
+        let guide = b.bytes() - b.kept.bytes();
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
-        shelf.put(file("a"), b, None);
-        assert_eq!(shelf.bytes(), 2 * size(10, 10));
-        let (b, _) = shelf.take(&file("a"), &edit, 0, true).unwrap();
-        assert!(Arc::ptr_eq(&b.patched.unwrap().1, &patched));
+        shelf.put(file("a"), b);
+        assert_eq!(shelf.bytes(), 2 * one + guide);
+        let b = shelf.take(&file("a"), &edit, 0, true, None).unwrap();
+        assert!(Arc::ptr_eq(b.kept.patched().unwrap().image, &patched));
     }
 
     /// A quarter of the memory past the first 4 GB, at most 4 GB.

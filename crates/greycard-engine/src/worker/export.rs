@@ -1,8 +1,5 @@
 //! The export path: opening a frame for it, and writing its picture.
 
-use greycard_core::develop::retouch::Region;
-use greycard_edit::retouch::Patch;
-
 use super::*;
 use crate::walk::NoLearned;
 
@@ -17,8 +14,7 @@ pub(super) fn open_picture(
     turn: u8,
     input: Option<&Input>,
     last: &mut Option<Last>,
-    base: &mut Option<Base>,
-    learned: &mut Option<LearnedBase>,
+    base: &mut Option<FrameKept>,
     ai: &mut Ai,
     cache: Option<&greycard_ai::DenoiseCache>,
     lenses: Option<&greycard_lens::Database>,
@@ -37,7 +33,7 @@ pub(super) fn open_picture(
         return Err("no file is open".into());
     };
     match develop_job(
-        f, edit, turn, 0, base, learned, ai, cache, lenses, &mut None, deliver,
+        f, edit, turn, 0, base, ai, cache, lenses, &mut None, deliver,
     ) {
         (outcome, Some(image)) => {
             *last = base
@@ -97,7 +93,7 @@ pub(super) fn export_other(
         frame.turn % 4,
         // A set frame is no develop of the window's: its fills are
         // said under the generation no develop has.
-        &mut ExportModels::new(ai, cache, deliver, 0),
+        &mut WorkerModels::new(ai, cache, deliver, 0),
         lenses,
         settings,
     )?;
@@ -123,7 +119,7 @@ pub(super) fn walk_export(
     input: Input,
     edit: &Edit,
     turn: u8,
-    models: &mut ExportModels<'_>,
+    models: &mut WorkerModels<'_>,
     lenses: Option<&greycard_lens::Database>,
     settings: &greycard_render::export::Settings,
 ) -> Result<(greycard_render::export::Rendered, Vec<String>), String> {
@@ -215,152 +211,6 @@ pub(super) fn walk_export(
     Ok((rendered, left_out))
 }
 
-/// The models an export's walk runs, the set's own: the learned
-/// denoiser through the disk cache, the fills, and the learned masks,
-/// each one that could not be had noted as the worker's develop and
-/// [`learned_masks`] note it.
-pub(super) struct ExportModels<'a> {
-    ai: &'a mut Ai,
-    cache: Option<&'a greycard_ai::DenoiseCache>,
-    deliver: &'a Deliver,
-    /// The job's generation, which its fills are said under.
-    generation: u64,
-    /// The edit and the turn the walk is of.
-    edit: Edit,
-    turn: u8,
-    /// How the learned denoiser's answer was had, for the log line.
-    learned: LearnedReport,
-    fills: FillReport,
-    /// Each learned mask not made, in words.
-    masks: Vec<String>,
-}
-
-impl<'a> ExportModels<'a> {
-    pub(super) fn new(
-        ai: &'a mut Ai,
-        cache: Option<&'a greycard_ai::DenoiseCache>,
-        deliver: &'a Deliver,
-        generation: u64,
-    ) -> Self {
-        Self {
-            ai,
-            cache,
-            deliver,
-            generation,
-            edit: Edit::default(),
-            turn: 0,
-            learned: LearnedReport::Off,
-            fills: FillReport::default(),
-            masks: Vec::new(),
-        }
-    }
-}
-
-impl ExportModels<'_> {
-    /// The learned denoiser `model`, loaded now if it is not yet; why
-    /// not when it cannot be.
-    fn denoiser(
-        &mut self,
-        model: &'static greycard_ai::Model,
-    ) -> Result<&mut greycard_ai::Denoiser, NoLearned> {
-        self.ai.denoiser(model).map_err(|e| match e {
-            NoDenoiser::Missing => NoLearned::Missing(model),
-            NoDenoiser::Failed(why) => NoLearned::Failed(why),
-        })
-    }
-}
-
-/// What the models' cache knows an export's picture by: each frame of
-/// a set is the first picture made of it.
-const EXPORT_STAMP: u64 = 1;
-
-impl crate::walk::Models for ExportModels<'_> {
-    fn can_denoise(&mut self, model: &'static greycard_ai::Model) -> Result<(), NoLearned> {
-        self.denoiser(model).map(|_| ())
-    }
-
-    fn denoise(
-        &mut self,
-        model: &'static greycard_ai::Model,
-        frame: &RawFrame,
-        prepared: &Prepared,
-    ) -> Result<Vec<f32>, NoLearned> {
-        let cache = self.cache;
-        let denoiser = self.denoiser(model)?;
-        let (rgb, report) = super::base::network(frame, prepared, model, denoiser, cache)
-            .map_err(|e| NoLearned::Failed(e.to_string()))?;
-        self.learned = report;
-        Ok(rgb)
-    }
-
-    fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>> {
-        // A fill the model has to make is said so before it starts,
-        // since it takes a while.
-        let kept = self.ai.fill_kept(patch, region, picture);
-        if !kept && self.ai.engine(patch, region, picture).is_ok() {
-            (self.deliver)(Outcome::Filling {
-                generation: self.generation,
-                name: patch.name(),
-            });
-        }
-        let started = Instant::now();
-        match self.ai.fill(patch, region, picture) {
-            Ok((data, engine)) => {
-                if !kept {
-                    self.fills.made.push(patch.name());
-                    self.fills.seconds += started.elapsed().as_secs_f64();
-                }
-                self.fills.engines.push((patch.id, engine));
-                Some(data)
-            }
-            Err(NoFill::Missing(model)) => {
-                self.fills.missing.push((patch.name(), model));
-                None
-            }
-            Err(NoFill::NoGpu) => {
-                self.fills.no_gpu.push(patch.name());
-                None
-            }
-            Err(NoFill::Failed(why)) => {
-                self.fills.failed.push((patch.name(), why));
-                None
-            }
-        }
-    }
-
-    fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool {
-        self.ai.could_fill_more(retouch, picture)
-    }
-
-    fn rasters(
-        &mut self,
-        how: crate::stages::Masks,
-        base: &Arc<WorkingImage>,
-        patched: Option<crate::walk::Patched<'_>>,
-        meta: &crate::walk::Meta,
-    ) -> crate::walk::Rasters {
-        debug_assert_eq!(how, crate::stages::Masks::Make, "an export makes its masks");
-        let (rasters, left_out) = super::masks::learned_rasters(
-            &self.edit,
-            self.ai,
-            &super::masks::On {
-                stamp: EXPORT_STAMP,
-                image: base,
-                retouched: patched.map(|p| crate::ai::Retouched {
-                    retouch: p.retouch,
-                    image: p.image,
-                    unmade: p.unmade,
-                }),
-                edit: &self.edit,
-                source: meta.source,
-                turn: self.turn,
-            },
-        );
-        self.masks = left_out;
-        rasters
-    }
-}
-
 /// Finish `image`, the develop `base` was made for, under `edit` and
 /// the sheet's `settings`, and write it to `path`: the learned masks
 /// made now if they are not yet, the edit's geometry, the finish, the
@@ -371,7 +221,7 @@ impl crate::walk::Models for ExportModels<'_> {
 pub(super) fn write_export(
     image: Arc<WorkingImage>,
     edit: &Edit,
-    base: Option<&Base>,
+    base: Option<&FrameKept>,
     ai: &mut Ai,
     source_path: Option<&std::path::Path>,
     metadata: Option<&greycard_core::decode::RawMetadata>,
@@ -428,7 +278,7 @@ fn write_rendered(
 pub(super) fn scene_export(
     image: &WorkingImage,
     edit: &Edit,
-    base: Option<&Base>,
+    base: Option<&FrameKept>,
     settings: &greycard_render::export::Settings,
 ) -> greycard_render::export::Scene {
     let source = (image.width as u32, image.height as u32);
@@ -452,7 +302,7 @@ pub(super) fn scene_export(
 pub(super) fn finish_export(
     image: Arc<WorkingImage>,
     edit: &Edit,
-    base: Option<&Base>,
+    base: Option<&FrameKept>,
     ai: &mut Ai,
     settings: &greycard_render::export::Settings,
 ) -> (greycard_render::export::Rendered, Vec<String>) {
@@ -465,13 +315,12 @@ pub(super) fn finish_export(
         framed = greycard_render::geometry::apply(&image, &edit.geometry);
         &framed
     };
-    let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
+    let clip_level = base.map(|b| b.meta.clip_level).unwrap_or(f32::INFINITY);
     // The masks' bands through the same geometry as the picture, when
     // they were made for this edit and this picture's size.
-    let planes = base
-        .and_then(|b| b.planes.as_ref())
-        .filter(|k| k.serves_edit(edit))
-        .map(|k| &k.planes)
+    let kept = base.and_then(|b| b.planes_for(edit));
+    let planes = kept
+        .as_deref()
         .filter(|p| (p.width as u32, p.height as u32) == source);
     let detail = planes.map(|p| {
         let bands = p.to_image();
@@ -491,8 +340,8 @@ pub(super) fn finish_export(
         &rasters,
         clip_level,
         guide.as_deref(),
-        base.map(|b| b.source).unwrap_or_default(),
-        base.and_then(Base::white_shift).as_ref(),
+        base.map(|b| b.meta.source).unwrap_or_default(),
+        base.and_then(FrameKept::white_shift).as_ref(),
         detail.as_ref().zip(planes.map(|p| &p.meta)),
     );
     (rendered, left_out)
@@ -508,17 +357,17 @@ pub(super) fn finish_export(
 /// the sharpen, where a set's walk makes its own on the CPU, so the
 /// two exports' refined masks can differ by what the GPU's Detail
 /// differs from the CPU's.
-fn refined_picture(b: &Base, edit: &Edit) -> Option<Arc<greycard_render::refine::MaskPicture>> {
+fn refined_picture(
+    b: &FrameKept,
+    edit: &Edit,
+) -> Option<Arc<greycard_render::refine::MaskPicture>> {
     if !greycard_render::refine::refines(edit) {
         return None;
     }
     if let Some(kept) = super::masks::kept_picture(b, edit) {
         return Some(kept);
     }
-    let patched = b
-        .patched
-        .as_ref()
-        .map_or_else(|| b.image.clone(), |p| p.1.clone());
-    let pre = super::masks::pre_sharpen(&patched, edit, b.clip_level);
+    let patched = b.patched_picture();
+    let pre = super::masks::pre_sharpen(&patched, edit, b.meta.clip_level);
     Some(Arc::new(greycard_render::refine::mask_picture(&pre)))
 }

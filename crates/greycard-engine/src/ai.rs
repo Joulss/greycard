@@ -1123,15 +1123,24 @@ impl Ai {
         }
     }
 
-    /// The learned denoiser `model`, loaded the first time it is asked
-    /// for; another tier replaces the one loaded.
-    pub fn denoiser(&mut self, model: &'static Model) -> Result<&mut Denoiser, NoDenoiser> {
+    /// Whether the learned denoiser `model` is there to be loaded: the
+    /// runtime and the model in the store. Asked without loading it, so
+    /// a develop that keeps the network's answer never pays for a load.
+    pub fn denoiser_there(&self, model: &'static Model) -> Result<(), NoDenoiser> {
         // No runtime here: fetching the model would not help.
         greycard_ai::runtime::status().map_err(|why| NoDenoiser::Failed(why.to_string()))?;
-        let store = self.store.clone().ok_or(NoDenoiser::Missing)?;
+        let store = self.store.as_ref().ok_or(NoDenoiser::Missing)?;
         if !store.have(model) {
             return Err(NoDenoiser::Missing);
         }
+        Ok(())
+    }
+
+    /// The learned denoiser `model`, loaded the first time it is asked
+    /// for; another tier replaces the one loaded.
+    pub fn denoiser(&mut self, model: &'static Model) -> Result<&mut Denoiser, NoDenoiser> {
+        self.denoiser_there(model)?;
+        let store = self.store.clone().ok_or(NoDenoiser::Missing)?;
         if self.providers.is_empty() {
             self.providers = Provider::available();
         }

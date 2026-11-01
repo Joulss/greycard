@@ -149,15 +149,11 @@ pub(super) fn keep_open(
             source,
             full: source,
             rasters,
-            clip_level: base.clip_level,
+            clip_level: base.meta.clip_level,
             guide: Some(super::masks::guide_with(base, picture)),
-            kind: base.source,
+            kind: base.meta.source,
             white: base.white_shift(),
-            detail: base
-                .planes
-                .as_ref()
-                .filter(|k| k.serves_edit(&keep.edit))
-                .map(|k| k.planes.clone()),
+            detail: base.planes_for(&keep.edit),
             edit: keep.edit,
         },
     };

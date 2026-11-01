@@ -638,12 +638,8 @@ mod tests {
         e.detail.enabled = true;
         e.detail.texture = -3.0;
         assert_eq!(e.detail.options().unwrap().texture, -1.0);
-        // It is part of the develop, not of the base: the worker's
-        // cache of the develop before it stays good, the develop does
-        // not.
-        let base = Edit::default();
-        assert!(base.same_patched(&e));
-        assert!(!base.same_develop(&e));
+        // It is part of the develop: a develop of it is another.
+        assert!(!Edit::default().same_develop(&e));
         assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
     }
 
