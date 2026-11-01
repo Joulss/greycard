@@ -93,4 +93,8 @@ pub(crate) struct Sheets {
     /// over the selection (`clipboard`). The session's, never the
     /// system's.
     pub(crate) clipboard: Option<clipboard::Clipboard>,
+    /// The mask clipboard: one mask, copied by the mask list's menu,
+    /// to add to the open frame or the selection. Apart from the
+    /// settings clipboard, so neither copy takes the other's place.
+    pub(crate) mask_clipboard: Option<clipboard::MaskClip>,
 }

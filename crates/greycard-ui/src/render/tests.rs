@@ -1006,6 +1006,52 @@ fn a_texture_read_through_a_turn_is_the_turned_texture() {
     }
 }
 
+/// The color pick's mean at each of its sizes is its square's, the
+/// square clamped at the picture's edges, of the picture as the GPU
+/// holds it.
+#[test]
+fn the_pick_reads_the_mean_of_its_square_at_each_size() {
+    use crate::panel::viewport::{SAMPLE_SIZES, sample_reach};
+    let Some((device, queue)) = device("the pick sample's check") else {
+        return;
+    };
+    let image = field();
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    let (w, h) = (image.width as i64, image.height as i64);
+    let held = |x: i64, y: i64, k: usize| {
+        half::f16::from_f32(image.data[(y * w + x) as usize * 3 + k]).to_f32()
+    };
+    for size in SAMPLE_SIZES {
+        let reach = i64::from(sample_reach(size));
+        assert_eq!(2 * reach + 1, i64::from(size));
+        for (x, y) in [(180, 120), (3, 7), (w - 1, h - 1)] {
+            let (mut sum, mut n) = ([0.0f32; 3], 0.0f32);
+            for yy in (y - reach).max(0)..(y + reach + 1).min(h) {
+                for xx in (x - reach).max(0)..(x + reach + 1).min(w) {
+                    for (k, s) in sum.iter_mut().enumerate() {
+                        *s += held(xx, yy, k);
+                    }
+                    n += 1.0;
+                }
+            }
+            let want = sum.map(|v| v / n);
+            let got = renderer
+                .sample(x, y, reach as u32)
+                .expect("sampled")
+                .expect("on the picture");
+            for k in 0..3 {
+                assert!(
+                    (got[k] - want[k]).abs() <= 1e-5 * want[k].abs().max(1.0),
+                    "{size} at {x},{y}: {got:?} against {want:?}"
+                );
+            }
+        }
+    }
+    // Any other size reads as the first, the droppers' own 5x5.
+    assert_eq!(sample_reach(7), 2);
+}
+
 /// A dropper's read during a turn's lag is the read of the develop
 /// at the new turn: the unturned texture sampled at the texel
 /// `texel_of` names is the turned texture sampled at the pixel.

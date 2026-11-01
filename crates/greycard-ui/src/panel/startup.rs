@@ -472,6 +472,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     ));
     app.set_wheel_resizes(remembered.grid_wheel);
     app.set_lightbox_across(crate::lightbox::held(remembered.lightbox_across));
+    app.set_range_sample(crate::panel::viewport::sample_size(remembered.range_sample));
     // The Library at the start when the Settings sheet chose it, as
     // `--grid` asks; never over a file named, or a run its flags own.
     let flags_own = scripted_start(&cli)
@@ -1271,6 +1272,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         .cloned();
                     // The brush's size on the view, per unit of the width.
                     app.set_brush_scale(sw * zoom / app.window().scale_factor());
+                    // A picture pixel's side on the view, for the color
+                    // pick's square.
+                    app.set_pick_scale(zoom / app.window().scale_factor());
                     // The chosen patch's shape on the view, while the
                     // Retouch tab shows: its edge, and where its
                     // feather begins.
@@ -2384,6 +2388,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // Written as the switch is flipped; the caller keeps the file's.
         grid_wheel: true,
         lightbox_across: app.get_lightbox_across(),
+        range_sample: app.get_range_sample(),
         // The lightbox puts the panes away for as long as it is on:
         // what is kept is how they were before it.
         hide_left: if app.get_lightbox() {

@@ -191,7 +191,7 @@ fn made_hint(kind: &str) -> &'static str {
 /// A mask fresh from "New mask" carries this placeholder until its
 /// first shape lands.
 fn placeholder_name(id: u64) -> String {
-    format!("Mask {id}")
+    Adjustment::placeholder_name(id)
 }
 
 /// The mask's name once its first shape lands, as `add_adjustment`
@@ -1130,6 +1130,78 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             show_edit(&st, &st.develop.edit, &app, None);
             drop(st);
             app.invoke_view_changed();
+        });
+    }
+    // The mask list's menu. Duplicate mask: the mask copied just below
+    // itself and chosen, one step of the history on its own, the
+    // panel's state before it recorded first. Its learned rasters go
+    // with it, so a model is not run again for what it has.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_mask_duplicated(move |i| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            if st.develop.edit.adjustments.len() >= MAX_LOCALS {
+                app.set_status(format!("at most {MAX_LOCALS} adjustments").into());
+                return;
+            }
+            // As a delete: a tool in hand keeps the index it was armed
+            // for, which the insert below shifts.
+            if st.develop.placing.take().is_some() || st.develop.choosing.is_some() {
+                app.set_placing("".into());
+                crate::panel::deliver::drop_hint(&app, &mut st);
+            }
+            crate::panel::parts::stopped(&mut st);
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            st.develop.edit = edit.clone();
+            crate::panel::edit::save_edit(&mut st, edit);
+            let Some(at) = st.develop.edit.duplicate_mask(i.max(0) as usize) else {
+                return;
+            };
+            let (from, to) = (
+                st.develop.edit.adjustments[at - 1].id,
+                st.develop.edit.adjustments[at].id,
+            );
+            let carried: Vec<_> = st
+                .develop
+                .learned
+                .iter()
+                .filter(|((id, _), _)| *id == from)
+                .map(|(&(_, c), v)| ((to, c), v.clone()))
+                .collect();
+            st.develop.learned.extend(carried);
+            st.develop.fresh_mask = None;
+            st.develop.target = Some(at);
+            app.set_component(0);
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
+            let edit = st.develop.edit.clone();
+            crate::panel::edit::save_edit(&mut st, edit);
+            crate::panel::history::show_history(&st, &app);
+            drop(st);
+            app.invoke_view_changed();
+        });
+    }
+    // Copy mask: that mask alone onto the mask clipboard, as the panel
+    // has it.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_mask_copied(move |i| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            let Some(id) = edit.adjustments.get(i.max(0) as usize).map(|a| a.id) else {
+                return;
+            };
+            let name = st
+                .current
+                .map(|c| crate::panel::sync::frame_name(&st, c))
+                .unwrap_or_default();
+            st.sheets.mask_clipboard = crate::clipboard::MaskClip::copy(&edit, id, name);
+            app.set_mask_held(st.sheets.mask_clipboard.is_some());
         });
     }
     {
@@ -3018,6 +3090,76 @@ mod tests {
         assert_eq!(st.develop.edit.adjustments.len(), 1);
         assert_eq!(st.develop.edit.adjustments[0].name, "Mask 2");
         assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
+    }
+
+    /// Duplicate mask: a copy just below, chosen, its shapes and look
+    /// the source's under a new mask's name, its learned rasters with
+    /// it; one step, which one undo takes back.
+    #[test]
+    fn duplicate_mask_lands_below_as_one_step() {
+        use greycard_edit::brush::Raster;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        // Global on the panel while the mask is set up under it.
+        app.invoke_target_changed(0);
+        {
+            let mut st = state.borrow_mut();
+            let a = &mut st.develop.edit.adjustments[0];
+            a.mask.components.push(Component {
+                shape: Shape::Subject {},
+                ..Default::default()
+            });
+            a.name = "Subject 1".into();
+            a.look.light.exposure = 0.4;
+            let raster = Arc::new(Raster::from_data(1.5, 4, vec![9; 24]));
+            st.develop
+                .learned
+                .insert((1, 0), (Shape::Subject {}, raster));
+        }
+        app.invoke_target_changed(1);
+        app.invoke_new_mask();
+        app.invoke_mask_duplicated(0);
+        let names = |state: &Rc<Shared>| -> Vec<String> {
+            let st = state.borrow();
+            st.develop
+                .edit
+                .adjustments
+                .iter()
+                .map(|a| a.name.clone())
+                .collect()
+        };
+        assert_eq!(names(&state), ["Subject 1", "Subject 3", "Mask 2"]);
+        {
+            let st = state.borrow();
+            let (a, b) = (
+                &st.develop.edit.adjustments[0],
+                &st.develop.edit.adjustments[1],
+            );
+            assert_eq!((&b.mask, &b.look), (&a.mask, &a.look));
+            assert_eq!(b.look.light.exposure, 0.4);
+            assert_eq!(st.develop.target, Some(1));
+            assert!(
+                st.develop.learned.contains_key(&(3, 0)),
+                "its raster carried"
+            );
+            assert_eq!(
+                st.sidecars[0].current.adjustments.len(),
+                3,
+                "recorded at once"
+            );
+        }
+        assert_eq!(app.get_target(), 2);
+        assert_eq!(app.get_adjustment_name(), "Subject 3");
+        let top = app.get_history_rows().row_data(0).unwrap().name;
+        assert_eq!(top, "Subject 3 added");
+        app.invoke_undo();
+        assert_eq!(names(&state), ["Subject 1", "Mask 2"]);
+        // Past the end, nothing.
+        app.invoke_mask_duplicated(7);
+        assert_eq!(names(&state), ["Subject 1", "Mask 2"]);
     }
 
     /// With no mask chosen, "New mask" is there and nothing offers a

@@ -327,7 +327,7 @@ pub fn rasterize(
 /// How many local adjustments a picture may carry: the shader's
 /// loop bound, and the size of a per-pixel array there. Nothing is
 /// paid for the ones not used.
-pub const MAX_LOCALS: usize = 16;
+pub const MAX_LOCALS: usize = greycard_edit::MAX_MASKS;
 
 const MID_GREY: f32 = 0.18;
 

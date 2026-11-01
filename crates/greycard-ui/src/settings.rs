@@ -79,6 +79,10 @@ pub struct Settings {
     /// How many tiles go across the lightbox, as it was left. Held to
     /// the lightbox's own range when read.
     pub lightbox_across: i32,
+    /// The side of the square the color pick takes its mean over, in
+    /// the picture's pixels: one of `panel::viewport::SAMPLE_SIZES`,
+    /// 5 by default. The pick's, not the edit's.
+    pub range_sample: i32,
     /// The left pane, the develop panel and the strip, each as put
     /// away (F7, F8, F6, Tab for all three) or not when the window
     /// closed.
@@ -599,6 +603,7 @@ impl Default for Settings {
             grid_cell: crate::grid::CELL,
             grid_wheel: true,
             lightbox_across: crate::lightbox::ACROSS,
+            range_sample: crate::panel::viewport::SAMPLE_SIZES[0],
             hide_left: false,
             hide_right: false,
             hide_strip: false,
@@ -840,6 +845,7 @@ mod tests {
             grid_cell: 256.0,
             grid_wheel: false,
             lightbox_across: 5,
+            range_sample: 21,
             hide_left: true,
             hide_right: false,
             hide_strip: true,
@@ -1304,6 +1310,14 @@ mod tests {
         assert_eq!(read.lightbox_across, 4);
         let read: Settings = serde_json::from_str(r#"{"lightbox_across": 6}"#).unwrap();
         assert_eq!(read.lightbox_across, 6);
+    }
+
+    #[test]
+    fn a_file_without_the_pick_sample_takes_five() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.range_sample, 5);
+        let read: Settings = serde_json::from_str(r#"{"range_sample": 41}"#).unwrap();
+        assert_eq!(read.range_sample, 41);
     }
 
     #[test]

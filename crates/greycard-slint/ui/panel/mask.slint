@@ -11,7 +11,9 @@ import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segment
 // with its bin; then New mask. It never scrolls with the sections
 // under it, and holds at most six rows before it scrolls inside
 // itself, so a long list leaves the sections their room. Folded, its
-// header names the chosen row.
+// header names the chosen row. A right-click on a mask offers a copy
+// of it below, or the mask clipboard; on any row, once the clipboard
+// holds a mask, its paste.
 export component AdjustmentsList inherits Section {
     in-out property <[string]> adjustment-names;
     in-out property <int> target;
@@ -21,6 +23,26 @@ export component AdjustmentsList inherits Section {
     callback adjustment-toggled(int);
     callback new-mask();
     callback delete-adjustment();
+    in property <bool> ctrl-click-menu;
+    // Whether the mask clipboard holds a mask, which the menu then
+    // offers to paste.
+    in property <bool> mask-held;
+    // A mask, by its index among the masks: copied below itself, or
+    // onto the mask clipboard; the clipboard's mask pasted.
+    callback duplicate-mask(int);
+    callback copy-mask(int);
+    callback paste-mask();
+    callback focus-keys();
+    callback menu-done();
+    pure callback menu-shown() -> bool;
+    // The row the menu was asked on.
+    property <int> menu-row;
+    function open-menu(i: int, x: length, y: length) {
+        if (i == 0 && !root.mask-held) { return; }
+        root.focus-keys();
+        root.menu-row = i;
+        menu.show({ x: x - frame.absolute-position.x, y: y - frame.absolute-position.y });
+    }
 
     // The height between the panel's tab bar and its footer. How many
     // rows show before the list scrolls follows it: as many as leave
@@ -72,12 +94,33 @@ export component AdjustmentsList inherits Section {
         root.fit-rows();
         root.reveal-target();
     }
-    Rectangle {
+    frame := Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
         height: min(rows.preferred-height, root.max-rows * root.pitch) + 2px;
+        menu := ContextMenuArea {
+            x: 0;
+            y: 0;
+            width: 0px;
+            height: 0px;
+            enabled: false;
+            Menu {
+                if root.menu-row > 0: MenuItem {
+                    title: "Duplicate mask";
+                    activated => { root.duplicate-mask(root.menu-row - 1); root.menu-done(); }
+                }
+                if root.menu-row > 0: MenuItem {
+                    title: "Copy mask";
+                    activated => { root.copy-mask(root.menu-row - 1); root.menu-done(); }
+                }
+                if root.mask-held: MenuItem {
+                    title: "Paste mask";
+                    activated => { root.paste-mask(); root.menu-done(); }
+                }
+            }
+        }
         list := ScrollPane {
             // A row scrolled from under a resting pointer takes its word along.
             changed content-y => { Tips.show("", 0, 0); }
@@ -101,8 +144,27 @@ export component AdjustmentsList inherits Section {
                     background: on ? Theme.raised : (row.has-hover ? Theme.hover : transparent);
                     animate background { duration: Theme.quick; }
                     row := TouchArea {
+                        property <bool> skip;
                         mouse-cursor: MouseCursor.pointer;
-                        clicked => { root.target-changed(i); }
+                        pointer-event(e) => {
+                            if (e.kind != PointerEventKind.down) { return; }
+                            // As a collection's row: the press that
+                            // closes a menu is nothing more, and a
+                            // right-click asks for the row's own.
+                            let closing = root.menu-shown();
+                            let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
+                                && e.modifiers.meta;
+                            let asks = e.button == PointerEventButton.right || ctrl-menu;
+                            self.skip = closing || asks || e.button != PointerEventButton.left;
+                            if (asks) {
+                                root.open-menu(i, self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                        clicked => {
+                            if (self.skip) { return; }
+                            root.target-changed(i);
+                        }
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
@@ -187,6 +249,8 @@ export component AdjustmentsSection inherits Section {
     in-out property <float> range-chroma-feather;
     in property <brush> hue-circle;
     in-out property <string> picking;
+    // The color pick's square, its side in the picture's pixels.
+    in-out property <int> range-sample;
     callback pick-started(string);
     in-out property <bool> show-mask;
     callback show-mask-toggled();
@@ -578,6 +642,20 @@ export component AdjustmentsSection inherits Section {
                                 icon: @image-url("../icons/pipette.svg");
                                 primary: root.picking == "Range";
                                 clicked => { root.pick-started("Range"); }
+                            }
+                            Text {
+                                text: "Sample";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                                horizontal-stretch: 1;
+                            }
+                            Segmented {
+                                options: ["5", "11", "21", "41"];
+                                current: root.range-sample;
+                                picks: false;
+                                selected(v) => { root.range-sample = v.to-float(); }
                             }
                         }
                         EditSlider {

@@ -153,6 +153,28 @@ impl Default for Adjustment {
     }
 }
 
+/// How many masks a picture may carry: what the viewport's shader and
+/// the export draw. A paste that joins masks stops there.
+pub const MAX_MASKS: usize = 16;
+
+impl Adjustment {
+    /// The name a mask carries from New mask until its first shape
+    /// lands: "Mask 3".
+    pub fn placeholder_name(id: u64) -> String {
+        format!("Mask {id}")
+    }
+
+    /// The name a new mask with `mask`'s shapes and id `id` is given:
+    /// its first shape's and the id ("Subject 3"), the placeholder
+    /// with none.
+    pub fn new_name(mask: &Mask, id: u64) -> String {
+        mask.components.first().map_or_else(
+            || Self::placeholder_name(id),
+            |c| format!("{} {id}", c.shape.name()),
+        )
+    }
+}
+
 impl Edit {
     /// The edit a picture that is not a raw starts from: the default,
     /// but with the capture sharpening off, since the file has been
@@ -254,6 +276,21 @@ impl Edit {
     /// An id no adjustment has.
     pub fn next_id(&self) -> u64 {
         self.adjustments.iter().map(|a| a.id).max().unwrap_or(0) + 1
+    }
+
+    /// A copy of mask `i` just below it, its shapes and its look the
+    /// same, under an id of its own and the name a new mask with its
+    /// shapes is given; where the copy went. None for no such mask.
+    pub fn duplicate_mask(&mut self, i: usize) -> Option<usize> {
+        let source = self.adjustments.get(i)?;
+        let id = self.next_id();
+        let copy = Adjustment {
+            id,
+            name: Adjustment::new_name(&source.mask, id),
+            ..source.clone()
+        };
+        self.adjustments.insert(i + 1, copy);
+        Some(i + 1)
     }
 }
 
@@ -661,6 +698,57 @@ mod tests {
         // Old sidecars have none.
         let old: Edit = serde_json::from_str(r#"{"version":1}"#).unwrap();
         assert!(old.adjustments.is_empty());
+    }
+
+    fn masked_twice() -> Edit {
+        use mask::{Component, Shape};
+        let mut edit = Edit::default();
+        for (id, name, shape) in [
+            (1, "Subject 1", Shape::Subject {}),
+            (4, "Lamp", Shape::LUMINANCE),
+        ] {
+            let mut look = Look::default();
+            look.light.exposure = id as f32 / 10.0;
+            edit.adjustments.push(Adjustment {
+                id,
+                name: name.into(),
+                enabled: id == 1,
+                mask: Mask {
+                    components: vec![Component {
+                        shape,
+                        ..Default::default()
+                    }],
+                    invert: id == 4,
+                },
+                look,
+            });
+        }
+        edit
+    }
+
+    #[test]
+    fn a_duplicate_lands_below_its_mask_under_a_new_id_and_name() {
+        let mut edit = masked_twice();
+        assert_eq!(edit.duplicate_mask(0), Some(1));
+        let names: Vec<&str> = edit.adjustments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Subject 1", "Subject 5", "Lamp"]);
+        let (source, copy) = (&edit.adjustments[0], &edit.adjustments[1]);
+        assert_eq!(copy.id, 5);
+        assert_eq!((&copy.mask, &copy.look), (&source.mask, &source.look));
+        assert_eq!(copy.enabled, source.enabled);
+        // A typed name is not carried: the copy is named as a new mask
+        // with its shapes is, its invert and switch kept.
+        assert_eq!(edit.duplicate_mask(2), Some(3));
+        let copy = &edit.adjustments[3];
+        assert_eq!((copy.id, copy.name.as_str()), (6, "Luminance 6"));
+        assert!(copy.mask.invert && !copy.enabled);
+        // With no shape yet, the placeholder; past the end, nothing.
+        edit.adjustments[0].mask.components.clear();
+        edit.duplicate_mask(0);
+        assert_eq!(edit.adjustments[1].name, "Mask 7");
+        let before = edit.clone();
+        assert_eq!(edit.duplicate_mask(9), None);
+        assert_eq!(edit, before);
     }
 
     #[test]

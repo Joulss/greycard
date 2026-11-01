@@ -120,7 +120,7 @@ fn own_white(st: &State) -> Result<WhiteBase, NeutralMiss> {
 /// Temperature and tint from a pixel of the developed picture that
 /// should be grey: what the Neutral dropper and the Auto button both
 /// come to. `px` is in the working space at the white the picture was
-/// developed at, as [`sample_view`] reads it; the white it names goes
+/// developed at, as [`sample_view_at`] reads it; the white it names goes
 /// to the panel, As shot off, and the develop follows, one step of
 /// the history. On a miss nothing moves, and the caller says why.
 pub(crate) fn white_from_neutral(
@@ -759,16 +759,33 @@ pub(crate) fn view_to_plane(st: &State, app: &App, x: f32, y: f32) -> (f32, f32)
     (r.0 / pw, r.1 / ph)
 }
 
-/// The developed picture under a point of the view (logical pixels):
-/// the mean of a few pixels about it, in the working space at the
-/// white it was developed at; `None` off the picture or without one.
-pub(crate) fn sample_view(st: &State, app: &App, x: f32, y: f32) -> Option<[f32; 3]> {
-    sample_view_at(st, app, x, y, 2)
+/// The color pick's sample sizes: the side of the square it takes
+/// the mean over, in the picture's own pixels, since the viewport's
+/// develop is full size: at fit on a 6000 pixel frame, 41 is about 7
+/// screen pixels and 5 under one. The first is the droppers' own 5x5.
+pub(crate) const SAMPLE_SIZES: [i32; 4] = [5, 11, 21, 41];
+
+/// `size` if it is one of [`SAMPLE_SIZES`], else the first.
+pub(crate) fn sample_size(size: i32) -> i32 {
+    if SAMPLE_SIZES.contains(&size) {
+        size
+    } else {
+        SAMPLE_SIZES[0]
+    }
 }
 
-/// The same, over a box of `reach` pixels each way instead of the
-/// droppers' usual two: what the defringe's dropper takes its local
-/// mean over.
+/// The reach each way of a square of `size` pixels a side, as
+/// [`sample_view_at`] takes it.
+pub(crate) fn sample_reach(size: i32) -> u32 {
+    (sample_size(size) as u32 - 1) / 2
+}
+
+/// The developed picture under a point of the view (logical pixels):
+/// the mean of the square of `reach` pixels each way about it, in the
+/// working space at the white it was developed at; `None` off the
+/// picture or without one. The droppers' usual reach is two, a 5x5;
+/// the color pick's is chosen, and the defringe's dropper takes its
+/// local mean over a wider one.
 pub(crate) fn sample_view_at(
     st: &State,
     app: &App,
@@ -1866,7 +1883,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 crate::panel::deliver::show_hint(&app, &mut st, &waiting_said(picking.as_str()));
                 return;
             }
-            let Some(px) = sample_view(&st, &app, x, y) else {
+            // The color pick's square is the size chosen beside it;
+            // every other dropper's the usual 5x5.
+            let reach = if picking == "Range" {
+                sample_reach(app.get_range_sample())
+            } else {
+                2
+            };
+            let Some(px) = sample_view_at(&st, &app, x, y, reach) else {
                 return;
             };
             match picking.as_str() {
@@ -1954,8 +1978,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 "Range" => {
                     // The color range's hue from the picture before any
                     // look, as the mask reads it (`finish::sample`), at
-                    // the panel's white; the dropper's box is the
-                    // mean the mask reads a hue from, near enough.
+                    // the panel's white; the dropper's square, 5x5 or
+                    // wider as chosen, is the mean the mask reads a hue
+                    // from, near enough.
                     let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
                     let m = preview_white(&mut st, key);
                     let px: [f32; 3] =
@@ -2326,6 +2351,19 @@ mod tests {
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
                 position: slint::LogicalPosition::new(600.0, 400.0),
             });
+    }
+
+    /// The color pick's sample: 5 to start, the droppers' own 5x5, a
+    /// size it does not offer read as that, and the one chosen kept
+    /// in the settings.
+    #[test]
+    fn the_pick_sample_starts_at_five_and_is_kept_in_the_settings() {
+        let app = window(1);
+        assert_eq!(app.get_range_sample(), 5);
+        assert_eq!(SAMPLE_SIZES.map(sample_reach), [2, 5, 10, 20]);
+        assert_eq!((sample_size(7), sample_size(41)), (5, 41));
+        app.set_range_sample(21);
+        assert_eq!(crate::panel::startup::remember(&app).range_sample, 21);
     }
 
     /// The vectorscope's circle sits square in the middle of its box,

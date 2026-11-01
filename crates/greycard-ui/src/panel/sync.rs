@@ -1305,14 +1305,9 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
 }
 
 /// Lay what `choice` picks of the clipboard over `chosen`, the frame it came
-/// from left out: a sync with the clipboard between. The frame on
-/// screen, outside culling, takes it through the panel as a preset
-/// click does (the camera-profile fit checked the same way); the rest,
-/// and in culling every frame, through [`lay_over_targets`], exactly
-/// as a sync's targets. Each frame that moved gets one step, "Paste
-/// from" the frame copied. The status line says what happened, and
-/// rides the develop the frame on screen asks for. `chosen` is what the
-/// paste was pressed on, whatever the selection is by the time the
+/// from left out: a sync with the clipboard between ([`lay_paste`]),
+/// each frame's step "Paste from" the frame copied. `chosen` is what
+/// the paste was pressed on, whatever the selection is by the time the
 /// frames' sidecars are in.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paste_onto(
@@ -1329,7 +1324,92 @@ pub(crate) fn paste_onto(
     };
     let targets = clip.targets(st, chosen);
     let preset = clip.preset(choice);
-    let label = clip.label();
+    let pasted = Pasted {
+        learned_from: clip.learned_from(&preset),
+        preset: &preset,
+        label: clip.label(),
+        what: format!("{} from {}", choice.words(), clip.name()),
+    };
+    lay_paste(st, app, worker, &targets, &pasted, profiles, probe)
+}
+
+/// Paste mask: the mask clipboard's mask added to `chosen`, the frame
+/// it was copied from among them, each frame that moved one step,
+/// "Paste from" that frame, as a paste of that one mask with Add to
+/// masks; a frame that has it already, or holds as many masks as a
+/// picture may, is left as it is, the second said in the log.
+pub(crate) fn paste_mask_onto(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    chosen: &[usize],
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) -> Synced {
+    let Some(clip) = st.sheets.mask_clipboard.clone() else {
+        return Synced::default();
+    };
+    let targets: Vec<usize> = chosen
+        .iter()
+        .copied()
+        .filter(|&c| st.key_of(c).is_some())
+        .collect();
+    let pasted = Pasted {
+        learned_from: None,
+        preset: &clip.preset,
+        label: clip.label(),
+        what: format!(
+            "{} from {}",
+            Choice::whole(&clip.preset.sections).words(),
+            clip.name()
+        ),
+    };
+    let synced = lay_paste(st, app, worker, &targets, &pasted, profiles, probe);
+    let full = targets
+        .iter()
+        .filter(|c| !synced.moved.contains(c))
+        .filter(|&&c| {
+            st.line(c)
+                .is_some_and(|l| l.current.adjustments.len() >= greycard_edit::MAX_MASKS)
+        })
+        .count();
+    if full > 0 {
+        tracing::info!(
+            "paste mask: {full} frame(s) at {} masks left as they were",
+            greycard_edit::MAX_MASKS
+        );
+    }
+    synced
+}
+
+/// What a paste lays over the frames it reaches: the preset, the edit
+/// its Noise brings the learned denoiser from, each step's words, and
+/// what the status line says went ("1 section from IMG_0001.CR3").
+struct Pasted<'a> {
+    preset: &'a Preset,
+    learned_from: Option<&'a Edit>,
+    label: String,
+    what: String,
+}
+
+/// Lay `pasted` over `targets`. The frame on screen, outside culling,
+/// takes it through the panel as a preset click does (the
+/// camera-profile fit checked the same way); the rest, and in culling
+/// every frame, through [`lay_over_targets`], exactly as a sync's
+/// targets. Each frame that moved gets one step. The status line says
+/// what happened, and rides the develop the frame on screen asks for.
+#[allow(clippy::too_many_arguments)]
+fn lay_paste(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    targets: &[usize],
+    pasted: &Pasted,
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) -> Synced {
+    let preset = pasted.preset;
+    let label = &pasted.label;
     // Outside culling the frame on screen is the panel's, and what
     // the panel holds is a state first, then the paste over it.
     let panel_frame = st.current.filter(|&c| {
@@ -1339,12 +1419,12 @@ pub(crate) fn paste_onto(
     let mut current_left_off = false;
     let mut current_demosaic_off = false;
     if let Some(c) = panel_frame {
-        let (fits, left_off) = preset_for_body(st, &preset, c, profiles, &probe);
+        let (fits, left_off) = preset_for_body(st, preset, c, profiles, &probe);
         let (fits, demosaic_off) = preset_for_mosaic(st, &fits, c);
         current_left_off = left_off;
         current_demosaic_off = demosaic_off;
         let edit = read_edit(app, &st.develop.edit, st.develop.target);
-        let applied = clip.applied(&fits, &edit);
+        let applied = crate::clipboard::laid(&fits, pasted.learned_from, &edit);
         if applied != edit {
             if let Some(edit) = panel_state(st, edit)
                 && let Some(line) = st.line_mut(c)
@@ -1365,15 +1445,15 @@ pub(crate) fn paste_onto(
     let mut synced = lay_over_targets(
         st,
         app,
-        &preset,
+        preset,
         &rest,
-        clip.learned_from(&preset),
-        Some(&label),
+        pasted.learned_from,
+        Some(label),
         profiles,
         probe,
     );
     // A person picked on one of them is offered for the rest.
-    crate::panel::parts_all::reached(st, app, &preset, &targets);
+    crate::panel::parts_all::reached(st, app, preset, targets);
     // The current frame's step went to disk with the set's write when
     // a target shares its file (a version of it): one write, one
     // revision; else its own, below.
@@ -1402,9 +1482,8 @@ pub(crate) fn paste_onto(
         )
     } else {
         format!(
-            "pasted {} from {} onto {} frame{}",
-            choice.words(),
-            clip.name(),
+            "pasted {} onto {} frame{}",
+            pasted.what,
             synced.moved.len(),
             plural(synced.moved.len())
         )
@@ -1453,6 +1532,51 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             {
                 paste_open(&mut state.borrow_mut(), &app);
             }
+        });
+    }
+    // Paste mask: the mask clipboard's mask onto the open frame or
+    // every selected frame, once their sidecars are in.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_mask_pasted(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            if st.sheets.mask_clipboard.is_none()
+                || crate::panel::queue_view::refused(&st, "a paste")
+            {
+                return;
+            }
+            if tool_in_hand(&app) {
+                app.set_status("put the tool down first (Esc), then paste".into());
+                return;
+            }
+            let paths: Vec<crate::versions::Key> = chosen_frames(&st)
+                .into_iter()
+                .filter_map(|c| st.key_of(c))
+                .collect();
+            drop(st);
+            crate::rows::request(
+                &state,
+                &app,
+                &worker,
+                paths,
+                crate::rows::Scope::Line,
+                "paste",
+                Box::new(move |state, app, worker, at| {
+                    let chosen: Vec<usize> = at.into_iter().flatten().collect();
+                    let profiles = greycard_edit_io::profiles::list();
+                    paste_mask_onto(
+                        &mut state.borrow_mut(),
+                        app,
+                        worker,
+                        &chosen,
+                        &profiles,
+                        probe,
+                    );
+                }),
+            );
         });
     }
     // The sheet, on everything but the masks.
@@ -3659,6 +3783,84 @@ mod tests {
             .collect();
         assert_eq!(checked, ["Masks: Sky 1"]);
         press(&app, Key::Escape);
+    }
+
+    /// Copy mask and Paste mask: the one mask, apart from the settings
+    /// clipboard, joined to every selected frame that lacks it, one
+    /// step each; onto the open frame through the panel, and undone in
+    /// one.
+    #[test]
+    fn a_mask_copied_alone_joins_the_selection_and_the_open_frame() {
+        let (app, state, _worker) = two_frames();
+        assert!(!app.get_mask_held());
+        app.invoke_mask_copied(1);
+        assert!(app.get_mask_held());
+        assert!(state.borrow().sheets.clipboard.is_none());
+        // Onto the selection, the frame it came from among them,
+        // which has it already and is left as it is.
+        state.borrow_mut().views.picked = vec![0, 1, 2];
+        app.invoke_mask_pasted();
+        assert_eq!(
+            app.get_status(),
+            "pasted 1 section from IMG_0000.CR3 onto 2 frames"
+        );
+        {
+            let st = state.borrow();
+            assert_eq!(mask_names(&st.sidecars[1].current), ["Face 2"]);
+            let got = &st.sidecars[2].current;
+            assert_eq!(mask_names(got), ["Mine 1", "Face 2"]);
+            assert_eq!(got.adjustments[1].id, 2);
+            assert_eq!(
+                got.adjustments[1].mask.components[0].shape,
+                Shape::Subject {},
+                "the subject to be found on this frame"
+            );
+            assert_eq!(got.light.tone.shadows, -0.5, "its own look kept");
+            assert_eq!(got.light.exposure, 0.0, "nothing but the mask");
+            assert_eq!(
+                st.sidecars[2].current_label.as_deref(),
+                Some("Paste from IMG_0000.CR3")
+            );
+            assert_eq!(mask_names(&st.develop.edit), ["Sky 1", "Face 2"]);
+        }
+        // Frame 2's own mask copied, and pasted onto frame 0 alone,
+        // open on the panel.
+        app.invoke_select(2);
+        app.invoke_mask_copied(0);
+        app.invoke_select(0);
+        state.borrow_mut().views.picked = vec![0];
+        app.invoke_mask_pasted();
+        let names = |state: &Rc<Shared>| mask_names(&state.borrow().develop.edit);
+        assert_eq!(names(&state), ["Sky 1", "Face 2", "Mine 1"]);
+        assert_eq!(app.get_adjustment_names().row_count(), 4);
+        assert_eq!(
+            state.borrow().sidecars[0].current_label.as_deref(),
+            Some("Paste from IMG_0002.CR3")
+        );
+        app.invoke_undo();
+        assert_eq!(names(&state), ["Sky 1", "Face 2"]);
+        assert_eq!(app.get_exposure(), 0.7, "the look before it kept");
+    }
+
+    /// A frame holding as many masks as a picture may takes no more
+    /// from Paste mask: the 17th would be listed and never drawn.
+    #[test]
+    fn paste_mask_leaves_a_frame_at_the_most_masks_as_it_is() {
+        let (app, state, _worker) = two_frames();
+        let full: Vec<_> = (1..=MAX_LOCALS as u64)
+            .map(|id| mask(id, &format!("Mine {id}"), Shape::Subject {}))
+            .collect();
+        {
+            let mut st = state.borrow_mut();
+            let mut own = st.sidecars[2].current.clone();
+            own.adjustments = full.clone();
+            st.sidecars[2].record(own);
+        }
+        app.invoke_mask_copied(0);
+        state.borrow_mut().views.picked = vec![0, 2];
+        app.invoke_mask_pasted();
+        assert_eq!(app.get_status(), "the 2 frames had these already");
+        assert_eq!(state.borrow().sidecars[2].current.adjustments, full);
     }
 
     #[test]

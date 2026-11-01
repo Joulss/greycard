@@ -70,7 +70,7 @@ pub use versions::Version;
 pub use vignette::Vignette;
 pub use white::{LocalWhite, WhiteShift};
 
-pub use edit::{Adjustment, DetailWants, Edit, Look, overlay_changes};
+pub use edit::{Adjustment, DetailWants, Edit, Look, MAX_MASKS, overlay_changes};
 pub use frames::{
     apply_preset_into, apply_preset_to_line, meta_into, sync_into, sync_learned, turn_into,
 };

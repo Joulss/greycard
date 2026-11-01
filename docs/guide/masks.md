@@ -17,6 +17,11 @@ what you chose.
   and takes the sections back to their top. Its name field has the
   keys, the name selected, so you can type a name at once; **Enter**
   or a click elsewhere ends the naming. A frame can hold up to 16.
+- Right-click a mask (Ctrl+click on a Mac) for **Duplicate mask**,
+  which puts a copy just below it with the same shapes and sliders,
+  named as a new mask is ("Subject 3"), and **Copy mask**. Once a mask
+  is copied, the menu on any row, **Global** too, offers **Paste mask**:
+  see [Masks and other frames](#masks-and-other-frames).
 
 The list stays put while the sections scroll under it, so **Global**
 or another mask is one click away from any slider. It shows up to six
@@ -263,6 +268,13 @@ with the dropper in hand: click a color in the picture to center it
 there, or press **Esc** to keep skin. **Pick** gives you the dropper
 again later.
 
+The dropper reads the mean of a square about the point, drawn around
+the pointer while you pick. **Sample** beside **Pick** sets its side:
+5, 11, 21, or 41 pixels of the picture itself, so at fit on a large
+frame even 41 is a small square on screen, a few screen pixels. Take
+a wider one on a noisy or textured color. The choice is kept between
+runs, not in the edit.
+
 ### What Luminance and Color read
 
 Both read the picture as developed, before any mask's own sliders,
@@ -387,6 +399,15 @@ frames leaves them out unless you check **Masks**, or one mask under
 it by name. **Replace masks** takes each frame's own away; **Add to
 masks** keeps them and puts the copied ones after. See
 [Presets and history](presets-and-history.md).
+
+To take one mask across without the sheet, right-click it in the
+**ADJUSTMENTS** list and choose **Copy mask**, then on another frame
+right-click any row and choose **Paste mask**. It goes onto the open
+frame and every other selected frame, after their own masks,
+as **Add to masks** does; a frame that has it already is left as it
+is. Each frame takes it as one step of its history, "Paste from" the
+frame it came from. **Copy mask** leaves the copied settings of
+**Ctrl+C** as they were.
 
 A Subject, Background, Sky, Landscape or People mask copied onto another frame is
 made again for that frame, from that frame's own picture. A paste of

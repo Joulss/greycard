@@ -857,6 +857,22 @@ impl Preset {
         p
     }
 
+    /// The mask of `edit` with id `id`, alone, to join the masks of
+    /// the frames it is pasted onto: what Copy mask holds and Paste
+    /// mask lays, as a sync or paste of that one mask with Add to
+    /// masks lays it.
+    pub fn of_mask(edit: &Edit, id: u64) -> Self {
+        Self::between_frames(
+            edit,
+            &Choice {
+                sections: vec![Section::Adjustments],
+                parts: Vec::new(),
+                masks: Some(vec![id]),
+                masks_land: Masks::Join,
+            },
+        )
+    }
+
     /// Whether it carries nothing.
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty() && self.parts.is_empty()
@@ -871,12 +887,13 @@ impl Preset {
     /// Lay the carried sections and parts over `onto`. Masks that
     /// join go after the picture's own, each with an id after theirs,
     /// and one the picture has already (the same in all but its id)
-    /// is not laid twice, so a second paste adds nothing.
+    /// is not laid twice, so a second paste adds nothing; none past
+    /// [`crate::MAX_MASKS`], which would be listed and never drawn.
     pub fn apply(&self, onto: &mut Edit) {
         for s in &self.sections {
             if *s == Section::Adjustments && self.joins_masks() {
                 for a in &self.edit.adjustments {
-                    if !has_mask(onto, a) {
+                    if onto.adjustments.len() < crate::MAX_MASKS && !has_mask(onto, a) {
                         let id = onto.next_id();
                         onto.adjustments.push(crate::Adjustment { id, ..a.clone() });
                     }
@@ -1616,6 +1633,86 @@ mod tests {
         let carried = &onto.adjustments[0].mask.components;
         assert!(carried[0].enabled);
         assert!(!carried[1].enabled);
+    }
+
+    #[test]
+    fn one_mask_copied_joins_another_edit_once() {
+        use crate::mask::{Component, Shape};
+        let mut edit = Edit::default();
+        edit.light.exposure = 1.0;
+        for (id, shape) in [(2, Shape::Subject {}), (5, Shape::skin())] {
+            let mut look = crate::Look::default();
+            look.light.exposure = -0.5;
+            edit.adjustments.push(crate::Adjustment {
+                id,
+                name: format!("{} {id}", shape.name()),
+                mask: crate::Mask {
+                    components: vec![Component {
+                        shape,
+                        ..Default::default()
+                    }],
+                    invert: false,
+                },
+                look,
+                ..Default::default()
+            });
+        }
+        // The copy: that mask and nothing else of the edit.
+        let copied = Preset::of_mask(&edit, 5);
+        assert_eq!(copied.sections, [Section::Adjustments]);
+        assert_eq!(copied.edit.light.exposure, Edit::default().light.exposure);
+        assert_eq!(copied.edit.adjustments.len(), 1);
+        assert_eq!(copied.edit.adjustments[0].name, "Color 5");
+        // Pasted: after the other edit's own, under the next id, its
+        // shapes, look and name as copied, the rest untouched.
+        let mut onto = Edit::default();
+        onto.light.exposure = 0.3;
+        onto.adjustments.push(crate::Adjustment {
+            id: 3,
+            name: "Mine".into(),
+            ..Default::default()
+        });
+        copied.apply(&mut onto);
+        assert_eq!(onto.light.exposure, 0.3);
+        let pasted = &onto.adjustments[1];
+        assert_eq!((onto.adjustments[0].name.as_str(), pasted.id), ("Mine", 4));
+        let source = &edit.adjustments[1];
+        assert_eq!(
+            (&pasted.name, &pasted.mask, &pasted.look),
+            (&source.name, &source.mask, &source.look)
+        );
+        // A second paste adds nothing, nor one onto the edit it came from.
+        let once = onto.clone();
+        copied.apply(&mut onto);
+        assert_eq!(onto, once);
+        assert_eq!(copied.applied(&edit), edit);
+        // An id the edit does not have carries no mask.
+        assert_eq!(Preset::of_mask(&edit, 9).applied(&once), once);
+        // A frame at the most masks a picture carries takes none more;
+        // one short of it takes one of two.
+        let mut full = Edit {
+            adjustments: (1..=crate::MAX_MASKS as u64)
+                .map(|id| crate::Adjustment {
+                    id,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(copied.applied(&full), full);
+        full.adjustments.pop();
+        let both = Preset::from_choice(
+            "",
+            &edit,
+            &Choice {
+                sections: vec![Section::Adjustments],
+                masks_land: Masks::Join,
+                ..Default::default()
+            },
+        );
+        let took = both.applied(&full);
+        assert_eq!(took.adjustments.len(), crate::MAX_MASKS);
+        assert_eq!(took.adjustments.last().unwrap().name, "Subject 2");
     }
 
     #[test]

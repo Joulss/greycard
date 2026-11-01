@@ -7,6 +7,12 @@ design note behind it.
 
 ### The window
 
+- A right-click on a mask offers Duplicate mask, Copy mask, and
+  Paste mask, the last onto the selection too
+  ([§492](https://github.com/jessolmstead/greycard/blob/master/docs/notes/492-one-mask-copied-and-the-picks-sample.md)).
+- The Color shape's pick takes a Sample size of 5 to 41 pixels and
+  shows its square at the pointer
+  ([§492](https://github.com/jessolmstead/greycard/blob/master/docs/notes/492-one-mask-copied-and-the-picks-sample.md)).
 - Settings' Start in offers the Library as well as the Loupe
   ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
 - A mask's name heads its sections as typed, not in capitals

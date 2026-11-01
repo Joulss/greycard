@@ -846,6 +846,7 @@ impl State {
                 sync_last: None,
                 sync_source: None,
                 clipboard: None,
+                mask_clipboard: None,
             },
             work: owners::Work {
                 exporting: None,

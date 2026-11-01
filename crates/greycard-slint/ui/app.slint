@@ -1185,6 +1185,10 @@ export component App inherits Window {
     in-out property <float> brush-flow: 1.0;
     in-out property <string> brush-op: "Add";
     in-out property <float> brush-scale: 0;
+    // The color pick's square: its side in the picture's pixels, one
+    // of 5, 11, 21, and 41, and a picture pixel's side on the view.
+    in-out property <int> range-sample: 5;
+    in property <float> pick-scale: 1;
     callback stop-placing();
     // A dropper in hand: "White" for a neutral, "Curve" for a point
     // on the curve, "Mixer" for a band, "Range" for a color mask's
@@ -1210,6 +1214,13 @@ export component App inherits Window {
     callback adjustment-toggled(int);
     callback new-mask();
     callback delete-adjustment();
+    // The mask list's menu: a mask, by its index among the masks,
+    // copied below itself or onto the mask clipboard; the clipboard's
+    // mask added to the open frame or to every selected frame.
+    callback mask-duplicated(int);
+    callback mask-copied(int);
+    callback mask-pasted();
+    in property <bool> mask-held: false;
     callback add-shape(string, string);
     // A part from the People menu by its label, and the mode it joins
     // by; everyone's, while a person is to be picked; and the menu
@@ -2968,6 +2979,8 @@ export component App inherits Window {
                 brush-op <=> root.brush-op;
                 brush-scale <=> root.brush-scale;
                 picking <=> root.picking;
+                range-sample: root.range-sample;
+                pick-scale: root.pick-scale;
                 pick-pressed(a, b) => { root.pick-pressed(a, b); }
                 pick-dragged(a, b) => { root.pick-dragged(a, b); }
                 pick-released => { root.pick-released(); }
@@ -3157,6 +3170,14 @@ export component App inherits Window {
                             }
                         }
                         delete-adjustment => { root.delete-adjustment(); }
+                        ctrl-click-menu: root.ctrl-click-menu;
+                        mask-held: root.mask-held;
+                        duplicate-mask(i) => { root.mask-duplicated(i); }
+                        copy-mask(i) => { root.mask-copied(i); }
+                        paste-mask => { root.mask-pasted(); }
+                        focus-keys => { keys.focus(); }
+                        menu-done => { root.menu-done(); }
+                        menu-shown => { return root.menu-shown(); }
                     }
                 }
                 // Named so the tests find the view's own edges.
@@ -3319,6 +3340,7 @@ export component App inherits Window {
                             range-chroma-feather <=> root.range-chroma-feather;
                             hue-circle: root.hue-circle;
                             picking <=> root.picking;
+                            range-sample <=> root.range-sample;
                             pick-started(a) => { root.pick-started(a); }
                             show-mask <=> root.show-mask;
                             show-mask-toggled => { root.show-mask-toggled(); }

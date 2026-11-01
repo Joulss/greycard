@@ -51,6 +51,10 @@ export component Viewport inherits Rectangle {
     in-out property <string> brush-op;
     in-out property <float> brush-scale;
     in-out property <string> picking;
+    // The color pick's square: its side in the picture's pixels, and
+    // a picture pixel's side on the view.
+    in property <int> range-sample: 5;
+    in property <float> pick-scale: 1;
     callback pick-pressed(length, length);
     callback pick-dragged(length, length);
     callback pick-released();
@@ -610,6 +614,26 @@ export component Viewport inherits Rectangle {
             font-size: 20px;
             font-weight: 600;
             vertical-alignment: center;
+        }
+    }
+    // The color pick's square about the point, what its mean is
+    // taken over: a dark edge outside a light one, to read on any
+    // picture.
+    if root.picking == "Range" && ta.has-hover && !root.placeholder: square := Rectangle {
+        property <length> side: max(root.range-sample * root.pick-scale * 1px, 3px);
+        x: ta.mouse-x - self.side / 2 - 1px;
+        y: ta.mouse-y - self.side / 2 - 1px;
+        width: self.side + 2px;
+        height: self.side + 2px;
+        border-width: 1px;
+        border-color: #000000aa;
+        Rectangle {
+            x: 1px;
+            y: 1px;
+            width: square.side;
+            height: square.side;
+            border-width: 1px;
+            border-color: #ffffffdd;
         }
     }
     // The dropper under the pointer, in place of a cursor:

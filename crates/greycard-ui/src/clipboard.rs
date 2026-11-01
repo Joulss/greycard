@@ -101,16 +101,53 @@ impl Clipboard {
             .then_some(&self.edit)
     }
 
-    /// What a paste of `sections` makes of one frame's edit: exactly
-    /// what `greycard_edit::apply_preset_into` records on a target,
-    /// for the frame on screen, whose edit is the panel's and not the
-    /// sidecar's.
+    /// [`laid`] with this clipboard's learned denoiser.
+    #[cfg(test)]
     pub(crate) fn applied(&self, preset: &Preset, onto: &Edit) -> Edit {
-        let mut out = preset.applied(onto);
-        if let Some(from) = self.learned_from(preset) {
-            greycard_edit::sync_learned(from, &mut out);
-        }
-        out
+        laid(preset, self.learned_from(preset), onto)
+    }
+}
+
+/// What a paste of `preset` makes of one frame's edit, the learned
+/// denoiser from `learned_from` when it brings one: exactly what
+/// `greycard_edit::apply_preset_into` records on a target, for the
+/// frame on screen, whose edit is the panel's and not the sidecar's.
+pub(crate) fn laid(preset: &Preset, learned_from: Option<&Edit>, onto: &Edit) -> Edit {
+    let mut out = preset.applied(onto);
+    if let Some(from) = learned_from {
+        greycard_edit::sync_learned(from, &mut out);
+    }
+    out
+}
+
+/// One mask copied from a frame, as the preset that adds it to the
+/// frames it is pasted onto (`Preset::of_mask`), and the name of the
+/// frame it came from.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MaskClip {
+    pub(crate) preset: Preset,
+    name: String,
+}
+
+impl MaskClip {
+    /// Mask `id` of `edit`, copied from the frame named `name`; none
+    /// for an id the edit does not have.
+    pub(crate) fn copy(edit: &Edit, id: u64, name: String) -> Option<Self> {
+        edit.adjustments.iter().any(|a| a.id == id).then(|| Self {
+            preset: Preset::of_mask(edit, id),
+            name,
+        })
+    }
+
+    /// The words each pasted frame's history step is recorded with, a
+    /// settings paste's.
+    pub(crate) fn label(&self) -> String {
+        paste_label(&self.name)
+    }
+
+    /// The name of the frame copied from.
+    pub(crate) fn name(&self) -> String {
+        self.name.clone()
     }
 }
 
