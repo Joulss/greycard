@@ -1207,26 +1207,15 @@ fn try_open(
     timed: bool,
     warm: &mut impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> ort::Result<(Session, Option<f64>)> {
-    // Declared before the builder, so that on an early return the
-    // builder, which holds pointers into them, goes first.
-    let weights = ExternalWeights::beside(path);
-    let mut builder = Session::builder()?.with_optimization_level(level)?;
-    if provider == Provider::CoreMl {
-        builder = builder.with_disabled_optimizers(CORE_ML_UNFUSED)?;
-        for &(name, size) in fixed {
-            builder = builder.with_dimension_override(name, size)?;
-        }
-    }
-    if let Some(ep) = provider.dispatch(path, fixed) {
-        builder = builder.with_execution_providers([ep])?;
-    }
-    for (name, bytes) in weights.files() {
-        builder = builder.with_external_initializer_file_in_memory(name, Cow::Borrowed(bytes))?;
-    }
-    let mut session = builder.commit_from_file(path)?;
-    // ONNX Runtime has copied what it needs: "the buffer can be freed
-    // after session creation" (`AddExternalInitializersFromFilesInMemory`).
-    drop(builder);
+    // The CPU takes its weights from ONNX Runtime's own maps of the
+    // files, without a copy; handed over in memory they would be copied
+    // onto the heap, 5.5 GB for the remove's UNet.
+    let weights = if provider == Provider::Cpu {
+        ExternalWeights::default()
+    } else {
+        ExternalWeights::beside(path)
+    };
+    let mut session = build_session(path, level, provider, fixed, &weights)?;
     drop(weights);
     let mut run = None;
     if !skip_warm {
@@ -1240,6 +1229,66 @@ fn try_open(
     Ok((session, run))
 }
 
+/// A session on `provider`, `weights` handed to ONNX Runtime in memory
+/// where there are any. ONNX Runtime does not fall back to reading a
+/// file once a table is given: every external file the graph names
+/// must be in it, under the graph's own `location`, or the build fails
+/// ("not found from the table user provided"). So when the build with
+/// the table fails, for that or any reason, it is made once more
+/// without it, from the files as ONNX Runtime reads them; a model the
+/// table does not suit then opens as it did before the table, and a
+/// provider that cannot run the model fails twice and is recorded as
+/// failing once.
+fn build_session(
+    path: &Path,
+    level: GraphOptimizationLevel,
+    provider: Provider,
+    fixed: &[(&str, i64)],
+    weights: &ExternalWeights,
+) -> ort::Result<Session> {
+    let build = |table: &[(&str, &[u8])]| -> ort::Result<Session> {
+        let mut builder = Session::builder()?.with_optimization_level(level)?;
+        if provider == Provider::CoreMl {
+            builder = builder.with_disabled_optimizers(CORE_ML_UNFUSED)?;
+            for &(name, size) in fixed {
+                builder = builder.with_dimension_override(name, size)?;
+            }
+        }
+        if let Some(ep) = provider.dispatch(path, fixed) {
+            builder = builder.with_execution_providers([ep])?;
+        }
+        for &(name, bytes) in table {
+            // SAFETY: the builder keeps the slice only until it is
+            // dropped, at the end of this closure, on every path out of
+            // it (an error drops it inside the `?`); the `Session` keeps
+            // none of it, and ONNX Runtime copies the tensors into the
+            // graph ("the buffer can be freed after session creation",
+            // `AddExternalInitializersFromFilesInMemory`, 1.28). The
+            // maps behind `table` outlive this call.
+            let bytes: &'static [u8] =
+                unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+            builder =
+                builder.with_external_initializer_file_in_memory(name, Cow::Borrowed(bytes))?;
+        }
+        builder.commit_from_file(path)
+    };
+    let table = weights.files();
+    if table.is_empty() {
+        return build(&[]);
+    }
+    match build(&table) {
+        Ok(session) => Ok(session),
+        Err(e) => {
+            log::info!(
+                "{}: the session with its weights in memory failed ({}); built again from the files",
+                path.display(),
+                first_line(&e.to_string())
+            );
+            build(&[])
+        }
+    }
+}
+
 /// A model's external weight files, each mapped once for the session
 /// being built.
 ///
@@ -1251,8 +1300,12 @@ fn try_open(
 /// for the 25-step one (§482). Every `*.onnx_data` beside the model is
 /// offered, under its own name, as the graph's `location` fields name
 /// them; ONNX Runtime takes the tensors a graph names from the files it
-/// names and passes over the rest. A file that cannot be opened or
-/// mapped is left to ONNX Runtime's own reading.
+/// names and passes over files it does not name. Either every file is
+/// mapped or none is (a table missing one the graph names fails the
+/// build), and a build the table does not suit is made again without it
+/// ([`build_session`]). Not for the CPU, which takes ONNX Runtime's own
+/// maps without a copy (`try_open`).
+#[derive(Default)]
 struct ExternalWeights {
     files: Vec<(String, memmap2::Mmap)>,
 }
@@ -1271,36 +1324,33 @@ impl ExternalWeights {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            let Ok(file) = std::fs::File::open(&path) else {
-                continue;
-            };
             // SAFETY: the map is read only, and only while the session
             // is built. The model store replaces a file by renaming a
             // finished copy over it (`store.rs`), never by writing into
             // it, so the mapped file is not truncated under the map.
-            match unsafe { memmap2::Mmap::map(&file) } {
+            let mapped = std::fs::File::open(&path).and_then(|f| unsafe { memmap2::Mmap::map(&f) });
+            match mapped {
                 Ok(map) => files.push((name.to_string(), map)),
-                Err(e) => log::debug!(
-                    "{}: not mapped ({e}); ONNX Runtime reads it",
-                    path.display()
-                ),
+                Err(e) => {
+                    // A table missing one file the graph names fails the
+                    // build, so one file not mapped means none offered.
+                    log::debug!(
+                        "{}: not mapped ({e}); ONNX Runtime reads the weights itself",
+                        path.display()
+                    );
+                    return Self::default();
+                }
             }
         }
         Self { files }
     }
 
-    /// Each file's name and bytes, the bytes `'static` for the
-    /// builder's `Cow`.
-    fn files(&self) -> impl Iterator<Item = (&str, &'static [u8])> + '_ {
-        self.files.iter().map(|(name, map)| {
-            // SAFETY: the builder that holds these is dropped before
-            // `self` in `try_open`, on every path out of it, and ONNX
-            // Runtime has copied the tensors out by then; nothing keeps
-            // the slice past the map.
-            let bytes: &'static [u8] =
-                unsafe { std::slice::from_raw_parts(map.as_ptr(), map.len()) };
-            (name.as_str(), bytes)
-        })
+    /// Each file's name and bytes, for as long as `self` lives.
+    fn files(&self) -> Vec<(&str, &[u8])> {
+        self.files
+            .iter()
+            .map(|(name, map)| (name.as_str(), &map[..]))
+            .collect()
     }
 }
 
@@ -1499,6 +1549,7 @@ mod tests {
         let weights = ExternalWeights::beside(&model);
         let mut files: Vec<(String, Vec<u8>)> = weights
             .files()
+            .into_iter()
             .map(|(name, bytes)| (name.to_string(), bytes.to_vec()))
             .collect();
         files.sort();
@@ -1513,13 +1564,64 @@ mod tests {
         let alone = dir.join("alone");
         std::fs::create_dir_all(&alone).unwrap();
         std::fs::write(alone.join("sky.onnx"), b"graph").unwrap();
-        assert_eq!(
+        assert!(
             ExternalWeights::beside(&alone.join("sky.onnx"))
                 .files()
-                .count(),
-            0
+                .is_empty()
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A model whose weights are in a file it names beside it builds
+    /// from the table and answers right; one naming a file the table
+    /// does not hold (`add.weights.bin`, with an unrelated
+    /// `other.onnx_data` beside it, which is offered) fails with the
+    /// table, as ONNX Runtime does not read a file it was not handed,
+    /// and is built again from the files. Both add `[10, 20, 30, 40]`
+    /// to their input. The fixtures are `tests/fixtures/external`, made
+    /// with `onnx`'s `convert_model_to_external_data`. Through the CPU,
+    /// which `try_open` keeps off the table, so that the table's path
+    /// runs wherever the runtime can be had.
+    #[test]
+    fn a_table_builds_or_falls_back_to_the_files() {
+        if let Err(why) = init() {
+            absent_in_test(why);
+            return;
+        }
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/external");
+        for case in ["named", "unoffered"] {
+            let model = fixtures.join(case).join("add.onnx");
+            let weights = ExternalWeights::beside(&model);
+            assert!(!weights.files().is_empty(), "{case}: something to offer");
+            let mut session = build_session(
+                &model,
+                GraphOptimizationLevel::Level1,
+                Provider::Cpu,
+                &[],
+                &weights,
+            )
+            .unwrap_or_else(|e| panic!("{case}: {e}"));
+            drop(weights);
+            let x =
+                ort::value::Tensor::from_array(([1usize, 4], vec![1.0f32, 2.0, 3.0, 4.0])).unwrap();
+            let outputs = session.run(ort::inputs!["x" => x]).unwrap();
+            let (_, y) = outputs["y"].try_extract_tensor::<f32>().unwrap();
+            assert_eq!(y, &[11.0, 22.0, 33.0, 44.0], "{case}");
+        }
+        // And the fallback is what opened the second: with the table
+        // alone, ONNX Runtime refuses it rather than read its file.
+        let model = fixtures.join("unoffered").join("add.onnx");
+        let refused = (|| -> ort::Result<Session> {
+            let mut b = Session::builder()?.with_external_initializer_file_in_memory(
+                "other.onnx_data",
+                Cow::Owned(vec![0; 16]),
+            )?;
+            b.commit_from_file(&model)
+        })();
+        assert!(
+            refused.is_err(),
+            "a table without the graph's file was taken"
+        );
     }
 
     /// A raced entry for `provider`, timed at `shape` in `run_us`.

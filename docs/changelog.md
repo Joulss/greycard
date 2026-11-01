@@ -37,7 +37,7 @@ design note behind it.
 - The Keys sheet reaches its last row, and the camera match sheet's
   group list its last group, by the wheel
   ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).
-- A fill's models load in under 2 s on an M5 rather than 10 to 14:
+- A fill's models load in about 2 s on an M5 rather than 10 to 14:
   a Fast fill at 512 takes 6.4 s, not 17.8
   ([§482](https://github.com/jessolmstead/greycard/blob/master/docs/notes/482-a-models-weights-mapped-once.md)).
 - On a Mac, Texture and Clarity themselves run about ten times
