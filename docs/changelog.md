@@ -98,6 +98,15 @@ design note behind it.
 
 ### Fixes
 
+- A collection or stack whose write to a slow share finished after
+  its time is taken out of a folder its frames leave, and a deletion
+  reaches it; part files a write left, and deletion files older than
+  half a year, are cleared from `.greycard/sets`
+  ([§511](https://github.com/jessolmstead/greycard/blob/master/docs/notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md)).
+- A frame moved out of the library and back into its folder under
+  another name, after the folder itself was renamed meanwhile, keeps
+  its edit and its place in its stack
+  ([§511](https://github.com/jessolmstead/greycard/blob/master/docs/notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md)).
 - An export could differ by one level at the right and bottom tile
   edges between machines or thread counts
   ([§510](https://github.com/jessolmstead/greycard/blob/master/docs/notes/510-the-same-export-at-any-thread-count.md)).

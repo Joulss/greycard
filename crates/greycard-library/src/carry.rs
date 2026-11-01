@@ -34,6 +34,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -55,8 +56,23 @@ pub const KEPT: usize = 256;
 /// The shape of a deletion's file.
 pub const GONE_VERSION: u32 = 1;
 
+/// How old a part file is before a pass takes it for one a write left:
+/// a write is waited on for seconds, but one on a share that stopped
+/// answering may finish much later, and another machine's clock may be
+/// hours off ours. A part file is a few kilobytes, so a day's wait
+/// costs nothing.
+pub const PART_STALE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long a deletion's file is kept. No machine says what it has
+/// read, so when every one has seen a deletion cannot be told from the
+/// folder; this stands in. A machine away longer can write the set back
+/// there, and the machine that deleted it, which remembers its own
+/// deletions, buries that copy again when a pass meets it.
+pub const GONE_KEPT_FOR: Duration = Duration::from_secs(180 * 24 * 60 * 60);
+
 const STACK_END: &str = ".stack.json";
 const GONE_END: &str = ".gone.json";
+const PART_END: &str = ".part";
 
 /// The revision before the first.
 const ZERO: &str = "00000000000000000000000000000000";
@@ -721,19 +737,128 @@ pub fn list(sets: &Path) -> std::io::Result<Vec<String>> {
 /// A copy's file as a listing sees it: its size and its time.
 pub type Seen = (u64, Option<std::time::SystemTime>);
 
-/// [`list`], each name with its [`Seen`], from the listing.
-pub fn list_stamped(sets: &Path) -> std::io::Result<Vec<(String, Seen)>> {
-    let mut names: Vec<(String, Seen)> = std::fs::read_dir(sets)?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let meta = e.metadata().ok().filter(|m| m.is_file())?;
-            let name = e.file_name().into_string().ok()?;
-            name_kind(&name)?;
-            Some((name, (meta.len(), meta.modified().ok())))
-        })
-        .collect();
-    names.sort();
-    Ok(names)
+/// The copy or deletion a part file was to become, by the part's name:
+/// `<name>.<process>-<count>.part`, as the writes name them.
+fn part_of(name: &str) -> Option<&str> {
+    let (target, tag) = name.strip_suffix(PART_END)?.rsplit_once('.')?;
+    let (process, count) = tag.split_once('-')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(process) && digits(count) && name_kind(target).is_some()).then_some(target)
+}
+
+/// Whether the file named `name` and last written at `at` is a leftover
+/// to clear at `now`: a part file older than [`PART_STALE`], or a
+/// deletion older than [`GONE_KEPT_FOR`]. A time to come is no age.
+fn stale(name: &str, at: Option<SystemTime>, now: SystemTime) -> bool {
+    let bound = if part_of(name).is_some() {
+        PART_STALE
+    } else if name.ends_with(GONE_END) && name_kind(name).is_some() {
+        GONE_KEPT_FOR
+    } else {
+        return false;
+    };
+    at.and_then(|t| now.duration_since(t).ok())
+        .is_some_and(|age| age > bound)
+}
+
+/// A sets' folder as a pass lists it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Listing {
+    /// The copies and deletions, each with its [`Seen`], sorted.
+    pub copies: Vec<(String, Seen)>,
+    /// The leftovers to clear, by name, sorted: part files a write left
+    /// and deletions past their keep ([`stale`]).
+    pub stale: Vec<String>,
+}
+
+/// The copies in `sets` (a folder's [`sets_dir`]) with their [`Seen`],
+/// and the leftovers among its files, as of now.
+pub fn listing(sets: &Path) -> std::io::Result<Listing> {
+    listing_at(sets, SystemTime::now())
+}
+
+/// [`listing`] as of `now`.
+pub fn listing_at(sets: &Path, now: SystemTime) -> std::io::Result<Listing> {
+    let mut out = Listing::default();
+    for e in std::fs::read_dir(sets)?.filter_map(|e| e.ok()) {
+        let Some(meta) = e.metadata().ok().filter(|m| m.is_file()) else {
+            continue;
+        };
+        let Ok(name) = e.file_name().into_string() else {
+            continue;
+        };
+        let at = meta.modified().ok();
+        if stale(&name, at, now) {
+            out.stale.push(name.clone());
+        }
+        if name_kind(&name).is_some() {
+            out.copies.push((name, (meta.len(), at)));
+        }
+    }
+    out.copies.sort();
+    out.stale.sort();
+    Ok(out)
+}
+
+/// What [`clear`] did.
+#[derive(Debug, Default)]
+pub struct Cleared {
+    /// How many leftovers went.
+    pub removed: usize,
+    /// The first refusal, when one or more would not go: a read-only
+    /// share, say. The rest were still tried.
+    pub refused: Option<std::io::Error>,
+}
+
+/// The leftovers at `paths`, each in a sets' folder, cleared where each
+/// is still one now: its time is asked again first, so a deletion
+/// written again since the pass, or a part file of a write under way,
+/// stays, and a deletion is read for its shape, a later build's left
+/// alone. One that will not go leaves the rest to be tried, and the
+/// sets' folder is tidied after.
+pub fn clear(paths: &[PathBuf]) -> Cleared {
+    let now = SystemTime::now();
+    let mut done = Cleared::default();
+    for p in paths {
+        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let tried = std::fs::metadata(p).and_then(|m| {
+            if !stale(name, m.modified().ok(), now) || later_gone(p, name) {
+                return Ok(false);
+            }
+            remove_quietly(p).map(|()| true)
+        });
+        match tried {
+            Ok(true) => done.removed += 1,
+            Ok(false) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                done.refused.get_or_insert(e);
+            }
+        }
+    }
+    let folder = paths.first().and_then(|p| p.parent()?.parent()?.parent());
+    if let Some(folder) = folder {
+        tidy(folder);
+    }
+    done
+}
+
+/// Whether the deletion's file at `path` is a later build's, or will
+/// not say its shape: left alone, as every later build's file is.
+fn later_gone(path: &Path, name: &str) -> bool {
+    if part_of(name).is_some() {
+        return false;
+    }
+    #[derive(Deserialize)]
+    struct Shape {
+        version: u32,
+    }
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Shape>(&b).ok())
+        .is_none_or(|s| s.version > GONE_VERSION)
 }
 
 /// Every copy in `folder`, read by this build; one that will not read
@@ -1552,6 +1677,106 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&gone).unwrap(), later_gone);
         assert!(!file.exists());
         greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    fn aged(path: &Path, by: Duration) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - by)
+            .unwrap();
+    }
+
+    /// A part file older than a day and a deletion older than its keep
+    /// are leftovers; a fresh one of either, a copy, and a file that is
+    /// no part of a copy's are not. Cleared, each is asked its age
+    /// again: a deletion written again since the pass stays, and so does
+    /// a later build's deletion, however old.
+    #[test]
+    fn leftovers_are_told_by_their_age_and_cleared_while_they_still_are() {
+        let dir = scratch("leftovers");
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let mut s = picks(&shoot);
+        s.stamp(1, "laptop");
+        let item = Item::Collection(s.clone());
+        put(&shoot, &item).unwrap();
+        let mut old = Collection::new("Old");
+        old.stamp(1, "laptop");
+        let old_gone = Gone::of(&Item::Collection(old.clone()));
+        bury(&shoot, &old_gone).unwrap();
+        let mut young = Collection::new("Young");
+        young.stamp(1, "laptop");
+        bury(&shoot, &Gone::of(&Item::Collection(young.clone()))).unwrap();
+        let sets = sets_dir(&shoot);
+        let names = [
+            format!("{}.json.77-0.part", s.id),
+            format!("{}.json.77-1.part", s.id),
+            format!("{}.gone.json.77-2.part", old.id),
+            "notes.txt.77-3.part".to_string(),
+            format!("{}.json.part", s.id),
+        ];
+        for n in &names {
+            std::fs::write(sets.join(n), "{").unwrap();
+        }
+        let day = Duration::from_secs(24 * 60 * 60);
+        for n in [&names[0], &names[2], &names[3], &names[4]] {
+            aged(&sets.join(n), 2 * day);
+        }
+        aged(&sets.join(gone_name(&old.id)), GONE_KEPT_FOR + day);
+        aged(&sets.join(gone_name(&young.id)), GONE_KEPT_FOR - day);
+        let later = gone_name("later0");
+        std::fs::write(sets.join(&later), r#"{"version": 99, "what": "else"}"#).unwrap();
+        aged(&sets.join(&later), GONE_KEPT_FOR + day);
+        let listed = listing(&sets).unwrap();
+        let mut want = vec![
+            names[0].clone(),
+            names[2].clone(),
+            gone_name(&old.id),
+            later.clone(),
+        ];
+        want.sort();
+        assert_eq!(listed.stale, want);
+        assert_eq!(listed.copies.len(), 4, "{:?}", listed.copies);
+        // The old deletion written again since the pass: it stays.
+        bury(&shoot, &old_gone).unwrap();
+        let paths: Vec<PathBuf> = listed.stale.iter().map(|n| sets.join(n)).collect();
+        let cleared = clear(&paths);
+        assert_eq!(cleared.removed, 2);
+        assert!(cleared.refused.is_none());
+        let mut left: Vec<String> = std::fs::read_dir(&sets)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        let mut kept = vec![
+            file_name(&s.id, Kind::Collection),
+            gone_name(&old.id),
+            gone_name(&young.id),
+            later,
+            names[1].clone(),
+            names[3].clone(),
+            names[4].clone(),
+        ];
+        kept.sort();
+        assert_eq!(left, kept);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The sets' folder emptied by a clear goes, and the sidecars'
+    /// folder with it when nothing else is there.
+    #[test]
+    fn a_clear_that_empties_the_sets_folder_takes_it_away() {
+        let dir = scratch("leftovers-tidy");
+        let mut c = Collection::new("Gone");
+        c.stamp(1, "laptop");
+        bury(&dir, &Gone::of(&Item::Collection(c.clone()))).unwrap();
+        let gone = sets_dir(&dir).join(gone_name(&c.id));
+        aged(&gone, GONE_KEPT_FOR * 2);
+        assert_eq!(clear(&[gone]).removed, 1);
+        assert!(!dir.join(greycard_edit::SIDECAR_FOLDER).exists());
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

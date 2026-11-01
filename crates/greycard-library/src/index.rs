@@ -144,6 +144,10 @@ pub struct Report {
     /// folders passed over (`carry`), each file once on a connection
     /// until it changes: what the editor joins into its own.
     pub sets: Vec<crate::carry::File>,
+    /// The leftovers in those folders' carried sets, every pass: part
+    /// files a write left and deletions past their keep
+    /// (`carry::listing`), for the editor's writer to clear.
+    pub sets_stale: Vec<PathBuf>,
     /// The pass was asked to stop and did, between two batches: what
     /// it wrote is written, and nothing was marked missing, since the
     /// files it did not reach were not looked for.
@@ -187,6 +191,7 @@ impl Report {
         self.unreadable.extend(other.unreadable);
         self.skipped.extend(other.skipped);
         self.sets.extend(other.sets);
+        self.sets_stale.extend(other.sets_stale);
         self.stopped |= other.stopped;
     }
 }
@@ -519,15 +524,20 @@ impl Library {
         // files come live in it.
         if !exists && !report.stopped && !gone.is_empty() {
             let pairs = self.renames.gone(vec![(dir.clone(), gone)], Instant::now());
+            follow_missing(self.conn_mut(), &pairs)?;
             report.moved_folders.extend(pairs);
         } else if exists && report.added + report.returned + report.moved > 0 {
             let came = live_files(self.conn_mut(), &folder, Some(&live_before))?;
-            report
-                .moved_folders
-                .extend(self.renames.live(dir.clone(), came, Instant::now()));
+            let pairs: Vec<_> = self
+                .renames
+                .live(dir.clone(), came, Instant::now())
+                .into_iter()
+                .collect();
+            follow_missing(self.conn_mut(), &pairs)?;
+            report.moved_folders.extend(pairs);
         }
         if hidden && !report.stopped {
-            report.sets = self.read_sets(&dir, far);
+            (report.sets, report.sets_stale) = self.read_sets(&dir, far);
         }
         Ok(report)
     }
@@ -535,19 +545,24 @@ impl Library {
     /// The carried sets in `dir` not read on this connection at the
     /// size and time they have now: only those are read. One that
     /// cannot be read is said in the log and tried again by the next
-    /// pass.
-    fn read_sets(&mut self, dir: &Path, far: Option<&Far>) -> Vec<crate::carry::File> {
+    /// pass. With them, the leftovers there to clear, every pass.
+    fn read_sets(
+        &mut self,
+        dir: &Path,
+        far: Option<&Far>,
+    ) -> (Vec<crate::carry::File>, Vec<PathBuf>) {
         let sets = crate::carry::sets_dir(dir);
-        let names = match read_far(far, &sets, crate::carry::list_stamped) {
+        let listing = match read_far(far, &sets, crate::carry::listing) {
             Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), Vec::new()),
             Err(e) => {
                 log::warn!("carried sets {}: {e}", sets.display());
-                return Vec::new();
+                return (Vec::new(), Vec::new());
             }
         };
+        let stale = listing.stale.iter().map(|n| sets.join(n)).collect();
         let mut found = Vec::new();
-        for (name, stamp) in names {
+        for (name, stamp) in listing.copies {
             let path = sets.join(&name);
             if self.sets_seen.get(&path) == Some(&stamp) {
                 continue;
@@ -564,7 +579,7 @@ impl Library {
                 Err(e) => log::warn!("carried set {}: {e}", path.display()),
             }
         }
-        found
+        (found, stale)
     }
 
     /// Index a folder and every folder under it, hidden ones (a
@@ -758,6 +773,7 @@ impl Library {
         // All at once: a folder gone in this pass is no folder another
         // was renamed to, whatever order they were found in.
         let pairs = self.renames.gone(went, Instant::now());
+        follow_missing(self.conn_mut(), &pairs)?;
         walk.report.moved_folders.extend(pairs);
         Ok(walk.report.clone())
     }
@@ -1782,6 +1798,64 @@ impl Disk<'_> {
 /// Files by name and content hash: what the two halves of a rename
 /// are matched by.
 type Files = HashSet<(OsString, String)>;
+
+/// For each folder found renamed, old and new, the rows still missing
+/// in the old one taken to the new one at their names, where no row
+/// is: the files that were away when the folder was renamed. A folder
+/// gone keeps its rows, since an unmounted drive looks the same, but
+/// a rename matched by its files is not that, and a file of it found
+/// later in the new folder, under any name, is then a move's other
+/// end: its row kept, its sidecar carried, and the move said, so a
+/// stack or a collection that holds it follows. A row whose name the
+/// new folder has a row at stays where it is, missing. How many went.
+fn follow_missing(conn: &mut Connection, pairs: &[(PathBuf, PathBuf)]) -> Result<usize> {
+    use rusqlite::OptionalExtension;
+    if pairs.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut n = 0;
+    for (from, to) in pairs {
+        let rows = tx
+            .prepare_cached(
+                "SELECT id, path FROM files WHERE folder = ? AND missing_since IS NOT NULL",
+            )?
+            .query_map(params![path_bytes(from)], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id, path) in rows {
+            let Some(name) = name_of(&path) else {
+                continue;
+            };
+            let key = path_bytes(&to.join(&name));
+            let taken = tx
+                .prepare_cached("SELECT 1 FROM files WHERE path = ?")?
+                .query_row(params![key], |_| Ok(()))
+                .optional()?
+                .is_some();
+            if taken {
+                continue;
+            }
+            tx.prepare_cached(
+                "UPDATE files SET path = ?, folder = ?, folder_text = ?, name = ? WHERE id = ?",
+            )?
+            .execute(params![
+                key,
+                path_bytes(to),
+                path_text(to),
+                name.to_string_lossy(),
+                id
+            ])?;
+            n += 1;
+        }
+    }
+    tx.commit()?;
+    if n > 0 {
+        log::info!("{n} files away from a renamed folder now wait in its new place");
+    }
+    Ok(n)
+}
 
 fn name_of(path: &[u8]) -> Option<OsString> {
     path_from_bytes(path).file_name().map(OsString::from)
@@ -3048,6 +3122,41 @@ pub(crate) mod tests {
             panic!("{:?}", again.sets);
         };
         assert_eq!(back.name, "Renamed");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A part file a write left a day ago is named by every pass, with
+    /// the copy it was to replace read as before; a fresh one is not.
+    #[test]
+    fn a_pass_names_the_leftovers_in_a_sets_folder_every_time() {
+        let dir = scratch("carried-leftovers");
+        let (r5, _r6, _a7) = shoot(&dir);
+        let mut c = crate::collections::Collection::new("Picks");
+        c.add(&[(hash::hash_file(&r5).unwrap(), r5.clone(), None)]);
+        c.stamp(1, "laptop");
+        crate::carry::put(&dir, &crate::carry::Item::Collection(c.clone())).unwrap();
+        let sets = crate::carry::sets_dir(&dir);
+        let (old, fresh) = (
+            sets.join(format!("{}.json.41-0.part", c.id)),
+            sets.join(format!("{}.json.41-1.part", c.id)),
+        );
+        for p in [&old, &fresh] {
+            std::fs::write(p, "{").unwrap();
+        }
+        let two_days = std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(two_days)
+            .unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        let first = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(first.sets.len(), 1, "{first:?}");
+        assert_eq!(first.sets_stale, std::slice::from_ref(&old));
+        let again = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert!(again.sets.is_empty());
+        assert_eq!(again.sets_stale, [old]);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -5561,6 +5670,52 @@ pub(crate) mod tests {
         std::fs::remove_file(new.join("x.tif")).unwrap();
         lib.index_folder(&new, &mut quiet()).unwrap();
         assert!(lib.found_at(&[id]).unwrap().is_empty());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A file away when its folder was renamed waits for it in the new
+    /// folder: moved back there under another name, it is a move, its
+    /// row and its sidecar kept. A row whose name the new folder has
+    /// stays in the old one.
+    #[test]
+    fn a_file_away_while_its_folder_is_renamed_is_a_move_when_it_comes_back() {
+        let dir = scratch("away-renamed");
+        let root = dir.join("root");
+        let [a, b] = ["a", "b"].map(|n| root.join(n));
+        std::fs::create_dir_all(&a).unwrap();
+        write_frame(&a.join("x.tif"), &R5, 1);
+        write_frame(&a.join("y.tif"), &R6, 2);
+        write_frame(&a.join("z.tif"), &A7, 3);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&root, &mut quiet()).unwrap();
+        let before = lib.by_path(&a.join("z.tif")).unwrap().unwrap();
+        let mut edit = Sidecar::default();
+        edit.meta.rating = 5;
+        edit.save(&a.join("z.tif")).unwrap();
+        lib.index_tree(&root, &mut quiet()).unwrap();
+        // z out of the root, then the folder renamed.
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::rename(a.join("z.tif"), outside.join("z.tif")).unwrap();
+        lib.index_tree(&root, &mut quiet()).unwrap();
+        std::fs::rename(&a, &b).unwrap();
+        let report = lib.index_tree(&root, &mut quiet()).unwrap();
+        assert_eq!(report.moved_folders.len(), 1, "{report:?}");
+        // Back into the new folder, renamed.
+        std::fs::rename(outside.join("z.tif"), b.join("z2.tif")).unwrap();
+        let report = lib.index_tree(&root, &mut quiet()).unwrap();
+        let cb = canonical(&b).unwrap();
+        assert_eq!(
+            report.moved_files,
+            [(cb.join("z.tif"), cb.join("z2.tif"))],
+            "{report:?}"
+        );
+        assert_eq!(report.added, 0, "{report:?}");
+        let after = lib.by_path(&b.join("z2.tif")).unwrap().unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.meta.rating, 5);
+        // x and y, live in the new folder, left their old rows behind.
+        assert!(lib.by_path(&a.join("x.tif")).unwrap().unwrap().missing);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

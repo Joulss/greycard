@@ -453,12 +453,10 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
-- [ ] Carried sets' leftovers (§493): a write that times out but
-      finishes later leaves a copy no record lists; `.gone.json` and
-      stale part files never cleaned; a destination stack misses a
-      frame renamed on one side until Back up carries the rename
-- [ ] A stack member moved outside every root is not found again
-      (§334, §486)
+- [ ] A frame renamed on one side of a backup pair keeps its old name
+      in the destination's stack copy (§511): a stack's revision
+      without file names, or Back up renaming the destination's file;
+      the user's call
 - [ ] The Lightroom mapper, after §342: the scales the fit proposes and
       did not ship (highlights, blacks, the curve, the mixer's bands)
       wait on a second shoot with export history; six exports from

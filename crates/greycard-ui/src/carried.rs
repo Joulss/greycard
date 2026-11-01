@@ -9,15 +9,19 @@
 //! state.json`, a folder an older build passes over), the revision and
 //! the folders each was last written to, so a copy is taken out of a
 //! folder its frames left and written again where a write failed (a
-//! minute later, and at the next launch); and the deletions made here,
-//! written by the window's own thread before it goes on, so a copy met
-//! later that a deletion saw does not come back, a quit while the
-//! writer is held up included.
+//! minute later, and at the next launch), a folder whose write did not
+//! answer kept among them, since that write may finish after; and the
+//! deletions made here, written by the window's own thread before it
+//! goes on, so a copy met later that a deletion saw does not come back,
+//! a quit while the writer is held up included.
 //!
 //! The index's passes bring the copies they find ([`Report::sets`]),
 //! and the window joins them into its own (`take`): a set new here is
 //! added, one behind is left (its folder is written again), one ahead
-//! is taken, two that went their own ways keep both.
+//! is taken, two that went their own ways keep both. A copy a deletion
+//! here has seen is buried where it was found, and the leftovers a pass
+//! names (part files a write left, deletions past their keep) are
+//! cleared here, on the writer's thread.
 //!
 //! [`Report::sets`]: greycard_library::Report::sets
 
@@ -72,6 +76,25 @@ struct Written {
     /// The hash of its lineage then.
     rev: String,
     folders: Vec<PathBuf>,
+    /// Folders whose write did not answer in time: it may finish after,
+    /// so a copy may be there. The next write goes there again, a set
+    /// that leaves one is taken out of it, and a deletion is carried to
+    /// it, as to the folders written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    late: Vec<PathBuf>,
+}
+
+impl Written {
+    /// Every folder a copy was, or may have been, written to.
+    fn all(self) -> Vec<PathBuf> {
+        let mut all = self.folders;
+        for f in self.late {
+            if !all.contains(&f) {
+                all.push(f);
+            }
+        }
+        all
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -149,7 +172,7 @@ impl Kept {
             .state
             .written
             .remove(&gone.id)
-            .map(|w| w.folders)
+            .map(Written::all)
             .unwrap_or_default();
         self.state.gone.retain(|g| g.id != gone.id);
         self.state.gone.push(gone.clone());
@@ -168,6 +191,8 @@ enum Job {
     Put { item: Box<Item>, force: bool },
     /// A deletion carried to the folders it was written to.
     Bury { gone: Gone, folders: Vec<PathBuf> },
+    /// Leftovers a pass found in the sets' folders, cleared.
+    Clear(Vec<PathBuf>),
     /// Answered once every job before it is done.
     Done(mpsc::Sender<()>),
 }
@@ -218,6 +243,10 @@ struct Worker {
     read: Option<(std::time::SystemTime, Roots)>,
     /// Sets whose copies did not all go, to be tried again.
     failed: BTreeMap<String, Item>,
+    /// Leftovers whose folder did not answer, to be cleared again.
+    clearing: Vec<PathBuf>,
+    /// Folders that refused a clear, said once.
+    refused: std::collections::HashSet<PathBuf>,
     limit: Duration,
     out: Out,
 }
@@ -227,16 +256,72 @@ impl Worker {
         match job {
             Job::Put { item, force } => self.put(&item, force),
             Job::Bury { gone, folders } => self.bury(&gone, &folders),
+            Job::Clear(paths) => self.clear(paths),
             Job::Done(tx) => {
                 let _ = tx.send(());
             }
         }
     }
 
-    /// The sets whose writes failed, tried again.
+    /// The sets whose writes failed, tried again, and the leftovers
+    /// whose folder did not answer.
     fn retry(&mut self) {
         for (_, item) in std::mem::take(&mut self.failed) {
             self.put(&item, true);
+        }
+        let clearing = std::mem::take(&mut self.clearing);
+        if !clearing.is_empty() {
+            self.clear(clearing);
+        }
+    }
+
+    /// Whether anything waits to be tried again.
+    fn waiting(&self) -> bool {
+        !self.failed.is_empty() || !self.clearing.is_empty()
+    }
+
+    /// The leftovers at `paths` cleared, folder by folder, each under
+    /// the folder's limit. One that did not answer is tried again on
+    /// the minute; a folder that refused (a read-only share) is said
+    /// once a session, though the next pass names its leftovers again.
+    fn clear(&mut self, paths: Vec<PathBuf>) {
+        let mut by: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+        for p in paths {
+            if let Some(folder) = p.parent().and_then(Path::parent).and_then(Path::parent) {
+                let at = by.entry(folder.to_path_buf()).or_default();
+                if !at.contains(&p) {
+                    at.push(p);
+                }
+            }
+        }
+        for (folder, paths) in by {
+            let asked = paths.clone();
+            match limited(&self.out, &folder, self.limit, move || carry::clear(&asked)) {
+                Some(done) => {
+                    if done.removed > 0 {
+                        tracing::info!(
+                            "carried sets {}: {} leftovers cleared",
+                            folder.display(),
+                            done.removed
+                        );
+                    }
+                    if let Some(e) = done.refused
+                        && self.refused.insert(folder.clone())
+                    {
+                        tracing::info!(
+                            "carried sets {}: leftovers not cleared: {e}",
+                            folder.display()
+                        );
+                    }
+                }
+                None => {
+                    tracing::info!(
+                        "carried sets {}: did not answer; leftovers cleared later",
+                        folder.display()
+                    );
+                    self.clearing.extend(paths);
+                }
+            }
         }
     }
 
@@ -285,10 +370,11 @@ impl Worker {
             kept.state.written.get(&id).cloned().unwrap_or_default()
         };
         self.failed.remove(&id);
-        if !force && before.rev == rev && before.folders == folders {
+        if !force && before.rev == rev && before.folders == folders && before.late.is_empty() {
             return;
         }
         let mut done = Vec::new();
+        let mut late = Vec::new();
         let mut failed = false;
         for t in targets {
             let (folder, home, it) = (t.folder.clone(), t.home, item.clone());
@@ -316,11 +402,17 @@ impl Worker {
                     tracing::info!(
                         "carried set {id}: {} did not answer; tried again later",
                         t.folder.display()
-                    )
+                    );
+                    late.push(t.folder);
                 }
             }
         }
-        for f in before.folders.iter().filter(|f| !folders.contains(f)) {
+        // Out of the folders its frames left: those it was written to,
+        // and those whose write did not answer and may have finished
+        // since, where only a copy this one has seen is taken.
+        let left = |f: &PathBuf| !folders.contains(f);
+        let was_late: Vec<PathBuf> = before.late.iter().filter(|f| left(f)).cloned().collect();
+        for f in before.folders.iter().filter(|f| left(f)).chain(&was_late) {
             let (folder, it) = (f.clone(), item.clone());
             match limited(&self.out, f, self.limit, move || {
                 carry::take_out(&folder, &it)
@@ -328,7 +420,12 @@ impl Worker {
                 Some(Ok(_)) => {}
                 _ => {
                     tracing::info!("carried set {id} not taken out of {}", f.display());
-                    done.push(f.clone());
+                    if was_late.contains(f) {
+                        failed = true;
+                        late.push(f.clone());
+                    } else {
+                        done.push(f.clone());
+                    }
                 }
             }
         }
@@ -348,6 +445,7 @@ impl Worker {
                     Written {
                         rev,
                         folders: done.clone(),
+                        late: late.clone(),
                     },
                 );
                 kept.save();
@@ -355,7 +453,15 @@ impl Worker {
             gone
         };
         match deleted {
-            Some(gone) => self.bury(&gone, &done),
+            Some(gone) => {
+                let all = Written {
+                    folders: done,
+                    late,
+                    ..Written::default()
+                }
+                .all();
+                self.bury(&gone, &all)
+            }
             None if failed => {
                 self.failed.insert(id, item.clone());
             }
@@ -372,7 +478,7 @@ impl Worker {
         {
             let mut kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(w) = kept.state.written.remove(&gone.id) {
-                for f in w.folders {
+                for f in w.all() {
                     if !folders.contains(&f) {
                         folders.push(f);
                     }
@@ -411,6 +517,8 @@ pub struct Carrier {
     /// What is kept beside the collections, the deletions among it;
     /// none while a later build's is there.
     kept: Option<Arc<Mutex<Kept>>>,
+    /// The folders the writer has a read or write out on.
+    out: Out,
 }
 
 impl Carrier {
@@ -432,24 +540,29 @@ impl Carrier {
             tx: None,
             inline: None,
             kept: None,
+            out: Out::default(),
         };
         let Some(kept) = Kept::load(collections.join(DIR).join(STATE)) else {
             return none();
         };
         let kept = Arc::new(Mutex::new(kept));
+        let out = Out::default();
         let mut worker = Worker {
             kept: kept.clone(),
             roots,
             read: None,
             failed: BTreeMap::new(),
+            clearing: Vec::new(),
+            refused: Default::default(),
             limit,
-            out: Out::default(),
+            out: out.clone(),
         };
         if inline {
             return Carrier {
                 tx: None,
                 inline: Some(RefCell::new(worker)),
                 kept: Some(kept),
+                out,
             };
         }
         let (tx, rx) = mpsc::channel::<Job>();
@@ -457,10 +570,10 @@ impl Carrier {
             .name("greycard carry".into())
             .spawn(move || {
                 loop {
-                    let wait = if worker.failed.is_empty() {
-                        Duration::MAX
-                    } else {
+                    let wait = if worker.waiting() {
                         RETRY
+                    } else {
+                        Duration::MAX
                     };
                     match rx.recv_timeout(wait) {
                         Ok(job) => worker.run(job),
@@ -477,6 +590,7 @@ impl Carrier {
             tx: Some(tx),
             inline: None,
             kept: Some(kept),
+            out,
         }
     }
 
@@ -532,6 +646,43 @@ impl Carrier {
         self.gone(|g| g.id == item.id() && g.covers(item.lineage()))
     }
 
+    /// A copy of `item` a pass found in `folder`, which a deletion made
+    /// or taken here has seen: a write that finished after its time
+    /// left it, or a machine that has not seen the deletion wrote it.
+    /// The deletion is carried there, so no other machine takes it.
+    /// True when one had seen it.
+    pub fn bury_found(&self, item: &Item, folder: &Path) -> bool {
+        let Some(kept) = &self.kept else {
+            return false;
+        };
+        let gone = kept
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .state
+            .gone
+            .iter()
+            .find(|g| g.id == item.id() && g.covers(item.lineage()))
+            .cloned();
+        match gone {
+            Some(gone) => {
+                self.send(Job::Bury {
+                    gone,
+                    folders: vec![folder.to_path_buf()],
+                });
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The leftovers a pass found in the sets' folders
+    /// (`Report::sets_stale`) cleared.
+    pub fn clear(&self, paths: Vec<PathBuf>) {
+        if !paths.is_empty() && self.kept.is_some() {
+            self.send(Job::Clear(paths));
+        }
+    }
+
     /// Whether a deletion of `id` is kept here.
     pub fn knows_gone(&self, id: &str) -> bool {
         self.gone(|g| g.id == id)
@@ -562,5 +713,14 @@ impl Carrier {
     /// without cfg(test)).
     pub fn start_limited(collections: &Path, limit: Duration) -> Carrier {
         Carrier::make(collections, None, false, limit)
+    }
+
+    /// Whether `folder` has a read or write of the writer still out on
+    /// it, one past its limit among them: for the tests.
+    pub fn out_on(&self, folder: &Path) -> bool {
+        self.out
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(folder)
     }
 }

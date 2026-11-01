@@ -830,6 +830,80 @@ mod tests {
         teardown(s);
     }
 
+    /// A member moved by another hand out of every root stays in its
+    /// stack while it is away, its row missing and the member not
+    /// shown; moved back into its folder under another name, the pass
+    /// finds it by its hash and the stack has it again, its edit with
+    /// it. Its folder renamed while it was away, the stack follows the
+    /// folder, and the member moved back into the renamed one is found
+    /// the same way.
+    #[test]
+    fn a_member_moved_out_of_every_root_and_back_is_found_again() {
+        let mut s = setup("out-and-back");
+        choose(&s, 1, &[3, 4]);
+        with_modifier(&s.app, Key::Control, || press(&s.app, "g"));
+        assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+        let shoot = s.files[0].parent().unwrap().to_path_buf();
+        let root = shoot.parent().unwrap().to_path_buf();
+        let away = s.dir.join("elsewhere");
+        std::fs::create_dir_all(&away).unwrap();
+        // x3's edit, in the sidecar the raw leaves behind when moved.
+        let mut edit = greycard_edit::Sidecar::default();
+        edit.meta.rating = 4;
+        edit.save(&s.files[3]).unwrap();
+        let rating = |raw: &Path| -> Option<u8> {
+            greycard_edit::Sidecar::load(raw)
+                .unwrap()
+                .map(|sc| sc.meta.rating)
+        };
+        let pass = |s: &mut Setup| {
+            let report = s.writer.index_tree(&root, &mut |_| {}).unwrap();
+            healed(&s.state, &s.app, crate::stacks::Found::of(&report));
+            open_view(&s.state, &s.app, &s.worker, View::Roots(None));
+            land_sent(&s.state, &s.app, &s.worker);
+        };
+
+        // Out of every root: kept, its row missing, not shown.
+        std::fs::rename(&s.files[3], away.join("x3.tif")).unwrap();
+        pass(&mut s);
+        assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [2]", "x2.tif"]);
+        assert_eq!(on_disk(&s), [["x1.tif", "x3.tif", "x4.tif"]]);
+        assert!(s.writer.by_path(&s.files[3]).unwrap().unwrap().missing);
+
+        // Back under another name: found by its hash.
+        std::fs::rename(away.join("x3.tif"), shoot.join("x3b.tif")).unwrap();
+        pass(&mut s);
+        assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+        assert_eq!(on_disk(&s), [["x1.tif", "x3b.tif", "x4.tif"]]);
+        assert_eq!(rating(&shoot.join("x3b.tif")), Some(4));
+
+        // Out again, its folder renamed while it is away, and back into
+        // the renamed folder under a third name.
+        std::fs::rename(shoot.join("x3b.tif"), away.join("x3b.tif")).unwrap();
+        pass(&mut s);
+        let renamed = shoot.with_file_name("renamed");
+        std::fs::rename(&shoot, &renamed).unwrap();
+        pass(&mut s);
+        assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [2]", "x2.tif"]);
+        std::fs::rename(away.join("x3b.tif"), renamed.join("x3c.tif")).unwrap();
+        pass(&mut s);
+        assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+        assert_eq!(on_disk(&s), [["x1.tif", "x3c.tif", "x4.tif"]]);
+        assert_eq!(rating(&renamed.join("x3c.tif")), Some(4));
+        let at = greycard_library::key_folder(&renamed);
+        let st = s.state.borrow();
+        assert!(
+            st.views.stacks.list[0]
+                .refs
+                .iter()
+                .all(|r| Path::new(&r.hint).parent() == Some(at.as_path())),
+            "{:?}",
+            st.views.stacks.list[0].refs
+        );
+        drop(st);
+        teardown(s);
+    }
+
     /// Ctrl+G stacks the selection under the frame on screen, closed: its
     /// top alone is listed, counted, and is the selection. S opens it,
     /// the members after the top; Set as top from the menu moves the

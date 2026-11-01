@@ -2199,6 +2199,7 @@ pub(crate) fn told(app: &App, told: Told) {
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
             crate::panel::stacks::healed(&state, app, crate::stacks::Found::of(&report));
             crate::panel::carried::landed(&state, app, &report.sets);
+            crate::panel::carried::leftovers(&state, &report.sets_stale);
             // What the window knew of the folders under the pass is
             // looked at again by the next read.
             crate::roots::folders_passed(&mut state.borrow_mut(), &path);
@@ -2325,6 +2326,7 @@ pub(crate) fn told(app: &App, told: Told) {
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
             crate::panel::stacks::healed(&state, app, crate::stacks::Found::of(&report));
             crate::panel::carried::landed(&state, app, &report.sets);
+            crate::panel::carried::leftovers(&state, &report.sets_stale);
             if generation != state.borrow().views.index_generation {
                 return;
             }

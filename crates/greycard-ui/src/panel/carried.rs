@@ -40,9 +40,10 @@ fn ours(
 /// The copies in `files` joined into `collections` and `stacks`.
 /// Deletions first: one that saw ours takes it; one of a set not here
 /// is kept, so a copy it saw met later is not taken. Then each copy: a
-/// set a deletion here saw is passed over; one new here is added; one
-/// of ours is joined with it (`carry::join`), ours ahead written again
-/// to the folders that hold the copy behind.
+/// set a deletion here saw is passed over, the deletion carried to the
+/// folder the copy is in; one new here is added; one of ours is joined
+/// with it (`carry::join`), ours ahead written again to the folders
+/// that hold the copy behind.
 pub(crate) fn take(
     collections: &mut crate::collections::Store,
     stacks: &mut crate::stacks::Store,
@@ -50,11 +51,13 @@ pub(crate) fn take(
 ) -> Took {
     let mut took = Took::default();
     let carrier = collections.carrier.clone();
-    let mut items: VecDeque<Item> = VecDeque::new();
+    // Each copy with the folder it was found in; a conflict's copy,
+    // made here, with none.
+    let mut items: VecDeque<(Item, Option<&Path>)> = VecDeque::new();
     let mut gones = Vec::new();
     for f in files {
         match f.parse() {
-            Ok(Parsed::Item(i)) => items.push_back(i),
+            Ok(Parsed::Item(i)) => items.push_back((i, Some(f.folder.as_path()))),
             Ok(Parsed::Gone(g)) => gones.push(g),
             Ok(Parsed::Later) => tracing::info!(
                 "carried set {} in {}: a later build's, left alone",
@@ -110,14 +113,21 @@ pub(crate) fn take(
     // A conflict's copy is joined in its turn; each join makes one at
     // most, so this ends, and the cap only guards against a bug.
     let mut turns = items.len() * 4 + 16;
-    while let Some(theirs) = items.pop_front() {
+    while let Some((theirs, found_in)) = items.pop_front() {
         let theirs_id = theirs.id().to_string();
         turns -= 1;
         if turns == 0 {
             tracing::warn!("carried sets: joins did not settle; the rest left");
             break;
         }
-        if carrier.as_ref().is_some_and(|c| c.buried(&theirs)) {
+        // A copy a deletion here has seen: passed over, and the deletion
+        // carried to the folder it was found in.
+        if let Some(c) = &carrier
+            && c.buried(&theirs)
+        {
+            if let Some(folder) = found_in {
+                c.bury_found(&theirs, folder);
+            }
             continue;
         }
         if matches!(&theirs, Item::Stack(s) if s.refs.len() < 2) {
@@ -169,7 +179,7 @@ pub(crate) fn take(
         }
         if let Some(copy) = joined.copy {
             tracing::info!("carried set {theirs_id}: went its own way on two machines; both kept");
-            items.push_back(copy);
+            items.push_back((copy, None));
         }
     }
     took
@@ -204,6 +214,17 @@ pub(crate) fn landed(state: &Rc<Shared>, app: &App, files: &[carry::File]) {
     };
     if viewing && let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
         crate::roots::refresh_view(state, app, &worker);
+    }
+}
+
+/// The leftovers a pass found in the carried sets' folders
+/// (`Report::sets_stale`), given to the carrier to clear.
+pub(crate) fn leftovers(state: &Rc<Shared>, paths: &[std::path::PathBuf]) {
+    if paths.is_empty() {
+        return;
+    }
+    if let Some(c) = &state.borrow().views.collections.carrier {
+        c.clear(paths.to_vec());
     }
 }
 
@@ -819,6 +840,133 @@ mod tests {
         let mut lib = greycard_library::Library::open_in_memory().unwrap();
         b.pass(&mut lib, &[&fast]);
         assert!(b.names().is_empty(), "{:?}", b.names());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A write that did not answer in time and finished after: the
+    /// folder it reached is kept as one the set may be in, so when its
+    /// frames leave that folder the copy is taken out of it.
+    #[cfg(unix)]
+    #[test]
+    fn a_write_that_answers_late_is_taken_out_when_its_frames_leave() {
+        let dir = crate::testing::scratch_dir("carried-late");
+        let (fast, slow) = (dir.join("a-fast"), dir.join("b-slow"));
+        let ff = shoot(&fast, 1);
+        let sf = shoot(&slow, 1);
+        let data = dir.join("a");
+        let collections = data.join(crate::collections::DIR);
+        let mut a = machine_with(
+            &data,
+            Carrier::start_limited(&collections, std::time::Duration::from_millis(300)),
+        );
+        let mut picks = crate::collections::Collection::new("Picks");
+        picks.refs = vec![r(0, &ff[0]), r(1, &sf[0])];
+        let id = picks.id.clone();
+        // The slow folder's deletion file a pipe: its read waits until
+        // something writes to it, past the folder's limit.
+        std::fs::create_dir_all(carry::sets_dir(&slow)).unwrap();
+        let fifo = carry::sets_dir(&slow).join(format!("{id}.gone.json"));
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        a.collections.list.push(picks);
+        a.collections.save(&id);
+        let carrier = a.collections.carrier.clone().unwrap();
+        assert!(carrier.wait(std::time::Duration::from_secs(10)));
+        assert!(carry::read_folder(&slow).is_empty(), "still out");
+        // The share answers: the write goes on, after its time.
+        std::fs::write(&fifo, "not a deletion").unwrap();
+        let copy = carry::sets_dir(&slow).join(format!("{id}.json"));
+        let start = std::time::Instant::now();
+        while !copy.exists() || carrier.out_on(&slow) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // The slow frame out of the set: its copy goes from there.
+        a.collections.collection_mut(&id).unwrap().refs.truncate(1);
+        a.collections.save(&id);
+        assert!(carrier.wait(std::time::Duration::from_secs(10)));
+        assert!(carry::read_folder(&slow).is_empty(), "taken out");
+        assert_eq!(carry::read_folder(&fast).len(), 1);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A copy of a set deleted here, in a folder no record of this
+    /// machine lists (a late write's, or one written by a machine that
+    /// had not seen the deletion): the pass that finds it buries it
+    /// there, and another machine passing that folder does not take
+    /// the set.
+    #[test]
+    fn a_copy_of_a_deleted_set_found_later_is_buried_where_it_lies() {
+        let dir = crate::testing::scratch_dir("carried-found-late");
+        let (f, g) = (dir.join("shoot"), dir.join("other"));
+        let frames = shoot(&f, 2);
+        shoot(&g, 1);
+        let mut a = machine(&dir.join("a"));
+        let mut picks = crate::collections::Collection::new("Picks");
+        picks.refs = vec![r(0, &frames[0]), r(1, &frames[1])];
+        let id = picks.id.clone();
+        a.collections.list.push(picks);
+        a.collections.save(&id);
+        carry::put(&g, &a.collections.item(&id).unwrap()).unwrap();
+        a.collections.delete(&id);
+        let names = |folder: &Path| -> Vec<String> {
+            carry::read_folder(folder)
+                .into_iter()
+                .map(|f| f.name)
+                .collect()
+        };
+        assert_eq!(names(&f), [format!("{id}.gone.json")]);
+        assert_eq!(names(&g), [format!("{id}.json")]);
+        let mut lib = greycard_library::Library::open_in_memory().unwrap();
+        assert!(!a.pass(&mut lib, &[&g]));
+        assert_eq!(names(&g), [format!("{id}.gone.json")]);
+        let mut b = machine(&dir.join("b"));
+        let mut lib = greycard_library::Library::open_in_memory().unwrap();
+        b.pass(&mut lib, &[&g]);
+        assert!(b.names().is_empty(), "{:?}", b.names());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The part file a pass names as left over goes through the
+    /// carrier; the copy beside it stays.
+    #[test]
+    fn the_leftovers_a_pass_names_are_cleared_by_the_writer() {
+        let dir = crate::testing::scratch_dir("carried-clear");
+        let f = dir.join("shoot");
+        let frames = shoot(&f, 2);
+        let mut a = machine(&dir.join("a"));
+        let mut picks = crate::collections::Collection::new("Picks");
+        picks.refs = vec![r(0, &frames[0]), r(1, &frames[1])];
+        let id = picks.id.clone();
+        a.collections.list.push(picks);
+        a.collections.save(&id);
+        let name = format!("{id}.json.9-9.part");
+        let part = carry::sets_dir(&f).join(&name);
+        std::fs::write(&part, "{").unwrap();
+        let two_days =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&part)
+            .unwrap()
+            .set_modified(two_days)
+            .unwrap();
+        let mut lib = greycard_library::Library::open_in_memory().unwrap();
+        let report = lib.index_tree(&f, &mut |_| {}).unwrap();
+        assert_eq!(report.sets_stale.len(), 1, "{:?}", report.sets_stale);
+        assert!(report.sets_stale[0].ends_with(&name));
+        a.collections
+            .carrier
+            .as_ref()
+            .unwrap()
+            .clear(report.sets_stale);
+        assert!(!part.exists());
+        assert_eq!(carry::read_folder(&f).len(), 1);
         crate::testing::remove_dir_retry(&dir);
     }
 }
