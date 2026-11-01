@@ -310,9 +310,21 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         app.set_asked_height(h);
     }
     *fit_slot.borrow_mut() = Some(app.as_weak());
-    // A slider turns the wheel back under natural scrolling.
-    app.global::<crate::SliderKeys>()
-        .set_natural(crate::scrolling::natural());
+    // A slider turns the wheel back under natural scrolling: a
+    // wheel's way here, a touchpad's set per event where they differ.
+    // Read on a thread nothing waits for: on GNOME it is two
+    // `gsettings` runs, which a session bus that never answers holds.
+    {
+        let app = app.as_weak();
+        std::thread::spawn(move || {
+            let natural = crate::scrolling::natural();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(app) = app.upgrade() {
+                    app.global::<crate::SliderKeys>().set_natural(natural.wheel);
+                }
+            });
+        });
+    }
     // The Settings sheet's scale row: the setting, and the one this
     // window started at, which a change is told it waits for.
     {

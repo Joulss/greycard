@@ -495,3 +495,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§480. Workgroup memory left unzeroed](notes/480-workgroup-memory-left-unzeroed.md) (2026-10-31)
 - [§481. The fp16 denoisers on real raws](notes/481-the-fp16-denoisers-on-real-raws.md) (2026-10-31)
 - [§482. A model's weights mapped once](notes/482-a-models-weights-mapped-once.md) (2026-10-31)
+- [§483. Natural scrolling on Windows and GNOME](notes/483-natural-scrolling-on-windows-and-gnome.md) (2026-10-31)

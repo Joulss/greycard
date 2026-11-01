@@ -133,9 +133,11 @@ libc.workspace = true
 # The same rename on Windows: MoveFileExW without REPLACE_EXISTING. The
 # version and feature greycard-edit already asks for. And the startup
 # info (GetStartupInfoW), for a shortcut set to open the window
-# maximized: a module of the same crate, nothing new in the tree.
+# maximized: a module of the same crate, nothing new in the tree. The
+# precision touchpad's scrolling direction (RegGetValueW) and a wheel
+# message's source (GetCurrentInputMessageSource) are two more.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging"] }
 
 # The Finder's open: a method added to winit's application delegate,
 # and the URLs it is handed. winit carries both already on the Mac.

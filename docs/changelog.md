@@ -34,6 +34,9 @@ design note behind it.
 
 ### Fixes
 
+- A slider under a Windows precision touchpad or a GNOME touchpad set
+  to natural scrolling moves with the fingers, as on a Mac
+  ([§483](https://github.com/jessolmstead/greycard/blob/master/docs/notes/483-natural-scrolling-on-windows-and-gnome.md)).
 - The Keys sheet reaches its last row, and the camera match sheet's
   group list its last group, by the wheel
   ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).

@@ -73,7 +73,9 @@ pub(crate) type Slot = std::rc::Rc<std::cell::RefCell<Option<slint::Weak<App>>>>
 /// there is none maximized or full screen to leave alone.
 ///
 /// It also holds the window's scale to the system's times the
-/// setting (`scale`), the one handler the backend takes doing both.
+/// setting (`scale`), and sets a slider's way for each wheel event
+/// from its device (`scrolling`), the one handler the backend takes
+/// doing all three.
 pub(crate) struct Handler {
     slot: Slot,
     done: bool,
@@ -122,6 +124,16 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         event: &slint::winit_030::winit::event::WindowEvent,
     ) -> slint::winit_030::EventResult {
         self.follow.window_event(winit_window, slint_window, event);
+        if let slint::winit_030::winit::event::WindowEvent::MouseWheel { delta, .. } = event {
+            let pixels = matches!(
+                delta,
+                slint::winit_030::winit::event::MouseScrollDelta::PixelDelta(_)
+            );
+            let app = self.slot.borrow().as_ref().and_then(|w| w.upgrade());
+            if let (Some(turned), Some(app)) = (crate::scrolling::for_event(pixels), app) {
+                app.global::<crate::SliderKeys>().set_natural(turned);
+            }
+        }
         if let (Some(w), slint::winit_030::winit::event::WindowEvent::Resized(_)) =
             (winit_window, event)
         {

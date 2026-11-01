@@ -349,7 +349,9 @@ export global SliderKeys {
     // Whether the system scrolls naturally, content following the
     // fingers, as a Mac does by default: a swipe up then comes as a
     // scroll down, and a slider turns it back so it moves the way
-    // the fingers went. Set from the system's setting at the start.
+    // the fingers went. Set from the system's setting at the start,
+    // and before each wheel event where a touchpad's way differs
+    // from a wheel's.
     in-out property <bool> natural: false;
     // The slider with the keys, by its number, or 0. The picture does
     // not take the keys at the pointer's crossing while one has them.
