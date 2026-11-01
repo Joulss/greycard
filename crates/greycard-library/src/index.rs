@@ -500,15 +500,15 @@ impl Library {
         )?;
         // One half of a rename: this folder gone with its files, or
         // files come live in it.
-        let half = if !exists && !report.stopped && !gone.is_empty() {
-            self.renames.gone(folder, gone, Instant::now())
+        if !exists && !report.stopped && !gone.is_empty() {
+            let pairs = self.renames.gone(vec![(dir, gone)], Instant::now());
+            report.moved_folders.extend(pairs);
         } else if exists && report.added + report.returned + report.moved > 0 {
             let came = live_files(self.conn_mut(), &folder, Some(&live_before))?;
-            self.renames.live(folder, came, Instant::now())
-        } else {
-            None
-        };
-        report.moved_folders.extend(half);
+            report
+                .moved_folders
+                .extend(self.renames.live(dir, came, Instant::now()));
+        }
         Ok(report)
     }
 
@@ -675,6 +675,7 @@ impl Library {
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
         let now = now_secs();
+        let mut went = Vec::new();
         for folder in gone {
             // The cheap questions first: a left-out folder (a share below
             // the root) is not asked of the disk at all.
@@ -697,10 +698,12 @@ impl Library {
                 path_from_bytes(&folder).display()
             );
             walk.report.missing += marked;
-            if let Some(pair) = self.renames.gone(folder, had, Instant::now()) {
-                walk.report.moved_folders.push(pair);
-            }
+            went.push((path_from_bytes(&folder), had));
         }
+        // All at once: a folder gone in this pass is no folder another
+        // was renamed to, whatever order they were found in.
+        let pairs = self.renames.gone(went, Instant::now());
+        walk.report.moved_folders.extend(pairs);
         Ok(walk.report.clone())
     }
 
@@ -1766,16 +1769,18 @@ const RENAME_MOST: usize = 64;
 /// One half of a rename: a folder and its files.
 #[derive(Debug)]
 struct Half {
-    folder: Vec<u8>,
+    folder: PathBuf,
     files: Files,
     at: Instant,
 }
 
 /// Folders lately gone and folders whose rows lately came live (added,
 /// or back from missing), each waiting a few minutes for the other
-/// half of a rename. A folder gone is renamed to the one come live that
-/// holds more than half its files by name and hash, the best such
-/// alone: a tie is no rename. Each half is matched once.
+/// half of a rename. A folder gone is renamed to the one come live
+/// sharing more than half of each one's files by name and hash, the
+/// best such alone. A tie is no rename, and the halves it weighed
+/// against the asking one are dropped: a copy made twice is not later
+/// taken for the one renamed. Each half is matched once.
 #[derive(Debug, Default)]
 pub(crate) struct Renames {
     gone: Vec<Half>,
@@ -1783,32 +1788,44 @@ pub(crate) struct Renames {
 }
 
 impl Renames {
-    /// Folder `folder` gone with `files`: the rename it completes, old
-    /// folder and new, or none and it waits.
+    /// Folders `gone`, each with its files, gone in one pass: the
+    /// renames they complete, old folder and new. None of them is a
+    /// folder another was renamed to, whatever order they come in;
+    /// they are matched in the order of their paths.
     pub(crate) fn gone(
         &mut self,
-        folder: Vec<u8>,
-        files: Files,
+        mut gone: Vec<(PathBuf, Files)>,
         now: Instant,
-    ) -> Option<(PathBuf, PathBuf)> {
-        if files.is_empty() {
-            return None;
+    ) -> Vec<(PathBuf, PathBuf)> {
+        gone.retain(|(_, files)| !files.is_empty());
+        if gone.is_empty() {
+            return Vec::new();
         }
         self.prune(now);
-        // Gone, it is no folder its files came live in.
-        self.live.retain(|h| h.folder != folder);
-        let at = add(&mut self.gone, folder, files, now);
-        let g = &self.gone[at];
-        let to = best(&self.live, |l| renamed(g, l))?;
-        let (g, l) = (self.gone.remove(at), self.live.remove(to));
-        Some(said(g, l))
+        self.live
+            .retain(|h| !gone.iter().any(|(f, _)| *f == h.folder));
+        gone.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut out = Vec::new();
+        for (folder, files) in gone {
+            let at = add(&mut self.gone, folder, files, now);
+            let g = &self.gone[at];
+            match best(&self.live, |l| renamed(g, l)) {
+                Best::One(to) => {
+                    let (g, l) = (self.gone.remove(at), self.live.remove(to));
+                    out.push(said(g, l));
+                }
+                Best::Tie(tied) => drop_all(&mut self.live, &tied),
+                Best::None => {}
+            }
+        }
+        out
     }
 
     /// Files `files` come live in folder `folder`: the rename it
     /// completes, or none and it waits.
     pub(crate) fn live(
         &mut self,
-        folder: Vec<u8>,
+        folder: PathBuf,
         files: Files,
         now: Instant,
     ) -> Option<(PathBuf, PathBuf)> {
@@ -1820,9 +1837,17 @@ impl Renames {
         self.gone.retain(|h| h.folder != folder);
         let at = add(&mut self.live, folder, files, now);
         let l = &self.live[at];
-        let from = best(&self.gone, |g| renamed(g, l))?;
-        let (g, l) = (self.gone.remove(from), self.live.remove(at));
-        Some(said(g, l))
+        match best(&self.gone, |g| renamed(g, l)) {
+            Best::One(from) => {
+                let (g, l) = (self.gone.remove(from), self.live.remove(at));
+                Some(said(g, l))
+            }
+            Best::Tie(tied) => {
+                drop_all(&mut self.gone, &tied);
+                None
+            }
+            Best::None => None,
+        }
     }
 
     fn prune(&mut self, now: Instant) {
@@ -1834,7 +1859,7 @@ impl Renames {
 
 /// `files` added to `folder`'s half, or a half of its own, the oldest
 /// dropped past [`RENAME_MOST`]: its place.
-fn add(halves: &mut Vec<Half>, folder: Vec<u8>, files: Files, now: Instant) -> usize {
+fn add(halves: &mut Vec<Half>, folder: PathBuf, files: Files, now: Instant) -> usize {
     if let Some(i) = halves.iter().position(|h| h.folder == folder) {
         halves[i].files.extend(files);
         halves[i].at = now;
@@ -1851,8 +1876,17 @@ fn add(halves: &mut Vec<Half>, folder: Vec<u8>, files: Files, now: Instant) -> u
     halves.len() - 1
 }
 
+/// The halves at `at` taken out of `halves`.
+fn drop_all(halves: &mut Vec<Half>, at: &[usize]) {
+    let mut i = 0;
+    halves.retain(|_| {
+        i += 1;
+        !at.contains(&(i - 1))
+    });
+}
+
 /// How many files folder `gone` and folder `live` share, when it is
-/// more than half of the gone one's: a rename of the one to the other.
+/// more than half of each one's: a rename of the one to the other.
 fn renamed(gone: &Half, live: &Half) -> Option<usize> {
     if gone.folder == live.folder {
         return None;
@@ -1862,31 +1896,45 @@ fn renamed(gone: &Half, live: &Half) -> Option<usize> {
         .iter()
         .filter(|f| live.files.contains(*f))
         .count();
-    (2 * n > gone.files.len()).then_some(n)
+    (2 * n > gone.files.len() && 2 * n > live.files.len()).then_some(n)
 }
 
-/// The half of `among` with the highest `score`; none on a tie.
-fn best(among: &[Half], score: impl Fn(&Half) -> Option<usize>) -> Option<usize> {
-    let mut found = None;
+/// What [`best`] found.
+enum Best {
+    One(usize),
+    /// Two or more at the highest score, by their places.
+    Tie(Vec<usize>),
+    None,
+}
+
+/// The half of `among` with the highest `score`.
+fn best(among: &[Half], score: impl Fn(&Half) -> Option<usize>) -> Best {
     let mut top = 0;
-    let mut tie = false;
+    let mut at: Vec<usize> = Vec::new();
     for (i, h) in among.iter().enumerate() {
         let Some(n) = score(h) else {
             continue;
         };
         if n > top {
-            (found, top, tie) = (Some(i), n, false);
+            (top, at) = (n, vec![i]);
         } else if n == top {
-            tie = true;
+            at.push(i);
         }
     }
-    found.filter(|_| !tie)
+    match at.len() {
+        0 => Best::None,
+        1 => Best::One(at[0]),
+        _ => Best::Tie(at),
+    }
 }
 
 fn said(gone: Half, live: Half) -> (PathBuf, PathBuf) {
-    let (from, to) = (path_from_bytes(&gone.folder), path_from_bytes(&live.folder));
-    log::info!("{}: renamed to {}", from.display(), to.display());
-    (from, to)
+    log::info!(
+        "{}: renamed to {}",
+        gone.folder.display(),
+        live.folder.display()
+    );
+    (gone.folder, live.folder)
 }
 
 /// A row with this hash whose file is gone from a folder that is
@@ -5511,7 +5559,9 @@ pub(crate) mod tests {
     }
 
     /// The halves of a rename wait a while and no longer; a new folder
-    /// is claimed once.
+    /// is claimed once; more than half of each side's files is needed;
+    /// a tie drops the halves it weighed; and folders gone in one pass
+    /// are none of them another's new name, in either order.
     #[test]
     fn a_half_of_a_rename_waits_and_is_matched_once() {
         let files = |names: &[&str]| -> Files {
@@ -5520,27 +5570,46 @@ pub(crate) mod tests {
                 .map(|n| (OsString::from(n), format!("h-{n}")))
                 .collect()
         };
+        let at = |n: &str| Path::new(&std::path::MAIN_SEPARATOR_STR).join("s").join(n);
+        let gone =
+            |r: &mut Renames, n: &str, f: &[&str], t: Instant| r.gone(vec![(at(n), files(f))], t);
         let t = Instant::now();
         let mut r = Renames::default();
-        assert!(r.gone(b"/s/a".to_vec(), files(&["x", "y"]), t).is_none());
+        assert!(gone(&mut r, "a", &["x", "y"], t).is_empty());
         let late = t + RENAME_WAIT + Duration::from_secs(1);
         assert!(
-            r.live(b"/s/b".to_vec(), files(&["x", "y"]), late).is_none(),
+            r.live(at("b"), files(&["x", "y"]), late).is_none(),
             "too late"
         );
         // The live half waits now; a gone folder takes it, and a second
         // gone folder of the same files finds nothing left.
-        let got = r.gone(b"/s/c".to_vec(), files(&["x", "y"]), late);
-        assert_eq!(got, Some((PathBuf::from("/s/c"), PathBuf::from("/s/b"))));
-        assert!(r.gone(b"/s/d".to_vec(), files(&["x", "y"]), late).is_none());
-        // Half of the files is not more than half.
+        assert_eq!(gone(&mut r, "c", &["x", "y"], late), [(at("c"), at("b"))]);
+        assert!(gone(&mut r, "d", &["x", "y"], late).is_empty());
+        // Half of the files is not more than half, on either side.
         let mut r = Renames::default();
-        r.gone(b"/s/a".to_vec(), files(&["x", "y"]), t);
-        assert!(r.live(b"/s/b".to_vec(), files(&["x"]), t).is_none());
+        gone(&mut r, "a", &["x", "y"], t);
+        assert!(r.live(at("b"), files(&["x"]), t).is_none());
+        let mut r = Renames::default();
+        gone(&mut r, "a", &["x", "y"], t);
+        assert!(r.live(at("b"), files(&["x", "y", "p", "q"]), t).is_none());
+        // A tie: two copies weighed against one gone folder are dropped,
+        // and are no later folder's new name.
+        let mut r = Renames::default();
+        r.live(at("b"), files(&["x", "y", "z"]), t);
+        r.live(at("c"), files(&["x", "y", "z"]), t);
+        assert!(gone(&mut r, "a", &["x", "y", "z"], t).is_empty());
+        assert!(r.live.is_empty());
+        // Gone in one pass, in either order: neither is the other's.
+        for order in [["b", "c"], ["c", "b"]] {
+            let mut r = Renames::default();
+            r.live(at("c"), files(&["x", "y", "z"]), t);
+            let went = order.map(|n| (at(n), files(&["x", "y", "z"]))).to_vec();
+            assert!(r.gone(went, t).is_empty(), "{order:?}");
+        }
         // Kept to a bound.
         let mut r = Renames::default();
         for i in 0..RENAME_MOST + 5 {
-            r.gone(format!("/s/{i}").into_bytes(), files(&["x"]), t);
+            gone(&mut r, &i.to_string(), &["x"], t);
         }
         assert_eq!(r.gone.len(), RENAME_MOST);
     }
