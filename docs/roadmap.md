@@ -210,13 +210,16 @@ seconds.
       mode: 2x2 Bayer quads binned to one RGB pixel, shown only while
       the full develop is pending and replaced by it when it lands, so
       the fit view at rest is still the export (§90, §115). The
-      camera's JPEG now stands in for the switch (§134), so this is
-      only worth showing if the Mac timing says the first develop
-      itself is the wait; waits on that timing. §270 builds the
-      reduced develop itself, for the edited thumbnails
+      camera's JPEG now stands in for the switch (§134), for about
+      7 s at 102 MP and 1 s at 24 MP on an M5 (§479): showing it is a
+      judgment on those. §270 builds the reduced develop itself, for
+      the edited thumbnails
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
-      GPU (§378, §386)
+      GPU (§378, §386); on an M5, 2.8 s of 6.5 to 7.0 s at 102 MP (§479)
+- [ ] A Clarity or Dehaze move at 102 MP takes 3.9 s and 2.4 s on an
+      M5, most of it the capture sharpen's 20 iterations run again
+      after the move, and a readback in its tile indices (§479)
 - [ ] The Subject model back on Core ML: explicit zero pads get it
       through the parser, but the Neural Engine's compile ran past
       25 min and the GPU alone is four times slower than WebGPU
@@ -241,11 +244,10 @@ seconds.
       2.3), and it is the next second (§164). The whole 45 MP develop
       with the hybrid denoise is 12.7 s at six threads, the number a
       tester can watch
-- [ ] The GPU's memory on an 8 GB Mac: the local contrast keeps the
-      patched picture on the device, 716 MB at 45 MP over 0.4.0, and
-      a move with the Dehaze on holds one picture more while it runs
-      (§269); if it presses, keep the picture before the sharpen only
-      on a discrete GPU. Waits on measuring it on the M-series (§259)
+- [ ] The GPU's memory on an 8 GB Mac: the local contrast's planes
+      are made per run on unified memory already, and a Clarity move at
+      102 MP peaks at 12.1 GB on a 24 GB M5 (§479). Waits on an 8 GB
+      Mac at 45 MP
 - [ ] Round the GPU ops' half-float stores to nearest: both NVIDIA
       and lavapipe round toward zero, a bias of up to 0.1% on every
       GPU output against the CPU's halves (§269)
