@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- The frame menu's Edit in... hands the frame to the app chosen on
+  Settings as a 16-bit TIFF beside the raw, and the app's save comes
+  back stacked with the raw
+  ([§499](https://github.com/jessolmstead/greycard/blob/master/docs/notes/499-edit-in-another-editor.md)).
 - The export sheet's Name field takes a pattern of {name}, {seq},
   {date}, and {camera}, kept with the preset
   ([§494](https://github.com/jessolmstead/greycard/blob/master/docs/notes/494-exports-named-by-a-pattern.md)).

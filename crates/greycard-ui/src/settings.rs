@@ -38,6 +38,11 @@ pub struct Settings {
     /// stands, with no sheet, and before it opens the sheet. Written
     /// as the first export starts.
     pub exported: bool,
+    /// The app Edit in hands a frame to, as chosen on the Settings
+    /// sheet: an application bundle, a program, or a desktop entry.
+    /// Empty for none, and the frame menu then offers no Edit in.
+    #[serde(deserialize_with = "string_leniently")]
+    pub edit_in: String,
     pub scope: String,
     /// Which curve the CURVES section shows: "Parametric" or "Point".
     pub curve_mode: String,
@@ -587,6 +592,7 @@ impl Default for Settings {
             export_preset: String::new(),
             export_last_folder: String::new(),
             exported: false,
+            edit_in: String::new(),
             scope: crate::scope::Scope::default().name().into(),
             curve_mode: "Point".into(),
             warn_shadows: false,
@@ -860,6 +866,7 @@ mod tests {
             rawtherapee_answered: vec!["/home/x/Pictures/rt".into()],
             export_last_folder: "/home/x/Pictures/out".into(),
             exported: true,
+            edit_in: "/Applications/Photoshop.app".into(),
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             start_folder: "~/Pictures/start".into(),

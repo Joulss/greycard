@@ -171,6 +171,14 @@ export component App inherits Window {
     callback menu-meta(string, int);
     /// The frame right-clicked, shown in the desktop's file manager.
     callback menu-reveal();
+    /// The app Edit in hands a frame to, by name, as the Settings
+    /// sheet shows it; empty while none is chosen, and the frame menu
+    /// then offers no Edit in.
+    in property <string> edit-in-app: "";
+    /// The frame right-clicked, exported and handed to that app.
+    callback menu-edit-in();
+    /// The Settings sheet's Edit in row: the app asked for.
+    callback edit-in-choose();
     /// Whether a Control+click is a right-click: a Mac's.
     in property <bool> ctrl-click-menu: false;
     /// The name of the frame right-clicked, whose settings the menu's
@@ -4965,6 +4973,8 @@ export component App inherits Window {
         choose-proof-file => { root.choose-proof-file(); }
         export-format <=> root.export-format;
         export-space <=> root.export-space;
+        edit-in-app: root.edit-in-app;
+        edit-in-choose => { root.edit-in-choose(); }
         ui-scale <=> root.ui-scale;
         ui-scale-percent: root.ui-scale-percent;
         ui-scale-started: root.ui-scale-started;
@@ -5064,6 +5074,8 @@ export component App inherits Window {
             if (!root.time-shift-open) { root.menu-done(); }
         }
         reveal => { root.menu-reveal(); root.menu-done(); }
+        edit-in-app: root.edit-in-app;
+        edit-in => { root.menu-edit-in(); root.menu-done(); }
         // The sheet takes the focus itself, as the time shift's does.
         export => {
             root.menu-export();

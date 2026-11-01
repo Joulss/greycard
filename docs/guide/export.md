@@ -304,6 +304,31 @@ queued twice shows twice.
   Cull. **Export** is for the queue's run here: an export of the
   chosen frames does nothing.
 
+## Edit in another app
+
+To finish a frame in another editor, pick its app once under
+**Settings > Editing > Export > Edit in**: an application on a Mac, a
+program on Windows, and a program or its desktop entry (`.desktop`)
+on Linux. The frame menu then offers **Edit in...**.
+
+**Edit in...** exports the frame right-clicked, with its edit (a
+version as itself), as a 16-bit TIFF at full size in the color space
+the Export sheet holds. The file goes beside the raw, named after it
+with `-edit`, such as `IMG_0001-edit.greycard.tif`, or
+`IMG_0001-edit.greycard-1.tif` when that is taken. greycard then
+opens it in the app.
+
+When the app saves the file, greycard indexes it and shows it beside
+the raw as a frame of its own, in the raw's stack if it has one or in
+a new stack of the two, opened. Each export adds a line to the
+frame's **HISTORY**, as any export does.
+
+The app must save over that same file for the edit to come back and
+stack. Saving to a file of its own instead, such as Affinity Photo's
+`.afphoto` or Evoto's own export, leaves the TIFF as greycard wrote
+it. In a folder under a watched root, the TIFF is listed as soon as
+it is written and joins the stack at the app's first save.
+
 ## An export in History
 
 Each export adds a line to the frame's **HISTORY**, such as

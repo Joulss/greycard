@@ -12,11 +12,12 @@
 // choices the panel's MONITOR and SOFT PROOF sections make, bound to
 // the window's own properties so a change in either place shows in
 // both; the aspect an uncropped frame's crop opens at; the shipped
-// presets put back; and the export sheet's format and color space,
-// bound the same way. Keys: each rebindable action of the key table
-// (`keys.rs`), a click on its chord to press a new one, Escape to keep
-// the old. About: the check for a newer release, the version, and where
-// greycard keeps its files.
+// presets put back; the export sheet's format and color space,
+// bound the same way; and the app Edit in hands a frame to. Keys:
+// each rebindable action of the key table (`keys.rs`), a click on its
+// chord to press a new one, Escape to keep the old. About: the check
+// for a newer release, the version, and where greycard keeps its
+// files.
 import { Theme } from "../theme.slint";
 import { BindRow } from "../structs.slint";
 import { Toggle, PanelButton, Segmented, ScrollPane } from "../controls.slint";
@@ -118,6 +119,10 @@ export component SettingsSheet inherits Rectangle {
     /// keeps as each changes.
     in-out property <string> export-format;
     in-out property <string> export-space;
+    /// The app Edit in hands a frame to, by name, empty for none, and
+    /// the chooser that picks it.
+    in property <string> edit-in-app;
+    callback edit-in-choose();
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
@@ -916,6 +921,22 @@ export component SettingsSheet inherits Rectangle {
                                     current <=> root.export-space;
                                     accessible-role: list;
                                     accessible-value: self.current;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Text { text: "Edit in"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text {
+                                    text: root.edit-in-app;
+                                    font-size: Theme.font-xs;
+                                    color: Theme.text-secondary;
+                                    vertical-alignment: center;
+                                    wrap: char-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                                PanelButton {
+                                    text: "Choose...";
+                                    clicked => { root.edit-in-choose(); }
                                 }
                             }
                         }

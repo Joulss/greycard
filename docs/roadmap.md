@@ -931,13 +931,11 @@ clears or a tester asks for it.
       paths, so `immich upload` (or any other tool) takes the developed
       picture; the destination folder for a watched library is the
       pool's naming-and-destination item. Waits on the XMP check (§195)
-- [ ] Edit in another editor, as Lightroom hands a frame to Evoto,
-      Photoshop or Topaz: the frame rendered to a 16-bit TIFF in a
-      chosen space beside the raw, the editor launched on it from a
-      list of editors found once, the written file indexed as it lands
-      and shown beside the raw; a raw-first tool (PureRAW, Photo AI)
-      given the raw and its DNG offered in place. For the platform
-      release, where those editors run
+- [ ] Edit in, the rest of it (§499): a list of editors found once
+      rather than one chosen app; a raw-first tool (PureRAW, Photo AI)
+      given the raw and its DNG offered in place; the edited TIFF's
+      watch kept while the file is listed rather than an hour. Try
+      the Mac and Windows launches on the machines first
 - [ ] A plugin protocol, after 1.0 and only on demand: an executable
       given a rendered file or a mask over JSON on stdin and stdout, a
       process boundary rather than in-process code, so a plugin's

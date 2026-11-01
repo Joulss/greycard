@@ -693,6 +693,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.sheets.lenses_declined = lenses_declined;
         st.work.export_presets = export_presets;
         st.work.export_last_folder = export_last_folder;
+        st.work.edit_in.app =
+            (!remembered.edit_in.is_empty()).then(|| PathBuf::from(&remembered.edit_in));
+        crate::panel::edit_in::show_app(&app, st.work.edit_in.app.as_deref());
         st.culling.cull_move_on = cull_move_on;
         crate::panel::cull::take_remembered_mode(&mut st, loupe_cull, show_developed);
         // `--cull-developed`, over whatever the last run left.
@@ -2291,6 +2294,7 @@ fn merged(
     settings.jpegs_apart = kept.jpegs_apart;
     settings.one_section = kept.one_section;
     settings.exported = kept.exported;
+    settings.edit_in = kept.edit_in;
     settings.cull_move_on = kept.cull_move_on;
     settings.loupe_cull = kept.loupe_cull;
     settings.cull_developed = kept.cull_developed;
@@ -2384,6 +2388,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         export_last_folder: String::new(),
         // Written as the first export starts; the caller keeps the file's.
         exported: false,
+        // Written as the app is chosen; the caller keeps the file's.
+        edit_in: String::new(),
         scope: app.get_scope().into(),
         curve_mode: app.get_curve_mode().into(),
         warn_shadows: app.get_warn_shadows(),

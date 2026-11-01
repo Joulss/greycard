@@ -1150,6 +1150,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         } => {
             let at = format!("{} of {}", index + 1, set.total);
             let ran = !matches!(done, queue::Done::Canceled);
+            crate::panel::edit_in::frame_done(&mut state.borrow_mut(), app, &set, &done);
             match done {
                 queue::Done::Exported {
                     path,

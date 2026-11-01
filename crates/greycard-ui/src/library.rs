@@ -2413,6 +2413,9 @@ pub(crate) fn told(app: &App, told: Told) {
                 );
             }
             reread(&state, app, false);
+            // A file another editor wrote for Edit in, listed now its
+            // row is in.
+            crate::panel::edit_in::indexed(&state, app);
             // A shift's rows written: a list by capture time is read
             // again in the new order.
             if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {

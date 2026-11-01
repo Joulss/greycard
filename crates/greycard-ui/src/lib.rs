@@ -8,6 +8,7 @@ pub mod carried;
 pub mod collections;
 pub mod delete;
 pub mod display;
+pub mod edit_in;
 pub mod export_name;
 pub mod files;
 pub mod filter;

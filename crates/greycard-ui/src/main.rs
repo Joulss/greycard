@@ -59,8 +59,9 @@ mod window_fit;
 // The modules with no window in them, in the library beside this
 // binary; named here as they were when they were the binary's own.
 pub(crate) use greycard_ui::{
-    archive, carried, collections, delete, display, export_name, files, filter, gpu_marker, import,
-    log, naming, outline, preset_fit, rejects, scrolling, selection, tags, wheel, zoom,
+    archive, carried, collections, delete, display, edit_in, export_name, files, filter,
+    gpu_marker, import, log, naming, outline, preset_fit, rejects, scrolling, selection, tags,
+    wheel, zoom,
 };
 
 // What renders a developed frame into a picture or a file, in a crate
@@ -862,6 +863,7 @@ impl State {
                 queue_busy: None,
                 export_presets: Vec::new(),
                 export_last_folder: None,
+                edit_in: Default::default(),
                 sync: sync::Sync::default(),
                 saves: Default::default(),
             },
@@ -1106,6 +1108,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::prefs::install(app, &state, &worker);
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);
+    panel::edit_in::install(app, &state, &worker);
     panel::versions::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
     panel::lightroom::install(app, &state);

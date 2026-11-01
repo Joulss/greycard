@@ -237,6 +237,12 @@ sheet's **Format** row.
 The color space an export is written in, the same choice as the Export
 sheet's **Color** row.
 
+#### Edit in
+
+The app the frame menu's **Edit in...** opens a frame in. **Choose...**
+picks it; the row shows its name. See
+[Edit in another app](export.md#edit-in-another-app).
+
 ## Keys
 
 Every key you can move, under the heading of its group: click an

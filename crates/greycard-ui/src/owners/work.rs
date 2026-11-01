@@ -46,6 +46,9 @@ pub(crate) struct Work {
     /// next export goes and the next chooser opens; the settings file
     /// keeps it across runs.
     pub(crate) export_last_folder: Option<PathBuf>,
+    /// Edit in: the app chosen, the frame on its way to it, and the
+    /// files handed to it and watched.
+    pub(crate) edit_in: crate::panel::edit_in::EditIn,
     /// The writes behind the saves to the archives' copies (§233):
     /// see [`sync`].
     pub(crate) sync: sync::Sync,

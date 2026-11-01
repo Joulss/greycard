@@ -279,6 +279,42 @@ impl Store {
         id
     }
 
+    /// `adding` stacked with the frame `with`: after it in its stack,
+    /// or in a new stack of the two with `with` on top; either way the
+    /// stack is opened, so `adding` shows beside it. Nothing when
+    /// `adding` is in a stack already. The stack's id.
+    pub(crate) fn stack_beside(&mut self, with: Reference, adding: Reference) -> Option<String> {
+        let added = frame_of(&adding);
+        if self
+            .list
+            .iter()
+            .any(|s| s.refs.iter().any(|r| frame_of(r) == added))
+        {
+            return None;
+        }
+        let beside = frame_of(&with);
+        let held = self.list.iter().find_map(|s| {
+            let at = s.refs.iter().position(|r| frame_of(r) == beside)?;
+            Some((s.id.clone(), at))
+        });
+        let id = match held {
+            Some((id, at)) => {
+                let s = self.stack_mut(&id)?;
+                s.refs.insert(at + 1, adding);
+                s.open = true;
+                self.save(&id);
+                self.index();
+                id
+            }
+            None => {
+                let id = self.make(vec![with, adding]);
+                self.set_open(&id, true);
+                id
+            }
+        };
+        Some(id)
+    }
+
     /// The frames `frames` out of every stack they are in, nothing
     /// written: the ids of the stacks they left.
     fn take_out(&mut self, frames: &HashSet<Frame>) -> BTreeSet<String> {
@@ -511,14 +547,22 @@ pub(crate) fn hint_of_file(st: &State, file: usize) -> Option<String> {
     if st.views.view.lists_rows() {
         return Some(hint_of(path));
     }
+    Some(hint_of_path(st, path))
+}
+
+/// [`hint_of_file`] for a path that is not the list's own, a file just
+/// written beside one of them: always as the index keys its folder,
+/// whatever the view, so a folder reached through a link is named as
+/// the stacks name it from any view.
+pub(crate) fn hint_of_path(st: &State, path: &Path) -> String {
     let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
-        return Some(hint_of(path));
+        return hint_of(path);
     };
     let mut canon = st.views.stacks.canon.borrow_mut();
     let key = canon
         .entry(folder.to_path_buf())
         .or_insert_with(|| greycard_library::key_folder(folder));
-    Some(hint_of(&key.join(name)))
+    hint_of(&key.join(name))
 }
 
 /// The stacks the list shows: each with at least two members listed,
