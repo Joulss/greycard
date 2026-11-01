@@ -169,13 +169,6 @@ impl Store {
             std::fs::rename(&part, &path)?;
         }
         std::fs::write(dir.join(model.license_file()), model.license_note())?;
-        // On a Mac the file Core ML opens comes too; the model is whole
-        // without it, so a failure here is said and the fetch stands.
-        if cfg!(target_os = "macos")
-            && let Err(e) = self.fetch_core_ml(model, &mut progress)
-        {
-            log::warn!("{}: its file for Core ML did not arrive: {e}", model.name);
-        }
         Ok(())
     }
 
@@ -189,10 +182,13 @@ impl Store {
     }
 
     /// Fetch the file Core ML opens for `model`, where it has one and it
-    /// is missing, checking its hash. Nothing else of the model's is
-    /// touched: a model already here is fetched no further. One such
-    /// fetch at a time a process, so a fetch with the model and one
-    /// started alone do not write the same part file.
+    /// is missing, checking its hash, and write the license note again
+    /// so it names the file. Nothing else of the model's is fetched. A
+    /// file another thread is already fetching is left to it: this
+    /// returns at once, and the caller looks for the file
+    /// ([`Store::core_ml_path`]) to know whether it is here. Its
+    /// callers fetch it after the model, on a Mac ([`Store::fetch`]
+    /// does not).
     pub fn fetch_core_ml(&self, model: &Model, progress: impl FnMut(Progress)) -> Result<()> {
         match crate::registry::core_ml_file(model) {
             Some(file) => self.fetch_extra(model, file, progress),
@@ -213,17 +209,31 @@ impl Store {
         file: &File,
         mut progress: impl FnMut(Progress),
     ) -> Result<()> {
-        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-        if self.extra_path(model, file).is_some() {
-            return Ok(());
-        }
-        std::fs::create_dir_all(self.dir(model))?;
         let path = self.path(model, file);
-        let part = path.with_file_name(format!("{}.part", file.name));
-        fetch_to(file, &part, &mut progress)?;
-        std::fs::rename(&part, &path)?;
-        Ok(())
+        // The paths being fetched, so two threads never write one part
+        // file, and one stalled download holds up no other file's.
+        static UNDER_WAY: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+        let under_way = || UNDER_WAY.lock().unwrap_or_else(|e| e.into_inner());
+        {
+            let mut list = under_way();
+            if list.contains(&path) || self.extra_path(model, file).is_some() {
+                return Ok(());
+            }
+            list.push(path.clone());
+        }
+        let fetched = (|| {
+            std::fs::create_dir_all(self.dir(model))?;
+            let part = path.with_file_name(format!("{}.part", file.name));
+            fetch_to(file, &part, &mut progress)?;
+            std::fs::rename(&part, &path)?;
+            std::fs::write(
+                self.dir(model).join(model.license_file()),
+                model.license_note(),
+            )?;
+            Ok(())
+        })();
+        under_way().retain(|p| *p != path);
+        fetched
     }
 
     /// A CPU-only runtime's directory: `<root>/<id>`, beside the models.
@@ -791,6 +801,11 @@ mod tests {
         let path = root.join(DENOISE_BEST.id).join(file.name);
         assert_eq!(store.extra_path(&model, &file), Some(path.clone()));
         assert_eq!(std::fs::read(&path).unwrap(), body);
+        let note = std::fs::read_to_string(root.join(DENOISE_BEST.id).join("LICENSE.txt")).unwrap();
+        assert!(
+            note.contains(fp16.sha256),
+            "the note names the fp16 file: {note}"
+        );
         assert_eq!(
             std::fs::metadata(store.path(&DENOISE_BEST, &own))
                 .unwrap()

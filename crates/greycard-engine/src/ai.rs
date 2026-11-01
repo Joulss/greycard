@@ -325,7 +325,7 @@ pub struct Ai {
     disk: bool,
     /// Whether a denoiser tier's file for Core ML is fetched in the
     /// background when the store lacks it ([`fetch_core_ml_quietly`]);
-    /// never for a test, whose store is its own.
+    /// never in a test build.
     quiet_fetch: bool,
     /// The Subject matte at the raster's size, of base develop
     /// `stamp`, and the provider that made it: run once and read by a
@@ -1137,7 +1137,8 @@ impl Ai {
             salt: None,
             other_side: Side::default(),
             disk: true,
-            quiet_fetch: true,
+            // Never in a test build, whichever constructor it uses.
+            quiet_fetch: !cfg!(any(test, feature = "testing")),
             subject_matte: None,
             #[cfg(any(test, feature = "testing"))]
             sams_edge_only: false,

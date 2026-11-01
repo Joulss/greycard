@@ -64,10 +64,16 @@ def convert(path, out_dir, pins):
         half = float16.convert_float_to_float16(model, keep_io_types=True)
     onnx.checker.check_model(half)
 
+    # Checked with exits, not asserts, which `python -O` drops.
     meta = lambda m: {p.key: p.value for p in m.metadata_props}
-    assert meta(half) == meta(model), (meta(half), meta(model))
+    if meta(half) != meta(model):
+        sys.exit(f"{path.name}: the metadata changed: {meta(model)} became {meta(half)}")
+    names = lambda vs: [v.name for v in vs]
+    if names(half.graph.input) != ["packed"] or names(half.graph.output) != ["rgb"]:
+        sys.exit(f"{path.name}: want input packed and output rgb, got {names(half.graph.input)} and {names(half.graph.output)}")
     for v in list(half.graph.input) + list(half.graph.output):
-        assert v.type.tensor_type.elem_type == FLOAT, f"{v.name} is no longer float32"
+        if v.type.tensor_type.elem_type != FLOAT:
+            sys.exit(f"{path.name}: {v.name} is no longer float32")
 
     out = out_dir / path.name.replace(".onnx", "-fp16.onnx")
     blob = half.SerializeToString()

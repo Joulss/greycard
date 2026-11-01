@@ -88,6 +88,13 @@ The most useful things you can send, in order:
 5. Which version: it is in the name of the folder you downloaded,
    or `greycard-ui --version` in a terminal.
 
+If the learned denoise looks wrong, the log's develop lines say where
+it ran: "CoreML, fp16" is the half-precision copy of the model that
+Core ML runs on a Mac. To try the same frame with the full-precision
+one, quit greycard and start it from a terminal with
+`open --env GREYCARD_DENOISE_FP32=1 -a greycard`, and say in the
+report whether that changed it.
+
 The quickest way to send it: **Report a problem…** at the bottom of
 greycard's left panel opens the bug report form in your browser with
 the version, the macOS version and the graphics chip already filled

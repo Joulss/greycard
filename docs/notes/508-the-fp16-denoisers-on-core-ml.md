@@ -26,22 +26,48 @@ the GPU. The other platforms never see the file.
 What the provider record keeps of such a load is filed under both
 files' hashes joined by `+`, so a race the fp32 file won or lost on
 Core ML does not settle a load that opens the fp16 one; the first load
-with the fp16 file races once. The denoise cache's key is left as it
-was: the provider was never in it, and the fp16 answer is the same
+with the fp16 file races once. Core ML failing the fp16 file is
+remembered under that hash too, and the next load, seeing it, hands
+Core ML the tier's own file under its own hash, so a Mac whose Core ML
+cannot run fp16 (an older chip or system, a file damaged on disk at
+its full size) goes back to fp32 on Core ML, as before, rather than
+to WebGPU for good; a new system or build tries the fp16 file again.
+The denoise cache's key is left as it was: the provider was never in it, and the fp16 answer is the same
 network's within about 0.001 stops, so the file arriving does not
 throw away a Mac's answers.
 
 ## How a Mac gets it
 
-On a Mac, `Store::fetch` fetches a tier's fp16 file after the tier's
-own, so a tier fetched from now on comes whole; the tier stands if the
-fp16 file fails. A tier fetched before keeps working on its fp32 file,
-and the editor fetches the fp16 one in the background the first time
-the tier loads on Core ML, once a process, with no sheet: it comes
-from the same repository under the same license the tier's sheet
-showed. Core ML opens it from the tier's next load. The CLI's
-`models --fetch` fetches it for a tier already there. Tests do not
-fetch (`Ai::for_test` turns it off).
+On a Mac, the editor's fetch of a tier, from its sheet, fetches the
+fp16 file after the tier is said to be here, since the tier runs
+without it; the CLI's `models --fetch` fetches it after the tier, or
+alone for a tier already there, and says if it did not arrive.
+`Store::fetch` itself does not, so a failure is always said by the
+caller that can say it. A tier fetched before keeps working on its
+fp32 file, and the editor fetches the fp16 one in the background the
+first time the tier loads on Core ML, once a process, with no sheet:
+it comes from the same repository under the same license the tier's
+sheet showed, and the license note beside the tier is written again
+to name it. Core ML opens it from the tier's next load. One thread
+fetches a file at a time, the others leaving it to that one, and a
+download stalled on one file holds up no other. A test build never
+fetches in the background, whichever constructor it takes.
+
+## Said, and refused
+
+Where a develop says where the denoiser ran, it says "CoreML, fp16"
+when the fp16 file is what runs, in the editor's develop line and the
+CLI's log. `GREYCARD_DENOISE_FP32=1` keeps Core ML on the tier's own
+file, for comparing the two on one Mac or a frame the fp16 file is
+suspected on. There is no setting: the difference is under what a
+person could choose by (§489), the tiers already hold the choice of
+quality against speed, and the providers already differ from each
+other a little without asking.
+
+`tools/denoise/compare.py` prints the figures §489 printed for any two
+develops, for measuring the fp16 files on another provider: WebGPU on
+Windows and Linux, and CUDA, are not measured, and keep fp32 until
+they are.
 
 ## Checked
 
@@ -53,8 +79,9 @@ fetch (`Ai::for_test` turns it off).
   the fp32 file's was 0.202 s.
 - Unit tests hold each tier's fp16 file beside its own, by name and
   host, and only the denoisers having one; the store having a tier
-  without it, having it by its size, fetching it alone once and
-  leaving the tier's file as it was.
+  without it, having it by its size, fetching it alone once, writing
+  the note again, and leaving the tier's file as it was; which file
+  Core ML is handed, under which hash, refused, or failed before.
 
 ## Left
 
@@ -62,4 +89,23 @@ fetch (`Ai::for_test` turns it off).
   as its own, or the fp16 file stays in the store.
 - An M1 or M2: the race guards the speed, but the first compile there
   is not measured (§489).
-- The Assets panel's size for a tier leaves the fp16 file out.
+- The download sheet's size for a tier, and the CLI's, leave the fp16
+  file out, about half as much again on a Mac; its download is not in
+  the sheet's progress.
+- ureq is given no timeout in the store, so a download stalled on a
+  dead connection waits as long as the system lets it; one stalled
+  fp16 file now holds up only itself.
+
+## Review
+
+A fresh review found four faults in the first version: Core ML
+failing the fp16 file left the tier off Core ML for good, about three
+times slower than before on the M5's figures; one lock over every fp16
+download let a stalled background fetch hold up a fetch the user
+asked for; the CLI said a tier fetched when its fp16 file had not
+arrived, its warning landing on the progress line; and the background
+fetch left the license note not naming the file. The fallback to the
+fp32 file, a lock a file, the callers fetching and saying, and the
+note written again are the fixes; with them, tests of the plan and of
+the note, a test build kept from fetching, and fp16.py's checks made
+exits rather than asserts, with the graph's input and output names.

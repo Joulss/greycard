@@ -14,7 +14,7 @@
 //! edge), and any 2x2 pattern is presented to the network as RGGB by
 //! starting the tiles where the pattern reads that way.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use greycard_core::develop::denoise::Vst;
 use greycard_core::develop::noise::NoiseModel;
@@ -172,6 +172,44 @@ pub struct Denoiser {
     /// The packed side the session takes, where it takes one only
     /// (Core ML).
     fixed: Option<usize>,
+    /// Whether the session runs the tier's fp16 file: Core ML handed
+    /// it ([`Denoiser::from_store`]) and kept.
+    fp16: bool,
+}
+
+/// The variable that keeps Core ML on a tier's own fp32 file when
+/// set to anything but `0` or empty: for comparing the two on one
+/// Mac, or a frame the fp16 file is suspected on.
+pub const FP32_VAR: &str = "GREYCARD_DENOISE_FP32";
+
+fn fp32_wanted(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// The file Core ML opens for a tier and the hash its load is
+/// remembered under: the tier's fp16 file, here as `fp16`, where Core
+/// ML is `offered` and has not `failed` that file on record, under
+/// both files' hashes; otherwise the tier's own file, under its own.
+/// So a Mac whose Core ML cannot run the fp16 file opens the fp32 one
+/// there again from the next load, as it did before the fp16 file was
+/// published, rather than leaving Core ML for good.
+fn core_ml_plan(
+    own: &str,
+    fp16: Option<(&crate::registry::File, PathBuf)>,
+    offered: bool,
+    failed: impl FnOnce(&str) -> bool,
+) -> (Option<PathBuf>, String) {
+    if let Some((file, path)) = fp16.filter(|_| offered) {
+        let both = format!("{own}+{}", file.sha256);
+        if !failed(&both) {
+            return (Some(path), both);
+        }
+        log::info!(
+            "Core ML failed {} at an earlier load; it opens the tier's own file",
+            file.name
+        );
+    }
+    (None, own.to_string())
 }
 
 impl Denoiser {
@@ -222,6 +260,7 @@ impl Denoiser {
             },
         )?;
         let fixed = (loaded.provider == Provider::CoreMl).then_some(packed);
+        let fp16 = core_ml.is_some() && loaded.provider == Provider::CoreMl;
         let version = loaded
             .session
             .metadata()
@@ -233,6 +272,7 @@ impl Denoiser {
             version,
             fixed,
             tiling,
+            fp16,
         })
     }
 
@@ -248,14 +288,17 @@ impl Denoiser {
         if !store.have(model) {
             return Err(Error::Missing(model.name));
         }
-        let core_ml = providers
-            .contains(&Provider::CoreMl)
-            .then(|| store.core_ml_path(model))
-            .flatten();
-        let hash = match (&core_ml, crate::registry::core_ml_file(model)) {
-            (Some(_), Some(fp16)) => format!("{}+{}", model.files[0].sha256, fp16.sha256),
-            _ => model.files[0].sha256.to_string(),
-        };
+        let fp32 = fp32_wanted(std::env::var(FP32_VAR).ok().as_deref());
+        if fp32 {
+            log::info!("{FP32_VAR} is set: Core ML opens the tier's fp32 file");
+        }
+        let fp16 = crate::registry::core_ml_file(model).zip(store.core_ml_path(model));
+        let (core_ml, hash) = core_ml_plan(
+            model.files[0].sha256,
+            fp16,
+            providers.contains(&Provider::CoreMl) && !fp32,
+            |both| runtime::remembered_failure(store.root(), both, Provider::CoreMl, providers),
+        );
         let remember = runtime::Remembered {
             store_root: store.root(),
             model: model.id,
@@ -294,6 +337,21 @@ impl Denoiser {
 
     pub fn provider(&self) -> Provider {
         self.loaded.provider
+    }
+
+    /// Where it runs, for a person: the provider's label, and on Core
+    /// ML whether the tier's fp16 file is what runs.
+    pub fn label(&self) -> &'static str {
+        if self.fp16 {
+            "CoreML, fp16"
+        } else {
+            self.provider().label()
+        }
+    }
+
+    /// Whether the session runs the tier's fp16 file.
+    pub fn fp16(&self) -> bool {
+        self.fp16
     }
 
     /// The tiling to [`Denoiser::run`] at: chosen for its provider, or
@@ -577,6 +635,48 @@ mod tests {
             assert_eq!(tile, SMALL_TILE, "{v:?}");
             assert!(why.ends_with("not a tile"), "{why}");
         }
+    }
+
+    #[test]
+    fn core_ml_takes_the_fp16_file_unless_refused_or_failed() {
+        let file = crate::registry::core_ml_file(&crate::registry::DENOISE_BEST).unwrap();
+        let path = PathBuf::from("/store/best/denoise-v20-fp16.onnx");
+        let both = format!("own+{}", file.sha256);
+        let plan = |fp16: Option<(&crate::registry::File, PathBuf)>, offered, failed: bool| {
+            let mut asked = None;
+            let out = core_ml_plan("own", fp16, offered, |h| {
+                asked = Some(h.to_string());
+                failed
+            });
+            (out, asked)
+        };
+        // Here, offered, never failed: the fp16 file, under both hashes,
+        // the record asked under both.
+        assert_eq!(
+            plan(Some((file, path.clone())), true, false),
+            ((Some(path.clone()), both.clone()), Some(both.clone()))
+        );
+        // Failed on record: the tier's own file, under its own hash.
+        assert_eq!(
+            plan(Some((file, path.clone())), true, true),
+            ((None, "own".into()), Some(both))
+        );
+        // Not offered (no Core ML, or the variable set), or not here:
+        // the tier's own, and the record not asked.
+        assert_eq!(
+            plan(Some((file, path)), false, false),
+            ((None, "own".into()), None)
+        );
+        assert_eq!(plan(None, true, false), ((None, "own".into()), None));
+    }
+
+    #[test]
+    fn the_fp32_variable_is_on_unless_empty_or_zero() {
+        assert!(!fp32_wanted(None));
+        assert!(!fp32_wanted(Some("")));
+        assert!(!fp32_wanted(Some("0")));
+        assert!(fp32_wanted(Some("1")));
+        assert!(fp32_wanted(Some("yes")));
     }
 
     #[test]

@@ -436,7 +436,7 @@ pub(super) fn network(
             )?;
             let report = LearnedReport::Ran {
                 version: denoiser.version().to_string(),
-                provider: denoiser.provider().label(),
+                provider: denoiser.label(),
                 seconds: start.elapsed().as_secs_f64(),
             };
             if let Some((c, k)) = key

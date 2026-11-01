@@ -828,6 +828,16 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool 
             message: e.to_string(),
         },
     });
+    // On a Mac a denoiser tier's fp16 file follows, after the tier is
+    // said to be here, since the tier runs without it; a failure is
+    // logged, and the editor tries again at the tier's first load on
+    // Core ML (`ai::fetch_core_ml_quietly`).
+    if fetched
+        && cfg!(target_os = "macos")
+        && let Err(e) = store.fetch_core_ml(model, |_| {})
+    {
+        tracing::info!("{name}: its file for Core ML did not arrive: {e}");
+    }
     fetched
 }
 

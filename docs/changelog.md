@@ -91,7 +91,7 @@ design note behind it.
 
 ### Mac
 
-- The learned denoise runs 1.4 to 2.5 times as fast on Apple Silicon:
+- The learned denoise runs 1.4 to 2.5 times as fast on Apple silicon:
   Core ML takes each tier's fp16 copy, fetched with the tier, or in the
   background for a tier already fetched
   ([§508](https://github.com/jessolmstead/greycard/blob/master/docs/notes/508-the-fp16-denoisers-on-core-ml.md)).

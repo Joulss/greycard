@@ -184,6 +184,22 @@ fn fetch_models(
         // Close the rewritten line before anything else is printed,
         // so a failure does not land on the end of it.
         reporter.done();
+        let fetched = fetched.and_then(|()| match core_ml {
+            Some(_) => {
+                let mut reporter = FetchReport::new();
+                let extra = store.fetch_core_ml(model, |p| reporter.report(p));
+                reporter.done();
+                // Another thread's fetch of it returns at once: whether
+                // it is here is the answer.
+                extra.and_then(|()| match store.core_ml_path(model) {
+                    Some(_) => Ok(()),
+                    None => Err(greycard_ai::store::Error::Io(std::io::Error::other(
+                        "its file for Core ML is being fetched elsewhere",
+                    ))),
+                })
+            }
+            None => Ok(()),
+        });
         match fetched {
             Ok(()) => println!(
                 "  fetched     into {} in {:.1} s",
