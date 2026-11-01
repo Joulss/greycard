@@ -3379,6 +3379,7 @@ mod tests {
                         ..Default::default()
                     }],
                     invert: false,
+                    ..Default::default()
                 },
                 look: Default::default(),
             });
@@ -3442,6 +3443,7 @@ mod tests {
                         ..Default::default()
                     }],
                     invert: false,
+                    ..Default::default()
                 },
                 look: Default::default(),
             });
@@ -3629,6 +3631,7 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                ..Default::default()
             },
             ..Default::default()
         }

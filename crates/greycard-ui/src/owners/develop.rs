@@ -30,6 +30,15 @@ pub(crate) struct Develop {
     /// would take a raw's baseline and shoulder, or a raw's scene go
     /// to the screen without them.
     pub(crate) drawn_kind: finish::Source,
+    /// The guide plane of the picture on the GPU, whose picture on the
+    /// masks' grid the refined masks are made against; set with the
+    /// picture, as `drawn_kind` is.
+    pub(crate) drawn_guide: Arc<finish::Guide>,
+    /// The generation of the develop on the GPU, set with it.
+    pub(crate) drawn_generation: u64,
+    /// The develop whose refined masks' picture was asked of the
+    /// worker (`Job::MaskPicture`), so it is asked once.
+    pub(crate) picture_asked: Option<u64>,
     /// The open raw's own white as a temperature and tint, as its
     /// decode read it: what the white balance sliders show under As
     /// shot. None until the decode lands, and for a picture.
@@ -153,6 +162,9 @@ pub(crate) struct Develop {
     /// The brushes' rasters, by adjustment id and component index,
     /// kept up with their strokes a stamp at a time.
     pub(crate) rasters: HashMap<(u64, usize), Arc<Raster>>,
+    /// The masks refined (Refine edge), by adjustment id, with what
+    /// each was made from: made again only when that changes.
+    pub(crate) refined: HashMap<u64, crate::panel::mask::Refined>,
     /// The repair tool in hand, the stroke under way (a patch index),
     /// and a patch's handle being dragged: the patch as grabbed, the
     /// handle, and where it was on the view.

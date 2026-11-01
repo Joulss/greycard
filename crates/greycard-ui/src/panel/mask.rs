@@ -4,6 +4,7 @@ use crate::panel::edit::{develop_soon, read_edit, show_edit, show_names};
 use crate::panel::retouch::show_patches;
 use crate::panel::viewport::{source_to_view, view_on_picture, view_to_source};
 use crate::*;
+use greycard_render::refine::MaskPicture;
 
 /// Zoom to use for a view of `vw` by `vh`: the state's, or fit.
 /// A shape being drawn: what kind, where the press was in the
@@ -283,6 +284,131 @@ pub(crate) fn bake_locals(
     rasters.retain(|k, _| live.contains(k));
     learned.retain(|k, _| live.contains(k));
     (locals, wants)
+}
+
+/// A refined mask as the window keeps it, and what it was made from.
+pub(crate) struct Refined {
+    key: RefinedKey,
+    raster: Option<RasterRef>,
+}
+
+/// What a refined mask is made from: the mask (a brush's strokes in
+/// it, so its raster is not kept here: holding it would have the next
+/// stroke's `Arc::make_mut` copy it, and the key miss every frame),
+/// its learned shapes' rasters (never changed in place), the picture
+/// it is made against (held, so its place cannot be another's), and
+/// the exposure and the stops it is shown at.
+struct RefinedKey {
+    mask: greycard_edit::Mask,
+    learned: Vec<Option<RasterRef>>,
+    picture: Arc<MaskPicture>,
+    aspect: u32,
+    exposure: u32,
+    stops: u32,
+}
+
+/// A local's learned shapes' rasters, a brush's left out.
+fn learned_of<'a>(local: &'a Local) -> impl Iterator<Item = Option<&'a RasterRef>> + 'a {
+    local
+        .mask
+        .components
+        .iter()
+        .enumerate()
+        .map(|(i, c)| match c.shape {
+            Shape::Brush { .. } => None,
+            _ => local.rasters.get(i).and_then(|r| r.as_ref()),
+        })
+}
+
+impl RefinedKey {
+    /// Whether `local` refined against `picture` as given would be made
+    /// from what this key says: read off the local, nothing cloned.
+    fn serves(
+        &self,
+        local: &Local,
+        picture: &Arc<MaskPicture>,
+        aspect: f32,
+        exposure: f32,
+        stops: f32,
+    ) -> bool {
+        Arc::ptr_eq(&self.picture, picture)
+            && self.aspect == aspect.to_bits()
+            && self.exposure == exposure.to_bits()
+            && self.stops == stops.to_bits()
+            && self.mask == local.mask
+            && self.learned.len() == local.mask.components.len()
+            && self
+                .learned
+                .iter()
+                .map(Option::as_ref)
+                .eq(learned_of(local))
+    }
+}
+
+/// The baked `locals` of `edit` refined where their Refine edge is on,
+/// against `picture` (the one on the GPU's, when it is the open frame's
+/// own at its turn), at the global `exposure` and shown `stops` over
+/// the picture as developed: each made again only when what it is made
+/// from changed, so a look slider moved under a refined mask costs
+/// nothing. A mask switched off is refined too, since its overlay can
+/// still be shown. Without a picture nothing is refined.
+pub(crate) fn refine_locals(
+    edit: &Edit,
+    locals: &mut [Local],
+    refined: &mut HashMap<u64, Refined>,
+    picture: Option<&Arc<MaskPicture>>,
+    aspect: f32,
+    exposure: f32,
+    stops: f32,
+) {
+    let ids: Vec<u64> = edit
+        .adjustments
+        .iter()
+        .take(locals.len())
+        .map(|a| a.id)
+        .collect();
+    refined.retain(|id, _| ids.contains(id));
+    for (local, id) in locals.iter_mut().zip(ids) {
+        let Some(picture) = picture.filter(|_| local.mask.refine > 0.0) else {
+            refined.remove(&id);
+            continue;
+        };
+        if let Some(r) = refined
+            .get(&id)
+            .filter(|r| r.key.serves(local, picture, aspect, exposure, stops))
+        {
+            local.refined = r.raster.clone();
+            continue;
+        }
+        local.refine(picture, aspect, exposure, stops);
+        let key = RefinedKey {
+            mask: local.mask.clone(),
+            learned: learned_of(local).map(|r| r.cloned()).collect(),
+            picture: picture.clone(),
+            aspect: aspect.to_bits(),
+            exposure: exposure.to_bits(),
+            stops: stops.to_bits(),
+        };
+        refined.insert(
+            id,
+            Refined {
+                key,
+                raster: local.refined.clone(),
+            },
+        );
+    }
+}
+
+/// Whether the drawn picture's refined masks want their picture asked
+/// of the worker: an enabled mask of `edit` refines, the drawn develop
+/// is the open frame's own at its turn and came without one, and it
+/// was not asked for that develop already.
+pub(crate) fn picture_wanted(st: &State, edit: &Edit) -> bool {
+    greycard_render::refine::refines(edit)
+        && crate::panel::viewport::own_develop(st) == Some(0)
+        && st.develop.drawn_guide.picture.is_none()
+        && !st.develop.drawn_guide.data.is_empty()
+        && st.develop.picture_asked != Some(st.develop.drawn_generation)
 }
 
 /// Frame `file` is sent to the worker to open: the learned rasters held
@@ -795,6 +921,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 mask: Mask {
                     components: Vec::new(),
                     invert: false,
+                    ..Default::default()
                 },
                 look: Look::default(),
             });
@@ -1666,8 +1793,9 @@ mod tests {
     use std::cell::Cell;
 
     /// A look slider moved with the overlay showing turns it off, every
-    /// time; a shape control (feather, invert, the toggle itself) leaves
-    /// it as it is.
+    /// time; a shape control (feather, invert, Refine edge, the toggle
+    /// itself) leaves it as it is. Refine edge reads into the mask and
+    /// is shown again from it.
     #[test]
     fn a_look_change_hides_the_overlay_and_a_shape_change_does_not() {
         let app = window(1);
@@ -1680,7 +1808,19 @@ mod tests {
         app.invoke_view_changed();
         app.set_mask_invert(true);
         app.invoke_view_changed();
+        app.set_mask_refine(0.4);
+        app.invoke_view_changed();
         assert!(app.get_show_mask(), "a shape control leaves the overlay");
+        let read = || {
+            let st = state.borrow();
+            read_edit(&app, &st.develop.edit, st.develop.target).adjustments[0]
+                .mask
+                .refine
+        };
+        assert_eq!(read(), 0.4);
+        app.invoke_target_changed(0);
+        app.invoke_target_changed(1);
+        assert_eq!(app.get_mask_refine(), 0.4, "shown again from the edit");
         app.set_exposure(0.5);
         app.invoke_view_changed();
         assert!(!app.get_show_mask(), "a look slider hides it");
@@ -1915,6 +2055,7 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                ..Default::default()
             },
             look: Default::default(),
         });
@@ -1988,6 +2129,80 @@ mod tests {
             None,
         );
         assert_eq!(wants, vec![((1, 0), Shape::Subject {})]);
+    }
+
+    /// A refined mask is made once and kept while nothing it is made
+    /// from moves, its brush painted a stroke at a time as the window
+    /// paints it: not again on the next frame, made again for a new
+    /// stroke, a new Refine edge, an exposure, or a new picture, and let
+    /// go with its Refine edge.
+    #[test]
+    fn a_refined_mask_is_made_again_only_when_its_making_moves() {
+        let image = greycard_core::image::WorkingImage {
+            width: 60,
+            height: 40,
+            data: (0..60 * 40 * 3)
+                .map(|k| (k / 3 % 60) as f32 / 60.0)
+                .collect(),
+        };
+        let picture = Arc::new(greycard_render::refine::mask_picture(&image));
+        let mut stroke =
+            greycard_edit::brush::Stroke::new(greycard_edit::brush::Op::Add, 0.1, 0.5, 1.0);
+        stroke.points = vec![[0.3, 0.3], [0.5, 0.35]];
+        let mut edit = Edit::default();
+        edit.adjustments.push(Adjustment {
+            id: 7,
+            mask: Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: Shape::Brush {
+                        strokes: vec![stroke],
+                    },
+                    ..Default::default()
+                }],
+                refine: 0.5,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let aspect = 40.0 / 60.0;
+        let mut rasters = HashMap::new();
+        let mut learned = HashMap::new();
+        let mut cache = HashMap::new();
+        let mut made = |edit: &Edit, picture: &Arc<MaskPicture>, exposure: f32| {
+            let (mut locals, _) = bake_locals(edit, &mut rasters, &mut learned, aspect, None);
+            refine_locals(
+                edit,
+                &mut locals,
+                &mut cache,
+                Some(picture),
+                aspect,
+                exposure,
+                exposure + 0.8,
+            );
+            locals[0].refined.clone()
+        };
+        let first = made(&edit, &picture, 0.0).expect("refined");
+        let again = made(&edit, &picture, 0.0).expect("refined");
+        assert!(Arc::ptr_eq(&first.0, &again.0), "kept the next frame");
+        let brighter = made(&edit, &picture, 1.0).expect("refined");
+        assert!(!Arc::ptr_eq(&first.0, &brighter.0), "an exposure");
+        let Shape::Brush { strokes } = &mut edit.adjustments[0].mask.components[0].shape else {
+            unreachable!()
+        };
+        strokes[0].points.push([0.6, 0.5]);
+        let stroked = made(&edit, &picture, 1.0).expect("refined");
+        assert!(!Arc::ptr_eq(&brighter.0, &stroked.0), "a stroke");
+        let kept = made(&edit, &picture, 1.0).expect("refined");
+        assert!(Arc::ptr_eq(&stroked.0, &kept.0), "kept after the stroke");
+        edit.adjustments[0].mask.refine = 0.7;
+        let moved = made(&edit, &picture, 1.0).expect("refined");
+        assert!(!Arc::ptr_eq(&kept.0, &moved.0), "a new Refine edge");
+        let other = Arc::new(greycard_render::refine::mask_picture(&image));
+        let anew = made(&edit, &other, 1.0).expect("refined");
+        assert!(!Arc::ptr_eq(&moved.0, &anew.0), "a new picture");
+        edit.adjustments[0].mask.refine = 0.0;
+        assert!(made(&edit, &other, 1.0).is_none());
+        assert!(cache.is_empty());
     }
 
     /// Picking another mask keeps today's rule: the look on show is
@@ -2547,6 +2762,7 @@ mod tests {
                 one(Shape::of_kind("Radial")),
             ],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(component_heading(&mask, 0), "Radial 1");
         assert_eq!(component_heading(&mask, 1), "Luminance");
@@ -3232,9 +3448,10 @@ mod tests {
     #[test]
     fn the_shape_buttons_and_new_mask_each_appear_once() {
         let app = window(1);
-        // The tall desktop window the test was written at.
+        // A tall desktop window, the whole of the mask's section on it
+        // with Refine edge under the toggles.
         app.window()
-            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+            .set_size(slint::LogicalSize::new(1500.0, 1000.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
         // Queried only after the mask exists: a query on this window
@@ -3314,6 +3531,7 @@ mod tests {
                         ..Default::default()
                     }],
                     invert: false,
+                    ..Default::default()
                 },
                 ..Default::default()
             });
@@ -3679,9 +3897,10 @@ mod tests {
     fn a_long_adjustments_list_scrolls_inside_itself() {
         use crate::testing::buttons;
         let app = window(1);
-        // The tall desktop window the test was written at.
+        // A tall desktop window, the whole of the mask's section on it
+        // with Refine edge under the toggles.
         app.window()
-            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+            .set_size(slint::LogicalSize::new(1500.0, 1000.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
         settle_layout(&app);

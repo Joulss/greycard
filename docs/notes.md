@@ -515,3 +515,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§500. The window fit to the work area](notes/500-the-window-fit-to-the-work-area.md) (2026-11-01)
 - [§501. The engine, part two: what a kept point carries](notes/501-the-engine-part-two-what-a-kept-point-carries.md) (2026-11-01)
 - [§502. No bare folder removal in a test](notes/502-no-bare-folder-removal-in-a-test.md) (2026-11-01)
+- [§503. Refine edge on a mask](notes/503-refine-edge-on-a-mask.md) (2026-11-01)

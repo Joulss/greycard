@@ -598,6 +598,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     if let Some(a) = target.and_then(|i| edit.adjustments.get_mut(i)) {
         a.enabled = app.get_adjustment_enabled();
         a.mask.invert = app.get_mask_invert();
+        a.mask.refine = app.get_mask_refine().clamp(0.0, 1.0);
         let name = app.get_adjustment_name();
         if !name.trim().is_empty() {
             a.name = name.trim().to_string();
@@ -732,6 +733,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     if let Some((i, a)) = target.map(|i| (i, &edit.adjustments[i])) {
         app.set_adjustment_enabled(a.enabled);
         app.set_mask_invert(a.mask.invert);
+        app.set_mask_refine(a.mask.refine);
         app.set_adjustment_name(a.name.as_str().into());
         app.set_target_name(heading_name(&a.name, i).into());
         app.set_component_names(component_names(&a.mask));

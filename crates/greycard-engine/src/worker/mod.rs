@@ -211,6 +211,10 @@ pub enum Job {
     /// What the Landscape button offers on the open picture, from the
     /// sky's model run once on it: answered with `Landscape`.
     Landscape,
+    /// The picture the refined masks of `edit` are made against, for
+    /// the open picture's develop `generation` drawn without one: made
+    /// from the base in hand, answered with `MaskPicture`.
+    MaskPicture { edit: Box<Edit>, generation: u64 },
     /// `frame` was saved under `edit` at `turn`: when it is the open
     /// frame and its develop is in hand, the edit's pictures are made
     /// from it and kept (`edited`); when the develop is still to land,
@@ -555,6 +559,13 @@ pub enum Outcome {
         file: Option<PathBuf>,
         offers: Result<(Vec<greycard_ai::landscape::Offer>, &'static str, f64), String>,
     },
+    /// The picture the refined masks are made against, for the develop
+    /// `generation` asked with (`Job::MaskPicture`); none with no base
+    /// in hand.
+    MaskPicture {
+        generation: u64,
+        picture: Option<Arc<greycard_render::refine::MaskPicture>>,
+    },
     Fetching {
         name: &'static str,
         done: u64,
@@ -628,6 +639,9 @@ struct Queue {
     people: bool,
     /// What the Landscape button offers is wanted (`Job::Landscape`).
     landscape: bool,
+    /// The refined masks' picture is wanted (`Job::MaskPicture`), the
+    /// newest ask replacing an older.
+    mask_picture: Option<Job>,
     /// The saves of the open frame (`Job::Keep`), the newest a frame,
     /// taken ahead of a develop or an open queued after them, so a frame
     /// left at once still has its picture in hand when its save is seen.
@@ -806,7 +820,7 @@ struct InHand<'a> {
     opened: Option<&'a std::path::Path>,
     last: Option<&'a Last>,
     shown: Option<&'a ShownTexture>,
-    base: Option<&'a Base>,
+    base: Option<&'a mut Base>,
     gpu: Option<&'a greycard_gpu::Context>,
 }
 
@@ -928,6 +942,7 @@ impl Blame {
             | Job::FetchLenses
             | Job::Gpu
             | Job::MasksFor(_)
+            | Job::MaskPicture { .. }
             | Job::Keep { .. } => Blame::Nobody,
         }
     }
@@ -1070,11 +1085,24 @@ struct Base {
     /// develop, and a move elsewhere that leaves these alone should
     /// not make them again.
     planes: Option<KeptPlanes>,
+    /// The picture the refined masks are made against, with what it
+    /// was made from: made only for an edit that refines a mask
+    /// ([`masks::mask_picture`]), kept for the next develop of it.
+    mask_picture: Option<KeptMaskPicture>,
     /// Taken back from the shelf of frames left behind
     /// ([`shelf::Shelf::take`]) and not developed from since: the next
     /// develop's log line says where its base came from, and clears
     /// this.
     from_shelf: bool,
+}
+
+/// The refined masks' picture ([`greycard_render::refine::MaskPicture`])
+/// with what it was made from: the patched picture and the Detail
+/// section run on it before the sharpen.
+struct KeptMaskPicture {
+    patched: Arc<WorkingImage>,
+    detail: greycard_edit::Detail,
+    picture: Arc<greycard_render::refine::MaskPicture>,
 }
 
 /// The masks' bands ([`greycard_render::detail::DetailPlanes`]) with what they

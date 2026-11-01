@@ -276,7 +276,7 @@ pub fn develop_as(
         clip_level: walked.meta.clip_level,
         guide: walked
             .taps
-            .guide
+            .guide_for_finish()
             .unwrap_or_else(|| Arc::new(greycard_render::finish::Guide::NONE)),
         kind: walked.meta.source,
         white,

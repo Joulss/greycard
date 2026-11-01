@@ -678,6 +678,7 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                ..Default::default()
             },
             look: local.clone(),
             ..Default::default()
@@ -719,6 +720,7 @@ mod tests {
                         ..Default::default()
                     }],
                     invert: id == 4,
+                    ..Default::default()
                 },
                 look,
             });

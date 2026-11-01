@@ -38,6 +38,10 @@ design note behind it.
 
 ### Color
 
+- A mask gains Refine edge, under Show mask and Invert: its edge is
+  fitted to the picture's, so a brush's or an AI mask's edge follows
+  the subject's and two masks meet without a seam
+  ([§503](https://github.com/jessolmstead/greycard/blob/master/docs/notes/503-refine-edge-on-a-mask.md)).
 - LENS offers a Lens picker: the database's lenses for the body when
   the file names none, and Adobe lens profiles (.lcp) placed beside
   the camera profiles

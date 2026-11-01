@@ -955,6 +955,21 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::Landscape { file, offers } => {
             crate::panel::landscape::found(&mut state.borrow_mut(), app, file, offers);
         }
+        Outcome::MaskPicture {
+            generation,
+            picture: Some(picture),
+        } => {
+            // For the develop still drawn: its refined masks are made
+            // against it on the next frame.
+            let mut st = state.borrow_mut();
+            if st.develop.drawn_generation == generation && st.develop.drawn_guide.picture.is_none()
+            {
+                st.develop.drawn_guide =
+                    Arc::new(st.develop.drawn_guide.with_picture(Some(picture)));
+                app.window().request_redraw();
+            }
+        }
+        Outcome::MaskPicture { picture: None, .. } => {}
         Outcome::People { file, people } => {
             let changed =
                 crate::panel::parts::people_found(&mut state.borrow_mut(), app, file, people);

@@ -236,6 +236,7 @@ export component AdjustmentsSection inherits Section {
     in-out property <bool> collapsed-mask;
     in-out property <int> target;
     in-out property <bool> mask-invert;
+    in-out property <float> mask-refine;
     in-out property <bool> has-feather;
     in-out property <float> mask-feather;
     in-out property <float> lum-low;
@@ -353,6 +354,20 @@ export component AdjustmentsSection inherits Section {
                         checked <=> root.mask-invert;
                         toggled => { root.view-changed(); }
                     }
+                }
+                // The whole mask's edge drawn onto the picture's.
+                EditSlider {
+                    label: "Refine edge";
+                    label-width: 84px;
+                    minimum: 0;
+                    maximum: 1;
+                    default: 0;
+                    step: 0.01;
+                    steps: Steps.percent;
+                    value <=> root.mask-refine;
+                    scale: 100;
+                    text: round(root.mask-refine * 100) + "%";
+                    changed(v) => { root.view-changed(); }
                 }
             }
         }

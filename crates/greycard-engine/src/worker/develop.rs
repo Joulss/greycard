@@ -118,6 +118,7 @@ pub(super) fn develop_job(
                 gave_way: None,
                 profile: None,
                 from_shelf: false,
+                mask_picture: None,
             }),
             (Input::Raw(frame), tier)
                 if let Some(why) = denoise_unavailable(frame, tier.is_some()) =>
@@ -326,6 +327,12 @@ pub(super) fn develop_job(
     };
     // The local contrast and the dehaze on one copy of the patched
     // picture, on the CPU; none when neither is asked for.
+    // The refined masks' picture, made only for an edit that refines
+    // a mask; let go when it no longer does.
+    let refines = greycard_render::refine::refines(edit);
+    if !refines {
+        b.mask_picture = None;
+    }
     let clip_level = b.clip_level;
     let before_sharpen = |copy: &mut Option<WorkingImage>| {
         let detail = edit.detail.options().map(|options| {
@@ -368,6 +375,11 @@ pub(super) fn develop_job(
             match sharpened {
                 Ok((stats, texture)) => {
                     let planes = planes.land(b);
+                    let picture = refines.then(|| {
+                        let pre = super::masks::Pre::Find(Some(ctx));
+                        super::masks::mask_picture(b, &patched, edit, pre)
+                    });
+                    let guide = super::masks::guide_with(b, picture);
                     let pre = b.pre.as_ref().expect("made, or kept");
                     let seconds = start.elapsed().as_secs_f64();
                     stages.extend(ran.upload.map(|s| ("upload", s)));
@@ -391,7 +403,7 @@ pub(super) fn develop_job(
                             turn,
                             image: Developed::Texture(texture),
                             kind: b.source,
-                            guide: b.guide.clone(),
+                            guide,
                             planes,
                             white: b.white,
                             seconds,
@@ -441,6 +453,13 @@ pub(super) fn develop_job(
                     Ok(Some(made)) => {
                         let planes = planes.land(b);
                         let texture = made.texture.expect("a viewport texture was asked for");
+                        // The sharpen is off: the texture is the
+                        // picture before it.
+                        let picture = refines.then(|| {
+                            let pre = super::masks::Pre::Viewport(ctx, &texture);
+                            super::masks::mask_picture(b, &patched, edit, pre)
+                        });
+                        let guide = super::masks::guide_with(b, picture);
                         let seconds = start.elapsed().as_secs_f64();
                         stages.extend(ran.upload.map(|s| ("upload", s)));
                         note_developed(
@@ -462,7 +481,7 @@ pub(super) fn develop_job(
                                 turn,
                                 image: Developed::Texture(texture),
                                 kind: b.source,
-                                guide: b.guide.clone(),
+                                guide,
                                 planes,
                                 white: b.white,
                                 seconds,
@@ -503,6 +522,10 @@ pub(super) fn develop_job(
     }
     let mut copy: Option<WorkingImage> = None;
     let (detail, dehaze_stats) = before_sharpen(&mut copy);
+    let picture = refines.then(|| {
+        let pre = copy.as_ref().unwrap_or(&*patched);
+        super::masks::mask_picture(b, &patched, edit, super::masks::Pre::Cpu(pre))
+    });
     let (stats, mask) = match edit.sharpen.options() {
         Some(options) => {
             let image = copy.get_or_insert_with(|| (*patched).clone());
@@ -538,7 +561,7 @@ pub(super) fn develop_job(
             turn,
             image: Developed::Halves(halves),
             kind: b.source,
-            guide: b.guide.clone(),
+            guide: super::masks::guide_with(b, picture),
             planes: planes.land(b),
             white: b.white,
             seconds,

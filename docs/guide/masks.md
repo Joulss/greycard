@@ -32,15 +32,15 @@ editing.
 With a mask chosen, you see, top to bottom:
 
 1. **MASK**, headed with the mask's name: its name field, **Show
-   mask** and **Invert**, then **Shapes**, one row per shape in the
-   mask, the chosen shape's settings when it has any, and **Add a
-   shape**, the buttons that add another shape.
+   mask**, **Invert**, and **Refine edge**, then **Shapes**, one row
+   per shape in the mask, the chosen shape's settings when it has
+   any, and **Add a shape**, the buttons that add another shape.
 2. **The mask's own sliders:** **WHITE BALANCE**, **LIGHT**,
    **COLOR**, **CURVES**, **COLOR MIXER**, **COLOR GRADING**,
    **TINT** and **DETAIL**, each headed with the mask's name as you typed
    it ("Sky 1 · LIGHT").
 
-### Naming, Show mask and Invert
+### Naming, Show mask, Invert, and Refine edge
 
 A mask is named for its first shape ("Subject 1", "Linear 2"). Type
 in the name field to call it something you'll recognize; a name you
@@ -52,14 +52,31 @@ goes back to how you had it when you finish.
 
 When you move a slider in the mask's own sections, **Show mask** turns
 off by itself, so you see the edit rather than the red. A shape's
-settings, such as **Feather** or a range, **Invert** and the brush
-leave it showing, since those are about the shape. Turn it on again
+settings, such as **Feather** or a range, **Invert**, **Refine
+edge**, and the brush leave it showing, since those are about the
+shape. Turn it on again
 whenever you want to check the shape.
 
 **Invert** flips the whole mask: the adjustment then acts everywhere
 the shapes are not.
 
 **O** turns the chosen mask's **Show mask** on or off.
+
+**Refine edge** fits the whole mask's edge to the picture's, after
+its shapes are combined and inverted. At 0, the default, the mask is
+exactly what its shapes make. Turned up, where the picture has an edge
+within reach of the mask's, the mask's edge takes the picture's shape
+and softness and is drawn toward it; where the picture is flat, the
+mask's edge is smoothed into a ramp. The slider sets the reach: at
+100% about 1.5% of the picture's width each way. It reads the
+picture's color as well as its lightness, so a red coat against green
+leaves of the same lightness still holds the mask. It fits an edge
+drawn near the subject's; it does not find one drawn far from it.
+
+The edge is found on the masks' own grid, 2048 across whatever the
+picture's size: about 4 pixels a step on a 45 MP frame, so at 1:1 the
+refined edge is that soft at the least. A Sky made at twice the size
+is read at that grid too once it is refined.
 
 ### The shapes list
 

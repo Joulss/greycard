@@ -53,6 +53,8 @@ pub(crate) fn drawn_kind(st: &State) -> finish::Source {
 /// Both are done here and nowhere else.
 pub(crate) fn picture_up(develop: &mut owners::Develop, landed: &crate::panel::deliver::Landed) {
     develop.drawn_kind = landed.kind;
+    develop.drawn_guide = landed.guide.clone();
+    develop.drawn_generation = landed.generation;
     let Some(renderer) = develop.renderer.as_mut() else {
         return;
     };

@@ -427,7 +427,8 @@ impl Shelf {
 }
 
 /// The bytes of the pictures a shelved base holds: its own, its
-/// patched picture, the learned pair, and the guide plane, each picture
+/// patched picture, the learned pair, the guide plane, and the refined
+/// masks' picture when one was made, each picture
 /// counted once however many of them share it (a blend at either end
 /// of its strength is one of the pair).
 pub(super) fn bytes_of(base: &Base, learned: Option<&LearnedBase>) -> u64 {
@@ -448,7 +449,8 @@ pub(super) fn bytes_of(base: &Base, learned: Option<&LearnedBase>) -> u64 {
         count(&l.model);
         count(&l.plain);
     }
-    total + (base.guide.data.len() * std::mem::size_of::<f32>()) as u64
+    let picture = base.mask_picture.as_ref().map_or(0, |k| k.picture.bytes());
+    total + (base.guide.data.len() * std::mem::size_of::<f32>()) as u64 + picture
 }
 
 #[cfg(test)]
@@ -478,6 +480,7 @@ mod tests {
             gave_way: None,
             profile: None,
             from_shelf: false,
+            mask_picture: None,
         }
     }
 

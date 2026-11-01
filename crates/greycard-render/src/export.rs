@@ -613,6 +613,7 @@ pub fn render_framed(
         None => image,
     };
     let global = finish::Baked::global(edit, kind);
+    let stops = kind.baseline(&edit.light) + edit.light.exposure;
     let (sw, sh) = (source.0 as f32, source.1 as f32);
     let locals: Vec<finish::Local> = edit
         .adjustments
@@ -620,7 +621,13 @@ pub fn render_framed(
         .take(finish::MAX_LOCALS)
         .map(|a| {
             let rasters = finish::rasterize(&a.mask, sh / sw, |i| learned.get(&(a.id, i)).cloned());
-            finish::Local::of(a, rasters, white)
+            let mut local = finish::Local::of(a, rasters, white);
+            if local.enabled
+                && let Some(p) = guide.and_then(|g| g.picture.as_ref())
+            {
+                local.refine(p, sh / sw, global.light.exposure, stops);
+            }
+            local
         })
         .collect();
     // A pixel of the image, through the resize and the frame, to the

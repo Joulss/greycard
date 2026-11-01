@@ -163,6 +163,19 @@ pub struct Taps {
     pub planes: Option<Arc<DetailPlanes>>,
     /// The picture the learned masks are made on, and how.
     pub masks: Option<(Masks, Arc<WorkingImage>)>,
+    /// The picture the refined masks are made against.
+    pub picture: Option<Arc<greycard_render::refine::MaskPicture>>,
+}
+
+impl Taps {
+    /// The guide plane, with the refined masks' picture beside it when
+    /// one was made: what every finish of this walk reads.
+    pub fn guide_for_finish(&self) -> Option<Arc<Guide>> {
+        match (&self.guide, &self.picture) {
+            (Some(g), Some(p)) => Some(Arc::new(g.with_picture(Some(p.clone())))),
+            (g, _) => g.clone(),
+        }
+    }
 }
 
 /// The rasters of the learned masks, by adjustment id and component.
@@ -946,6 +959,14 @@ fn attempt(
                             .push(("guide", started.elapsed().as_secs_f64()));
                     }
                     Tap::Masks(how) => st.taps.masks = Some((*how, image.clone())),
+                    Tap::MaskPicture => {
+                        let started = Instant::now();
+                        st.taps.picture =
+                            Some(Arc::new(greycard_render::refine::mask_picture(image)));
+                        walked
+                            .seconds
+                            .push(("mask picture", started.elapsed().as_secs_f64()));
+                    }
                     Tap::Planes {
                         wants,
                         haze_after,
@@ -2336,6 +2357,7 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                refine: 0.0,
             },
             ..Default::default()
         });

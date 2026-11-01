@@ -397,6 +397,7 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                ..Default::default()
             },
             look: greycard_edit::Look {
                 detail,

@@ -625,6 +625,7 @@ mod tests {
             gave_way: None,
             profile: None,
             from_shelf: false,
+            mask_picture: None,
         }
     }
 

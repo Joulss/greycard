@@ -23,6 +23,7 @@ pub mod noise;
 pub mod profile;
 pub mod rcd;
 pub mod reduced;
+pub mod refine_edge;
 pub mod retouch;
 pub mod segments;
 pub mod sharpen;

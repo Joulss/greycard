@@ -212,6 +212,10 @@ pub struct Local {
     pub enabled: bool,
     /// The mask's brushes, one entry per component, painted.
     pub rasters: Vec<Option<RasterRef>>,
+    /// The mask refined, read in place of its shapes: made when its
+    /// Refine edge is on and the picture it is made against is there
+    /// ([`crate::refine::refined`]).
+    pub refined: Option<RasterRef>,
 }
 
 impl Local {
@@ -237,9 +241,25 @@ impl Local {
             mask: a.mask.clone(),
             enabled: a.enabled && !a.mask.is_empty(),
             rasters,
+            refined: None,
         }
     }
 
+    /// Its mask refined against `picture`, the picture `aspect` (height
+    /// over width) tall, at the global `exposure` and shown `stops`
+    /// over the picture as developed (the baseline and the exposure),
+    /// when its Refine edge is on: the one way the viewport and the
+    /// export both make it.
+    pub fn refine(
+        &mut self,
+        picture: &crate::refine::MaskPicture,
+        aspect: f32,
+        exposure: f32,
+        stops: f32,
+    ) {
+        self.refined =
+            crate::refine::refined(&self.mask, &self.rasters, picture, aspect, exposure, stops);
+    }
     /// The mask's value at (u, v), its brushes from their rasters.
     #[cfg(test)]
     pub fn weight(&self, u: f32, v: f32) -> f32 {
@@ -248,7 +268,11 @@ impl Local {
 
     /// The mask's value at (u, v), its brushes from their rasters and
     /// its range shapes from the picture's `sample` there ([`sample`]).
+    /// A refined mask is its raster there.
     pub fn weight_sampled(&self, u: f32, v: f32, sample: Option<Sample>) -> f32 {
+        if let Some(r) = &self.refined {
+            return r.0.at(u, v);
+        }
         self.mask.at_sampled(u, v, sample, |i, u, v| {
             self.rasters
                 .get(i)
@@ -259,12 +283,12 @@ impl Local {
 
     /// Whether this local's mask reads the picture, switched on.
     pub fn reads_picture(&self) -> bool {
-        self.enabled && self.mask.reads_picture()
+        self.enabled && self.refined.is_none() && self.mask.reads_picture()
     }
 
     /// Whether it reads the picture's color, switched on.
     pub fn reads_color(&self) -> bool {
-        self.enabled && self.mask.reads_color()
+        self.enabled && self.refined.is_none() && self.mask.reads_color()
     }
 }
 
@@ -395,6 +419,11 @@ pub struct Guide {
     /// plane ([`FRAME_TOP`]). Where the highlights ramp sits is placed
     /// by these ([`FrameRange`]).
     pub range: [f32; 2],
+    /// The picture before its sharpen on the masks' grid, which a
+    /// refined mask is made against ([`crate::refine`]): made only
+    /// for an edit that refines a mask, and set beside the plane by
+    /// whoever made it ([`Guide::with_picture`]).
+    pub picture: Option<Arc<crate::refine::MaskPicture>>,
 }
 
 impl Guide {
@@ -411,7 +440,16 @@ impl Guide {
         scale: 1,
         data: Vec::new(),
         range: [0.0, 0.0],
+        picture: None,
     };
+
+    /// This plane with `picture` beside it.
+    pub fn with_picture(&self, picture: Option<Arc<crate::refine::MaskPicture>>) -> Self {
+        Self {
+            picture,
+            ..self.clone()
+        }
+    }
 
     /// The guide at a continuous source position, bilinear, the edges
     /// clamped, as the shader's `guide_at` reads it by texel, so the
@@ -478,6 +516,7 @@ pub fn guide_plane(image: &WorkingImage) -> Guide {
         scale,
         data,
         range,
+        picture: None,
     }
 }
 
@@ -4143,9 +4182,11 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                ..Default::default()
             },
             enabled: true,
             rasters: vec![None],
+            refined: None,
         };
         let m = crate::export::Space::Srgb.matrix();
         let global = plain_look();
@@ -4283,6 +4324,7 @@ mod tests {
             rasters: rasterize(&mask, 0.667, |_| None),
             mask,
             enabled: true,
+            refined: None,
         };
         let both = local(Mask {
             components: vec![
@@ -4290,12 +4332,14 @@ mod tests {
                 disc([0.4, 0.5], Mode::Subtract),
             ],
             invert: false,
+            ..Default::default()
         });
         let mut off = both.clone();
         off.mask.components[1].enabled = false;
         let add_alone = local(Mask {
             components: vec![disc([0.3, 0.5], Mode::Add)],
             invert: false,
+            ..Default::default()
         });
         assert_eq!(both.weight(0.45, 0.5), 0.0);
         for k in 0..32 {
@@ -4315,6 +4359,7 @@ mod tests {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         };
         assert!(rasterize(&brushed, 0.667, |_| None)[0].is_none());
         // Every shape off is an empty mask, which the callers turn
@@ -4388,9 +4433,11 @@ mod tests {
                         ..Default::default()
                     }],
                     invert: false,
+                    ..Default::default()
                 },
                 enabled: true,
                 rasters: vec![None],
+                refined: None,
             }
         };
         let render = |global: &Baked, locals: &[Local]| -> Vec<u8> {

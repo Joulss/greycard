@@ -1051,11 +1051,14 @@ clears or a tester asks for it.
       camera-scanning workflow alongside digital raws (reddit,
       2026-10-31)
 
-- [ ] An edge-aware refinement for a mask's edge, a guided filter on
-      the mask against the picture, so a brush's or an AI mask's edge
-      follows the subject's and two masks meet without a seam; the
-      guide gets a worked example of each fade (discussion 59,
-      2026-11-01)
+- [ ] Refine edge at full resolution (§503): the fitted a·Oklab+b
+      sent to the finish and the shader and applied per pixel, so the
+      edge is finer than the 2048 grid's 4 px at 45 MP and a Sky's
+      wide raster keeps its detail; and the filter off the window's
+      thread while a slider drags
+- [ ] The guide's worked example of each fade (Feather, Flow,
+      Luminance, Color), numbers checked against the code
+      (discussion 59, 2026-11-01)
 - [ ] Drawn shapes as masks: a polygon and a curved path with a
       feathered edge, inverted and combined like the rest
       (discussion 59, 2026-11-01)

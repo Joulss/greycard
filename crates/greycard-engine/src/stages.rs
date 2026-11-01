@@ -435,6 +435,9 @@ pub enum Tap {
     },
     /// The learned masks' rasters.
     Masks(Masks),
+    /// The picture the refined masks are made against, before the
+    /// sharpen: only for an edit that refines a mask.
+    MaskPicture,
 }
 
 /// Where a walk leaves what it has for the next to start from.
@@ -755,6 +758,9 @@ pub fn stages(
         return s;
     }
     s.keep(Keep::PreSharpen);
+    if greycard_render::refine::refines(edit) {
+        s.tap(Tap::MaskPicture);
+    }
     match edit.sharpen.options() {
         Some(_) if reduced => s.skip("the capture sharpen", Skip::Reduced),
         options => s.op_if(options.map(Stage::Sharpen)),
@@ -920,6 +926,7 @@ mod tests {
                 Step::Tap(Tap::Guide) => "guide".into(),
                 Step::Tap(Tap::Planes { beside, .. }) => format!("planes beside {beside}"),
                 Step::Tap(Tap::Masks(m)) => format!("masks {m:?}"),
+                Step::Tap(Tap::MaskPicture) => "mask picture".into(),
                 Step::Keep(k) => format!("keep {k:?}"),
             })
             .collect()

@@ -712,6 +712,17 @@ pub struct Mask {
     #[serde(serialize_with = "known_only")]
     pub components: Vec<Component>,
     pub invert: bool,
+    /// Refine edge, 0 to 1: how far the composed mask's edge is drawn
+    /// onto the picture's, by a guided filter against it. Nothing,
+    /// the default, leaves the mask as its shapes make it, and is left
+    /// out of the sidecar, so every sidecar written before it reads
+    /// and writes as it did.
+    #[serde(skip_serializing_if = "is_unrefined")]
+    pub refine: f32,
+}
+
+fn is_unrefined(v: &f32) -> bool {
+    *v == 0.0
 }
 
 impl Mask {
@@ -1172,6 +1183,29 @@ pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 mod tests {
     use super::*;
 
+    /// Refine edge at its default is left out of the sidecar, so a
+    /// mask writes as it did before there was one; set, it goes round;
+    /// a mask written before it reads as unrefined.
+    #[test]
+    fn refine_edge_round_trips_and_an_old_mask_reads_as_unrefined() {
+        let mut mask = Mask {
+            components: vec![Component {
+                shape: Shape::Subject {},
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let plain = serde_json::to_string(&mask).unwrap();
+        assert!(!plain.contains("refine"), "{plain}");
+        let old: Mask = serde_json::from_str(&plain).unwrap();
+        assert_eq!(old.refine, 0.0);
+        assert_eq!(old, mask);
+        mask.refine = 0.35;
+        let json = serde_json::to_string(&mask).unwrap();
+        assert!(json.contains("\"refine\":0.35"), "{json}");
+        assert_eq!(serde_json::from_str::<Mask>(&json).unwrap(), mask);
+    }
+
     #[test]
     fn a_radial_body_is_its_turned_ellipse() {
         let radial = Shape::Radial {
@@ -1511,6 +1545,7 @@ mod tests {
         let mut mask = Mask {
             components: vec![disc([0.3, 0.5]), disc([0.6, 0.5])],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(mask.at(0.3, 0.5), 1.0);
         assert_eq!(mask.at(0.45, 0.5), 1.0);
@@ -1561,6 +1596,7 @@ mod tests {
                 },
             ],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(mask.at(0.5, 0.5), 0.0);
         // The subject at 0.8, the object taking away 0.5 of it.
@@ -1798,6 +1834,7 @@ mod tests {
                 },
             ],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(mask.live().map(|(i, _)| i).collect::<Vec<_>>(), [1]);
         assert_eq!(mask.unknown(), 1);
@@ -1852,6 +1889,7 @@ mod tests {
                 },
             ],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(mask.live().map(|(i, _)| i).collect::<Vec<_>>(), [1]);
         assert_eq!(mask.unknown(), 1);
@@ -1899,6 +1937,7 @@ mod tests {
                 },
             ],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(mask.components[1].shape.name(), "Brush");
         // Without a raster the brush is nothing.
@@ -1930,10 +1969,12 @@ mod tests {
                 disc([0.4, 0.5], Mode::Subtract),
             ],
             invert: false,
+            ..Default::default()
         };
         let add_alone = Mask {
             components: vec![disc([0.3, 0.5], Mode::Add)],
             invert: false,
+            ..Default::default()
         };
         // The two together: the second takes its disc away.
         assert_eq!(mask.at(0.45, 0.5), 0.0);
@@ -1978,6 +2019,7 @@ mod tests {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         };
         assert_eq!(brushed.at_with(0.5, 0.5, |_, _, _| 1.0), 1.0);
         brushed.components[0].enabled = false;
@@ -2151,6 +2193,7 @@ mod tests {
                 },
             ],
             invert: false,
+            ..Default::default()
         };
         assert!(mask.reads_picture());
         let none = |_: usize, _: f32, _: f32| 0.0;
@@ -2194,6 +2237,7 @@ mod tests {
                 },
             ],
             invert: true,
+            ..Default::default()
         };
         let json = serde_json::to_string(&mask).unwrap();
         assert!(json.contains("\"kind\":\"luminance\""), "{json}");

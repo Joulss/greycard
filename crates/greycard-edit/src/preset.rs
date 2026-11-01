@@ -1670,6 +1670,7 @@ mod tests {
                         ..Default::default()
                     }],
                     invert: false,
+                    ..Default::default()
                 },
                 look,
                 ..Default::default()

@@ -621,7 +621,9 @@ fn mask(name: &str, x: &Mask, y: &Mask) -> String {
         } == *b)
             .then(|| switched(b.shape.name(), b.enabled))
     };
-    if x.invert != y.invert && x.components == y.components {
+    if x.refine != y.refine && x.invert == y.invert && x.components == y.components {
+        format!("{name}: Refine edge")
+    } else if x.invert != y.invert && x.components == y.components {
         format!("{name} mask inverted")
     } else if x.components.len() == y.components.len()
         && x.invert == y.invert
@@ -1057,6 +1059,7 @@ mod tests {
                     ..Default::default()
                 }],
                 invert: false,
+                ..Default::default()
             },
             look,
             ..Default::default()
@@ -1069,6 +1072,9 @@ mod tests {
         let mut f = e.clone();
         f.adjustments[0].mask.invert = true;
         assert_eq!(describe(&e, &f, &[]), "Linear 1 mask inverted");
+        let mut r = e.clone();
+        r.adjustments[0].mask.refine = 0.4;
+        assert_eq!(describe(&e, &r, &[]), "Linear 1: Refine edge");
         let mut f = e.clone();
         f.adjustments[0].enabled = false;
         assert_eq!(describe(&e, &f, &[]), "Linear 1 off");

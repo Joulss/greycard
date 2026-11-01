@@ -171,6 +171,7 @@ pub(super) fn engine_base_or_stop(
         gave_way,
         profile: None,
         from_shelf: false,
+        mask_picture: None,
     }))
 }
 
@@ -246,6 +247,7 @@ pub(super) fn learned_base(
             gave_way: None,
             profile: None,
             from_shelf: false,
+            mask_picture: None,
         },
         report,
     ))

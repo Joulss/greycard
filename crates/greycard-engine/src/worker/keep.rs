@@ -68,6 +68,7 @@ pub(super) fn keep_open(
     let gpu = hand
         .shown
         .filter(|s| s.turn == keep.turn && s.edit.same_develop(&keep.edit));
+    let device = hand.gpu;
     let (cpu, gpu, base) = match (cpu, gpu, hand.gpu, hand.base) {
         (Some(l), _, _, Some(b)) => (Some(l), None, b),
         (None, Some(s), Some(ctx), Some(b)) => (None, Some((s, ctx)), b),
@@ -83,7 +84,7 @@ pub(super) fn keep_open(
     // not downloaded or failed, a look not in the directory) is not the
     // edit's, and would be kept under the edit's key for good: none is
     // kept, and the frame shows the camera's until one can be.
-    let (rasters, mut left_out) = learned_masks(&keep.edit, Some(base), ai);
+    let (rasters, mut left_out) = learned_masks(&keep.edit, Some(&*base), ai);
     left_out.extend(
         cpu.map(|l| &l.left_out)
             .or(gpu.map(|(s, _)| &s.left_out))
@@ -130,6 +131,10 @@ pub(super) fn keep_open(
         }
         (None, None) => unreachable!("one picture or the other, matched above"),
     };
+    // The refined masks' picture, made here when the edit refines and
+    // none is kept: a Refine edge moved is saved without a develop, and
+    // its ask for the picture may not have run yet.
+    let picture = super::masks::picture_for(base, &keep.edit, device);
     let job = crate::edited_pictures::Keeping {
         frame,
         hash,
@@ -145,7 +150,7 @@ pub(super) fn keep_open(
             full: source,
             rasters,
             clip_level: base.clip_level,
-            guide: Some(base.guide.clone()),
+            guide: Some(super::masks::guide_with(base, picture)),
             kind: base.source,
             white: base.white_shift(),
             detail: base

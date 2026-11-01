@@ -1392,13 +1392,39 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     sync_rows(&st.develop.person_boxes, people);
                     let st = &mut *st;
                     let shift = crate::panel::color::local_white_shift(st, white_key);
-                    let (locals, wants) = bake_locals(
+                    let (mut locals, wants) = bake_locals(
                         &edit,
                         &mut st.develop.rasters,
                         &mut st.develop.learned,
                         sh / sw.max(1.0),
                         shift.as_ref(),
                     );
+                    // The refined masks, against the picture of the
+                    // open frame's own develop at its turn; asked of
+                    // the worker when that develop came without one.
+                    let own = crate::panel::viewport::own_develop(st) == Some(0);
+                    let guide = st.develop.drawn_guide.clone();
+                    crate::panel::mask::refine_locals(
+                        &edit,
+                        &mut locals,
+                        &mut st.develop.refined,
+                        guide.picture.as_ref().filter(|_| own),
+                        sh / sw.max(1.0),
+                        edit.light.exposure,
+                        st.develop.drawn_kind.baseline(&edit.light) + edit.light.exposure,
+                    );
+                    if crate::panel::mask::picture_wanted(st, &edit) {
+                        let generation = st.develop.drawn_generation;
+                        st.develop.picture_asked = Some(generation);
+                        WORKER.with(|w| {
+                            if let Some(w) = &*w.borrow() {
+                                w.send(Job::MaskPicture {
+                                    edit: Box::new(edit.clone()),
+                                    generation,
+                                });
+                            }
+                        });
+                    }
                     ask_for(st, &app, wants);
                     // A screenshot waits for the masks asked for.
                     // A snapshot waits for the develop; one of the

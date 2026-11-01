@@ -195,6 +195,32 @@ mod tests {
         edit.develop_key_with(&[], lenses)
     }
 
+    /// A mask's Refine edge is another picture: the key moves with it,
+    /// and back with it.
+    #[test]
+    fn a_masks_refine_edge_changes_the_key() {
+        let mut edit = Edit::default();
+        edit.adjustments.push(crate::Adjustment {
+            id: 1,
+            mask: crate::Mask {
+                components: vec![crate::mask::Component {
+                    shape: Shape::Subject {},
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let plain = key(&edit, None);
+        edit.adjustments[0].mask.refine = 0.3;
+        let refined = key(&edit, None);
+        assert_ne!(plain, refined);
+        edit.adjustments[0].mask.refine = 0.6;
+        assert_ne!(key(&edit, None), refined);
+        edit.adjustments[0].mask.refine = 0.0;
+        assert_eq!(key(&edit, None), plain);
+    }
+
     #[test]
     fn an_undo_and_a_redo_back_to_the_same_picture_give_the_same_key() {
         let mut sidecar = Sidecar::default();

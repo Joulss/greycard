@@ -147,6 +147,7 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         },
         ..Default::default()
     });
@@ -257,6 +258,7 @@ fn without_onnx_runtime_the_editor_runs_and_says_why() {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         },
         ..Default::default()
     });

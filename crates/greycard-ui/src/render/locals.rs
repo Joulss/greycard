@@ -194,7 +194,26 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
         // there: the count is of what was pushed, not of what the
         // mask holds. This is the shader's side of `Mask::live`.
         let start = shapes.len() as u32;
-        for (i, c) in local.mask.live() {
+        // A refined mask is its raster alone, added to nothing and not
+        // inverted again: the shapes and the invert are in it.
+        if let Some(r) = &local.refined {
+            let is_wide = is_wide(&r.0);
+            let layer = if is_wide { wide.len() } else { rasters.len() };
+            shapes.push(ShapeGpu {
+                kind: 2,
+                flags: 0,
+                layer: layer as u32,
+                wide: is_wide as u32,
+                a: [0.0; 4],
+                b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
+            });
+            if is_wide {
+                wide.push(r.clone());
+            } else {
+                rasters.push(r.clone());
+            }
+        }
+        for (i, c) in local.mask.live().filter(|_| local.refined.is_none()) {
             let raster = local.rasters.get(i).and_then(|r| r.as_ref());
             let is_wide = raster.is_some_and(|r| is_wide(&r.0));
             let layer = if is_wide { wide.len() } else { rasters.len() };
@@ -220,7 +239,7 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
             shaded: if b.curves.shaded { 1.0 } else { 0.0 },
             shapes_start: start,
             shapes_count: shapes.len() as u32 - start,
-            invert: local.mask.invert as u32,
+            invert: (local.mask.invert && local.refined.is_none()) as u32,
             enabled: local.enabled as u32,
             color: if b.color.enabled { 1.0 } else { 0.0 },
             saturation: b.color.saturation,
@@ -409,6 +428,7 @@ mod tests {
             rasters: vec![None; mask.components.len()],
             mask,
             enabled: true,
+            refined: None,
         };
         let mut off = local(Mask {
             components: vec![
@@ -417,11 +437,13 @@ mod tests {
                 disc([0.7, 0.5], Mode::Add),
             ],
             invert: false,
+            ..Default::default()
         });
         off.mask.components[1].enabled = false;
         let without = local(Mask {
             components: vec![disc([0.3, 0.5], Mode::Add), disc([0.7, 0.5], Mode::Add)],
             invert: false,
+            ..Default::default()
         });
         let (a, b) = (locals_gpu(&[off]), locals_gpu(&[without]));
         assert_eq!(a.params[0].shapes_count, 2);
@@ -449,11 +471,13 @@ mod tests {
         let mut first = Mask {
             components: vec![disc([0.3, 0.5]), disc([0.4, 0.5])],
             invert: false,
+            ..Default::default()
         };
         first.components[0].enabled = false;
         let second = Mask {
             components: vec![disc([0.7, 0.5])],
             invert: false,
+            ..Default::default()
         };
         let locals: Vec<Local> = [first, second]
             .into_iter()
@@ -462,6 +486,7 @@ mod tests {
                 rasters: vec![None; mask.components.len()],
                 mask,
                 enabled: true,
+                refined: None,
             })
             .collect();
         let gpu = locals_gpu(&locals);
@@ -496,6 +521,7 @@ mod tests {
                 },
             ],
             invert: false,
+            ..Default::default()
         };
         let local = Local {
             baked: Baked::of(&Look::default()),
@@ -503,6 +529,7 @@ mod tests {
             rasters: vec![None, Some(RasterRef(painted))],
             mask,
             enabled: true,
+            refined: None,
         };
         let gpu = locals_gpu(&[local]);
         assert_eq!(gpu.params[0].shapes_count, 2);

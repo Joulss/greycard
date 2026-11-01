@@ -38,7 +38,7 @@ impl Walked {
         FinishInput {
             source,
             full: self.meta.full,
-            guide: self.taps.guide.clone(),
+            guide: self.taps.guide_for_finish(),
             planes: self.taps.planes.clone(),
             rasters: self.rasters.clone(),
             white: self.meta.white_shift(),

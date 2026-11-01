@@ -145,6 +145,9 @@ pub(super) fn run(
     // The generation of the last open whose develop landed: the
     // neighbors the window sent with that open are the ones prefetched.
     let mut landed: Option<u64> = None;
+    // The generation of the last develop delivered, open or not: an ask
+    // for the refined masks' picture of another is let go.
+    let mut developed: Option<u64> = None;
     // The device was lost this session: the ops are the CPU's for the
     // rest of it, and a device handed over again is not taken.
     let mut gpu_gone = false;
@@ -218,6 +221,9 @@ pub(super) fn run(
                 if q.landscape {
                     q.landscape = false;
                     break Job::Landscape;
+                }
+                if let Some(job) = q.mask_picture.take() {
+                    break job;
                 }
                 if let Some((key, shape, model)) = q.masks.pop_front() {
                     break Job::Mask { key, shape, model };
@@ -385,7 +391,7 @@ pub(super) fn run(
                 opened: opened_path.as_deref(),
                 last: last.as_ref(),
                 shown: shown.as_ref(),
-                base: base.as_ref(),
+                base: base.as_mut(),
                 gpu: gpu.as_ref(),
             };
             let keep = Keep {
@@ -421,7 +427,7 @@ pub(super) fn run(
                 opened: opened_path.as_deref(),
                 last: last.as_ref(),
                 shown: shown.as_ref(),
-                base: base.as_ref(),
+                base: base.as_mut(),
                 gpu: gpu.as_ref(),
             };
             pending = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -766,6 +772,8 @@ pub(super) fn run(
                         last = image
                             .and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                         landed = base.is_some().then_some(generation);
+                        developed =
+                            matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                         lock.lock().expect("worker queue").landed =
                             landed.map(|g| (g, opened_path.clone().unwrap_or_default()));
                         deliver(outcome);
@@ -802,6 +810,7 @@ pub(super) fn run(
                     );
                     shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                     ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
+                    developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                     last =
                         image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
@@ -906,6 +915,19 @@ pub(super) fn run(
                     offers,
                 });
             }
+            Job::MaskPicture { edit, generation } => {
+                // An ask behind a newer develop is that develop's to
+                // answer, which makes its own picture.
+                let current = developed == Some(generation);
+                let picture = base
+                    .as_mut()
+                    .filter(|_| current)
+                    .and_then(|b| super::masks::picture_for(b, &edit, gpu.as_ref()));
+                deliver(Outcome::MaskPicture {
+                    generation,
+                    picture,
+                });
+            }
             Job::Fetch { .. }
             | Job::FetchRuntime { .. }
             | Job::FetchLenses
@@ -948,7 +970,7 @@ pub(super) fn run(
                     opened: opened_path.as_deref(),
                     last: last.as_ref(),
                     shown: shown.as_ref(),
-                    base: base.as_ref(),
+                    base: base.as_mut(),
                     gpu: gpu.as_ref(),
                 };
                 pending = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

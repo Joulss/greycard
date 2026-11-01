@@ -481,6 +481,7 @@ pub(super) fn finish_export(
             greycard_render::geometry::apply(&bands, &edit.geometry)
         }
     });
+    let guide = base.map(|b| super::masks::guide_with(b, refined_picture(b, edit)));
     let rendered = greycard_render::export::render(
         image,
         edit,
@@ -489,10 +490,35 @@ pub(super) fn finish_export(
         settings,
         &rasters,
         clip_level,
-        base.map(|b| &*b.guide),
+        guide.as_deref(),
         base.map(|b| b.source).unwrap_or_default(),
         base.and_then(Base::white_shift).as_ref(),
         detail.as_ref().zip(planes.map(|p| &p.meta)),
     );
     (rendered, left_out)
+}
+
+/// The picture `edit`'s refined masks are made against for an export
+/// of `b`: the one its develop kept when that is of this picture and
+/// Detail section, else made now from the patched picture. None when
+/// the edit refines no mask.
+///
+/// The kept one may be the GPU's: with the Detail section on, the
+/// window's develop reads it back from the device's picture before
+/// the sharpen, where a set's walk makes its own on the CPU, so the
+/// two exports' refined masks can differ by what the GPU's Detail
+/// differs from the CPU's.
+fn refined_picture(b: &Base, edit: &Edit) -> Option<Arc<greycard_render::refine::MaskPicture>> {
+    if !greycard_render::refine::refines(edit) {
+        return None;
+    }
+    if let Some(kept) = super::masks::kept_picture(b, edit) {
+        return Some(kept);
+    }
+    let patched = b
+        .patched
+        .as_ref()
+        .map_or_else(|| b.image.clone(), |p| p.1.clone());
+    let pre = super::masks::pre_sharpen(&patched, edit, b.clip_level);
+    Some(Arc::new(greycard_render::refine::mask_picture(&pre)))
 }

@@ -75,9 +75,11 @@ fn local_of(shapes: Vec<(Shape, Mode)>) -> Local {
                 })
                 .collect(),
             invert: false,
+            ..Default::default()
         },
         enabled: true,
         rasters: Vec::new(),
+        refined: None,
     }
 }
 
@@ -739,6 +741,34 @@ fn the_shaders_range_masks_are_the_cpus() {
     assert!(mean <= 0.5 / 255.0, "mean {mean}");
 }
 
+/// Refined masks on the GPU are the CPU's: the range masks above,
+/// one of them inverted, each refined against the field. The shader is
+/// handed the refined raster alone, so a shape or the invert read
+/// again on top of it would be far off.
+#[test]
+fn the_shaders_refined_masks_are_the_cpus() {
+    let image = field();
+    let picture = greycard_render::refine::mask_picture(&image);
+    let aspect = image.height as f32 / image.width as f32;
+    let mut locals = range_locals();
+    locals[3].mask.invert = true;
+    for (k, l) in locals.iter_mut().enumerate() {
+        l.mask.refine = 0.2 + 0.2 * k as f32;
+        l.refine(&picture, aspect, -0.3, 0.5);
+        assert!(l.refined.is_some(), "local {k} refined");
+    }
+    let packed = super::locals::locals_gpu(&locals);
+    assert_eq!(packed.shapes.len(), locals.len(), "one raster a mask");
+    assert_eq!(packed.rasters.len(), locals.len());
+    let Some((device, queue)) = device("the refined masks' GPU check") else {
+        return;
+    };
+    let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &locals, -0.3, true);
+    eprintln!("refined masks, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+    assert!(worst <= 3.0 / 255.0, "max {worst}");
+    assert!(mean <= 0.5 / 255.0, "mean {mean}");
+}
+
 /// Two Skies' wide rasters beside a brush's and a learned mask's
 /// narrow ones: the narrow ones in their array at their own size, the
 /// wide ones in an array of their own, each read inside its own size
@@ -924,6 +954,7 @@ fn a_texture_read_through_a_turn_is_the_turned_texture() {
             scale,
             range: crate::finish::plane_range(&data),
             data,
+            picture: None,
         }
     };
     let plain = |x: usize, y: usize| ((x * 7 + y * 3) % 11) as f32 * 0.3 - 1.5;
@@ -2104,6 +2135,7 @@ fn random_mask(
     let mask = Mask {
         components,
         invert: rng.chance(0.2),
+        ..Default::default()
     };
     (mask, rasters)
 }
@@ -2546,6 +2578,7 @@ fn everywhere(look: Look) -> greycard_edit::Adjustment {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         },
         look,
         ..Default::default()
@@ -2837,6 +2870,7 @@ fn a_masks_white_balance_agrees_on_both_sides() {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         },
         look: cool,
         ..Default::default()
@@ -3186,6 +3220,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
             scale: s,
             range: crate::finish::plane_range(&data),
             data,
+            picture: None,
         }
     };
     let guides = [native, coarse].map(|mut g| {

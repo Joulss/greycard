@@ -561,6 +561,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
             gave_way: None,
             profile: None,
             from_shelf: false,
+            mask_picture: None,
         };
         turn_base(&mut b, &mut learned, 1, 2, None);
         let l = learned.as_ref().unwrap();
@@ -606,6 +607,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
         gave_way: None,
         profile: None,
         from_shelf: false,
+        mask_picture: None,
     };
     turn_base(&mut b, &mut learned, 1, 2, None);
     let l = learned.as_ref().unwrap();
@@ -706,6 +708,7 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
         gave_way: None,
         profile: None,
         from_shelf: false,
+        mask_picture: None,
     };
     let wants = greycard_edit::DetailWants {
         texture: true,
@@ -810,6 +813,7 @@ fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         },
         look: greycard_edit::Look {
             white_balance: white,
@@ -883,6 +887,7 @@ fn a_masks_offset_follows_the_global_and_its_light_does_not() {
                 ..Default::default()
             }],
             invert: false,
+            ..Default::default()
         },
         look: greycard_edit::Look {
             white_balance: white,
@@ -2229,6 +2234,7 @@ fn an_export_says_which_learned_mask_it_went_without() {
                 },
             ],
             invert: false,
+            ..Default::default()
         },
         ..greycard_edit::Adjustment::default()
     });
@@ -2243,6 +2249,7 @@ fn an_export_says_which_learned_mask_it_went_without() {
                 ..Component::default()
             }],
             invert: false,
+            ..Default::default()
         },
         ..greycard_edit::Adjustment::default()
     });
@@ -2255,6 +2262,7 @@ fn an_export_says_which_learned_mask_it_went_without() {
                 ..Component::default()
             }],
             invert: false,
+            ..Default::default()
         },
         ..greycard_edit::Adjustment::default()
     });
@@ -3731,8 +3739,8 @@ fn same_pixels(a: &greycard_render::export::Rendered, b: &greycard_render::expor
 
 /// An edit that asks for a learned denoiser, a Fill, and a learned
 /// mask, none of whose models is in the store, beside a Heal, a
-/// Detail of the edit's and the mask's own, the sharpen, and a
-/// straightened crop.
+/// Detail of the edit's and the mask's own, a mask refined against the
+/// picture, the sharpen, and a straightened crop.
 fn edit_without_its_models() -> Edit {
     use greycard_edit::mask::Component;
     use greycard_edit::retouch::{Method, Patch};
@@ -3775,6 +3783,35 @@ fn edit_without_its_models() -> Edit {
                 ..Component::default()
             }],
             invert: false,
+            ..Default::default()
+        },
+        look,
+        ..greycard_edit::Adjustment::default()
+    });
+    // A mask refined against the picture: a hard edge across the frame
+    // and a luminance window, its Refine edge on.
+    let mut look = greycard_edit::Look::default();
+    look.light.exposure = -0.7;
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 12,
+        name: "Refined".into(),
+        mask: greycard_edit::mask::Mask {
+            components: vec![
+                Component {
+                    shape: Shape::Linear {
+                        from: [0.55, 0.3],
+                        to: [0.549, 0.3],
+                    },
+                    ..Component::default()
+                },
+                Component {
+                    shape: Shape::LUMINANCE,
+                    mode: greycard_edit::mask::Mode::Intersect,
+                    ..Component::default()
+                },
+            ],
+            refine: 0.5,
+            ..Default::default()
         },
         look,
         ..greycard_edit::Adjustment::default()
@@ -3786,7 +3823,8 @@ fn edit_without_its_models() -> Edit {
 /// file's develop and finish write: the same pixels, and the same words
 /// for what it went without, the engine's denoise standing in for the
 /// learned one, the Fill left as it was, and the mask written without
-/// its shape. At each quarter turn, the crop straightened.
+/// its shape; the refined mask refined on both. At each quarter turn,
+/// the crop straightened.
 #[test]
 fn a_set_frame_s_walk_writes_what_the_develop_writes() {
     let frame = Arc::new(aberrated_frame(160, 120));
@@ -3808,6 +3846,20 @@ fn a_set_frame_s_walk_writes_what_the_develop_writes() {
             "{}",
             left_out[2]
         );
+        // The refined mask is refined on both: unrefined, another picture.
+        if turn == 0 {
+            let mut plain = edit.clone();
+            plain.adjustments[1].mask.refine = 0.0;
+            let ((unrefined, _), _) =
+                develop_and_walk("export-walk-plain", &Input::Raw(frame.clone()), &plain, 0);
+            use greycard_render::export::Pixels;
+            let differs = match (&unrefined.pixels, &walked.pixels) {
+                (Pixels::Sixteen(a), Pixels::Sixteen(b)) => a != b,
+                (Pixels::Eight(a), Pixels::Eight(b)) => a != b,
+                _ => true,
+            };
+            assert!(differs, "the refine did nothing");
+        }
     }
 }
 
@@ -3846,5 +3898,279 @@ fn a_set_picture_s_walk_writes_what_the_develop_writes() {
         same_pixels(&developed, &walked);
         assert_eq!(left_out, said);
         assert_eq!(left_out.len(), 2, "{left_out:?}");
+    }
+}
+
+/// An edit that refines one mask, a luminance window of 60 to 80 over
+/// the frame, with Dehaze at `dehaze` and no capture sharpen, so the
+/// picture the develop hands the finish is the one before the sharpen.
+fn refining(dehaze: f32) -> Edit {
+    use greycard_edit::mask::Component;
+    let mut edit = Edit::default();
+    edit.sharpen.enabled = false;
+    edit.detail.dehaze = dehaze;
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 3,
+        mask: greycard_edit::mask::Mask {
+            components: vec![Component {
+                shape: Shape::Luminance {
+                    low: 0.6,
+                    high: 0.8,
+                    low_feather: 0.05,
+                    high_feather: 0.05,
+                },
+                ..Component::default()
+            }],
+            refine: 0.01,
+            ..Default::default()
+        },
+        ..greycard_edit::Adjustment::default()
+    });
+    edit
+}
+
+/// The develop of an edit that refines a mask hands the window the
+/// picture its refined masks are made against, made from the picture
+/// the finish's range shapes read, after the Dehaze: the same picture
+/// on the masks' grid, where the patched picture before the Dehaze is
+/// another. And a develop that refines nothing makes none and keeps
+/// none.
+#[test]
+fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let mut base = None;
+    let deliver: Deliver = Arc::new(|_| {});
+    let edit = refining(0.4);
+    let (outcome, image) = develop_job(
+        &Input::Raw(frame.clone()),
+        &edit,
+        0,
+        1,
+        &mut base,
+        &mut None,
+        &mut Ai::new(),
+        None,
+        None,
+        &mut None,
+        &deliver,
+    );
+    let Outcome::Developed { guide, .. } = outcome else {
+        panic!("developed")
+    };
+    let picture = guide.picture.clone().expect("a picture beside the guide");
+    let developed = image.unwrap();
+    assert!(*picture == greycard_render::refine::mask_picture(&developed));
+    let b = base.as_ref().unwrap();
+    let patched = b.patched.as_ref().map_or(b.image.clone(), |p| p.1.clone());
+    assert!(*picture != greycard_render::refine::mask_picture(&patched));
+    assert!(b.mask_picture.is_some());
+    // The open frame's own pictures (`keep`) are made against it too.
+    assert!(masks::kept_picture(b, &edit).is_some());
+    // A Luminance shape reads the same lightness in the picture refined
+    // against as the finish reads in the developed one, on average over
+    // each texel, to the half float's rounding.
+    let (w, h) = (developed.width, developed.height);
+    let texel = |gx: usize, gy: usize| picture.lab[gy * picture.width + gx][0].to_f32();
+    let (gx, gy) = (picture.width / 2, picture.height / 3);
+    let (x, y) = (gx * w / picture.width, gy * h / picture.height);
+    let read = greycard_render::finish::oklab(developed.pixel(x, y))[0];
+    assert!(
+        (texel(gx, gy) - read).abs() < 3e-3,
+        "{} {read}",
+        texel(gx, gy)
+    );
+    // Refining nothing: no picture made, and the kept one let go.
+    let mut plain = edit.clone();
+    plain.adjustments[0].mask.refine = 0.0;
+    let (outcome, _) = develop_job(
+        &Input::Raw(frame),
+        &plain,
+        0,
+        2,
+        &mut base,
+        &mut None,
+        &mut Ai::new(),
+        None,
+        None,
+        &mut None,
+        &deliver,
+    );
+    let Outcome::Developed { guide, .. } = outcome else {
+        panic!("developed")
+    };
+    assert!(guide.picture.is_none());
+    assert!(base.as_ref().unwrap().mask_picture.is_none());
+    // A save of the refining edit with no develop between (a Refine
+    // edge moved from 0, `keep_open`) makes it from the base in hand:
+    // the picture the develop made, and kept for the next.
+    let b = base.as_mut().unwrap();
+    let made = masks::picture_for(b, &edit, None).expect("made for the save");
+    assert!(*made == *picture);
+    assert!(masks::kept_picture(b, &edit).is_some());
+    assert!(masks::picture_for(b, &plain, None).is_none());
+}
+
+/// A set frame's walk makes the refined masks' picture after the
+/// Dehaze, as the develop does: the two export the same pixels with
+/// Dehaze on, and a walk that refines nothing has no such step.
+#[test]
+fn a_walk_refines_against_the_picture_after_the_dehaze() {
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let edit = refining(0.4);
+    let ((developed, _), (walked, _)) =
+        develop_and_walk("export-walk-refined", &Input::Raw(frame), &edit, 0);
+    same_pixels(&developed, &walked);
+    let facts = Input::Raw(Arc::new(aberrated_frame(160, 120)));
+    let purpose = crate::stages::Purpose::Export(Box::default());
+    let has_tap = |edit: &Edit| {
+        let input = match &facts {
+            Input::Raw(f) => crate::walk::Input::Raw(f.clone()),
+            Input::Picture { .. } => unreachable!(),
+        };
+        crate::stages::stages(edit, &purpose, &input.facts(0), None)
+            .steps
+            .iter()
+            .any(|s| matches!(s, crate::stages::Step::Tap(crate::stages::Tap::MaskPicture)))
+    };
+    assert!(has_tap(&edit));
+    let mut plain = edit.clone();
+    plain.adjustments[0].mask.refine = 0.0;
+    assert!(!has_tap(&plain));
+}
+
+/// The window's ask for the refined masks' picture is answered for the
+/// develop it names; with no picture open, with none.
+#[test]
+fn an_ask_for_the_refined_masks_picture_is_answered() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::MaskPicture {
+            generation,
+            picture,
+        } = o
+        {
+            tx.lock()
+                .unwrap()
+                .send((generation, picture.is_some()))
+                .unwrap();
+        }
+    });
+    worker.send(Job::MaskPicture {
+        edit: Box::new(refining(0.0)),
+        generation: 7,
+    });
+    let answer = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("answered");
+    assert_eq!(answer, (7, false));
+    assert!(worker.stop());
+}
+
+/// The edit's pictures of a frame are refined as its export is: a
+/// refined mask's reduced develop carries the picture beside its
+/// guide, and the picture made from it is another than the same edit's
+/// with the mask unrefined.
+#[test]
+fn the_edits_pictures_are_refined() {
+    use greycard_edit::mask::Component;
+    let dir = crate::testing::scratch_dir("refined-pictures");
+    let path = dir.join("frame.dng");
+    crate::testing::linear_dng(&path, 96, 64, "Canon", "Canon EOS R5");
+    let mut look = greycard_edit::Look::default();
+    look.light.exposure = 1.5;
+    let mut edit = Edit::default();
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 4,
+        mask: greycard_edit::mask::Mask {
+            components: vec![Component {
+                shape: Shape::Linear {
+                    from: [0.51, 0.3],
+                    to: [0.5, 0.3],
+                },
+                ..Component::default()
+            }],
+            refine: 0.4,
+            ..Default::default()
+        },
+        look,
+        ..greycard_edit::Adjustment::default()
+    });
+    let picture = |edit: &Edit| {
+        let developed = crate::reduced::develop(&path, edit, 0, None).expect("reduced");
+        let finish = crate::edited_pictures::Finish {
+            edit: edit.clone(),
+            turn: 0,
+            source: (developed.image.width as u32, developed.image.height as u32),
+            full: developed.full,
+            rasters: Default::default(),
+            clip_level: developed.clip_level,
+            guide: Some(developed.guide.clone()),
+            kind: developed.kind,
+            white: developed.white.clone(),
+            detail: developed.detail.clone(),
+        };
+        (
+            developed.guide.picture.is_some(),
+            crate::edited_pictures::make(&developed.image, &finish).big,
+        )
+    };
+    let (with, refined) = picture(&edit);
+    let mut plain = edit.clone();
+    plain.adjustments[0].mask.refine = 0.0;
+    let (without, unrefined) = picture(&plain);
+    assert!(with && !without);
+    assert!(refined != unrefined, "the refine changed nothing");
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// With the GPU, the refined masks' picture is read back from the
+/// device's picture before the sharpen, a band at a time, and not made
+/// again on the CPU: the viewport's texture with the sharpen off, the
+/// kept picture before it with the sharpen on. Each is the CPU
+/// develop's within the GPU's Detail and the half floats' rounding.
+#[test]
+fn with_the_gpu_the_refined_masks_picture_is_read_back() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the refined masks' picture on the GPU");
+        return;
+    };
+    let frame = Arc::new(aberrated_frame(320, 240));
+    let deliver: Deliver = Arc::new(|_| {});
+    let picture = |edit: &Edit, gpu: &mut Option<greycard_gpu::Context>| {
+        let mut base = None;
+        let (outcome, _) = develop_job(
+            &Input::Raw(frame.clone()),
+            edit,
+            0,
+            1,
+            &mut base,
+            &mut None,
+            &mut Ai::new(),
+            None,
+            None,
+            gpu,
+            &deliver,
+        );
+        let Outcome::Developed { guide, .. } = outcome else {
+            panic!("developed")
+        };
+        guide.picture.clone().expect("a picture")
+    };
+    let mut gpu = Some(ctx);
+    for sharpen in [false, true] {
+        let mut edit = refining(0.3);
+        edit.detail.clarity = 0.4;
+        edit.sharpen.enabled = sharpen;
+        let on_gpu = picture(&edit, &mut gpu);
+        assert!(gpu.is_some(), "the GPU kept");
+        let on_cpu = picture(&edit, &mut None);
+        let worst = on_gpu
+            .lab
+            .iter()
+            .zip(&on_cpu.lab)
+            .flat_map(|(a, b)| (0..3).map(move |c| (a[c].to_f32() - b[c].to_f32()).abs()))
+            .fold(0f32, f32::max);
+        assert!(worst < 5e-3, "sharpen {sharpen}: {worst} apart");
     }
 }
