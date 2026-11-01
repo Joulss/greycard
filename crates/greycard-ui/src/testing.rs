@@ -8,6 +8,7 @@ use crate::worker::Worker;
 use crate::{App, Shared, State, Thumb, grid, install_callbacks};
 
 // The helpers the render crate's tests share with these.
+pub(crate) use greycard_engine::testing::{linear_dng, scratch_dir};
 pub(crate) use greycard_render::testing::{GFX, bar_png, remove_dir_retry, white_shift};
 
 thread_local! {
@@ -145,25 +146,6 @@ pub(crate) fn state_for(app: &App, files: Vec<std::path::PathBuf>) -> (Rc<Shared
 /// callbacks without a picture open.
 pub(crate) fn retouch_state(app: &App) -> (Rc<Shared>, Rc<Worker>) {
     state_for(app, Vec::new())
-}
-
-/// A folder under the system's temporary directory no test has used,
-/// named for `what`, made, and in its canonical form: on macOS the
-/// temporary directory is a symlink, and the index keys folders by
-/// their canonical path, so a test that lists a view from the index
-/// would find nothing under the spelling `temp_dir` gives. A test
-/// removes it with [`remove_dir_retry`].
-pub(crate) fn scratch_dir(what: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "greycard-{what}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dunce::canonicalize(&dir).unwrap()
 }
 
 /// A folder of `count` frames nothing has ever written, named as a
@@ -423,67 +405,4 @@ pub(crate) fn keeps_its_last_line(app: &App, last: &str, pane_width: (f32, f32),
     app.window()
         .set_size(slint::LogicalSize::new(1500.0, 400.0));
     wheel_brings_in(app, last, pane_width);
-}
-
-/// A linear DNG of our own writing from a body of `make` and `model`, a
-/// textured scene of `width` by `height` with a ramp across it: a raw
-/// the engine opens and names by its body, which no sample raw in the
-/// repository may stand in for.
-pub(crate) fn linear_dng(
-    path: &std::path::Path,
-    width: usize,
-    height: usize,
-    make: &str,
-    model: &str,
-) {
-    use greycard_core::raw::{
-        Calibration, CfaPattern, LevelPattern, Levels, Orientation, Samples, SensorLayout,
-    };
-    let m = greycard_core::color::WORKING_SPACE
-        .from_xyz_matrix()
-        .expect("the working space has a matrix");
-    let frame = greycard_core::RawFrame {
-        make: make.into(),
-        model: model.into(),
-        other_names: Vec::new(),
-        width,
-        height,
-        channels: 1,
-        layout: SensorLayout::Cfa(CfaPattern::rggb()),
-        samples: Samples::U16(Vec::new()),
-        levels: Levels {
-            black: LevelPattern::uniform(0.0, 1),
-            white: LevelPattern::uniform(65535.0, 1),
-        },
-        as_shot_coefficients: Some([2.0, 1.0, 1.6]),
-        calibrations: vec![Calibration {
-            illuminant: 21,
-            color_matrix: m.rows.iter().flatten().map(|v| *v as f32).collect(),
-            forward_matrix: None,
-        }],
-        crop: None,
-        orientation: Orientation::Normal,
-        shot: Default::default(),
-        dng: Default::default(),
-    };
-    let mut data = Vec::with_capacity(width * height * 3);
-    for y in 0..height {
-        for x in 0..width {
-            let (fx, fy) = (x as f32, y as f32);
-            let v =
-                0.5 + 0.2 * (fx * 0.13).sin() * (fy * 0.09).cos() + 0.1 * ((fx + fy) * 0.031).sin();
-            let ramp = 0.02 + 0.6 * fx / width as f32;
-            data.extend_from_slice(&[ramp * v * 0.5, ramp * v, ramp * v * 0.6]);
-        }
-    }
-    let image = greycard_core::CameraImage::from_data(width, height, data).unwrap();
-    let mut file = std::fs::File::create(path).unwrap();
-    greycard_core::dng::write_linear_dng(
-        &mut file,
-        &frame,
-        &image,
-        [2.0, 1.0, 1.6],
-        &Default::default(),
-    )
-    .unwrap();
 }

@@ -490,3 +490,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§475. Four small asks from the testers](notes/475-four-small-asks-from-the-testers.md) (2026-10-31)
 - [§476. The engine, part two: the list and its walker](notes/476-the-engine-part-two-the-list-and-its-walker.md) (2026-10-31)
 - [§477. Subject and the denoisers on the Neural Engine, measured](notes/477-subject-and-the-denoisers-on-the-neural-engine-measured.md) (2026-10-31)
+- [§478. The engine, part two: the worker below the window](notes/478-the-engine-part-two-the-worker-below-the-window.md) (2026-10-31)

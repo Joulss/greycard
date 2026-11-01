@@ -65,7 +65,7 @@ pub(super) fn export_other(
     cache: Option<&greycard_ai::DenoiseCache>,
     lenses: Option<&greycard_lens::Database>,
     deliver: &Deliver,
-    settings: &crate::export::Settings,
+    settings: &greycard_render::export::Settings,
     path: &std::path::Path,
 ) -> Result<(Edit, Vec<String>), String> {
     let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
@@ -118,13 +118,13 @@ pub(super) fn write_export(
     source_path: Option<&std::path::Path>,
     metadata: Option<&greycard_core::decode::RawMetadata>,
     time_shift: i64,
-    settings: &crate::export::Settings,
+    settings: &greycard_render::export::Settings,
     path: &std::path::Path,
 ) -> Result<Vec<String>, String> {
     let shifted = metadata.map(|m| greycard_core::exif::with_capture_shifted(m, time_shift));
     let metadata = shifted.as_ref();
     let (mut rendered, left_out) = finish_export(image, edit, base, ai, settings);
-    let origin = crate::export::Origin {
+    let origin = greycard_render::export::Origin {
         source_name: source_path
             .and_then(|s| s.file_name())
             .map(|n| n.to_string_lossy().into_owned()),
@@ -133,33 +133,33 @@ pub(super) fn write_export(
     // The border and then the mark, on the export alone; a mark that
     // cannot be drawn fails the export rather than let an unmarked
     // picture out.
-    crate::export::border(&mut rendered, settings);
-    crate::export::mark(&mut rendered, settings)
-        .and_then(|()| crate::export::write(&rendered, settings, path, metadata, &origin))
+    greycard_render::export::border(&mut rendered, settings);
+    greycard_render::export::mark(&mut rendered, settings)
+        .and_then(|()| greycard_render::export::write(&rendered, settings, path, metadata, &origin))
         .map_err(|e| format!("{e:#}"))?;
     Ok(left_out)
 }
 
 /// What [`finish_export`] would hand the finish for `image` under
 /// `edit` and `settings`, before any pixel is finished
-/// ([`crate::export::Scene`]): the edit's geometry, the resize, the
+/// ([`greycard_render::export::Scene`]): the edit's geometry, the resize, the
 /// guide plane and the vignette, as the export has them. No masks: the
 /// measurement this serves carries none.
 pub(super) fn scene_export(
     image: &WorkingImage,
     edit: &Edit,
     base: Option<&Base>,
-    settings: &crate::export::Settings,
-) -> crate::export::Scene {
+    settings: &greycard_render::export::Settings,
+) -> greycard_render::export::Scene {
     let source = (image.width as u32, image.height as u32);
     let framed;
     let image: &WorkingImage = if edit.geometry.is_identity() {
         image
     } else {
-        framed = crate::geometry::apply(image, &edit.geometry);
+        framed = greycard_render::geometry::apply(image, &edit.geometry);
         &framed
     };
-    crate::export::scene_framed(image, edit, source, settings, base.map(|b| &*b.guide))
+    greycard_render::export::scene_framed(image, edit, source, settings, base.map(|b| &*b.guide))
 }
 
 /// `image`, the develop `base` was made for, finished under `edit` and
@@ -174,15 +174,15 @@ pub(super) fn finish_export(
     edit: &Edit,
     base: Option<&Base>,
     ai: &mut Ai,
-    settings: &crate::export::Settings,
-) -> (crate::export::Rendered, Vec<String>) {
+    settings: &greycard_render::export::Settings,
+) -> (greycard_render::export::Rendered, Vec<String>) {
     let source = (image.width as u32, image.height as u32);
     let (rasters, left_out) = learned_masks(edit, base, ai);
     let framed;
     let image: &WorkingImage = if edit.geometry.is_identity() {
         &image
     } else {
-        framed = crate::geometry::apply(&image, &edit.geometry);
+        framed = greycard_render::geometry::apply(&image, &edit.geometry);
         &framed
     };
     let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
@@ -198,10 +198,10 @@ pub(super) fn finish_export(
         if edit.geometry.is_identity() {
             bands
         } else {
-            crate::geometry::apply(&bands, &edit.geometry)
+            greycard_render::geometry::apply(&bands, &edit.geometry)
         }
     });
-    let rendered = crate::export::render(
+    let rendered = greycard_render::export::render(
         image,
         edit,
         source,

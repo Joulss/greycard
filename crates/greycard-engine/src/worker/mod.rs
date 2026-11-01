@@ -55,10 +55,10 @@ use self::{
     thumbs::{cached_thumbnail_noting, thumb_lookup},
 };
 
-#[cfg(test)]
-pub(crate) use self::prefetch::{behind_prefetch, claim};
+#[cfg(any(test, feature = "testing"))]
+pub use self::prefetch::{behind_prefetch, claim};
 pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
-pub(crate) use self::{
+pub use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,
     prefetch::{Neighbor, Side},
@@ -101,7 +101,7 @@ impl Halves {
     /// The picture, with `mask` in the alpha when there is one: the
     /// sharpen's blend, for the viewport to paint where it acted.
     /// Zero alpha otherwise, so nothing is painted.
-    pub(crate) fn from_image(image: &WorkingImage, mask: Option<&[f32]>) -> Self {
+    pub fn from_image(image: &WorkingImage, mask: Option<&[f32]>) -> Self {
         use rayon::prelude::*;
         // A row at a time, in parallel: a 24 MP frame is a hundred
         // million conversions.
@@ -417,13 +417,13 @@ pub enum Outcome {
         /// rendered, which says how the viewport finishes it: the
         /// panel's open frame may be another kind by the time this
         /// is drawn, and the picture keeps its own.
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         /// The tone equalizer's plane for this develop, for the
         /// viewport's own texture.
-        guide: Arc<crate::finish::Guide>,
+        guide: Arc<greycard_render::finish::Guide>,
         /// The bands the masks' Detail is put on from, when a mask
-        /// asks for one ([`crate::detail::DetailPlanes`]).
-        planes: Option<Arc<crate::detail::DetailPlanes>>,
+        /// asks for one ([`greycard_render::detail::DetailPlanes`]).
+        planes: Option<Arc<greycard_render::detail::DetailPlanes>>,
         white: WhiteBase,
         seconds: f64,
         /// What the local contrast did, when it ran, and where: on
@@ -662,7 +662,7 @@ struct Queue {
     edits_changed: Vec<(PathBuf, Option<FileNow>)>,
 }
 
-pub(crate) type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
+pub type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
 
 /// How long the editor waits on its way out for the worker to finish
 /// what it is in the middle of. A develop is a second or two; a job
@@ -677,7 +677,7 @@ pub type ThumbCache = Arc<Mutex<Option<Thumbs>>>;
 
 /// The thumbnail cache's caps as last set, shared with the threads
 /// that apply them.
-pub(crate) type ThumbCaps = Arc<Mutex<Option<(u64, u64)>>>;
+pub type ThumbCaps = Arc<Mutex<Option<(u64, u64)>>>;
 
 pub struct Worker {
     queue: Arc<(Mutex<Queue>, Condvar)>,
@@ -690,18 +690,38 @@ pub struct Worker {
     /// waiting on the cache's lock, which a count or an eviction holds
     /// for seconds. `None` while there is no cache.
     caps: ThumbCaps,
-    /// The thumbnails' own threads, shared with the worker's thread,
-    /// which holds them back while the first develop runs.
-    pool: Arc<crate::thumbpool::Pool>,
+    /// The thumbnails' pool and the reduced develops, none for a
+    /// worker with no background side (headless export).
+    background: Option<Arc<Background>>,
     /// The local previews the pool makes behind the thumbnails, in
     /// the same cache.
     previews: Arc<crate::previews::Previews>,
     /// Which frames show their edit, and the pictures made from it, in
     /// the same cache (`edited`).
     edited: Arc<crate::edited_pictures::Edited>,
-    /// The reduced develops of the edit's pictures in the pool
-    /// (`reduced`).
+}
+
+/// The worker's background side: the thumbnails' own threads, shared
+/// with the worker's thread, which holds them back while a develop
+/// runs, and the reduced develops of the edit's pictures they run
+/// (`reduced`). A window's worker has one; headless export's has none,
+/// so it starts no thread it would leave idle.
+pub struct Background {
+    pool: Arc<crate::thumbpool::Pool>,
     reducer: Arc<crate::reduced::Reducer>,
+}
+
+impl crate::walk::Hold for Background {
+    /// While a develop runs, the pool begins no thumbnail
+    /// ([`engine::during_develop`]); after it, all its threads may.
+    fn hold(&self, on: bool) {
+        let threads = self.pool.threads();
+        self.pool.set_limit(if on {
+            engine::during_develop(threads)
+        } else {
+            threads
+        });
+    }
 }
 
 /// The last develop, kept for an export under the same develop and the
@@ -793,7 +813,7 @@ struct InHand<'a> {
 /// Everything the frame's own develop does after the base (the lens,
 /// the retouch, the detail, the sharpen) is in `image`; the finish
 /// under `edit` is [`FrameDevelop::finish`].
-pub(crate) struct FrameDevelop {
+pub struct FrameDevelop {
     image: Arc<WorkingImage>,
     base: Option<Base>,
     ai: Ai,
@@ -803,7 +823,7 @@ impl FrameDevelop {
     /// Open the raw at `path` and develop it under `edit`, with the
     /// lens database for the lens corrections. The export's own
     /// develop, with no GPU and no learned denoiser's cache.
-    pub(crate) fn develop(
+    pub fn develop(
         path: &std::path::Path,
         edit: &Edit,
         lenses: Option<&greycard_lens::Database>,
@@ -826,8 +846,8 @@ impl FrameDevelop {
 
     /// A picture standing in for a develop, with no base: for a test
     /// of the finish.
-    #[cfg(test)]
-    pub(crate) fn of_image(image: WorkingImage) -> FrameDevelop {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn of_image(image: WorkingImage) -> FrameDevelop {
         FrameDevelop {
             image: Arc::new(image),
             base: None,
@@ -837,18 +857,18 @@ impl FrameDevelop {
 
     /// What the finish is handed: a raw's develop and its body's
     /// baseline, as the export finishes it.
-    pub(crate) fn source(&self) -> crate::finish::Source {
+    pub fn source(&self) -> greycard_render::finish::Source {
         self.base.as_ref().map(|b| b.source).unwrap_or_default()
     }
 
     /// The developed picture finished under `edit` (whose develop is
     /// the one this was made under) and `settings`, as an export
     /// finishes it.
-    pub(crate) fn finish(
+    pub fn finish(
         &mut self,
         edit: &Edit,
-        settings: &crate::export::Settings,
-    ) -> crate::export::Rendered {
+        settings: &greycard_render::export::Settings,
+    ) -> greycard_render::export::Rendered {
         let (rendered, left_out) = finish_export(
             self.image.clone(),
             edit,
@@ -863,12 +883,12 @@ impl FrameDevelop {
     }
 
     /// What the finish would be handed for `edit` and `settings`,
-    /// before any pixel goes through it ([`crate::export::Scene`]).
-    pub(crate) fn scene(
+    /// before any pixel goes through it ([`greycard_render::export::Scene`]).
+    pub fn scene(
         &self,
         edit: &Edit,
-        settings: &crate::export::Settings,
-    ) -> crate::export::Scene {
+        settings: &greycard_render::export::Settings,
+    ) -> greycard_render::export::Scene {
         scene_export(&self.image, edit, self.base.as_ref(), settings)
     }
 }
@@ -939,11 +959,11 @@ impl Blame {
 /// `panic!` with a text, and nothing readable otherwise.
 /// Whether a panic's message is wgpu's for a lost device: what it
 /// panics with when a wait, or a buffer it maps for itself, meets one.
-pub(crate) fn says_lost(message: &str) -> bool {
+pub fn says_lost(message: &str) -> bool {
     message.contains("device is lost")
 }
 
-pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|s| s.to_string())
@@ -954,7 +974,7 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// A whole number of quarter turns clockwise as an orientation, for
 /// a picture that was already turned by its own tag at decode; None
 /// for no turn at all.
-pub(crate) fn quarters(turn: u8) -> Option<greycard_core::raw::Orientation> {
+pub fn quarters(turn: u8) -> Option<greycard_core::raw::Orientation> {
     use greycard_core::raw::Orientation;
     match turn % 4 {
         1 => Some(Orientation::Rotate90),
@@ -1003,15 +1023,15 @@ struct Base {
     /// when there is one and of the base otherwise, made once with
     /// each: the Light sliders never re-develop, so a slider move
     /// must not pay for it, and neither must a sharpen change. Every
-    /// way of making a base leaves [`crate::finish::Guide::NONE`] here
+    /// way of making a base leaves [`greycard_render::finish::Guide::NONE`] here
     /// and `develop_job` fills it in after the lens, and again with
     /// each fresh retouch or a retouch cleared.
-    guide: Arc<crate::finish::Guide>,
+    guide: Arc<greycard_render::finish::Guide>,
     white: WhiteBase,
     radius: Option<f32>,
     clip_level: f32,
     /// A raw's scene or a picture already rendered, for the finish.
-    source: crate::finish::Source,
+    source: greycard_render::finish::Source,
     /// Counts the bases made, for the learned masks to know theirs.
     stamp: u64,
     /// The base with its retouch applied, for the retouch it was,
@@ -1064,7 +1084,7 @@ struct Base {
     from_shelf: bool,
 }
 
-/// The masks' bands ([`crate::detail::DetailPlanes`]) with what they
+/// The masks' bands ([`greycard_render::detail::DetailPlanes`]) with what they
 /// were made from: the patched picture, the bands asked for, and the
 /// global's local contrast the haze was read after (none without a
 /// haze, or with the global's Texture and Clarity at rest).
@@ -1072,7 +1092,7 @@ struct KeptPlanes {
     patched: Arc<WorkingImage>,
     wants: greycard_edit::DetailWants,
     haze_after: Option<LocalContrastOptions>,
-    planes: Arc<crate::detail::DetailPlanes>,
+    planes: Arc<greycard_render::detail::DetailPlanes>,
 }
 
 impl KeptPlanes {
@@ -1102,9 +1122,9 @@ impl KeptPlanes {
 /// or being made on a thread of their own beside the develop.
 enum PlanesJob {
     Nothing,
-    Kept(Arc<crate::detail::DetailPlanes>),
+    Kept(Arc<greycard_render::detail::DetailPlanes>),
     Making {
-        made: std::sync::mpsc::Receiver<Option<crate::detail::DetailPlanes>>,
+        made: std::sync::mpsc::Receiver<Option<greycard_render::detail::DetailPlanes>>,
         // Held for its drop alone.
         _cancel: CancelOnDrop,
         patched: Arc<WorkingImage>,
@@ -1130,7 +1150,7 @@ impl PlanesJob {
         global: Option<LocalContrastOptions>,
         clip_level: f32,
         wants: greycard_edit::DetailWants,
-        reuse: Option<Arc<crate::detail::DetailPlanes>>,
+        reuse: Option<Arc<greycard_render::detail::DetailPlanes>>,
     ) -> Self {
         let (send, made) = std::sync::mpsc::channel();
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1139,7 +1159,7 @@ impl PlanesJob {
         let spawned = std::thread::Builder::new()
             .name("detail planes".into())
             .spawn(move || {
-                let planes = crate::detail::DetailPlanes::make_with(
+                let planes = greycard_render::detail::DetailPlanes::make_with(
                     &picture,
                     haze_after,
                     clip_level,
@@ -1171,7 +1191,7 @@ impl PlanesJob {
 
     /// The planes for the develop being delivered, waited for if they
     /// are still being made, and kept in `b` for the next.
-    fn land(&mut self, b: &mut Base) -> Option<Arc<crate::detail::DetailPlanes>> {
+    fn land(&mut self, b: &mut Base) -> Option<Arc<greycard_render::detail::DetailPlanes>> {
         match std::mem::replace(self, Self::Nothing) {
             Self::Nothing => None,
             Self::Kept(planes) => Some(planes),
@@ -1279,7 +1299,7 @@ enum DehazeRan {
 /// takes, so none is given (as for the sharpen); or not in this
 /// develop, the picture after it kept from the last.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum DetailRan {
+pub enum DetailRan {
     Cpu(f64),
     Gpu,
     Kept,

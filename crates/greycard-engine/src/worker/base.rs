@@ -66,7 +66,7 @@ pub(super) fn turn_base(
         image = turned(image);
     }
     b.image = image;
-    b.guide = Arc::new(crate::finish::guide_plane(&b.image));
+    b.guide = Arc::new(greycard_render::finish::guide_plane(&b.image));
     b.turn = turn;
     b.stamp = stamp;
     b.patched = None;
@@ -155,11 +155,11 @@ pub(super) fn engine_base_or_stop(
         edit: edit.clone(),
         turn,
         image: Arc::new(d.image),
-        guide: Arc::new(crate::finish::Guide::NONE),
+        guide: Arc::new(greycard_render::finish::Guide::NONE),
         white: WhiteBase::from(&d.white_balance, d.clip_level),
         radius: d.sharpen_radius,
         clip_level: d.clip_level,
-        source: crate::finish::Source::of_frame(frame),
+        source: greycard_render::finish::Source::of_frame(frame),
         stamp,
         patched: None,
         pre: None,
@@ -230,11 +230,11 @@ pub(super) fn learned_base(
             edit: edit.clone(),
             turn,
             image,
-            guide: Arc::new(crate::finish::Guide::NONE),
+            guide: Arc::new(greycard_render::finish::Guide::NONE),
             white: l.white,
             radius: l.radius,
             clip_level: l.clip_level,
-            source: crate::finish::Source::of_frame(frame),
+            source: greycard_render::finish::Source::of_frame(frame),
             stamp,
             patched: None,
             pre: None,

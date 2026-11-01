@@ -17,7 +17,7 @@ use greycard_ai::landscape::{self, Offer, Scene};
 use greycard_ai::sam::Embedding;
 use greycard_ai::sam3::{self, Choice, Encodings, Picture, Presets, Sam3};
 use greycard_ai::sky;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 use greycard_ai::sky::Prior;
 use greycard_ai::{
     Denoiser, Fill, Model, Prompt, Provider, REMOVE, REMOVE_FAST, Remove, Rgb8, Rgbf, SAM, SAM3,
@@ -54,44 +54,44 @@ pub fn providers() -> &'static [Provider] {
 /// remove runs on and nothing else: [`providers`], or what a test set
 /// with [`set_test_webgpu`].
 pub fn on_webgpu() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     if let Some(on) = TEST_WEBGPU.with(|t| t.get()) {
         return on;
     }
     providers().contains(&Provider::WebGpu)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 thread_local! {
     static TEST_WEBGPU: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// [`on_webgpu`]'s answer on this thread, for a test; `None` asks the
 /// providers again.
-#[cfg(test)]
-pub(crate) fn set_test_webgpu(on: Option<bool>) {
+#[cfg(any(test, feature = "testing"))]
+pub fn set_test_webgpu(on: Option<bool>) {
     TEST_WEBGPU.with(|t| t.set(on));
 }
 
 /// Whether the GPU the models run on shares the machine's memory
 /// (`runtime::webgpu_unified`), false when it is not known.
 pub fn unified() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     if let Some(on) = TEST_UNIFIED.with(|t| t.get()) {
         return on;
     }
     greycard_ai::runtime::webgpu_unified().unwrap_or(false)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 thread_local! {
     static TEST_UNIFIED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// [`unified`]'s answer on this thread, for a test; `None` asks the
 /// adapter.
-#[cfg(test)]
-pub(crate) fn set_test_unified(on: Option<bool>) {
+#[cfg(any(test, feature = "testing"))]
+pub fn set_test_unified(on: Option<bool>) {
     TEST_UNIFIED.with(|t| t.set(on));
 }
 
@@ -226,7 +226,7 @@ pub struct Ai {
     /// raster size, or none where the sky's gate finds no sky.
     sky_cut: Option<SkyCut>,
     /// What the last Sky raster took, stage by stage.
-    pub(crate) last_sky: Option<SkyReport>,
+    pub last_sky: Option<SkyReport>,
     fill: Option<Fill>,
     /// The generative remove, loaded at the first Fill patch it makes.
     remove: Option<Remove>,
@@ -304,13 +304,13 @@ pub struct Ai {
     subject_matte: Option<(u64, Vec<u8>, Provider)>,
     /// A Whole person keeps SAM's edge whatever the store has: for a
     /// test to set the two edges side by side.
-    #[cfg(test)]
-    pub(crate) sams_edge_only: bool,
+    #[cfg(any(test, feature = "testing"))]
+    pub sams_edge_only: bool,
     /// How many times the sky model has run for a scene: for a test
     /// that the Landscape button, a Sky and the Landscape shapes share
     /// one run.
-    #[cfg(test)]
-    pub(crate) scene_runs: usize,
+    #[cfg(any(test, feature = "testing"))]
+    pub scene_runs: usize,
 }
 
 /// A base's picture with its retouch applied: the retouch as the
@@ -579,7 +579,7 @@ pub fn at_face(people: &[Candidate], at: [f32; 2]) -> Option<usize> {
 
 /// A point in fractions of the camera's own picture, on the picture
 /// turned `turn` quarters clockwise.
-pub(crate) fn turn_frac(turn: u8, [x, y]: [f32; 2]) -> [f32; 2] {
+pub fn turn_frac(turn: u8, [x, y]: [f32; 2]) -> [f32; 2] {
     match turn % 4 {
         1 => [1.0 - y, x],
         2 => [1.0 - x, 1.0 - y],
@@ -749,29 +749,29 @@ fn route_of(route: &greycard_edit::mask::Route) -> Result<sam3::Route, String> {
 
 /// A Sky raster's making, stage by stage, in seconds.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct SkyReport {
+pub struct SkyReport {
     /// The prior's provider, and SAM's (encoder) when it ran.
-    pub(crate) prior_on: Option<Provider>,
-    pub(crate) sam_on: Option<Provider>,
+    pub prior_on: Option<Provider>,
+    pub sam_on: Option<Provider>,
     /// Loading the prior, when this raster loaded it.
-    pub(crate) load: f64,
-    pub(crate) prior: f64,
+    pub load: f64,
+    pub prior: f64,
     /// SAM's loading and embedding, when this raster paid for them.
-    pub(crate) sam_load: f64,
-    pub(crate) embed: f64,
-    pub(crate) decodes: usize,
-    pub(crate) stages: sky::Times,
+    pub sam_load: f64,
+    pub embed: f64,
+    pub decodes: usize,
+    pub stages: sky::Times,
     /// Bringing the matte to the raster's size.
-    pub(crate) raster: f64,
-    pub(crate) seeded: bool,
-    pub(crate) no_sky: Option<sky::NoSky>,
+    pub raster: f64,
+    pub seeded: bool,
+    pub no_sky: Option<sky::NoSky>,
     /// The outline the matte was made from, at the preview's size.
-    pub(crate) outline: Option<greycard_ai::Mask>,
+    pub outline: Option<greycard_ai::Mask>,
 }
 
 /// Whether a learned mask's raster can be had ([`Ai::raster_ready`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ready {
+pub enum Ready {
     /// In the disk cache.
     Cached,
     /// Not made yet; its model is in the store.
@@ -1070,6 +1070,9 @@ fn window_for(region: &Region, width: usize, height: usize) -> (Window, f32) {
 }
 
 impl Ai {
+    // Not `Default`: it reads the model store, which a default should
+    // not go to disk for.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             store: Store::user().ok(),
@@ -1103,23 +1106,23 @@ impl Ai {
             other_side: Side::default(),
             disk: true,
             subject_matte: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             sams_edge_only: false,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             scene_runs: 0,
         }
     }
 
     /// The sky prior of the last develop a Sky raster was made on.
-    #[cfg(test)]
-    pub(crate) fn sky_prior(&self) -> Option<&Prior> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn sky_prior(&self) -> Option<&Prior> {
         self.scene.as_ref().map(|s| &s.1.prior)
     }
 
     /// Models from `store` on `providers` alone, and no file, so no
     /// disk cache: for a test that runs the models.
-    #[cfg(test)]
-    pub(crate) fn for_test(store: Store, providers: Vec<Provider>) -> Self {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn for_test(store: Store, providers: Vec<Provider>) -> Self {
         Self {
             store: Some(store),
             providers,
@@ -1528,7 +1531,7 @@ impl Ai {
             width: ww,
             height: wh,
         } = window;
-        let to_srgb = crate::export::Space::Srgb.matrix();
+        let to_srgb = greycard_render::export::Space::Srgb.matrix();
         let from_srgb = invert(&to_srgb);
         // Coverage over the window, and the picture's values there.
         let mut hole = vec![0.0f32; ww * wh];
@@ -1867,7 +1870,7 @@ impl Ai {
     /// will not say, a Sky's raster in either width's slot counts, and
     /// one of the width the frame does not take is not read after the
     /// develop ([`Ai::cached_raster`]).
-    pub(crate) fn raster_ready(
+    pub fn raster_ready(
         &mut self,
         file: &Path,
         shape: &Shape,
@@ -1906,13 +1909,8 @@ impl Ai {
 
     /// Where the raster for `shape` of `file` at `turn` is kept on disk:
     /// for a test that puts one there as the worker would.
-    #[cfg(test)]
-    pub(crate) fn cached_path_of(
-        &mut self,
-        file: &Path,
-        shape: &Shape,
-        turn: u8,
-    ) -> Option<PathBuf> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn cached_path_of(&mut self, file: &Path, shape: &Shape, turn: u8) -> Option<PathBuf> {
         if self.file.as_deref() != Some(file) {
             self.forget(Some(file.to_path_buf()));
         }
@@ -1921,8 +1919,8 @@ impl Ai {
 
     /// Models from `store`, with the disk cache of the rasters beside
     /// it: for a test of the reduced develop's masks.
-    #[cfg(test)]
-    pub(crate) fn for_test_on_disk(store: Store) -> Self {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn for_test_on_disk(store: Store) -> Self {
         Self {
             store: Some(store),
             ..Self::new()
@@ -1935,7 +1933,7 @@ impl Ai {
     /// The reduced develop's, which keeps no picture of a frame whose
     /// masks are not made yet. The raster's width is the frame's
     /// (`brush::raster_width`).
-    pub(crate) fn cached_raster(
+    pub fn cached_raster(
         &mut self,
         file: &Path,
         shape: &Shape,
@@ -1975,7 +1973,7 @@ impl Ai {
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         turn: u8,
         key: Key,
         shape: &Shape,
@@ -1999,7 +1997,7 @@ impl Ai {
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         turn: u8,
         key: Key,
         shape: &Shape,
@@ -2029,7 +2027,7 @@ impl Ai {
         image: &WorkingImage,
         retouched: Option<Retouched<'_>>,
         edit: &Edit,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         turn: u8,
         key: Key,
         shape: &Shape,
@@ -2200,7 +2198,7 @@ impl Ai {
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         turn: u8,
         key: Key,
         shape: &Shape,
@@ -2473,7 +2471,7 @@ impl Ai {
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
     ) {
         if self.preview.as_ref().is_none_or(|p| p.0 != stamp) {
             let rgb = preview(image, edit, kind);
@@ -2508,7 +2506,7 @@ impl Ai {
         &mut self,
         stamp: u64,
         image: &WorkingImage,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         turn: u8,
     ) -> Result<(Vec<Candidate>, Provider, f64), String> {
         greycard_ai::runtime::status().map_err(|why| why.to_string())?;
@@ -2559,7 +2557,7 @@ impl Ai {
     pub fn person_on(
         &mut self,
         image: &WorkingImage,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         turn: u8,
         carried: Option<&greycard_edit::mask::Person>,
         wanted: &Picked,
@@ -2626,7 +2624,7 @@ impl Ai {
         stamp: u64,
         turn: u8,
         image: &WorkingImage,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
     ) {
         if self
             .parts_view
@@ -2657,7 +2655,7 @@ impl Ai {
         &mut self,
         (stamp, turn): (u64, u8),
         image: &WorkingImage,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         (phrase, route, person): PartAsked,
         raster: (usize, usize),
         store: &Store,
@@ -2736,7 +2734,7 @@ impl Ai {
         &mut self,
         (stamp, turn): (u64, u8),
         image: &WorkingImage,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
         phrase: &str,
         person: Option<&greycard_edit::mask::Person>,
         hash: &Option<String>,
@@ -2855,7 +2853,7 @@ impl Ai {
         raster: (usize, usize),
         store: &Store,
     ) -> Result<greycard_ai::Mask, Edgeless> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         if self.sams_edge_only {
             return Err(Edgeless {
                 why: "SAM's edge asked for by a test".into(),
@@ -2954,7 +2952,7 @@ impl Ai {
         let made = model.scene(rgb).map_err(|e| e.to_string())?;
         let run = t.elapsed().as_secs_f64();
         *scene = Some((stamp, made, model.provider()));
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         {
             self.scene_runs += 1;
         }
@@ -2972,7 +2970,7 @@ impl Ai {
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
-        kind: crate::finish::Source,
+        kind: greycard_render::finish::Source,
     ) -> Result<(Vec<Offer>, Provider, f64), String> {
         let store = self
             .store
@@ -3289,7 +3287,7 @@ fn unturned_size(image: &WorkingImage, turn: u8) -> (usize, usize) {
 /// back to the camera's orientation.
 fn parts_region(
     image: &WorkingImage,
-    kind: crate::finish::Source,
+    kind: greycard_render::finish::Source,
     turn: u8,
     size: (usize, usize),
     rect: sam3::Rect,
@@ -3474,7 +3472,7 @@ fn no_sky_note(file: Option<&Path>) -> String {
 
 /// The status line for a shape the model finds none of on a frame:
 /// "no water found in FILE".
-pub(crate) fn none_found_note(what: &str, file: Option<&Path>) -> String {
+pub fn none_found_note(what: &str, file: Option<&Path>) -> String {
     let name = file
         .and_then(|f| f.file_name())
         .map_or("this picture".to_string(), |n| {
@@ -3486,7 +3484,7 @@ pub(crate) fn none_found_note(what: &str, file: Option<&Path>) -> String {
 /// What a model sees: the picture under the global look alone, no
 /// geometry, no vignette or grain, in sRGB, no more than `PREVIEW`
 /// on its long side.
-pub(crate) fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::Source) -> Rgb8 {
+pub fn preview(image: &WorkingImage, edit: &Edit, kind: greycard_render::finish::Source) -> Rgb8 {
     display(image, edit, kind, Some(PREVIEW))
 }
 
@@ -3494,10 +3492,10 @@ pub(crate) fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::So
 /// clamped to it), at those pixels: what a crop the People model looks
 /// closer at is cut from, so an eye in a full-length frame is the
 /// sensor's pixels rather than a few dozen of the preview's.
-pub(crate) fn region(
+pub fn region(
     image: &WorkingImage,
     edit: &Edit,
-    kind: crate::finish::Source,
+    kind: greycard_render::finish::Source,
     rect: sam3::Rect,
 ) -> Rgb8 {
     let x0 = rect.x0.min(image.width.saturating_sub(1));
@@ -3519,7 +3517,7 @@ pub(crate) fn region(
 fn display(
     image: &WorkingImage,
     edit: &Edit,
-    kind: crate::finish::Source,
+    kind: greycard_render::finish::Source,
     long_edge: Option<u32>,
 ) -> Rgb8 {
     let mut edit = edit.clone();
@@ -3527,20 +3525,20 @@ fn display(
     edit.geometry = Default::default();
     edit.vignette = Default::default();
     edit.grain = Default::default();
-    let settings = crate::export::Settings {
-        format: crate::export::Format::Jpeg,
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Jpeg,
         long_edge,
-        space: crate::export::Space::Srgb,
+        space: greycard_render::export::Space::Srgb,
         // The models see the picture as it is, not sharpened for a
         // screen.
-        sharpen: crate::export::Sharpen::Off,
+        sharpen: greycard_render::export::Sharpen::Off,
         ..Default::default()
     };
     let source = (image.width as u32, image.height as u32);
     // No guide plane: the models see a picture the tone equalizer's
     // shifts read the pixel's own luminance for, as they did before
     // the tone equalizer. What a mask is drawn around takes no stop.
-    let rendered = crate::export::render(
+    let rendered = greycard_render::export::render(
         image,
         &edit,
         source,
@@ -3553,7 +3551,7 @@ fn display(
         None,
         None,
     );
-    let crate::export::Pixels::Eight(data) = rendered.pixels else {
+    let greycard_render::export::Pixels::Eight(data) = rendered.pixels else {
         unreachable!("a JPEG render is eight bit");
     };
     Rgb8::new(rendered.width as usize, rendered.height as usize, data)
@@ -3831,7 +3829,7 @@ fn invert(m: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
 }
 
 fn encode(v: f32) -> f32 {
-    crate::finish::encode(v.clamp(0.0, 1.0))
+    greycard_render::finish::encode(v.clamp(0.0, 1.0))
 }
 
 fn decode(v: f32) -> f32 {
@@ -3841,6 +3839,22 @@ fn decode(v: f32) -> f32 {
     } else {
         ((v + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// The shape an offer makes, by the name `Shape::of_kind` takes.
+pub fn kind_of(offer: &greycard_ai::landscape::Offer) -> &'static str {
+    match offer.kind {
+        greycard_ai::landscape::Kind::Sky => "Sky",
+        greycard_ai::landscape::Kind::Group(g) => {
+            greycard_edit::mask::LandscapeGroup::from(g.name().to_string()).label()
+        }
+    }
+}
+
+/// An offer on the menu: its name and the share of the frame it is.
+pub fn words_of(offer: &greycard_ai::landscape::Offer) -> String {
+    let percent = (offer.area * 100.0).round().max(1.0);
+    format!("{} {percent:.0}%", kind_of(offer))
 }
 
 #[cfg(test)]
@@ -3997,7 +4011,7 @@ mod tests {
         let base = Arc::new(half_shape());
         ai.cache.insert((key, 0), (shape.clone(), base.clone()));
         let edit = Edit::default();
-        let kind = crate::finish::Source::default();
+        let kind = greycard_render::finish::Source::default();
         let off = Retouch {
             enabled: true,
             patches: vec![patch_at(2, 0.8, 0)],
@@ -4096,7 +4110,7 @@ mod tests {
         let key = (1, 0);
         let image = WorkingImage::new(200, 100);
         let edit = Edit::default();
-        let kind = crate::finish::Source::default();
+        let kind = greycard_render::finish::Source::default();
         let base = Arc::new(half_shape());
         let fill = Retouch {
             enabled: true,
@@ -4136,7 +4150,7 @@ mod tests {
         let key = (1, 0);
         let image = WorkingImage::new(200, 100);
         let edit = Edit::default();
-        let kind = crate::finish::Source::default();
+        let kind = greycard_render::finish::Source::default();
         let base = Arc::new(half_shape());
         ai.cache.insert((key, 0), (shape.clone(), base.clone()));
         ai.preview_of(1, &image, &edit, kind);
@@ -4768,7 +4782,7 @@ mod tests {
 
     #[test]
     fn the_inverse_undoes_the_matrix_and_the_transfer_round_trips() {
-        let m = crate::export::Space::Srgb.matrix();
+        let m = greycard_render::export::Space::Srgb.matrix();
         let inv = invert(&m);
         let v = [0.3f32, 0.5, 0.1];
         let back = mul(&inv, mul(&m, v));
@@ -4806,7 +4820,7 @@ mod tests {
                 5,
                 &image,
                 &edit,
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 0,
                 (1, 0),
                 &Shape::Background {},
@@ -4827,7 +4841,7 @@ mod tests {
                 5,
                 &image,
                 &edit,
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 0,
                 (1, 1),
                 &Shape::Subject {},
@@ -4842,7 +4856,7 @@ mod tests {
             6,
             &image,
             &edit,
-            crate::finish::Source::SCENE,
+            greycard_render::finish::Source::SCENE,
             0,
             (1, 2),
             &Shape::Background {},
@@ -4902,7 +4916,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 0,
                 (7, 0),
                 &shape,
@@ -4948,7 +4962,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 0,
                 (9, 0),
                 &shape,
@@ -4962,7 +4976,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 0,
                 (9, 0),
                 &shape,
@@ -5095,7 +5109,7 @@ mod tests {
                 1,
                 &WorkingImage::new(3, 4),
                 &Edit::default(),
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 0,
                 (3, 0),
                 &sky,
@@ -5150,7 +5164,7 @@ mod tests {
                     1,
                     &WorkingImage::new(picture.0, picture.1),
                     &Edit::default(),
-                    crate::finish::Source::SCENE,
+                    greycard_render::finish::Source::SCENE,
                     0,
                     (4, 0),
                     &sky,
@@ -5205,7 +5219,7 @@ mod tests {
         }
         let mut edit = Edit::default();
         edit.light.exposure = 0.4;
-        let kind = crate::finish::Source::SCENE;
+        let kind = greycard_render::finish::Source::SCENE;
         let whole = preview(&image, &edit, kind);
         assert_eq!((whole.width, whole.height), (w, h));
         let rect = sam3::Rect {
@@ -5566,7 +5580,7 @@ mod tests {
                 1,
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
-                crate::finish::Source::SCENE,
+                greycard_render::finish::Source::SCENE,
                 turn,
                 (3, 0),
                 &shape,
@@ -5919,7 +5933,7 @@ mod tests {
             });
         }
         let edit = Edit::default();
-        let kind = crate::finish::Source::SCENE;
+        let kind = greycard_render::finish::Source::SCENE;
         ai.preview_of(1, &image, &edit, kind);
         let (pw, ph) = {
             let p = &ai.preview.as_ref().unwrap().1;

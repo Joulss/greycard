@@ -99,14 +99,14 @@ pub(super) fn develop_job(
                     Some(o) => Arc::new(greycard_core::develop::orient((**image).clone(), o)),
                     None => image.clone(),
                 },
-                guide: Arc::new(crate::finish::Guide::NONE),
+                guide: Arc::new(greycard_render::finish::Guide::NONE),
                 white: WhiteBase {
                     clip: meta.clip_level(),
                     ..WhiteBase::IDENTITY
                 },
                 radius: None,
                 clip_level: meta.clip_level(),
-                source: crate::finish::Source::Display,
+                source: greycard_render::finish::Source::Display,
                 stamp,
                 patched: None,
                 pre: None,
@@ -293,7 +293,7 @@ pub(super) fn develop_job(
         // bright surround moves its region's mean far more than the
         // guide's scale can miss, and a guide still holding it would
         // have the tone sliders draw its ghost back.
-        b.guide = Arc::new(crate::finish::guide_plane(&image));
+        b.guide = Arc::new(greycard_render::finish::guide_plane(&image));
         b.patched = Some((retouch, image.clone(), whole, unmade));
         stages.push(("retouch", started.elapsed().as_secs_f64()));
         image
@@ -726,7 +726,7 @@ pub(super) fn lens_step(
 /// way; the sharpen moves none by anything the guide's scale can see.
 pub(super) fn guide_step(b: &mut Base, stages: &mut Stages) {
     b.guide = Arc::new(timed(stages, "guide", || {
-        crate::finish::guide_plane(&b.image)
+        greycard_render::finish::guide_plane(&b.image)
     }));
 }
 

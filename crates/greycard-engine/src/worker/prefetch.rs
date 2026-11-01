@@ -36,14 +36,14 @@ use super::*;
 
 /// Which way from the open frame a neighbor is, in the strip's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Side {
+pub enum Side {
     Next,
     Previous,
 }
 
 impl Side {
     /// The side in words, for the log.
-    pub(crate) fn word(self) -> &'static str {
+    pub fn word(self) -> &'static str {
         match self {
             Side::Next => "next",
             Side::Previous => "previous",
@@ -55,7 +55,7 @@ impl Side {
 /// its file, the edit its line holds, its quarter turns, and whether
 /// its learned blend is still to be seeded from its ISO.
 #[derive(Clone, Debug)]
-pub(crate) struct Neighbor {
+pub struct Neighbor {
     pub path: PathBuf,
     pub edit: Edit,
     pub turn: u8,
@@ -99,9 +99,9 @@ impl Neighbors {
 /// while a frame is open, and for its reason. A slider paused for less
 /// is not met by a decode that cannot stop, nor its next move by a
 /// stage to wait out and work thrown away.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "testing")))]
 pub(super) const QUIET: Duration = crate::reduced::IDLE;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub(super) const QUIET: Duration = Duration::from_millis(30);
 
 /// What the idle worker does about the neighbors.
@@ -195,7 +195,7 @@ pub(super) fn due(queued: &mut Option<Neighbors>, now: &Idle<'_>) -> Due {
 /// meanwhile is seen. True when none is, and the prefetch may begin;
 /// either way the flag stays up, so a prefetch that waits for the one
 /// in hand is the next to run and not behind every one still queued.
-pub(crate) fn claim(reserve: impl FnOnce(), in_hand: impl FnOnce() -> usize) -> bool {
+pub fn claim(reserve: impl FnOnce(), in_hand: impl FnOnce() -> usize) -> bool {
     reserve();
     in_hand() == 0
 }
@@ -223,7 +223,7 @@ pub(super) fn settle_reservation(
 /// (`prefetching`), looked at again in [`BEHIND_REDUCED`] (the worker
 /// also wakes the pool when it lets the reservation go); `otherwise`
 /// says when it does not.
-pub(crate) fn behind_prefetch(
+pub fn behind_prefetch(
     prefetching: bool,
     otherwise: impl FnOnce() -> (usize, Option<Duration>),
 ) -> (usize, Option<Duration>) {
@@ -609,11 +609,11 @@ mod tests {
             edit: Edit::default(),
             turn: 0,
             image: Arc::new(WorkingImage::new(width, height)),
-            guide: Arc::new(crate::finish::Guide::NONE),
+            guide: Arc::new(greycard_render::finish::Guide::NONE),
             white: WhiteBase::IDENTITY,
             radius: None,
             clip_level: 1.0,
-            source: crate::finish::Source::SCENE,
+            source: greycard_render::finish::Source::SCENE,
             stamp: 1,
             patched: None,
             pre: None,

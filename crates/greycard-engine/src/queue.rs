@@ -9,10 +9,10 @@
 //! frames are written under, the tally, the cancel and the words the
 //! status line says, so it is tested without a raw or a window.
 
-use crate::export::{Format, OnExists, Settings};
 use crate::naming::safe;
 use greycard_core::output::Resolved;
 use greycard_edit::Edit;
+use greycard_render::export::{Format, OnExists, Settings};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};

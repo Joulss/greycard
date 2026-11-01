@@ -162,7 +162,7 @@ fn lens_corrections_of(
 /// CPU, for a frame named by its body, its shot, and whether it is a
 /// raw: the reduced develop's, which has no `Input`. The picture
 /// itself when there is nothing to do.
-pub(crate) fn correct_lens_of(
+pub fn correct_lens_of(
     image: WorkingImage,
     identity: (&str, &str, &Shot, bool),
     edit: &Edit,

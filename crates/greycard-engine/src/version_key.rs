@@ -13,10 +13,10 @@ use std::sync::Arc;
 /// and is no part of the key: two keys are the same frame by path and
 /// id whatever name each was made with.
 #[derive(Debug, Clone)]
-pub(crate) struct Key {
-    pub(crate) path: PathBuf,
-    pub(crate) version: Option<Arc<str>>,
-    pub(crate) name: Option<Arc<str>>,
+pub struct Key {
+    pub path: PathBuf,
+    pub version: Option<Arc<str>>,
+    pub name: Option<Arc<str>>,
 }
 
 impl PartialEq for Key {
@@ -48,7 +48,7 @@ impl Ord for Key {
 
 impl Key {
     /// The file's own frame.
-    pub(crate) fn file(path: impl Into<PathBuf>) -> Self {
+    pub fn file(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             version: None,
@@ -57,7 +57,7 @@ impl Key {
     }
 
     /// Version `version` of the file at `path`, the file's own for none.
-    pub(crate) fn of(path: impl Into<PathBuf>, version: Option<&str>) -> Self {
+    pub fn of(path: impl Into<PathBuf>, version: Option<&str>) -> Self {
         Self {
             path: path.into(),
             version: version.map(Arc::from),
@@ -66,7 +66,7 @@ impl Key {
     }
 
     /// The version's id, when the frame is one.
-    pub(crate) fn version(&self) -> Option<&str> {
+    pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
     }
 
@@ -75,7 +75,7 @@ impl Key {
     /// the export names it by (`queue::label_of`); the id stands in for a
     /// name that was not had. What the log and the status line say of
     /// the frame.
-    pub(crate) fn said(&self) -> String {
+    pub fn said(&self) -> String {
         match &self.version {
             None => greycard_edit_io::on_disk::file_name(&self.path),
             Some(v) => {

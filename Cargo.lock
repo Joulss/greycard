@@ -2056,13 +2056,24 @@ name = "greycard-engine"
 version = "0.9.1"
 dependencies = [
  "anyhow",
+ "bytemuck",
+ "dunce",
  "greycard-ai",
  "greycard-core",
  "greycard-edit",
+ "greycard-edit-io",
  "greycard-gpu",
  "greycard-lens",
+ "greycard-library",
  "greycard-render",
+ "half",
+ "image",
  "log",
+ "pollster",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -2165,6 +2176,7 @@ dependencies = [
  "greycard-core",
  "greycard-edit",
  "greycard-edit-io",
+ "greycard-engine",
  "greycard-gpu",
  "greycard-lens",
  "greycard-library",

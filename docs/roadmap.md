@@ -598,11 +598,11 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] The engine, part 2, second half (§454, §476): the worker and
-      its collaborators moved into greycard-engine, the three develops
-      as walks of the list, the four `same_*` predicates retired;
-      exports byte-equal before and after (the crate, the list, and
-      the walker landed, §476)
+- [ ] The engine, part 2, last step (§454, §478): the three develops
+      as walks of the list in three landings, the four `same_*`
+      predicates retired; exports byte-equal before and after (the
+      crate, the list, and the walker landed, §476; the worker moved,
+      §478)
 - [ ] The engine, part 3 (§454): the viewport crate, the shader and
       its parity tests over gpu and render, Slint's pixel types out
       of it. Waits on part 2

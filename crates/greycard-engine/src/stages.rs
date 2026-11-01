@@ -25,9 +25,12 @@ use greycard_core::develop::sharpen::SharpenOptions;
 use greycard_core::develop::{DemosaicMethod, DevelopSettings};
 use greycard_core::raw::{CfaPattern, Orientation, RawFrame, SensorLayout, Shot};
 use greycard_edit::geometry::Geometry;
-use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Retouch;
 use greycard_edit::{DetailWants, Edit};
+
+use crate::ai::prompted;
+use crate::edited_pictures::framed_size;
+use crate::worker::quarters;
 use greycard_render::export;
 
 /// What a develop is for: all that varies between the callers.
@@ -223,16 +226,6 @@ fn swaps(o: Orientation) -> bool {
             | Orientation::Transverse
             | Orientation::Rotate270
     )
-}
-
-/// The size of a develop of `full` once `geometry` has framed it, as
-/// the geometry cuts it.
-pub(crate) fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
-    if geometry.is_identity() {
-        return full;
-    }
-    let frame = geometry.frame(full.0 as f32, full.1 as f32);
-    (frame.size.0 as u32, frame.size.1 as u32)
 }
 
 /// The engine's settings before the demosaic: the edit's white, its
@@ -630,17 +623,6 @@ pub fn learned_shapes(edit: &Edit) -> Vec<(u64, usize)> {
     out
 }
 
-/// Whether a learned shape has what its model is prompted with: an
-/// Object needs a pick or a box, a Landscape a feature.
-pub fn prompted(shape: &Shape) -> bool {
-    match shape {
-        Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } | Shape::Part { .. } => true,
-        Shape::Landscape { .. } => !shape.is_unknown(),
-        Shape::Object { picks, boxes } => !picks.is_empty() || !boxes.is_empty(),
-        _ => false,
-    }
-}
-
 /// The steps of `edit`'s develop for `purpose` on the frame `facts`
 /// describe, with the lens corrections `lenses` holds for it.
 pub fn stages(
@@ -818,19 +800,10 @@ fn corrections(
     edit.lens.corrections(profile)
 }
 
-/// The orientation of a picture input's turn, none for none.
-pub fn quarters(turn: u8) -> Option<Orientation> {
-    match turn % 4 {
-        1 => Some(Orientation::Rotate90),
-        2 => Some(Orientation::Rotate180),
-        3 => Some(Orientation::Rotate270),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use greycard_edit::Adjustment;
+    use greycard_edit::mask::Shape;
     use greycard_edit::retouch::{Method, Patch};
 
     use super::*;

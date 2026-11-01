@@ -33,7 +33,8 @@ use greycard_gpu::wgpu;
 use greycard_render::detail::DetailPlanes;
 use greycard_render::finish::{Guide, Source, guide_plane};
 
-use crate::stages::{Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
+use crate::stages::{Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap};
+use crate::worker::quarters;
 
 /// The open file: a raw to develop, or a picture already in the
 /// working space, its image shared rather than copied.
@@ -540,7 +541,7 @@ pub struct Walked {
 }
 
 /// The state a walk carries between its steps.
-struct State {
+struct Carried {
     buf: Buf,
     meta: Meta,
     taps: Taps,
@@ -670,7 +671,7 @@ fn start(
     input: &Input,
     kept: &mut Kept,
     models: &dyn Models,
-) -> Result<(usize, State, Option<Keep>, Vec<Place>), Retry> {
+) -> Result<(usize, Carried, Option<Keep>, Vec<Place>), Retry> {
     let point = kept
         .resume(steps, plan, models)
         .or_else(|| kept.turned(steps, plan));
@@ -685,7 +686,7 @@ fn start(
             .unwrap_or_default();
         return Ok((
             p.steps.len(),
-            State {
+            Carried {
                 buf: p.buf.buf(),
                 meta: p.meta.clone(),
                 taps: p.taps.clone(),
@@ -728,7 +729,7 @@ fn start(
     };
     Ok((
         0,
-        State {
+        Carried {
             buf,
             meta,
             taps: Taps::default(),
@@ -965,7 +966,7 @@ fn run_end(steps: &Steps, plan: &[Place], i: usize) -> usize {
 fn cpu_op(
     stage: &Stage,
     input: &Input,
-    st: &mut State,
+    st: &mut Carried,
     models: &mut dyn Models,
     walked: &mut Walked,
 ) -> Result<(), Retry> {
@@ -1207,7 +1208,7 @@ fn device_run(
     i: usize,
     end: usize,
     ctx: &greycard_gpu::Context,
-    st: &mut State,
+    st: &mut Carried,
     kept: &mut Kept,
     places: &mut Vec<Place>,
     walked: &mut Walked,

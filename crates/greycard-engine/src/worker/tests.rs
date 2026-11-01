@@ -83,8 +83,8 @@ fn run_fake_set(
     let set = Arc::new(crate::queue::Set::new(
         frames.len(),
         Some(dir.join("out")),
-        crate::export::Settings::default(),
-        crate::export::OnExists::Increment,
+        greycard_render::export::Settings::default(),
+        greycard_render::export::OnExists::Increment,
     ));
     let (tx, rx) = std::sync::mpsc::channel();
     let tx = Mutex::new(tx);
@@ -545,11 +545,11 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
             edit: edit.clone(),
             turn: 0,
             image,
-            guide: Arc::new(crate::finish::Guide::NONE),
+            guide: Arc::new(greycard_render::finish::Guide::NONE),
             white: WhiteBase::IDENTITY,
             radius: None,
             clip_level: 1.0,
-            source: crate::finish::Source::SCENE,
+            source: greycard_render::finish::Source::SCENE,
             stamp: 1,
             patched: None,
             pre: None,
@@ -590,11 +590,11 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
         edit: edit.clone(),
         turn: 0,
         image: plain.clone(),
-        guide: Arc::new(crate::finish::Guide::NONE),
+        guide: Arc::new(greycard_render::finish::Guide::NONE),
         white: WhiteBase::IDENTITY,
         radius: None,
         clip_level: 1.0,
-        source: crate::finish::Source::SCENE,
+        source: greycard_render::finish::Source::SCENE,
         stamp: 1,
         patched: None,
         pre: None,
@@ -690,11 +690,11 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
         edit: Edit::default(),
         turn: 0,
         image: image.clone(),
-        guide: Arc::new(crate::finish::Guide::NONE),
+        guide: Arc::new(greycard_render::finish::Guide::NONE),
         white: WhiteBase::IDENTITY,
         radius: None,
         clip_level: 1.0,
-        source: crate::finish::Source::SCENE,
+        source: greycard_render::finish::Source::SCENE,
         stamp: 0,
         patched: None,
         pre: None,
@@ -733,7 +733,7 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
     assert!(matches!(job, PlanesJob::Nothing));
 
     // Died: the sender dropped without a word, as a panic drops it.
-    let (send, made) = std::sync::mpsc::channel::<Option<crate::detail::DetailPlanes>>();
+    let (send, made) = std::sync::mpsc::channel::<Option<greycard_render::detail::DetailPlanes>>();
     drop(send);
     let mut job = making(made);
     assert!(job.land(&mut base).is_none());
@@ -817,9 +817,9 @@ fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
         },
         ..Default::default()
     };
-    let settings = crate::export::Settings {
-        format: crate::export::Format::Tiff,
-        sharpen: crate::export::Sharpen::Off,
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Tiff,
+        sharpen: greycard_render::export::Sharpen::Off,
         ..Default::default()
     };
     let mut ai = Ai::new();
@@ -827,7 +827,7 @@ fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
         let mut edit = global.clone();
         edit.adjustments.push(everywhere(white));
         let (r, _) = finish_export(image.clone(), &edit, base.as_ref(), &mut ai, &settings);
-        let crate::export::Pixels::Sixteen(p) = r.pixels else {
+        let greycard_render::export::Pixels::Sixteen(p) = r.pixels else {
             panic!("a TIFF is sixteen bits")
         };
         p
@@ -890,9 +890,9 @@ fn a_masks_offset_follows_the_global_and_its_light_does_not() {
         },
         ..Default::default()
     };
-    let settings = crate::export::Settings {
-        format: crate::export::Format::Tiff,
-        sharpen: crate::export::Sharpen::Off,
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Tiff,
+        sharpen: greycard_render::export::Sharpen::Off,
         ..Default::default()
     };
     let mut ai = Ai::new();
@@ -909,7 +909,7 @@ fn a_masks_offset_follows_the_global_and_its_light_does_not() {
         let mut edit = global.clone();
         edit.adjustments.push(everywhere(white));
         let (r, _) = finish_export(image, &edit, base.as_ref(), &mut ai, &settings);
-        let crate::export::Pixels::Sixteen(p) = r.pixels else {
+        let greycard_render::export::Pixels::Sixteen(p) = r.pixels else {
             panic!("a TIFF is sixteen bits")
         };
         p
@@ -1916,7 +1916,7 @@ fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
         tx.lock().unwrap().send(line).unwrap();
     });
     let mut thumbs = Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP);
-    let made = crate::grid::made_size(worker.pool.size());
+    let made = crate::made::made_size(worker.pool().expect("a window's worker").size());
     let kept = Thumb {
         width: 5,
         height: 4,
@@ -2263,7 +2263,7 @@ fn an_export_says_which_learned_mask_it_went_without() {
         &edit,
         base.as_ref(),
         &mut ai,
-        &crate::export::Settings::default(),
+        &greycard_render::export::Settings::default(),
     );
     let _ = std::fs::remove_dir_all(empty.parent().unwrap());
     assert_eq!(left_out.len(), 1, "{left_out:?}");
@@ -2281,13 +2281,13 @@ fn a_develop_without_its_model_says_what_was_left_out() {
     let developed = |learned, fills| Outcome::Developed {
         generation: 0,
         turn: 0,
-        kind: crate::finish::Source::SCENE,
+        kind: greycard_render::finish::Source::SCENE,
         image: Developed::Halves(Arc::new(Halves {
             width: 1,
             height: 1,
             pixels: vec![half::f16::ZERO; 4],
         })),
-        guide: Arc::new(crate::finish::Guide::NONE),
+        guide: Arc::new(greycard_render::finish::Guide::NONE),
         planes: None,
         white: WhiteBase::IDENTITY,
         seconds: 0.0,
@@ -2480,12 +2480,15 @@ fn a_raw_s_develop_carries_its_body_s_baseline() {
     let b = greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"));
     assert_eq!(
         base.as_ref().expect("a base").source,
-        crate::finish::Source::Scene(crate::finish::Baseline::of_stops(b))
+        greycard_render::finish::Source::Scene(greycard_render::finish::Baseline::of_stops(b))
     );
     (frame.make, frame.model) = ("Canon".into(), "Canon EOS R5 Mark II".into());
     let mut base = None;
     develop_once(&Arc::new(frame), &mut base, &mut None);
-    assert_eq!(base.expect("a base").source, crate::finish::Source::SCENE);
+    assert_eq!(
+        base.expect("a base").source,
+        greycard_render::finish::Source::SCENE
+    );
 }
 
 /// The shelf's key for `frame`, as an open of a file at `path` makes it.
@@ -3489,40 +3492,6 @@ fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
                 ..
             }
         ));
-    }
-}
-
-/// A worker and a culling prefetcher dropped take their threads with
-/// them: each made and dropped in a test would otherwise leave threads
-/// asleep for the rest of the run, and macOS caps a process's threads
-/// well short of Linux. Counted per instance, by the queue each thread
-/// holds: the worker's is held by its thread and by each thread of the
-/// thumbnail pool (through the edit hooks), the prefetcher's by its
-/// threads, so the queue going means they have. The pool starts its
-/// threads on the first thumbnail asked, so one is asked for.
-#[test]
-fn a_dropped_worker_and_prefetcher_leave_no_threads() {
-    let worker = Worker::new(|_| {});
-    worker.send(Job::Thumbnail {
-        index: 0,
-        frame: Frame::file("/nonexistent/greycard-threads-exit.CR3"),
-    });
-    let prefetcher = crate::cull::Prefetcher::new(|_| {});
-    let worker_queue = Arc::downgrade(&worker.queue);
-    let prefetcher_gone = prefetcher.threads_gone();
-    assert!(
-        worker_queue.strong_count() > 1 && !prefetcher_gone(),
-        "the threads hold their queues"
-    );
-    drop(worker);
-    drop(prefetcher);
-    let asked = Instant::now();
-    while worker_queue.upgrade().is_some() || !prefetcher_gone() {
-        assert!(
-            asked.elapsed() < std::time::Duration::from_secs(2),
-            "two seconds after the drop, a thread still holds its queue"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
 

@@ -403,7 +403,7 @@ pub(crate) fn run(plan: Plan) -> Finished {
         set.settings.describe()
     );
     let (tx, rx) = std::sync::mpsc::channel();
-    let worker = Worker::batched(move |outcome| {
+    let worker = Worker::headless(move |outcome| {
         let _ = tx.send(outcome);
     });
     worker.send(Job::ExportSet {

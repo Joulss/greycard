@@ -55,10 +55,20 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String>
 pub(super) fn run(
     queue: Arc<(Mutex<Queue>, Condvar)>,
     deliver: Deliver,
-    pool: Arc<crate::thumbpool::Pool>,
     edited: Arc<crate::edited_pictures::Edited>,
-    reducer: Arc<crate::reduced::Reducer>,
+    background: Option<Arc<Background>>,
 ) {
+    use crate::walk::Hold;
+    let wake = || {
+        if let Some(b) = &background {
+            b.pool.wake();
+        }
+    };
+    let set_lenses = |lenses: Option<Arc<greycard_lens::Database>>| {
+        if let Some(b) = &background {
+            b.reducer.set_lenses(lenses);
+        }
+    };
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
     match greycard_ai::Store::user() {
@@ -69,7 +79,7 @@ pub(super) fn run(
         .ok()
         .and_then(|s| s.load())
         .map(|(db, _)| Arc::new(db));
-    reducer.set_lenses(lenses.clone());
+    set_lenses(lenses.clone());
     // The learned models for the masks of frames not open
     // (`Job::MasksFor`), made on the first such frame and dropped when
     // none is waiting, as `set_ai` is for a set's frames.
@@ -161,7 +171,7 @@ pub(super) fn run(
                 }
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
-                    reducer.set_lenses(lenses.clone());
+                    set_lenses(lenses.clone());
                     edited.set_lenses(crate::edited_pictures::lens_database());
                     forget_bases(&mut base, &mut learned, &mut shelf, gpu.as_ref());
                 }
@@ -235,7 +245,7 @@ pub(super) fn run(
                     frame_open: edited.any_open(),
                 };
                 let due = prefetch::due(&mut q.neighbors, &now);
-                prefetch::settle_reservation(&due, &edited, || pool.wake());
+                prefetch::settle_reservation(&due, &edited, wake);
                 match due {
                     Due::Fetch(n) => {
                         let n = *n;
@@ -246,7 +256,10 @@ pub(super) fn run(
                         // a reservation the pool honors, so the
                         // prefetch is next and not behind every reduced
                         // develop still queued.
-                        if !prefetch::claim(|| edited.set_prefetching(true), || pool.edits_busy()) {
+                        if !prefetch::claim(
+                            || edited.set_prefetching(true),
+                            || background.as_ref().map_or(0, |b| b.pool.edits_busy()),
+                        ) {
                             if let Some(waiting) = q.neighbors.as_mut() {
                                 waiting.waiting.push_front(n);
                             }
@@ -275,7 +288,7 @@ pub(super) fn run(
                             )
                         }));
                         edited.set_prefetching(false);
-                        pool.wake();
+                        wake();
                         q = lock.lock().expect("worker queue");
                         match held {
                             // Given way to a request on the open frame:
@@ -614,8 +627,8 @@ pub(super) fn run(
         {
             ai.release_parts();
         }
-        if developing {
-            pool.set_limit(during_develop(pool.threads()));
+        if developing && let Some(b) = &background {
+            b.hold(true);
         }
         let blame = Blame::of(&job);
         // A panic in a job is the hook's to write, with its
@@ -827,13 +840,19 @@ pub(super) fn run(
                 };
                 match masks_for(&frame, ai, lenses.as_deref(), &waiting) {
                     MasksMade::All => {
-                        reducer.masks_done(&frame, true);
+                        if let Some(b) = &background {
+                            b.reducer.masks_done(&frame, true);
+                        }
                         deliver(Outcome::EditedKept { frame });
                     }
                     // A frame tried and found wanting stays so until a
                     // model is fetched: asked again now, it would be
                     // decoded and developed again for the same answer.
-                    MasksMade::Short => reducer.masks_done(&frame, false),
+                    MasksMade::Short => {
+                        if let Some(b) = &background {
+                            b.reducer.masks_done(&frame, false);
+                        }
+                    }
                     MasksMade::GaveWay => {
                         lock.lock()
                             .expect("worker queue")
@@ -903,7 +922,9 @@ pub(super) fn run(
         }
         if developing {
             edited.touch();
-            pool.set_limit(pool.threads());
+            if let Some(b) = &background {
+                b.hold(false);
+            }
             // A save that was waiting for this develop: its pictures now.
             if let Some(keep) = pending.take() {
                 let hand = InHand {
@@ -930,7 +951,7 @@ pub(super) fn run(
 /// 1.21 and cost the folder 0.8 s of its 3.6. The develop runs rayon
 /// over every core and the thumbnails' decodes take cores it wanted.
 /// `GREYCARD_THUMB_DURING_DEVELOP` overrides it, for measuring.
-fn during_develop(threads: usize) -> usize {
+pub(super) fn during_develop(threads: usize) -> usize {
     std::env::var("GREYCARD_THUMB_DURING_DEVELOP")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())

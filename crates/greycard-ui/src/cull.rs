@@ -18,6 +18,9 @@ use greycard_core::raw::Orientation;
 // The compare view's tiles are laid out where the viewport's fit reads
 // them, in the library.
 pub use crate::zoom::tile_rects;
+#[cfg(test)]
+pub(crate) use greycard_engine::camera::FILE_READS;
+pub(crate) use greycard_engine::camera::{camera_picture, turn_rgb8, turned_size};
 // The rejects' move, in the library beside the archive's.
 pub use crate::rejects::{
     Moved, Orphans, REJECTS, above_rejects, move_back, move_rejects_as, rejects_dir,
@@ -1116,52 +1119,6 @@ fn shaped(
     (preview, image, orientation)
 }
 
-/// The files read for a camera picture, for the tests that say a frame
-/// out of reach reads none: by path, since the tests run beside each
-/// other.
-#[cfg(test)]
-pub(crate) static FILE_READS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
-
-/// The camera's own rendering of a file, and the orientation it is
-/// to be shown in.
-pub(crate) fn camera_picture(path: &Path) -> anyhow::Result<(image::RgbImage, Orientation)> {
-    #[cfg(test)]
-    FILE_READS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(path.to_path_buf());
-    if greycard_core::picture::is_picture_path(path) {
-        // The picture module's reader for the tag: one answer a file,
-        // so the loupe, the strip and the develop cannot disagree
-        // about which way up a multi-directory TIFF stands.
-        let orientation = greycard_core::picture::orientation_path(path)?;
-        let decoder = image::ImageReader::open(path)?
-            .with_guessed_format()?
-            .into_decoder()?;
-        let rgb = image::DynamicImage::from_decoder(decoder)?.to_rgb8();
-        return Ok((rgb, orientation));
-    }
-    match greycard_core::decode::preview_path(path)? {
-        Some(found) => Ok(found),
-        None => anyhow::bail!("no camera preview in the file"),
-    }
-}
-
-/// The size of a `w` by `h` picture once turned.
-fn turned_size(w: u32, h: u32, orientation: Orientation) -> (u32, u32) {
-    if matches!(
-        orientation,
-        Orientation::Transpose
-            | Orientation::Rotate90
-            | Orientation::Transverse
-            | Orientation::Rotate270
-    ) {
-        (h, w)
-    } else {
-        (w, h)
-    }
-}
-
 /// RGB bytes box-downscaled by a whole `factor`, the partial cells at
 /// the right and the bottom dropped. A factor past the picture's
 /// short side is held to it, so the smallest result is a pixel.
@@ -1189,44 +1146,6 @@ fn box_down(w: u32, h: u32, rgb: &[u8], factor: u32) -> (u32, u32, Vec<u8>) {
             out[o] = ((sum[0] + n / 2) / n) as u8;
             out[o + 1] = ((sum[1] + n / 2) / n) as u8;
             out[o + 2] = ((sum[2] + n / 2) / n) as u8;
-        }
-    }
-    (ow as u32, oh as u32, out)
-}
-
-/// RGB bytes turned as the engine's `develop::orient` turns a
-/// picture, so the loupe agrees with the strip and the develop.
-pub(crate) fn turn_rgb8(
-    w: u32,
-    h: u32,
-    rgb: &[u8],
-    orientation: Orientation,
-) -> (u32, u32, Vec<u8>) {
-    if orientation == Orientation::Normal {
-        return (w, h, rgb.to_vec());
-    }
-    let (w, h) = (w as usize, h as usize);
-    let (ow, oh) = turned_size(w as u32, h as u32, orientation);
-    let (ow, oh) = (ow as usize, oh as usize);
-    let source = |ox: usize, oy: usize| -> (usize, usize) {
-        match orientation {
-            Orientation::Normal => (ox, oy),
-            Orientation::FlipHorizontal => (w - 1 - ox, oy),
-            Orientation::Rotate180 => (w - 1 - ox, h - 1 - oy),
-            Orientation::FlipVertical => (ox, h - 1 - oy),
-            Orientation::Transpose => (oy, ox),
-            Orientation::Rotate90 => (oy, h - 1 - ox),
-            Orientation::Transverse => (w - 1 - oy, h - 1 - ox),
-            Orientation::Rotate270 => (w - 1 - oy, ox),
-        }
-    };
-    let mut out = vec![0u8; ow * oh * 3];
-    for oy in 0..oh {
-        for ox in 0..ow {
-            let (sx, sy) = source(ox, oy);
-            let s = (sy * w + sx) * 3;
-            let d = (oy * ow + ox) * 3;
-            out[d..d + 3].copy_from_slice(&rgb[s..s + 3]);
         }
     }
     (ow as u32, oh as u32, out)
@@ -2442,5 +2361,39 @@ mod tests {
         std::fs::write(&padded, &bytes).unwrap();
         assert_eq!(shown(&padded), (true, (600, 400)));
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A worker and a culling prefetcher dropped take their threads with
+    /// them: each made and dropped in a test would otherwise leave threads
+    /// asleep for the rest of the run, and macOS caps a process's threads
+    /// well short of Linux. Counted per instance, by the queue each thread
+    /// holds: the worker's is held by its thread and by each thread of the
+    /// thumbnail pool (through the edit hooks), the prefetcher's by its
+    /// threads, so the queue going means they have. The pool starts its
+    /// threads on the first thumbnail asked, so one is asked for.
+    #[test]
+    fn a_dropped_worker_and_prefetcher_leave_no_threads() {
+        let worker = crate::worker::Worker::new(|_| {});
+        worker.send(crate::worker::Job::Thumbnail {
+            index: 0,
+            frame: crate::versions::Key::file("/nonexistent/greycard-threads-exit.CR3"),
+        });
+        let prefetcher = Prefetcher::new(|_| {});
+        let worker_queue = worker.queue_held();
+        let prefetcher_gone = prefetcher.threads_gone();
+        assert!(
+            worker_queue.strong_count() > 1 && !prefetcher_gone(),
+            "the threads hold their queues"
+        );
+        drop(worker);
+        drop(prefetcher);
+        let asked = Instant::now();
+        while worker_queue.upgrade().is_some() || !prefetcher_gone() {
+            assert!(
+                asked.elapsed() < std::time::Duration::from_secs(2),
+                "two seconds after the drop, a thread still holds its queue"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }

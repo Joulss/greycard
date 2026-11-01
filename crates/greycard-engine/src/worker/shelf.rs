@@ -197,7 +197,7 @@ pub(super) struct Shelved {
 /// without an open of it: every edit its sidecar holds, its versions'
 /// among them, and its quarter turns.
 #[derive(Clone, Debug)]
-pub(crate) struct FileNow {
+pub struct FileNow {
     pub edits: Vec<Edit>,
     pub turn: u8,
 }
@@ -212,7 +212,7 @@ impl FileNow {
     /// sidecar says, so one shelved from a seeded frame never saved goes
     /// on the next save of the file (a base made again, never a wrong
     /// one).
-    pub(crate) fn serves(&self, edit: &Edit, turn: u8) -> bool {
+    pub fn serves(&self, edit: &Edit, turn: u8) -> bool {
         self.turn % 4 == turn % 4
             && self.edits.iter().any(|now| {
                 let mut as_made = now.clone();
@@ -263,7 +263,7 @@ impl Shelf {
     /// failed, whose model may be there by the time the frame is
     /// opened again.
     fn takes(base: &Base) -> bool {
-        base.source != crate::finish::Source::Display && base.stand_in.is_none()
+        base.source != greycard_render::finish::Source::Display && base.stand_in.is_none()
     }
 
     /// Put `base`, the frame `file`'s, on the shelf, with `learned`
@@ -462,11 +462,11 @@ mod tests {
             edit: edit.clone(),
             turn,
             image: Arc::new(WorkingImage::new(width, height)),
-            guide: Arc::new(crate::finish::Guide::NONE),
+            guide: Arc::new(greycard_render::finish::Guide::NONE),
             white: WhiteBase::IDENTITY,
             radius: None,
             clip_level: 1.0,
-            source: crate::finish::Source::SCENE,
+            source: greycard_render::finish::Source::SCENE,
             stamp: 1,
             patched: None,
             pre: None,
@@ -897,7 +897,7 @@ mod tests {
         stand_in.stand_in = Some(LearnedReport::Missing(&greycard_ai::DENOISE_FAST));
         shelf.put(file("a"), stand_in, None);
         let mut picture = base(&off, 0, 10, 10);
-        picture.source = crate::finish::Source::Display;
+        picture.source = greycard_render::finish::Source::Display;
         shelf.put(file("p.tif"), picture, None);
         assert_eq!(shelf.len(), 0);
     }

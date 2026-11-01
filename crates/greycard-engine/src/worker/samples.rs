@@ -487,7 +487,7 @@ fn the_landscape_over_real_frames() {
             .unwrap_or_else(|e| panic!("{stem}: {e}"));
         let (mut made, mut rasters) = (Vec::new(), Vec::new());
         for (i, offer) in offers.iter().enumerate() {
-            let kind = crate::panel::landscape::kind_of(offer);
+            let kind = crate::ai::kind_of(offer);
             let shape = Shape::of_kind(kind);
             let t = Instant::now();
             let raster = ai
@@ -569,7 +569,7 @@ fn the_landscape_over_real_frames() {
             provider.name(),
             offers
                 .iter()
-                .map(crate::panel::landscape::words_of)
+                .map(crate::ai::words_of)
                 .collect::<Vec<_>>()
                 .join(", "),
             made.join(", ")
@@ -1363,10 +1363,10 @@ fn the_dehaze_viewport_against_the_export_on_real_frames() {
                 }
             };
             let b = base.as_ref().unwrap();
-            let global = crate::finish::Baked::global(edit, b.source);
-            let to_out = crate::export::Space::Srgb.matrix();
+            let global = greycard_render::finish::Baked::global(edit, b.source);
+            let to_out = greycard_render::export::Space::Srgb.matrix();
             let finish = |image: &WorkingImage| -> Vec<u8> {
-                crate::finish::finish_with(
+                greycard_render::finish::finish_with(
                     image,
                     None,
                     &global,
@@ -1385,7 +1385,7 @@ fn the_dehaze_viewport_against_the_export_on_real_frames() {
             // brightest channel is over 0.8 in a 16-bit finish while
             // the 5x5 mean of its Rec.709 luma is under 0.08.
             let dots = |image: &WorkingImage| -> usize {
-                let out: Vec<u16> = crate::finish::finish_with(
+                let out: Vec<u16> = greycard_render::finish::finish_with(
                     image,
                     None,
                     &global,

@@ -58,25 +58,25 @@ use crate::worker::{Deliver, Outcome, THUMB_WIDTH, order_thumbnails, panic_messa
 /// How a picture is made: a frame (a file, and the version of it whose
 /// edit's picture is wanted) and the long edge asked for, to the
 /// picture and whether it came from the cache.
-pub(crate) type Make = Arc<MakeFn>;
-pub(crate) type MakeFn = dyn Fn(&Key, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync;
+pub type Make = Arc<MakeFn>;
+pub type MakeFn = dyn Fn(&Key, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync;
 
 /// How a picture is looked up in the cache alone, without making it:
 /// the picture, or `None` for a miss.
-pub(crate) type Lookup = Arc<LookupFn>;
-pub(crate) type LookupFn = dyn Fn(&Key, u32) -> Option<Thumb> + Send + Sync;
+pub type Lookup = Arc<LookupFn>;
+pub type LookupFn = dyn Fn(&Key, u32) -> Option<Thumb> + Send + Sync;
 
 /// The local previews behind the thumbnails: whether a file whose
 /// thumbnail was just delivered is owed one (a question of memory,
 /// asked on every delivery), and the making of it.
 #[derive(Clone)]
-pub(crate) struct PreviewHooks {
-    pub(crate) owes: Arc<OwesFn>,
-    pub(crate) make: Arc<MakePreviewFn>,
+pub struct PreviewHooks {
+    pub owes: Arc<OwesFn>,
+    pub make: Arc<MakePreviewFn>,
 }
 
-pub(crate) type OwesFn = dyn Fn(&Path) -> bool + Send + Sync;
-pub(crate) type MakePreviewFn = dyn Fn(&Path) -> anyhow::Result<()> + Send + Sync;
+pub type OwesFn = dyn Fn(&Path) -> bool + Send + Sync;
+pub type MakePreviewFn = dyn Fn(&Path) -> anyhow::Result<()> + Send + Sync;
 
 /// The edit's pictures behind the previews: whether a frame whose
 /// thumbnail was just delivered wants them made (held as edited, its
@@ -87,18 +87,18 @@ pub(crate) type MakePreviewFn = dyn Fn(&Path) -> anyhow::Result<()> + Send + Syn
 /// with no other beside it. A frame is a file and a version of it: each
 /// version's edit has pictures of its own.
 #[derive(Clone)]
-pub(crate) struct EditHooks {
-    pub(crate) wants: Arc<WantsFn>,
-    pub(crate) make: Arc<MakeEditFn>,
-    pub(crate) at_once: Arc<AtOnceFn>,
-    pub(crate) alone: Arc<WantsFn>,
+pub struct EditHooks {
+    pub wants: Arc<WantsFn>,
+    pub make: Arc<MakeEditFn>,
+    pub at_once: Arc<AtOnceFn>,
+    pub alone: Arc<WantsFn>,
 }
 
-pub(crate) type WantsFn = dyn Fn(&Key) -> bool + Send + Sync;
+pub type WantsFn = dyn Fn(&Key) -> bool + Send + Sync;
 /// How many edits may be in hand now, and, when that holds one back
 /// only for a while (`reduced::begin`), when to look again.
-pub(crate) type AtOnceFn = dyn Fn() -> (usize, Option<Duration>) + Send + Sync;
-pub(crate) type MakeEditFn = dyn Fn(&Key) -> Result<bool, crate::reduced::Why> + Send + Sync;
+pub type AtOnceFn = dyn Fn() -> (usize, Option<Duration>) + Send + Sync;
+pub type MakeEditFn = dyn Fn(&Key) -> Result<bool, crate::reduced::Why> + Send + Sync;
 
 /// How many threads make thumbnails on a machine of `cores`: half of
 /// them, at least two and at most eight. The develop runs on rayon's
@@ -106,13 +106,13 @@ pub(crate) type MakeEditFn = dyn Fn(&Key) -> Result<bool, crate::reduced::Why> +
 /// preview decodes wait on the disk more than on each other, and each
 /// thread holds a full-frame preview while it downscales one (134 MB
 /// for an R5 II's 8192 by 5464).
-pub(crate) fn threads_for(cores: usize) -> usize {
+pub fn threads_for(cores: usize) -> usize {
     (cores / 2).clamp(2, 8)
 }
 
 /// The pool's size on this machine: `threads_for` the cores, or
 /// `GREYCARD_THUMB_THREADS` when that is set, for measuring.
-pub(crate) fn default_threads() -> usize {
+pub fn default_threads() -> usize {
     std::env::var("GREYCARD_THUMB_THREADS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -126,7 +126,7 @@ pub(crate) fn default_threads() -> usize {
 /// of cells apart, and the frames between are hidden. The window hands
 /// the pool these rows' cells ([`Pool::set_near`]), the only frames the
 /// edit's pictures are made for.
-pub(crate) fn near_rows(first: usize, last: usize, count: usize) -> std::ops::Range<usize> {
+pub fn near_rows(first: usize, last: usize, count: usize) -> std::ops::Range<usize> {
     if first > last {
         return 0..0;
     }
@@ -205,7 +205,7 @@ impl Pass {
 /// in: the files the window shows apart from the rest, so it takes
 /// them first.
 #[derive(Default)]
-pub(crate) struct Outbox {
+pub struct Outbox {
     inner: Mutex<Waiting>,
 }
 
@@ -302,8 +302,8 @@ pub struct Batch(Arc<Outbox>);
 impl Batch {
     /// A batch of these, as the threads would leave it, with the
     /// window told.
-    #[cfg(test)]
-    pub(crate) fn of(outcomes: Vec<Outcome>) -> Self {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn of(outcomes: Vec<Outcome>) -> Self {
         let outbox = Outbox::default();
         for outcome in outcomes {
             outbox.put(outcome);
@@ -315,7 +315,7 @@ impl Batch {
     /// the rest, each in the order they were finished; and whether any
     /// are left. When none are, the next one finished tells the window
     /// again.
-    pub(crate) fn take(&self, n: usize) -> (Vec<Outcome>, bool) {
+    pub fn take(&self, n: usize) -> (Vec<Outcome>, bool) {
         let mut w = self.0.lock();
         let from_shown = n.min(w.shown_done.len());
         let mut taken: Vec<Outcome> = w.shown_done.drain(..from_shown).collect();
@@ -365,7 +365,7 @@ struct Pending {
     /// How many times a thread has looked at all of the above and found
     /// nothing to begin, before it waits: what a test reads to know the
     /// pool has declined, rather than not yet looked.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     looked: u64,
     /// The long edge pictures are made at now; `THUMB_WIDTH` until
     /// the grid asks otherwise. Read as each is begun.
@@ -440,7 +440,7 @@ struct Shared {
 
 /// The pool: `threads` threads, started with the first thumbnail
 /// asked for, each making one picture at a time.
-pub(crate) struct Pool {
+pub struct Pool {
     shared: Arc<Shared>,
     threads: usize,
     lookup: Option<Lookup>,
@@ -457,19 +457,14 @@ pub(crate) struct Pool {
 
 impl Pool {
     /// A pool with nothing to look up in: held, it does nothing.
-    #[cfg(test)]
-    pub(crate) fn new(threads: usize, make: Make, deliver: Deliver) -> Self {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn new(threads: usize, make: Make, deliver: Deliver) -> Self {
         Self::build(threads, None, make, deliver)
     }
 
     /// A pool that looks pictures up with `lookup` while it is held,
     /// and makes them (a lookup included) with `make` otherwise.
-    pub(crate) fn with_lookup(
-        threads: usize,
-        lookup: Lookup,
-        make: Make,
-        deliver: Deliver,
-    ) -> Self {
+    pub fn with_lookup(threads: usize, lookup: Lookup, make: Make, deliver: Deliver) -> Self {
         Self::build(threads, Some(lookup), make, deliver)
     }
 
@@ -495,14 +490,14 @@ impl Pool {
 
     /// Make the edit's pictures behind the previews for each file
     /// delivered that `hooks` says wants them. Before the first push.
-    pub(crate) fn with_edits(mut self, hooks: EditHooks) -> Self {
+    pub fn with_edits(mut self, hooks: EditHooks) -> Self {
         self.edits = Some(hooks);
         self
     }
 
     /// Make a local preview behind each thumbnail delivered whose file
     /// `hooks` says is owed one. Before the first push.
-    pub(crate) fn with_previews(mut self, hooks: PreviewHooks) -> Self {
+    pub fn with_previews(mut self, hooks: PreviewHooks) -> Self {
         self.previews = Some(hooks);
         self
     }
@@ -510,7 +505,7 @@ impl Pool {
     /// Deliver through an outbox: one [`Outcome::Thumbnails`] for as
     /// many as are finished before the window takes them, rather than
     /// a call each. Before the first push, which starts the threads.
-    pub(crate) fn batched(mut self) -> Self {
+    pub fn batched(mut self) -> Self {
         self.outbox = Some(Arc::new(Outbox::default()));
         self
     }
@@ -522,7 +517,7 @@ impl Pool {
     /// Make `frame`'s picture, as cell `index` of the list. An ask for
     /// one already waiting is dropped; the waiting one is made at
     /// whatever size is wanted when it is begun anyway.
-    pub(crate) fn push(&self, index: usize, frame: Key) {
+    pub fn push(&self, index: usize, frame: Key) {
         let mut q = self.lock();
         q.wanted = None;
         if !q.jobs.iter().any(|(i, p)| *i == index && *p == frame) {
@@ -578,7 +573,7 @@ impl Pool {
     /// `push` makes for one waiting already (the whole queue, each
     /// time, which is quadratic over a list of twenty thousand) is
     /// skipped.
-    pub(crate) fn push_all(&self, list: Vec<(usize, Key)>) {
+    pub fn push_all(&self, list: Vec<(usize, Key)>) {
         let mut list = list.into_iter();
         let Some((index, frame)) = list.next() else {
             return;
@@ -593,7 +588,7 @@ impl Pool {
 
     /// Make `first..=last` before the rest, the rest outward from
     /// that range; applies to whatever has not been begun.
-    pub(crate) fn want(&self, first: usize, last: usize) {
+    pub fn want(&self, first: usize, last: usize) {
         // What is finished and waiting for the window is taken in
         // with that range first as well.
         if let Some(outbox) = &self.outbox {
@@ -619,7 +614,7 @@ impl Pool {
     /// edit's pictures are made for these alone from now on. Others
     /// brought near, a thread waiting with only far ones queued looks
     /// again.
-    pub(crate) fn set_near(&self, cells: HashSet<usize>) {
+    pub fn set_near(&self, cells: HashSet<usize>) {
         let mut q = self.lock();
         if q.near != cells {
             q.near = cells;
@@ -630,18 +625,18 @@ impl Pool {
     }
 
     /// The long edge to make pictures at from the next one begun.
-    pub(crate) fn set_size(&self, size: u32) {
+    pub fn set_size(&self, size: u32) {
         self.lock().size = Some(size);
     }
 
     /// The long edge pictures are made at now.
-    pub(crate) fn size(&self) -> u32 {
+    pub fn size(&self) -> u32 {
         self.lock().size.unwrap_or(crate::worker::THUMB_WIDTH)
     }
 
     /// Another folder: what is waiting is dropped, and a picture in
     /// hand is not delivered when it is done.
-    pub(crate) fn forget(&self) {
+    pub fn forget(&self) {
         let mut q = self.lock();
         q.jobs.clear();
         q.missed.clear();
@@ -663,7 +658,7 @@ impl Pool {
     /// How many pictures may be in hand at once from now on, up to
     /// the pool's size: fewer while the first develop runs, all of
     /// them after. Those in hand past it finish.
-    pub(crate) fn set_limit(&self, limit: usize) {
+    pub fn set_limit(&self, limit: usize) {
         self.lock().limit = limit.min(self.threads);
         self.shared.cv.notify_all();
     }
@@ -673,7 +668,7 @@ impl Pool {
     /// of a folder opened in the loupe and lets go when that develop
     /// is delivered; the worker's own limit during every develop is
     /// separate, so neither lets go of the other's hold.
-    pub(crate) fn hold(&self, on: bool) {
+    pub fn hold(&self, on: bool) {
         let mut q = self.lock();
         if q.held != on {
             q.held = on;
@@ -682,18 +677,18 @@ impl Pool {
     }
 
     /// The pool's size.
-    pub(crate) fn threads(&self) -> usize {
+    pub fn threads(&self) -> usize {
         self.threads
     }
 
     /// How many of the edit's pictures (reduced develops) are in hand.
-    pub(crate) fn edits_busy(&self) -> usize {
+    pub fn edits_busy(&self) -> usize {
         self.lock().edits_busy
     }
 
     /// Something a thread waits on outside the pool changed (how many
     /// edits may be in hand): each looks again.
-    pub(crate) fn wake(&self) {
+    pub fn wake(&self) {
         let _q = self.lock();
         self.shared.cv.notify_all();
     }
@@ -701,7 +696,7 @@ impl Pool {
     /// Stop the threads once each has finished what it has in hand.
     ///
     /// Poisoned or not, since it is the pool's and the worker's drop.
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         self.shared
             .pending
             .lock()
@@ -772,7 +767,7 @@ fn serve(
                         q.jobs[at].clone()
                     };
                     q.making.push(frame.clone());
-                    let size = crate::grid::made_size(q.size.unwrap_or(THUMB_WIDTH));
+                    let size = crate::made::made_size(q.size.unwrap_or(THUMB_WIDTH));
                     break (index, frame, size, q.epoch, full, What::Thumb);
                 }
                 // The lowest of all: a preview, only when no thumbnail
@@ -840,7 +835,7 @@ fn serve(
                 {
                     pass.end(deliver);
                 }
-                #[cfg(test)]
+                #[cfg(any(test, feature = "testing"))]
                 {
                     q.looked += 1;
                 }

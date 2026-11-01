@@ -6,9 +6,9 @@
 //! the settings file beside the sheet's last choices rather than in a
 //! sidecar or the preset directory.
 
-use crate::border::{Border, Color as BorderColor};
-use crate::export::{self, Metadata, OnExists, Sharpen, Space};
-use crate::watermark::{Kind, Mark, Position};
+use greycard_render::border::{Border, Color as BorderColor};
+use greycard_render::export::{self, Metadata, OnExists, Sharpen, Space};
+use greycard_render::watermark::{Kind, Mark, Position};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 

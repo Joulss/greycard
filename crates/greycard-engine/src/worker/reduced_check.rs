@@ -334,13 +334,13 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 continue;
             };
             let full_ms = started.elapsed().as_secs_f64() * 1e3;
-            let settings = |edge: u32| crate::export::Settings {
-                format: crate::export::Format::Jpeg,
+            let settings = |edge: u32| greycard_render::export::Settings {
+                format: greycard_render::export::Format::Jpeg,
                 long_edge: Some(edge),
-                space: crate::export::Space::Srgb,
-                sharpen: crate::export::Sharpen::Off,
+                space: greycard_render::export::Space::Srgb,
+                sharpen: greycard_render::export::Sharpen::Off,
                 watermark: None,
-                ..crate::export::Settings::default()
+                ..greycard_render::export::Settings::default()
             };
             let (rendered, left_out) = finish_export(
                 image.clone(),
@@ -350,7 +350,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 &settings(2048),
             );
             assert!(left_out.is_empty(), "{name}: {left_out:?}");
-            let crate::export::Pixels::Eight(rgb) = rendered.pixels else {
+            let greycard_render::export::Pixels::Eight(rgb) = rendered.pixels else {
                 unreachable!("a JPEG's pixels are eight bits")
             };
             let big = Thumb {
@@ -614,10 +614,10 @@ fn a_masks_detail_measured() {
         dehaze: 0.3,
         ..Default::default()
     };
-    let settings = crate::export::Settings {
-        format: crate::export::Format::Jpeg,
-        sharpen: crate::export::Sharpen::Off,
-        metadata: crate::export::Metadata::None,
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Jpeg,
+        sharpen: greycard_render::export::Sharpen::Off,
+        metadata: greycard_render::export::Metadata::None,
         ..Default::default()
     };
     for path in &raws {
@@ -645,11 +645,12 @@ fn a_masks_detail_measured() {
         let (_, t_every) = timed(&every);
         let size = (g.image.width, g.image.height);
         let started = Instant::now();
-        let _ = crate::detail::DetailPlanes::make(&g.image, None, 1.0, every.detail_wants());
+        let _ =
+            greycard_render::detail::DetailPlanes::make(&g.image, None, 1.0, every.detail_wants());
         let t_planes = started.elapsed().as_secs_f64();
-        let eight = |r: crate::export::Rendered| match r.pixels {
-            crate::export::Pixels::Eight(p) => p,
-            crate::export::Pixels::Sixteen(_) => unreachable!(),
+        let eight = |r: greycard_render::export::Rendered| match r.pixels {
+            greycard_render::export::Pixels::Eight(p) => p,
+            greycard_render::export::Pixels::Sixteen(_) => unreachable!(),
         };
         let a = eight(g.finish(&global, &settings));
         let b = eight(m.finish(&masked, &settings));

@@ -6,9 +6,9 @@ use super::*;
 impl Worker {
     /// A worker whose thumbnails come to `deliver` one call each: the
     /// tests', which read them off a channel.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn new(deliver: impl Fn(Outcome) + Send + Sync + 'static) -> Self {
-        Self::build(Arc::new(deliver), false)
+        Self::build(Arc::new(deliver), false, true)
     }
 
     /// A worker whose thumbnails come to `deliver` in batches, as
@@ -16,116 +16,137 @@ impl Worker {
     /// of the event loop and a warm folder of thousands would take
     /// every one before drawing.
     pub fn batched(deliver: impl Fn(Outcome) + Send + Sync + 'static) -> Self {
-        Self::build(Arc::new(deliver), true)
+        Self::build(Arc::new(deliver), true, true)
     }
 
-    fn build(deliver: Deliver, batched: bool) -> Self {
+    /// A worker with no background side, no thumbnail pool and no
+    /// reduced develops: headless export's, which asks for neither and
+    /// should start no thread it would leave idle.
+    pub fn headless(deliver: impl Fn(Outcome) + Send + Sync + 'static) -> Self {
+        Self::build(Arc::new(deliver), false, false)
+    }
+
+    /// The worker's queue, held weakly: gone once every thread that
+    /// held it has ended, for the tests that a dropped worker leaves
+    /// none behind.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn queue_held(&self) -> std::sync::Weak<dyn std::any::Any + Send + Sync> {
+        let queue: Arc<dyn std::any::Any + Send + Sync> = self.queue.clone();
+        Arc::downgrade(&queue)
+    }
+
+    fn build(deliver: Deliver, batched: bool, background: bool) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let thumbs: ThumbCache = Arc::new(Mutex::new(None));
         let edited = Arc::new(crate::edited_pictures::Edited::new(thumbs.clone()));
         let previews =
             Arc::new(crate::previews::Previews::new(thumbs.clone()).with_edited(edited.clone()));
-        let make: crate::thumbpool::Make = {
-            let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
-            Arc::new(move |frame, size| {
-                cached_thumbnail_noting(
-                    &thumbs,
-                    Some(&previews),
-                    Some(&edited),
-                    frame,
-                    size,
-                    thumbnail,
-                )
-            })
-        };
-        let lookup: crate::thumbpool::Lookup = {
-            let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
-            Arc::new(move |frame, size| {
-                thumb_lookup(&thumbs, frame, size, Some(&previews), Some(&edited)).2
-            })
-        };
-        let hooks = crate::thumbpool::PreviewHooks {
-            owes: {
-                let previews = previews.clone();
-                Arc::new(move |path| previews.owes(path))
-            },
-            make: {
-                let previews = previews.clone();
-                Arc::new(move |path| previews.make(path).map(drop))
-            },
-        };
-        let reducer = Arc::new(crate::reduced::Reducer::new());
-        let edits = crate::thumbpool::EditHooks {
-            wants: {
-                let (reducer, edited) = (reducer.clone(), edited.clone());
-                Arc::new(move |frame| reducer.wants(&edited, frame))
-            },
-            make: {
-                let (reducer, edited, queue) = (reducer.clone(), edited.clone(), queue.clone());
-                Arc::new(move |frame| match reducer.make(&edited, frame) {
-                    Ok(kept) => Ok(kept),
-                    // The worker makes the masks, behind everything
-                    // else, and the frame is asked for again after.
-                    Err(crate::reduced::Why::AskMasks(which)) => {
-                        tracing::info!(
-                            "the edit's pictures of {}: {} not in the mask cache; the worker is asked",
-                            frame.said(),
-                            which.join(", ")
-                        );
-                        let (lock, cv) = &*queue;
-                        let mut q = lock.lock().expect("worker queue");
-                        if !q.masks_for.iter().any(|p| p == frame) {
-                            q.masks_for.push_back(frame.clone());
+        // The background side: the thumbnails' pool, which makes the
+        // previews and the edit's pictures behind the thumbnails, and
+        // the reduced develops it runs.
+        let background = background.then(|| {
+            let make: crate::thumbpool::Make = {
+                let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
+                Arc::new(move |frame, size| {
+                    cached_thumbnail_noting(
+                        &thumbs,
+                        Some(&previews),
+                        Some(&edited),
+                        frame,
+                        size,
+                        thumbnail,
+                    )
+                })
+            };
+            let lookup: crate::thumbpool::Lookup = {
+                let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
+                Arc::new(move |frame, size| {
+                    thumb_lookup(&thumbs, frame, size, Some(&previews), Some(&edited)).2
+                })
+            };
+            let hooks = crate::thumbpool::PreviewHooks {
+                owes: {
+                    let previews = previews.clone();
+                    Arc::new(move |path| previews.owes(path))
+                },
+                make: {
+                    let previews = previews.clone();
+                    Arc::new(move |path| previews.make(path).map(drop))
+                },
+            };
+            let reducer = Arc::new(crate::reduced::Reducer::new());
+            let edits = crate::thumbpool::EditHooks {
+                wants: {
+                    let (reducer, edited) = (reducer.clone(), edited.clone());
+                    Arc::new(move |frame| reducer.wants(&edited, frame))
+                },
+                make: {
+                    let (reducer, edited, queue) = (reducer.clone(), edited.clone(), queue.clone());
+                    Arc::new(move |frame| match reducer.make(&edited, frame) {
+                        Ok(kept) => Ok(kept),
+                        // The worker makes the masks, behind everything
+                        // else, and the frame is asked for again after.
+                        Err(crate::reduced::Why::AskMasks(which)) => {
+                            tracing::info!(
+                                "the edit's pictures of {}: {} not in the mask cache; the worker is asked",
+                                frame.said(),
+                                which.join(", ")
+                            );
+                            let (lock, cv) = &*queue;
+                            let mut q = lock.lock().expect("worker queue");
+                            if !q.masks_for.iter().any(|p| p == frame) {
+                                q.masks_for.push_back(frame.clone());
+                            }
+                            cv.notify_one();
+                            Ok(false)
                         }
-                        cv.notify_one();
-                        Ok(false)
-                    }
-                    // Asked already: the worker's answer brings it back.
-                    Err(crate::reduced::Why::Masks(_)) => Ok(false),
-                    Err(why) => Err(why),
-                })
-            },
-            at_once: {
-                let (edited, threads) = (edited.clone(), crate::thumbpool::default_threads());
-                // For a measurement: how many at once whatever the window
-                // is doing.
-                let fixed = std::env::var("GREYCARD_REDUCED_AT_ONCE")
-                    .ok()
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .filter(|&n| n > 0);
-                Arc::new(move || match fixed {
-                    Some(n) => (n, None),
-                    // Behind the worker's prefetch of a neighbor's base,
-                    // which wakes the pool when it ends.
-                    None => super::prefetch::behind_prefetch(edited.prefetching(), || {
-                        crate::reduced::begin(threads, edited.any_open(), edited.idle_for())
-                    }),
-                })
-            },
-            alone: {
-                let reducer = reducer.clone();
-                Arc::new(move |frame| reducer.alone(frame))
-            },
-        };
-        let pool = crate::thumbpool::Pool::with_lookup(
-            crate::thumbpool::default_threads(),
-            lookup,
-            make,
-            deliver.clone(),
-        )
-        .with_previews(hooks)
-        .with_edits(edits);
-        let pool = Arc::new(if batched { pool.batched() } else { pool });
-        let (q, d, p, e, r) = (
+                        // Asked already: the worker's answer brings it back.
+                        Err(crate::reduced::Why::Masks(_)) => Ok(false),
+                        Err(why) => Err(why),
+                    })
+                },
+                at_once: {
+                    let (edited, threads) = (edited.clone(), crate::thumbpool::default_threads());
+                    // For a measurement: how many at once whatever the window
+                    // is doing.
+                    let fixed = std::env::var("GREYCARD_REDUCED_AT_ONCE")
+                        .ok()
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|&n| n > 0);
+                    Arc::new(move || match fixed {
+                        Some(n) => (n, None),
+                        // Behind the worker's prefetch of a neighbor's base,
+                        // which wakes the pool when it ends.
+                        None => super::prefetch::behind_prefetch(edited.prefetching(), || {
+                            crate::reduced::begin(threads, edited.any_open(), edited.idle_for())
+                        }),
+                    })
+                },
+                alone: {
+                    let reducer = reducer.clone();
+                    Arc::new(move |frame| reducer.alone(frame))
+                },
+            };
+            let pool = crate::thumbpool::Pool::with_lookup(
+                crate::thumbpool::default_threads(),
+                lookup,
+                make,
+                deliver.clone(),
+            )
+            .with_previews(hooks)
+            .with_edits(edits);
+            let pool = Arc::new(if batched { pool.batched() } else { pool });
+            Arc::new(Background { pool, reducer })
+        });
+        let (q, d, e, b) = (
             queue.clone(),
             deliver.clone(),
-            pool.clone(),
             edited.clone(),
-            reducer.clone(),
+            background.clone(),
         );
         let thread = std::thread::Builder::new()
             .name("greycard worker".into())
-            .spawn(move || run(q, d, p, e, r))
+            .spawn(move || run(q, d, e, b))
             .expect("spawning the worker");
         Self {
             queue,
@@ -133,16 +154,21 @@ impl Worker {
             thread: Mutex::new(Some(thread)),
             thumbs,
             caps: Arc::new(Mutex::new(None)),
-            pool,
+            background,
             previews,
             edited,
-            reducer,
         }
+    }
+
+    /// The thumbnails' pool, which a worker with no background side has
+    /// not got.
+    pub(super) fn pool(&self) -> Option<&crate::thumbpool::Pool> {
+        self.background.as_ref().map(|b| &*b.pool)
     }
 
     /// Which frames show their edit: the window says which it holds as
     /// edited, and the culling loupe looks their pictures up.
-    pub(crate) fn edited(&self) -> Arc<crate::edited_pictures::Edited> {
+    pub fn edited(&self) -> Arc<crate::edited_pictures::Edited> {
         self.edited.clone()
     }
 
@@ -150,14 +176,16 @@ impl Worker {
     /// frame. While there is one, the reduced develops run one at a
     /// time and the learned masks for them wait (`Job::MasksFor`); the
     /// pool and the worker look again when it changes.
-    pub(crate) fn set_open_frame(&self, frame: Option<Frame>) {
+    pub fn set_open_frame(&self, frame: Option<Frame>) {
         // No frame open: the neighbors of the last one are not wanted.
         if frame.is_none() {
             self.queue.0.lock().expect("worker queue").neighbors = None;
             self.queue.1.notify_one();
         }
         if self.edited.set_open(frame) {
-            self.pool.wake();
+            if let Some(b) = &self.background {
+                b.pool.wake();
+            }
             let (_, cv) = &*self.queue;
             cv.notify_one();
         }
@@ -165,19 +193,21 @@ impl Worker {
 
     /// The roots on a network mount: a frame under one has the reduced
     /// develop of its pictures alone.
-    pub(crate) fn set_network_roots(&self, roots: Vec<PathBuf>) {
-        self.reducer.set_network(roots);
+    pub fn set_network_roots(&self, roots: Vec<PathBuf>) {
+        if let Some(b) = &self.background {
+            b.reducer.set_network(roots);
+        }
     }
 
     /// The local previews, for the culling loupe's decode threads,
     /// which read them for a frame out of reach and make them from a
     /// picture they decoded anyway.
-    pub(crate) fn previews(&self) -> Arc<crate::previews::Previews> {
+    pub fn previews(&self) -> Arc<crate::previews::Previews> {
         self.previews.clone()
     }
 
     /// The roots whose frames get a local preview from now on.
-    pub(crate) fn set_preview_roots(&self, roots: Vec<PathBuf>) {
+    pub fn set_preview_roots(&self, roots: Vec<PathBuf>) {
         self.previews.set_roots(roots);
     }
 
@@ -200,27 +230,27 @@ impl Worker {
 
     /// The cache's caps in bytes, thumbnails' then previews', as last
     /// set, or `None` with no cache. Never waits on the cache.
-    pub(crate) fn thumb_caps(&self) -> Option<(u64, u64)> {
+    pub fn thumb_caps(&self) -> Option<(u64, u64)> {
         *self.caps.lock().expect("thumbnail caps")
     }
 
     /// The caps as last set, for a thread that applies them: one
     /// that waited on the cache's lock applies the newest, not the one
     /// it was started for.
-    pub(crate) fn thumb_caps_shared(&self) -> ThumbCaps {
+    pub fn thumb_caps_shared(&self) -> ThumbCaps {
         self.caps.clone()
     }
 
     /// Record a new thumbnails' cap for the sheet to show, ahead of the
     /// cache taking it on a thread of its own.
-    pub(crate) fn note_thumbs_cap(&self, bytes: u64) {
+    pub fn note_thumbs_cap(&self, bytes: u64) {
         if let Some(caps) = self.caps.lock().expect("thumbnail caps").as_mut() {
             caps.0 = bytes;
         }
     }
 
     /// The same for the previews' cap.
-    pub(crate) fn note_previews_cap(&self, bytes: u64) {
+    pub fn note_previews_cap(&self, bytes: u64) {
         if let Some(caps) = self.caps.lock().expect("thumbnail caps").as_mut() {
             caps.1 = bytes;
         }
@@ -272,7 +302,9 @@ impl Worker {
     /// Ask the worker's thread and the pool's to stop, and wait for
     /// neither: what [`Drop`] does.
     fn close(&self) {
-        self.pool.stop();
+        if let Some(b) = &self.background {
+            b.pool.stop();
+        }
         let (lock, cv) = &*self.queue;
         // Poisoned or not: a drop while a panic unwinds aborts if it
         // panics too.
@@ -308,7 +340,7 @@ impl Worker {
 
     pub fn send(&self, job: Job) {
         if let Job::Fetch { model } = job {
-            let (deliver, reducer) = (self.deliver.clone(), self.reducer.clone());
+            let (deliver, reducer) = (self.deliver.clone(), self.background.clone());
             std::thread::Builder::new()
                 .name("greycard fetch".into())
                 .spawn(move || {
@@ -316,7 +348,7 @@ impl Worker {
                         if fetch(model, &*deliver) {
                             // The frames whose pictures waited on a model
                             // are tried again: their cells ask.
-                            for frame in reducer.models_arrived() {
+                            for frame in reducer.iter().flat_map(|b| b.reducer.models_arrived()) {
                                 deliver(Outcome::EditedKept { frame });
                             }
                         }
@@ -336,13 +368,13 @@ impl Worker {
             return;
         }
         if let Job::FetchRuntime { runtime } = job {
-            let (deliver, reducer) = (self.deliver.clone(), self.reducer.clone());
+            let (deliver, reducer) = (self.deliver.clone(), self.background.clone());
             std::thread::Builder::new()
                 .name("greycard runtime fetch".into())
                 .spawn(move || {
                     let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         if fetch_runtime(runtime, &*deliver) {
-                            for frame in reducer.models_arrived() {
+                            for frame in reducer.iter().flat_map(|b| b.reducer.models_arrived()) {
                                 deliver(Outcome::EditedKept { frame });
                             }
                         }
@@ -382,7 +414,9 @@ impl Worker {
             return;
         }
         if let Job::Thumbnail { index, frame } = job {
-            self.pool.push(index, frame);
+            if let Some(pool) = self.pool() {
+                pool.push(index, frame);
+            }
             return;
         }
         if let Job::CachedThumbnail {
@@ -400,7 +434,7 @@ impl Worker {
             let (thumbs, deliver, size, edited) = (
                 self.thumbs.clone(),
                 self.deliver.clone(),
-                crate::grid::made_size(self.pool.size()),
+                crate::made::made_size(self.pool().map_or(THUMB_WIDTH, |p| p.size())),
                 self.edited.clone(),
             );
             rayon::spawn(move || {
@@ -501,8 +535,9 @@ impl Worker {
                         version: version.clone(),
                         name: None,
                     }))
+                    && let Some(pool) = self.pool()
                 {
-                    self.pool.wake();
+                    pool.wake();
                 }
                 // The editor is being worked in: the queue waits for it
                 // to be quiet again.
@@ -520,7 +555,7 @@ impl Worker {
     /// shelf while the worker has nothing else to do, once that open's
     /// develop has landed (`prefetch`). Those of an earlier open still
     /// waiting are let go.
-    pub(crate) fn neighbors(&self, generation: u64, neighbors: Vec<Neighbor>) {
+    pub fn neighbors(&self, generation: u64, neighbors: Vec<Neighbor>) {
         let (lock, cv) = &*self.queue;
         lock.lock().expect("worker queue").neighbors =
             Some(super::prefetch::Neighbors::new(generation, neighbors));
@@ -536,7 +571,7 @@ impl Worker {
     /// sent, or of none once that open's develop has landed on that
     /// file; let go when another open has been sent since, or the open
     /// never landed and its list is gone. Whether it was taken.
-    pub(crate) fn neighbors_again(
+    pub fn neighbors_again(
         &self,
         generation: u64,
         open: &std::path::Path,
@@ -574,8 +609,8 @@ impl Worker {
 
     /// The neighbors waiting to be made, with the open they are for:
     /// what the window's tests read of what it sent.
-    #[cfg(test)]
-    pub(crate) fn neighbors_waiting(&self) -> Option<(u64, Vec<(std::path::PathBuf, Side)>)> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn neighbors_waiting(&self) -> Option<(u64, Vec<(std::path::PathBuf, Side)>)> {
         let q = self.queue.0.lock().expect("worker queue");
         q.neighbors.as_ref().map(|n| {
             (
@@ -591,7 +626,7 @@ impl Worker {
     /// ([`FileNow::serves`]) are let go, every one of the file's when
     /// the window does not have that at hand. A neighbor sent again
     /// under the new edit is then made afresh.
-    pub(crate) fn edit_changed(&self, path: std::path::PathBuf, now: Option<FileNow>) {
+    pub fn edit_changed(&self, path: std::path::PathBuf, now: Option<FileNow>) {
         let (lock, cv) = &*self.queue;
         lock.lock()
             .expect("worker queue")
@@ -646,32 +681,40 @@ impl Worker {
     /// it shows; a folder of hundreds is otherwise decoded in file
     /// order, and the frames on screen wait for every earlier one.
     pub fn want_thumbnails(&self, first: usize, last: usize) {
-        self.pool.want(first, last);
+        if let Some(pool) = self.pool() {
+            pool.want(first, last);
+        }
     }
 
     /// The cells of the rows near those on screen
     /// ([`crate::thumbpool::near_rows`]): the edit's pictures are made
     /// for these alone.
     pub fn near_thumbnails(&self, cells: std::collections::HashSet<usize>) {
-        self.pool.set_near(cells);
+        if let Some(pool) = self.pool() {
+            pool.set_near(cells);
+        }
     }
 
     /// Another folder's list: the thumbnails still waiting are
     /// dropped, and one in hand is not delivered. Its numbering is
     /// the old list's, and a late picture must not land on the new.
     pub fn forget_thumbnails(&self) {
-        self.pool.forget();
+        if let Some(pool) = self.pool() {
+            pool.forget();
+        }
     }
 
     /// How many threads make thumbnails.
     pub fn thumb_threads(&self) -> usize {
-        self.pool.threads()
+        self.pool().map_or(0, |p| p.threads())
     }
 
     /// Hold the thumbnails' threads for a develop the window is
     /// about to ask for, or let them go: see `thumbpool::Pool::hold`.
     pub fn hold_thumbnails(&self, on: bool) {
-        self.pool.hold(on);
+        if let Some(pool) = self.pool() {
+            pool.hold(on);
+        }
     }
 
     /// Put these thumbnails in the queue in place of the ones there:
@@ -683,10 +726,13 @@ impl Worker {
     /// `wanted`, the files on screen, are made first, as the grid's
     /// range would have them.
     pub fn replace_thumbnails(&self, list: Vec<(usize, Frame)>, wanted: Option<(usize, usize)>) {
-        self.pool.forget();
-        self.pool.push_all(list);
+        let Some(pool) = self.pool() else {
+            return;
+        };
+        pool.forget();
+        pool.push_all(list);
         if let Some((first, last)) = wanted {
-            self.pool.want(first, last);
+            pool.want(first, last);
         }
     }
 
@@ -697,14 +743,16 @@ impl Worker {
     /// before it. Whether a picture already made is made again is
     /// the caller's business, and that only ever steps up.
     pub fn set_thumb_size(&self, size: u32) {
-        self.pool.set_size(size);
+        if let Some(pool) = self.pool() {
+            pool.set_size(size);
+        }
     }
 }
 
 /// The frames on the strip first, in file order, then the rest
 /// outward from the middle of that range: what a scroll asks for
 /// next is whichever end it is heading towards.
-pub(crate) fn order_thumbnails<T>(pending: &mut [(usize, T)], first: usize, last: usize) {
+pub fn order_thumbnails<T>(pending: &mut [(usize, T)], first: usize, last: usize) {
     // Ties broken by the frame's number, so two the same distance
     // from the center come in the list's order whichever thread
     // queued them first.

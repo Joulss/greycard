@@ -6,8 +6,7 @@
 //! Picking one makes that shape as the Sky button makes a sky. When
 //! nothing passes, nothing opens and the status line says so.
 
-use greycard_ai::landscape::{Kind, Offer};
-use greycard_edit::mask::LandscapeGroup;
+use greycard_ai::landscape::Offer;
 
 use crate::panel::assets::offer_model;
 use crate::panel::edit::{read_edit, show_edit};
@@ -22,19 +21,7 @@ pub(crate) struct Pending {
     pub(crate) mode: Mode,
 }
 
-/// The shape an offer makes, by the name `Shape::of_kind` takes.
-pub(crate) fn kind_of(offer: &Offer) -> &'static str {
-    match offer.kind {
-        Kind::Sky => "Sky",
-        Kind::Group(g) => LandscapeGroup::from(g.name().to_string()).label(),
-    }
-}
-
-/// An offer on the menu: its name and the share of the frame it is.
-pub(crate) fn words_of(offer: &Offer) -> String {
-    let percent = (offer.area * 100.0).round().max(1.0);
-    format!("{} {percent:.0}%", kind_of(offer))
-}
+pub(crate) use greycard_engine::ai::{kind_of, words_of};
 
 /// The sky's model's step: ask, offer it, or wait. A Landscape shape
 /// wants the prior alone.
@@ -263,6 +250,7 @@ mod tests {
     use super::*;
     use crate::testing::{folder, state_for, window};
     use greycard_ai::landscape::Group;
+    use greycard_ai::landscape::Kind;
 
     /// A window on the Masks tab with one empty mask chosen.
     fn masks() -> (App, Rc<Shared>, Rc<Worker>) {

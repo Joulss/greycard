@@ -291,8 +291,8 @@ fn ask_again(st: &mut crate::State, worker: &crate::worker::Worker, c: usize) {
 mod tests {
     use super::*;
     use crate::edited_pictures::BIG;
-    use crate::edited_pictures::tests::{mean, scratch};
     use greycard_edit::Edit;
+    use greycard_engine::testing::edited::{mean, scratch};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
@@ -465,5 +465,234 @@ mod tests {
         worker.stop();
         drop(state);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The edit's pictures as the window's loupe reads them.
+    mod loupe {
+        use greycard_edit::Edit;
+        use greycard_engine::testing::edited::{Heard, Rig, rig};
+
+        trait Loupe {
+            fn loupe(&self) -> (bool, bool, u32, u32);
+            fn loupe_as(&self, camera: bool) -> (bool, bool, u32, u32);
+        }
+
+        impl Loupe for Rig {
+            /// The loupe's picture of the frame at a view's size where it
+            /// shows the edit (a versions compare's tile, the develop view's
+            /// stand-in): whether it is the edit's, whether it is a local
+            /// preview, and its size.
+            fn loupe(&self) -> (bool, bool, u32, u32) {
+                self.loupe_as(false)
+            }
+
+            /// The same, or with `camera` the loupe's in Cull on the
+            /// camera's JPEG.
+            fn loupe_as(&self, camera: bool) -> (bool, bool, u32, u32) {
+                let previews = self.worker.previews();
+                let got = std::cell::RefCell::new(None);
+                crate::cull::fetch(
+                    &crate::cull::Want::for_loupe(0, self.png.clone(), 1000).camera_only(camera),
+                    Some(&previews),
+                    &|loaded| {
+                        if let crate::cull::Loaded::Ok { preview, .. } = loaded {
+                            *got.borrow_mut() = Some(preview);
+                        }
+                    },
+                );
+                let p = got.into_inner().expect("a picture");
+                (p.edited, p.local, p.width, p.height)
+            }
+        }
+
+        /// The open frame brightened and saved: the strip's picture of it is
+        /// made from the edit, brighter than the camera's, at the made size,
+        /// and so is the loupe's at 2048; saved again unchanged (a rating)
+        /// nothing is made again; and reset, the camera's is the picture
+        /// again and the edit's are gone from the cache.
+        #[test]
+        fn a_saved_edit_shows_in_the_strip_and_a_reset_shows_the_camera_s() {
+            let rig = rig("bright");
+            let (cw, ch, camera) = rig.thumb();
+            assert_eq!(
+                (cw, ch),
+                (150, 100),
+                "the camera's picture, a whole factor down"
+            );
+            assert!(!rig.loupe().0, "no edit, the camera's");
+            let mut bright = Edit::for_picture();
+            bright.light.exposure = 1.0;
+            rig.save(&bright, 0);
+            rig.kept();
+            let (w, h, edited) = rig.thumb();
+            assert_eq!((w, h), (176, 117), "the edit's, to the made size");
+            assert!(
+                edited > camera + 20.0,
+                "a stop up: {edited:.1} against the camera's {camera:.1}"
+            );
+            let (edited_up, local, lw, lh) = rig.loupe();
+            assert!(edited_up && !local);
+            assert_eq!((lw, lh), (600, 400), "no larger than it is");
+            assert!(
+                !rig.loupe_as(true).0,
+                "Cull on the camera's JPEG: the camera's"
+            );
+            let kept = rig.entries();
+            assert!(kept >= 6, "the camera's and the edit's five: {kept}");
+            // A save that changes nothing of the picture (a rating) makes
+            // nothing, and asks no cell again.
+            rig.save(&bright, 0);
+            rig.quiet();
+            assert_eq!(rig.entries(), kept);
+            // Another edit replaces the last one's pictures, not adds to them.
+            bright.light.exposure = 1.5;
+            rig.save(&bright, 0);
+            rig.kept();
+            assert_eq!(rig.entries(), kept);
+            assert!(rig.thumb().2 > edited);
+            // The crop is in the picture: the left half of the frame.
+            bright.geometry.crop = Some(greycard_edit::geometry::Crop {
+                x: 0.0,
+                y: 0.0,
+                w: 0.5,
+                h: 1.0,
+            });
+            rig.save(&bright, 0);
+            rig.kept();
+            let (w, h, _) = rig.thumb();
+            assert_eq!((w, h), (132, 176), "300 by 400, to the made size");
+            assert_eq!(rig.entries(), kept);
+            // Reset: the camera's again, the edit's gone.
+            rig.save(&Edit::for_picture(), 0);
+            rig.kept();
+            let (w, h, again) = rig.thumb();
+            assert_eq!((w, h), (cw, ch), "the camera's again");
+            assert!(
+                (again - camera).abs() < 1.0,
+                "{again:.1} against {camera:.1}"
+            );
+            assert_eq!(rig.entries(), kept - 5);
+            assert!(!rig.loupe().0);
+            crate::testing::remove_dir_retry(&rig.dir);
+        }
+
+        /// A frame turned a quarter is kept as the camera's tag turns it,
+        /// for the strip to turn at draw time; a save whose develop is not
+        /// in hand waits for it; and a frame left before it lands shows the
+        /// camera's.
+        #[test]
+        fn a_turned_frame_is_kept_unturned_and_a_save_waits_for_its_develop() {
+            use crate::worker::Job;
+            let rig = rig("turned");
+            let (_, _, camera) = rig.thumb();
+            let (right, down) = rig.slope.get();
+            assert!(
+                right > 10.0 && down > 10.0,
+                "the camera's runs right and down"
+            );
+            // The frame turned: the window develops it again at the turn.
+            let mut bright = Edit::for_picture();
+            bright.light.exposure = 1.0;
+            rig.worker.send(Job::Develop {
+                edit: bright.clone(),
+                generation: 2,
+                turn: 1,
+            });
+            assert!(matches!(rig.next(), Heard::Developed));
+            rig.save(&bright, 1);
+            rig.kept();
+            let (w, h, edited) = rig.thumb();
+            assert_eq!((w, h), (176, 117), "unturned, as the camera's is");
+            assert!(edited > camera + 20.0);
+            let (right, down) = rig.slope.get();
+            assert!(
+                right > 10.0 && down > 10.0,
+                "and runs the camera's way: {right:.0} right, {down:.0} down"
+            );
+            // Turned a quarter and mirrored by the crop panel's own turn.
+            let mut mirrored = bright.clone();
+            mirrored.geometry.flip = true;
+            mirrored.geometry.turns = 1;
+            rig.worker.send(Job::Develop {
+                edit: mirrored.clone(),
+                generation: 5,
+                turn: 1,
+            });
+            assert!(matches!(rig.next(), Heard::Developed));
+            rig.save(&mirrored, 1);
+            rig.kept();
+            let (w, h, _) = rig.thumb();
+            assert_eq!((w, h), (176, 117));
+            let (right, down) = rig.slope.get();
+            assert!(
+                right > 10.0 && down > 10.0,
+                "{right:.0} right, {down:.0} down"
+            );
+            // Texture is a develop's: the save comes before the develop
+            // lands, and its pictures with it.
+            let mut textured = bright.clone();
+            textured.detail.texture = 30.0;
+            rig.save(&textured, 1);
+            rig.worker.send(Job::Develop {
+                edit: textured.clone(),
+                generation: 3,
+                turn: 1,
+            });
+            rig.kept();
+            assert!(rig.thumb().2 > camera + 20.0);
+            // Saved again, darker, and the frame left before a develop of
+            // it: the camera's stands in, the key having moved on.
+            let mut dark = textured.clone();
+            dark.detail.texture = 0.0;
+            dark.light.exposure = -1.0;
+            let mut sidecar = greycard_edit::Sidecar {
+                line: greycard_edit::Line::of(dark.clone()),
+                turn: 1,
+                ..Default::default()
+            };
+            sidecar.save(&rig.png).unwrap();
+            rig.save(&dark, 1);
+            let other = rig.dir.join("other.png");
+            image::RgbImage::from_pixel(40, 30, image::Rgb([9, 9, 9]))
+                .save(&other)
+                .unwrap();
+            rig.worker.send(Job::Open {
+                path: other,
+                version: None,
+                edit: Edit::for_picture(),
+                generation: 4,
+                seed_blend: false,
+                turn: 0,
+                stance_known: false,
+            });
+            rig.kept();
+            let (_, _, left) = rig.thumb();
+            assert!((left - camera).abs() < 1.0, "{left:.1} against {camera:.1}");
+            crate::testing::remove_dir_retry(&rig.dir);
+        }
+
+        /// A picture without something its edit asks for (here a look not in
+        /// the look directory) is not kept under the edit's key: the frame
+        /// shows the camera's.
+        #[test]
+        fn a_picture_missing_what_its_edit_asks_for_is_not_kept() {
+            let rig = rig("left-out");
+            let (_, _, camera) = rig.thumb();
+            let mut bright = Edit::for_picture();
+            bright.light.exposure = 1.0;
+            bright.look_lut = greycard_edit::LookLut {
+                lut: greycard_edit::look::LutChoice::Named("Not here at all".into()),
+                strength: 1.0,
+            };
+            rig.save(&bright, 0);
+            rig.kept();
+            let (_, _, shown) = rig.thumb();
+            assert!(
+                (shown - camera).abs() < 1.0,
+                "{shown:.1} against {camera:.1}"
+            );
+            assert!(!rig.loupe().0);
+            crate::testing::remove_dir_retry(&rig.dir);
+        }
     }
 }

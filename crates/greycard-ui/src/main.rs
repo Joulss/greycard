@@ -13,7 +13,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod adapter;
-mod ai;
 mod camera_match;
 mod carry;
 mod cells;
@@ -21,7 +20,6 @@ mod chooser;
 mod clipboard;
 mod cull;
 mod edited;
-mod edited_pictures;
 mod entry;
 mod export_queue;
 mod finder;
@@ -40,9 +38,6 @@ mod measure_lightroom;
 mod owners;
 mod panel;
 mod placeholder;
-mod previews;
-mod queue;
-mod reduced;
 mod render;
 mod report;
 mod roots;
@@ -50,19 +45,15 @@ mod rows;
 mod scope;
 mod settings;
 mod shared;
-mod sheet;
 mod sort;
 mod stacks;
 mod sync;
 #[cfg(test)]
 pub(crate) mod testing;
-mod thumbpool;
 mod tree;
 mod update;
-mod version_key;
 mod versions;
 mod window_fit;
-mod worker;
 
 // The modules with no window in them, in the library beside this
 // binary; named here as they were when they were the binary's own.
@@ -73,7 +64,13 @@ pub(crate) use greycard_ui::{
 
 // What renders a developed frame into a picture or a file, in a crate
 // of its own below the window; named here as the modules were.
-pub(crate) use greycard_render::{agx, border, detail, export, finish, geometry, watermark};
+pub(crate) use greycard_render::{agx, detail, export, finish, watermark};
+
+// The develop below the window, the worker and what it holds, in the
+// engine's crate; named here as the modules were.
+pub(crate) use greycard_engine::{
+    ai, edited_pictures, previews, queue, sheet, thumbpool, version_key, worker,
+};
 
 pub(crate) use std::cell::RefCell;
 pub(crate) use std::collections::HashMap;

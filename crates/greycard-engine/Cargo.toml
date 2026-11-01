@@ -1,7 +1,7 @@
 [package]
 name = "greycard-engine"
 version.workspace = true
-description = "The develop below the window: the list of stages an edit's develop walks, and the walk"
+description = "The develop below the window: the list of stages an edit's develop walks, the walk, and the worker that runs it"
 license = "GPL-3.0-or-later"
 edition.workspace = true
 rust-version.workspace = true
@@ -13,9 +13,38 @@ repository.workspace = true
 [dependencies]
 greycard-core = { path = "../greycard-core" }
 greycard-edit = { path = "../greycard-edit" }
+greycard-edit-io = { path = "../greycard-edit-io" }
 greycard-ai = { path = "../greycard-ai" }
 greycard-lens = { path = "../greycard-lens" }
-greycard-render = { path = "../greycard-render" }
-log.workspace = true
 greycard-gpu = { path = "../greycard-gpu" }
+greycard-render = { path = "../greycard-render" }
+# The thumbnail cache, keyed by the index's content hash, and the
+# sidecar helpers the reduced develop and the masks read.
+greycard-library = { path = "../greycard-library" }
 anyhow.workspace = true
+bytemuck.workspace = true
+# The render crate's half, feature for feature.
+half = { workspace = true, features = ["bytemuck"] }
+image.workspace = true
+log.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The worker logs as the window did; tracing-log carries it to the
+# window's file.
+tracing.workspace = true
+# The scratch folder of the test helpers, in its canonical form.
+dunce = { workspace = true, optional = true }
+
+[dev-dependencies]
+dunce.workspace = true
+# For a device of our own in the worker's GPU fallback tests.
+pollster.workspace = true
+greycard-render = { path = "../greycard-render", features = ["testing"] }
+greycard-library = { path = "../greycard-library", features = ["fixtures"] }
+
+[features]
+# The test helpers and the test hooks the window's tests share with
+# these: the worker for a test, the camera picture's reads, the
+# prefetch's quiet. Turned on by greycard-ui's dev-dependency only.
+testing = ["dep:dunce", "greycard-render/testing"]

@@ -34,6 +34,9 @@ greycard-slint = { path = "../greycard-slint" }
 # AgX, the detail bands, the geometry, the border, the watermark and
 # the export.
 greycard-render = { path = "../greycard-render" }
+# The develop below the window: the stage list, the walk, the worker,
+# and what it holds.
+greycard-engine = { path = "../greycard-engine" }
 # winit's window behind Slint's, for the monitor the window opens on.
 slint.workspace = true
 bytemuck.workspace = true
@@ -98,6 +101,9 @@ pollster.workspace = true
 # profile, a scratch folder's removal, a watermark picture), and the
 # CPU references the viewport's tests hold the GPU to.
 greycard-render = { path = "../greycard-render", features = ["testing"] }
+# The engine's test helpers and hooks: a worker for a test, the camera
+# picture's reads, the edit's pictures' rig.
+greycard-engine = { path = "../greycard-engine", features = ["testing"] }
 # Frames with real EXIF, for the library index's tests.
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
 # A second connection that holds the library's write lock, for the

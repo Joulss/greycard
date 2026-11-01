@@ -8,7 +8,7 @@ use super::*;
 /// develop through `DevelopSettings::default()`, whose definition in
 /// core names this constant), and every entry made the old way is a
 /// miss and is made again. The long edge is in the key already, so a
-/// change of the sizes made (`grid::MADE`) needs no bump.
+/// change of the sizes made (`made::MADE`) needs no bump.
 pub const THUMB_RECIPE: u16 = 3;
 
 /// Count what `cache` holds on a thread of its own, walking the disk
@@ -51,7 +51,7 @@ pub fn count_thumb_cache(
 
 /// A file's length and modification time in nanoseconds, the two a
 /// change to it past its first 64 KB shows in.
-pub(crate) fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
+pub fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta
         .modified()
@@ -73,7 +73,7 @@ pub(crate) fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
 /// three apart. A move or rename keeps it; the cost is one more making
 /// of each thumbnail after a copy that does not keep it (`cp` without
 /// `-p`, a drag to another disk on some desktops).
-pub(crate) fn thumb_tag(stat: (u64, u64)) -> Tag {
+pub fn thumb_tag(stat: (u64, u64)) -> Tag {
     Tag {
         recipe: THUMB_RECIPE,
         stamp: stat.1,
@@ -83,7 +83,7 @@ pub(crate) fn thumb_tag(stat: (u64, u64)) -> Tag {
 /// What a file's thumbnails are kept under, its content hash and the
 /// stamp of [`thumb_tag`], for taking them out of the cache when the
 /// file is deleted: read before it goes, since neither can be after.
-pub(crate) fn thumb_key(path: &std::path::Path) -> Option<(String, u64)> {
+pub fn thumb_key(path: &std::path::Path) -> Option<(String, u64)> {
     let stat = file_stat(path)?;
     let hash = greycard_library::hash_file(path).ok()?;
     Some((hash, thumb_tag(stat).stamp))
@@ -187,7 +187,7 @@ pub(super) fn cached_thumbnail_noting(
 /// camera's own preview JPEG when the file has one, box downscaled
 /// and turned as the camera says; else a bilinear demosaic, box
 /// downscaled.
-pub(crate) fn thumbnail(path: &std::path::Path, size: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+pub fn thumbnail(path: &std::path::Path, size: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let size = size.max(1) as usize;
     if is_picture_path(path) {
         // The picture itself, as the file encodes it: near enough to

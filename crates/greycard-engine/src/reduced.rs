@@ -77,21 +77,21 @@ use crate::version_key::Key;
 /// thumbnail threads, else one. Each holds a decoded frame (a 45 MP
 /// mosaic is 180 MB as floats, and its prepared copy as much again)
 /// and runs on the [`Reducer::threads`] the develops share.
-pub(crate) fn at_once(threads: usize, editing: bool) -> usize {
+pub fn at_once(threads: usize, editing: bool) -> usize {
     if editing || threads < 4 { 1 } else { 2 }
 }
 
 /// How long the editor is left alone (no develop asked for or under
 /// way, so no slider in motion either) before a reduced develop begins
 /// while a frame is open in it.
-pub(crate) const IDLE: std::time::Duration = std::time::Duration::from_millis(1500);
+pub const IDLE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// How many reduced develops may be in hand now, and when to look again
 /// if that is none only for want of quiet: while a frame is open in the
 /// editor, none until the window has been idle for [`IDLE`] (`idle`, the
 /// time since its last develop was asked for or done), then one;
 /// otherwise as [`at_once`] says.
-pub(crate) fn begin(
+pub fn begin(
     threads: usize,
     editing: bool,
     idle: std::time::Duration,
@@ -104,7 +104,7 @@ pub(crate) fn begin(
 
 /// Why a frame's pictures were not made by the reduced develop.
 #[derive(Debug)]
-pub(crate) enum Why {
+pub enum Why {
     /// The frame is the open one: the worker keeps its pictures.
     Open,
     /// The frame shows no edit, or its pictures are kept already.
@@ -147,39 +147,35 @@ impl std::fmt::Display for Why {
 }
 
 /// A frame developed reduced and ready for the finish.
-pub(crate) struct Developed {
+pub struct Developed {
     /// The picture after everything up to the finish, at half the
     /// frame's size (or in full for a frame too small to bin).
-    pub(crate) image: WorkingImage,
+    pub image: WorkingImage,
     /// The full develop's size, oriented: what the learned masks'
     /// rasters are checked by.
-    pub(crate) full: (u32, u32),
-    pub(crate) bin: usize,
-    pub(crate) clip_level: f32,
-    pub(crate) guide: Arc<crate::finish::Guide>,
-    pub(crate) kind: crate::finish::Source,
-    pub(crate) white: Option<greycard_edit::WhiteShift>,
+    pub full: (u32, u32),
+    pub bin: usize,
+    pub clip_level: f32,
+    pub guide: Arc<greycard_render::finish::Guide>,
+    pub kind: greycard_render::finish::Source,
+    pub white: Option<greycard_edit::WhiteShift>,
     /// The masks' bands, of `image`.
-    pub(crate) detail: Option<Arc<crate::detail::DetailPlanes>>,
+    pub detail: Option<Arc<greycard_render::detail::DetailPlanes>>,
     /// How long each step took, seconds: the decode, the develop to
     /// the binned picture, the rest to the finish.
-    pub(crate) decode: f64,
-    pub(crate) develop: f64,
-    pub(crate) rest: f64,
+    pub decode: f64,
+    pub develop: f64,
+    pub rest: f64,
 }
 
 /// The learned masks' rasters by adjustment id and component.
-pub(crate) type Rasters = std::collections::HashMap<(u64, usize), Arc<Raster>>;
+pub type Rasters = std::collections::HashMap<(u64, usize), Arc<Raster>>;
 
 /// The engine's settings for the reduced develop of `edit`: the edit's
 /// own, less what the reduced develop leaves out (the denoisers), with the
 /// frame's quarter turns on the camera's tag as the window has them.
 /// The grain is the finish's, and stays.
-pub(crate) fn settings(
-    edit: &Edit,
-    camera: greycard_core::raw::Orientation,
-    turn: u8,
-) -> DevelopSettings {
+pub fn settings(edit: &Edit, camera: greycard_core::raw::Orientation, turn: u8) -> DevelopSettings {
     DevelopSettings {
         denoise: None,
         orientation: Some(camera.turned(i32::from(turn))),
@@ -195,7 +191,7 @@ pub(crate) fn settings(
 /// demosaic, a full develop of the frame) under a tighter crop or a
 /// straighten that takes it there. A 24 MP Bayer frame is binned down
 /// to about two thirds of its width.
-pub(crate) fn bin_under(
+pub fn bin_under(
     full: (usize, usize),
     cell: usize,
     geometry: &greycard_edit::geometry::Geometry,
@@ -226,7 +222,7 @@ fn open(path: &Path) -> anyhow::Result<Opened> {
 
 /// The frame at `path` developed reduced under `edit` at `turn`, up to
 /// the finish; the learned masks are the caller's ([`rasters`]).
-pub(crate) fn develop(
+pub fn develop(
     path: &Path,
     edit: &Edit,
     turn: u8,
@@ -285,7 +281,7 @@ pub(crate) fn develop(
                 (r.full.0 as u32, r.full.1 as u32),
                 r.bin,
                 d.clip_level,
-                crate::finish::Source::of_frame(frame),
+                greycard_render::finish::Source::of_frame(frame),
                 white,
                 (
                     frame.make.clone(),
@@ -315,7 +311,7 @@ pub(crate) fn develop(
                 full,
                 bin,
                 picture.clip_level(),
-                crate::finish::Source::Display,
+                greycard_render::finish::Source::Display,
                 None,
                 (
                     picture.make.clone(),
@@ -353,10 +349,10 @@ pub(crate) fn develop(
     // The guide plane, after the retouch and before the local
     // contrast, as the worker makes it: in the developed picture's own
     // coordinates.
-    let guide = Arc::new(crate::finish::guide_plane(&image));
+    let guide = Arc::new(greycard_render::finish::guide_plane(&image));
     // The masks' bands, of the picture at this size, as the worker
     // makes them of the full one.
-    let detail = crate::detail::DetailPlanes::make(
+    let detail = greycard_render::detail::DetailPlanes::make(
         &image,
         edit.detail.options(),
         clip_level,
@@ -389,7 +385,7 @@ pub(crate) fn develop(
 
 /// Whether the look the edit names is in the look directory: asked
 /// before anything is decoded, since a picture without it is not kept.
-pub(crate) fn look_ready(edit: &Edit) -> Result<(), Why> {
+pub fn look_ready(edit: &Edit) -> Result<(), Why> {
     if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
         && edit.look_lut.strength > 0.0
         && edit.look_lut.look_under(edit.display_curve).is_none()
@@ -403,7 +399,7 @@ pub(crate) fn look_ready(edit: &Edit) -> Result<(), Why> {
 /// had, asked before anything is decoded: `Why::NoModel` names the ones
 /// whose model is not in the store, `Why::Masks` the ones the worker is
 /// to make first.
-pub(crate) fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Result<(), Why> {
+pub fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Result<(), Why> {
     let mut to_make = Vec::new();
     let mut no_model = Vec::new();
     // The frame's size as its file says it stands, read only for a Sky,
@@ -452,7 +448,7 @@ pub(crate) fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Re
 /// The learned masks `edit` draws, from the mask cache alone, for the
 /// frame at `path` whose full develop is `full`. `Err` names the
 /// shapes whose rasters are not cached at that aspect.
-pub(crate) fn rasters(
+pub fn rasters(
     ai: &mut Ai,
     path: &Path,
     edit: &Edit,
@@ -485,7 +481,7 @@ pub(crate) fn rasters(
 
 /// Whether the edit draws a learned mask at all: what decides whether a
 /// frame's pictures can wait on the worker's masks.
-pub(crate) fn draws_learned(edit: &Edit) -> bool {
+pub fn draws_learned(edit: &Edit) -> bool {
     edit.adjustments.iter().any(|a| {
         a.enabled
             && a.mask
@@ -497,7 +493,7 @@ pub(crate) fn draws_learned(edit: &Edit) -> bool {
 /// What the pool's reduced develops share: the lens database, the
 /// reader of the mask cache, the threads the develops run on, what was
 /// tried and found wanting, and the roots on a network mount.
-pub(crate) struct Reducer {
+pub struct Reducer {
     /// The lens database as the worker has it; `None` while the worker
     /// has not said, then loaded here once.
     lenses: Mutex<Option<Option<Arc<greycard_lens::Database>>>>,
@@ -542,7 +538,7 @@ impl Reducer {
     /// machine's, two at least and eight at most, one pool the develops
     /// in hand share, so the window's develop, which has the thumbnails'
     /// pool held while it runs, finds the rest free.
-    pub(crate) fn threads() -> usize {
+    pub fn threads() -> usize {
         std::env::var("GREYCARD_REDUCED_THREADS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -552,12 +548,15 @@ impl Reducer {
             })
     }
 
-    pub(crate) fn new() -> Self {
+    // Not `Default`: its models read the store, which a default should
+    // not go to disk for.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
         Self::with_ai(Ai::new())
     }
 
     /// A reducer reading the mask cache and the store through `ai`.
-    pub(crate) fn with_ai(ai: Ai) -> Self {
+    pub fn with_ai(ai: Ai) -> Self {
         Self {
             lenses: Mutex::new(None),
             ai: Mutex::new(ai),
@@ -585,7 +584,7 @@ impl Reducer {
     /// Whether `frame` wants the reduced develop of its pictures
     /// (`Edited::wants_develop`) under a key not tried and found wanting
     /// already: the pool's ask after each thumbnail.
-    pub(crate) fn wants(&self, edited: &Edited, frame: &Key) -> bool {
+    pub fn wants(&self, edited: &Edited, frame: &Key) -> bool {
         edited.wants_develop(frame).is_some_and(|key| {
             !self
                 .tried
@@ -597,7 +596,7 @@ impl Reducer {
 
     /// The lens database the develops correct with: the worker's, or
     /// one loaded here the first time it is asked for.
-    pub(crate) fn lenses(&self) -> Option<Arc<greycard_lens::Database>> {
+    pub fn lenses(&self) -> Option<Arc<greycard_lens::Database>> {
         let mut held = self.lenses.lock().expect("reduced lenses");
         held.get_or_insert_with(|| {
             greycard_lens::Store::user()
@@ -610,18 +609,18 @@ impl Reducer {
 
     /// The worker's lens database, loaded or fetched: shared here so it
     /// is not loaded twice.
-    pub(crate) fn set_lenses(&self, lenses: Option<Arc<greycard_lens::Database>>) {
+    pub fn set_lenses(&self, lenses: Option<Arc<greycard_lens::Database>>) {
         *self.lenses.lock().expect("reduced lenses") = Some(lenses);
     }
 
     /// The roots on a network mount, as the window has them now.
-    pub(crate) fn set_network(&self, roots: Vec<PathBuf>) {
+    pub fn set_network(&self, roots: Vec<PathBuf>) {
         *self.network.lock().expect("network roots") = roots;
     }
 
     /// Whether `frame` is developed alone: its file is under a root on
     /// a network mount.
-    pub(crate) fn alone(&self, frame: &Key) -> bool {
+    pub fn alone(&self, frame: &Key) -> bool {
         self.network
             .lock()
             .expect("network roots")
@@ -630,8 +629,8 @@ impl Reducer {
     }
 
     /// How many reduced develops were begun.
-    #[cfg(test)]
-    pub(crate) fn develops(&self) -> usize {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn develops(&self) -> usize {
         self.develops.load(Ordering::SeqCst)
     }
 
@@ -656,7 +655,7 @@ impl Reducer {
     /// The worker made `frame`'s masks: every one (`all`), when the next
     /// try of the frame is a making, or not every one, when the frame
     /// stays tried under its key and waits for a model to be fetched.
-    pub(crate) fn masks_done(&self, frame: &Key, all: bool) {
+    pub fn masks_done(&self, frame: &Key, all: bool) {
         let key = self.asked.lock().expect("asked masks").remove(frame);
         if all {
             if let Some(key) = key {
@@ -678,7 +677,7 @@ impl Reducer {
     /// A model was fetched: every frame waiting on one is let go, to be
     /// tried again when it is next asked for. Answers them, for their
     /// cells to ask.
-    pub(crate) fn models_arrived(&self) -> Vec<Key> {
+    pub fn models_arrived(&self) -> Vec<Key> {
         let waiting: Vec<Key> = self.waiting.lock().expect("waiting").drain().collect();
         if !waiting.is_empty() {
             self.tried
@@ -702,7 +701,7 @@ impl Reducer {
     /// reads it, the line of the frame's version; the open frame, a
     /// frame with no edit and one whose pictures are kept already are
     /// left alone.
-    pub(crate) fn make(&self, edited: &Edited, frame: &Key) -> Result<bool, Why> {
+    pub fn make(&self, edited: &Edited, frame: &Key) -> Result<bool, Why> {
         let mut key = None;
         let mut made = self.make_under(edited, frame, &mut key);
         // Masks to make: asked of the worker once a key; still missing
@@ -912,11 +911,11 @@ mod tests {
         let b = greycard_edit::baseline::for_body(Some("Fujifilm GFX 100S II"));
         assert_eq!(
             at("gfx.dng", crate::testing::GFX),
-            crate::finish::Source::Scene(crate::finish::Baseline::of_stops(b))
+            greycard_render::finish::Source::Scene(greycard_render::finish::Baseline::of_stops(b))
         );
         assert_eq!(
             at("r5.dng", ("Canon", "Canon EOS R5 Mark II")),
-            crate::finish::Source::SCENE
+            greycard_render::finish::Source::SCENE
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

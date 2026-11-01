@@ -38,7 +38,7 @@ pub const SIZE: u32 = 2048;
 
 // A thumbnail is never made at a preview's size, so the two can never
 // be each other's entry.
-const _: () = assert!(SIZE > crate::grid::MAX_RENDER);
+const _: () = assert!(SIZE > crate::made::MAX_RENDER);
 
 /// A preview's JPEG quality: a little under the thumbnails' 90, where
 /// the bytes of a picture this size start to count (about a third of a
@@ -67,7 +67,7 @@ pub const FROM_PICTURES_AT_ONCE: usize = 2;
 /// file's stat then, which a making checks again so a file changed
 /// since is not kept under its old key.
 #[derive(Debug, Clone)]
-pub(crate) struct Owed {
+pub struct Owed {
     hash: String,
     tag: Tag,
     stat: (u64, u64),
@@ -85,7 +85,7 @@ pub struct Made {
 
 /// The local previews: the cache they are kept in, the roots whose
 /// frames get one, and the frames owed one.
-pub(crate) struct Previews {
+pub struct Previews {
     cache: ThumbCache,
     roots: Mutex<Vec<PathBuf>>,
     owed: Mutex<HashMap<PathBuf, Owed>>,
@@ -101,10 +101,10 @@ pub(crate) struct Previews {
 
 /// One preview being made from a picture in hand, counted while it is
 /// held.
-pub(crate) struct InHand(Arc<Previews>);
+pub struct InHand(Arc<Previews>);
 
 impl InHand {
-    pub(crate) fn previews(&self) -> &Previews {
+    pub fn previews(&self) -> &Previews {
         &self.0
     }
 }
@@ -116,7 +116,7 @@ impl Drop for InHand {
 }
 
 impl Previews {
-    pub(crate) fn new(cache: ThumbCache) -> Self {
+    pub fn new(cache: ThumbCache) -> Self {
         Self {
             cache,
             roots: Mutex::new(Vec::new()),
@@ -127,13 +127,13 @@ impl Previews {
     }
 
     /// The same previews, with the frames that show their edit.
-    pub(crate) fn with_edited(mut self, edited: Arc<crate::edited_pictures::Edited>) -> Self {
+    pub fn with_edited(mut self, edited: Arc<crate::edited_pictures::Edited>) -> Self {
         self.edited = Some(edited);
         self
     }
 
     /// Which frames show their edit, when the previews were told.
-    pub(crate) fn edited(&self) -> Option<&crate::edited_pictures::Edited> {
+    pub fn edited(&self) -> Option<&crate::edited_pictures::Edited> {
         self.edited.as_deref()
     }
 
@@ -141,7 +141,7 @@ impl Previews {
     /// on another thread, with its place among the
     /// [`FROM_PICTURES_AT_ONCE`]; `None`, and the preview left owed for
     /// the pool, when that many are in hand already.
-    pub(crate) fn take_for_picture(self: &Arc<Self>, path: &Path) -> Option<(Owed, InHand)> {
+    pub fn take_for_picture(self: &Arc<Self>, path: &Path) -> Option<(Owed, InHand)> {
         self.from_pictures
             .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < FROM_PICTURES_AT_ONCE).then_some(n + 1)
@@ -155,7 +155,7 @@ impl Previews {
     /// The roots whose frames get a preview: the ones online when the
     /// list was opened. A frame of a folder under no root gets none;
     /// its file is where the user put it and read from there.
-    pub(crate) fn set_roots(&self, roots: Vec<PathBuf>) {
+    pub fn set_roots(&self, roots: Vec<PathBuf>) {
         *self.roots.lock().expect("preview roots") = roots;
         // What was owed was the last list's; this list's thumbnails
         // note their own.
@@ -173,7 +173,7 @@ impl Previews {
     /// A thumbnail's lookup found `path`'s key: note the frame as owed
     /// a preview when it is under a root and the cache has none for
     /// that key. One stat of the cache's own entry; nothing of the file.
-    pub(crate) fn note(&self, path: &Path, stat: (u64, u64), hash: &str) {
+    pub fn note(&self, path: &Path, stat: (u64, u64), hash: &str) {
         if !self.under_a_root(path) {
             return;
         }
@@ -200,7 +200,7 @@ impl Previews {
     }
 
     /// Whether `path` is owed a preview: a question of memory.
-    pub(crate) fn owes(&self, path: &Path) -> bool {
+    pub fn owes(&self, path: &Path) -> bool {
         self.owed.lock().expect("previews owed").contains_key(path)
     }
 
@@ -208,7 +208,7 @@ impl Previews {
     /// under a root and the cache is known to have room for it: see
     /// [`ROOM`]. Until the cache's startup count is in, nothing is
     /// made, so no preview's write walks the cache under its lock.
-    pub(crate) fn take(&self, path: &Path) -> Option<Owed> {
+    pub fn take(&self, path: &Path) -> Option<Owed> {
         let owed = self.owed.lock().expect("previews owed").remove(path)?;
         if !self.under_a_root(path) {
             return None;
@@ -238,7 +238,7 @@ impl Previews {
     /// pool's work, behind the thumbnails. `None` when none was owed,
     /// the cache had no room, one was kept meanwhile, or the file
     /// changed under it.
-    pub(crate) fn make(&self, path: &Path) -> anyhow::Result<Option<Made>> {
+    pub fn make(&self, path: &Path) -> anyhow::Result<Option<Made>> {
         let Some(owed) = self.take(path) else {
             return Ok(None);
         };
@@ -248,7 +248,7 @@ impl Previews {
         let started = Instant::now();
         // The camera's picture, or the picture file itself; a raw with
         // neither goes the thumbnail's way, through a quick develop.
-        let thumb = match crate::cull::camera_picture(path) {
+        let thumb = match crate::camera::camera_picture(path) {
             Ok((picture, orientation)) => sized(&picture, orientation),
             Err(_) => {
                 let (width, height, rgb) = thumbnail(path, SIZE)?;
@@ -261,8 +261,8 @@ impl Previews {
     /// Make `path`'s preview from the camera's picture decoded for
     /// something else (the culling loupe), if it is owed one: no read
     /// of the file beyond a stat to see it has not changed.
-    #[cfg(test)]
-    pub(crate) fn make_from(
+    #[cfg(any(test, feature = "testing"))]
+    pub fn make_from(
         &self,
         path: &Path,
         picture: &image::RgbImage,
@@ -276,7 +276,7 @@ impl Previews {
     /// in hand: the cull threads take it, which is a question of
     /// memory, and hand this to another thread, so the next decode is
     /// not held up by the resize and the encode.
-    pub(crate) fn make_taken(
+    pub fn make_taken(
         &self,
         path: &Path,
         owed: &Owed,
@@ -344,7 +344,7 @@ impl Previews {
     /// The preview kept under a file's hash and stamp, from the cache
     /// alone: nothing of the file is read. The entry is read under the
     /// cache's lock and decoded outside it.
-    pub(crate) fn get(&self, hash: &str, stamp: u64) -> Option<Thumb> {
+    pub fn get(&self, hash: &str, stamp: u64) -> Option<Thumb> {
         let tag = Tag {
             recipe: THUMB_RECIPE,
             stamp,
@@ -364,8 +364,8 @@ impl Previews {
 
     /// The hash and stamp a file's preview is kept under: a stat and a
     /// read of its first 64 KB, for a frame with no row to say them.
-    #[cfg(test)]
-    pub(crate) fn key_of(path: &Path) -> Option<(String, u64)> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn key_of(path: &Path) -> Option<(String, u64)> {
         crate::worker::thumb_key(path)
     }
 }
@@ -389,7 +389,7 @@ fn sized(picture: &image::RgbImage, orientation: Orientation) -> Thumb {
     } else {
         picture
     };
-    let (width, height, rgb) = crate::cull::turn_rgb8(
+    let (width, height, rgb) = crate::camera::turn_rgb8(
         picture.width(),
         picture.height(),
         picture.as_raw(),
@@ -605,7 +605,7 @@ mod tests {
             .expect("made from the picture in hand");
         assert_eq!((made.width, made.height), (400, 600), "turned");
         assert!(
-            !crate::cull::FILE_READS
+            !crate::camera::FILE_READS
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .contains(&inside),

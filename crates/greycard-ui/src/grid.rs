@@ -24,13 +24,11 @@ pub const LABEL: f32 = 22.0;
 pub const STEPS: [f32; 6] = [96.0, 128.0, 176.0, 256.0, 360.0, 512.0];
 /// The cell the grid opens at when nothing is remembered.
 pub const CELL: f32 = STEPS[2];
-/// The largest a thumbnail is ever made, whatever the cell asks.
-/// The last step shows a 360 px picture stretched by a factor of
-/// 1.4, which is soft under a loupe and indistinguishable at arm's
-/// length, and costs two fifths of what a 512 costs to hold: a
-/// picture is kept twice over, once as the bytes the worker made
-/// and once as the image the renderer uploaded.
-pub const MAX_RENDER: u32 = STEPS[4] as u32;
+#[cfg(test)]
+use greycard_engine::made::made_size;
+pub use greycard_engine::made::{MADE, MAX_RENDER};
+// The engine's largest thumbnail is the grid's last step but one.
+const _: () = assert!(MAX_RENDER == STEPS[4] as u32);
 
 /// The long edge to make a picture at for a cell of this size.
 pub fn render_size(cell: f32) -> u32 {
@@ -38,20 +36,6 @@ pub fn render_size(cell: f32) -> u32 {
         return MAX_RENDER;
     }
     (cell.ceil().max(1.0) as u32).min(MAX_RENDER)
-}
-
-/// The long edges a picture is actually made at: the strip's 170 and
-/// the grid's cells rounded up to one of these, so the thumbnail
-/// cache, which keeps a picture a size, holds a few sizes of a frame
-/// rather than one for every size a timing happened to ask for. The
-/// grid's smallest cells get a 128 where they asked for 96, which is
-/// the most this costs.
-pub const MADE: [u32; 4] = [128, 176, 256, MAX_RENDER];
-
-/// The size from [`MADE`] a picture asked for at `asked` is made at:
-/// the least that is no smaller, or `asked` itself past the last.
-pub fn made_size(asked: u32) -> u32 {
-    MADE.iter().copied().find(|&m| m >= asked).unwrap_or(asked)
 }
 
 /// Whether a picture made at `made` is too small for a cell asking
