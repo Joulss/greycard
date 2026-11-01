@@ -52,6 +52,8 @@ provided"). So the files are mapped all or none, and a build with the
 table that fails, for that or any reason, is made once more without
 it, from the files as ONNX Runtime reads them; a model whose weights
 are named otherwise (`model.onnx.data`, a subfolder) opens as it did.
+The builder's own steps run once, before the table, and only the
+build with the table is retried, from a clone made before it.
 The CPU is kept off the table: there ONNX Runtime uses its own maps of
 the files as the weights themselves, file pages the system can drop,
 where a table's bytes are copied onto the heap, 5.5 GB for the UNet.
@@ -72,15 +74,19 @@ model with external weights, goes through the same path.
 - A unit test holds which files are offered: the `.onnx_data` beside
   the model, by name and bytes, nothing else, and nothing beside a
   model with none. Another builds two small models with external
-  weights through ONNX Runtime (`tests/fixtures/external`): one named
-  as the table holds it, which builds from the table; one naming
-  `add.weights.bin` beside an unrelated `other.onnx_data`, which the
-  table alone fails, as the test also shows, and which the fallback
-  opens. Both answer right.
-- One run of six of the Fast removal, the first after a rebuild, took
-  10.5 s to load against 1.8 to 2.0 s for the rest; the bench logs
-  nothing, so whether that build fell back to the files or read pages
-  the build had pushed out of the cache is not known.
+  weights through ONNX Runtime (`tests/fixtures/external`, made with
+  `onnx`'s `convert_model_to_external_data` at a size threshold of
+  0): one named as the table holds it, which builds from the table,
+  as a table holding other weights shows by changing its answer; one
+  naming `add.weights.bin` beside an unrelated `other.onnx_data`,
+  which the table alone fails with ONNX Runtime's own "not found from
+  the table", and which the fallback opens. Both answer right.
+- Twice, the first run of the Fast removal after a rebuild took 10.5
+  and 10.6 s to load against 1.8 to 2.0 s for every other run. A
+  build that printed whether the table was offered and whether the
+  fallback ran saw the table offered and no fallback on both of its
+  runs, both fast, so the slow one was not caught in the act; what it
+  was is not known.
 
 ## What it costs
 
@@ -88,8 +94,9 @@ On WebGPU on the M5, about 0.6 GB more footprint while a UNet session
 is open: tensors ONNX Runtime keeps on the host are copies on the heap
 now, where before they pointed into its maps, which the footprint left
 out. The remove's memory policy (`Memory`, "the UNet kept open, 5.1 GB
-held" on 24 GB) is not retuned for it. The CPU, kept off the table,
-costs what it did.
+held" on 24 GB) is not retuned for it. Core ML sessions take the
+table too (SAM 2.1, and Core ML's side of a race), and theirs was not
+measured. The CPU, kept off the table, costs what it did.
 
 ## Not measured
 
@@ -113,3 +120,11 @@ zero-copy weights; and `files()` handed out a `'static` slice from
 safe code. All or none, the fallback, the CPU kept off, and slices
 tied to the maps are the fixes, with the test through ONNX Runtime
 that the first version lacked.
+
+A second review of those fixes ran ONNX Runtime on a table it then
+overwrote, on the CPU and on Core ML, and found the answers followed
+the original bytes, so the copy is real and not only documented. It
+found the test could not tell the table's build from the fallback's,
+which would have hidden a lost speedup, and the retry repeating
+failures the table had no part in; the table's effect on the answer,
+and the clone, are the fixes.
