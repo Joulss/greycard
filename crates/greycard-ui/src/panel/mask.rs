@@ -2440,6 +2440,13 @@ mod tests {
         app.set_adjustment_name("Warm the far hillside".into());
         app.invoke_renamed();
         assert_eq!(app.get_target_name(), "Warm the far hillside");
+        // A name, so shown as typed, never set in the titles' capitals.
+        let typed = crate::testing::count_labeled(&app, "Warm the far hillside");
+        assert!(typed > 0);
+        assert_eq!(
+            crate::testing::count_labeled(&app, "WARM THE FAR HILLSIDE"),
+            0
+        );
         // Never a bare title: a name blanked in the field is not
         // taken, and a blank one from a sidecar is its place.
         app.set_adjustment_name("   ".into());
@@ -3603,7 +3610,9 @@ mod tests {
             "the rows are folded away"
         );
         assert!(placed(&app, "Mask 2").is_empty());
-        assert_eq!(placed(&app, "Mask 1").len(), 1, "the header's note");
+        // The header's note, and the mask section's heading, which
+        // shows the name as typed.
+        assert_eq!(placed(&app, "Mask 1").len(), 2);
     }
 
     /// Where the bottom of the panel's footer (Fit and Export) is: the

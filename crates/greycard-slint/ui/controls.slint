@@ -139,6 +139,7 @@ export component Section inherits VerticalLayout {
     in property <string> title;
     // Whose section this is, before the title: a mask's adjustment
     // on the Masks tab. A long one is cut; the title after it stays.
+    // A name, so shown as typed, where the title is in capitals.
     in property <string> owner;
     in property <image> icon;
     // A word after the title, muted: a key, say.
@@ -236,11 +237,10 @@ export component Section inherits VerticalLayout {
                     y: (parent.height - self.height) / 2;
                 }
                 if root.owner != "": Text {
-                    text: root.owner.to-uppercase();
+                    text: root.owner;
                     color: head.has-hover ? Theme.text : Theme.text-secondary;
                     font-size: Theme.font-xs;
                     font-weight: Theme.weight-semibold;
-                    letter-spacing: 0.8px;
                     vertical-alignment: center;
                     overflow: elide;
                 }

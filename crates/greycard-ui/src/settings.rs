@@ -150,6 +150,12 @@ pub struct Settings {
     /// Written as it is chosen.
     #[serde(deserialize_with = "string_leniently")]
     pub start_folder: String,
+    /// The view a launch opens on, one of [`START_VIEWS`]: the Loupe,
+    /// as every earlier build did, or the Library's grid. A file named
+    /// on the command line opens in the Loupe whatever this says
+    /// ([`opens_on_library`]). Written as it is chosen.
+    #[serde(deserialize_with = "start_view_leniently")]
+    pub start_view: String,
     /// Whether the filter bar is shown, over the grid and in culling's
     /// section. On by default; off, the bar's room goes to the frames,
     /// and a filter set before still applies. Written as the switch
@@ -319,6 +325,14 @@ where
     one_of(d, &THEMES, "theme")
 }
 
+/// The `start_view` of a file edited by hand, as leniently.
+fn start_view_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    one_of(d, &START_VIEWS, "start_view")
+}
+
 /// The `scroll_bars` of a file edited by hand, as leniently.
 fn scroll_bars_leniently<'de, D>(d: D) -> Result<String, D::Error>
 where
@@ -383,6 +397,18 @@ where
             Ok(true)
         }
     }
+}
+
+/// The views a launch may open on, as the Settings sheet's row spells
+/// them; the first is the default.
+pub const START_VIEWS: [&str; 2] = ["Loupe", "Library"];
+
+/// Whether a launch opens on the Library's grid: asked for by `grid`
+/// (the command line's flag), or chosen in `start_view` for a launch
+/// that names no file and that its flags do not own (a capture, a
+/// timing run, or culling asked for). A file named opens on itself.
+pub fn opens_on_library(grid: bool, start_view: &str, file_named: bool, flags_own: bool) -> bool {
+    grid || (start_view == START_VIEWS[1] && !file_named && !flags_own)
 }
 
 /// What a launch with no path opens first ([`start_listing`]).
@@ -587,6 +613,7 @@ impl Default for Settings {
             last_file: String::new(),
             recent_folders: Vec::new(),
             start_folder: String::new(),
+            start_view: START_VIEWS[0].into(),
             filter_bar: true,
             folder_tree_subfolders: false,
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
@@ -829,6 +856,7 @@ mod tests {
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             start_folder: "~/Pictures/start".into(),
+            start_view: "Library".into(),
             filter_bar: false,
             folder_tree_subfolders: true,
             thumb_cache_mb: 1024,
@@ -1031,6 +1059,44 @@ mod tests {
             assert_eq!(read.start_folder, "", "{text}");
             assert!(read.filter_bar, "{text}");
         }
+    }
+
+    /// The view a launch opens on: kept by its row's word, a file
+    /// without it the Loupe, and any other value the Loupe at no cost
+    /// to the rest of the file.
+    #[test]
+    fn the_start_view_is_kept_by_its_word_and_read_leniently() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.start_view, "Loupe");
+        let mine = Settings {
+            start_view: "Library".into(),
+            ..Settings::default()
+        };
+        let text = serde_json::to_value(&mine).unwrap();
+        assert_eq!(text["start_view"], "Library");
+        let read: Settings = serde_json::from_value(text).unwrap();
+        assert_eq!(read.start_view, "Library");
+        for text in [
+            r#"{"ui_scale": 150, "start_view": "Grid"}"#,
+            r#"{"ui_scale": 150, "start_view": true}"#,
+            r#"{"ui_scale": 150, "start_view": null}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert_eq!(read.start_view, "Loupe", "{text}");
+        }
+    }
+
+    /// The first view: the Library when chosen, or asked for on the
+    /// command line; the Loupe for a file named, or a launch its flags
+    /// own, whatever the setting says.
+    #[test]
+    fn a_launch_opens_on_the_view_chosen_unless_a_file_is_named() {
+        assert!(!opens_on_library(false, "Loupe", false, false));
+        assert!(opens_on_library(false, "Library", false, false));
+        assert!(!opens_on_library(false, "Library", true, false));
+        assert!(!opens_on_library(false, "Library", false, true));
+        assert!(opens_on_library(true, "Loupe", true, false));
     }
 
     /// The wheel's switch: a file without it, or with a value of the

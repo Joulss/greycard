@@ -1027,8 +1027,6 @@ clears or a tester asks for it.
       still lightens the highlights of the positive; swapping the
       black and white points, as C1 and Lightroom make one do, turns
       every slider round (reddit, 2026-10-31)
-- [ ] Open on the Library rather than the Loupe at launch, as a
-      choice under Settings' Start in (discussion 51, 2026-10-28)
 - [ ] One instance: a file sent to a running greycard opens in it,
       not in a second window (discussion 51, 2026-10-28)
 - [ ] The download progress shown where it cannot be missed while a
@@ -1075,12 +1073,6 @@ clears or a tester asks for it.
       camera-scanning workflow alongside digital raws (reddit,
       2026-10-31)
 
-- [ ] A mask's name shown as typed: the section heading style sets
-      every name in capitals (discussion 59, 2026-11-01)
-- [ ] Keys for the brush's Feather and Flow and for Show mask; the
-      wheel already sizes the brush and Space or Shift drags the
-      picture with a tool in hand since 0.10.0 (discussion 59,
-      2026-11-01)
 - [ ] Duplicate a mask within the frame, and copy one mask onto other
       frames rather than the whole set (discussion 59, 2026-11-01)
 - [ ] An edge-aware refinement for a mask's edge, a guided filter on

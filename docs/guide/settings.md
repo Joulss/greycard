@@ -86,6 +86,10 @@ does from the folder tree when it is a root or under one: its folders
 as tiles, or everything under it with **With subfolders** on. Under no
 root, the last folder opens.
 
+The row under it picks the view: **Loupe** (default), one frame, or
+**Library**, the grid. A file you open greycard with opens in the
+Loupe whatever this says.
+
 ### Show the filter bar
 
 On by default. Turn it off and the filter bar leaves the grid's header

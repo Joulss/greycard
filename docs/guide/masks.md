@@ -32,8 +32,8 @@ With a mask chosen, you see, top to bottom:
    shape**, the buttons that add another shape.
 2. **The mask's own sliders:** **WHITE BALANCE**, **LIGHT**,
    **COLOR**, **CURVES**, **COLOR MIXER**, **COLOR GRADING**,
-   **TINT** and **DETAIL**, each headed with the mask's name ("SKY 1 ·
-   LIGHT").
+   **TINT** and **DETAIL**, each headed with the mask's name as you typed
+   it ("Sky 1 · LIGHT").
 
 ### Naming, Show mask and Invert
 
@@ -53,6 +53,8 @@ whenever you want to check the shape.
 
 **Invert** flips the whole mask: the adjustment then acts everywhere
 the shapes are not.
+
+**O** turns the chosen mask's **Show mask** on or off.
 
 ### The shapes list
 
@@ -110,6 +112,9 @@ Click **Brush** and paint. While a brush is chosen, the button reads
 | **Feather** | how much of the radius fades |
 | **Flow** | how much each stroke lays down |
 | **Add**, **Subtract**, **Erase** | paint, take paint away by the flow, or clear paint completely under the brush |
+
+With the brush in hand, **Shift+[** and **Shift+]** take the feather
+down or up a tenth, and **Ctrl+[** and **Ctrl+]** the flow.
 
 ### Subject and Background
 

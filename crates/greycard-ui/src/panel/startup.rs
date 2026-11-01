@@ -472,7 +472,22 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     ));
     app.set_wheel_resizes(remembered.grid_wheel);
     app.set_lightbox_across(crate::lightbox::held(remembered.lightbox_across));
-    app.set_grid_open(cli.grid);
+    // The Library at the start when the Settings sheet chose it, as
+    // `--grid` asks; never over a file named, or a run its flags own.
+    let flags_own = scripted_start(&cli)
+        || cli.cull
+        || cli.cull_compare.is_some()
+        || cli.cull_key.is_some()
+        || cli.cull_develop
+        || cli.ask_rejects
+        || cli.move_rejects;
+    let file_named = cli.path.as_ref().is_some_and(|p| p.is_file());
+    app.set_grid_open(settings::opens_on_library(
+        cli.grid,
+        &remembered.start_view,
+        file_named,
+        flags_own,
+    ));
     // `--hide-panels` puts all three away for this run, whatever the
     // last one left.
     app.set_left_hidden(cli.hide_panels || remembered.hide_left);
@@ -2245,6 +2260,7 @@ fn merged(
     settings.last_file = kept.last_file;
     settings.recent_folders = kept.recent_folders;
     settings.start_folder = kept.start_folder;
+    settings.start_view = kept.start_view;
     settings.filter_bar = kept.filter_bar;
     settings.grid_wheel = kept.grid_wheel;
     settings.folder_tree_subfolders = kept.folder_tree_subfolders;
@@ -2404,6 +2420,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         recent_folders: Vec::new(),
         // Written as the Settings sheet's rows are chosen.
         start_folder: String::new(),
+        start_view: settings::START_VIEWS[0].into(),
         filter_bar: true,
         // Written as the tree's switch is flipped.
         folder_tree_subfolders: false,

@@ -2193,6 +2193,9 @@ export component App inherits Window {
     in-out property <string> start-choice: "Last folder";
     in property <string> start-folder: "";
     callback start-picked(string);
+    /// The Settings sheet's Start in view: "Loupe" or "Library".
+    in-out property <string> start-view: "Loupe";
+    callback start-view-changed();
     /// The Settings sheet's switch: the filter bar shown, over the
     /// grid and in culling's section.
     in-out property <bool> filter-bar: true;
@@ -2825,6 +2828,30 @@ export component App inherits Window {
             if (chord == "S" && !root.grid-open) {
                 root.proofing = !root.proofing;
                 root.proof-changed();
+                return accept;
+            }
+            // The brush in hand: Shift and a bracket its feather, Ctrl
+            // and one its flow, a tenth a press, held to the sliders'
+            // range. Held, they run on as an arrow on a slider does.
+            if (root.placing == "Brush" && !root.grid-open && !root.cull-mode
+                && (chord == "{" || chord == "}" || chord == "Ctrl+[" || chord == "Ctrl+]")) {
+                let by = chord == "}" || chord == "Ctrl+]" ? 0.1 : -0.1;
+                if (chord == "{" || chord == "}") {
+                    root.brush-feather = max(0, min(1, round((root.brush-feather + by) * 100) / 100));
+                } else {
+                    root.brush-flow = max(0, min(1, round((root.brush-flow + by) * 100) / 100));
+                }
+                return accept;
+            }
+            // O, Lightroom's overlay key: the chosen mask's Show mask,
+            // as a click on it.
+            if (chord == "O" && !root.grid-open && !root.cull-mode
+                && root.panel-tab == "Masks" && root.target > 0) {
+                if (!e.repeat) {
+                    root.show-mask = !root.show-mask;
+                    root.show-mask-toggled();
+                    root.view-changed();
+                }
                 return accept;
             }
             // The Develop view's tools, each by the way its button
@@ -4901,6 +4928,8 @@ export component App inherits Window {
         start-choice <=> root.start-choice;
         start-folder: root.start-folder;
         start-picked(c) => { root.start-picked(c); }
+        start-view <=> root.start-view;
+        start-view-changed => { root.start-view-changed(); }
         filter-bar <=> root.filter-bar;
         filter-bar-changed => { root.filter-bar-changed(); }
         grid-cell-typed <=> root.grid-cell-typed;

@@ -280,6 +280,19 @@ pub(crate) const TABLE: &[Group] = &[
                 &["Shift+M"],
                 "New mask with a Radial, placed by the next drag",
             ),
+            // The brush in hand's, as its sliders: Shift and a
+            // bracket feather Lightroom's brush too.
+            shown(
+                &["{", "}"],
+                "Shift+[ Shift+]",
+                "Brush feather, less and more",
+            ),
+            shown(
+                &["Ctrl+[", "Ctrl+]"],
+                "Ctrl+[ Ctrl+]",
+                "Brush flow, less and more",
+            ),
+            act("show-mask", &["O"], "Show the mask"),
         ],
     },
     // A focused slider's own (`EditSlider` in greycard-slint's
@@ -1473,6 +1486,49 @@ mod tests {
         assert_eq!(masks(&state), 3);
         press(&app, "m");
         assert_eq!(app.get_placing(), "");
+    }
+
+    /// With the brush in hand, Shift and a bracket take its feather a
+    /// tenth down or up and Ctrl and one its flow, held to the
+    /// sliders' range; with no brush they do neither. O is the chosen
+    /// mask's Show mask, as a click on it.
+    #[test]
+    fn the_brush_keys_feather_and_flow_and_o_shows_the_mask() {
+        let (app, _state, _worker) = develop_window();
+        let ctrl = |key: &str| {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Control.into(),
+            });
+            press(&app, key);
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Control.into(),
+            });
+        };
+        // No brush: the keys leave the brush as it is.
+        shifted(&app, "}");
+        ctrl("[");
+        assert_eq!(app.get_brush_feather(), 0.5);
+        assert_eq!(app.get_brush_flow(), 1.0);
+        press(&app, "m");
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Brush");
+        shifted(&app, "}");
+        assert!((app.get_brush_feather() - 0.6).abs() < 1e-6);
+        shifted(&app, "{");
+        shifted(&app, "{");
+        assert!((app.get_brush_feather() - 0.4).abs() < 1e-6);
+        ctrl("[");
+        assert!((app.get_brush_flow() - 0.9).abs() < 1e-6);
+        for _ in 0..12 {
+            ctrl("]");
+        }
+        assert_eq!(app.get_brush_flow(), 1.0, "held at the top");
+        // Show mask, on and off.
+        let shown = app.get_show_mask();
+        press(&app, "o");
+        assert_eq!(app.get_show_mask(), !shown);
+        press(&app, "o");
+        assert_eq!(app.get_show_mask(), shown);
     }
 
     /// R in the middle of a crop's drag: the crop as dragged so far is

@@ -7,6 +7,13 @@ design note behind it.
 
 ### The window
 
+- Settings' Start in offers the Library as well as the Loupe
+  ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
+- A mask's name heads its sections as typed, not in capitals
+  ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
+- With the brush in hand, Shift+[ and Shift+] step its feather and
+  Ctrl+[ and Ctrl+] its flow; O shows and hides the chosen mask
+  ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
 - A new mask's name field takes the keys, so it can be named at once
   ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
 - Under One section open at a time, a section opened out of sight

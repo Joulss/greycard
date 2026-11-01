@@ -55,6 +55,9 @@ export component SettingsSheet inherits Rectangle {
     in-out property <string> start-choice;
     in property <string> start-folder;
     callback start-picked(string);
+    /// The view a launch opens on: "Loupe" or "Library".
+    in-out property <string> start-view;
+    callback start-view-changed();
     /// Whether the filter bar is shown, over the grid and in culling.
     in-out property <bool> filter-bar;
     callback filter-bar-changed();
@@ -495,6 +498,15 @@ export component SettingsSheet inherits Rectangle {
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                Rectangle { width: 68px; }
+                                Segmented {
+                                    options: ["Loupe", "Library"];
+                                    current <=> root.start-view;
+                                    selected => { root.start-view-changed(); }
+                                }
                             }
                             Toggle {
                                 label: "Show the filter bar";

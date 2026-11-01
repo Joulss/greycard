@@ -223,6 +223,19 @@ fn start_picked(st: &State, app: &App, choice: &str) {
     }
 }
 
+/// The view a launch opens on, as clicked under Start in: kept at
+/// once, a word the settings do not know taken as the first.
+pub(crate) fn start_view_changed(st: &State, app: &App) {
+    let picked = app.get_start_view();
+    let name = settings::START_VIEWS
+        .into_iter()
+        .find(|v| *v == picked.as_str())
+        .unwrap_or(settings::START_VIEWS[0]);
+    app.set_start_view(name.into());
+    keep(st, |s| s.start_view = name.into());
+    tracing::info!("a launch opens on the {name}");
+}
+
 /// The filter bar shown or put away, over the grid and in culling's
 /// section alike: kept as flipped. The filter it holds is the state's
 /// and goes on applying either way.
@@ -759,7 +772,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             app.set_jpegs_apart(st.views.jpegs_apart);
             app.set_crop_start(st.develop.crop_start.name().into());
             crate::panel::retouch::show_patches(&st, &st.develop.edit, &app);
-            show_start(&app, &settings::Settings::load().start_folder);
+            let kept = settings::Settings::load();
+            show_start(&app, &kept.start_folder);
+            app.set_start_view(kept.start_view.into());
             app.set_settings_note("".into());
             // A Check now still on its way keeps its "Checking...".
             if !app.get_update_checking() {
@@ -817,6 +832,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             start_picked(&state.borrow(), &app, &choice);
+        });
+    }
+    // The view a launch opens on: kept as clicked.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_start_view_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                start_view_changed(&state.borrow(), &app);
+            }
         });
     }
     // The filter bar shown or not: kept as flipped.
@@ -1192,6 +1216,31 @@ mod tests {
         assert_eq!(app.get_start_choice(), START_LAST);
         assert_eq!(crate::testing::count_labeled(&app, &shown), 0);
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Start in's view: the Loupe until the Library is clicked, which
+    /// the row then shows; a word the settings do not know is the
+    /// Loupe.
+    #[test]
+    fn the_start_view_row_takes_the_loupe_or_the_library() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_settings_category("Interface".into());
+        app.invoke_settings_asked();
+        let count = |label| crate::testing::count_labeled(&app, label);
+        let elsewhere = (count("Loupe"), count("Library"));
+        app.set_settings_category("Library".into());
+        assert_eq!(app.get_start_view(), "Loupe");
+        // The row's two, beside the window's own.
+        assert_eq!(count("Loupe"), elsewhere.0 + 1);
+        assert_eq!(count("Library"), elsewhere.1 + 1);
+        app.set_start_view("Library".into());
+        app.invoke_start_view_changed();
+        assert_eq!(app.get_start_view(), "Library");
+        app.set_start_view("Grid".into());
+        app.invoke_start_view_changed();
+        assert_eq!(app.get_start_view(), "Loupe");
+        drop(state);
     }
 
     /// The filter bar's switch: off, the bar is gone from the grid's
