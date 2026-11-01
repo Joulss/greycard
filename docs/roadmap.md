@@ -15,14 +15,12 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A model's first run on a Mac is a compile with no word in the
-      window: Sky and the denoisers on Core ML (§422), tens of seconds
-      with every thread of the app asleep and no line logged, then a
-      second on the next frame; under WebGPU a first run has sat for
-      minutes too (2026-10-25). Subject's wait was the worst of these
-      until §441 kept it off Core ML. The compile runs out of process
-      and is cached after. Compile the models in the background when
-      they are fetched or at launch, or say "preparing" while it runs
+- [ ] A model's first run under WebGPU on a Mac has sat for minutes
+      with no word in the window (2026-10-25), and a second wait came
+      on the next frame; neither names the model. Core ML's share was
+      Sky's weights written as text, 27 s cold and 4.5 s a launch,
+      now 1.1 s and 0.23 s (§466). Name the model, then compile in the
+      background or say "preparing" while it runs
 - [ ] The Library's camera thumbnails and the previews behind them
       are still made for the whole root at its first open, about a
       quarter of a CPU second a cold frame, an hour on a 12515-file
@@ -221,10 +219,6 @@ seconds.
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
       GPU (§378, §386)
-- [ ] Core ML on the Mac: confirmed on an M5 (2026-10-25), the
-      denoisers all on the GPU at a third of WebGPU's time, the
-      develop keeping Core ML; the race's winner remembered so a load
-      opens one session (§422)
 - [ ] The Subject model back on Core ML, kept off it since the ML
       Program compile fails on a dilated Conv ("Required param 'pad'
       is missing") after 2 min 22 s (§441); waits on that Conv

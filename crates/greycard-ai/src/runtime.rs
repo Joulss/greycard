@@ -248,13 +248,59 @@ fn coreml_cache(path: &Path, fixed: &[(&str, i64)]) -> Option<std::path::PathBuf
         .join("coreml")
         .join(key);
     match std::fs::create_dir_all(&dir) {
-        Ok(()) => Some(dir),
+        Ok(()) => {
+            sweep_coreml_cache(&dir, path);
+            Some(dir)
+        }
         Err(e) => {
             log::warn!(
                 "no Core ML cache at {}: {e}; it compiles at every load",
                 dir.display()
             );
             None
+        }
+    }
+}
+
+/// Removes the other compiles of the model at `path` beside `keep`:
+/// folders under the same parent whose compile ONNX Runtime recorded
+/// as made from that file (the `model.txt` it writes in each, which
+/// holds the source's path). Each one is a compile under an older key:
+/// the file replaced, another tiling, or a graph greycard hands the
+/// provider differently, as `CORE_ML_UNFUSED` changed, which left 431
+/// MB for Sky alone. A folder of another file, or one that cannot be
+/// read, is left.
+#[cfg_attr(not(all(feature = "coreml", target_os = "macos")), allow(dead_code))]
+fn sweep_coreml_cache(keep: &Path, path: &Path) {
+    let Some(parent) = keep.parent() else { return };
+    let Ok(folders) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let source = path.to_string_lossy();
+    for folder in folders.flatten().map(|e| e.path()) {
+        if folder == keep || !folder.is_dir() {
+            continue;
+        }
+        let made_from_this = std::fs::read_dir(&folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| std::fs::read_to_string(e.path().join("model.txt")).ok())
+            .any(|text| text.trim() == source);
+        if !made_from_this {
+            continue;
+        }
+        match std::fs::remove_dir_all(&folder) {
+            Ok(()) => log::info!(
+                "an older Core ML compile of {} removed: {}",
+                path.display(),
+                folder.display()
+            ),
+            Err(e) => log::warn!(
+                "an older Core ML compile of {} not removed ({}): {e}",
+                path.display(),
+                folder.display()
+            ),
         }
     }
 }
@@ -272,6 +318,9 @@ fn coreml_cache_key(path: &Path, fixed: &[(&str, i64)]) -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let mut h = Sha256::new();
+    // What greycard hands the provider beyond the file: a compile
+    // cached from another graph is not this one's.
+    h.update(CORE_ML_UNFUSED.as_bytes());
     h.update(path.to_string_lossy().as_bytes());
     h.update(meta.map(|m| m.len()).unwrap_or_default().to_le_bytes());
     h.update(modified.to_le_bytes());
@@ -770,7 +819,11 @@ pub struct Loaded {
 /// cut, and it says so only in its compute plan. So where a GPU
 /// provider follows it in the list, both are opened, `warm` is run
 /// once more on each and timed, and the faster is kept; the other
-/// session is dropped. The CPU after them is not tried.
+/// session is dropped. The CPU after them is not tried. Each side's
+/// time is remembered with its outcome, and a later load of the same
+/// file at the same shape, on the same adapter and build, opens the
+/// winner first without a race, the other after it only if the winner
+/// fails ([`settled_race`]): one session a load, not two.
 pub fn open(
     path: &Path,
     level: GraphOptimizationLevel,
@@ -804,20 +857,43 @@ pub fn open_fixed(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let build = record::build_fingerprint(providers);
+    let shape = record::shape(fixed);
     // Read once, lazily: only a provider that can be remembered
     // (`remember` is set and the adapter could be named) touches
     // disk, and only once for the whole call.
     let mut entries: Option<Vec<record::Entry>> = None;
+    // A race this file already ran at this shape, on this adapter and
+    // build, is not run again: the winner is opened first and not
+    // timed, and the other stays after it in case the winner fails.
+    let settled = match remember {
+        Some(r) if racer(providers).is_some() => {
+            let entries = entries.get_or_insert_with(|| record::read(r.store_root));
+            settled_race(entries, r.hash, providers, &build, &shape, |p| {
+                p.adapter_identity()
+            })
+        }
+        _ => None,
+    };
+    let order = match settled {
+        Some(winner) => {
+            log::info!(
+                "{name}: {} won the race at its last load; opened without one",
+                winner.name()
+            );
+            winner_first(providers, winner)
+        }
+        None => providers.to_vec(),
+    };
     // Core ML's session and its timed run, held while the provider
     // after it is timed against it.
     let mut held: Option<(Loaded, f64)> = None;
 
-    for (i, &provider) in providers.iter().enumerate() {
+    for (i, &provider) in order.iter().enumerate() {
         if held.is_some() && provider == Provider::Cpu {
             break;
         }
-        let last = i + 1 == providers.len();
-        let racing = held.is_none() && races(provider, &providers[i + 1..]);
+        let last = i + 1 == order.len();
+        let racing = settled.is_none() && held.is_none() && races(provider, &order[i + 1..]);
         let timed = racing || held.is_some();
         // Started before the adapter probe (cached after its first
         // call a process, but the first call still costs something),
@@ -854,6 +930,19 @@ pub fn open_fixed(
                     reason: first_line(&e.to_string()).to_string(),
                 },
             };
+            // A timed run is this load's side of the race; an untimed
+            // one that worked keeps the side already on record, while
+            // it still applies, so a settled race stays settled.
+            let race = match &outcome {
+                Ok((_, Some(run))) => Some(record::Race {
+                    shape: shape.clone(),
+                    run_us: (run * 1e6).round() as u64,
+                }),
+                Ok((_, None)) => record::find(entries, r.hash, provider)
+                    .filter(|e| record::valid(e, adapter, &build))
+                    .and_then(|e| e.race.clone()),
+                Err(_) => None,
+            };
             let entry = record::Entry {
                 model: r.model.to_string(),
                 hash: r.hash.to_string(),
@@ -861,6 +950,7 @@ pub fn open_fixed(
                 adapter: adapter.clone(),
                 build: build.clone(),
                 outcome: recorded,
+                race,
             };
             // Nothing changed since the entry already on disk: not
             // worth a write, and not worth racing another process
@@ -988,6 +1078,75 @@ fn races(provider: Provider, rest: &[Provider]) -> bool {
     provider == Provider::CoreMl && rest.iter().any(|p| *p != Provider::Cpu)
 }
 
+/// Core ML and the provider it would be timed against, where
+/// `providers` races them.
+fn racer(providers: &[Provider]) -> Option<(Provider, Provider)> {
+    let i = providers.iter().position(|&p| p == Provider::CoreMl)?;
+    let rival = providers[i + 1..]
+        .iter()
+        .copied()
+        .find(|&p| p != Provider::Cpu)?;
+    Some((Provider::CoreMl, rival))
+}
+
+/// The winner of the race `providers` would run, as the record has it
+/// for the file named by `hash` at `shape`: both sides' entries worked,
+/// were timed at that shape, and still apply to the adapter `adapter`
+/// names for each and to `build`. A tie goes to Core ML, as it does in
+/// the race. `None` when either side is missing, failed, untimed,
+/// timed at another shape, or stale, and the race is run.
+fn settled_race(
+    entries: &[record::Entry],
+    hash: &str,
+    providers: &[Provider],
+    build: &str,
+    shape: &str,
+    adapter: impl Fn(Provider) -> Option<String>,
+) -> Option<Provider> {
+    let (core_ml, rival) = racer(providers)?;
+    let run = |p: Provider| {
+        let adapter = adapter(p)?;
+        let e = record::find(entries, hash, p)?;
+        let race = e.race.as_ref()?;
+        (record::valid(e, &adapter, build)
+            && e.outcome == record::Outcome::Worked
+            && race.shape == shape)
+            .then_some(race.run_us)
+    };
+    let (first, second) = (run(core_ml)?, run(rival)?);
+    Some(if second < first { rival } else { core_ml })
+}
+
+/// `providers` with `winner` moved to where the race's first side
+/// stood, the other side after it; unchanged when Core ML won.
+fn winner_first(providers: &[Provider], winner: Provider) -> Vec<Provider> {
+    let mut order: Vec<Provider> = providers.to_vec();
+    if winner == Provider::CoreMl {
+        return order;
+    }
+    let (Some(at), Some(from)) = (
+        order.iter().position(|&p| p == Provider::CoreMl),
+        order.iter().position(|&p| p == winner),
+    ) else {
+        return order;
+    };
+    let p = order.remove(from);
+    order.insert(at, p);
+    order
+}
+
+/// The graph optimizers kept off a Core ML session. ONNX Runtime's
+/// `MatMulAddFusion` turns a MatMul and the Add after it into a Gemm,
+/// and the Core ML provider writes a Gemm's weight transposed into
+/// the program as an inline literal rather than into the weight file,
+/// where a MatMul's weight goes by reference (`gemm_op_builder.cc`,
+/// 1.28). On the Sky model that put 130 weights, 336 MB of hex text,
+/// into the program, and Core ML prints the whole program to text to
+/// key its own cache and again in each validator: a session took 27 s
+/// cold and 4.5 s from the cache, most of it in `snprintf`. Unfused,
+/// Core ML fuses the pair itself from the weight file.
+const CORE_ML_UNFUSED: &str = "MatMulAddFusion";
+
 /// A session on `provider`, warmed up unless `skip_warm`, and with
 /// `timed` the seconds of a second warm run: the first pays for
 /// compiling shaders or a Core ML specialization, which a tile does
@@ -1003,6 +1162,7 @@ fn try_open(
 ) -> ort::Result<(Session, Option<f64>)> {
     let mut builder = Session::builder()?.with_optimization_level(level)?;
     if provider == Provider::CoreMl {
+        builder = builder.with_disabled_optimizers(CORE_ML_UNFUSED)?;
         for &(name, size) in fixed {
             builder = builder.with_dimension_override(name, size)?;
         }
@@ -1144,6 +1304,148 @@ mod tests {
         std::fs::write(&a, b"other").unwrap();
         assert_ne!(key, coreml_cache_key(&a, &fixed));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Making a file's compile folder removes that file's compiles
+    /// under other keys, as ONNX Runtime lays them out (a folder a
+    /// partition, its `model.txt` naming the source), and leaves
+    /// another file's, and a folder with no record of its source.
+    #[test]
+    fn an_older_core_ml_compile_of_the_same_file_is_swept() {
+        let root = std::env::temp_dir().join(format!(
+            "greycard-runtime-coreml-sweep-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("coreml");
+        let sky = root.join("models").join("eomt-s-coco-640.onnx");
+        let other = root.join("models").join("denoise-v20.onnx");
+        let compile = |name: &str, source: Option<&Path>| {
+            let part = cache.join(name).join("15121039830728902357");
+            std::fs::create_dir_all(part.join("0_static_mlprogram")).unwrap();
+            if let Some(source) = source {
+                std::fs::write(part.join("model.txt"), source.to_string_lossy().as_bytes())
+                    .unwrap();
+            }
+            cache.join(name)
+        };
+        let old = compile("eomt-s-coco-640-efb177dcdda754db", Some(&sky));
+        let keep = compile("eomt-s-coco-640-5ccff4f64851c189", Some(&sky));
+        let denoiser = compile("denoise-v20-3b5ae551c565f67b", Some(&other));
+        let unknown = compile("eomt-s-coco-640-0000000000000000", None);
+
+        sweep_coreml_cache(&keep, &sky);
+        assert!(!old.exists());
+        assert!(keep.exists());
+        assert!(denoiser.exists());
+        assert!(unknown.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A raced entry for `provider`, timed at `shape` in `run_us`.
+    fn raced(
+        provider: Provider,
+        shape: &str,
+        run_us: u64,
+        outcome: record::Outcome,
+    ) -> record::Entry {
+        let mut e = record::test_entry(
+            "greycard-denoise-best-v20",
+            "file-hash",
+            provider,
+            &format!("{} adapter", provider.name()),
+            "CoreML,WebGPU,CPU greycard 0.9.1",
+            outcome,
+        );
+        e.race = Some(record::Race {
+            shape: shape.to_string(),
+            run_us,
+        });
+        e
+    }
+
+    fn settled(entries: &[record::Entry], shape: &str) -> Option<Provider> {
+        settled_race(
+            entries,
+            "file-hash",
+            &[Provider::CoreMl, Provider::WebGpu, Provider::Cpu],
+            "CoreML,WebGPU,CPU greycard 0.9.1",
+            shape,
+            |p| Some(format!("{} adapter", p.name())),
+        )
+    }
+
+    /// The faster side of a race on record wins the next load, Core ML
+    /// on a tie, and only while both sides worked, were timed at this
+    /// shape, and still apply.
+    #[test]
+    fn a_race_on_record_settles_the_next_load() {
+        let at = "h=1024,w=1024";
+        let worked = || record::Outcome::Worked;
+        let core_ml_faster = [
+            raced(Provider::CoreMl, at, 206_000, worked()),
+            raced(Provider::WebGpu, at, 592_000, worked()),
+        ];
+        assert_eq!(settled(&core_ml_faster, at), Some(Provider::CoreMl));
+        let webgpu_faster = [
+            raced(Provider::CoreMl, at, 700_000, worked()),
+            raced(Provider::WebGpu, at, 592_000, worked()),
+        ];
+        assert_eq!(settled(&webgpu_faster, at), Some(Provider::WebGpu));
+        let tie = [
+            raced(Provider::CoreMl, at, 592_000, worked()),
+            raced(Provider::WebGpu, at, 592_000, worked()),
+        ];
+        assert_eq!(settled(&tie, at), Some(Provider::CoreMl));
+
+        // Another tile, one side alone, an untimed side, a failure, or
+        // a stale build: the race is run.
+        assert_eq!(settled(&core_ml_faster, "h=608,w=608"), None);
+        assert_eq!(settled(&core_ml_faster[..1], at), None);
+        let mut untimed = core_ml_faster.clone();
+        untimed[1].race = None;
+        assert_eq!(settled(&untimed, at), None);
+        let failed = [
+            raced(Provider::CoreMl, at, 206_000, worked()),
+            raced(
+                Provider::WebGpu,
+                at,
+                592_000,
+                record::Outcome::Failed {
+                    reason: "lost".to_string(),
+                },
+            ),
+        ];
+        assert_eq!(settled(&failed, at), None);
+        let mut stale = core_ml_faster.clone();
+        stale[0].build = "CoreML,WebGPU,CPU greycard 0.9.0".to_string();
+        assert_eq!(settled(&stale, at), None);
+        // No race in the list: nothing to settle.
+        assert_eq!(
+            settled_race(
+                &core_ml_faster,
+                "file-hash",
+                &[Provider::WebGpu, Provider::Cpu],
+                "CoreML,WebGPU,CPU greycard 0.9.1",
+                at,
+                |p| Some(format!("{} adapter", p.name())),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_winner_goes_first_and_the_other_stays_behind_it() {
+        let all = [Provider::CoreMl, Provider::WebGpu, Provider::Cpu];
+        assert_eq!(winner_first(&all, Provider::CoreMl), all.to_vec());
+        assert_eq!(
+            winner_first(&all, Provider::WebGpu),
+            vec![Provider::WebGpu, Provider::CoreMl, Provider::Cpu]
+        );
+        assert_eq!(racer(&all), Some((Provider::CoreMl, Provider::WebGpu)));
+        assert_eq!(racer(&[Provider::CoreMl, Provider::Cpu]), None);
+        assert_eq!(racer(&[Provider::WebGpu, Provider::Cpu]), None);
     }
 
     #[test]

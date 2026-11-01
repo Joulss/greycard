@@ -24,9 +24,10 @@
 //! update or a rebuild replaces the one entry for a file and provider
 //! instead of leaving an orphan beside it.
 //!
-//! Success is remembered as well as failure, so a provider already
-//! known to work is not warmed up again to prove it still does (see
-//! `runtime::open`).
+//! Success is remembered as well as failure. A success still gets
+//! its warm-up (see `runtime::open`), but where Core ML was raced
+//! against a GPU provider each side's timed run is kept with it
+//! (`Race`), so the next load opens the winner alone.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,6 +60,33 @@ pub struct Entry {
     pub build: String,
     #[serde(flatten)]
     pub outcome: Outcome,
+    /// The timed warm run, where the provider was raced against another
+    /// (Core ML against the GPU provider after it, `runtime::open`), so
+    /// the next load can open the winner alone. Absent in a record
+    /// written before there was one, and for a provider never raced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race: Option<Race>,
+}
+
+/// One provider's side of a race: how long its timed warm run took, and
+/// the shape that run was at, since a winner at one tile need not win
+/// at another.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Race {
+    /// The free dimensions fixed for the session (`shape`), empty for a
+    /// model of static shape.
+    pub shape: String,
+    /// The warm run, in microseconds.
+    pub run_us: u64,
+}
+
+/// The fixed dimensions as a race records them: `h=608,w=608`.
+pub fn shape(fixed: &[(&str, i64)]) -> String {
+    fixed
+        .iter()
+        .map(|(name, size)| format!("{name}={size}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -178,6 +206,7 @@ pub(crate) fn test_entry(
         adapter: adapter.to_string(),
         build: build.to_string(),
         outcome,
+        race: None,
     }
 }
 
@@ -227,6 +256,35 @@ mod tests {
         let back = read(&dir);
         assert_eq!(back, entries);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A record written before races were kept reads, its entries
+    /// with no race; one with a race keeps it through a round trip.
+    #[test]
+    fn a_race_is_optional_in_the_file_and_kept_when_there() {
+        let old = r#"{"entries":[{"model":"m","hash":"h","provider":"CoreML",
+            "adapter":"Apple M5|macOS 27.0.1","build":"b","outcome":"worked"}]}"#;
+        let back: Contents = serde_json::from_str(old).unwrap();
+        assert_eq!(back.entries.len(), 1);
+        assert_eq!(back.entries[0].race, None);
+        assert_eq!(back.entries[0].outcome, Outcome::Worked);
+
+        let mut e = entry("m", "h", Provider::CoreMl, Outcome::Worked);
+        e.race = Some(Race {
+            shape: shape(&[("h", 608), ("w", 608)]),
+            run_us: 206_000,
+        });
+        let text = serde_json::to_string(&Contents {
+            entries: vec![e.clone()],
+        })
+        .unwrap();
+        assert!(text.contains(r#""shape":"h=608,w=608""#), "{text}");
+        let back: Contents = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.entries, vec![e]);
+        // No race, no key: an entry never raced writes as it did.
+        let plain =
+            serde_json::to_string(&entry("m", "h", Provider::WebGpu, Outcome::Worked)).unwrap();
+        assert!(!plain.contains("race"), "{plain}");
     }
 
     #[test]

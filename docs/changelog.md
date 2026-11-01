@@ -10,6 +10,10 @@ design note behind it.
 - The Keys sheet reaches its last row, and the camera match sheet's
   group list its last group, by the wheel
   ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).
+- On a Mac, the first Sky mask no longer waits about 27 seconds for
+  Core ML, nor 4.5 at each launch after; the Sky model and the
+  learned denoiser open in under half a second once they have run
+  ([§466](https://github.com/jessolmstead/greycard/blob/master/docs/notes/466-sky-on-core-ml-without-its-weights-as-text.md)).
 
 ## 0.9.1, 2026-10-29
 
