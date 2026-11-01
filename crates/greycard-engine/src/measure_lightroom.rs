@@ -48,6 +48,7 @@ use greycard_library::lightroom_exports::{self as lx, Confidence, Crop, Pairing}
 use greycard_match::color::{decode3, oklab};
 use greycard_match::register::{NCC_MIN, register};
 use greycard_match::{Pairs, Picture};
+use greycard_render::export;
 
 use crate::camera_match as cm;
 use crate::match_compare::Acc;
@@ -96,42 +97,26 @@ const PROCESS_2012: f32 = 6.7;
 const SHAPE: f64 = 0.03;
 
 /// What the command line asked for.
-pub(crate) struct Options {
-    pub(crate) catalog: PathBuf,
-    pub(crate) roots: Vec<(String, PathBuf)>,
-    pub(crate) folders: Vec<PathBuf>,
-    pub(crate) limit: Option<usize>,
-    pub(crate) out: Option<PathBuf>,
+pub struct Options {
+    pub catalog: PathBuf,
+    pub roots: Vec<(String, PathBuf)>,
+    pub folders: Vec<PathBuf>,
+    pub limit: Option<usize>,
+    pub out: Option<PathBuf>,
     /// Where each measured frame's blocks are kept for the fit
     /// (`--blocks DIR`, [`crate::fit_lightroom`]); none keeps nothing.
-    pub(crate) blocks: Option<PathBuf>,
+    pub blocks: Option<PathBuf>,
     /// Measure with the bodies' offsets taken back off the Exposure
     /// slider (`--no-body-offset`).
-    pub(crate) no_body_offset: bool,
+    pub no_body_offset: bool,
     /// The mapper's scales for the run: the shipped ones unless
     /// `--scale` moved some.
-    pub(crate) scales: greycard_edit_io::lightroom::Scales,
+    pub scales: greycard_edit_io::lightroom::Scales,
 }
 
-/// `--measure-lightroom`, from the command line to the exit code.
-pub(crate) fn headless(cli: &crate::Cli, catalog: &Path) -> Result<std::process::ExitCode> {
-    let mut scales = greycard_edit_io::lightroom::Scales::DEFAULT;
-    for given in &cli.scale {
-        scales
-            .set_from(given)
-            .map_err(|e| anyhow::anyhow!("--scale {e}"))?;
-    }
-    let opts = Options {
-        catalog: catalog.to_path_buf(),
-        roots: cli.root.clone(),
-        folders: cli.exports.clone(),
-        limit: cli.limit,
-        out: cli.out.clone(),
-        blocks: cli.blocks.clone(),
-        no_body_offset: cli.no_body_offset,
-        scales,
-    };
-    let report = run(&opts)?;
+/// `--measure-lightroom`, from its options to the exit code.
+pub fn headless(opts: &Options) -> Result<std::process::ExitCode> {
+    let report = run(opts)?;
     print!("{}", text(&report));
     if let Some(out) = &opts.out {
         let json = serde_json::to_string_pretty(&report)?;
@@ -652,7 +637,7 @@ pub(crate) fn measure_frame_with(
     let own = greycard_core::decode::stance_path(raw)
         .map(|s| s.orientation)
         .unwrap_or_default();
-    let settings = crate::export::Settings {
+    let settings = export::Settings {
         long_edge: Some(long_edge_for(crop, size)),
         ..cm::settings()
     };
@@ -1879,7 +1864,7 @@ mod tests {
         let mut developed = crate::worker::FrameDevelop::develop(&raw, &edit, None).unwrap();
         let render = cm::picture_of(&developed.finish(
             &edit,
-            &crate::export::Settings {
+            &export::Settings {
                 long_edge: Some(long_edge_for(crop.as_ref(), None)),
                 ..cm::settings()
             },

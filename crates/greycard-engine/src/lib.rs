@@ -5,22 +5,32 @@
 //! worker that takes the window's jobs and runs them (`worker`), with
 //! what it holds: the reduced develop, the thumbnail pool, the
 //! previews, the edit's pictures, the models, and the export queue.
+//! Over the export's develop of a frame not open, the camera match's
+//! runner (`camera_match`) and the measurements of it and of the
+//! Lightroom import (`match_compare`, `measure_baseline`,
+//! `measure_crop`, `measure_lightroom`, and `fit_lightroom`).
 //!
 //! It stands between the render crate and the window, and depends on
-//! core, edit, edit-io, render, gpu, ai, lens, and the library alone:
-//! never on the window, Slint, or anything that names a window's
-//! state. The GPU is lent to it as an optional context by whoever
-//! owns a device, never made here; without one, every stage runs on
-//! the CPU.
+//! core, edit, edit-io, render, gpu, ai, lens, match, and the library
+//! alone: never on the window, Slint, or anything that names a
+//! window's state. The GPU is lent to it as an optional context by
+//! whoever owns a device, never made here; without one, every stage
+//! runs on the CPU.
 
 pub mod ai;
 pub mod camera;
+pub mod camera_match;
 pub mod edited_pictures;
 pub mod export_name;
 pub mod finish;
+pub mod fit_lightroom;
 pub mod headless;
 pub mod lens;
 pub mod made;
+pub mod match_compare;
+pub mod measure_baseline;
+pub mod measure_crop;
+pub mod measure_lightroom;
 pub mod naming;
 pub mod preset_fit;
 pub mod previews;

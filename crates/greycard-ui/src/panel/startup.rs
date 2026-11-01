@@ -61,24 +61,24 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // `--match-compare` measures the camera match and writes a report;
     // no window, no device.
     if let Some(out) = cli.match_compare.as_deref() {
-        return crate::match_compare::headless(&cli, out);
+        return crate::runners::match_compare(&cli, out);
     }
     // `--measure-baseline` likewise: the default develop against the
     // camera's JPEG, per body.
     if let Some(out) = cli.measure_baseline.as_deref() {
-        return crate::measure_baseline::headless(&cli, out);
+        return crate::runners::measure_baseline(&cli, out);
     }
     // `--fit-lightroom` likewise: the mapper fitted to the blocks the
     // measurement kept.
     if !cli.fit_lightroom.is_empty() {
-        return crate::fit_lightroom::headless(&cli, &cli.fit_lightroom);
+        return crate::runners::fit_lightroom(&cli, &cli.fit_lightroom);
     }
     // `--measure-lightroom` likewise: a catalog against its exports.
     if let Some(catalog) = cli.measure_lightroom.as_deref() {
         if cli.crops {
-            return crate::measure_crop::headless(&cli, catalog);
+            return crate::runners::measure_crop(&cli, catalog);
         }
-        return crate::measure_lightroom::headless(&cli, catalog);
+        return crate::runners::measure_lightroom(&cli, catalog);
     }
     // `--import` with no sheet asked for is a run with no window.
     let import_sheet = matches!(

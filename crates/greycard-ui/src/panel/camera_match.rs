@@ -1,9 +1,9 @@
 //! The camera match's sheet: the Look section's "Fit this camera's
 //! look". The scope is surveyed for its bodies and picture styles off
 //! the window's thread, the sheet says what the fit will do with each,
-//! and Fit runs [`crate::camera_match::run`] on a thread of its own,
-//! its progress and each group's result coming back here, the look
-//! list read again when it is done.
+//! and Fit runs [`greycard_engine::camera_match::run`] on a thread of
+//! its own, its progress and each group's result coming back here, the
+//! look list read again when it is done.
 //!
 //! Each body-and-style line has a box, every one checked at first; Fit
 //! runs over the checked groups, and the choice is kept for the
@@ -17,12 +17,15 @@
 //! every group.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::camera_match::{self as fit, Group, Plan, Progress, Survey};
+use greycard_engine::camera_match::{self as fit, Group, Plan, Progress, Survey};
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::panel::assets::show_looks;
-use crate::*;
+use crate::{App, MatchGroup, STATE, Shared, State};
 
 /// How often the fit's held-out count is passed on to the window: it
 /// finishes several a second across the threads.
@@ -914,7 +917,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::camera_match::{Frame, MIN_FRAMES};
+    use greycard_engine::camera_match::{Frame, MIN_FRAMES};
+    use slint::Model;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1510,5 +1514,36 @@ mod tests {
         app.set_match_groups(ModelRc::new(VecModel::from(groups)));
         app.set_match_open(true);
         crate::testing::wheel_brings_in(&app, "Body 9 Standard: 14", (500.0, 580.0));
+    }
+
+    /// The sheet's lines on real raws: every raw in `GREYCARD_SAMPLES`
+    /// surveyed, each group's plan line as the sheet would show it, and
+    /// the summary. Prints; the run itself is the engine's test of the
+    /// same name. Ignored, since it wants the samples.
+    #[test]
+    #[ignore]
+    fn the_samples_run() {
+        let Some(dir) = std::env::var_os("GREYCARD_SAMPLES").map(PathBuf::from) else {
+            eprintln!("set GREYCARD_SAMPLES to a folder of raws");
+            return;
+        };
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .collect();
+        files.sort();
+        let survey = fit::survey_files(&files, &|_, _| {}, &AtomicBool::new(false));
+        let plans = fit::plan_chosen(
+            &survey.groups,
+            &std::collections::HashMap::new(),
+            greycard_edit::DisplayCurve::Channels,
+            false,
+            &vec![true; survey.groups.len()],
+            fit::Scope::Library,
+        );
+        for (g, p) in survey.groups.iter().zip(&plans) {
+            eprintln!("plan: {}", group_line(g, p));
+        }
+        eprintln!("summary: {}", summary(&survey));
     }
 }

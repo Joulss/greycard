@@ -9,11 +9,12 @@
 //! vignette's stops) and what both sides came out as. A block the
 //! comparison kept is flat on both sides, so the finish of its mean is
 //! within a hair of the mean of its finish, and the fit can run the
-//! finish's own pixel function ([`crate::finish::finish_pixel_with`])
-//! over the blocks for any scales it tries, thousands of times, without
-//! developing a frame again. The record of the real render's block mean
-//! beside the emulation's is the check on that: the report says how
-//! far the two sit apart at the scales the measurement ran under.
+//! finish's own pixel function
+//! ([`greycard_render::finish::finish_pixel_with`]) over the blocks
+//! for any scales it tries, thousands of times, without developing a
+//! frame again. The record of the real render's block mean beside the
+//! emulation's is the check on that: the report says how far the two
+//! sit apart at the scales the measurement ran under.
 //!
 //! What is fitted: one exposure offset per body (where Lightroom's
 //! Exposure zero sits against ours), and the mapper's scales
@@ -41,9 +42,9 @@ use greycard_edit::{DisplayCurve, Edit};
 use greycard_edit_io::lightroom::{self, Scales};
 use greycard_match::color::{decode3, luminance, oklab};
 
-use crate::finish;
 use crate::match_compare::Acc;
 use crate::measure_lightroom::{FrameLine, Kept};
+use greycard_render::{export, finish};
 
 /// One kept block, as the record keeps it: the scene's mean in the
 /// working space before any exposure, the guide at it (none when no
@@ -324,7 +325,7 @@ fn render(frame: &Frame, scales: &Scales, offset: f32) -> Option<Vec<[f32; 3]>> 
         &edit,
         finish::Source::Scene(finish::Baseline::of_stops(baseline)),
     );
-    let m = crate::export::Space::Srgb.matrix();
+    let m = export::Space::Srgb.matrix();
     let look = frame.look.as_ref();
     let range = frame.rec.range;
     Some(
@@ -798,36 +799,22 @@ pub(crate) struct Report {
 }
 
 /// What the command line asked for.
-pub(crate) struct Options {
-    pub(crate) dirs: Vec<PathBuf>,
-    pub(crate) out: Option<PathBuf>,
-    pub(crate) rounds: usize,
+pub struct Options {
+    pub dirs: Vec<PathBuf>,
+    pub out: Option<PathBuf>,
+    pub rounds: usize,
     /// Fit the scales too; without it only the bodies' offsets move.
-    pub(crate) scales: bool,
+    pub scales: bool,
     /// Run the hold-outs, a fit each.
-    pub(crate) hold_out: bool,
+    pub hold_out: bool,
     /// The scales the fit starts from and the "before" is measured
     /// at: the shipped ones unless `--fit-scale` moved some.
-    pub(crate) start: Scales,
+    pub start: Scales,
 }
 
-/// `--fit-lightroom`, from the command line to the exit code.
-pub(crate) fn headless(cli: &crate::Cli, dirs: &[PathBuf]) -> Result<std::process::ExitCode> {
-    let mut start = Scales::DEFAULT;
-    for given in &cli.fit_scale {
-        start
-            .set_from(given)
-            .map_err(|e| anyhow::anyhow!("--fit-scale {e}"))?;
-    }
-    let opts = Options {
-        dirs: dirs.to_vec(),
-        out: cli.out.clone(),
-        rounds: cli.fit_rounds,
-        scales: !cli.offsets_only,
-        hold_out: !cli.no_hold_out,
-        start,
-    };
-    let report = run(&opts)?;
+/// `--fit-lightroom`, from its options to the exit code.
+pub fn headless(opts: &Options) -> Result<std::process::ExitCode> {
+    let report = run(opts)?;
     print!("{}", text(&report));
     if let Some(out) = &opts.out {
         let json = serde_json::to_string_pretty(&report)?;

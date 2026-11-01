@@ -3,8 +3,8 @@
 //! picture style in a scope and writing one table per group into the
 //! looks store.
 //!
-//! It lives in the editor and not beside the fit because the develop
-//! it needs is the editor's: the export's own develop of a frame that
+//! It lives in the engine and not beside the fit because the develop
+//! it needs is the engine's: the export's own develop of a frame that
 //! is not open ([`crate::worker::FrameDevelop`]), with the lens
 //! corrections, the finish and the geometry exactly as an export has
 //! them. `greycard-match` stays a crate of numbers with no develop in
@@ -35,6 +35,7 @@ use greycard_edit::{DisplayCurve, Edit};
 use greycard_match::fit::{LutParams, leave_one_out};
 use greycard_match::register::{NCC_MIN, register};
 use greycard_match::{FIT_VERSION, Model, Pairs, Picture};
+use greycard_render::export;
 
 #[cfg(test)]
 mod cover;
@@ -42,11 +43,12 @@ mod cover;
 mod sweep;
 
 /// Frames a group is sampled down to.
-pub(crate) const SAMPLE: usize = 40;
+pub const SAMPLE: usize = 40;
 /// Usable frames a group needs for a table of its own; also the
 /// number of fixed frames past which the frames with an adaptive
 /// setting on are left out.
-pub(crate) const MIN_FRAMES: usize = 20;
+#[doc(hidden)]
+pub const MIN_FRAMES: usize = 20;
 /// Frames taken from every folder before the rest are spread through
 /// the dates, so one long session does not fill the sample.
 pub(crate) const PER_FOLDER: usize = 3;
@@ -66,13 +68,13 @@ pub(crate) const MAX_STEP: f32 = 1.0;
 
 /// One frame of a group.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Frame {
-    pub(crate) path: PathBuf,
+pub struct Frame {
+    pub path: PathBuf,
     /// `YYYY-MM-DD HH:MM:SS`, as the index keeps it.
-    pub(crate) taken: Option<String>,
-    pub(crate) lens: Option<String>,
+    pub taken: Option<String>,
+    pub lens: Option<String>,
     /// A fixed style with every adaptive setting off.
-    pub(crate) fixed: bool,
+    pub fixed: bool,
 }
 
 impl Frame {
@@ -83,30 +85,30 @@ impl Frame {
 
 /// A body and a fixed picture style, and the frames of it in the scope.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Group {
+pub struct Group {
     /// Make and model as the panel names them.
-    pub(crate) camera: String,
+    pub camera: String,
     /// Make and model as the raw names them, which the table declares.
-    pub(crate) make: String,
-    pub(crate) model: String,
+    pub make: String,
+    pub model: String,
     /// The maker as the style reader names it.
-    pub(crate) maker: String,
+    pub maker: String,
     /// The style's group key: the maker and the style.
-    pub(crate) style: String,
-    pub(crate) frames: Vec<Frame>,
+    pub style: String,
+    pub frames: Vec<Frame>,
     /// The look the group's table is written under when it is not the
     /// group's own name: a refit of a look the user renamed, or one
     /// from before the names were the bodies'.
-    pub(crate) look: Option<String>,
+    pub look: Option<String>,
 }
 
 impl Group {
-    pub(crate) fn fixed(&self) -> usize {
+    pub fn fixed(&self) -> usize {
         self.frames.iter().filter(|f| f.fixed).count()
     }
 
     /// The look's name in the store.
-    pub(crate) fn name(&self) -> String {
+    pub fn name(&self) -> String {
         self.look
             .clone()
             .unwrap_or_else(|| look_name(&self.camera, &self.maker, &self.style))
@@ -117,7 +119,7 @@ impl Group {
     /// will see. A frame with a copy in another folder (a backup: the
     /// same file name, taken at the same time) counts in the first
     /// folder that holds it, so a shoot and its backup are one folder.
-    pub(crate) fn one_folder(&self) -> bool {
+    pub fn one_folder(&self) -> bool {
         let mut first: HashMap<(&std::ffi::OsStr, &str), &Path> = HashMap::new();
         let mut frames: Vec<&Frame> = self.frames.iter().collect();
         frames.sort_by(|a, b| order(a, b));
@@ -142,7 +144,7 @@ impl Group {
 
     /// The frames left out of the sample for an adaptive setting:
     /// every one of them once the fixed frames are enough alone.
-    pub(crate) fn left_out(&self) -> usize {
+    pub fn left_out(&self) -> usize {
         if self.fixed() >= MIN_FRAMES {
             self.frames.len() - self.fixed()
         } else {
@@ -151,26 +153,26 @@ impl Group {
     }
 
     /// The frames the fit would develop.
-    pub(crate) fn candidates(&self) -> usize {
+    pub fn candidates(&self) -> usize {
         sample(&self.frames, SAMPLE).len()
     }
 }
 
 /// What the scope's groups and the index's state were found to be.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Survey {
-    pub(crate) groups: Vec<Group>,
+pub struct Survey {
+    pub groups: Vec<Group>,
     /// Raws in the scope whose maker's tags the index has not read
     /// yet, which the next pass over their folders reads.
-    pub(crate) unread: usize,
+    pub unread: usize,
     /// Raws in the scope, read directly, with no fixed style: an
     /// adaptive style, a setting on that replaces the style or one not
     /// known, or a maker whose styles are not read.
-    pub(crate) no_style: usize,
+    pub no_style: usize,
 }
 
 /// The groups the index holds under `roots`, or in the whole library.
-pub(crate) fn survey_library(
+pub fn survey_library(
     lib: &greycard_library::Library,
     roots: Option<&[PathBuf]>,
 ) -> greycard_library::Result<Survey> {
@@ -255,7 +257,7 @@ fn read_raw(path: &Path) -> Surveyed {
 /// survey's threads. Once `stop` is set no raw is begun, and what was
 /// read is what comes back: a survey the sheet has moved on from does
 /// not go on reading a share beside the one that replaced it.
-pub(crate) fn survey_files(
+pub fn survey_files(
     files: &[PathBuf],
     progress: &(dyn Fn(usize, usize) + Sync),
     stop: &AtomicBool,
@@ -445,7 +447,7 @@ pub(crate) fn sanitize(name: &str) -> String {
 /// enough frames, borrow for one without from a body in the run with
 /// the same maker and style that has them, skip the rest.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Plan {
+pub enum Plan {
     /// With the warning when it replaces a table it would otherwise
     /// have left alone.
     Fit {
@@ -471,16 +473,17 @@ impl Plan {
 }
 
 /// Why a group the user unchecked is left alone.
-pub(crate) const NOT_CHOSEN: &str = "not chosen";
+pub const NOT_CHOSEN: &str = "not chosen";
 /// Why a group whose frames are all from one folder gets no table in
 /// the library.
-pub(crate) const ONE_FOLDER: &str = "all from one folder, so the fit would be narrow";
+#[doc(hidden)]
+pub const ONE_FOLDER: &str = "all from one folder, so the fit would be narrow";
 
 /// What a run is over. In the library a group whose sample is all
 /// from one folder gets no table ([`ONE_FOLDER`]); a folder the user
 /// chose is one folder on purpose, and fits with a note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Scope {
+pub enum Scope {
     #[default]
     Library,
     Folder,
@@ -491,7 +494,7 @@ pub(crate) const TINTS_GREYS: &str = "refused: the fit would tint greys it never
 
 /// A table already in the store under a group's name.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Existing {
+pub enum Existing {
     /// Written by the camera match: the body it was fitted on, the
     /// frames the fit used where the table says, the display curve it
     /// was fitted under, and which fit wrote it
@@ -515,7 +518,7 @@ pub(crate) enum Existing {
 /// said them says them in its title, which is read when the header
 /// does not. A table without the line is the user's, whatever its
 /// title says.
-pub(crate) fn existing_in(store: &Path) -> HashMap<String, Existing> {
+pub fn existing_in(store: &Path) -> HashMap<String, Existing> {
     use greycard_core::lut::declared;
     use greycard_edit::look::key;
     greycard_core::lut::list_dir(store)
@@ -634,7 +637,7 @@ pub(crate) fn plan(
 /// borrows from one that is not chosen, that group is [`Plan::Donor`]:
 /// its frames are read and a table fitted in memory for the borrower,
 /// and its own table is not written.
-pub(crate) fn plan_chosen(
+pub fn plan_chosen(
     groups: &[Group],
     existing: &HashMap<String, Existing>,
     curve: DisplayCurve,
@@ -743,7 +746,7 @@ fn makes(g: &Group, name: &str, tables: &[&Entry]) -> bool {
 /// fitting its donor again. The look's group writes under the look's
 /// own name, so a renamed look gets its table for the curve beside the
 /// one it has. None when no group in the scope makes that look.
-pub(crate) fn refit_groups(groups: &[Group], name: &str, tables: &[&Entry]) -> Option<Vec<Group>> {
+pub fn refit_groups(groups: &[Group], name: &str, tables: &[&Entry]) -> Option<Vec<Group>> {
     let target = groups.iter().position(|g| makes(g, name, tables))?;
     let mut g = groups[target].clone();
     if g.name() != name {
@@ -786,7 +789,7 @@ fn under(n: usize) -> String {
 
 /// Where a run is, and each group's result as it lands.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Progress {
+pub enum Progress {
     /// `index` of `of` frames of the group named developed, from none
     /// (the group's start) up to all.
     Frame {
@@ -816,27 +819,27 @@ pub(crate) enum Progress {
 
 /// What became of one group.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct GroupResult {
-    pub(crate) camera: String,
-    pub(crate) style: String,
+pub struct GroupResult {
+    pub camera: String,
+    pub style: String,
     /// The look's name in the store.
-    pub(crate) name: String,
-    pub(crate) outcome: Outcome,
+    pub name: String,
+    pub outcome: Outcome,
     /// Frames developed and not used, and why.
-    pub(crate) dropped: Vec<(PathBuf, String)>,
+    pub dropped: Vec<(PathBuf, String)>,
     /// Frames not sampled for an adaptive setting on.
-    pub(crate) left_out: usize,
+    pub left_out: usize,
     /// The camera's vignetting against the lens profile's, per lens.
-    pub(crate) radial: Vec<RadialLine>,
+    pub radial: Vec<RadialLine>,
     /// Every frame from one folder: a folder's run fits it, with a note.
-    pub(crate) one_folder: bool,
+    pub one_folder: bool,
     /// The warning when the table written replaced one the match would
     /// otherwise have left alone.
-    pub(crate) replaced: Option<String>,
+    pub replaced: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Outcome {
+pub enum Outcome {
     Fitted {
         frames: usize,
         /// Mean ΔE in Oklab over every kept block, fitted on all.
@@ -862,15 +865,15 @@ pub(crate) enum Outcome {
 /// one lens: positive where the develop is lighter in the corners than
 /// the camera's JPEG.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RadialLine {
-    pub(crate) lens: String,
-    pub(crate) corner_minus_center: f32,
-    pub(crate) frames: usize,
+pub struct RadialLine {
+    pub lens: String,
+    pub corner_minus_center: f32,
+    pub frames: usize,
 }
 
 impl GroupResult {
     /// One line for the sheet.
-    pub(crate) fn line(&self) -> String {
+    pub fn line(&self) -> String {
         let mut out = match &self.outcome {
             Outcome::Fitted {
                 frames,
@@ -936,29 +939,29 @@ struct Kept {
 /// The export settings a frame is developed under for the fit: a
 /// 16-bit sRGB picture at [`LONG_EDGE`], no output sharpening, no
 /// mark.
-pub(crate) fn settings() -> crate::export::Settings {
-    crate::export::Settings {
-        format: crate::export::Format::Tiff,
+pub(crate) fn settings() -> export::Settings {
+    export::Settings {
+        format: export::Format::Tiff,
         long_edge: Some(LONG_EDGE),
-        space: crate::export::Space::Srgb,
-        sharpen: crate::export::Sharpen::Off,
-        metadata: crate::export::Metadata::None,
+        space: export::Space::Srgb,
+        sharpen: export::Sharpen::Off,
+        metadata: export::Metadata::None,
         watermark: None,
         ..Default::default()
     }
 }
 
 /// A rendered picture as the fit reads one: encoded sRGB in floats.
-pub(crate) fn picture_of(rendered: &crate::export::Rendered) -> Picture {
+pub(crate) fn picture_of(rendered: &export::Rendered) -> Picture {
     let (w, h) = (rendered.width as usize, rendered.height as usize);
     let data = match &rendered.pixels {
-        crate::export::Pixels::Sixteen(p) => p
+        export::Pixels::Sixteen(p) => p
             .as_chunks::<3>()
             .0
             .iter()
             .map(|&c| c.map(|v| v as f32 / 65535.0))
             .collect(),
-        crate::export::Pixels::Eight(p) => p
+        export::Pixels::Eight(p) => p
             .as_chunks::<3>()
             .0
             .iter()
@@ -1372,11 +1375,11 @@ pub(crate) fn write_look(
 /// whether it replaces what it would leave alone, and which groups the
 /// user chose (one flag a group; a missing flag is a yes).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Choices<'a> {
-    pub(crate) curve: DisplayCurve,
-    pub(crate) replace: bool,
-    pub(crate) chosen: &'a [bool],
-    pub(crate) scope: Scope,
+pub struct Choices<'a> {
+    pub curve: DisplayCurve,
+    pub replace: bool,
+    pub chosen: &'a [bool],
+    pub scope: Scope,
 }
 
 /// Run the camera match over `groups`, writing into the look store at
@@ -1385,7 +1388,7 @@ pub(crate) struct Choices<'a> {
 /// reason. `progress` hears every frame and every group's result;
 /// `cancel` is looked at between frames, and a canceled run writes
 /// nothing more.
-pub(crate) fn run(
+pub fn run(
     groups: &[Group],
     store: &Path,
     choices: Choices,
@@ -3567,9 +3570,9 @@ mod tests {
         }
     }
 
-    /// The sheet and the run on real raws: every raw in
-    /// `GREYCARD_SAMPLES` surveyed, each group's plan line as the sheet
-    /// would show it, the run into a scratch store and its result
+    /// The run on real raws: every raw in `GREYCARD_SAMPLES` surveyed,
+    /// each group's plan (the sheet's lines are the window's test of
+    /// the same name), the run into a scratch store and its result
     /// lines; then every sampled frame of each group developed and
     /// registered, and the group fitted and held out whatever its size,
     /// which the run itself does only from twenty frames. Prints; asserts
@@ -3591,9 +3594,8 @@ mod tests {
         let curve = DisplayCurve::Channels;
         let plans = plan(&survey.groups, &HashMap::new(), curve, false);
         for (g, p) in survey.groups.iter().zip(&plans) {
-            eprintln!("plan: {}", crate::panel::camera_match::group_line(g, p));
+            eprintln!("plan: {}: {p:?}", g.name());
         }
-        eprintln!("summary: {}", crate::panel::camera_match::summary(&survey));
         let lenses = greycard_lens::Store::user()
             .ok()
             .and_then(|s| s.load())

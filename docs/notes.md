@@ -533,3 +533,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§518. The strip's cells sized to their pictures](notes/518-the-strips-cells-sized-to-their-pictures.md) (2026-11-01)
 - [§519. The badge over the picture in Develop](notes/519-the-badge-over-the-picture-in-develop.md) (2026-11-01)
 - [§520. A settings file that will not parse is kept aside](notes/520-a-settings-file-that-will-not-parse-is-kept-aside.md) (2026-11-01)
+- [§521. The camera match and the runners, into the engine](notes/521-the-camera-match-and-the-runners-into-the-engine.md) (2026-11-01)

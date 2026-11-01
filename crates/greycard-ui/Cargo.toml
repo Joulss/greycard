@@ -25,7 +25,8 @@ greycard-lens = { path = "../greycard-lens" }
 greycard-gpu = { path = "../greycard-gpu" }
 # The thumbnail cache, keyed by the index's content hash.
 greycard-library = { path = "../greycard-library" }
-# The camera match: the fit the Look section runs over a group.
+# The camera match's fit version, which a look's table is checked
+# against for the Look section's refit.
 greycard-match = { path = "../greycard-match" }
 # The window, its panels and its sheets, compiled from `.slint` in a
 # crate of their own so a change here does not compile them again.

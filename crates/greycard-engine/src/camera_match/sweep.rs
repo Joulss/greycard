@@ -1,7 +1,7 @@
 //! The camera match's sample-size sweep: the held-out error of a
 //! group's table against how many frames were developed for it and how
 //! they were picked. Not shipped; an ignored test, so it measures with
-//! the editor's own develop, registration, exposure match and fit
+//! the engine's own develop, registration, exposure match and fit
 //! ([`measure`], [`fit_group`]) and nothing of its own.
 //!
 //! It runs in steps over a work folder, `GREYCARD_SWEEP`, each kept on

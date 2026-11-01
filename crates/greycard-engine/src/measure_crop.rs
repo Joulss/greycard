@@ -28,7 +28,7 @@
 //! `(1 - s) z`, and what is left of the shift after it is where the
 //! crop itself stands off Lightroom's.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -37,6 +37,7 @@ use serde::Serialize;
 use greycard_library::lightroom_exports::{self as lx, Confidence, Crop};
 use greycard_match::Picture;
 use greycard_match::register::{Plane, Registration, ncc_shifted, register};
+use greycard_render::export;
 
 use crate::camera_match as cm;
 
@@ -44,12 +45,12 @@ use crate::camera_match as cm;
 const FINE_WIDTH: usize = 2560;
 
 /// What the command line asked for.
-pub(crate) struct Options {
-    pub(crate) catalog: PathBuf,
-    pub(crate) roots: Vec<(String, PathBuf)>,
-    pub(crate) folders: Vec<PathBuf>,
-    pub(crate) limit: Option<usize>,
-    pub(crate) out: Option<PathBuf>,
+pub struct Options {
+    pub catalog: PathBuf,
+    pub roots: Vec<(String, PathBuf)>,
+    pub folders: Vec<PathBuf>,
+    pub limit: Option<usize>,
+    pub out: Option<PathBuf>,
 }
 
 /// One cropped frame against its export.
@@ -108,17 +109,9 @@ pub(crate) struct CropReport {
     pub(crate) seconds: f32,
 }
 
-/// `--measure-lightroom --crops`, from the command line to the exit
-/// code.
-pub(crate) fn headless(cli: &crate::Cli, catalog: &Path) -> Result<std::process::ExitCode> {
-    let opts = Options {
-        catalog: catalog.to_path_buf(),
-        roots: cli.root.clone(),
-        folders: cli.exports.clone(),
-        limit: cli.limit,
-        out: cli.out.clone(),
-    };
-    let report = run(&opts)?;
+/// `--measure-lightroom --crops`, from its options to the exit code.
+pub fn headless(opts: &Options) -> Result<std::process::ExitCode> {
+    let report = run(opts)?;
     print!("{}", text(&report));
     if let Some(out) = &opts.out {
         let json = serde_json::to_string_pretty(&report)?;
@@ -306,7 +299,7 @@ fn frame(pair: &lx::Pair, shot: &lx::Shot, lenses: Option<&greycard_lens::Databa
         }
     };
     line.export_size = (export.width, export.height);
-    let settings = crate::export::Settings {
+    let settings = export::Settings {
         long_edge: Some(export.width.max(export.height) as u32),
         ..cm::settings()
     };

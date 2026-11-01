@@ -35,7 +35,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 | `greycard-render` | A developed frame made into a picture or a file: the CPU finish the shader is held to, AgX, the masks' detail bands, geometry, the border, the watermark, and the export | core, edit |
 | `greycard-library` | The SQLite index, the roots, the thumbnail cache, collections, stacks and their carried copies, the catalog import, and a sidecar held or noted from disk | core, edit, edit-io |
 | `greycard-viewport` | The viewport's shader and its renderer, the scopes' binning, the monitor's display table, and the device's loss flag; no Slint type | core, edit, gpu, render |
-| `greycard-engine` | The stage list and the walk, the worker and its jobs, the reduced develop, the thumbnail pool, the previews, the edit's pictures, the models' side, the export queue, sheet, and headless run, and the settings subset | core, edit, edit-io, lens, gpu, render, ai, library |
+| `greycard-engine` | The stage list and the walk, the worker and its jobs, the reduced develop, the thumbnail pool, the previews, the edit's pictures, the models' side, the export queue, sheet, and headless run, the settings subset, and the camera match's runner and the measurement runners over the export's develop | core, edit, edit-io, lens, gpu, render, ai, match, library |
 | `greycard-slint` | The `.slint` files compiled to Rust, a crate of its own so a change to the editor's code does not recompile them | none |
 | `greycard-ui` | The editor: the window, its `State`, the panels and sheets; a library target of its windowless modules beside the `greycard-ui` binary | core, edit, edit-io, lens, gpu, render, ai, library, match, engine, viewport, slint |
 | `greycard-cli` | The `greycard` binary: `develop`, `export`, `library`, `models`, `lenses`, and the rest | core, edit, edit-io, lens, ai, library, engine |
@@ -92,12 +92,14 @@ The root `Cargo.toml` patches three projects to forks of ours, rawler
 (§13), femtovg (§208), and Slint (§377), each until an upstream
 release carries the fix; the comment above each says which.
 
-**Planned, not done.** The camera match's runner and the measurement
-runners (`camera_match.rs`, `measure_baseline.rs`, `measure_crop.rs`,
-`measure_lightroom.rs` under `crates/greycard-ui/src/`) are still
-modules of the window's binary; they move into its library target now
-that the frame develop they call is the engine's (roadmap, engine
-track).
+**The camera match and the runners.** The camera match's runner
+(`camera_match.rs`: the survey, the plan, and the fit run) and the
+measurement runners (`match_compare.rs`, `measure_baseline.rs`,
+`measure_crop.rs`, `measure_lightroom.rs`, `fit_lightroom.rs`) are the
+engine's, beside the frame develop they call
+(`worker::FrameDevelop`). The window keeps the sheet
+(`panel/camera_match.rs`), its progress, and the calls, and reads the
+runners' flags into their options (`runners.rs`).
 
 ## 2. The develop, stage by stage
 

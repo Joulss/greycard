@@ -21,7 +21,13 @@ greycard-render = { path = "../greycard-render" }
 # The thumbnail cache, keyed by the index's content hash, and the
 # sidecar helpers the reduced develop and the masks read.
 greycard-library = { path = "../greycard-library" }
+# The camera match's fit, which its runner drives over the export's
+# develop.
+greycard-match = { path = "../greycard-match" }
 anyhow.workspace = true
+# The camera match's records, keyed by a hash of the path and the
+# build. The library already brings it.
+blake3.workspace = true
 # A file's modification day in local time, for an export's name when
 # the EXIF has no date. rawler already brings it, clock and all.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

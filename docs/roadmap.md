@@ -591,10 +591,8 @@ touches.
       made it an alias of `greycard export`
 - [ ] The learned-mask cache keyed by the base it was made from, so an
       export's masks are the viewport's (§454, §236)
-- [ ] Camera match and the measurement runners into the window's
-      library, now that the worker's frame develop is the engine's
-      (§471, §506, §514); explicit imports in place of the crate root's
-      glob imports as each file moves
+- [ ] Explicit imports in place of greycard-ui's crate-root glob
+      imports, 49 `use crate::*` left after the runners' move (§521)
 
 ---
 

@@ -13,7 +13,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod adapter;
-mod camera_match;
 mod carry;
 mod cells;
 mod chooser;
@@ -23,7 +22,6 @@ mod edited;
 mod entry;
 mod export_queue;
 mod finder;
-mod fit_lightroom;
 mod gpu_errors;
 mod gpu_lost;
 mod grid;
@@ -31,10 +29,6 @@ mod headless;
 mod keys;
 mod library;
 mod lightbox;
-mod match_compare;
-mod measure_baseline;
-mod measure_crop;
-mod measure_lightroom;
 mod owners;
 mod panel;
 mod placeholder;
@@ -42,6 +36,7 @@ mod preparing;
 mod report;
 mod roots;
 mod rows;
+mod runners;
 mod scope;
 mod settings;
 mod shared;

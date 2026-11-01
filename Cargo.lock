@@ -2058,6 +2058,7 @@ name = "greycard-engine"
 version = "0.9.1"
 dependencies = [
  "anyhow",
+ "blake3",
  "bytemuck",
  "chrono",
  "dirs",
@@ -2069,6 +2070,7 @@ dependencies = [
  "greycard-gpu",
  "greycard-lens",
  "greycard-library",
+ "greycard-match",
  "greycard-render",
  "half",
  "image",

@@ -59,7 +59,7 @@ use greycard_match::exposure::offset_stops;
 use crate::camera_match as cm;
 
 /// Frames a body is sampled down to unless asked.
-pub(crate) const FRAMES: usize = 32;
+pub const FRAMES: usize = 32;
 /// The bodies whose default the Lightroom comparisons found within a
 /// tenth of a stop of Lightroom's at the default baseline: the R5
 /// Mark II over a catalog's history pairs, the R6 Mark II on the
@@ -78,35 +78,22 @@ pub(crate) const MIN_SESSIONS: usize = 5;
 const ISO_EDGES: [u32; 3] = [200, 800, 3200];
 
 /// What the command line asked for.
-pub(crate) struct Options {
-    pub(crate) out: PathBuf,
-    pub(crate) library: PathBuf,
-    pub(crate) roots: Option<Vec<PathBuf>>,
+pub struct Options {
+    pub out: PathBuf,
+    pub library: PathBuf,
+    pub roots: Option<Vec<PathBuf>>,
     /// A folder to read the raws of directly, in place of the index.
-    pub(crate) folder: Option<PathBuf>,
-    pub(crate) frames: usize,
+    pub folder: Option<PathBuf>,
+    pub frames: usize,
     /// Bodies whose name contains any of these; all when empty.
-    pub(crate) only: Vec<String>,
+    pub only: Vec<String>,
     /// Every body at the baseline from before the table.
-    pub(crate) before: bool,
+    pub before: bool,
 }
 
-/// `--measure-baseline`, from the command line to the exit code.
-pub(crate) fn headless(cli: &crate::Cli, out: &Path) -> Result<std::process::ExitCode> {
-    let library = match &cli.library {
-        Some(p) => p.clone(),
-        None => greycard_library::Library::user_path().context("no data directory")?,
-    };
-    let opts = Options {
-        out: out.to_path_buf(),
-        library,
-        roots: (!cli.roots.is_empty()).then(|| cli.roots.clone()),
-        folder: cli.path.clone().filter(|p| p.is_dir()),
-        frames: cli.baseline_frames.unwrap_or(FRAMES),
-        only: cli.baseline_body.clone(),
-        before: cli.baseline_before,
-    };
-    let report = run(&opts)?;
+/// `--measure-baseline`, from its options to the exit code.
+pub fn headless(opts: &Options) -> Result<std::process::ExitCode> {
+    let report = run(opts)?;
     std::fs::write(opts.out.join("report.md"), text(&report))?;
     std::fs::write(
         opts.out.join("report.json"),

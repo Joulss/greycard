@@ -69,39 +69,26 @@ const C_BANDS: usize = C_EDGES.len() + 1;
 const CURVES: [DisplayCurve; 2] = [DisplayCurve::Channels, DisplayCurve::Agx];
 
 /// What the command line asked for.
-pub(crate) struct Options {
-    pub(crate) out: PathBuf,
-    pub(crate) library: PathBuf,
-    pub(crate) roots: Option<Vec<PathBuf>>,
+pub struct Options {
+    pub out: PathBuf,
+    pub library: PathBuf,
+    pub roots: Option<Vec<PathBuf>>,
     /// Frames a group is sampled down to: the sheet's 40 unless asked.
-    pub(crate) frames: usize,
+    pub frames: usize,
     /// Groups whose look name contains any of these, and the donors
     /// they borrow from; all when empty.
-    pub(crate) only: Vec<String>,
+    pub only: Vec<String>,
     /// Other builds whose records are taken, by [`build`]'s string.
-    pub(crate) reuse: Vec<String>,
+    pub reuse: Vec<String>,
     /// Where each fitted group's tables are written, as the sheet
     /// would write them into the store (`--match-write DIR`); none
     /// writes no table.
-    pub(crate) write: Option<PathBuf>,
+    pub write: Option<PathBuf>,
 }
 
-/// `--match-compare`, from the command line to the exit code.
-pub(crate) fn headless(cli: &crate::Cli, out: &Path) -> Result<std::process::ExitCode> {
-    let library = match &cli.library {
-        Some(p) => p.clone(),
-        None => greycard_library::Library::user_path().context("no data directory")?,
-    };
-    let opts = Options {
-        out: out.to_path_buf(),
-        library,
-        roots: (!cli.roots.is_empty()).then(|| cli.roots.clone()),
-        frames: cli.match_frames.unwrap_or(cm::SAMPLE),
-        only: cli.match_group.clone(),
-        reuse: cli.match_reuse_records.clone(),
-        write: cli.match_write.clone(),
-    };
-    let report = run(&opts)?;
+/// `--match-compare`, from its options to the exit code.
+pub fn headless(opts: &Options) -> Result<std::process::ExitCode> {
+    let report = run(opts)?;
     eprintln!(
         "match compare: {} groups, {} frames developed ({} from the record) in {:.0} s; {}",
         report.groups.len(),
