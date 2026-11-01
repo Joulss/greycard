@@ -41,15 +41,22 @@
 //! was and counted unavailable: an unmounted drive leaves its mount
 //! point behind, and marking a shoot missing because its disk is in
 //! a drawer would be Lightroom's exclamation mark.
+//!
+//! A folder on a network mount ([`Library::set_network`]) has its
+//! first phase read ahead, a few files at once and each read under a
+//! limit (the `far` module): a file whose read does not answer is an
+//! error in the report and keeps its row as it was, for the next pass.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use greycard_edit::meta::Meta;
 use greycard_edit::{Placement, Sidecar};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
+use crate::far::Far;
 use crate::{
     Error, Exif, FileMosaic, Library, Result, StyleTags, canonical, canonical_file, filter, hash,
     mtime_of, now_secs, path_bytes, path_from_bytes, path_text,
@@ -185,6 +192,10 @@ pub struct TreeWalk {
     /// What a pass over the folder on top of `dirs` did before it
     /// stopped partway, to be counted with the pass that finishes it.
     partial: Option<Report>,
+    /// The reads of a root on a network mount, each under a limit;
+    /// one walk's, so a read gone unanswered in one folder holds the
+    /// next folders' reads too.
+    far: Option<Far>,
 }
 
 impl TreeWalk {
@@ -267,11 +278,17 @@ pub fn is_indexed_path(path: &Path) -> bool {
 fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
-        .map(|e| e.path())
+        .filter(|e| is_indexed_path(&e.path()))
         // Regular files, or links to them: a named pipe's read would
-        // never return.
-        .filter(|p| p.is_file())
-        .filter(|p| is_indexed_path(p))
+        // never return. The entry's own type, from the listing, so a
+        // folder over a share costs no round trip a file; only a link
+        // is followed.
+        .filter(|e| match e.file_type() {
+            Ok(t) if t.is_symlink() => e.path().is_file(),
+            Ok(t) => t.is_file(),
+            Err(_) => false,
+        })
+        .map(|e| e.path())
         .collect();
     files.sort();
     Ok(files)
@@ -280,6 +297,43 @@ fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 /// Whether a folder has no entries at all, hidden ones included.
 fn is_empty_dir(dir: &Path) -> std::io::Result<bool> {
     Ok(std::fs::read_dir(dir)?.next().is_none())
+}
+
+/// The folders in `dir` a tree pass goes into, not hidden, each with
+/// whether it is a link to a folder (named in the report, not gone
+/// into).
+fn subfolders(dir: &Path) -> std::io::Result<Vec<(PathBuf, bool)>> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir)?.filter_map(|e| e.ok()) {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if kind.is_symlink() && entry.path().is_dir() {
+            found.push((entry.path(), true));
+        } else if kind.is_dir() {
+            found.push((entry.path(), false));
+        }
+    }
+    Ok(found)
+}
+
+/// `read` of `path`, under a network mount's limit when `far` says it
+/// is on one, else in place.
+fn read_far<T: Send + 'static>(
+    far: Option<&Far>,
+    path: &Path,
+    read: fn(&Path) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    match far {
+        Some(f) => {
+            let path = path.to_path_buf();
+            f.one(move || read(&path))?
+        }
+        None => read(path),
+    }
 }
 
 /// Whether the index holds rows in this folder or under it.
@@ -365,19 +419,38 @@ impl Library {
         progress: &mut dyn FnMut(Progress<'_>),
         stop: &dyn Fn() -> bool,
     ) -> Result<Report> {
-        let (dir, exists) = resolve_folder(dir)?;
+        let far = self.far_for(dir);
+        self.index_folder_far(dir, progress, stop, far.as_ref())
+    }
+
+    /// [`Library::index_folder_until`] with its reads over a network
+    /// mount's limit, when `far` says it is on one.
+    fn index_folder_far(
+        &mut self,
+        dir: &Path,
+        progress: &mut dyn FnMut(Progress<'_>),
+        stop: &dyn Fn() -> bool,
+        far: Option<&Far>,
+    ) -> Result<Report> {
+        let (dir, exists) = match far {
+            Some(f) => {
+                let asked = dir.to_path_buf();
+                f.one(move || resolve_folder(&asked))??
+            }
+            None => resolve_folder(dir)?,
+        };
         let folder = path_bytes(&dir);
         if !exists && !has_rows_under(self.conn_mut(), &folder)? {
             return Err(no_such_folder(&dir));
         }
         let files = if exists {
-            list_folder(&dir)?
+            read_far(far, &dir, list_folder)?
         } else {
             Vec::new()
         };
         if exists
             && files.is_empty()
-            && is_empty_dir(&dir)?
+            && read_far(far, &dir, is_empty_dir)?
             && has_rows_under(self.conn_mut(), &folder)?
         {
             log::info!("{}: empty on disk, left as it was", dir.display());
@@ -395,6 +468,7 @@ impl Library {
             existing,
             progress,
             stop,
+            far,
         )
     }
 
@@ -436,7 +510,14 @@ impl Library {
     /// had done, a stat and a sidecar read a file, and at two or three
     /// keys a second it could make no headway at all.
     pub fn tree_walk(&mut self, root: &Path) -> Result<TreeWalk> {
-        let (root, exists) = resolve_folder(root)?;
+        let far = self.far_for(root);
+        let (root, exists) = match &far {
+            Some(f) => {
+                let asked = root.to_path_buf();
+                f.one(move || resolve_folder(&asked))??
+            }
+            None => resolve_folder(root)?,
+        };
         if !exists && !has_rows_under(self.conn_mut(), &path_bytes(&root))? {
             return Err(no_such_folder(&root));
         }
@@ -449,6 +530,7 @@ impl Library {
             left_out: Vec::new(),
             report: Report::default(),
             partial: None,
+            far,
         })
     }
 
@@ -479,7 +561,8 @@ impl Library {
             // left as it was, rows and all; the rest of the tree is
             // walked. The first cut let it end the pass, and a root
             // with one locked folder in it was never indexed past it.
-            let one = match self.index_folder_until(&dir, progress, stop) {
+            let far = walk.far.clone();
+            let one = match self.index_folder_far(&dir, progress, stop, far.as_ref()) {
                 Ok(one) => one,
                 Err(Error::Io(e)) if dir != root => {
                     log::warn!("{}: {e}; left as it was", dir.display());
@@ -516,7 +599,7 @@ impl Library {
                 continue;
             }
             let mut under = Vec::new();
-            let listing = match std::fs::read_dir(&dir) {
+            let listing = match read_far(walk.far.as_ref(), &dir, subfolders) {
                 Ok(l) => l,
                 Err(e) if dir != root => {
                     walk.report.errors.push((dir.clone(), e.to_string()));
@@ -526,17 +609,11 @@ impl Library {
                 }
                 Err(e) => return Err(e.into()),
             };
-            for entry in listing.filter_map(|e| e.ok()) {
-                let Ok(kind) = entry.file_type() else {
-                    continue;
-                };
-                if entry.file_name().to_string_lossy().starts_with('.') {
-                    continue;
-                }
-                if kind.is_symlink() && entry.path().is_dir() {
-                    walk.report.skipped.push(entry.path());
-                } else if kind.is_dir() && !walk.leaves_out(&entry.path()) {
-                    under.push(entry.path());
+            for (path, link) in listing {
+                if link {
+                    walk.report.skipped.push(path);
+                } else if !walk.leaves_out(&path) {
+                    under.push(path);
                 }
             }
             // Popped from the end, so reversed to walk in name order.
@@ -564,7 +641,9 @@ impl Library {
             if walk.visited.contains(&folder)
                 || walk.leaves_out(&path_from_bytes(&folder))
                 || walk.shielded.iter().any(|s| folder.starts_with(s))
-                || path_from_bytes(&folder).is_dir()
+                // A share that does not answer has not said it is gone.
+                || read_far(walk.far.as_ref(), &path_from_bytes(&folder), |d| Ok(d.is_dir()))
+                    .unwrap_or(true)
             {
                 continue;
             }
@@ -606,6 +685,7 @@ impl Library {
             existing,
             &mut |_| {},
             &|| false,
+            None,
         )
     }
 }
@@ -883,6 +963,81 @@ fn disk_call() {
     }
 }
 
+/// What the row says of a file, for a read ahead to decide what to
+/// read of it as the pass would.
+#[derive(Clone, Copy)]
+struct Hint {
+    size: u64,
+    mtime: i64,
+    style_read: bool,
+    mosaic_read: bool,
+}
+
+impl Hint {
+    fn of(row: &Row) -> Hint {
+        Hint {
+            size: row.size,
+            mtime: row.mtime,
+            style_read: row.style_read,
+            mosaic_read: row.mosaic_read,
+        }
+    }
+}
+
+/// A file's first phase read ahead on a thread of its own: whatever
+/// the pass would read of it, given what its row says. A fresh file is
+/// probed with its hash, though a move would not need it: a probe
+/// wasted on a rare move costs less than a second round trip on every
+/// file. Each field the pass takes is taken out, so it is used once.
+struct Ahead {
+    stat: std::result::Result<(u64, i64), String>,
+    hash: Option<std::result::Result<String, String>>,
+    /// The EXIF and the probe's lines for the report.
+    exif: Option<(Exif, Vec<(PathBuf, String)>)>,
+    style: Option<StyleTags>,
+    mosaic: Option<Option<FileMosaic>>,
+    sidecar: Option<SidecarNow>,
+    summary: Summary,
+}
+
+fn read_ahead(path: &Path, hint: Option<Hint>) -> Ahead {
+    #[cfg(test)]
+    tests::held_read(path);
+    let stat = std::fs::metadata(path)
+        .map(|m| (m.len(), mtime_of(&m)))
+        .map_err(|e| e.to_string());
+    let mut ahead = Ahead {
+        stat: stat.clone(),
+        hash: None,
+        exif: None,
+        style: None,
+        mosaic: None,
+        sidecar: None,
+        summary: Summary::default(),
+    };
+    let Ok((size, mtime)) = stat else {
+        return ahead;
+    };
+    match hint {
+        Some(h) if h.size == size && h.mtime == mtime => {
+            ahead.style = (!h.style_read).then(|| read_style(path));
+            ahead.mosaic = (!h.mosaic_read).then(|| read_mosaic(path));
+        }
+        _ => {
+            let hash = hash::hash_file(path).map_err(|e| e.to_string());
+            if hash.is_ok() {
+                let mut report = Report::default();
+                let exif = probe(path, &mut report);
+                ahead.exif = Some((exif, report.errors));
+            }
+            ahead.hash = Some(hash);
+        }
+    }
+    ahead.sidecar = sidecar_of(path);
+    ahead.summary = summary_of(ahead.sidecar.as_ref(), path);
+    ahead
+}
+
 /// The pass over `files`, which are all in `folder`, against
 /// `existing`, the folder's rows by path; what is left of `existing`
 /// at the end is marked missing.
@@ -897,6 +1052,7 @@ fn disk_call() {
 /// was read before the pass and another writer may have added a row
 /// since, so a path it did not hold is looked up again inside the
 /// transaction before anything is inserted.
+#[allow(clippy::too_many_arguments)]
 fn index_paths(
     conn: &mut Connection,
     folder: &Path,
@@ -905,6 +1061,7 @@ fn index_paths(
     mut existing: HashMap<Vec<u8>, Row>,
     progress: &mut dyn FnMut(Progress<'_>),
     stop: &dyn Fn() -> bool,
+    far: Option<&Far>,
 ) -> Result<Report> {
     let mut report = Report::default();
     let total = files.len();
@@ -915,7 +1072,22 @@ fn index_paths(
         folder: &folder_bytes,
         listed: whole_folder.then(|| files.iter().map(|p| path_bytes(p)).collect()),
         in_use: HashMap::new(),
+        far,
+        unanswered: None,
     };
+    // Over a network mount the first phase's reads of each file are
+    // made ahead, several at once and each under the limit, with what
+    // the row says to decide what to read; the pass below takes them in
+    // order and reads in place only what they could not know.
+    let mut ahead = far.map(|f| {
+        let items: Vec<(PathBuf, Option<Hint>)> = files
+            .iter()
+            .map(|p| (p.clone(), existing.get(&path_bytes(p)).map(Hint::of)))
+            .collect();
+        let read: Arc<dyn Fn((PathBuf, Option<Hint>)) -> Ahead + Send + Sync> =
+            Arc::new(|(path, hint)| read_ahead(&path, hint));
+        f.many(items, read)
+    });
     let mut since = Instant::now();
     for (done, path) in files.iter().enumerate() {
         progress(Progress {
@@ -930,60 +1102,159 @@ fn index_paths(
                 + report.styled,
         });
         let key = path_bytes(path);
-        disk_call();
-        let stat = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(e) => {
+        let mut early = match ahead.as_mut().and_then(Iterator::next) {
+            None => None,
+            Some(Ok(a)) => Some(a),
+            Some(Err(e)) => {
+                // Not answered: its row is kept as it is, not marked
+                // missing, and the next pass asks again.
+                existing.remove(&key);
                 report.errors.push((path.clone(), e.to_string()));
                 continue;
             }
         };
-        let (size, mtime) = (stat.len(), mtime_of(&stat));
-        let hashed = |report: &mut Report| {
-            disk_call();
-            match hash::hash_file(path) {
+        let stat = match early.as_ref() {
+            Some(a) => a.stat.clone(),
+            None => {
+                disk_call();
+                std::fs::metadata(path)
+                    .map(|m| (m.len(), mtime_of(&m)))
+                    .map_err(|e| e.to_string())
+            }
+        };
+        let (size, mtime) = match stat {
+            Ok(s) => s,
+            Err(e) => {
+                report.errors.push((path.clone(), e));
+                continue;
+            }
+        };
+        let hashed = |report: &mut Report, early: &mut Option<Ahead>| {
+            let got = match early.as_mut().and_then(|a| a.hash.take()) {
+                Some(got) => got,
+                None => {
+                    disk_call();
+                    hash::hash_file(path).map_err(|e| e.to_string())
+                }
+            };
+            match got {
                 Ok(h) => Some(h),
                 Err(e) => {
-                    report.errors.push((path.clone(), e.to_string()));
+                    report.errors.push((path.clone(), e));
                     None
                 }
             }
         };
+        let probed = |report: &mut Report, early: &mut Option<Ahead>| match early
+            .as_mut()
+            .and_then(|a| a.exif.take())
+        {
+            Some((exif, errors)) => {
+                report.errors.extend(errors);
+                exif
+            }
+            None => probe(path, report),
+        };
         let mut moved = None;
+        let mut carried = false;
         let plan = match existing.remove(&key) {
             Some(row) if row.size == size && row.mtime == mtime => {
-                let style = (!row.style_read).then(|| read_style(path));
-                let mosaic = (!row.mosaic_read).then(|| read_mosaic(path));
+                let style = match early.as_mut().and_then(|a| a.style.take()) {
+                    Some(style) => Some(style),
+                    None => (!row.style_read).then(|| read_style(path)),
+                };
+                let mosaic = match early.as_mut().and_then(|a| a.mosaic.take()) {
+                    Some(mosaic) => Some(mosaic),
+                    None => (!row.mosaic_read).then(|| read_mosaic(path)),
+                };
                 Plan::Same(row, style, mosaic)
             }
             Some(row) => {
-                let Some(hash) = hashed(&mut report) else {
+                let Some(hash) = hashed(&mut report, &mut early) else {
                     continue;
                 };
-                let exif = probe(path, &mut report);
+                let exif = probed(&mut report, &mut early);
                 Plan::Changed { row, hash, exif }
             }
             None => {
-                let Some(hash) = hashed(&mut report) else {
+                let Some(hash) = hashed(&mut report, &mut early) else {
                     continue;
                 };
                 let found = gone_by_hash(conn, &hash, &mut disk)?;
-                let exif = if found.is_some() {
+                // A move keeps its EXIF, so a file found moved is not
+                // probed; over a network mount it was probed ahead
+                // anyway, and that is kept, so a move that turns out
+                // not to be one under the lock asks the share nothing
+                // there.
+                let exif = if found.is_some() && early.is_none() {
                     None
                 } else {
-                    Some(probe(path, &mut report))
+                    Some(probed(&mut report, &mut early))
                 };
-                if let Some((_, old)) = &found
-                    && carry_sidecar(&path_from_bytes(old), path)
-                {
-                    report.carried += 1;
+                // A read that did not answer decides nothing: taken for a
+                // file gone or a folder empty, it would make a move a
+                // copy, and the next pass would find the copy current.
+                // The file is left to the next pass, which asks again.
+                if let Some(e) = disk.unanswered.take() {
+                    report.errors.push((path.clone(), e));
+                    continue;
+                }
+                if let Some((_, old)) = &found {
+                    let (old, new) = (path_from_bytes(old), path.clone());
+                    carried = match far {
+                        Some(f) => {
+                            let carry = f.one(move || {
+                                #[cfg(test)]
+                                tests::held_read(&old);
+                                carry_sidecar(&old, &new)
+                            });
+                            match carry {
+                                Ok(carried) => carried,
+                                // Not recorded as a move, or its sidecar
+                                // would be left at the old path for good:
+                                // the next pass finds the move again and
+                                // carries what is still to carry.
+                                Err(e) => {
+                                    report.errors.push((path.clone(), e.to_string()));
+                                    continue;
+                                }
+                            }
+                        }
+                        None => carry_sidecar(&old, path),
+                    };
+                    if carried {
+                        report.carried += 1;
+                    }
                 }
                 moved = found;
                 Plan::Fresh { hash, exif }
             }
         };
-        let sidecar = sidecar_of(path);
-        let summary = summary_of(sidecar.as_ref(), path);
+        // The sidecar as it is now: read ahead, unless one was carried
+        // here since.
+        let (sidecar, summary) = match early.take().filter(|_| !carried) {
+            Some(a) => (a.sidecar, a.summary),
+            None => {
+                let read = |p: &Path| {
+                    let sidecar = sidecar_of(p);
+                    let summary = summary_of(sidecar.as_ref(), p);
+                    (sidecar, summary)
+                };
+                match far {
+                    Some(f) => {
+                        let p = path.clone();
+                        match f.one(move || read(&p)) {
+                            Ok(got) => got,
+                            Err(e) => {
+                                report.errors.push((path.clone(), e.to_string()));
+                                continue;
+                            }
+                        }
+                    }
+                    None => read(path),
+                }
+            }
+        };
         looked.push(Looked {
             path,
             key,
@@ -1348,17 +1619,34 @@ struct Disk<'a> {
     folder: &'a [u8],
     listed: Option<HashSet<Vec<u8>>>,
     in_use: HashMap<Vec<u8>, bool>,
+    /// A network mount's reads.
+    far: Option<&'a Far>,
+    /// A network mount's read that did not answer, while the file in
+    /// hand was looked for as a move: the file is left to the next pass.
+    unanswered: Option<String>,
 }
 
 impl Disk<'_> {
     /// Whether a row's file is on disk: for a row in the folder being
     /// indexed whole, by the listing; for any other, by a stat.
-    fn has(&self, row_folder: &[u8], row_path: &[u8]) -> bool {
+    fn has(&mut self, row_folder: &[u8], row_path: &[u8]) -> bool {
         match &self.listed {
             Some(listed) if row_folder == self.folder => listed.contains(row_path),
             _ => {
                 disk_call();
-                path_from_bytes(row_path).exists()
+                let path = path_from_bytes(row_path);
+                let Some(f) = self.far else {
+                    return path.exists();
+                };
+                match f.one(move || path.exists()) {
+                    Ok(there) => there,
+                    // Taken for there, which claims no move; the caller
+                    // drops the file for this pass.
+                    Err(e) => {
+                        self.unanswered.get_or_insert(e.to_string());
+                        true
+                    }
+                }
             }
         }
     }
@@ -1371,7 +1659,19 @@ impl Disk<'_> {
         }
         disk_call();
         let dir = path_from_bytes(folder);
-        let in_use = dir.is_dir() && !is_empty_dir(&dir).unwrap_or(true);
+        let look = move || dir.is_dir() && !is_empty_dir(&dir).unwrap_or(true);
+        let in_use = match self.far {
+            Some(f) => match f.one(look) {
+                Ok(in_use) => in_use,
+                // Not kept for the pass: the caller drops the file, and
+                // the next file asks again.
+                Err(e) => {
+                    self.unanswered.get_or_insert(e.to_string());
+                    return false;
+                }
+            },
+            None => look(),
+        };
         self.in_use.insert(folder.to_vec(), in_use);
         in_use
     }
@@ -1987,6 +2287,377 @@ pub(crate) mod tests {
 
     fn quiet() -> impl FnMut(Progress<'_>) {
         |_| {}
+    }
+
+    /// A read ahead's hand for a test: called on the read's thread
+    /// before it asks the disk anything, for a path under its folder.
+    type Hold = Arc<dyn Fn(&Path) + Send + Sync>;
+
+    /// The holds, by the folder they are for: tests run side by side,
+    /// each in its own folder.
+    static HOLDS: std::sync::Mutex<Vec<(PathBuf, Hold)>> = std::sync::Mutex::new(Vec::new());
+
+    pub(super) fn held_read(path: &Path) {
+        let hold = HOLDS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(dir, _)| path.starts_with(dir))
+            .map(|(_, h)| h.clone());
+        if let Some(hold) = hold {
+            hold(path);
+        }
+    }
+
+    /// `hold` on every read ahead under `dir` until the result is dropped.
+    struct Holding(PathBuf);
+
+    fn hold(dir: &Path, hold: Hold) -> Holding {
+        let dir = canonical(dir).unwrap();
+        HOLDS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((dir.clone(), hold));
+        Holding(dir)
+    }
+
+    impl Drop for Holding {
+        fn drop(&mut self) {
+            HOLDS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|(d, _)| *d != self.0);
+        }
+    }
+
+    /// A library that reads everything under `dir` as a network mount.
+    /// The decoder's first probe in a process is slow, its tables read,
+    /// so a pass on another library has it done before a test's short
+    /// limit counts.
+    fn over_network(dir: &Path, limit: Duration, at_once: usize) -> Library {
+        Library::open_in_memory()
+            .unwrap()
+            .index_folder(dir, &mut quiet())
+            .unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        let dir = canonical(dir).unwrap();
+        lib.set_network(
+            move |p| p.starts_with(&dir),
+            crate::NetworkReads { limit, at_once },
+        );
+        lib
+    }
+
+    /// A pass over a network mount, its reads made ahead several at
+    /// once, writes the rows a pass over a local disk writes: the
+    /// EXIF, the sidecars' meta, a change, and a move with its sidecar
+    /// carried.
+    #[test]
+    fn a_pass_over_a_network_mount_writes_what_a_local_one_does() {
+        let near = scratch("net-near");
+        let far = scratch("net-far");
+        shoot(&near);
+        shoot(&far);
+        let mut local = Library::open_in_memory().unwrap();
+        let mut remote = over_network(&far, Duration::from_secs(20), 2);
+        let both = |local: &mut Library, remote: &mut Library| {
+            let a = local.index_folder(&near, &mut quiet()).unwrap();
+            let b = remote.index_folder(&far, &mut quiet()).unwrap();
+            let counts = |r: &Report| {
+                (
+                    r.added,
+                    r.moved,
+                    r.carried,
+                    r.changed,
+                    r.unchanged,
+                    r.meta_refreshed,
+                    r.missing,
+                    r.errors.len(),
+                )
+            };
+            assert_eq!(counts(&a), counts(&b), "{a:?}\n{b:?}");
+            for name in ["r5.tif", "r6.tif", "a7.tif", "moved.tif"] {
+                let a = local.by_path(&near.join(name)).unwrap();
+                let b = remote.by_path(&far.join(name)).unwrap();
+                assert_eq!(a.is_some(), b.is_some(), "{name}");
+                if let (Some(a), Some(b)) = (a, b) {
+                    assert_eq!(a.hash, b.hash, "{name}");
+                    assert_eq!(a.exif, b.exif, "{name}");
+                    assert_eq!(a.meta, b.meta, "{name}");
+                    assert_eq!(a.missing, b.missing, "{name}");
+                    assert_eq!(a.sidecar.is_some(), b.sidecar.is_some(), "{name}");
+                }
+            }
+        };
+        both(&mut local, &mut remote);
+        for dir in [&near, &far] {
+            write_frame(&dir.join("a7.tif"), &A7, 9);
+            std::fs::rename(dir.join("r5.tif"), dir.join("moved.tif")).unwrap();
+        }
+        both(&mut local, &mut remote);
+        assert_eq!(
+            remote
+                .by_path(&far.join("moved.tif"))
+                .unwrap()
+                .unwrap()
+                .meta
+                .rating,
+            4,
+            "the sidecar came with the move"
+        );
+        std::fs::remove_dir_all(&near).unwrap();
+        std::fs::remove_dir_all(&far).unwrap();
+    }
+
+    /// Until the reads given up on under `dir` have come back, which a
+    /// pass over it waits for before it asks the share anything.
+    fn settled(dir: &Path) {
+        let until = Instant::now() + Duration::from_secs(5);
+        while Far::new(crate::NetworkReads::default(), dir).stalled() {
+            assert!(Instant::now() < until, "the stuck read came back");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A move whose sidecar carry does not answer is not recorded: the
+    /// old row and the sidecar stay where they were, and the next pass
+    /// finds the move again and finishes it. Recorded, the sidecar would
+    /// be left at the old path with nothing to look for it there.
+    #[test]
+    fn a_carry_that_stalls_leaves_the_move_to_the_next_pass() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        let dir = scratch("net-carry");
+        let (r5, _, _) = shoot(&dir);
+        let r5 = canonical(&r5).unwrap();
+        let mut lib = over_network(&dir, Duration::from_secs(1), 2);
+        assert_eq!(lib.index_folder(&dir, &mut quiet()).unwrap().added, 3);
+        let moved = dir.join("moved.tif");
+        std::fs::rename(&r5, &moved).unwrap();
+        let asleep = Arc::new(AtomicBool::new(true));
+        let (a, old) = (asleep.clone(), r5.clone());
+        let _holding = hold(
+            &dir,
+            Arc::new(move |p: &Path| {
+                while a.load(SeqCst) && p == old {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }),
+        );
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.moved, 0, "{report:?}");
+        assert_eq!(report.carried, 0, "{report:?}");
+        assert!(
+            report.errors.iter().any(|(p, _)| p.ends_with("moved.tif")),
+            "{report:?}"
+        );
+        assert!(lib.by_path(&moved).unwrap().is_none(), "no copy's row");
+        assert!(lib.by_path(&r5).unwrap().is_some(), "the old row kept");
+        assert!(Sidecar::find(&r5).is_some(), "the sidecar where it was");
+        // Awake: the next pass makes the move, the sidecar with it.
+        asleep.store(false, SeqCst);
+        settled(&dir);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.moved, 1, "{report:?}");
+        assert!(report.errors.is_empty(), "{report:?}");
+        let row = lib.by_path(&moved).unwrap().unwrap();
+        assert_eq!(row.meta.rating, 4);
+        assert!(lib.by_path(&r5).unwrap().is_none());
+        assert!(Sidecar::find(&r5).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A read over a network mount that does not answer within the limit
+    /// is an error in the report, and the pass finishes: the file's row
+    /// is kept as it was, not marked missing, and the next pass, the
+    /// share awake, reads it.
+    #[test]
+    fn a_read_that_stalls_past_the_limit_is_an_error_and_the_pass_finishes() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        let dir = scratch("net-stall");
+        let (_, r6, a7) = shoot(&dir);
+        let r6 = canonical(&r6).unwrap();
+        let mut lib = over_network(&dir, Duration::from_secs(1), 2);
+        // The file asleep, if any, and whether the share is asleep.
+        let stalled = Arc::new(std::sync::Mutex::new(r6.clone()));
+        let asleep = Arc::new(AtomicBool::new(true));
+        let (s, a) = (stalled.clone(), asleep.clone());
+        let _holding = hold(
+            &dir,
+            Arc::new(move |p: &Path| {
+                while a.load(SeqCst) && *s.lock().unwrap() == p {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }),
+        );
+        let started = Instant::now();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the pass went on"
+        );
+        assert_eq!(report.added, 2, "{report:?}");
+        assert_eq!(report.errors.len(), 1, "{report:?}");
+        assert_eq!(report.errors[0].0, r6);
+        assert!(lib.by_path(&r6).unwrap().is_none());
+        // Awake: the next pass reads it.
+        asleep.store(false, SeqCst);
+        settled(&dir);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 1, "{report:?}");
+        assert!(report.errors.is_empty(), "{report:?}");
+        // Changed on disk and asleep again, the first file read: its
+        // row is kept, neither changed nor missing. The file already
+        // out beside it is read; the one after is not asked, and its
+        // row is kept too.
+        write_frame(&a7, &A7, 9);
+        *stalled.lock().unwrap() = canonical(&a7).unwrap();
+        asleep.store(true, SeqCst);
+        let before = lib.by_path(&a7).unwrap().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 0, "{report:?}");
+        assert_eq!(report.changed, 0, "{report:?}");
+        assert_eq!(report.unchanged, 1, "{report:?}");
+        let errors: Vec<&str> = report.errors.iter().map(|(_, e)| e.as_str()).collect();
+        assert_eq!(errors.len(), 2, "{report:?}");
+        assert!(errors[0].starts_with("no answer"), "{errors:?}");
+        assert!(errors[1].starts_with("not read"), "{errors:?}");
+        assert_eq!(lib.by_path(&a7).unwrap().unwrap(), before);
+        assert!(!lib.by_path(&r6).unwrap().unwrap().missing);
+        asleep.store(false, SeqCst);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A first pass over files on a share, timed at several widths, for
+    /// the choice of [`crate::READS_AT_ONCE`]. `GREYCARD_NETWORK_ROOT`
+    /// names a folder of raws on one; each width takes its own slice of
+    /// them (`GREYCARD_NETWORK_FILES` a width, 24 by default), so none
+    /// is read from this machine's cache, and `GREYCARD_NETWORK_WIDTHS`
+    /// the widths in the order run (0 is the local read, one file after
+    /// another, with no limit). Bytes read are the process's `rchar`.
+    #[test]
+    #[ignore = "measures a share named by GREYCARD_NETWORK_ROOT"]
+    fn network_reads_measured() {
+        let Ok(root) = std::env::var("GREYCARD_NETWORK_ROOT") else {
+            eprintln!("GREYCARD_NETWORK_ROOT is not set");
+            return;
+        };
+        let per: usize = std::env::var("GREYCARD_NETWORK_FILES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(24);
+        let widths: Vec<usize> = std::env::var("GREYCARD_NETWORK_WIDTHS")
+            .unwrap_or("0,1,2,4,8,16".into())
+            .split(',')
+            .map(|w| w.trim().parse().unwrap())
+            .collect();
+        let rchar = || {
+            std::fs::read_to_string("/proc/self/io")
+                .ok()
+                .and_then(|io| {
+                    io.lines()
+                        .find_map(|l| l.strip_prefix("rchar: ").map(|n| n.parse::<u64>().ok()))
+                        .flatten()
+                })
+                .unwrap_or(0)
+        };
+        let root = canonical(Path::new(&root)).unwrap();
+        let files: Vec<PathBuf> = list_folder(&root)
+            .unwrap()
+            .into_iter()
+            .filter(|p| greycard_core::decode::is_raw_path(p))
+            .collect();
+        assert!(files.len() >= per * widths.len(), "{} raws", files.len());
+        for (i, &width) in widths.iter().enumerate() {
+            let slice = &files[i * per..(i + 1) * per];
+            let size: u64 = slice
+                .iter()
+                .map(|p| std::fs::metadata(p).unwrap().len())
+                .sum();
+            let mut lib = Library::open_in_memory().unwrap();
+            let far = (width > 0).then(|| {
+                Far::new(
+                    crate::NetworkReads {
+                        limit: crate::READ_LIMIT,
+                        at_once: width,
+                    },
+                    &root,
+                )
+            });
+            let (read_before, started) = (rchar(), Instant::now());
+            let report = index_paths(
+                lib.conn_mut(),
+                &root,
+                slice,
+                false,
+                HashMap::new(),
+                &mut quiet(),
+                &|| false,
+                far.as_ref(),
+            )
+            .unwrap();
+            let took = started.elapsed();
+            let read = rchar() - read_before;
+            assert_eq!(report.added, per, "{report:?}");
+            // Again, the rows current: a stat and a sidecar a file, the
+            // timer's pass over an archive indexed already.
+            let existing = rows_in_folder(lib.conn_mut(), &path_bytes(&root)).unwrap();
+            // Past the attribute cache of an SMB mount (`actimeo=1`).
+            std::thread::sleep(Duration::from_millis(1500));
+            let again = Instant::now();
+            let report = index_paths(
+                lib.conn_mut(),
+                &root,
+                slice,
+                false,
+                existing,
+                &mut quiet(),
+                &|| false,
+                far.as_ref(),
+            )
+            .unwrap();
+            let again = again.elapsed();
+            assert_eq!(report.unchanged, per, "{report:?}");
+            eprintln!(
+                "width {width:2}: {per} files ({:.0} MB) in {:6.2} s, {:4.0} ms a file, \
+                 {:.0} KB read a file; again {:4.0} ms a file",
+                size as f64 / 1e6,
+                took.as_secs_f64(),
+                took.as_secs_f64() * 1000.0 / per as f64,
+                read as f64 / 1024.0 / per as f64,
+                again.as_secs_f64() * 1000.0 / per as f64,
+            );
+        }
+    }
+
+    /// A folder over a network mount is read a few files at a time,
+    /// never more than asked.
+    #[test]
+    fn a_network_roots_reads_are_bounded() {
+        let dir = scratch("net-bounded");
+        for i in 0..12 {
+            write_frame(&dir.join(format!("f{i:02}.tif")), &R5, i);
+        }
+        let out = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (o, m) = (out.clone(), most.clone());
+        let _holding = hold(
+            &dir,
+            Arc::new(move |_: &Path| {
+                use std::sync::atomic::Ordering::SeqCst;
+                m.fetch_max(o.fetch_add(1, SeqCst) + 1, SeqCst);
+                std::thread::sleep(Duration::from_millis(40));
+                o.fetch_sub(1, SeqCst);
+            }),
+        );
+        let mut lib = over_network(&dir, Duration::from_secs(20), 3);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 12, "{report:?}");
+        assert_eq!(
+            most.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "three at once, no more"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The lens database's name is one value for the whole process

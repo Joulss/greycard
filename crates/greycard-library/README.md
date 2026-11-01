@@ -47,6 +47,21 @@ there yet, and four openers of a fresh library at once all finish
 with every row and no error; each is a test with its own connections
 on its own threads.
 
+A folder on a network mount, as the caller says through
+`Library::set_network` (the crate keeps no mount table), is read
+differently. Each file's stat, hash, probe, and sidecar are read
+together on a thread of the file's own, `READS_AT_ONCE` files at a
+time, and each folder's listing on one of its own, every one waited
+for up to a limit (`READ_LIMIT`, 20 s): a share's round trip, not its
+bandwidth, is what a pass waits on, and a read of a share gone away
+cannot be called off. A read that does not answer in time is an error
+in the report; the file's row is kept as it was, not marked missing,
+and a move is not decided on it, so the next pass asks again. Once
+one read under a root has gone unanswered, that root is asked nothing
+new, by this pass or a later one, until the read comes back, so a
+sleeping NAS costs one limit, not one a file, and strands no more
+threads pass after pass.
+
 The filter language (`filter` module) is terms separated by spaces,
 all of which must pass:
 

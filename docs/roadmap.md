@@ -467,18 +467,9 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
-- [ ] A root added while the machine is loaded is skipped by the index
-      pass as not answering ("Shoot isn't reachable") when its sibling
-      added a moment later indexes fine; seen after a catalog import's
-      write added two roots (2026-10-17). The reachability check wants
-      a longer patience or a retry
-- [ ] The network assumed slow and sometimes hung: a timeout on every
-      read of a root over a network mount so a sleeping NAS does not
-      hold the pool; the indexer's reads several at once on such a
-      root, latency being the limit; check what the content hash reads
-      of a file, since a whole-file hash over 200 GB is a first pass
-      measured in hours. The polling fallback for the watcher landed
-      in §188
+- [ ] The probe reads about 2 MB a CR3 on a first index pass, most of
+      it the file's head, which is what a pass over a network root
+      pays now that the reads have a limit (§472); read less
 - [ ] Collections carried across machines: the collections file is per
       machine, so a set gathered on the laptop is not on the desktop;
       carry it through the archive as the sidecars are (§243), and the
@@ -550,9 +541,6 @@ and a picture found across the library by a phrase or by a person.
 A model suggests; a flag, a rating or a keyword is only ever set by
 the user.
 
-- [ ] Bursts and near-duplicates grouped: frames seconds apart with
-      near-identical previews put in one stack, its sharpest frame on
-      top (§334)
 - [ ] A focus score for every frame from its embedded preview, on the
       subject where the Subject mask finds one and on the frame
       otherwise; a sort, a `focus:` term, and the order inside a burst

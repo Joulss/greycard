@@ -17,8 +17,9 @@
 //!
 //! The passes themselves run on a lane of their own, a thread with a
 //! third connection, which the indexer's thread waits on. A root is
-//! looked at before a pass over it begins, with the roots' 3 s look,
-//! and one that does not answer is skipped; a pass that goes quiet in
+//! looked at before a pass over it begins, with the roots' 3 s look
+//! and a second try on it up to 6 s (`roots::PASS_PATIENCE`), and one
+//! that does not answer is skipped; a pass that goes quiet in
 //! the middle (a share that answered the look and then stopped) is set
 //! aside on its lane after [`PASS_WAIT`], the same 3 s, and its root
 //! is skipped until it is back, when its report lands as any other. So
@@ -301,7 +302,8 @@ impl Asker {
 /// may go without a word before it is set aside.
 pub(crate) struct Guard {
     /// Whether a root answers, within whatever wait the look keeps.
-    /// The editor's is the roots' 3 s look, one thread a root at most.
+    /// The editor's is the roots' 3 s look tried twice, up to 6 s in
+    /// all (`roots::PASS_PATIENCE`), one thread a root at most.
     pub(crate) answers: Box<dyn Fn(&Path) -> bool + Send>,
     /// A pass that has said nothing (not a file begun, not a folder
     /// left) for this long is set aside on its lane, where it goes on
@@ -656,6 +658,10 @@ impl Lane {
                 if let Err(e) = lib.set_busy_handler(lane_busy) {
                     tracing::debug!("index: the passes' busy handler: {e}");
                 }
+                lib.set_network(
+                    |p| greycard_ui::mounts::remote(p).is_some(),
+                    Default::default(),
+                );
                 // Ends when the lane is dropped: set aside, its pass done.
                 for job in taken {
                     job(&mut lib);
@@ -1421,6 +1427,7 @@ fn window_pass_guarded(
         return None;
     }
     let waits_on_lane = waits.clone();
+    let root = key.clone();
     let leaving = || waits.wanted.load(Ordering::SeqCst) == LEAVING;
     #[cfg(test)]
     let each_file = guard.each_file.clone();
@@ -1441,6 +1448,7 @@ fn window_pass_guarded(
             window_pass(
                 lib,
                 pass,
+                &root,
                 &|t| word(Word::Told(Box::new(t))),
                 &beat,
                 &waits_on_lane,
@@ -1479,6 +1487,7 @@ fn window_pass_guarded(
 fn window_pass(
     lib: &mut Library,
     pass: Pass,
+    root: &Path,
     told: &dyn Fn(Told),
     beat: &dyn Fn(Option<&Path>),
     waits: &Waits,
@@ -1495,6 +1504,7 @@ fn window_pass(
     };
     let mut report = Report::default();
     let mut error = None;
+    let mut unanswered: Option<PathBuf> = None;
     let mut last = Instant::now();
     let mut before = 0;
     for dir in &pass.dirs {
@@ -1534,6 +1544,15 @@ fn window_pass(
                     break;
                 }
             }
+            // A read over a network mount that did not answer in its
+            // limit: the folder is skipped as one whose root did not
+            // answer, in the same words, and not asked again at once.
+            // Taken for a busy library, it was retried five times, a
+            // thread stranded on the share each time.
+            Err(greycard_library::Error::Io(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
+                tracing::warn!("index: {}: {e}; skipped", dir.display());
+                unanswered.get_or_insert(dir.clone());
+            }
             Err(e) => {
                 tracing::warn!("index: {}: {e}", dir.display());
                 error = Some(e.to_string());
@@ -1546,12 +1565,22 @@ fn window_pass(
         // since left: dropped.
         return (wanted.load(Ordering::SeqCst) == generation).then_some(pass);
     }
+    let skipped = error.is_none().then_some(unanswered).flatten();
     told(Told::Indexed {
         generation,
         report,
         seconds: pass.started.elapsed().as_secs_f64(),
         error,
     });
+    if let Some(dir) = skipped {
+        told(Told::Skipped {
+            path: dir,
+            root: root.to_path_buf(),
+            launch: false,
+            generation: Some(generation),
+            first: false,
+        });
+    }
     None
 }
 

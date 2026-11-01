@@ -484,3 +484,5 @@ in its section; the roadmap and the changelog only point at it.
 - [§469. The stage list, once](notes/469-the-stage-list-once.md) (2026-10-31)
 - [§470. One profile under two file names](notes/470-one-profile-under-two-file-names.md) (2026-10-31)
 - [§471. The rest of the windowless modules](notes/471-the-rest-of-the-windowless-modules.md) (2026-10-31)
+- [§472. The library over a network](notes/472-the-library-over-a-network.md) (2026-10-31)
+- [§473. Bursts into stacks](notes/473-bursts-into-stacks.md) (2026-10-31)

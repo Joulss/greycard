@@ -35,6 +35,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 
 pub mod collections;
 pub mod export_record;
+mod far;
 pub mod files;
 pub mod filter;
 #[cfg(any(test, feature = "fixtures"))]
@@ -52,6 +53,7 @@ pub mod stacks;
 pub mod sync_note;
 pub mod thumbs;
 
+pub use far::{NetworkReads, READ_LIMIT, READS_AT_ONCE};
 pub use filter::{Facet, Filter, ParseError};
 pub use hash::hash_file;
 pub use index::{Progress, Rehash, Report, TreeWalk, is_indexed_path, read_meta};
@@ -539,6 +541,10 @@ pub struct Library {
     /// its own ([`Library::set_jpegs_apart`]); off, a listing leaves
     /// the companions out ([`pairs`]).
     jpegs_apart: bool,
+    /// Which folders a pass reads as a network mount's
+    /// ([`Library::set_network`]); none, every folder is read as a
+    /// local disk's.
+    network: Option<far::Network>,
 }
 
 /// What a file's EXIF says that a filter can ask about.
@@ -1176,6 +1182,7 @@ impl Library {
                     path: path.to_path_buf(),
                     read_only: false,
                     jpegs_apart: false,
+                    network: None,
                 })
             }
             Judgement::NotOurs => Err(Error::NotALibrary(path.to_path_buf())),
@@ -1280,6 +1287,7 @@ impl Library {
                     path,
                     read_only,
                     jpegs_apart: false,
+                    network: None,
                 });
             }
             Judgement::NotOurs => return Err(Error::NotALibrary(path)),
@@ -1376,6 +1384,7 @@ impl Library {
             path,
             read_only,
             jpegs_apart: false,
+            network: None,
         })
     }
 
@@ -1391,6 +1400,31 @@ impl Library {
     /// answer for the rows given either way.
     pub fn set_jpegs_apart(&mut self, apart: bool) {
         self.jpegs_apart = apart;
+    }
+
+    /// Tell the passes which folders are on a network mount, by
+    /// `is_network` (the caller's mount table: the crate has none), and
+    /// how to read them: each read under `reads.limit`, `reads.at_once`
+    /// files at a time. Asked once a tree pass, of its root, and once a
+    /// folder pass, of its folder. A save's [`Library::index_file`] is
+    /// read as before.
+    pub fn set_network(
+        &mut self,
+        is_network: impl Fn(&Path) -> bool + Send + 'static,
+        reads: NetworkReads,
+    ) {
+        self.network = Some(far::Network {
+            is: Box::new(is_network),
+            reads,
+        });
+    }
+
+    /// The reads of a pass over `dir`: a network mount's, or none.
+    pub(crate) fn far_for(&self, dir: &Path) -> Option<far::Far> {
+        self.network
+            .as_ref()
+            .filter(|n| (n.is)(dir))
+            .map(|n| far::Far::new(n.reads, dir))
     }
 
     /// Whether a camera's JPEG beside its raw is listed apart.

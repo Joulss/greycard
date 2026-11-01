@@ -72,9 +72,19 @@ pub(crate) fn answers_of(paths: &[PathBuf], wait: Duration) -> HashMap<PathBuf, 
 /// How many paths [`answers_of`] looks at together.
 const LOOKS_AT_ONCE: usize = 16;
 
-/// Whether `root` answers the roots' look: up to 3 s, and at once no
-/// while its last look is still out. The indexer asks it before each
-/// pass over a root, on its own thread.
+/// Whether `root` answers the roots' look: up to 3 s, then a second
+/// try on the same look up to [`PASS_PATIENCE`] from when it was asked,
+/// and at once no while a look older than that is still out. The
+/// indexer asks it before each pass over a root, on its own thread. A
+/// root slow to answer on a loaded machine is not a share gone away,
+/// and a pass skipped waits for the next launch or change; a share that
+/// is gone costs the second wait once, since its look is out after.
 pub(crate) fn answers(root: &Path) -> bool {
-    answer_of(root, ROOT_WAIT) == Some(true)
+    answer_of(root, ROOT_WAIT)
+        .or_else(|| answer_of(root, PASS_PATIENCE))
+        .unwrap_or(false)
 }
+
+/// How long the indexer's look at a root waits in all before its pass
+/// is skipped.
+pub(crate) const PASS_PATIENCE: Duration = Duration::from_secs(6);

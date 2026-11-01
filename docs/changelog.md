@@ -3,7 +3,17 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.9.2
+## 0.10.0
+
+### Library
+
+- Stack bursts, in the frame menu, puts frames seconds apart that
+  look alike into one stack with the sharpest on top
+  ([§473](https://github.com/jessolmstead/greycard/blob/master/docs/notes/473-bursts-into-stacks.md)).
+- A root added while the machine is busy is indexed in the same pass,
+  and a sleeping network share costs a pass one timeout instead of
+  holding it
+  ([§472](https://github.com/jessolmstead/greycard/blob/master/docs/notes/472-the-library-over-a-network.md)).
 
 ### Fixes
 

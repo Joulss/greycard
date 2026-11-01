@@ -559,9 +559,14 @@ type Answer = Arc<(Mutex<Option<bool>>, Condvar)>;
 /// answered its last look is offline to every read until it does,
 /// without another thread or another wait: a hard-mounted share gone
 /// away does not answer at all, and a thread asking it is stuck for as
-/// long as it is gone.
+/// long as it is gone. A read that finds a look out younger than its
+/// own wait waits for the rest of it, as it would for a look of its
+/// own: on a loaded machine a root just added is looked at by the
+/// watcher's build and the indexer a moment apart, and the indexer took
+/// the build's look, still out, for a root that does not answer.
 pub(crate) struct Checks {
-    out: Mutex<HashMap<PathBuf, Answer>>,
+    /// Each root's last look, with when it was asked.
+    out: Mutex<HashMap<PathBuf, (Answer, Instant)>>,
     look: fn(&Path) -> bool,
     /// Threads started, for the log and the tests.
     started: AtomicUsize,
@@ -578,7 +583,7 @@ impl Checks {
 
     /// Which of `roots` are offline: each root with no look out gets
     /// one, and has up to `wait` to answer; one whose last look has
-    /// not answered yet is offline now, without waiting.
+    /// been out longer than `wait` is offline now, without waiting.
     pub(crate) fn offline(&self, roots: &[PathBuf], wait: Duration) -> HashSet<PathBuf> {
         self.answers(roots, wait)
             .into_iter()
@@ -588,23 +593,27 @@ impl Checks {
     }
 
     /// Each of `roots` looked at, as [`Checks::offline`] looks: whether
-    /// it is there, or `None` when it has not answered within `wait`
-    /// (or its last look is still out, or no thread could be had for
-    /// one).
+    /// it is there, or `None` when it has not answered within `wait` of
+    /// being asked (or its last look has been out longer than that, or
+    /// no thread could be had for one).
     pub(crate) fn answers(
         &self,
         roots: &[PathBuf],
         wait: Duration,
     ) -> HashMap<PathBuf, Option<bool>> {
         let mut answers = HashMap::new();
-        let mut asked: Vec<(PathBuf, Answer)> = Vec::new();
+        let mut asked: Vec<(PathBuf, Answer, Instant)> = Vec::new();
         {
             let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
             for root in roots {
-                if let Some(answer) = out.get(root) {
+                if let Some((answer, since)) = out.get(root) {
                     let answered = *answer.0.lock().unwrap_or_else(|e| e.into_inner());
                     if answered.is_none() {
-                        answers.insert(root.clone(), None);
+                        if since.elapsed() < wait {
+                            asked.push((root.clone(), answer.clone(), *since + wait));
+                        } else {
+                            answers.insert(root.clone(), None);
+                        }
                         continue;
                     }
                 }
@@ -624,12 +633,12 @@ impl Checks {
                     continue;
                 }
                 self.started.fetch_add(1, Ordering::Relaxed);
-                out.insert(root.clone(), answer.clone());
-                asked.push((root.clone(), answer));
+                let now = Instant::now();
+                out.insert(root.clone(), (answer.clone(), now));
+                asked.push((root.clone(), answer, now + wait));
             }
         }
-        let until = Instant::now() + wait;
-        for (root, answer) in asked {
+        for (root, answer, until) in asked {
             let (slot, told) = &*answer;
             let mut there = slot.lock().unwrap_or_else(|e| e.into_inner());
             while there.is_none() {

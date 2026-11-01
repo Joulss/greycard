@@ -1072,6 +1072,41 @@ fn a_root_that_does_not_answer_costs_one_look_and_no_more_waits() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A root's look that answers late, as a local root's `read_dir` does
+/// on a machine loaded with a catalog import and its thumbnails.
+fn slow(_: &Path) -> bool {
+    std::thread::sleep(Duration::from_millis(400));
+    true
+}
+
+/// A root whose look another read started a moment ago is waited for
+/// to the asker's own wait, not taken for offline at once; and the
+/// indexer's second try on the same look finds a root that answers
+/// past the first wait. Before, the root added first after a catalog
+/// import was skipped as not answering while its sibling indexed.
+#[test]
+fn a_root_that_answers_late_is_waited_for_and_tried_twice() {
+    let checks = Checks::new(slow);
+    let root = PathBuf::from("/loaded/shoot");
+    // The watcher's build looks, and gives up at once.
+    let none = checks.answers(std::slice::from_ref(&root), Duration::ZERO);
+    assert_eq!(none.get(&root), Some(&None));
+    // The indexer asks while that look is out, and waits for it.
+    let started = Instant::now();
+    let got = checks.answers(std::slice::from_ref(&root), Duration::from_secs(5));
+    assert_eq!(got.get(&root), Some(&Some(true)));
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert_eq!(checks.started.load(Ordering::Relaxed), 1, "one look");
+    // A fresh look past the first wait: the second try, on the same
+    // look and to a longer wait, has it.
+    let other = PathBuf::from("/loaded/sibling");
+    let first = checks.answers(std::slice::from_ref(&other), Duration::from_millis(100));
+    assert_eq!(first.get(&other), Some(&None));
+    let second = checks.answers(std::slice::from_ref(&other), Duration::from_secs(5));
+    assert_eq!(second.get(&other), Some(&Some(true)));
+    assert_eq!(checks.started.load(Ordering::Relaxed), 2, "no look more");
+}
+
 /// The frame on screen under a root the read found offline is not
 /// looked at (a stat there would not come back): it stays on screen
 /// and in the list, while the rest of the root's frames leave.
