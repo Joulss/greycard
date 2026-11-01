@@ -81,8 +81,7 @@ pub(crate) fn ask_owed(st: &State, worker: &Worker) {
         .collect();
     worker.replace_thumbnails(online, on_screen(st), &cells);
     // The list renumbered: the cells near the rows on screen again.
-    worker.near_thumbnails(crate::panel::browser::near_cells(st));
-    crate::panel::browser::previews_ahead(st, worker);
+    crate::panel::browser::send_near(st, worker);
     for (i, _) in offline {
         worker.send(rows::thumb_job(st, i));
     }

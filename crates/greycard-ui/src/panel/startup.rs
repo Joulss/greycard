@@ -1169,11 +1169,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 at.elapsed().as_secs_f64()
                             );
                             st.views.fill_clock = None;
+                            st.views.fill_over = true;
                         } else if at.elapsed() > crate::panel::browser::GRID_WAIT {
                             st.views.fill_clock = None;
+                            st.views.fill_over = true;
                         }
                     }
-                    let pictures_in = st.views.thumb_run.is_none();
+                    // From the rows on screen, not the whole folder: a
+                    // cold root's far frames come only with a scroll.
+                    let pictures_in = st.views.fill_over;
                     if let Some(timing) = st.launch.time_scroll.as_mut() {
                         timing.before_frame(pictures_in, &app);
                     }

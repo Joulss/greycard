@@ -528,7 +528,7 @@ struct Cli {
     /// the mean
     #[arg(long, value_name = "N", hide = true)]
     time_select: Option<u32>,
-    /// Once the folder's thumbnails are all in, move the grid (with
+    /// Once the rows on screen have their thumbnails, move the grid (with
     /// --grid) or the strip this many times by --time-scroll-by, one
     /// move a frame and back at either end, logging the time from
     /// each move to the end of the frame that draws it, then quit
@@ -947,6 +947,7 @@ impl State {
                 making_said: None,
                 near_rows: None,
                 fill_clock: None,
+                fill_over: false,
                 selected_at: None,
                 grid_shown: None,
                 strip_shown: None,

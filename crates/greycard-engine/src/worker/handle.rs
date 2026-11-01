@@ -688,8 +688,9 @@ impl Worker {
     }
 
     /// The cells of the rows near those on screen
-    /// ([`crate::thumbpool::near_rows`]): the edit's pictures, and the
-    /// previews outside culling, are made for these alone.
+    /// ([`crate::thumbpool::near_rows`]): the thumbnails the cache lacks,
+    /// the edit's pictures, and the previews outside culling are made
+    /// for these alone.
     pub fn near_thumbnails(&self, cells: std::collections::HashSet<usize>) {
         if let Some(pool) = self.pool() {
             pool.set_near(cells);

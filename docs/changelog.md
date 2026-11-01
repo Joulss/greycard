@@ -98,6 +98,10 @@ design note behind it.
 
 ### Fixes
 
+- The Library's camera thumbnails are made for the frames near the
+  screen and around the one being culled, not for the whole root at
+  its first open; the rest come in as a scroll reaches them
+  ([§512](https://github.com/jessolmstead/greycard/blob/master/docs/notes/512-camera-thumbnails-near-the-screen.md)).
 - A collection or stack whose write to a slow share finished after
   its time is taken out of a folder its frames leave, and a deletion
   reaches it; part files a write left, and deletion files older than

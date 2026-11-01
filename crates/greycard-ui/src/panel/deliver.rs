@@ -384,7 +384,7 @@ pub(crate) fn take_thumbnails(
                 break left;
             }
         };
-        end_thumb_turn(&mut st, started);
+        end_thumb_turn(&mut st, app, started, left);
         left
     };
     if left {
@@ -409,7 +409,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let started = Instant::now();
             let mut st = state.borrow_mut();
             take_thumbnail(&mut st, app, outcome);
-            end_thumb_turn(&mut st, started);
+            end_thumb_turn(&mut st, app, started, false);
         }
         Outcome::Thumbnails(batch) => take_thumbnails(app, &state, batch, thumb_turn(None)),
         Outcome::Opened {
@@ -1116,7 +1116,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 crate::edited::kept(&mut st, &worker, &frame);
             }
         }
-        Outcome::Making(making) => show_making(app, &mut state.borrow_mut(), making),
+        Outcome::Making(making) => {
+            let mut st = state.borrow_mut();
+            show_making(app, &mut st, making);
+            if making == crate::thumbpool::Making::Over {
+                crate::panel::browser::thumbs_idle(&mut st, app);
+            }
+        }
         Outcome::LensesFetched => {
             let mut st = state.borrow_mut();
             st.sheets.fetching = false;

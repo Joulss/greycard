@@ -27,8 +27,11 @@ use crate::{
 
 /// A folder's first round of thumbnails as it comes back from the
 /// worker: which have not yet, and what the ones that have cost. The
-/// log gets one line when the last arrives, which is how a folder
-/// open is timed with the cache cold, warm, and after a rename.
+/// log gets one line when the last arrives, or once the pool has gone
+/// idle, the window has taken in all it finished, and the rows on
+/// screen are filled (a cold root's far frames come only with a
+/// scroll), which is how a folder open is timed with the cache cold,
+/// warm, and after a rename.
 #[derive(Debug)]
 pub(crate) struct ThumbRun {
     started: std::time::Instant,
@@ -55,12 +58,20 @@ pub(crate) struct ThumbRun {
     /// The totals, once the last has arrived, for the log at the end
     /// of the turn that took it in.
     done: Option<RunTotals>,
+    /// Whether the pool has said the end of a pass that made pictures
+    /// for this run, and whether the window's last turn left pictures
+    /// finished and not yet taken in: the two a run closed early waits
+    /// on.
+    pool_idle: bool,
+    outbox_left: bool,
 }
 
 /// What a finished run says, for the log.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RunTotals {
+    /// The files arrived, of `of` in the folder.
     pub(crate) files: usize,
+    pub(crate) of: usize,
     pub(crate) cached: usize,
     pub(crate) made: usize,
     pub(crate) failed: usize,
@@ -97,6 +108,8 @@ impl ThumbRun {
             last_frame: None,
             longest_gap: 0.0,
             done: None,
+            pool_idle: false,
+            outbox_left: false,
         }
     }
 
@@ -174,14 +187,36 @@ impl ThumbRun {
             Some(false) => self.made += 1,
             None => self.failed += 1,
         }
-        (self.left == 0).then(|| RunTotals {
-            files: self.waiting.len(),
+        (self.left == 0).then(|| self.totals())
+    }
+
+    /// The pool said the end of a pass. Heard before anything made
+    /// for this run has come, it is the last folder's pass, or one of
+    /// lookups alone, and says nothing of this run.
+    pub(crate) fn pool_idle(&mut self) {
+        if self.made > 0 {
+            self.pool_idle = true;
+        }
+    }
+
+    /// Whether the run may close before every file has come: the pool
+    /// idle, nothing it finished still waiting for the window, and the
+    /// rows on screen filled.
+    pub(crate) fn may_close(&self, screen_filled: bool) -> bool {
+        self.pool_idle && !self.outbox_left && screen_filled
+    }
+
+    /// What has arrived so far.
+    fn totals(&self) -> RunTotals {
+        RunTotals {
+            files: self.waiting.len() - self.left,
+            of: self.waiting.len(),
             cached: self.cached,
             made: self.made,
             failed: self.failed,
             seconds: self.started.elapsed().as_secs_f64(),
             work: self.work,
-        })
+        }
     }
 }
 
@@ -197,13 +232,51 @@ pub(crate) fn count_thumb(st: &mut State, index: usize, cached: Option<bool>, se
 }
 
 /// A turn of the window's that took pictures in, begun at `started`,
-/// is over: counted into the run, and when the run's last has come,
-/// the run said in the log and closed.
-pub(crate) fn end_thumb_turn(st: &mut State, started: std::time::Instant) {
+/// is over, `left` saying whether it left finished pictures for the
+/// next: counted into the run, and when the run's last has come, or it
+/// may close early ([`ThumbRun::may_close`]), the run said in the log
+/// and closed.
+pub(crate) fn end_thumb_turn(st: &mut State, app: &App, started: std::time::Instant, left: bool) {
+    let filled = screen_filled(st, app);
     let Some(run) = st.views.thumb_run.as_mut() else {
         return;
     };
     run.turn(started.elapsed().as_secs_f64());
+    run.outbox_left = left;
+    close_early(run, filled);
+    if run.done.is_some() {
+        say_thumb_run(st);
+    }
+}
+
+/// The thumbnails' pool said the end of a pass: the run closes now if
+/// it may, with what has come, since the far frames of a cold root come
+/// only with a scroll; else at the end of the turn that takes in the
+/// last of what the pool finished, or with the next pass's end while
+/// the rows on screen wait (the pool held for a develop).
+pub(crate) fn thumbs_idle(st: &mut State, app: &App) {
+    let filled = screen_filled(st, app);
+    let Some(run) = st.views.thumb_run.as_mut() else {
+        return;
+    };
+    run.pool_idle();
+    close_early(run, filled);
+    if run.done.is_some() {
+        say_thumb_run(st);
+    }
+}
+
+fn close_early(run: &mut ThumbRun, filled: bool) {
+    if run.done.is_none() && run.may_close(filled) {
+        run.done = Some(run.totals());
+    }
+}
+
+/// The run's line in the log, and the run closed.
+fn say_thumb_run(st: &mut State) {
+    let Some(run) = st.views.thumb_run.as_ref() else {
+        return;
+    };
     let Some(t) = run.done else {
         return;
     };
@@ -212,11 +285,12 @@ pub(crate) fn end_thumb_turn(st: &mut State, started: std::time::Instant) {
     // more than the wall time.
     let threads = WORKER.with(|w| w.borrow().as_ref().map_or(1, |w| w.thumb_threads()));
     tracing::info!(
-        "thumbnails: {} files in {:.2} s from the folder's open, {:.2} s of decoding across \
-         {threads} threads; {} from the cache, {} made, {} failed; taken in by the window in \
-         {} turns, {:.2} s, the longest {:.0} ms; {} frames drawn meanwhile, the first {}, the \
-         longest wait between two {:.0} ms",
+        "thumbnails: {} of {} files in {:.2} s from the folder's open, {:.2} s of decoding \
+         across {threads} threads; {} from the cache, {} made, {} failed; taken in by the \
+         window in {} turns, {:.2} s, the longest {:.0} ms; {} frames drawn meanwhile, the \
+         first {}, the longest wait between two {:.0} ms",
         t.files,
+        t.of,
         t.seconds,
         t.work,
         t.cached,
@@ -260,8 +334,9 @@ impl ScrollTiming {
         }
     }
 
-    /// A frame is being drawn. The moves begin a second after the
-    /// folder's last picture came, with the window settled; once they
+    /// A frame is being drawn. The moves begin a second after the rows
+    /// on screen were drawn with their pictures, with the window
+    /// settled; once they
     /// have, the drawing's own time starts here when a move waits for
     /// it.
     pub(crate) fn before_frame(&mut self, pictures_in: bool, app: &App) {
@@ -1371,11 +1446,21 @@ pub(crate) fn grid_breaks(st: &State, app: &App) -> Vec<i32> {
 }
 
 /// The rows `first..=last` are on screen, of the strip or the grid: the
-/// worker has the cells of the rows near them for the edit's pictures,
+/// worker has the cells of the rows near them for the pictures it makes,
 /// and they are kept for a list made again under them.
 pub(crate) fn near_shown(st: &mut State, worker: &Worker, first: usize, last: usize) {
     st.views.near_rows = Some((first, last));
-    worker.near_thumbnails(near_cells(st));
+    send_near(st, worker);
+}
+
+/// The cells near the rows on screen to the worker, and the reach ahead
+/// while culling, as the list stands now. Nothing near is said before
+/// the strip or the grid has said what it shows: until then the worker
+/// makes every thumbnail, the frames shown first, rather than none.
+pub(crate) fn send_near(st: &State, worker: &Worker) {
+    if let Some(cells) = near_cells(st) {
+        worker.near_thumbnails(cells);
+    }
     previews_ahead(st, worker);
 }
 
@@ -1415,16 +1500,39 @@ pub(crate) fn ahead_cells(st: &State) -> std::collections::HashSet<usize> {
         .collect()
 }
 
+/// How many rows either side of the row about to be selected count as
+/// near before the strip or the grid has said what it shows: a large
+/// grid's screenful about it.
+const SEED_ROWS: usize = 12;
+
+/// Before the strip or the grid has said what it shows, the window's
+/// first list: the rows about `row`, the one about to be selected (the
+/// first without one), handed to the worker as near, so its first
+/// cold thumbnails are those and not the list's start. The cell to
+/// make first, for the queue's order; none for an empty list or one
+/// whose rows on screen are known.
+fn seed_near(st: &State, worker: &Worker, row: Option<usize>) -> Option<usize> {
+    let len = st.views.shown.len();
+    if st.views.near_rows.is_some() || len == 0 {
+        return None;
+    }
+    let at = row.unwrap_or(0).min(len - 1);
+    let rows = crate::thumbpool::near_rows(at.saturating_sub(SEED_ROWS), at + SEED_ROWS, len);
+    worker.near_thumbnails(rows.map(|r| st.views.shown[r]).collect());
+    Some(st.views.shown[at])
+}
+
 /// The cells of the rows near those last on screen
 /// ([`crate::thumbpool::near_rows`]), as the list stands now: by row,
-/// so a filter's hidden cells between two rows are never near.
-pub(crate) fn near_cells(st: &State) -> std::collections::HashSet<usize> {
-    let Some((first, last)) = st.views.near_rows else {
-        return Default::default();
-    };
-    crate::thumbpool::near_rows(first, last, st.views.shown.len())
-        .map(|row| st.views.shown[row])
-        .collect()
+/// so a filter's hidden cells between two rows are never near. None
+/// before any rows were on screen.
+pub(crate) fn near_cells(st: &State) -> Option<std::collections::HashSet<usize>> {
+    let (first, last) = st.views.near_rows?;
+    Some(
+        crate::thumbpool::near_rows(first, last, st.views.shown.len())
+            .map(|row| st.views.shown[row])
+            .collect(),
+    )
 }
 
 /// The browser's list again: the filter over the flags, the strip's
@@ -1448,8 +1556,7 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
         .collect();
     // Other rows under the ones on screen: other cells near them.
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
-        worker.near_thumbnails(near_cells(st));
-        previews_ahead(st, &worker);
+        send_near(st, &worker);
     }
 
     show_filter(st, app);
@@ -1766,6 +1873,7 @@ pub(crate) fn open_loaded(
     st.views.strip_shown = None;
     st.views.thumb_run = Some(ThumbRun::new(st.cells.len()));
     st.views.fill_clock = Some(std::time::Instant::now());
+    st.views.fill_over = false;
     // The old folder's thumbnails still waiting are dropped: their
     // numbering is its list's.
     worker.forget_thumbnails();
@@ -1827,6 +1935,7 @@ pub(crate) fn open_loaded(
     // replaced, and goes with it.
     let deferred = !st.launch.setup_ran && !files.is_empty();
     st.launch.select_at_start = deferred.then_some(select);
+    let seed = row;
     if deferred {
         row = None;
     }
@@ -1837,8 +1946,13 @@ pub(crate) fn open_loaded(
     }
     {
         let st = state.borrow();
+        let seed = seed_near(&st, worker, seed);
         for c in 0..st.cells.len() {
             worker.send(crate::rows::thumb_job(&st, c));
+        }
+        // After the pushes, which clear the queue's order.
+        if let Some(cell) = seed {
+            worker.want_thumbnails(cell, cell);
         }
     }
     tracing::debug!(
@@ -4762,11 +4876,42 @@ mod tests {
         assert_eq!(run.arrived(2, None, 0.0), None);
         let done = run.arrived(1, Some(false), 0.05).expect("the last one");
         assert_eq!(
-            (done.files, done.cached, done.made, done.failed),
-            (3, 1, 1, 1)
+            (done.files, done.of, done.cached, done.made, done.failed),
+            (3, 3, 1, 1, 1)
         );
         assert!((done.work - 0.051).abs() < 1e-9);
         assert_eq!(run.arrived(1, Some(true), 0.0), None);
+    }
+
+    /// Closed with the pool idle, a cold root's far frames never come:
+    /// the run says what has, of how many.
+    #[test]
+    fn a_folders_round_closed_early_says_what_came_of_how_many() {
+        let mut run = ThumbRun::new(5);
+        run.arrived(3, Some(false), 0.1);
+        run.arrived(4, Some(true), 0.0);
+        let t = run.totals();
+        assert_eq!((t.files, t.of, t.made, t.cached), (2, 5, 1, 1));
+    }
+
+    /// A run closes early only with the pool idle after making pictures
+    /// for it, nothing finished still waiting for the window, and the
+    /// rows on screen filled; a pass's end heard before anything was
+    /// made for it is the last folder's, and counts for nothing.
+    #[test]
+    fn a_folders_round_closes_early_only_with_all_taken_in() {
+        let mut run = ThumbRun::new(5);
+        run.arrived(0, Some(true), 0.0);
+        run.pool_idle();
+        assert!(!run.may_close(true), "the last folder's pass");
+        run.arrived(1, Some(false), 0.1);
+        assert!(!run.may_close(true), "the pool not idle");
+        run.pool_idle();
+        run.outbox_left = true;
+        assert!(!run.may_close(true), "pictures still in the outbox");
+        run.outbox_left = false;
+        assert!(!run.may_close(false), "the rows on screen not filled");
+        assert!(run.may_close(true));
     }
 
     /// For the numbers: every sidecar under `GREYCARD_SIDECAR_BENCH`,

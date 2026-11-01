@@ -524,3 +524,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§509. The engine, part three: the viewport crate](notes/509-the-engine-part-three-the-viewport-crate.md) (2026-11-01)
 - [§510. The same export at any thread count](notes/510-the-same-export-at-any-thread-count.md) (2026-11-01)
 - [§511. Carried sets' leftovers, and a file away while its folder is renamed](notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md) (2026-11-01)
+- [§512. Camera thumbnails near the screen](notes/512-camera-thumbnails-near-the-screen.md) (2026-11-01)

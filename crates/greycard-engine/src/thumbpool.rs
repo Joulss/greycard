@@ -5,11 +5,18 @@
 //!
 //! The order is the worker's queue's as it was: the frames the strip
 //! or the grid shows first, the rest outward from them, and a
-//! re-order applies to whatever has not been started. A file is never
-//! made by two threads at once — a second ask for one in hand waits
-//! for the first to finish, and an ask for one already waiting is
-//! dropped — and a folder change drops what is waiting and throws
-//! away what comes back from the old folder's numbering.
+//! re-order applies to whatever has not been started. Every frame asked
+//! for is looked up in the cache, but one the cache lacks is made only
+//! near the screen ([`near_rows`]), and while culling within the reach
+//! of [`Pool::previews_ahead`] as well: a cold root of thousands made
+//! whole is a tenth of a CPU second a frame, twenty minutes and more,
+//! for pictures nobody is looking at. The rest wait, looked up and
+//! missed, for a scroll to bring them near. Until the window has said
+//! what it shows, every frame is near. A file is never made by two
+//! threads at once — a second ask for one in hand waits for the first
+//! to finish, and an ask for one already waiting is dropped — and a
+//! folder change drops what is waiting and throws away what comes back
+//! from the old folder's numbering.
 //!
 //! While the pool is held (for a develop) nothing is made, but every
 //! thread still looks pictures up in the cache: a hit is a tenth of a
@@ -39,6 +46,8 @@
 //! a line in the log when it begins and when it has nothing left, and
 //! how many are left to the window ([`Outcome::Making`]) for its status
 //! line, once the making has gone on long enough to be worth a word.
+//! The end is always said, told or not: the window closes its count of
+//! a folder's first round there, the far frames never coming.
 //!
 //! What the threads finish goes to the window one call each, or
 //! through an [`Outbox`] ([`Pool::batched`], the editor's). A warm
@@ -188,7 +197,9 @@ impl Pass {
     }
 
     /// Nothing left in hand: the line in the log, and the window told
-    /// the making is over when it was told it began.
+    /// the making is over, whether or not it was told it began. A word
+    /// it was not told of finds the status line as it left it, and
+    /// leaves it so.
     fn end(self, deliver: &dyn Fn(Outcome)) {
         if self.made() > 0 {
             tracing::info!(
@@ -199,9 +210,7 @@ impl Pass {
                 self.began.elapsed().as_secs_f64()
             );
         }
-        if self.told.is_some() {
-            deliver(Outcome::Making(Making::Over));
-        }
+        deliver(Outcome::Making(Making::Over));
     }
 }
 
@@ -362,12 +371,24 @@ struct Pending {
     edits_busy: usize,
     edits_alone: bool,
     /// The cells of the rows near those the window shows, as it last
-    /// said ([`Pool::set_near`]): an edit is begun only for one of these,
-    /// and a preview too, unless it is one of `ahead`.
-    near: HashSet<usize>,
-    /// The cells whose previews are made ahead while culling, as the
-    /// window last said ([`Pool::previews_ahead`]); none otherwise.
+    /// said ([`Pool::set_near`]): a thumbnail the cache lacks, an edit,
+    /// and a preview are begun only for one of these, a thumbnail and a
+    /// preview unless it is one of `ahead`. `None` until the window has
+    /// said, when every thumbnail is near and no edit or preview is.
+    near: Option<HashSet<usize>>,
+    /// The cells whose previews and thumbnails are made ahead while
+    /// culling, as the window last said ([`Pool::previews_ahead`]); none
+    /// otherwise.
     ahead: HashSet<usize>,
+    /// Thumbnails looked up, missed, and not near: out of `jobs`, which
+    /// every thread walks at every turn, until a scroll brings them
+    /// near ([`Pending::regroup`]).
+    far: Vec<(usize, Key)>,
+    /// The same, to be asked of without a walk of the list.
+    far_queued: HashSet<(usize, Key)>,
+    /// The range the window last said it shows ([`Pool::want`]), to put
+    /// the far ones brought near in its order.
+    shown: Option<(usize, usize)>,
     /// What has been made since the pool last had nothing in hand.
     pass: Option<Pass>,
     /// How many times a thread has looked at all of the above and found
@@ -401,22 +422,68 @@ struct Pending {
 }
 
 impl Pending {
-    /// How many are known to be left to make: the previews waiting, the
-    /// edits waiting near the rows shown, the thumbnails a lookup found
-    /// missing from the cache, and those in hand. Uncounted while a
-    /// thumbnail not yet looked up waits: in a warm folder nearly all
-    /// are hits, and in a cold one all are not.
+    /// How many are known to be left to make: the thumbnails, previews,
+    /// and edits waiting that may be begun (near the rows shown, or
+    /// ahead while culling), and those in hand. The far ones wait for a
+    /// scroll and are not counted. Uncounted while a thumbnail that may
+    /// be made waits to be looked up: in a warm folder nearly all are
+    /// hits, and in a cold one all are not.
     fn left(&self) -> Making {
-        if self.jobs.iter().any(|(_, f)| !self.missed.contains(f)) {
+        let unlooked = |(i, f): &(usize, Key)| self.thumb_due(*i) && !self.missed.contains(f);
+        if self.jobs.iter().any(unlooked) {
             return Making::Uncounted;
         }
-        Making::Left(self.previews_due() + self.edits_due() + self.jobs.len() + self.busy)
+        Making::Left(self.previews_due() + self.edits_due() + self.thumbs_due() + self.busy)
+    }
+
+    /// Whether cell `index` is near the screen, as the window last said.
+    fn is_near(&self, index: usize) -> bool {
+        self.near.as_ref().is_some_and(|n| n.contains(&index))
+    }
+
+    /// Whether the thumbnail waiting for cell `index` may be made, the
+    /// cache lacking it: near the screen, or before the window has said
+    /// what it shows, or made ahead while culling.
+    fn thumb_due(&self, index: usize) -> bool {
+        self.near.as_ref().is_none_or(|n| n.contains(&index)) || self.ahead.contains(&index)
+    }
+
+    /// How many of the thumbnails waiting may be made.
+    fn thumbs_due(&self) -> usize {
+        self.jobs.iter().filter(|(i, _)| self.thumb_due(*i)).count()
+    }
+
+    /// The near cells or the reach ahead moved: the far thumbnails now
+    /// due go back to wait in `jobs`, in the order of the range shown,
+    /// and those missed and no longer due leave it.
+    fn regroup(&mut self) {
+        let far = std::mem::take(&mut self.far);
+        let (back, far): (Vec<_>, Vec<_>) = far.into_iter().partition(|(i, _)| self.thumb_due(*i));
+        for job in &back {
+            self.far_queued.remove(job);
+        }
+        self.far = far;
+        let jobs = std::mem::take(&mut self.jobs);
+        let (jobs, away): (VecDeque<_>, VecDeque<_>) = jobs
+            .into_iter()
+            .partition(|(i, f)| self.thumb_due(*i) || !self.missed.contains(f));
+        self.jobs = jobs;
+        self.far_queued.extend(away.iter().cloned());
+        self.far.extend(away);
+        if back.is_empty() {
+            return;
+        }
+        self.jobs.extend(back);
+        self.wanted = self.shown;
+        if let Some((first, last)) = self.shown {
+            order_thumbnails(self.jobs.make_contiguous(), first, last);
+        }
     }
 
     /// Whether the preview waiting for cell `index` may be begun: near
     /// the screen, or made ahead while culling.
     fn preview_due(&self, index: usize) -> bool {
-        self.near.contains(&index) || self.ahead.contains(&index)
+        self.is_near(index) || self.ahead.contains(&index)
     }
 
     /// How many of the previews waiting may be begun.
@@ -429,10 +496,7 @@ impl Pending {
 
     /// How many of the edits waiting are near the screen.
     fn edits_due(&self) -> usize {
-        self.edits
-            .iter()
-            .filter(|(i, _)| self.near.contains(i))
-            .count()
+        self.edits.iter().filter(|(i, _)| self.is_near(*i)).count()
     }
 
     /// One of `what` made: counted into the pass, which begins with the
@@ -441,8 +505,17 @@ impl Pending {
     fn count_made(&mut self, what: What) -> Option<Making> {
         let left = self.left();
         if self.pass.is_none() {
-            let waiting = self.jobs.len() + self.previews_due() + self.edits_due();
-            tracing::info!("the thumbnails' pool: making pictures, {waiting} waiting");
+            // Before the window has said what it shows, every thumbnail
+            // waiting counts as near, and a count of them would be the
+            // whole list's.
+            if self.near.is_some() {
+                let waiting = self.thumbs_due() + self.previews_due() + self.edits_due();
+                tracing::info!("the thumbnails' pool: making pictures, {waiting} waiting");
+            } else {
+                tracing::info!(
+                    "the thumbnails' pool: making pictures, the rows near the screen not yet said"
+                );
+            }
         }
         let pass = self.pass.get_or_insert_with(Pass::new);
         match what {
@@ -548,8 +621,9 @@ impl Pool {
     pub fn push(&self, index: usize, frame: Key) {
         let mut q = self.lock();
         q.wanted = None;
-        if !q.jobs.iter().any(|(i, p)| *i == index && *p == frame) {
-            q.jobs.push_back((index, frame));
+        let job = (index, frame);
+        if !q.far_queued.contains(&job) && !q.jobs.contains(&job) {
+            q.jobs.push_back(job);
         }
         if !q.started {
             q.started = true;
@@ -623,6 +697,7 @@ impl Pool {
             outbox.show(first, last);
         }
         let mut q = self.lock();
+        q.shown = Some((first, last));
         if q.previews.len() >= 2 && q.previews_wanted != Some((first, last)) {
             q.previews_wanted = Some((first, last));
             order_thumbnails(q.previews.make_contiguous(), first, last);
@@ -639,33 +714,41 @@ impl Pool {
     }
 
     /// The cells near the rows the window shows ([`near_rows`]): the
-    /// edit's pictures, and the previews unless they are made ahead,
-    /// are made for these alone from now on. Others brought near, a
-    /// thread waiting with only far ones queued looks again; those
-    /// scrolled away wait, queued, for the view to come back.
+    /// thumbnails the cache lacks, the edit's pictures, and the previews
+    /// are made for these alone from now on, a thumbnail and a preview
+    /// unless they are made ahead. Others brought near, a thread waiting
+    /// with only far ones queued looks again; those scrolled away wait,
+    /// queued, for the view to come back.
     pub fn set_near(&self, cells: HashSet<usize>) {
         let mut q = self.lock();
-        if q.near != cells {
-            q.near = cells;
-            if !q.edits.is_empty() || !q.previews.is_empty() {
-                self.shared.cv.notify_all();
-            }
+        if q.near.as_ref() != Some(&cells) {
+            q.near = Some(cells);
+            self.moved(&mut q);
         }
     }
 
-    /// Make the previews of these cells as well as the near ones, or
-    /// of the near ones alone (`None`). Culling sees the frames one
-    /// after another, so the window hands it those within a long reach
-    /// of the one shown; browsing and editing see what is near the
-    /// screen. In the order [`Pool::want`] sets, the nearest first.
+    /// The near cells or the reach ahead moved: the far thumbnails
+    /// regrouped, and the threads woken to look again when anything
+    /// waits.
+    fn moved(&self, q: &mut Pending) {
+        q.regroup();
+        if !q.jobs.is_empty() || !q.edits.is_empty() || !q.previews.is_empty() {
+            self.shared.cv.notify_all();
+        }
+    }
+
+    /// Make the previews and the thumbnails of these cells as well as
+    /// the near ones, or of the near ones alone (`None`). Culling sees
+    /// the frames one after another, so the window hands it those within
+    /// a long reach of the one shown; browsing and editing see what is
+    /// near the screen. In the order [`Pool::want`] sets, the nearest
+    /// first.
     pub fn previews_ahead(&self, cells: Option<HashSet<usize>>) {
         let cells = cells.unwrap_or_default();
         let mut q = self.lock();
         if q.ahead != cells {
             q.ahead = cells;
-            if !q.previews.is_empty() {
-                self.shared.cv.notify_all();
-            }
+            self.moved(&mut q);
         }
     }
 
@@ -707,6 +790,8 @@ impl Pool {
         let previews = std::mem::take(&mut q.previews);
         let edits = std::mem::take(&mut q.edits);
         q.jobs.clear();
+        q.far.clear();
+        q.far_queued.clear();
         q.missed.clear();
         q.wanted = None;
         q.previews_wanted = None;
@@ -836,15 +921,19 @@ fn serve(
                 if q.stopping {
                     return;
                 }
-                let full = !q.held && q.busy < q.limit;
+                let room = !q.held && q.busy < q.limit;
+                // Made when there is room and it is near; else looked up
+                // when it has not been, wherever it is.
                 let free = {
                     let p = &*q;
-                    p.jobs.iter().position(|(_, f)| {
+                    p.jobs.iter().position(|(i, f)| {
                         !p.making.contains(f)
-                            && (full || (lookup.is_some() && !p.missed.contains(f)))
+                            && ((room && p.thumb_due(*i))
+                                || (lookup.is_some() && !p.missed.contains(f)))
                     })
                 };
                 if let Some(at) = free {
+                    let full = room && q.thumb_due(q.jobs[at].0);
                     // One being made leaves the queue; one being looked
                     // up keeps its place in it, in hand, and leaves only
                     // when it is found.
@@ -899,7 +988,7 @@ fn serve(
                     p.edits
                         .iter()
                         .position(|(i, f)| {
-                            p.near.contains(i)
+                            p.is_near(*i)
                                 && !p.making.contains(f)
                                 && (p.edits_busy == 0 || !(h.alone)(f))
                         })
@@ -1007,13 +1096,22 @@ fn serve(
             {
                 let mut q = shared.pending.lock().expect("thumbnail pool");
                 if q.epoch == epoch {
+                    let found = q.jobs.iter().position(|(i, f)| *i == index && *f == frame);
                     if hit.is_some() {
-                        let found = q.jobs.iter().position(|(i, f)| *i == index && *f == frame);
                         if let Some(at) = found {
                             q.jobs.remove(at);
                         }
                     } else {
                         q.missed.insert(frame.clone());
+                        // Far: out of the way until a scroll brings it
+                        // near.
+                        if !q.thumb_due(index)
+                            && let Some(at) = found
+                        {
+                            let job = q.jobs.remove(at).expect("a job at a found place");
+                            q.far_queued.insert(job.clone());
+                            q.far.push(job);
+                        }
                     }
                 }
                 if hit.is_none() {
@@ -1726,7 +1824,9 @@ mod tests {
     fn the_edits_are_made_near_the_rows_shown_and_the_rest_wait_for_a_scroll() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let (deliver, rx) = collector();
-        let pool = Pool::new(4, instant(), deliver).with_edits(edit_hooks(log.clone(), &[]));
+        // Warm: every thumbnail found in the cache, near or far.
+        let pool = Pool::with_lookup(4, warm(), instant(), deliver)
+            .with_edits(edit_hooks(log.clone(), &[]));
         pool.hold(true);
         for i in 0..40 {
             pool.push(i, file(i));
@@ -1765,7 +1865,8 @@ mod tests {
         let (deliver, rx) = collector();
         // Two threads: one preview at a time, so the log is the pool's
         // order.
-        let pool = Pool::new(2, instant(), deliver).with_previews(preview_hooks(log.clone(), &[]));
+        let pool = Pool::with_lookup(2, warm(), instant(), deliver)
+            .with_previews(preview_hooks(log.clone(), &[]));
         pool.hold(true);
         for i in 0..40 {
             pool.push(i, file(i));
@@ -1892,7 +1993,7 @@ mod tests {
             q.previews
                 .push_back((i, PathBuf::from(format!("IMG_{i:04}.CR3"))));
         }
-        q.near = (0..3).collect();
+        q.near = Some((0..3).collect());
         assert_eq!(q.left(), Making::Left(3));
         q.ahead = (2..6).collect();
         assert_eq!(q.left(), Making::Left(6));
@@ -2183,6 +2284,11 @@ mod tests {
         Arc::new(|_, _| Ok((picture(), true)))
     }
 
+    /// A cache that holds every picture.
+    fn warm() -> Lookup {
+        Arc::new(|_, _| Some(picture()))
+    }
+
     /// How many are waiting in a batch's outbox.
     fn waiting(batch: &Batch) -> usize {
         let w = batch.0.lock();
@@ -2323,5 +2429,103 @@ mod tests {
         until_waiting(&again, 10);
         let (taken, left) = again.take(usize::MAX);
         assert_eq!((taken.len(), left), (10, false));
+    }
+
+    /// A cold root: every frame is looked up, but only those near the
+    /// rows shown are made; the rest wait, looked up once, and a scroll
+    /// to them has them made, as culling's reach ahead does. Nothing
+    /// far is made meanwhile, and nothing is looked up twice.
+    #[test]
+    fn cold_thumbnails_are_made_near_the_rows_shown_and_the_rest_wait_for_a_scroll() {
+        let (make, began) = recording();
+        let looked = Arc::new(Mutex::new(0usize));
+        let seen = looked.clone();
+        let lookup: Lookup = Arc::new(move |_, _| {
+            *seen.lock().unwrap() += 1;
+            None
+        });
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(2, lookup, make, deliver);
+        pool.set_near((0..4).collect());
+        for i in 0..40 {
+            pool.push(i, file(i));
+        }
+        pool.want(0, 1);
+        let mut got: Vec<usize> = receive(&rx, 4).into_iter().map(|(i, _)| i).collect();
+        got.sort();
+        assert_eq!(got, [0, 1, 2, 3]);
+        until_idle(&pool);
+        // Every far one looked up: a thread may hold the last before
+        // its lookup when another finds nothing to begin.
+        let started = Instant::now();
+        while pool.lock().far.len() < 36 {
+            assert!(started.elapsed() < WAIT, "the far ones never looked up");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        settled(&pool);
+        assert!(rx.try_recv().is_err(), "nothing far delivered");
+        assert_eq!(began.lock().unwrap().len(), 4, "nothing far made");
+        assert_eq!(*looked.lock().unwrap(), 36, "the far ones looked up");
+        assert_eq!(pool.lock().far.len(), 36);
+        assert_eq!(pool.lock().left(), Making::Left(0));
+        // Scrolled: the rows now near, the nearest the range first.
+        pool.want(20, 21);
+        pool.set_near((20..24).collect());
+        let mut got: Vec<usize> = receive(&rx, 4).into_iter().map(|(i, _)| i).collect();
+        got.sort();
+        assert_eq!(got, [20, 21, 22, 23]);
+        until_idle(&pool);
+        settled(&pool);
+        assert_eq!(began.lock().unwrap().len(), 8);
+        // Culling's reach ahead.
+        pool.previews_ahead(Some((30..32).collect()));
+        let mut got: Vec<usize> = receive(&rx, 2).into_iter().map(|(i, _)| i).collect();
+        got.sort();
+        assert_eq!(got, [30, 31]);
+        until_idle(&pool);
+        settled(&pool);
+        assert_eq!(began.lock().unwrap().len(), 10);
+        assert_eq!(*looked.lock().unwrap(), 36, "none looked up twice");
+        assert_eq!(pool.lock().far.len(), 30);
+    }
+
+    /// Until the window has said what it shows, every thumbnail is made,
+    /// the frames shown first: a view that never says is never left
+    /// blank.
+    #[test]
+    fn before_the_window_says_what_is_near_every_thumbnail_is_made() {
+        let (make, began) = recording();
+        let lookup: Lookup = Arc::new(|_, _| None);
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(2, lookup, make, deliver);
+        for i in 0..10 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 10);
+        assert_eq!(began.lock().unwrap().len(), 10);
+    }
+
+    /// The status line's count is of the thumbnails that will be made,
+    /// the near ones; a far one not yet looked up leaves it counted,
+    /// a near one leaves it uncounted.
+    #[test]
+    fn far_thumbnails_are_not_counted_as_left() {
+        let mut q = Pending {
+            near: Some((0..3).collect()),
+            ..Pending::default()
+        };
+        for i in 0..10 {
+            q.jobs.push_back((i, file(i)));
+        }
+        assert_eq!(q.left(), Making::Uncounted);
+        for i in 0..3 {
+            q.missed.insert(file(i));
+        }
+        assert_eq!(q.left(), Making::Left(3), "the far ones not looked up yet");
+        q.ahead = (8..10).collect();
+        assert_eq!(q.left(), Making::Uncounted);
+        q.missed.insert(file(8));
+        q.missed.insert(file(9));
+        assert_eq!(q.left(), Making::Left(5));
     }
 }

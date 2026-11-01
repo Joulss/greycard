@@ -172,6 +172,10 @@ pub(crate) struct Views {
     /// When the folder on screen was opened, until the first frame
     /// that draws every row on screen with its picture.
     pub(crate) fill_clock: Option<std::time::Instant>,
+    /// Whether that frame has been drawn, or the clock given up on,
+    /// since the folder on screen was opened: what `--time-scroll`
+    /// waits for.
+    pub(crate) fill_over: bool,
     /// When the selection last moved in the develop view, until the
     /// frame that shows the frame it moved to.
     pub(crate) selected_at: Option<std::time::Instant>,
