@@ -231,6 +231,13 @@ seconds.
       47 s (pixls, 2026-10-28). Waits on the UNet and VAE exported
       for the ML Program compiler at fp16; the Subject Conv's parse
       fix carries over, its Neural Engine compile time may too (§477)
+- [ ] The fp16 denoisers on WebGPU, measured 2026-11-01 on an RTX
+      5070 Ti with tools/denoise/compare.py (§508): 1.3 times
+      quicker (v20 2.9 to 2.1 s, v19 1.1 to 0.8 s), PSNR 57 to 68 dB,
+      99.9th percentile 0.015 to 0.03 stops in every band, three
+      times Core ML's difference though still invisible; kept at
+      fp32 for now, the user's call. CUDA unmeasured, no toolkit on
+      the machine
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's
