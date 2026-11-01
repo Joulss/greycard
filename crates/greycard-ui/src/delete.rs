@@ -800,7 +800,7 @@ mod tests {
             // A hidden folder that is a link to elsewhere: B's sidecar
             // is outside, and B stays.
             let hidden = shoot_dir.join(SIDECAR_FOLDER);
-            std::fs::rename(&hidden, dir.join("hidden")).unwrap();
+            greycard_core::testing::rename_retry(&hidden, dir.join("hidden"));
             std::os::unix::fs::symlink(dir.join("hidden"), &hidden).unwrap();
             let p = plan(std::slice::from_ref(&files[1]), &[], &ok, false);
             assert!(p.frames.is_empty(), "{p:?}");
@@ -865,7 +865,7 @@ mod tests {
                 return Err("no trash on this disk".to_string());
             }
             for p in paths {
-                std::fs::rename(p, bin.join(p.file_name().unwrap())).unwrap();
+                greycard_core::testing::rename_retry(p, bin.join(p.file_name().unwrap()));
             }
             Ok(())
         };
@@ -907,7 +907,10 @@ mod tests {
         let files = shoot(&shoot_dir);
         let ok = allowed(std::slice::from_ref(&shoot_dir));
         let stand_in = |paths: &[PathBuf]| {
-            std::fs::rename(&paths[0], bin.join(paths[0].file_name().unwrap())).unwrap();
+            greycard_core::testing::rename_retry(
+                &paths[0],
+                bin.join(paths[0].file_name().unwrap()),
+            );
             Err("the sidecar would not go".to_string())
         };
         // B, whose one sidecar is under the hidden folder, then C.
@@ -996,7 +999,7 @@ mod tests {
             let p = plan(&files[..2], &[], &ok, false);
             assert_eq!(p.frames.len(), 2);
             std::fs::write(elsewhere.join("B.CR3"), b"raw").unwrap();
-            std::fs::rename(&shoot_dir, dir.join("moved")).unwrap();
+            greycard_core::testing::rename_retry(&shoot_dir, dir.join("moved"));
             std::os::unix::fs::symlink(&elsewhere, &shoot_dir).unwrap();
             let done = delete(&p, How::Permanent, &ok, never);
             assert!(done.frames.is_empty());

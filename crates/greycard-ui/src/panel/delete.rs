@@ -1053,7 +1053,7 @@ pub(crate) mod tests {
         app.invoke_delete_asked("selection".into());
         assert!(app.get_delete_open());
         std::fs::write(elsewhere.join("a.tif"), b"not this one").unwrap();
-        std::fs::rename(&shoot_dir, dir.join("moved")).unwrap();
+        greycard_core::testing::rename_retry(&shoot_dir, dir.join("moved"));
         std::os::unix::fs::symlink(&elsewhere, &shoot_dir).unwrap();
         app.invoke_delete_answered(2);
         land_all(&state, &app, &worker);

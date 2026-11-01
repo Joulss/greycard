@@ -2804,7 +2804,7 @@ pub(crate) mod tests {
         // K: really gone, so the take and the save here go nowhere).
         laptop_saves(&copy, -1.0);
         let away = dir.join("local-away");
-        std::fs::rename(&local, &away).unwrap();
+        greycard_core::testing::rename_retry(&local, &away);
         {
             let mut st = state.borrow_mut();
             st.views.library.offline.insert(local.clone());
@@ -2850,7 +2850,7 @@ pub(crate) mod tests {
         assert_eq!(compare(&state.borrow().sidecars[0], &there), Compared::Same);
         assert!(pending_for(&db, &nas).is_empty());
         assert_eq!(app.get_sync_note(), "");
-        std::fs::rename(&away, &local).unwrap();
+        greycard_core::testing::rename_retry(&away, &local);
         assert_eq!(
             Sidecar::load(&files[0])
                 .unwrap()
@@ -3024,7 +3024,7 @@ pub(crate) mod tests {
         // its copy.
         let copy = nas.join("shoot").join("a.tif");
         let away = dir.join("local-away");
-        std::fs::rename(&local, &away).unwrap();
+        greycard_core::testing::rename_retry(&local, &away);
         {
             let mut st = state.borrow_mut();
             st.views.library.offline.insert(local.clone());
@@ -3149,7 +3149,7 @@ pub(crate) mod tests {
         close(state, worker);
         // The next window says it waits, and its catch-up settles the
         // row against what stands on the copy, which is whole.
-        std::fs::rename(&away, &local).unwrap();
+        greycard_core::testing::rename_retry(&away, &local);
         let app = window(2);
         let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
         assert_eq!(app.get_sync_note(), "1 edit waiting for Archive");
@@ -3194,7 +3194,7 @@ pub(crate) mod tests {
         land_sent(&state, &app, &worker);
         let copy = nas.join("shoot").join("a.tif");
         let away = dir.join("local-away");
-        std::fs::rename(&local, &away).unwrap();
+        greycard_core::testing::rename_retry(&local, &away);
         {
             let mut st = state.borrow_mut();
             st.views.library.offline.insert(local.clone());
@@ -3252,7 +3252,7 @@ pub(crate) mod tests {
         assert_eq!(on_copy().meta.rating, 3);
         assert_eq!(on_copy().current.light.exposure, 0.5);
         assert!(!exposures_of(&on_copy()).contains(&2.0), "not the panel's");
-        std::fs::rename(&away, &local).unwrap();
+        greycard_core::testing::rename_retry(&away, &local);
         crate::testing::remove_scratch(state, &dir);
     }
 
@@ -3398,7 +3398,7 @@ pub(crate) mod tests {
         let other = nas.join("shoot").join("b.tif");
         let (state, worker) = opened(&app, &dir, vec![other], &local, &nas, &db);
         let away = dir.join("local-away");
-        std::fs::rename(&local, &away).unwrap();
+        greycard_core::testing::rename_retry(&local, &away);
         heard_from(&mut state.borrow_mut(), &app, &nas, true);
         land_sent(&state, &app, &worker);
         let after = pending_for(&db, &nas);
@@ -3410,7 +3410,7 @@ pub(crate) mod tests {
         );
         assert_eq!(app.get_sync_note(), "1 edit waiting for Archive");
         // The disk back: the next answering look writes it.
-        std::fs::rename(&away, &local).unwrap();
+        greycard_core::testing::rename_retry(&away, &local);
         heard_from(&mut state.borrow_mut(), &app, &nas, true);
         land_sent(&state, &app, &worker);
         assert!(pending_for(&db, &nas).is_empty());

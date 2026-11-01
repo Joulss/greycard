@@ -568,7 +568,7 @@ fn offline_view(
         st.views.library.roots.add(&b).unwrap();
     }
     let away = dir.join("b-away");
-    crate::testing::rename_away(&b, &away);
+    greycard_core::testing::rename_retry(&b, &away);
     open_view(&state, &app, &worker, View::Roots(None));
     assert_eq!(land_all(&state, &app, &worker), 1);
     {

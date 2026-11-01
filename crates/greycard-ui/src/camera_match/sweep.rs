@@ -224,6 +224,7 @@ fn previews(out: &Path, frames: &[&Frame]) -> HashMap<PathBuf, Result<Seen, Stri
             let file = dir.join(key_of(&f.path) + ".json");
             let part = file.with_extension("part");
             std::fs::write(&part, serde_json::to_string(&r).unwrap()).unwrap();
+            // rename allowed: the harness's own part file, which nothing reads.
             std::fs::rename(&part, &file).unwrap();
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if n.is_multiple_of(50) {
@@ -291,6 +292,7 @@ fn develop_all(out: &Path, frames: &[&Frame], lenses: Option<&greycard_lens::Dat
         let file = dir.join(key_of(&f.path) + ".json");
         let part = file.with_extension("part");
         std::fs::write(&part, serde_json::to_string(&rec).unwrap()).unwrap();
+        // rename allowed: the harness's own part file, which nothing reads.
         std::fs::rename(&part, &file).unwrap();
         if (i + 1) % 10 == 0 || i + 1 == todo.len() {
             eprintln!(

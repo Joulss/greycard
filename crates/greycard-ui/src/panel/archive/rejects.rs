@@ -1100,11 +1100,11 @@ mod tests {
         /// The archive gone, as a share that does not answer: its rows
         /// are as the index has them.
         fn unplug(&self) {
-            std::fs::rename(&self.nas, self.dir.join("nas-away")).unwrap();
+            greycard_core::testing::rename_retry(&self.nas, self.dir.join("nas-away"));
         }
 
         fn plug(&self) {
-            std::fs::rename(self.dir.join("nas-away"), &self.nas).unwrap();
+            greycard_core::testing::rename_retry(self.dir.join("nas-away"), &self.nas);
         }
 
         fn done(self) {

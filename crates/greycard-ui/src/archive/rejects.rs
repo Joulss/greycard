@@ -1334,7 +1334,7 @@ mod tests {
     fn offline_the_copies_are_as_the_index_has_them() {
         let c = culled("offline");
         let away = c.dir.join("nas-away");
-        std::fs::rename(&c.nas, &away).unwrap();
+        greycard_core::testing::rename_retry(&c.nas, &away);
         let look = look(&c.rejects, &c.nas, false, Some(&c.db), &no_beat()).unwrap();
         assert!(!look.answered);
         assert_eq!(look.copies().0, 2);

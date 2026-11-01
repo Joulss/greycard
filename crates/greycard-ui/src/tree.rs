@@ -1613,11 +1613,10 @@ mod tests {
                 assert!(st.views.tree.root.is_none() && st.views.tree.asked.is_some());
             }
             std::fs::create_dir_all(root.join("later")).unwrap();
-            std::fs::rename(
+            greycard_core::testing::rename_retry(
                 root.join("day").join("d2.tif"),
                 root.join("later").join("d2.tif"),
-            )
-            .unwrap();
+            );
             let report = greycard_library::Library::open(&db)
                 .unwrap()
                 .index_tree(&root, &mut |_| {})
@@ -1644,7 +1643,7 @@ mod tests {
         let dir = scratch("offline");
         let (app, state, worker) = archive(&dir, None);
         let root = dir.join("archive");
-        crate::testing::rename_away(&root, &dir.join("away"));
+        greycard_core::testing::rename_retry(&root, dir.join("away"));
         // The tree built again with the root away.
         {
             let mut st = state.borrow_mut();
@@ -2315,7 +2314,7 @@ mod tests {
 
         // The root away: its tree and tiles from the index, dimmed, no
         // menu.
-        crate::testing::rename_away(&root, &dir.join("away"));
+        greycard_core::testing::rename_retry(&root, dir.join("away"));
         {
             let mut st = state.borrow_mut();
             st.views.tree.stale = true;
@@ -2527,7 +2526,7 @@ mod tests {
         crate::tree::loose_changed(&mut state.borrow_mut(), &app);
         land_sent(&state, &app, &worker);
         assert_eq!(tiles(&app), [("sub".into(), 1)]);
-        crate::testing::rename_away(&loose.join("Birch"), &dir.join("birch-away"));
+        greycard_core::testing::rename_retry(loose.join("Birch"), dir.join("birch-away"));
         crate::tree::loose_changed(&mut state.borrow_mut(), &app);
         land_sent(&state, &app, &worker);
         assert!(tiles(&app).is_empty());

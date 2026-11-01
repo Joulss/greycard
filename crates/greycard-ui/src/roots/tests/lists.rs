@@ -109,7 +109,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     }
     // Renamed within the folder.
     let renamed = shoot.join("bb.tif");
-    std::fs::rename(&files[1], &renamed).unwrap();
+    greycard_core::testing::rename_retry(&files[1], &renamed);
     writer.index_folder(&shoot, &mut |_| {}).unwrap();
     let listed = crate::files::list_files(&shoot, false).unwrap();
     assert_eq!(merge_read(&state, &app, &worker, listed, Some(&db)), None);
@@ -121,7 +121,7 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     }
     // Moved to the other folder: followed, and kept in the list.
     let moved = other.join("bb.tif");
-    std::fs::rename(&renamed, &moved).unwrap();
+    greycard_core::testing::rename_retry(&renamed, &moved);
     writer.index_tree(&dir, &mut |_| {}).unwrap();
     let listed = crate::files::list_files(&shoot, false).unwrap();
     assert_eq!(listed.len(), 2);
@@ -461,7 +461,7 @@ fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() 
         recount(&mut st);
     }
     let away = dir.join("b-away");
-    crate::testing::rename_away(&b, &away);
+    greycard_core::testing::rename_retry(&b, &away);
     open_view(&state, &app, &worker, View::Roots(None));
     assert_eq!(land_all(&state, &app, &worker), 1);
     let (zi, zzi) = {
@@ -707,7 +707,7 @@ fn all_roots_lists_the_archives_copy_when_the_local_one_is_away() {
     );
 
     // The root unplugged: both from the archive, and not dimmed.
-    crate::testing::rename_away(&a, &dir.join("a-away"));
+    greycard_core::testing::rename_retry(&a, dir.join("a-away"));
     open_view(&state, &app, &worker, View::Roots(None));
     land_all(&state, &app, &worker);
     assert_eq!(
@@ -767,7 +767,7 @@ fn an_offline_root_is_listed_dimmed_and_its_frames_left_alone() {
     }
     // b unplugged: the folder gone from the disk.
     let away = dir.join("b-away");
-    crate::testing::rename_away(&b, &away);
+    greycard_core::testing::rename_retry(&b, &away);
     open_view(&state, &app, &worker, View::Roots(None));
     assert_eq!(land_all(&state, &app, &worker), 1);
     {
@@ -1137,7 +1137,7 @@ fn the_frame_on_screen_under_a_root_gone_offline_stays() {
         let mut st = state.borrow_mut();
         st.current = st.files.iter().position(|f| *f == y);
     }
-    crate::testing::rename_away(&b, &dir.join("b-away"));
+    greycard_core::testing::rename_retry(&b, dir.join("b-away"));
     assert!(refresh_view(&state, &app, &worker));
     land_all(&state, &app, &worker);
     let st = state.borrow();

@@ -2529,7 +2529,7 @@ mod tests {
         let mut lib = Library::open(&dir.join("library.sqlite")).unwrap();
         lib.index_tree(&dir, &mut |_| {}).unwrap();
         let was = greycard_library::key_folder(&shoot);
-        std::fs::rename(&shoot, &renamed).unwrap();
+        greycard_core::testing::rename_retry(&shoot, &renamed);
         let report = lib.index_tree(&shoot, &mut |_| {}).unwrap();
         assert!(report.moved_folders.is_empty(), "{report:?}");
         let waits = Waits {

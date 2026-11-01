@@ -809,7 +809,7 @@ mod tests {
         };
         for (from, to, first) in [(&shoot, &renamed, &renamed), (&renamed, &shoot, &renamed)] {
             let key = greycard_library::key_folder(from);
-            std::fs::rename(from, to).unwrap();
+            greycard_core::testing::rename_retry(from, to);
             let then = if first == to { from } else { to };
             for pass in [first, then] {
                 let report = s.writer.index_tree(pass, &mut |_| {}).unwrap();
@@ -864,14 +864,14 @@ mod tests {
         };
 
         // Out of every root: kept, its row missing, not shown.
-        std::fs::rename(&s.files[3], away.join("x3.tif")).unwrap();
+        greycard_core::testing::rename_retry(&s.files[3], away.join("x3.tif"));
         pass(&mut s);
         assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [2]", "x2.tif"]);
         assert_eq!(on_disk(&s), [["x1.tif", "x3.tif", "x4.tif"]]);
         assert!(s.writer.by_path(&s.files[3]).unwrap().unwrap().missing);
 
         // Back under another name: found by its hash.
-        std::fs::rename(away.join("x3.tif"), shoot.join("x3b.tif")).unwrap();
+        greycard_core::testing::rename_retry(away.join("x3.tif"), shoot.join("x3b.tif"));
         pass(&mut s);
         assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
         assert_eq!(on_disk(&s), [["x1.tif", "x3b.tif", "x4.tif"]]);
@@ -879,13 +879,13 @@ mod tests {
 
         // Out again, its folder renamed while it is away, and back into
         // the renamed folder under a third name.
-        std::fs::rename(shoot.join("x3b.tif"), away.join("x3b.tif")).unwrap();
+        greycard_core::testing::rename_retry(shoot.join("x3b.tif"), away.join("x3b.tif"));
         pass(&mut s);
         let renamed = shoot.with_file_name("renamed");
-        std::fs::rename(&shoot, &renamed).unwrap();
+        greycard_core::testing::rename_retry(&shoot, &renamed);
         pass(&mut s);
         assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [2]", "x2.tif"]);
-        std::fs::rename(away.join("x3b.tif"), renamed.join("x3c.tif")).unwrap();
+        greycard_core::testing::rename_retry(away.join("x3b.tif"), renamed.join("x3c.tif"));
         pass(&mut s);
         assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
         assert_eq!(on_disk(&s), [["x1.tif", "x3c.tif", "x4.tif"]]);
@@ -1127,7 +1127,7 @@ mod tests {
 
         // x4 renamed by another hand: the pass's move carries it.
         let renamed = s.files[4].with_file_name("x5.tif");
-        std::fs::rename(&s.files[4], &renamed).unwrap();
+        greycard_core::testing::rename_retry(&s.files[4], &renamed);
         let report = s.writer.index_folder(&shoot, &mut |_| {}).unwrap();
         assert_eq!(report.moved_files.len(), 1, "{report:?}");
         healed(&s.state, &s.app, crate::stacks::Found::of(&report));

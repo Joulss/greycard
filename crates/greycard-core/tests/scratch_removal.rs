@@ -18,19 +18,24 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 const ALLOW: &str = "remove_dir_all allowed:";
+/// A bare `fs::rename` in the window crate's test code is refused the
+/// same way: Windows refuses to rename a file or a folder while the
+/// thumbnail pool or the worker holds a file under it open, so a test
+/// renames through `greycard_core::testing::rename_retry`, or says
+/// why on the line above with this.
+const RENAME_ALLOW: &str = "rename allowed:";
 
-#[test]
-fn no_test_removes_a_folder_bare() {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let crates = crates.canonicalize().unwrap();
+/// Every `.rs` file under the crates, with each file's blanked code and
+/// its test spans, and the set of files that are test code whole.
+fn test_code(crates: &Path) -> TestCode {
     let mut files = Vec::new();
-    rust_files(&crates, &mut files);
+    rust_files(crates, &mut files);
     assert!(files.len() > 100, "found only {} files", files.len());
 
     let mut test_files: BTreeSet<PathBuf> = files
         .iter()
         .filter(|f| {
-            f.strip_prefix(&crates)
+            f.strip_prefix(crates)
                 .unwrap()
                 .components()
                 .nth(1)
@@ -68,36 +73,91 @@ fn no_test_removes_a_folder_bare() {
         }
         test_files.extend(more);
     }
+    TestCode {
+        files,
+        spans,
+        test_files,
+    }
+}
 
+struct TestCode {
+    files: Vec<PathBuf>,
+    spans: std::collections::HashMap<PathBuf, (String, Vec<std::ops::Range<usize>>)>,
+    test_files: BTreeSet<PathBuf>,
+}
+
+/// The `file:line` of every `needle` in test code under `crates`,
+/// among the files `take` admits, not allowed by `allow` on its line
+/// or the line above.
+fn bare_in_tests(
+    crates: &Path,
+    code: &TestCode,
+    needle: &str,
+    allow: &str,
+    take: impl Fn(&Path) -> bool,
+) -> Vec<String> {
     let mut bare = Vec::new();
-    for f in &files {
+    for f in &code.files {
+        if !take(f) {
+            continue;
+        }
         let raw = std::fs::read_to_string(f).unwrap();
         let raw: Vec<&str> = raw.lines().collect();
-        let (code, s) = &spans[f];
-        let whole = test_files.contains(f);
+        let (blanked, s) = &code.spans[f];
+        let whole = code.test_files.contains(f);
         let mut offset = 0;
-        for (i, line) in code.split('\n').enumerate() {
-            let at = line.find("remove_dir_all").map(|c| offset + c);
+        for (i, line) in blanked.split('\n').enumerate() {
+            let at = line.find(needle).map(|c| offset + c);
             offset += line.len() + 1;
             let Some(at) = at else { continue };
             if !whole && !s.iter().any(|r| r.contains(&at)) {
                 continue;
             }
-            let allowed = raw[i].contains(ALLOW) || (i > 0 && raw[i - 1].contains(ALLOW));
+            let allowed = raw[i].contains(allow) || (i > 0 && raw[i - 1].contains(allow));
             if !allowed {
                 bare.push(format!(
                     "{}:{}",
-                    f.strip_prefix(&crates).unwrap().display(),
+                    f.strip_prefix(crates).unwrap().display(),
                     i + 1
                 ));
             }
         }
     }
+    bare
+}
+
+#[test]
+fn no_test_removes_a_folder_bare() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let crates = crates.canonicalize().unwrap();
+    let code = test_code(&crates);
+    let bare = bare_in_tests(&crates, &code, "remove_dir_all", ALLOW, |_| true);
     assert!(
         bare.is_empty(),
         "a bare remove_dir_all in test code; use greycard_core::testing::remove_dir_retry \
          (or the window's testing::remove_scratch), or say why on the line above with \
          `// {ALLOW} <why>`:\n{}",
+        bare.join("\n")
+    );
+}
+
+#[test]
+fn no_window_test_renames_bare() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let crates = crates.canonicalize().unwrap();
+    let code = test_code(&crates);
+    let bare = bare_in_tests(&crates, &code, "fs::rename(", RENAME_ALLOW, |f| {
+        f.strip_prefix(&crates)
+            .unwrap()
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str() == "greycard-ui")
+    });
+    assert!(
+        bare.is_empty(),
+        "a bare fs::rename in the window's test code, which Windows refuses while the pool \
+         or the worker holds a file under it; use greycard_core::testing::rename_retry, or say why on \
+         line above with `// {RENAME_ALLOW} <why>`:\n{}",
         bare.join("\n")
     );
 }
@@ -273,6 +333,9 @@ fn test_spans(raw: &str, code: &str) -> Result<Spans, String> {
                     }
                     break;
                 }
+                // A field or a variant ends at its comma or at the
+                // closing brace of what holds it: no body of its own.
+                b',' | b'}' => break,
                 _ => j += 1,
             }
         }
@@ -492,4 +555,14 @@ fn an_inner_attribute_and_an_inline_module_s_files_are_read() {
         modules,
         vec![(vec!["tests".to_string()], "child".to_string())]
     );
+}
+
+#[test]
+fn a_test_attribute_on_a_field_or_a_variant_ends_at_its_comma() {
+    let src = "struct S {\n    #[cfg(test)]\n    tamper: Option<u8>,\n}\nfn f() { let x = 1; }\n";
+    let (spans, _, _) = test_spans(src, &blank(src)).unwrap();
+    assert!(spans.is_empty(), "{spans:?}");
+    let src = "enum E {\n    A,\n    #[cfg(test)]\n    B\n}\nfn f() { let x = 1; }\n";
+    let (spans, _, _) = test_spans(src, &blank(src)).unwrap();
+    assert!(spans.is_empty(), "{spans:?}");
 }

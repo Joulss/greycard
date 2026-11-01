@@ -355,7 +355,7 @@ mod tests {
         // A downgrade and back: the older build moved our last run to
         // the old name and wrote its own. Its run comes first, ours
         // next, and the rest after, none written over out of turn.
-        std::fs::rename(dir.join(FILE), dir.join(format!("{FILE}.1"))).unwrap();
+        greycard_core::testing::rename_retry(dir.join(FILE), dir.join(format!("{FILE}.1")));
         std::fs::write(dir.join(FILE), "older build").unwrap();
         rotate(&dir);
         assert_eq!(read(&kept(1)), "older build");

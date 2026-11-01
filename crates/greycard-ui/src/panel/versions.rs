@@ -1175,9 +1175,9 @@ mod tests {
         // The sidecar is not there at the read.
         let gcd = Sidecar::find(&a).unwrap();
         let aside = dir.join("aside.gcd");
-        std::fs::rename(&gcd, &aside).unwrap();
+        greycard_core::testing::rename_retry(&gcd, &aside);
         let took = crate::rows::load_frame(&mut state.borrow_mut(), &app, 1);
-        std::fs::rename(&aside, &gcd).unwrap();
+        greycard_core::testing::rename_retry(&aside, &gcd);
         crate::versions::settle_pending(&mut state.borrow_mut(), &app, &worker);
         let left = cells(&state.borrow());
         crate::testing::remove_scratch(state, &dir);

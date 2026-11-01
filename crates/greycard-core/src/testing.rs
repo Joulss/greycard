@@ -94,3 +94,21 @@ fn still_held_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 fn still_held_under(_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     Vec::new()
 }
+
+/// A file or a folder renamed, tried again for a while when the system
+/// refuses: on Windows a folder cannot be renamed while any file under
+/// it is open, and a test's thumbnail pool or worker may still be
+/// reading one when the test gets here. The last refusal is the panic.
+pub fn rename_retry(from: impl AsRef<std::path::Path>, to: impl AsRef<std::path::Path>) {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    let start = std::time::Instant::now();
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return,
+            Err(_) if start.elapsed() < std::time::Duration::from_secs(20) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("{} could not be renamed: {e}", from.display()),
+        }
+    }
+}
