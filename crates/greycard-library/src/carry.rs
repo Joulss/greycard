@@ -1178,7 +1178,10 @@ mod tests {
             std::fs::read_to_string(sets_dir(&shoot).join(file_name(&c.id, Kind::Collection)))
                 .unwrap();
         assert!(text.contains("\"hint\": \"IMG_0001.CR3\""), "{text}");
-        assert!(text.contains(&hint_of(&other.join("IMG_0003.CR3"))));
+        // The frame in another folder keeps its whole path, as JSON
+        // writes it (its backslashes escaped on Windows).
+        let whole = serde_json::to_string(&hint_of(&other.join("IMG_0003.CR3"))).unwrap();
+        assert!(text.contains(&whole), "{text}");
 
         // The folder backed up, as a copy of it is on the desk.
         let desk = scratch("desk").join("archive-shoot");
@@ -1553,7 +1556,10 @@ mod tests {
 
     #[test]
     fn a_copy_in_a_backup_names_its_frames_by_name() {
-        let d = scratch("dest");
+        // Canonical, as the roots keep what they are given: the temp
+        // folder sits behind a symlink on macOS and takes the verbatim
+        // prefix on Windows.
+        let d = crate::canonical(&scratch("dest")).unwrap();
         let (local, archive) = (d.join("local"), d.join("archive"));
         let src = local.join("shoot");
         let dest = archive.join("2026").join("shoot");
