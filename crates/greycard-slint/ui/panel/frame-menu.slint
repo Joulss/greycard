@@ -102,6 +102,8 @@ export component FrameMenu inherits Rectangle {
     callback stack-top-asked();
     callback stack-remove();
     callback stack-compare();
+    /// Stack bursts, over the folders listed rather than the frame.
+    callback stack-bursts();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -196,7 +198,11 @@ export component FrameMenu inherits Rectangle {
                 title: "Unstack";
                 activated => { root.stack-unmake(); }
             }
-            if root.can-stack || root.stack > 0: MenuSeparator { }
+            if !root.queue: MenuItem {
+                title: "Stack bursts";
+                activated => { root.stack-bursts(); }
+            }
+            if root.can-stack || root.stack > 0 || !root.queue: MenuSeparator { }
             MenuItem {
                 title: root.lightbox ? "Leave lightbox" : "Lightbox";
                 activated => { root.lightbox-toggled(); }

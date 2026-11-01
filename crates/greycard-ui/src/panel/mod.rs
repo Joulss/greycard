@@ -1,6 +1,7 @@
 pub(crate) mod archive;
 pub(crate) mod assets;
 pub(crate) mod browser;
+pub(crate) mod bursts;
 pub(crate) mod camera_match;
 pub(crate) mod collections;
 pub(crate) mod color;

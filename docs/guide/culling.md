@@ -269,6 +269,13 @@ top, until you open it.
   marked "2/5" and so on. Click or **S** again to close it. In culling
   and the loupe **S** is the soft proof, so open a stack there by its
   badge on the filmstrip.
+- **Stack bursts** on the frame menu finds the bursts in the folders
+  you are looking at, frames taken up to two seconds apart that look
+  alike, and stacks each one, closed, with its sharpest frame on top.
+  Frames already in a stack are left as they are. The first time it
+  reads each frame's embedded preview, which takes about a minute for
+  a card of raws, longer for Fuji's large previews; the index keeps
+  what it learned, so the next time is quick.
 - **Set as top of stack** on the frame menu, or **Shift+S** in the
   grid, puts a frame on top. **Remove from stack** takes the selected
   frames out; a stack left with one frame is no stack. **Unstack**, or

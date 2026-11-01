@@ -56,7 +56,7 @@ fn chosen_stacks(st: &State) -> Vec<Listed> {
 
 /// The list made again after a change to the stacks, and the browser's
 /// rows with it.
-fn settle(st: &mut State, app: &App, worker: &Worker) {
+pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) {
     if !crate::versions::settle(st, app, worker) {
         crate::panel::browser::rebuild_browser(st, app);
     }
@@ -442,6 +442,7 @@ pub(crate) fn healed(
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
+    crate::panel::bursts::install(app, state, worker);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_stack_make(move || {

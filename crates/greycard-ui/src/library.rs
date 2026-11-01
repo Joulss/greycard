@@ -1696,7 +1696,7 @@ pub(crate) fn open_reader(st: &mut State, app: &App) {
     }
 }
 
-const READER_UNAVAILABLE: &str = "The library index could not be read";
+pub(crate) const READER_UNAVAILABLE: &str = "The library index could not be read";
 
 /// Each file's row id, as the index holds it now; `None` for a file
 /// it has no row for yet, and for every file while there is no index.

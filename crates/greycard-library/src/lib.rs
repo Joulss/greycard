@@ -33,6 +33,7 @@ use greycard_core::raw::{Shot, camera_name};
 use greycard_edit::meta::Meta;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
+pub mod bursts;
 pub mod collections;
 pub mod export_record;
 mod far;
@@ -101,7 +102,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 12;
+pub const SCHEMA_VERSION: i32 = 13;
 
 /// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
 /// schema 11 both: `taken` moved by `shift` seconds, worked out by
@@ -168,6 +169,9 @@ macro_rules! taken_at {
 /// 10's step did, so the next pass over each folder reads the shift a
 /// sidecar may already carry (written by this build on another
 /// machine, and indexed here by an older one that passed it over).
+/// Schema 13 adds the `looks` table, a frame's signature and focus
+/// score from its preview ([`bursts`]), made when the bursts are first
+/// asked for; a schema 12 library gains it empty.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -227,6 +231,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
              UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;"
         ),
     ),
+    (12, bursts::LOOKS_SCHEMA),
 ];
 
 /// The index's own facts about itself, by name: `develop_keys`, what
@@ -1354,6 +1359,7 @@ impl Library {
                     }
                     tx.execute_batch(SCHEMA)?;
                     tx.execute_batch(SYNC_SCHEMA)?;
+                    tx.execute_batch(bursts::LOOKS_SCHEMA)?;
                     tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 }

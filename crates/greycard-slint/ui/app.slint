@@ -212,6 +212,8 @@ export component App inherits Window {
     callback stack-top(bool);
     callback stack-remove();
     callback stack-compare();
+    /// Stack bursts: each burst of the folders listed made a stack.
+    callback stack-bursts();
     /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
     /// copies the frame on screen.
     callback menu-copy();
@@ -4925,6 +4927,7 @@ export component App inherits Window {
         stack-top-asked => { root.stack-top(true); root.menu-done(); }
         stack-remove => { root.stack-remove(); root.menu-done(); }
         stack-compare => { root.stack-compare(); root.menu-done(); }
+        stack-bursts => { root.stack-bursts(); root.menu-done(); }
     }
 
     // Recently opened: one list for the window, opened below the
