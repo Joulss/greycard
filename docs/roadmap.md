@@ -637,7 +637,10 @@ clears or a tester asks for it.
       and the scopes folded away on a small screen, their space to
       the panel
 - [ ] Before and after: the picture against a chosen history step or
-      snapshot under a wipe the pointer drags
+      snapshot under a wipe the pointer drags; and the last render
+      kept when a section is switched off or on, so Denoise's toggle
+      shows its difference at once under the wipe instead of after
+      the whole chain runs again (pixls, 2026-11-01)
 - [ ] Bezier handles on a curve's points, so a point's reach along
       the curve can be set
 - [ ] The crop's grid: its lines' count and spacing chosen, so a line
