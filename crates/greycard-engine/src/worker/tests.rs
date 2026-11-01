@@ -3663,3 +3663,188 @@ fn a_cleared_retouch_brings_back_the_bases_guide() {
     assert!(b.patched.is_none());
     assert_eq!(b.guide.data, own);
 }
+
+/// What the open file's develop and finish write for `input` under
+/// `edit` at `turn`, and what a set frame's walk of its stage list
+/// writes: each picture's pixels with what it went without, with no
+/// model in the store for either.
+fn develop_and_walk(
+    what: &str,
+    input: &Input,
+    edit: &Edit,
+    turn: u8,
+) -> (
+    (greycard_render::export::Rendered, Vec<String>),
+    (greycard_render::export::Rendered, Vec<String>),
+) {
+    let empty = crate::testing::scratch_dir(what).join("models");
+    std::fs::create_dir_all(&empty).unwrap();
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Tiff,
+        ..Default::default()
+    };
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
+    let (mut base, mut learned) = (None, None);
+    let (outcome, image) = develop_job(
+        input,
+        edit,
+        turn,
+        0,
+        &mut base,
+        &mut learned,
+        &mut ai,
+        None,
+        None,
+        &mut None,
+        &deliver,
+    );
+    let mut said = left_out_of(&outcome, base.as_ref());
+    let (mut developed, masks) =
+        finish_export(image.unwrap(), edit, base.as_ref(), &mut ai, &settings);
+    greycard_render::export::border(&mut developed, &settings);
+    greycard_render::export::mark(&mut developed, &settings).unwrap();
+    said.extend(masks);
+    let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
+    let walked = super::export::walk_export(
+        input.clone(),
+        edit,
+        turn,
+        &mut super::export::ExportModels::new(&mut ai, None, &deliver),
+        None,
+        &settings,
+    )
+    .unwrap();
+    crate::testing::remove_dir_retry(empty.parent().unwrap());
+    ((developed, said), walked)
+}
+
+fn same_pixels(a: &greycard_render::export::Rendered, b: &greycard_render::export::Rendered) {
+    use greycard_render::export::Pixels;
+    assert_eq!((a.width, a.height), (b.width, b.height));
+    match (&a.pixels, &b.pixels) {
+        (Pixels::Sixteen(a), Pixels::Sixteen(b)) => assert!(a == b, "the pixels differ"),
+        (Pixels::Eight(a), Pixels::Eight(b)) => assert!(a == b, "the pixels differ"),
+        _ => panic!("one picture is 8-bit and the other 16"),
+    }
+}
+
+/// An edit that asks for a learned denoiser, a Fill, and a learned
+/// mask, none of whose models is in the store, beside a Heal, a
+/// Detail of the edit's and the mask's own, the sharpen, and a
+/// straightened crop.
+fn edit_without_its_models() -> Edit {
+    use greycard_edit::mask::Component;
+    use greycard_edit::retouch::{Method, Patch};
+    let mut edit = Edit::default();
+    edit.noise.learned = greycard_edit::Learned::Fast;
+    edit.noise.learned_strength = 0.6;
+    edit.detail.clarity = 0.3;
+    edit.geometry.angle = 2.5;
+    edit.geometry.crop = Some(greycard_edit::geometry::Crop {
+        x: 0.1,
+        y: 0.05,
+        w: 0.7,
+        h: 0.8,
+    });
+    edit.retouch.patches = vec![
+        Patch {
+            id: 21,
+            method: Method::Fill,
+            points: vec![[0.5, 0.5]],
+            radius: 0.08,
+            ..Patch::default()
+        },
+        Patch {
+            id: 22,
+            method: Method::Heal,
+            points: vec![[0.3, 0.6]],
+            radius: 0.05,
+            ..Patch::default()
+        },
+    ];
+    let mut look = greycard_edit::Look::default();
+    look.light.exposure = 0.8;
+    look.detail.clarity = 0.5;
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 11,
+        name: "Face".into(),
+        mask: greycard_edit::mask::Mask {
+            components: vec![Component {
+                shape: Shape::Subject {},
+                ..Component::default()
+            }],
+            invert: false,
+        },
+        look,
+        ..greycard_edit::Adjustment::default()
+    });
+    edit
+}
+
+/// A set frame's export walks its stage list and writes what the open
+/// file's develop and finish write: the same pixels, and the same words
+/// for what it went without, the engine's denoise standing in for the
+/// learned one, the Fill left as it was, and the mask written without
+/// its shape. At each quarter turn, the crop straightened.
+#[test]
+fn a_set_frame_s_walk_writes_what_the_develop_writes() {
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let edit = edit_without_its_models();
+    for turn in 0..4 {
+        let ((developed, said), (walked, left_out)) =
+            develop_and_walk("export-walk", &Input::Raw(frame.clone()), &edit, turn);
+        same_pixels(&developed, &walked);
+        assert_eq!(left_out, said);
+        assert_eq!(left_out.len(), 3, "{left_out:?}");
+        assert!(
+            left_out[0].starts_with("the learned denoiser"),
+            "{}",
+            left_out[0]
+        );
+        assert!(left_out[1].starts_with("fill Fill 21: "), "{}", left_out[1]);
+        assert!(
+            left_out[2].starts_with("Face's Subject shape: "),
+            "{}",
+            left_out[2]
+        );
+    }
+}
+
+/// An X-Trans mosaic has no learned denoiser: the walk says so in the
+/// develop's words, and writes its picture.
+#[test]
+fn a_set_frame_s_walk_says_the_x_trans_has_no_learned_denoiser() {
+    let mut frame = aberrated_frame(168, 120);
+    frame.layout = greycard_core::raw::SensorLayout::Cfa(greycard_core::raw::CfaPattern::xtrans());
+    let mut edit = Edit::default();
+    edit.noise.learned = greycard_edit::Learned::Fast;
+    let ((developed, said), (walked, left_out)) =
+        develop_and_walk("export-walk-xtrans", &Input::Raw(Arc::new(frame)), &edit, 0);
+    same_pixels(&developed, &walked);
+    assert_eq!(left_out, said);
+    assert_eq!(
+        left_out,
+        ["the denoise: the learned denoiser has no X-Trans version yet; none ran"]
+    );
+}
+
+/// A picture file walks as its develop does: turned, cropped, its
+/// retouch and its mask, with no capture sharpen.
+#[test]
+fn a_set_picture_s_walk_writes_what_the_develop_writes() {
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let mut base = None;
+    let (_, image) = develop_once(&frame, &mut base, &mut None);
+    let input = picture_input(&image.unwrap());
+    let mut edit = edit_without_its_models();
+    edit.noise.learned = greycard_edit::Learned::Off;
+    edit.sharpen.enabled = false;
+    for turn in [0, 3] {
+        let ((developed, said), (walked, left_out)) =
+            develop_and_walk("export-walk-picture", &input, &edit, turn);
+        same_pixels(&developed, &walked);
+        assert_eq!(left_out, said);
+        assert_eq!(left_out.len(), 2, "{left_out:?}");
+    }
+}

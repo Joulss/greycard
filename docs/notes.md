@@ -508,3 +508,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§493. Collections and stacks carried beside their frames](notes/493-collections-and-stacks-carried-beside-their-frames.md) (2026-11-01)
 - [§494. Exports named by a pattern](notes/494-exports-named-by-a-pattern.md) (2026-11-01)
 - [§495. Previews near the screen, and around the cull](notes/495-previews-near-the-screen-and-around-the-cull.md) (2026-11-01)
+- [§496. The engine, part two: the set export as a walk](notes/496-the-engine-part-two-the-set-export-as-a-walk.md) (2026-11-01)

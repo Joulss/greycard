@@ -16,7 +16,8 @@ use greycard_core::develop::local_contrast::{
 };
 use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
 use greycard_core::develop::{
-    CaCorrector, DemosaicMethod, DevelopSettings, demosaic_prepared, develop, finish, prepare_with,
+    CaCorrector, DemosaicMethod, DevelopSettings, Prepared, demosaic_prepared, develop, finish,
+    prepare_with,
 };
 use greycard_core::image::WorkingImage;
 use greycard_core::picture::{Picture, decode_picture_path, is_picture_path};
@@ -48,7 +49,7 @@ use self::{
     },
     decode::{lens_corrections, lens_report, open_told, timed_open},
     develop::develop_job,
-    engine::{left_out_of, run},
+    engine::{left_out_of, left_out_words, run},
     export::{export_other, finish_export, open_picture, scene_export, seeded, write_export},
     keep::keep_open,
     masks::{MasksMade, learned_masks, masks_for, person_on},
@@ -976,6 +977,7 @@ pub use crate::stages::quarters;
 /// The open file: a raw to develop, or a picture already in the
 /// working space (its image taken out of its record, so the base
 /// shares it rather than copying it).
+#[derive(Clone)]
 enum Input {
     Raw(Arc<RawFrame>),
     Picture {

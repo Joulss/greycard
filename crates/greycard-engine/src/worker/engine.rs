@@ -18,6 +18,16 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String>
         (LearnedReport::Kept, Some(stood_in)) => stood_in,
         (report, _) => report,
     };
+    left_out_words(learned, base.and_then(|b| b.gave_way.as_ref()), fills)
+}
+
+/// [`left_out_of`]'s words for a develop's learned denoiser, the
+/// demosaic that gave way, and its fills.
+pub(super) fn left_out_words(
+    learned: &LearnedReport,
+    gave_way: Option<&String>,
+    fills: &FillReport,
+) -> Vec<String> {
     let mut out = Vec::new();
     match learned {
         LearnedReport::Missing(model) => out.push(format!(
@@ -30,7 +40,7 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String>
         LearnedReport::Unavailable(why) => out.push(format!("the denoise: {why}; none ran")),
         _ => {}
     }
-    if let Some(why) = base.and_then(|b| b.gave_way.as_ref()) {
+    if let Some(why) = gave_way {
         out.push(why.clone());
     }
     for (name, model) in &fills.missing {

@@ -15,19 +15,40 @@ pub(super) fn learned_masks(
     base: Option<&Base>,
     ai: &mut Ai,
 ) -> (Rasters, Vec<String>) {
-    let mut rasters = std::collections::HashMap::new();
-    let mut left_out = Vec::new();
-    // A look the edit names that the export cannot have, not in the
-    // look directory or with no table for the picture's display curve:
-    // the picture is finished without it, as the window draws it
-    // without, and said in the Look section's own words.
-    if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
-        && edit.look_lut.strength > 0.0
+    let mut left_out: Vec<String> = look_left_out(edit).into_iter().collect();
+    let Some(b) = base else {
+        return (Rasters::new(), left_out);
+    };
+    let (rasters, masks) = learned_rasters(
+        edit,
+        ai,
+        &On {
+            stamp: b.stamp,
+            image: &b.image,
+            retouched: retouched_of(b, Some(edit)),
+            edit: &b.edit,
+            source: b.source,
+            turn: b.turn,
+        },
+    );
+    left_out.extend(masks);
+    (rasters, left_out)
+}
+
+/// A look the edit names that the export cannot have, not in the
+/// look directory or with no table for the picture's display curve:
+/// the picture is finished without it, as the window draws it
+/// without, and said in the Look section's own words.
+pub(super) fn look_left_out(edit: &Edit) -> Option<String> {
+    let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut else {
+        return None;
+    };
+    let missed = edit.look_lut.strength > 0.0
         && edit
             .look_lut
             .look_under(&greycard_edit_io::Stores::user(), edit.display_curve)
-            .is_none()
-    {
+            .is_none();
+    missed.then(|| {
         let why = if greycard_edit_io::looks::is_there(&edit.look_lut) {
             greycard_edit::look::mismatch(
                 &greycard_edit_io::looks::list(),
@@ -39,54 +60,73 @@ pub(super) fn learned_masks(
         } else {
             "not in the look directory".into()
         };
-        left_out.push(format!(
+        format!(
             "the look {name}: {}; written without it",
             why.trim_end_matches(['.', ' '])
-        ));
-    }
-    if let Some(b) = base {
-        for a in &edit.adjustments {
-            // An adjustment switched off, or with nothing live in its
-            // mask, is not drawn (`finish::Local::of`): nothing of it
-            // is made, and nothing of it is missed.
-            if !a.enabled || a.mask.is_empty() {
+        )
+    })
+}
+
+/// The picture the learned masks are made on, and what the models'
+/// cache knows it by.
+pub(super) struct On<'a> {
+    /// Counts the pictures made, for the masks to know theirs.
+    pub stamp: u64,
+    pub image: &'a WorkingImage,
+    /// The picture with its retouch applied, when a patch is on it.
+    pub retouched: Option<crate::ai::Retouched<'a>>,
+    /// The edit the picture was developed under.
+    pub edit: &'a Edit,
+    pub source: greycard_render::finish::Source,
+    pub turn: u8,
+}
+
+/// Each learned mask `edit` draws, made now on `on` if it is not yet;
+/// and each one whose model is not downloaded or failed, in words.
+pub(super) fn learned_rasters(edit: &Edit, ai: &mut Ai, on: &On<'_>) -> (Rasters, Vec<String>) {
+    let mut rasters = Rasters::new();
+    let mut left_out = Vec::new();
+    for a in &edit.adjustments {
+        // An adjustment switched off, or with nothing live in its
+        // mask, is not drawn (`finish::Local::of`): nothing of it
+        // is made, and nothing of it is missed.
+        if !a.enabled || a.mask.is_empty() {
+            continue;
+        }
+        for (i, c) in a.mask.live() {
+            // An Object with nothing picked yet asks for nothing.
+            if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
                 continue;
             }
-            for (i, c) in a.mask.live() {
-                // An Object with nothing picked yet asks for nothing.
-                if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
-                    continue;
-                }
-                match ai.raster_retouched(
-                    b.stamp,
-                    &b.image,
-                    retouched_of(b, Some(edit)),
-                    &b.edit,
-                    b.source,
-                    b.turn,
-                    (a.id, i),
-                    &c.shape,
-                    None,
-                ) {
-                    Ok((made, _)) => {
-                        // A Part whose person is not settled here goes
-                        // out empty, and the log says so.
-                        if let Some(part) = &made.part {
-                            let why = part.left_out();
-                            left_out.push(format!(
-                                "{}'s {} shape: {why}; its mask written empty",
-                                a.name,
-                                c.shape.name()
-                            ));
-                        }
-                        rasters.insert((a.id, i), made.raster);
+            match ai.raster_retouched(
+                on.stamp,
+                on.image,
+                on.retouched,
+                on.edit,
+                on.source,
+                on.turn,
+                (a.id, i),
+                &c.shape,
+                None,
+            ) {
+                Ok((made, _)) => {
+                    // A Part whose person is not settled here goes
+                    // out empty, and the log says so.
+                    if let Some(part) = &made.part {
+                        let why = part.left_out();
+                        left_out.push(format!(
+                            "{}'s {} shape: {why}; its mask written empty",
+                            a.name,
+                            c.shape.name()
+                        ));
                     }
-                    Err(why) => left_out.push(format!(
-                        "{}'s {} shape: {why}; its mask written without it",
-                        a.name,
-                        c.shape.name()
-                    )),
+                    rasters.insert((a.id, i), made.raster);
                 }
+                Err(why) => left_out.push(format!(
+                    "{}'s {} shape: {why}; its mask written without it",
+                    a.name,
+                    c.shape.name()
+                )),
             }
         }
     }

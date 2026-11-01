@@ -459,6 +459,9 @@ pub enum Step {
     Keep(Keep),
 }
 
+/// The name a list's skips give the learned denoiser.
+pub const LEARNED_DENOISER: &str = "the learned denoiser";
+
 /// Why a stage the edit asks for is not in a list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Skip {
@@ -645,12 +648,12 @@ pub fn stages(
             let xtrans = pattern.as_ref().is_some_and(CfaPattern::is_xtrans);
             let learned = match tier {
                 Some(_) if reduced => {
-                    s.skip("the learned denoiser", Skip::Reduced);
+                    s.skip(LEARNED_DENOISER, Skip::Reduced);
                     None
                 }
                 Some(_) if xtrans => {
                     s.skip(
-                        "the learned denoiser",
+                        LEARNED_DENOISER,
                         Skip::Unavailable("the learned denoiser has no X-Trans version yet"),
                     );
                     None
@@ -1064,11 +1067,7 @@ mod tests {
         // The reduced develop has no learned denoiser, and says so.
         let reduced = stages(&edit, &Purpose::Reduced, &raw(0), None);
         assert!(!reduced.ops().any(|o| matches!(o, Stage::Learned(_))));
-        assert!(
-            reduced
-                .skipped
-                .contains(&("the learned denoiser", Skip::Reduced))
-        );
+        assert!(reduced.skipped.contains(&(LEARNED_DENOISER, Skip::Reduced)));
         assert_eq!(needs(&edit, &Purpose::Reduced).denoiser, None);
 
         // Nor does an X-Trans mosaic, which it has no version for; the
@@ -1078,7 +1077,7 @@ mod tests {
         assert!(!x.ops().any(|o| matches!(o, Stage::Learned(_))));
         assert!(matches!(
             x.skipped[..],
-            [("the learned denoiser", Skip::Unavailable(_))]
+            [(LEARNED_DENOISER, Skip::Unavailable(_))]
         ));
         assert!(!x.reduced_recipe());
         assert!(!stages(&edit, &export(), &xtrans(), None).reduced_recipe());

@@ -997,15 +997,55 @@ fn note_developed(
     sharpened: Option<Sharpened>,
     total: f64,
 ) {
-    for (name, why) in &fills.failed {
-        tracing::warn!("fill {name}: {why}");
-    }
+    warn_failed_fills(fills);
     tracing::info!(
         "{}",
         developed_line(
             width, height, from, ca, learned, fills, stages, detail, dehazed, sharpened, total
         )
     );
+}
+
+/// The learned denoiser's part of a develop's line: how its answer
+/// was had, and on which provider when it ran.
+pub(super) fn learned_part(learned: &LearnedReport) -> Option<String> {
+    Some(match learned {
+        LearnedReport::Off => return None,
+        LearnedReport::Ran {
+            version,
+            provider,
+            seconds,
+        } => format!("denoiser {version} on {provider} {seconds:.2} s"),
+        LearnedReport::Cached { seconds } => format!("denoiser cached {seconds:.2} s"),
+        LearnedReport::Kept => "denoiser kept".into(),
+        LearnedReport::Missing(_) => "denoiser missing".into(),
+        LearnedReport::Failed(_) => "denoiser failed".into(),
+        LearnedReport::Unavailable(_) => "no learned denoiser for this mosaic".into(),
+    })
+}
+
+/// The fills' parts of a develop's line: those made and their
+/// seconds, and those whose model is missing.
+pub(super) fn fill_parts(fills: &FillReport) -> Vec<String> {
+    let mut parts = Vec::new();
+    if !fills.made.is_empty() {
+        parts.push(format!(
+            "{} fill(s) {:.2} s",
+            fills.made.len(),
+            fills.seconds
+        ));
+    }
+    if !fills.missing.is_empty() {
+        parts.push(format!("{} fill(s) missing", fills.missing.len()));
+    }
+    parts
+}
+
+/// Each fill the model failed, warned: the line counts none of them.
+pub(super) fn warn_failed_fills(fills: &FillReport) {
+    for (name, why) in &fills.failed {
+        tracing::warn!("fill {name}: {why}");
+    }
 }
 
 /// [`note_developed`]'s line: where the base came from, then the CA
@@ -1041,32 +1081,11 @@ fn developed_line(
         Some((CaRan::Cpu, s)) => parts.push(format!("CA {s:.2} s")),
         None => {}
     }
-    match learned {
-        LearnedReport::Off => {}
-        LearnedReport::Ran {
-            version,
-            provider,
-            seconds,
-        } => parts.push(format!("denoiser {version} on {provider} {seconds:.2} s")),
-        LearnedReport::Cached { seconds } => parts.push(format!("denoiser cached {seconds:.2} s")),
-        LearnedReport::Kept => parts.push("denoiser kept".into()),
-        LearnedReport::Missing(_) => parts.push("denoiser missing".into()),
-        LearnedReport::Failed(_) => parts.push("denoiser failed".into()),
-        LearnedReport::Unavailable(_) => parts.push("no learned denoiser for this mosaic".into()),
-    }
+    parts.extend(learned_part(learned));
     for (name, s) in stages {
         parts.push(format!("{name} {s:.2} s"));
     }
-    if !fills.made.is_empty() {
-        parts.push(format!(
-            "{} fill(s) {:.2} s",
-            fills.made.len(),
-            fills.seconds
-        ));
-    }
-    if !fills.missing.is_empty() {
-        parts.push(format!("{} fill(s) missing", fills.missing.len()));
-    }
+    parts.extend(fill_parts(fills));
     match detail {
         Some(DetailRan::Gpu) => parts.push("local contrast on the GPU".into()),
         Some(DetailRan::Cpu(s)) => parts.push(format!("local contrast {s:.2} s")),

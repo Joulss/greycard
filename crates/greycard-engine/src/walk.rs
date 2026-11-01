@@ -188,15 +188,16 @@ pub trait Models {
     fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>>;
 
     /// Whether a fill left unmade in `retouch` could be made now.
-    fn could_fill_more(&self, retouch: &Retouch, picture: &WorkingImage) -> bool;
+    fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool;
 
-    /// The learned masks' rasters, made on `base` (and on `patched`
-    /// where a patch meets a shape) as `how` says.
+    /// The learned masks' rasters, made on `base` (and on `patched`,
+    /// the picture with the retouch beside it applied, where a patch
+    /// meets a shape) as `how` says.
     fn rasters(
         &mut self,
         how: Masks,
         base: &Arc<WorkingImage>,
-        patched: Option<&Arc<WorkingImage>>,
+        patched: Option<(&Arc<WorkingImage>, &Retouch)>,
         meta: &Meta,
     ) -> Rasters;
 }
@@ -218,7 +219,7 @@ impl Models for NoModels {
         None
     }
 
-    fn could_fill_more(&self, _: &Retouch, _: &WorkingImage) -> bool {
+    fn could_fill_more(&mut self, _: &Retouch, _: &WorkingImage) -> bool {
         false
     }
 
@@ -226,7 +227,7 @@ impl Models for NoModels {
         &mut self,
         _: Masks,
         _: &Arc<WorkingImage>,
-        _: Option<&Arc<WorkingImage>>,
+        _: Option<(&Arc<WorkingImage>, &Retouch)>,
         _: &Meta,
     ) -> Rasters {
         Rasters::new()
@@ -345,7 +346,7 @@ impl Kept {
     /// allows, its patched picture only while no fill left unmade in it
     /// could be made now. The points past it are let go, as they were
     /// another list's.
-    fn resume(&mut self, steps: &Steps, plan: &[Place], models: &dyn Models) -> Option<usize> {
+    fn resume(&mut self, steps: &Steps, plan: &[Place], models: &mut dyn Models) -> Option<usize> {
         let found = self
             .points
             .iter()
@@ -601,15 +602,23 @@ fn walk_held(
                     walked.taps.planes = job.land(kept);
                 }
                 if let Some((how, base)) = walked.taps.masks.clone() {
+                    // The patched picture, only where a retouch made it.
                     let patched = kept
                         .points
                         .iter()
                         .find(|p| p.keep == Keep::Patched)
-                        .and_then(|p| match &p.buf {
-                            KeptBuf::Working(image) => Some(image.clone()),
+                        .and_then(|p| match (&p.buf, &p.retouch) {
+                            (KeptBuf::Working(image), Some((retouch, _))) => {
+                                Some((image.clone(), retouch.clone()))
+                            }
                             _ => None,
                         });
-                    walked.rasters = models.rasters(how, &base, patched.as_ref(), &walked.meta);
+                    walked.rasters = models.rasters(
+                        how,
+                        &base,
+                        patched.as_ref().map(|(image, retouch)| (image, retouch)),
+                        &walked.meta,
+                    );
                 }
                 walked.stood_in = stood_in;
                 return Ok(walked);
@@ -669,7 +678,7 @@ fn start(
     plan: &[Place],
     input: &Input,
     kept: &mut Kept,
-    models: &dyn Models,
+    models: &mut dyn Models,
 ) -> Result<(usize, Carried, Option<Keep>, Vec<Place>), Retry> {
     let point = kept
         .resume(steps, plan, models)

@@ -267,54 +267,11 @@ fn run_learned(
     ca: Option<CaCorrector<'_>>,
     stages: &mut Stages,
 ) -> anyhow::Result<(LearnedBase, LearnedReport)> {
-    use anyhow::Context;
-    if let greycard_core::raw::SensorLayout::Cfa(p) = &frame.layout
-        && !greycard_core::develop::rcd::is_bayer(p)
-    {
-        anyhow::bail!("the learned denoiser needs a 2x2 Bayer mosaic, not a {p} one");
-    }
+    bayer_only(frame)?;
     let prepared = timed(stages, "prepare", || {
         prepare_with(frame, settings, true, ca)
     })?;
-    let pattern = prepared
-        .pattern
-        .clone()
-        .context("the learned denoiser needs a Bayer mosaic")?;
-    let noise = prepared
-        .noise_model()
-        .context("the learned denoiser needs the frame's noise model")?;
-    let tiling = denoiser.tiling();
-    let start = Instant::now();
-    let key = cache.map(|c| (c, greycard_ai::DenoiseCache::key(model, tiling, &prepared)));
-    let (rgb, report) = match key.and_then(|(c, k)| c.read(k, &prepared)) {
-        Some(rgb) => (
-            rgb,
-            LearnedReport::Cached {
-                seconds: start.elapsed().as_secs_f64(),
-            },
-        ),
-        None => {
-            let rgb = denoiser.run(
-                &prepared.samples,
-                prepared.width,
-                prepared.height,
-                &pattern,
-                &noise,
-                tiling,
-            )?;
-            let report = LearnedReport::Ran {
-                version: denoiser.version().to_string(),
-                provider: denoiser.provider().label(),
-                seconds: start.elapsed().as_secs_f64(),
-            };
-            if let Some((c, k)) = key
-                && let Err(e) = c.write(k, frame, &prepared, &rgb)
-            {
-                tracing::warn!("denoise cache {}: {e}", c.path(k).display());
-            }
-            (rgb, report)
-        }
-    };
+    let (rgb, report) = network(frame, &prepared, model, denoiser, cache)?;
     let (plain_rgb, dual, _) = timed(stages, "demosaic", || {
         demosaic_prepared(&prepared, settings)
     })?;
@@ -338,6 +295,69 @@ fn run_learned(
         },
         report,
     ))
+}
+
+/// The learned denoiser's network takes a packed 2x2 Bayer mosaic.
+fn bayer_only(frame: &RawFrame) -> anyhow::Result<()> {
+    if let greycard_core::raw::SensorLayout::Cfa(p) = &frame.layout
+        && !greycard_core::develop::rcd::is_bayer(p)
+    {
+        anyhow::bail!("the learned denoiser needs a 2x2 Bayer mosaic, not a {p} one");
+    }
+    Ok(())
+}
+
+/// The network's camera RGB of `prepared`: from the disk cache when
+/// it is there, else run and put there.
+pub(super) fn network(
+    frame: &RawFrame,
+    prepared: &Prepared,
+    model: &'static greycard_ai::Model,
+    denoiser: &mut greycard_ai::Denoiser,
+    cache: Option<&greycard_ai::DenoiseCache>,
+) -> anyhow::Result<(Vec<f32>, LearnedReport)> {
+    use anyhow::Context;
+    bayer_only(frame)?;
+    let pattern = prepared
+        .pattern
+        .clone()
+        .context("the learned denoiser needs a Bayer mosaic")?;
+    let noise = prepared
+        .noise_model()
+        .context("the learned denoiser needs the frame's noise model")?;
+    let tiling = denoiser.tiling();
+    let start = Instant::now();
+    let key = cache.map(|c| (c, greycard_ai::DenoiseCache::key(model, tiling, prepared)));
+    let (rgb, report) = match key.and_then(|(c, k)| c.read(k, prepared)) {
+        Some(rgb) => (
+            rgb,
+            LearnedReport::Cached {
+                seconds: start.elapsed().as_secs_f64(),
+            },
+        ),
+        None => {
+            let rgb = denoiser.run(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                &pattern,
+                &noise,
+                tiling,
+            )?;
+            let report = LearnedReport::Ran {
+                version: denoiser.version().to_string(),
+                provider: denoiser.provider().label(),
+                seconds: start.elapsed().as_secs_f64(),
+            };
+            if let Some((c, k)) = key
+                && let Err(e) = c.write(k, frame, prepared, &rgb)
+            {
+                tracing::warn!("denoise cache {}: {e}", c.path(k).display());
+            }
+            (rgb, report)
+        }
+    };
+    Ok((rgb, report))
 }
 
 /// `plain` taken `strength` of the way to `model`, per sample: the

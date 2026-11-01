@@ -1,6 +1,10 @@
 //! The export path: opening a frame for it, and writing its picture.
 
+use greycard_core::develop::retouch::Region;
+use greycard_edit::retouch::Patch;
+
 use super::*;
+use crate::walk::NoLearned;
 
 /// The open file's picture under `edit` at `turn`: the last develop's
 /// when it was of the same develop and turn, else developed afresh.
@@ -54,11 +58,11 @@ pub(super) fn seeded(edit: &Edit, seed: bool, input: Option<&Input>) -> Edit {
     edit
 }
 
-/// A frame of a set that is not the open file: opened and developed
-/// here under its own edit, with a base and a learned pair of its
-/// own so the open file's are there as they were for the next
-/// develop, then written to `path`. The edit it was written under,
-/// and what of it was left out ([`left_out_of`]).
+/// A frame of a set that is not the open file: opened, walked through
+/// its stage list for the export ([`walk_export`]), and written to
+/// `path`, the open file's base and learned pair left as they were for
+/// the next develop. The edit it was written under, and what of it
+/// was left out.
 pub(super) fn export_other(
     frame: &crate::queue::Frame,
     ai: &mut Ai,
@@ -71,36 +75,292 @@ pub(super) fn export_other(
     let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
     let edit = seeded(&frame.edit, frame.seed_blend, Some(&input));
     ai.forget(Some(frame.source.clone()));
-    let (mut base, mut learned) = (None, None);
-    let (image, mut left_out) = match develop_job(
-        &input,
+    let (rendered, left_out) = walk_export(
+        input,
         &edit,
         frame.turn % 4,
-        0,
-        &mut base,
-        &mut learned,
-        ai,
-        cache,
+        &mut ExportModels::new(ai, cache, deliver),
         lenses,
-        &mut None,
-        deliver,
-    ) {
-        (outcome, Some(image)) => (image, left_out_of(&outcome, base.as_ref())),
-        (Outcome::Failed { message, .. }, None) => return Err(message),
-        _ => return Err("the develop made no picture".into()),
-    };
-    left_out.extend(write_export(
-        image,
+        settings,
+    )?;
+    write_rendered(
+        &rendered,
         &edit,
-        base.as_ref(),
-        ai,
         Some(&frame.source),
         Some(&metadata),
         frame.time_shift,
         settings,
         path,
-    )?);
+    )?;
     Ok((edit, left_out))
+}
+
+/// `input` walked under `edit` at `turn` through its stage list for
+/// the export, on the CPU and from nothing kept, with `models`'s
+/// models, and finished under the sheet's `settings` with its border
+/// and mark: the file's pixels. Beside them, what of the edit was left
+/// out, in [`left_out_of`]'s words and then [`learned_masks`]'.
+pub(super) fn walk_export(
+    input: Input,
+    edit: &Edit,
+    turn: u8,
+    models: &mut ExportModels<'_>,
+    lenses: Option<&greycard_lens::Database>,
+    settings: &greycard_render::export::Settings,
+) -> Result<(greycard_render::export::Rendered, Vec<String>), String> {
+    use crate::stages::{Keep, LEARNED_DENOISER, Purpose, Skip, Stage, Step, Tap, stages};
+    use crate::walk::{Buf, Kept, NoHold, plan, walk};
+
+    let started = Instant::now();
+    let input = match input {
+        Input::Raw(f) => crate::walk::Input::Raw(f),
+        Input::Picture { image, meta } => crate::walk::Input::Picture { image, meta },
+    };
+    models.edit = edit.clone();
+    models.turn = turn;
+    let purpose = Purpose::Export(Box::new(settings.clone()));
+    let mut steps = stages(edit, &purpose, &input.facts(turn), lenses);
+    // A learned denoiser not to be had is known before the walk, as the
+    // develop knows it before its prepare: the engine's own path stands
+    // in from the start rather than prepare the mosaic twice.
+    let model = steps.ops().find_map(|s| match s {
+        Stage::Learned(model) => Some(*model),
+        _ => None,
+    });
+    let mut stood_in = None;
+    if let Some(model) = model
+        && let Err(why) = models.denoiser(model)
+    {
+        tracing::info!("the learned denoiser: {why:?}; the engine's own path stands in");
+        steps = steps.without_learned();
+        stood_in = Some(why);
+    }
+    // Nothing is kept for a later walk: each kept point holds a picture
+    // the size of the frame, and the stage after it would copy it
+    // rather than change it. The patched picture alone stays when a
+    // learned mask is made beside a Fill, which it is made on where the
+    // Fill meets it; no other patch changes what a mask is made on.
+    let on_patched = steps
+        .steps
+        .iter()
+        .any(|s| matches!(s, Step::Tap(Tap::Masks(_))))
+        && steps.ops().any(|s| {
+            matches!(s, Stage::Retouch(r, _)
+                if r.patches.iter().any(|p| p.method == greycard_edit::retouch::Method::Fill))
+        });
+    steps.steps.retain(|s| match s {
+        Step::Keep(Keep::Patched) => on_patched,
+        Step::Keep(_) => false,
+        _ => true,
+    });
+    let plan = plan(&steps, &purpose, false);
+    let mut kept = Kept::new();
+    let walked = walk(&steps, &plan, &input, &mut kept, models, &mut None, &NoHold)
+        .map_err(|e| e.to_string())?;
+    drop(kept);
+    drop(input);
+    debug_assert!(walked.without.is_empty(), "an export runs its fills");
+    let fills = std::mem::take(&mut models.fills);
+    let masks = std::mem::take(&mut models.masks);
+    let learned = std::mem::replace(&mut models.learned, LearnedReport::Off);
+    // The learned denoiser as the worker's develop reports it: what
+    // stood in for it, or the mosaic it has no version for.
+    let unavailable = steps.skipped.iter().find_map(|(name, why)| match why {
+        Skip::Unavailable(why) if *name == LEARNED_DENOISER => Some(*why),
+        _ => None,
+    });
+    let learned = match (walked.stood_in.as_ref().or(stood_in.as_ref()), unavailable) {
+        (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
+        (Some(NoLearned::Failed(why)), _) => LearnedReport::Failed(why.clone()),
+        (None, Some(why)) => LearnedReport::Unavailable(why),
+        (None, None) => learned,
+    };
+    // The network is the demosaic when it ran: the one the edit chose
+    // did not give way to anything.
+    let ran = matches!(
+        learned,
+        LearnedReport::Ran { .. } | LearnedReport::Cached { .. }
+    );
+    let gave_way = walked.meta.gave_way.as_ref().filter(|_| !ran);
+    let mut left_out = left_out_words(&learned, gave_way, &fills);
+    left_out.extend(super::masks::look_left_out(edit));
+    left_out.extend(masks);
+    let mut walked = walked;
+    // Neither is read by the finish: the base the masks were made on,
+    // and the sharpen's blend, which the viewport alone paints.
+    walked.taps.masks = None;
+    walked.sharpen_mask = None;
+    let finish = walked.finish_input();
+    let Buf::Working(image) = walked.buf else {
+        unreachable!("a walk on the CPU ends at a picture in memory")
+    };
+    // The develop's line, its denoiser and fills in its words.
+    super::develop::warn_failed_fills(&fills);
+    let parts: Vec<String> = super::develop::learned_part(&learned)
+        .into_iter()
+        .chain(
+            walked
+                .seconds
+                .iter()
+                .map(|(stage, s)| format!("{stage} {s:.2} s")),
+        )
+        .chain(super::develop::fill_parts(&fills))
+        .collect();
+    tracing::info!(
+        "developed {}x{} for the export: {}, total {:.2} s",
+        image.width,
+        image.height,
+        parts.join(", "),
+        started.elapsed().as_secs_f64()
+    );
+    let rendered = crate::finish::finish_file(&image, edit, &finish, settings)
+        .map_err(|e| format!("{e:#}"))?;
+    Ok((rendered, left_out))
+}
+
+/// The models an export's walk runs, the set's own: the learned
+/// denoiser through the disk cache, the fills, and the learned masks,
+/// each one that could not be had noted as the worker's develop and
+/// [`learned_masks`] note it.
+pub(super) struct ExportModels<'a> {
+    ai: &'a mut Ai,
+    cache: Option<&'a greycard_ai::DenoiseCache>,
+    deliver: &'a Deliver,
+    /// The edit and the turn the walk is of.
+    edit: Edit,
+    turn: u8,
+    /// How the learned denoiser's answer was had, for the log line.
+    learned: LearnedReport,
+    fills: FillReport,
+    /// The Fill patches left as they were, by id, which the learned
+    /// masks keep the base's raster under.
+    unmade: Vec<u64>,
+    /// Each learned mask not made, in words.
+    masks: Vec<String>,
+}
+
+impl<'a> ExportModels<'a> {
+    pub(super) fn new(
+        ai: &'a mut Ai,
+        cache: Option<&'a greycard_ai::DenoiseCache>,
+        deliver: &'a Deliver,
+    ) -> Self {
+        Self {
+            ai,
+            cache,
+            deliver,
+            edit: Edit::default(),
+            turn: 0,
+            learned: LearnedReport::Off,
+            fills: FillReport::default(),
+            unmade: Vec::new(),
+            masks: Vec::new(),
+        }
+    }
+}
+
+impl ExportModels<'_> {
+    /// The learned denoiser `model`, loaded now if it is not yet; why
+    /// not when it cannot be.
+    fn denoiser(
+        &mut self,
+        model: &'static greycard_ai::Model,
+    ) -> Result<&mut greycard_ai::Denoiser, NoLearned> {
+        self.ai.denoiser(model).map_err(|e| match e {
+            NoDenoiser::Missing => NoLearned::Missing(model),
+            NoDenoiser::Failed(why) => NoLearned::Failed(why),
+        })
+    }
+}
+
+/// What the models' cache knows an export's picture by: each frame of
+/// a set is the first picture made of it.
+const EXPORT_STAMP: u64 = 1;
+
+impl crate::walk::Models for ExportModels<'_> {
+    fn denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+        frame: &RawFrame,
+        prepared: &Prepared,
+    ) -> Result<Vec<f32>, NoLearned> {
+        let cache = self.cache;
+        let denoiser = self.denoiser(model)?;
+        let (rgb, report) = super::base::network(frame, prepared, model, denoiser, cache)
+            .map_err(|e| NoLearned::Failed(e.to_string()))?;
+        self.learned = report;
+        Ok(rgb)
+    }
+
+    fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>> {
+        // A fill the model has to make is said so before it starts,
+        // since it takes a while.
+        let kept = self.ai.fill_kept(patch, region, picture);
+        if !kept && self.ai.engine(patch, region, picture).is_ok() {
+            (self.deliver)(Outcome::Filling {
+                generation: 0,
+                name: patch.name(),
+            });
+        }
+        let started = Instant::now();
+        match self.ai.fill(patch, region, picture) {
+            Ok((data, engine)) => {
+                if !kept {
+                    self.fills.made.push(patch.name());
+                    self.fills.seconds += started.elapsed().as_secs_f64();
+                }
+                self.fills.engines.push((patch.id, engine));
+                Some(data)
+            }
+            Err(NoFill::Missing(model)) => {
+                self.unmade.push(patch.id);
+                self.fills.missing.push((patch.name(), model));
+                None
+            }
+            Err(NoFill::NoGpu) => {
+                self.unmade.push(patch.id);
+                self.fills.no_gpu.push(patch.name());
+                None
+            }
+            Err(NoFill::Failed(why)) => {
+                self.unmade.push(patch.id);
+                self.fills.failed.push((patch.name(), why));
+                None
+            }
+        }
+    }
+
+    fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool {
+        self.ai.could_fill_more(retouch, picture)
+    }
+
+    fn rasters(
+        &mut self,
+        how: crate::stages::Masks,
+        base: &Arc<WorkingImage>,
+        patched: Option<(&Arc<WorkingImage>, &Retouch)>,
+        meta: &crate::walk::Meta,
+    ) -> crate::walk::Rasters {
+        debug_assert_eq!(how, crate::stages::Masks::Make, "an export makes its masks");
+        let (rasters, left_out) = super::masks::learned_rasters(
+            &self.edit,
+            self.ai,
+            &super::masks::On {
+                stamp: EXPORT_STAMP,
+                image: base,
+                retouched: patched.map(|(image, retouch)| crate::ai::Retouched {
+                    retouch,
+                    image,
+                    unmade: &self.unmade,
+                }),
+                edit: &self.edit,
+                source: meta.source,
+                turn: self.turn,
+            },
+        );
+        self.masks = left_out;
+        rasters
+    }
 }
 
 /// Finish `image`, the develop `base` was made for, under `edit` and
@@ -121,23 +381,45 @@ pub(super) fn write_export(
     settings: &greycard_render::export::Settings,
     path: &std::path::Path,
 ) -> Result<Vec<String>, String> {
-    let shifted = metadata.map(|m| greycard_core::exif::with_capture_shifted(m, time_shift));
-    let metadata = shifted.as_ref();
     let (mut rendered, left_out) = finish_export(image, edit, base, ai, settings);
+    // The border and then the mark, on the export alone; a mark that
+    // cannot be drawn fails the export rather than let an unmarked
+    // picture out.
+    greycard_render::export::border(&mut rendered, settings);
+    greycard_render::export::mark(&mut rendered, settings).map_err(|e| format!("{e:#}"))?;
+    write_rendered(
+        &rendered,
+        edit,
+        source_path,
+        metadata,
+        time_shift,
+        settings,
+        path,
+    )?;
+    Ok(left_out)
+}
+
+/// The file of `rendered`, finished under `edit`, at `path`: the
+/// source's EXIF with its capture times moved by the frame's
+/// `time_shift`, and its name and edit as where it came from.
+fn write_rendered(
+    rendered: &greycard_render::export::Rendered,
+    edit: &Edit,
+    source_path: Option<&std::path::Path>,
+    metadata: Option<&greycard_core::decode::RawMetadata>,
+    time_shift: i64,
+    settings: &greycard_render::export::Settings,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let shifted = metadata.map(|m| greycard_core::exif::with_capture_shifted(m, time_shift));
     let origin = greycard_render::export::Origin {
         source_name: source_path
             .and_then(|s| s.file_name())
             .map(|n| n.to_string_lossy().into_owned()),
         edit: Some(edit.to_json()),
     };
-    // The border and then the mark, on the export alone; a mark that
-    // cannot be drawn fails the export rather than let an unmarked
-    // picture out.
-    greycard_render::export::border(&mut rendered, settings);
-    greycard_render::export::mark(&mut rendered, settings)
-        .and_then(|()| greycard_render::export::write(&rendered, settings, path, metadata, &origin))
-        .map_err(|e| format!("{e:#}"))?;
-    Ok(left_out)
+    greycard_render::export::write(rendered, settings, path, shifted.as_ref(), &origin)
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// What [`finish_export`] would hand the finish for `image` under
