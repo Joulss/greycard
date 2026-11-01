@@ -249,7 +249,9 @@ fn coreml_cache(path: &Path, fixed: &[(&str, i64)]) -> Option<std::path::PathBuf
         .join(key);
     match std::fs::create_dir_all(&dir) {
         Ok(()) => {
-            sweep_coreml_cache(&dir, path);
+            let shape = record::shape(fixed);
+            mark_coreml_cache(&dir, &shape);
+            sweep_coreml_cache(&dir, path, &shape);
             Some(dir)
         }
         Err(e) => {
@@ -262,16 +264,34 @@ fn coreml_cache(path: &Path, fixed: &[(&str, i64)]) -> Option<std::path::PathBuf
     }
 }
 
-/// Removes the other compiles of the model at `path` beside `keep`:
+/// The file in a compile folder that names the shape it was compiled
+/// at, beside what ONNX Runtime writes there.
+const SHAPE_MARK: &str = "greycard-shape.txt";
+
+/// Writes [`SHAPE_MARK`] in `dir` with `shape` (`record::shape`), if it
+/// is not there already. Best effort: a folder without one is taken
+/// for one made before marks, and swept as older.
+#[cfg_attr(not(all(feature = "coreml", target_os = "macos")), allow(dead_code))]
+fn mark_coreml_cache(dir: &Path, shape: &str) {
+    let mark = dir.join(SHAPE_MARK);
+    if !mark.exists() {
+        let _ = std::fs::write(mark, shape);
+    }
+}
+
+/// Removes the older compiles of the model at `path` beside `keep`:
 /// folders under the same parent whose compile ONNX Runtime recorded
 /// as made from that file (the `model.txt` it writes in each, which
-/// holds the source's path). Each one is a compile under an older key:
-/// the file replaced, another tiling, or a graph greycard hands the
-/// provider differently, as `CORE_ML_UNFUSED` changed, which left 431
-/// MB for Sky alone. A folder of another file, or one that cannot be
-/// read, is left.
+/// holds the source's path), at the same `shape`, or with no shape
+/// marked, which only a build from before the marks leaves. Each is a
+/// compile under an older key: the file replaced, or a graph greycard
+/// hands the provider differently, as `CORE_ML_UNFUSED` changed, which
+/// left 431 MB for Sky alone. The same file's compile at another shape
+/// (the bench's `--tile` beside the editor's default) is in use, not
+/// older, and is left; so is a folder of another file, or one that
+/// cannot be read.
 #[cfg_attr(not(all(feature = "coreml", target_os = "macos")), allow(dead_code))]
-fn sweep_coreml_cache(keep: &Path, path: &Path) {
+fn sweep_coreml_cache(keep: &Path, path: &Path, shape: &str) {
     let Some(parent) = keep.parent() else { return };
     let Ok(folders) = std::fs::read_dir(parent) else {
         return;
@@ -279,6 +299,13 @@ fn sweep_coreml_cache(keep: &Path, path: &Path) {
     let source = path.to_string_lossy();
     for folder in folders.flatten().map(|e| e.path()) {
         if folder == keep || !folder.is_dir() {
+            continue;
+        }
+        let same_shape = match std::fs::read_to_string(folder.join(SHAPE_MARK)) {
+            Ok(marked) => marked == shape,
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+        if !same_shape {
             continue;
         }
         let made_from_this = std::fs::read_dir(&folder)
@@ -318,8 +345,8 @@ fn coreml_cache_key(path: &Path, fixed: &[(&str, i64)]) -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let mut h = Sha256::new();
-    // What greycard hands the provider beyond the file: a compile
-    // cached from another graph is not this one's.
+    // The optimizers kept off, which change the graph Core ML is
+    // handed: a compile cached from another graph is not this one's.
     h.update(CORE_ML_UNFUSED.as_bytes());
     h.update(path.to_string_lossy().as_bytes());
     h.update(meta.map(|m| m.len()).unwrap_or_default().to_le_bytes());
@@ -858,9 +885,9 @@ pub fn open_fixed(
         .unwrap_or_default();
     let build = record::build_fingerprint(providers);
     let shape = record::shape(fixed);
-    // Read once, lazily: only a provider that can be remembered
-    // (`remember` is set and the adapter could be named) touches
-    // disk, and only once for the whole call.
+    // Read once, lazily, and only with `remember` set: for a list that
+    // races, to see whether the race is settled, and otherwise for a
+    // provider whose adapter could be named.
     let mut entries: Option<Vec<record::Entry>> = None;
     // A race this file already ran at this shape, on this adapter and
     // build, is not run again: the winner is opened first and not
@@ -930,19 +957,13 @@ pub fn open_fixed(
                     reason: first_line(&e.to_string()).to_string(),
                 },
             };
-            // A timed run is this load's side of the race; an untimed
-            // one that worked keeps the side already on record, while
-            // it still applies, so a settled race stays settled.
-            let race = match &outcome {
-                Ok((_, Some(run))) => Some(record::Race {
-                    shape: shape.clone(),
-                    run_us: (run * 1e6).round() as u64,
-                }),
-                Ok((_, None)) => record::find(entries, r.hash, provider)
-                    .filter(|e| record::valid(e, adapter, &build))
-                    .and_then(|e| e.race.clone()),
-                Err(_) => None,
-            };
+            let race = race_to_record(
+                outcome.as_ref().ok().map(|(_, run)| *run),
+                record::find(entries, r.hash, provider),
+                adapter,
+                &build,
+                &shape,
+            );
             let entry = record::Entry {
                 model: r.model.to_string(),
                 hash: r.hash.to_string(),
@@ -1117,6 +1138,31 @@ fn settled_race(
     Some(if second < first { rival } else { core_ml })
 }
 
+/// The race to write with a provider's outcome: `run` is `None` when
+/// it failed, `Some(None)` when it worked untimed, and `Some(Some(s))`
+/// when its warm run was timed at `s` seconds. A timed run is this
+/// load's side of the race. An untimed success keeps the side on
+/// record in `previous` while that entry still applies to `adapter`
+/// and `build`, so a settled race stays settled. A failure has none,
+/// which unsettles the race.
+fn race_to_record(
+    run: Option<Option<f64>>,
+    previous: Option<&record::Entry>,
+    adapter: &str,
+    build: &str,
+    shape: &str,
+) -> Option<record::Race> {
+    match run? {
+        Some(seconds) => Some(record::Race {
+            shape: shape.to_string(),
+            run_us: (seconds * 1e6).round() as u64,
+        }),
+        None => previous
+            .filter(|e| record::valid(e, adapter, build))
+            .and_then(|e| e.race.clone()),
+    }
+}
+
 /// `providers` with `winner` moved to where the race's first side
 /// stood, the other side after it; unchanged when Core ML won.
 fn winner_first(providers: &[Provider], winner: Provider) -> Vec<Provider> {
@@ -1145,7 +1191,7 @@ fn winner_first(providers: &[Provider], winner: Provider) -> Vec<Provider> {
 /// key its own cache and again in each validator: a session took 27 s
 /// cold and 4.5 s from the cache, most of it in `snprintf`. Unfused,
 /// Core ML fuses the pair itself from the weight file.
-const CORE_ML_UNFUSED: &str = "MatMulAddFusion";
+pub const CORE_ML_UNFUSED: &str = "MatMulAddFusion";
 
 /// A session on `provider`, warmed up unless `skip_warm`, and with
 /// `timed` the seconds of a second warm run: the first pays for
@@ -1307,9 +1353,11 @@ mod tests {
     }
 
     /// Making a file's compile folder removes that file's compiles
-    /// under other keys, as ONNX Runtime lays them out (a folder a
-    /// partition, its `model.txt` naming the source), and leaves
-    /// another file's, and a folder with no record of its source.
+    /// under older keys, as ONNX Runtime lays them out (a folder a
+    /// partition, its `model.txt` naming the source): one at the same
+    /// shape, and one from before the shape marks. It leaves the same
+    /// file's compile at another shape, another file's, and a folder
+    /// with no record of its source.
     #[test]
     fn an_older_core_ml_compile_of_the_same_file_is_swept() {
         let root = std::env::temp_dir().join(format!(
@@ -1319,26 +1367,39 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         let cache = root.join("coreml");
+        let denoiser = root.join("models").join("denoise-v20.onnx");
         let sky = root.join("models").join("eomt-s-coco-640.onnx");
-        let other = root.join("models").join("denoise-v20.onnx");
-        let compile = |name: &str, source: Option<&Path>| {
-            let part = cache.join(name).join("15121039830728902357");
+        let at = record::shape(&[("h", 608), ("w", 608)]);
+        let compile = |name: &str, source: Option<&Path>, shape: Option<&str>| {
+            let folder = cache.join(name);
+            let part = folder.join("15121039830728902357");
             std::fs::create_dir_all(part.join("0_static_mlprogram")).unwrap();
             if let Some(source) = source {
                 std::fs::write(part.join("model.txt"), source.to_string_lossy().as_bytes())
                     .unwrap();
             }
-            cache.join(name)
+            if let Some(shape) = shape {
+                mark_coreml_cache(&folder, shape);
+            }
+            folder
         };
-        let old = compile("eomt-s-coco-640-efb177dcdda754db", Some(&sky));
-        let keep = compile("eomt-s-coco-640-5ccff4f64851c189", Some(&sky));
-        let denoiser = compile("denoise-v20-3b5ae551c565f67b", Some(&other));
-        let unknown = compile("eomt-s-coco-640-0000000000000000", None);
+        let replaced = compile("denoise-v20-1111111111111111", Some(&denoiser), Some(&at));
+        let unmarked = compile("denoise-v20-3b5ae551c565f67b", Some(&denoiser), None);
+        let other_tile = compile(
+            "denoise-v20-2222222222222222",
+            Some(&denoiser),
+            Some("h=352,w=352"),
+        );
+        let keep = compile("denoise-v20-25b1585071afb68d", Some(&denoiser), Some(&at));
+        let other_file = compile("eomt-s-coco-640-5ccff4f64851c189", Some(&sky), Some(""));
+        let unknown = compile("denoise-v20-0000000000000000", None, Some(&at));
 
-        sweep_coreml_cache(&keep, &sky);
-        assert!(!old.exists());
+        sweep_coreml_cache(&keep, &denoiser, &at);
+        assert!(!replaced.exists());
+        assert!(!unmarked.exists());
+        assert!(other_tile.exists());
         assert!(keep.exists());
-        assert!(denoiser.exists());
+        assert!(other_file.exists());
         assert!(unknown.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1431,6 +1492,42 @@ mod tests {
                 at,
                 |p| Some(format!("{} adapter", p.name())),
             ),
+            None
+        );
+    }
+
+    /// What a load writes for its race: a timed run its own, an
+    /// untimed success the one on record while it applies, a failure
+    /// none.
+    #[test]
+    fn a_settled_load_keeps_its_race_and_a_failure_drops_it() {
+        let at = "h=1024,w=1024";
+        let build = "CoreML,WebGPU,CPU greycard 0.9.1";
+        let adapter = "CoreML adapter";
+        let on_record = raced(Provider::CoreMl, at, 206_000, record::Outcome::Worked);
+        let timed = race_to_record(Some(Some(0.2155)), Some(&on_record), adapter, build, at);
+        assert_eq!(
+            timed,
+            Some(record::Race {
+                shape: at.to_string(),
+                run_us: 215_500
+            })
+        );
+        assert_eq!(
+            race_to_record(Some(None), Some(&on_record), adapter, build, at),
+            on_record.race
+        );
+        assert_eq!(race_to_record(Some(None), None, adapter, build, at), None);
+        assert_eq!(
+            race_to_record(Some(None), Some(&on_record), adapter, "another build", at),
+            None
+        );
+        assert_eq!(
+            race_to_record(Some(None), Some(&on_record), "another adapter", build, at),
+            None
+        );
+        assert_eq!(
+            race_to_record(None, Some(&on_record), adapter, build, at),
             None
         );
     }

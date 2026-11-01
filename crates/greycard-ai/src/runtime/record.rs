@@ -27,7 +27,7 @@
 //! Success is remembered as well as failure. A success still gets
 //! its warm-up (see `runtime::open`), but where Core ML was raced
 //! against a GPU provider each side's timed run is kept with it
-//! (`Race`), so the next load opens the winner alone.
+//! (`Race`), so the next load opens the winner first and races no more.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

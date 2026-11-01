@@ -54,11 +54,17 @@ unchanged.
 
 The option's name joins the Core ML cache key, since ONNX Runtime
 does not recompile a cached model for a changed graph from the same
-file. Making a file's compile folder now removes that file's
-compiles under other keys: ONNX Runtime writes the source's path into
-each folder's `model.txt`, and a folder naming the same path under
-another key is an older compile. Without that, every Mac that had run
-Sky kept a dead 431 MB folder. A file no longer offered to Core ML
+file. Making a file's compile folder now removes that file's older
+compiles: ONNX Runtime writes the source's path into each folder's
+`model.txt`, and greycard writes the fixed shape into a
+`greycard-shape.txt` of its own. A folder naming the same path at the
+same shape under another key is older, and so is one with no shape
+written, which only a build from before this leaves. The same file at
+another shape is in use, not older: the bench's `--tile` beside the
+editor's default tile, each of which would otherwise sweep the other
+and compile cold at every switch. Without the sweep, every Mac that
+had run Sky kept a dead 431 MB folder. A 0.9.1 and a later greycard
+on one Mac at once could still sweep each other's unmarked folder. A file no longer offered to Core ML
 leaves its folder: Subject's from 0.9.0, 747 MB here, stays (§441).
 
 Apple's own compile cache, `com.apple.e5rt.e5bundlecache`, is kept
@@ -104,3 +110,13 @@ WebGPU's 0.66 s, Sky in 0.085 s against 0.20 s.
   minutes, which names no model and is not this.
 - Subject's Conv (§441), which fails Core ML's parser and is
   unrelated to the inline weights.
+
+## Review
+
+A fresh review walked every path through `open_fixed` and found the
+race and the record sound, and an older record readable. It found the
+sweep taking the same file's compile at another tile for an older
+one, which is where the shape mark came from, and the record's choice
+of race untested inside `open_fixed`, now `race_to_record` with tests
+of its own. The probe built its Core ML session with the fusion on,
+unlike the editor; it now turns it off too.

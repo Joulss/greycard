@@ -99,6 +99,11 @@ fn run(
     names: (&str, &str),
 ) -> ort::Result<Vec<f32>> {
     let mut b = Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
+    // As the editor builds a Core ML session (`runtime::CORE_ML_UNFUSED`).
+    #[cfg(feature = "coreml")]
+    if let Ep::CoreMl(_) = ep {
+        b = b.with_disabled_optimizers(greycard_ai::runtime::CORE_ML_UNFUSED)?;
+    }
     let fixed = fixed();
     for (name, size) in &fixed {
         b = b.with_dimension_override(name, *size)?;
