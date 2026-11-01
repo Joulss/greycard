@@ -1,0 +1,235 @@
+//! A DNG's bad-pixel lists on the mosaic: `FixBadPixelsConstant` and
+//! `FixBadPixelsList`, the photosites a maker knows to be bad, each made
+//! again from its same-color neighbors.
+//!
+//! The SDK (`dng_bad_pixels.cpp`) averages fixed neighbor sets of a
+//! Bayer mosaic. Here a bad photosite takes the median of the good ones
+//! of its color within two photosites, or within four when none is
+//! that near, read from the frame's own pattern, so an X-Trans mosaic
+//! is repaired as a Bayer one is and a cluster's members never feed one
+//! another. A photosite with no good neighbor of its color in reach is
+//! left.
+
+use rayon::prelude::*;
+
+use crate::opcodes::BadPixels;
+use crate::raw::{CfaColor, CfaPattern};
+
+/// Mark the photosites `fix` lists in `bad`, a flag a photosite of a
+/// buffer `width` by `height` whose first photosite is at (`x`, `y`) in
+/// the list's image. A constant list marks nothing here: its test is
+/// on the values, the caller's.
+pub fn mark_listed(
+    bad: &mut [bool],
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+    fix: &BadPixels,
+) {
+    let BadPixels::List { points, rects, .. } = fix else {
+        return;
+    };
+    let (x, y) = (x as i64, y as i64);
+    let (w, h) = (width as i64, height as i64);
+    let mut mark = |top: i64, left: i64, bottom: i64, right: i64| {
+        let (top, bottom) = ((top - y).clamp(0, h), (bottom - y).clamp(0, h));
+        let (left, right) = ((left - x).clamp(0, w), (right - x).clamp(0, w));
+        for row in top..bottom {
+            let start = (row * w) as usize;
+            bad[start + left as usize..start + right.max(left) as usize].fill(true);
+        }
+    };
+    for &[row, col] in points {
+        let (row, col) = (i64::from(row), i64::from(col));
+        mark(row, col, row + 1, col + 1);
+    }
+    for &[top, left, bottom, right] in rects {
+        mark(
+            i64::from(top),
+            i64::from(left),
+            i64::from(bottom),
+            i64::from(right),
+        );
+    }
+}
+
+/// The farthest a repair reads, photosites each way.
+const MAX_REACH: usize = 4;
+
+/// Make every photosite `bad` flags again from its good same-color
+/// neighbors, `pattern` as seen from the buffer's corner. Answers how
+/// many were made again.
+pub fn repair(
+    samples: &mut [f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    bad: &[bool],
+) -> usize {
+    let read: &[f32] = samples;
+    let fixes: Vec<(usize, f32)> = bad
+        .par_iter()
+        .enumerate()
+        .filter(|(_, b)| **b)
+        .filter_map(|(i, _)| {
+            let (x, y) = (i % width, i / width);
+            let color = pattern.color_at(y, x);
+            [2, MAX_REACH]
+                .into_iter()
+                .find_map(|reach| median(read, width, height, pattern, bad, color, x, y, reach))
+                .map(|v| (i, v))
+        })
+        .collect();
+    for &(i, v) in &fixes {
+        samples[i] = v;
+    }
+    fixes.len()
+}
+
+/// The median of the good photosites of `color` within `reach` of
+/// (`x`, `y`), or `None` when there is none.
+#[allow(clippy::too_many_arguments)]
+fn median(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    bad: &[bool],
+    color: CfaColor,
+    x: usize,
+    y: usize,
+    reach: usize,
+) -> Option<f32> {
+    let mut found = [0.0f32; (2 * MAX_REACH + 1) * (2 * MAX_REACH + 1)];
+    let mut n = 0;
+    for ny in y.saturating_sub(reach)..(y + reach + 1).min(height) {
+        for nx in x.saturating_sub(reach)..(x + reach + 1).min(width) {
+            let i = ny * width + nx;
+            if !bad[i] && pattern.color_at(ny, nx) == color {
+                found[n] = samples[i];
+                n += 1;
+            }
+        }
+    }
+    let found = &mut found[..n];
+    if found.is_empty() {
+        return None;
+    }
+    found.sort_unstable_by(f32::total_cmp);
+    let mid = n / 2;
+    Some(if n % 2 == 1 {
+        found[mid]
+    } else {
+        (found[mid - 1] + found[mid]) / 2.0
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A listed point on a flat red takes the red, not the greens beside
+    /// it; the photosites not listed are left to the bit.
+    #[test]
+    fn a_listed_point_takes_its_colors_median() {
+        let (w, h) = (8, 8);
+        let pattern = CfaPattern::rggb();
+        let mut s: Vec<f32> = (0..w * h)
+            .map(|i| match pattern.color_at(i / w, i % w) {
+                CfaColor::Red => 0.3,
+                CfaColor::Blue => 0.1,
+                _ => 0.6,
+            })
+            .collect();
+        let before = s.clone();
+        s[4 * w + 4] = 1.0; // a red site, stuck at the white
+        let mut bad = vec![false; w * h];
+        let fix = BadPixels::List {
+            phase: 0,
+            points: vec![[4, 4]],
+            rects: vec![],
+        };
+        mark_listed(&mut bad, w, h, 0, 0, &fix);
+        assert_eq!(bad.iter().filter(|b| **b).count(), 1);
+        assert_eq!(repair(&mut s, w, h, &pattern, &bad), 1);
+        assert_eq!(s, before);
+    }
+
+    /// A list in the coordinates of a larger image marks its point where
+    /// the buffer has it, and a rectangle clipped to the buffer; one
+    /// wholly outside, or written backward, marks nothing.
+    #[test]
+    fn a_list_is_placed_by_the_buffers_corner() {
+        let (w, h) = (6, 4);
+        let mut bad = vec![false; w * h];
+        let fix = BadPixels::List {
+            phase: 0,
+            points: vec![[11, 12], [0, 0], [-3, 5]],
+            rects: vec![[9, 14, 20, 30], [10, 10, 9, 12], [100, 100, 101, 101]],
+        };
+        mark_listed(&mut bad, w, h, 10, 8, &fix);
+        let marked: Vec<usize> = (0..w * h).filter(|&i| bad[i]).collect();
+        // (11, 12) is row 3 col 2; the first rectangle rows 1.. and
+        // columns 4.. of the buffer.
+        assert_eq!(
+            marked,
+            vec![
+                w + 4,
+                w + 5,
+                2 * w + 4,
+                2 * w + 5,
+                3 * w + 2,
+                3 * w + 4,
+                3 * w + 5
+            ]
+        );
+    }
+
+    /// A cluster's members never feed one another: a 3x3 block of bad
+    /// photosites on a flat mosaic comes back flat, the reach widening
+    /// for the center that has no good neighbor of its color within two.
+    #[test]
+    fn a_cluster_is_made_from_the_good_around_it() {
+        let (w, h) = (12, 12);
+        let pattern = CfaPattern::rggb();
+        let mut s = vec![0.5f32; w * h];
+        let mut bad = vec![false; w * h];
+        let fix = BadPixels::List {
+            phase: 0,
+            points: vec![],
+            rects: vec![[4, 4, 9, 9]],
+        };
+        mark_listed(&mut bad, w, h, 0, 0, &fix);
+        for (v, b) in s.iter_mut().zip(&bad) {
+            if *b {
+                *v = 0.0;
+            }
+        }
+        assert_eq!(repair(&mut s, w, h, &pattern, &bad), 25);
+        assert!(s.iter().all(|&v| v == 0.5), "{s:?}");
+    }
+
+    /// An X-Trans mosaic is repaired by its own pattern.
+    #[test]
+    fn an_xtrans_site_takes_its_own_color() {
+        let (w, h) = (12, 12);
+        let pattern = CfaPattern::xtrans();
+        let level = |c: CfaColor| match c {
+            CfaColor::Red => 0.2,
+            CfaColor::Blue => 0.4,
+            _ => 0.7,
+        };
+        let mut s: Vec<f32> = (0..w * h)
+            .map(|i| level(pattern.color_at(i / w, i % w)))
+            .collect();
+        let before = s.clone();
+        let mut bad = vec![false; w * h];
+        for i in [5 * w + 5, 6 * w + 7, 7 * w + 3] {
+            s[i] = 1.0;
+            bad[i] = true;
+        }
+        assert_eq!(repair(&mut s, w, h, &pattern, &bad), 3);
+        assert_eq!(s, before);
+    }
+}

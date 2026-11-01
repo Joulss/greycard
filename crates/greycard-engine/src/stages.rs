@@ -18,13 +18,16 @@ use greycard_core::develop::defringe::DefringeOptions;
 use greycard_core::develop::dehaze::DehazeOptions;
 use greycard_core::develop::denoise::DenoiseOptions;
 use greycard_core::develop::dual::DualContrast;
+use greycard_core::develop::gain_map::MapPlacement;
 use greycard_core::develop::lens::LensCorrection;
 use greycard_core::develop::local_contrast::LocalContrastOptions;
 use greycard_core::develop::reduced;
 use greycard_core::develop::sharpen::SharpenOptions;
 use greycard_core::develop::{DemosaicMethod, DevelopSettings};
+use greycard_core::opcodes::Warp;
 use greycard_core::raw::{CfaPattern, Orientation, RawFrame, SensorLayout, Shot};
 use greycard_edit::geometry::Geometry;
+use greycard_edit::lens::FileCorrects;
 use greycard_edit::retouch::Retouch;
 use greycard_edit::{DetailWants, Edit};
 
@@ -84,6 +87,9 @@ pub enum InputKind {
         crop: (usize, usize),
         /// The camera's orientation tag.
         tag: Orientation,
+        /// The warps a DNG corrects its lens with, and where the crop
+        /// sits in their image; none for every other raw.
+        warp: Option<Box<WarpOptions>>,
     },
     /// A picture is turned by its tag at decode, so its size is the
     /// size it stands at.
@@ -110,6 +116,12 @@ impl Facts {
                 },
                 crop: (crop.width, crop.height),
                 tag: frame.orientation,
+                warp: greycard_core::develop::warp::area_of(frame).map(|area| {
+                    Box::new(WarpOptions {
+                        warps: frame.dng.warps.clone(),
+                        area,
+                    })
+                }),
             },
             identity: Identity {
                 make: frame.make.clone(),
@@ -135,6 +147,14 @@ impl Facts {
 
     pub fn is_raw(&self) -> bool {
         matches!(self.input, InputKind::Raw { .. })
+    }
+
+    /// What the file's own warps correct of its lens.
+    pub fn file_corrects(&self) -> FileCorrects {
+        match &self.input {
+            InputKind::Raw { warp: Some(w), .. } => FileCorrects::of(&w.warps),
+            _ => FileCorrects::default(),
+        }
     }
 
     /// The orientation the develop shows a raw in: the camera's tag
@@ -279,6 +299,14 @@ fn same_profile(a: &Option<Arc<Profile>>, b: &Option<Arc<Profile>>) -> bool {
     }
 }
 
+/// A DNG's rectilinear warps and where the develop's crop sits in the
+/// image they are defined over, at the full develop's scale.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WarpOptions {
+    pub warps: Vec<Warp>,
+    pub area: MapPlacement,
+}
+
 /// One transform, its options resolved from the edit.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stage {
@@ -297,6 +325,9 @@ pub enum Stage {
     Learned(&'static greycard_ai::Model),
     /// The profiled denoise, on camera RGB.
     Denoise(DenoiseOptions),
+    /// A DNG's own lens correction, on camera RGB: a resample, the
+    /// camera's geometry before any turn, crop, or lens profile.
+    Warp(Box<WarpOptions>),
     /// Camera RGB into the working space: the matrix, the camera
     /// profile's map, the orientation. Each of a pair.
     IntoWorking {
@@ -363,6 +394,7 @@ impl Stage {
             Stage::Bin(_) => "bin",
             Stage::Learned(_) => "learned denoiser",
             Stage::Denoise(_) => "denoise",
+            Stage::Warp(_) => "the file's warp",
             Stage::IntoWorking { .. } => "move into the working space",
             Stage::Blend(_) => "blend",
             Stage::Orient(_) => "orient",
@@ -643,7 +675,7 @@ pub fn stages(
     let mut s = Steps::default();
     let settings = edit.settings(&greycard_edit_io::Stores::user());
     match &facts.input {
-        InputKind::Raw { pattern, .. } => {
+        InputKind::Raw { pattern, warp, .. } => {
             let tier = edit
                 .noise
                 .tier()
@@ -677,10 +709,14 @@ pub fn stages(
                 },
                 measure_noise: learned.is_some(),
             })));
+            // A file whose warps correct each color has corrected its
+            // lateral aberration itself, as Adobe's reader takes it: the
+            // automatic correction would move red and blue a second time.
             s.op_if(
                 settings
                     .chromatic_aberration
                     .filter(|_| pattern.as_ref().is_some_and(ca::corrects))
+                    .filter(|_| !facts.file_corrects().chromatic_aberration)
                     .map(Stage::Ca),
             );
             match (bin, learned) {
@@ -693,6 +729,10 @@ pub fn stages(
                     .filter(|_| bin == 1 || pattern.is_none())
                     .map(Stage::Denoise),
             );
+            // The file's own correction of its lens, on the camera's
+            // geometry: after the denoise, which reads the demosaic's
+            // noise as measured, and before the turn.
+            s.op_if(warp.clone().map(Stage::Warp));
             s.op(Stage::IntoWorking {
                 profile: settings.profile.clone().map(ProfileRef),
                 orientation: facts.orientation().expect("a raw's orientation"),
@@ -708,8 +748,10 @@ pub fn stages(
         }
     }
     let (w, h) = facts.binned(bin);
-    if !edit.lens.is_identity(lenses.is_some()) {
-        s.op(Stage::Lens(corrections(w, h, facts, edit, lenses)));
+    // A file that corrects its own lens has the last word on it.
+    let lens = edit.lens.over_file(facts.file_corrects());
+    if !lens.is_identity(lenses.is_some()) {
+        s.op(Stage::Lens(corrections(w, h, facts, &lens, lenses)));
     }
     s.op_if(edit.lens.defringe().map(|mut o| {
         // The radius is in pixels, and the binned picture's are larger.
@@ -830,12 +872,13 @@ fn reduced_settings() -> export::Settings {
     }
 }
 
-/// The lens's corrections for a picture `w` by `h` of the frame.
+/// The lens's corrections for a picture `w` by `h` of the frame, the
+/// section as it applies over the file's own correction.
 fn corrections(
     w: usize,
     h: usize,
     facts: &Facts,
-    edit: &Edit,
+    lens: &greycard_edit::Lens,
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
     let id = &facts.identity;
@@ -851,8 +894,8 @@ fn corrections(
         .orientation()
         .or_else(|| quarters(facts.turn))
         .unwrap_or_default();
-    let profile = crate::lens::profile_correction((w, h), orientation, identity, &edit.lens, db);
-    edit.lens.corrections(profile)
+    let profile = crate::lens::profile_correction((w, h), orientation, identity, lens, db);
+    lens.corrections(profile)
 }
 
 /// A whole number of quarter turns clockwise as an orientation, for
@@ -907,6 +950,7 @@ mod tests {
                 pattern: Some(CfaPattern::rggb()),
                 crop: (6000, 4000),
                 tag: Orientation::Normal,
+                warp: None,
             },
             identity: identity(),
             turn,
@@ -919,6 +963,7 @@ mod tests {
                 pattern: Some(CfaPattern::xtrans()),
                 crop: (7728, 5152),
                 tag: Orientation::Normal,
+                warp: None,
             },
             ..raw(0)
         }
@@ -1081,6 +1126,155 @@ mod tests {
         );
         // A picture is not denoised, so nothing of that is skipped.
         assert_eq!(reduced.skipped, [("the capture sharpen", Skip::Reduced)]);
+    }
+
+    /// A raw whose file corrects its lens with a warp.
+    fn phone() -> Facts {
+        let mut facts = raw(0);
+        let InputKind::Raw { warp, .. } = &mut facts.input else {
+            unreachable!()
+        };
+        let mut lens = greycard_core::opcodes::WarpPlane::identity();
+        lens.radial[2] = 0.03;
+        *warp = Some(Box::new(WarpOptions {
+            warps: vec![Warp {
+                planes: vec![lens],
+                center_x: 0.5,
+                center_y: 0.5,
+                reciprocal: false,
+            }],
+            area: MapPlacement {
+                x: 8,
+                y: 8,
+                image_width: 6016,
+                image_height: 4016,
+            },
+        }));
+        facts
+    }
+
+    /// The file's warp runs on camera RGB: after the demosaic and the
+    /// denoise, after the bin, and after the learned denoiser, each
+    /// before the move into the working space, and on no other raw.
+    #[test]
+    fn a_files_warp_runs_before_the_move_into_working() {
+        let edit = everything();
+        let at = |s: &Steps| names(s).iter().position(|n| n == "the file's warp");
+        let viewport = stages(&edit, &Purpose::Viewport, &phone(), None);
+        assert_eq!(
+            names(&viewport)[..6],
+            [
+                "prepare",
+                "CA",
+                "demosaic",
+                "denoise",
+                "the file's warp",
+                "into working"
+            ]
+        );
+        let reduced = stages(&edit, &Purpose::Reduced, &phone(), None);
+        assert_eq!(
+            names(&reduced)[2..5],
+            ["bin 2", "the file's warp", "into working"]
+        );
+        let mut learned = Edit::default();
+        learned.noise.learned = greycard_edit::Learned::Best;
+        let pair = stages(&learned, &Purpose::Viewport, &phone(), None);
+        assert_eq!(
+            names(&pair)[2..5],
+            ["learned denoiser", "the file's warp", "into working"]
+        );
+        // The list standing in for a learned tier not to be had keeps
+        // it.
+        assert_eq!(
+            names(&pair.without_learned())[2..4],
+            ["demosaic", "the file's warp"]
+        );
+        assert!(at(&stages(&edit, &Purpose::Viewport, &raw(0), None)).is_none());
+        assert!(
+            !Stage::Warp(Box::new(WarpOptions {
+                warps: vec![],
+                area: MapPlacement {
+                    x: 0,
+                    y: 0,
+                    image_width: 1,
+                    image_height: 1
+                }
+            }))
+            .device()
+        );
+    }
+
+    /// A file that corrects its own lens has the last word on it: under
+    /// the file's own lens, its profile gives up the distortion to a
+    /// warp, and the lateral aberration (the profile's and the automatic
+    /// one) to a warp that moves each color; the vignetting stays.
+    #[test]
+    fn a_files_warp_takes_the_profiles_distortion_and_the_ca() {
+        let mut db = greycard_lens::Database::default();
+        db.read_xml(
+            r#"<lensdatabase version="2">
+            <camera><maker>Canon</maker><model>Canon EOS R5</model>
+            <mount>Canon RF</mount><cropfactor>1</cropfactor></camera>
+            <lens><maker>Canon</maker><model>Canon RF 50mm F1.8 STM</model>
+            <mount>Canon RF</mount><cropfactor>1.0</cropfactor><calibration>
+            <distortion model="poly3" focal="50" k1="0.02"/>
+            <tca model="linear" focal="50" kr="1.0002" kb="0.9998"/>
+            <vignetting model="pa" focal="50" aperture="2.8" distance="10" k1="-0.5" k2="0" k3="0"/>
+            </calibration></lens></lensdatabase>"#,
+        )
+        .unwrap();
+        let shot = Shot {
+            lens_model: Some("Canon RF 50mm F1.8 STM".into()),
+            focal_length: Some(50.0),
+            f_number: Some(2.8),
+            ..Shot::default()
+        };
+        let with_shot = |mut f: Facts| {
+            f.identity.shot = shot.clone();
+            f
+        };
+        let edit = Edit::default();
+        let lens_of = |facts: &Facts| -> (Option<LensCorrection>, bool) {
+            let s = stages(&edit, &Purpose::Viewport, facts, Some(&db));
+            let lens = s.ops().find_map(|o| match o {
+                Stage::Lens(c) => c.first().copied(),
+                _ => None,
+            });
+            (lens, s.ops().any(|o| matches!(o, Stage::Ca(_))))
+        };
+
+        let (plain, ca) = lens_of(&with_shot(raw(0)));
+        let plain = plain.expect("the profile's correction");
+        assert!(plain.distortion.is_some() && plain.chromatic_aberration.is_some());
+        assert!(ca, "the automatic CA");
+
+        let (warped, ca) = lens_of(&with_shot(phone()));
+        let warped = warped.expect("the vignetting stays");
+        assert!(warped.distortion.is_none());
+        assert!(warped.chromatic_aberration.is_some() && warped.vignetting.is_some());
+        assert!(ca, "a warp of one set leaves the CA");
+
+        let mut each = with_shot(phone());
+        let InputKind::Raw { warp: Some(w), .. } = &mut each.input else {
+            unreachable!()
+        };
+        let plane = w.warps[0].planes[0].clone();
+        w.warps[0].planes = vec![plane.clone(), plane.clone(), plane];
+        let (colors, ca) = lens_of(&each);
+        let colors = colors.expect("the vignetting stays");
+        assert!(colors.distortion.is_none() && colors.chromatic_aberration.is_none());
+        assert!(colors.vignetting.is_some());
+        assert!(!ca, "the file corrects each color");
+
+        // A lens picked by hand keeps all it asks for.
+        let mut picked = Edit::default();
+        picked.lens.chosen = greycard_edit::LensChoice::Database("Canon RF 50mm F1.8 STM".into());
+        let s = stages(&picked, &Purpose::Viewport, &each, Some(&db));
+        assert!(
+            s.ops()
+                .any(|o| matches!(o, Stage::Lens(c) if c[0].distortion.is_some()))
+        );
     }
 
     #[test]

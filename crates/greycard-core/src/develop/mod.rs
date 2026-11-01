@@ -7,6 +7,7 @@
 //! stores.
 
 pub mod amaze;
+pub mod bad_pixels;
 pub mod ca;
 pub mod ca_xtrans;
 pub mod defringe;
@@ -30,6 +31,7 @@ pub mod sharpen;
 pub mod sites;
 pub(crate) mod sum;
 pub mod vng4;
+pub mod warp;
 pub mod xtrans;
 
 use std::sync::Arc;
@@ -39,7 +41,8 @@ use rayon::prelude::*;
 use crate::color::{self, WhitePoint};
 use crate::error::{Error, Result};
 use crate::image::{CameraImage, WorkingImage};
-use crate::raw::{CfaPattern, Mosaic, Orientation, RawFrame, Rect, SensorLayout};
+use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
+use crate::raw::{CfaPattern, Mosaic, Orientation, RawFrame, Rect, Samples, SensorLayout};
 
 /// What to develop a frame with.
 ///
@@ -589,8 +592,15 @@ pub fn prepare_with(
     clip_highlights(&mut samples, ceiling);
 
     let mut ca_stats = None;
+    // A DNG whose warps correct each color has corrected its lateral
+    // aberration itself: the warp after the demosaic is the authority.
+    let file_corrects_ca = frame.dng.warps_each_color();
+    if file_corrects_ca && settings.chromatic_aberration.is_some() {
+        log::debug!("the CA correction left to the file's own warps");
+    }
     if let (Some(pattern), Some(options)) = (&pattern, &settings.chromatic_aberration)
         && ca::corrects(pattern)
+        && !file_corrects_ca
     {
         let (corrected, s) = match ca {
             Some(correct) => correct(&samples, width, height, pattern, options)?,
@@ -711,8 +721,26 @@ pub fn develop_with(
     ca: Option<CaCorrector<'_>>,
 ) -> Result<Developed> {
     let prepared = prepare_with(frame, settings, false, ca)?;
-    let (rgb, dual, denoise) = demosaic_prepared(&prepared, settings)?;
+    let (mut rgb, dual, denoise) = demosaic_prepared(&prepared, settings)?;
+    apply_dng_warps(frame, &mut rgb, prepared.width, prepared.height, 1);
     finish(prepared, rgb, dual, denoise, settings)
+}
+
+/// The frame's DNG warps on its demosaiced camera RGB, binned by `bin`:
+/// the lens's distortion as the file corrects it, on the camera's own
+/// geometry, before the move into the working space turns it.
+pub fn apply_dng_warps(
+    frame: &RawFrame,
+    rgb: &mut Vec<f32>,
+    width: usize,
+    height: usize,
+    bin: usize,
+) {
+    if let Some(area) = warp::area_of(frame) {
+        let at = warp::WarpPlacement::binned(area, bin);
+        warp::apply_warps(rgb, width, height, at, &frame.dng.warps);
+        log::debug!("DNG warps: {} applied", frame.dng.warps.len());
+    }
 }
 
 /// Below this a sample is too dark to say how sharp the mosaic is:
@@ -721,8 +749,9 @@ const RADIUS_LOWER_LIMIT: f32 = 1000.0 / 65535.0;
 /// This close to the clip a value counts as clipped.
 pub(crate) const CLIP_FRACTION: f32 = 0.98;
 
-/// Demosaic a frame and stop there: camera-space RGB with no white balance,
-/// no matrix and no orientation applied.
+/// Demosaic a frame and stop before the color: camera-space RGB with no
+/// white balance, no matrix and no orientation applied, a DNG's own warps
+/// on it, since the linear DNG it is stored as carries no opcode list.
 ///
 /// The gains are still applied before the demosaic, because demosaic
 /// algorithms assume balanced channels, and divided out afterwards. Nothing
@@ -758,6 +787,8 @@ pub fn demosaic(frame: &RawFrame, settings: &DevelopSettings) -> Result<Demosaic
             options,
         )?;
     }
+    // A linear DNG carries no opcode list: the lens's warp goes in.
+    apply_dng_warps(frame, &mut rgb, width, height, 1);
     apply_gains_rgb(&mut rgb, gains.map(|g| 1.0 / g));
     rgb.par_iter_mut().for_each(|s| *s = s.clamp(0.0, 1.0));
 
@@ -858,10 +889,10 @@ fn balanced_samples(
     let crop = frame.effective_crop();
     let (mut samples, width, height) = crop_samples(&normalized, frame.width, frame.channels, crop);
     drop(normalized);
-    // A DNG's gain maps go on the linear samples before anything reads
-    // them, as the specification runs `OpcodeList2`: the noise measured
-    // and every pass after see the mosaic the file meant.
-    apply_dng_gain_maps(frame, &mut samples, width, crop);
+    // A DNG's first two opcode lists go on the linear samples before
+    // anything reads them, as the specification runs them: the noise
+    // measured and every pass after see the mosaic the file meant.
+    apply_dng_mosaic(frame, &mut samples, width, height, crop);
 
     let mut noise = None;
     let mut hot = None;
@@ -904,12 +935,18 @@ fn balanced_samples(
     Ok((samples, width, height, pattern, noise, hot))
 }
 
-/// The frame's DNG gain maps on its cropped, normalized samples. A crop
-/// that reaches outside the area the maps are measured in (which no
-/// camera writes) leaves them undone, said in the log.
-fn apply_dng_gain_maps(frame: &RawFrame, samples: &mut [f32], width: usize, crop: Rect) {
-    let maps = &frame.dng.gain_maps;
-    if maps.is_empty() {
+/// The frame's DNG opcodes of its first two lists on its cropped,
+/// normalized samples, in their order. A crop that reaches outside the
+/// area the second list is measured in (which no camera writes) leaves
+/// that list undone, said in the log.
+fn apply_dng_mosaic(
+    frame: &RawFrame,
+    samples: &mut [f32],
+    width: usize,
+    height: usize,
+    crop: Rect,
+) {
+    if frame.dng.mosaic.is_empty() {
         return;
     }
     let area = frame.dng.opcode_area.unwrap_or(Rect {
@@ -918,22 +955,113 @@ fn apply_dng_gain_maps(frame: &RawFrame, samples: &mut [f32], width: usize, crop
         width: frame.width,
         height: frame.height,
     });
-    if crop.x < area.x || crop.y < area.y {
-        log::warn!("DNG gain maps left undone: the crop {crop:?} is outside {area:?}");
-        return;
+    let inside = crop.x >= area.x && crop.y >= area.y;
+    if !inside {
+        log::warn!("DNG OpcodeList2 left undone: the crop {crop:?} is outside {area:?}");
     }
     let at = gain_map::MapPlacement {
-        x: crop.x - area.x,
-        y: crop.y - area.y,
+        x: crop.x.saturating_sub(area.x),
+        y: crop.y.saturating_sub(area.y),
         image_width: area.width,
         image_height: area.height,
     };
-    let held = gain_map::apply_gain_maps(samples, width, frame.channels, at, maps);
+    let (mut maps, mut held, mut made) = (0, 0, 0);
+    for op in &frame.dng.mosaic {
+        match op {
+            MosaicOp::GainMap(map) if inside => {
+                held += gain_map::apply_gain_maps(
+                    samples,
+                    width,
+                    frame.channels,
+                    at,
+                    std::slice::from_ref(map),
+                );
+                maps += 1;
+            }
+            MosaicOp::BadPixels(OpcodeList::One, fix) => {
+                made += fix_bad_pixels(
+                    frame,
+                    samples,
+                    width,
+                    height,
+                    crop,
+                    (crop.x, crop.y),
+                    true,
+                    fix,
+                );
+            }
+            MosaicOp::BadPixels(_, fix) if inside => {
+                made += fix_bad_pixels(
+                    frame,
+                    samples,
+                    width,
+                    height,
+                    crop,
+                    (at.x, at.y),
+                    false,
+                    fix,
+                );
+            }
+            _ => {}
+        }
+    }
     log::debug!(
-        "DNG gain maps: {} applied, {held} of {} samples held at the white",
-        maps.len(),
+        "DNG mosaic opcodes: {maps} gain map(s), {held} of {} samples held at the white; {made} bad photosite(s) made again",
         samples.len()
     );
+}
+
+/// One bad-pixel opcode on the cropped, normalized mosaic, its list's
+/// image placed so the crop's corner is at `at`: the first list's
+/// (`stored`) constant against the file's stored values, the second's
+/// against the values as they stand, scaled to 0..65535 as the SDK's
+/// 16-bit stage holds them. Answers how many were made again; a linear
+/// frame has none made, said in the log.
+#[allow(clippy::too_many_arguments)]
+fn fix_bad_pixels(
+    frame: &RawFrame,
+    samples: &mut [f32],
+    width: usize,
+    height: usize,
+    crop: Rect,
+    at: (usize, usize),
+    stored: bool,
+    fix: &BadPixels,
+) -> usize {
+    let SensorLayout::Cfa(pattern) = &frame.layout else {
+        log::warn!("DNG bad pixels left undone: the frame is not a mosaic");
+        return 0;
+    };
+    let pattern = pattern.shifted(crop.x, crop.y);
+    let mut bad = vec![false; width * height];
+    match fix {
+        BadPixels::List { .. } => bad_pixels::mark_listed(&mut bad, width, height, at.0, at.1, fix),
+        BadPixels::Constant { value, .. } => {
+            let value = *value as f32;
+            let stored_at = |i: usize| -> f32 {
+                let (cx, cy) = (crop.x + i % width, crop.y + i / width);
+                match &frame.samples {
+                    Samples::U16(v) => f32::from(v[cy * frame.width + cx]),
+                    Samples::F32(v) => v[cy * frame.width + cx],
+                }
+            };
+            for (i, b) in bad.iter_mut().enumerate() {
+                let seen = if stored {
+                    stored_at(i)
+                } else {
+                    (samples[i] * 65535.0).round()
+                };
+                *b = seen == value;
+            }
+        }
+    }
+    let made = bad_pixels::repair(samples, width, height, &pattern, &bad);
+    log::debug!(
+        "DNG bad pixels (phase {}): {} marked, {made} made again",
+        fix.phase(),
+        bad.iter().filter(|b| **b).count()
+    );
+    made
 }
 
 /// Subtract black, divide by the range to white, clamp to 0..1.
@@ -1267,12 +1395,116 @@ pub(crate) mod tests {
         };
         let plain = demosaic(&flat_frame(), &settings).unwrap();
         let mut frame = flat_frame();
-        frame.dng.gain_maps = vec![crate::opcodes::even_map(4, 4, 2, 2, |_, _| 0.5)];
+        frame.dng.mosaic = vec![crate::opcodes::MosaicOp::GainMap(crate::opcodes::even_map(
+            4,
+            4,
+            2,
+            2,
+            |_, _| 0.5,
+        ))];
         let halved = demosaic(&frame, &settings).unwrap();
         for (a, b) in plain.image.data.iter().zip(&halved.image.data) {
             assert!(close(*a * 0.5, *b), "{a} halved is not {b}");
         }
         assert!(plain.image.data.iter().any(|v| *v > 0.1));
+    }
+
+    /// A DNG's bad photosites are made again on the mosaic: a listed
+    /// blue stuck at the white and a red at the list's constant develop
+    /// as the frame with none stuck. The second list's points are in
+    /// the active area's coordinates.
+    #[test]
+    fn a_dngs_bad_pixels_are_made_again() {
+        use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
+        let settings = DevelopSettings {
+            hot_pixels: None,
+            chromatic_aberration: None,
+            ..Default::default()
+        };
+        let plain = demosaic(&flat_frame(), &settings).unwrap();
+        let mut frame = flat_frame();
+        let Samples::U16(samples) = &mut frame.samples else {
+            unreachable!()
+        };
+        samples[5] = 1100;
+        samples[10] = 1099;
+        let listed = |row, col| BadPixels::List {
+            phase: 0,
+            points: vec![[row, col]],
+            rects: vec![],
+        };
+        frame.dng.mosaic = vec![MosaicOp::BadPixels(OpcodeList::One, listed(1, 1))];
+        let one = demosaic(&frame, &settings).unwrap();
+        assert_ne!(plain.image.data, one.image.data);
+        frame.dng.mosaic.push(MosaicOp::BadPixels(
+            OpcodeList::One,
+            BadPixels::Constant {
+                value: 1099,
+                phase: 0,
+            },
+        ));
+        let both = demosaic(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&both.image.data) {
+            assert!(close(*a, *b), "{a} is not {b}");
+        }
+
+        // The same red listed in the second list, its area the right
+        // half of the frame: the red at sensor row 2, column 2 is at
+        // the area's column 0.
+        frame.dng.opcode_area = Some(Rect {
+            x: 2,
+            y: 0,
+            width: 2,
+            height: 4,
+        });
+        frame.crop = frame.dng.opcode_area;
+        frame.dng.mosaic = vec![MosaicOp::BadPixels(OpcodeList::Two, listed(2, 0))];
+        let mut clean = flat_frame();
+        clean.crop = frame.crop;
+        let plain = demosaic(&clean, &settings).unwrap();
+        let area = demosaic(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&area.image.data) {
+            assert!(close(*a, *b), "{a} is not {b}");
+        }
+    }
+
+    /// The second list runs in its file order: a constant before a gain
+    /// map is tested on the values before the gain, so a stuck red at
+    /// 0.8 is found by its 0.8 and made again before the map halves it.
+    #[test]
+    fn the_second_list_runs_in_its_order() {
+        use crate::opcodes::{BadPixels, MosaicOp, OpcodeList, even_map};
+        let settings = DevelopSettings {
+            hot_pixels: None,
+            chromatic_aberration: None,
+            ..Default::default()
+        };
+        let half = MosaicOp::GainMap(even_map(4, 4, 2, 2, |_, _| 0.5));
+        let mut clean = flat_frame();
+        clean.dng.mosaic = vec![half.clone()];
+        let plain = demosaic(&clean, &settings).unwrap();
+        let mut frame = flat_frame();
+        let Samples::U16(samples) = &mut frame.samples else {
+            unreachable!()
+        };
+        samples[10] = 900; // (900 - 100) / 1000 = 0.8
+        let constant = MosaicOp::BadPixels(
+            OpcodeList::Two,
+            BadPixels::Constant {
+                value: (0.8f32 * 65535.0).round() as u32,
+                phase: 0,
+            },
+        );
+        frame.dng.mosaic = vec![constant.clone(), half.clone()];
+        let ordered = demosaic(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&ordered.image.data) {
+            assert!(close(*a, *b), "{a} is not {b}");
+        }
+        // After the map the stuck red is at 0.4 and the constant finds
+        // nothing.
+        frame.dng.mosaic = vec![half, constant];
+        let after = demosaic(&frame, &settings).unwrap();
+        assert_ne!(plain.image.data, after.image.data);
     }
 
     #[test]

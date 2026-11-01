@@ -38,6 +38,14 @@ design note behind it.
 
 ### Color
 
+- A DNG that carries its own distortion correction or bad-pixel list
+  is read with them, as Adobe's reader applies them, a phone's
+  per-color CA correction included. The file's correction takes the
+  place of the lens profile's distortion, and of the CA correction
+  where it corrects each color. Crops, spots, and brushes already
+  placed on such a DNG move with the picture, up to about 96 px at a
+  Pixel ultra-wide's corners plus a 4 % zoom
+  ([§513](https://github.com/jessolmstead/greycard/blob/master/docs/notes/513-a-dngs-own-lens-correction-and-bad-pixels.md)).
 - Detail gains Structure under Clarity, in the global section and in
   a mask: a local contrast about three times wider than Clarity and
   soft, so shapes separate across a face or a landscape without halos

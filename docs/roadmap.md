@@ -327,13 +327,19 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
-- [ ] The rest of a phone's DNG (§474): the file's `BaselineExposure`
-      applied as our neutral plus its value, once the neutral is
-      measured from one Adobe-converted DNG of a reference body; the
-      rectilinear warps (a resample after the demosaic, placed on the
-      engine's stage list) and the bad-pixel list; the 3 MB
-      ProfileGainTableMap, the phone's local tone mapping, most of
-      the gap left to its own picture. Test set: three Pixel 9 DNGs
+- [ ] The rest of a phone's DNG (§474, §513): the file's
+      `BaselineExposure` applied as our neutral plus its value, once
+      the neutral is measured from one Adobe-converted DNG of a
+      reference body; the 3 MB ProfileGainTableMap, the phone's local
+      tone mapping, most of the gap left to its own picture;
+      `WarpFisheye` and `FixVignetteRadial`. Test set: three Pixel 9
+      DNGs
+- [ ] A DNG's warp on the GPU (§513): 0.4 s a develop at four threads
+      on the CPU today, once per base
+- [ ] A margin past the default crop demosaiced for a DNG's warp
+      (§513): the warp reads the crop alone, so where its source falls
+      outside (about 2 px at a Pixel wide's corners) the edge repeats
+      as a faint smear; Adobe reads the active area's border
 
 - [ ] Color accuracy against a chart: a 48-patch chart shot per camera in
       daylight and under tungsten, kept with the samples, and an ignored

@@ -130,6 +130,25 @@ impl Default for Lens {
     }
 }
 
+/// What a file's own correction of its lens covers: a DNG's warps (its
+/// `OpcodeList3`) correct the distortion, and with a set of
+/// coefficients a color its lateral chromatic aberration too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FileCorrects {
+    pub distortion: bool,
+    pub chromatic_aberration: bool,
+}
+
+impl FileCorrects {
+    /// What the warps `warps` correct.
+    pub fn of(warps: &[greycard_core::opcodes::Warp]) -> Self {
+        Self {
+            distortion: !warps.is_empty(),
+            chromatic_aberration: warps.iter().any(|w| w.planes.len() > 1),
+        }
+    }
+}
+
 /// The largest manual distortion either way.
 pub const MAX_MANUAL: f32 = 0.5;
 /// The largest manual chromatic aberration either way: a percent of
@@ -138,6 +157,21 @@ pub const MAX_MANUAL: f32 = 0.5;
 pub const MAX_MANUAL_CA: f32 = 0.01;
 
 impl Lens {
+    /// The section as it applies over a file that corrects its own lens
+    /// as `file` says: the file's lens's profile leaves the distortion,
+    /// and the lateral aberration when the file corrects each color, to
+    /// the file, which is the authority on its own lens, and keeps its
+    /// vignetting. A lens picked by hand keeps all it asks for, and the
+    /// corrections set by hand are kept either way.
+    pub fn over_file(&self, file: FileCorrects) -> Lens {
+        let mut out = self.clone();
+        if self.chosen.is_from_file() {
+            out.distortion &= !file.distortion;
+            out.chromatic_aberration &= !file.chromatic_aberration;
+        }
+        out
+    }
+
     /// Whether the edit wants anything of a profile.
     pub fn wants_profile(&self) -> bool {
         self.enabled
@@ -270,6 +304,52 @@ impl Lens {
 mod tests {
     use super::*;
     use greycard_core::develop::lens::Vignetting;
+
+    /// Over a file that corrects its own distortion, the file's lens's
+    /// profile gives up its distortion, and its aberration too when the
+    /// file corrects each color; the vignetting stays, and a lens picked
+    /// by hand and the corrections set by hand are kept.
+    #[test]
+    fn a_file_that_corrects_its_lens_keeps_the_profile_off_it() {
+        let profile = LensCorrection {
+            distortion: Some(Distortion::Poly3 { k1: 0.02 }),
+            chromatic_aberration: Some(ChromaticAberration::IDENTITY.scaled(1.001, 0.999)),
+            vignetting: Some(Vignetting {
+                k: [-0.5, 0.0, 0.0],
+            }),
+            ..Default::default()
+        };
+        let lens = Lens::default();
+        let distortion = FileCorrects {
+            distortion: true,
+            chromatic_aberration: false,
+        };
+        let c = lens.over_file(distortion).corrections(Some(profile));
+        assert_eq!(c.len(), 1);
+        assert!(c[0].distortion.is_none());
+        assert!(c[0].chromatic_aberration.is_some());
+        assert!(c[0].vignetting.is_some());
+        let both = FileCorrects {
+            distortion: true,
+            chromatic_aberration: true,
+        };
+        let c = lens.over_file(both).corrections(Some(profile));
+        assert!(c[0].distortion.is_none() && c[0].chromatic_aberration.is_none());
+        assert!(c[0].vignetting.is_some());
+        assert_eq!(lens.over_file(FileCorrects::default()), lens);
+
+        let manual = Lens {
+            manual: -0.1,
+            ..lens.clone()
+        };
+        let c = manual.over_file(both).corrections(Some(profile));
+        assert_eq!(c[0].distortion, Some(Distortion::Poly3 { k1: -0.1 }));
+        let picked = Lens {
+            chosen: LensChoice::Database("A lens".into()),
+            ..lens
+        };
+        assert_eq!(picked.over_file(both), picked);
+    }
 
     #[test]
     fn the_edit_chooses_among_the_profiles_corrections() {

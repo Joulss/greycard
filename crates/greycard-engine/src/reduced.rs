@@ -254,6 +254,7 @@ pub fn develop_as(
                     | Stage::Bin(_)
                     | Stage::Demosaic(..)
                     | Stage::Denoise(_)
+                    | Stage::Warp(_)
                     | Stage::IntoWorking { .. }
                     | Stage::Orient(_)
                     | Stage::Reduce(_)

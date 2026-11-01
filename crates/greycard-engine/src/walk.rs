@@ -19,6 +19,7 @@ use greycard_core::develop::denoise;
 use greycard_core::develop::local_contrast::{LocalContrastStats, local_contrast};
 use greycard_core::develop::retouch::Region;
 use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
+use greycard_core::develop::warp::{WarpPlacement, apply_warps};
 use greycard_core::develop::{
     self as core_develop, DemosaicMethod, DevelopSettings, Prepared, demosaic_prepared,
     prepare_with,
@@ -1594,6 +1595,23 @@ fn cpu_op(
                     .map_err(failed)?;
             }
         }
+        Stage::Warp(options) => {
+            let at = WarpPlacement::binned(options.area, st.meta.bin);
+            match &mut st.buf {
+                Buf::Camera { prepared, rgb } => {
+                    apply_warps(rgb, prepared.width, prepared.height, at, &options.warps);
+                }
+                Buf::CameraPair {
+                    prepared,
+                    network,
+                    plain,
+                } => {
+                    apply_warps(network, prepared.width, prepared.height, at, &options.warps);
+                    apply_warps(plain, prepared.width, prepared.height, at, &options.warps);
+                }
+                _ => unreachable!("the file's warp is camera RGB's"),
+            }
+        }
         Stage::IntoWorking { orientation, .. } => {
             let swapped = |o: Orientation| {
                 matches!(
@@ -2350,6 +2368,86 @@ mod tests {
         walk_cpu(&edit(), &Purpose::Viewport, &input, 0, &mut kept);
         let turned = walk_cpu(&edit(), &Purpose::Viewport, &input, 1, &mut kept);
         assert_eq!(turned.from, None);
+    }
+
+    /// A DNG's warp is walked on camera RGB as core's develop runs it,
+    /// to the bit, and moves the picture; the reduced walk warps its
+    /// binned picture as well.
+    #[test]
+    fn a_files_warp_is_walked_as_cores_develop_runs_it() {
+        let mut frame = (*frame_of(96, 64, [1.0, 1.0])).clone();
+        let mut lens = greycard_core::opcodes::WarpPlane::identity();
+        (lens.radial[0], lens.radial[2]) = (0.97, 0.06);
+        frame.dng.warps = vec![greycard_core::opcodes::Warp {
+            planes: vec![lens],
+            center_x: 0.48,
+            center_y: 0.53,
+            reciprocal: false,
+        }];
+        let warped = Arc::new(frame.clone());
+        frame.dng.warps.clear();
+        let plain = Arc::new(frame);
+        let mut edit = Edit::default();
+        edit.sharpen.enabled = false;
+        let steps = stages::stages(
+            &edit,
+            &Purpose::Viewport,
+            &Input::Raw(warped.clone()).facts(0),
+            None,
+        );
+        assert_eq!(
+            steps.ops().map(Stage::name).collect::<Vec<_>>(),
+            [
+                "prepare",
+                "CA",
+                "demosaic",
+                "the file's warp",
+                "move into the working space",
+                "finish"
+            ]
+        );
+        let walked = walk_cpu(
+            &edit,
+            &Purpose::Viewport,
+            &Input::Raw(warped.clone()),
+            0,
+            &mut Kept::new(),
+        );
+        let Some(Stage::Prepare(prepare)) = steps.ops().next() else {
+            unreachable!("a raw's list starts at its prepare")
+        };
+        let ca = steps.ops().find_map(|s| match s {
+            Stage::Ca(o) => Some(*o),
+            _ => None,
+        });
+        // Core's develop runs the CA inside its prepare.
+        let settings = DevelopSettings {
+            chromatic_aberration: ca,
+            ..prepare.settings.clone()
+        };
+        let want = core_develop::develop(&warped, &settings).unwrap().image;
+        let got = picture(&walked);
+        assert!(got.data == want.data, "the walk is core's develop");
+        let unwarped = walk_cpu(
+            &edit,
+            &Purpose::Viewport,
+            &Input::Raw(plain),
+            0,
+            &mut Kept::new(),
+        );
+        assert!(
+            picture(&unwarped).data != got.data,
+            "the warp moved nothing"
+        );
+
+        let reduced = walk_cpu(
+            &edit,
+            &Purpose::Reduced,
+            &Input::Raw(warped),
+            0,
+            &mut Kept::new(),
+        );
+        assert!(picture(&reduced).data.iter().all(|v| v.is_finite()));
     }
 
     /// The give-way is asked before each stage, and a walk told to

@@ -1045,6 +1045,9 @@ fn run_develop(
         None => develop(&frame, settings).map_err(anyhow::Error::from),
     }
     .with_context(|| format!("developing {}", file.display()))?;
+    // A DNG that corrects its own lens has the last word on it, as in
+    // the editor.
+    let lens = &lens.over_file(greycard_edit::lens::FileCorrects::of(&frame.dng.warps));
     let sharpened = correct_and_sharpen(
         &mut developed.image,
         (&frame.make, &frame.model, &frame.shot, true),

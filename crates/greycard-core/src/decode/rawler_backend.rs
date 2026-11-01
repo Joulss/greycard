@@ -725,7 +725,7 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     let mut frame = frame_from_rawler(image)?;
     judge_rows(&frame, up_front)?;
     frame.dng = dng_tags(decoder.as_ref());
-    if !frame.dng.gain_maps.is_empty() {
+    if !frame.dng.mosaic.is_empty() || !frame.dng.warps.is_empty() {
         frame.dng.opcode_area = active_area;
     }
     let forward = forward_matrices(decoder.as_ref());
@@ -733,11 +733,13 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     if let Some(stops) = frame.dng.baseline_exposure {
         log::info!("BaselineExposure {stops:.2} EV carried, not applied");
     }
-    if !forward.is_empty() || !frame.dng.gain_maps.is_empty() {
+    if !forward.is_empty() || frame.dng.opcode_area.is_some() {
         log::info!(
-            "DNG tags: forward matrices for illuminant(s) {:?}, {} gain map(s)",
+            "DNG tags: forward matrices for illuminant(s) {:?}, {} gain map(s), {} bad-pixel list(s), {} warp(s)",
             forward.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
-            frame.dng.gain_maps.len()
+            crate::opcodes::gain_maps_of(&frame.dng.mosaic).count(),
+            frame.dng.mosaic.len() - crate::opcodes::gain_maps_of(&frame.dng.mosaic).count(),
+            frame.dng.warps.len()
         );
     }
     // rawler leaves the image's orientation at Normal (a TODO in its
@@ -806,9 +808,7 @@ fn dng_tags(decoder: &dyn ::rawler::decoders::Decoder) -> DngTags {
         .and_then(|e| e.value.get_f32(0).ok().flatten())
         // Past sixteen stops either way is a damaged tag, not a picture.
         .filter(|v| v.is_finite() && v.abs() <= 16.0);
-    // The opcode lists live on the raw image's IFD. Only the second's
-    // gain maps are applied; the first and the third (a lens's warp, a
-    // bad-pixel list) are named in the log as left.
+    // The opcode lists live on the raw image's IFD.
     let raw = decoder.ifd(WellKnownIFD::VirtualDngRawTags).ok().flatten();
     let list = |tag: DngTag| -> Option<Vec<u8>> {
         let e = raw.as_ref()?.get_entry(tag)?;
@@ -818,22 +818,16 @@ fn dng_tags(decoder: &dyn ::rawler::decoders::Decoder) -> DngTags {
             _ => None,
         }
     };
-    for (tag, name) in [
-        (DngTag::OpcodeList1, "OpcodeList1"),
-        (DngTag::OpcodeList3, "OpcodeList3"),
-    ] {
-        if let Some(bytes) = list(tag) {
-            for op in crate::opcodes::parse_list(&bytes) {
-                crate::opcodes::log_left(&op, name);
-            }
-        }
-    }
-    let gain_maps = list(DngTag::OpcodeList2)
-        .map(|b| crate::opcodes::gain_maps(&b))
-        .unwrap_or_default();
+    let (one, two, three) = (
+        list(DngTag::OpcodeList1),
+        list(DngTag::OpcodeList2),
+        list(DngTag::OpcodeList3),
+    );
+    let read = crate::opcodes::corrections(one.as_deref(), two.as_deref(), three.as_deref());
     DngTags {
         baseline_exposure,
-        gain_maps,
+        mosaic: read.mosaic,
+        warps: read.warps,
         opcode_area: None,
     }
 }

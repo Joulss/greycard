@@ -112,7 +112,7 @@ pub fn develop_reduced(
         Some(p) => bin_for_cell(cell_of(p), prepared.width, prepared.height),
         None => 1,
     };
-    develop_prepared_binned(prepared, settings, bin)
+    develop_prepared_binned(frame, prepared, settings, bin)
 }
 
 /// [`develop_reduced`] with the bin given, for a frame of any size: the
@@ -130,17 +130,19 @@ pub fn develop_reduced_by(
         Some(p) => fit_bin(p, bin),
         None => 1,
     };
-    develop_prepared_binned(prepared, settings, bin)
+    develop_prepared_binned(frame, prepared, settings, bin)
 }
 
 fn develop_prepared_binned(
+    frame: &RawFrame,
     prepared: Prepared,
     settings: &DevelopSettings,
     bin: usize,
 ) -> Result<Reduced> {
     let full = oriented((prepared.width, prepared.height), prepared.orientation);
     if bin == 1 {
-        let (rgb, dual, denoise) = demosaic_prepared(&prepared, settings)?;
+        let (mut rgb, dual, denoise) = demosaic_prepared(&prepared, settings)?;
+        super::apply_dng_warps(frame, &mut rgb, prepared.width, prepared.height, 1);
         let developed = finish(prepared, rgb, dual, denoise, settings)?;
         return Ok(Reduced {
             developed,
@@ -152,13 +154,14 @@ fn develop_prepared_binned(
         .pattern
         .as_ref()
         .expect("a bin past one is a mosaic's");
-    let (rgb, width, height) = bin_mosaic(
+    let (mut rgb, width, height) = bin_mosaic(
         &prepared.samples,
         prepared.width,
         prepared.height,
         pattern,
         bin,
     );
+    super::apply_dng_warps(frame, &mut rgb, width, height, bin);
     let binned = Prepared {
         samples: Vec::new(),
         width,

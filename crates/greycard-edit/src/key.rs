@@ -47,7 +47,8 @@ use crate::mask::{LandscapeGroup, Shape};
 /// span's foot, 2026-10-13.
 /// 4: a baseline per body (`baseline::for_body`), which the edit does
 /// not store, 2026-10-17.
-pub const DEVELOP_RECIPE: u32 = 4;
+/// 5: a DNG's own warps and bad-pixel lists, 2026-11-01.
+pub const DEVELOP_RECIPE: u32 = 5;
 
 /// The learned masks' stages, by version: raise one when its raster
 /// comes to be another from the same shape. greycard-ui's mask cache

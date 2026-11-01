@@ -328,7 +328,7 @@ pub(super) enum Fetched {
     Landed,
     /// It gave way before this stage, with what the decode said of
     /// the frame.
-    Abandoned(&'static str, Facts),
+    Abandoned(&'static str, Box<Facts>),
     /// Not begun, or its base not made, for this reason.
     Skipped(String),
 }
@@ -465,7 +465,7 @@ pub(super) fn prefetch(
                 "the prefetch of the {side} frame, {name}, abandoned before its {stage}: \
                  the worker was asked for something"
             ));
-            return Fetched::Abandoned(stage, facts);
+            return Fetched::Abandoned(stage, Box::new(facts));
         }
         Err(Stopped::Failed(e)) => return skipped(format!("its base failed: {e}")),
     };

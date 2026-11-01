@@ -4,18 +4,35 @@
 //! A list is big-endian whatever the file's byte order: a count, then
 //! each opcode as its id, the DNG version it was written for, its flags,
 //! the byte count of its parameters, and the parameters. Of the opcodes
-//! only `GainMap` is read for now; every other is named in the log and
-//! left, as a reader may leave one flagged optional. One that is not
-//! optional is left too, with the log saying so: a picture with a
-//! correction missing is more use than no picture.
+//! the gain maps, the rectilinear warps, and the two bad-pixel lists are
+//! read; every other is named in the log and left, as a reader may leave
+//! one flagged optional. One that is not optional is left too, with the
+//! log saying so: a picture with a correction missing is more use than
+//! no picture.
+//!
+//! Where the specification leaves a reader a choice, the reading
+//! follows Adobe's DNG SDK (`dng_lens_correction.cpp` for the warps'
+//! parameters, `dng_opcode_list.cpp` for the rule between the two
+//! warps); no SDK code is taken. The bad photosites are repaired
+//! otherwise than the SDK's `dng_bad_pixels.cpp` does
+//! (`develop::bad_pixels` says how).
 
 use std::fmt;
 
 /// The opcode's flag bit saying a reader may skip it.
 const OPTIONAL: u32 = 1;
 
-/// The `GainMap` opcode's id.
+/// The opcodes' ids.
+const WARP_RECTILINEAR: u32 = 1;
+const WARP_FISHEYE: u32 = 2;
+const FIX_BAD_PIXELS_CONSTANT: u32 = 4;
+const FIX_BAD_PIXELS_LIST: u32 = 5;
 const GAIN_MAP: u32 = 9;
+const WARP_RECTILINEAR_2: u32 = 14;
+
+/// The radial terms of a warp's polynomial, as `WarpRectilinear2` lays
+/// them out: the powers of the radius from 0 to 14.
+pub const RADIAL_TERMS: usize = 15;
 
 /// The largest number of opcodes a list is read for; a count past it is
 /// a damaged list, not a camera's.
@@ -71,6 +88,169 @@ impl GainMap {
     pub fn point(&self, v: usize, h: usize, plane: usize) -> f32 {
         self.gains[(v * self.points_h as usize + h) * self.map_planes as usize + plane]
     }
+}
+
+/// A `WarpRectilinear` or `WarpRectilinear2` opcode: a lens's distortion,
+/// and with a set of coefficients a plane its lateral chromatic
+/// aberration, as a map from each corrected pixel to where it is found
+/// in the picture as taken. It runs on the demosaiced picture of the
+/// active area (`OpcodeList3`).
+///
+/// For a pixel at (x, y), with the center (cx, cy) in pixels and m the
+/// distance from the center to the farthest corner: dx = (x - cx) / m,
+/// dy = (y - cy) / m, r^2 = dx^2 + dy^2, and the source is
+///
+/// ```text
+/// xs = cx + m (dx f(r) + kt1 (r^2 + 2 dx^2) + 2 kt0 dx dy)
+/// ys = cy + m (dy f(r) + kt0 (r^2 + 2 dy^2) + 2 kt1 dx dy)
+/// ```
+///
+/// where f(r) is the radial polynomial (its reciprocal when the file
+/// says so), r held to the plane's valid range. `WarpRectilinear`'s four
+/// terms are the even powers 0, 2, 4, and 6 of the same polynomial.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Warp {
+    /// One set for every plane, or one each for red, green, and blue.
+    pub planes: Vec<WarpPlane>,
+    /// The optical center, relative to the image: 0 at its left or top
+    /// edge, 1 at its right or bottom.
+    pub center_x: f64,
+    pub center_y: f64,
+    /// Whether the radius is divided by the polynomial rather than
+    /// multiplied.
+    pub reciprocal: bool,
+}
+
+/// One plane's coefficients of a [`Warp`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct WarpPlane {
+    /// The radial polynomial's terms, kr0 to kr14 by power of r.
+    pub radial: [f64; RADIAL_TERMS],
+    /// The tangential terms kt0 and kt1.
+    pub tangential: [f64; 2],
+    /// The radii, relative to the farthest corner, the polynomial is
+    /// read between; a radius outside is held to the nearer.
+    pub valid: (f64, f64),
+}
+
+impl WarpPlane {
+    /// A plane that leaves every pixel where it is.
+    pub fn identity() -> Self {
+        let mut radial = [0.0; RADIAL_TERMS];
+        radial[0] = 1.0;
+        Self {
+            radial,
+            tangential: [0.0; 2],
+            valid: (0.0, 1.0),
+        }
+    }
+}
+
+impl Warp {
+    /// Whether the warp leaves every pixel where it is.
+    pub fn is_identity(&self) -> bool {
+        let identity = WarpPlane::identity();
+        self.planes
+            .iter()
+            .all(|p| p.radial == identity.radial && p.tangential == identity.tangential)
+    }
+
+    /// The coefficients of `plane`: its own, or the one set's.
+    pub fn plane(&self, plane: usize) -> &WarpPlane {
+        &self.planes[plane.min(self.planes.len() - 1)]
+    }
+}
+
+/// A `FixBadPixelsConstant` or `FixBadPixelsList` opcode: photosites the
+/// maker knows to be bad, each to be made again from its same-color
+/// neighbors. Mosaic only; `OpcodeList1` or `OpcodeList2`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BadPixels {
+    /// Every photosite whose value, as the list sees it, is `value`:
+    /// the stored value for `OpcodeList1`, the value scaled to 0..65535
+    /// over the levels for `OpcodeList2`.
+    Constant { value: u32, phase: u32 },
+    /// The photosites at `points`, (row, column), and every one inside
+    /// `rects`, (top, left, bottom, right) with the bottom and right
+    /// outside, in the coordinates of the image the list runs on.
+    List {
+        phase: u32,
+        points: Vec<[i32; 2]>,
+        rects: Vec<[i32; 4]>,
+    },
+}
+
+impl BadPixels {
+    /// The mosaic's phase the maker wrote, 0 to 3: which of red, the two
+    /// greens, and blue is at the image's top left. Carried for the log;
+    /// the develop reads the frame's own pattern, which also has an
+    /// answer for an X-Trans mosaic.
+    pub fn phase(&self) -> u32 {
+        match self {
+            BadPixels::Constant { phase, .. } | BadPixels::List { phase, .. } => *phase,
+        }
+    }
+}
+
+/// Which of a DNG's three opcode lists an opcode came from: the first
+/// runs on the stored values, the second on the linear values of the
+/// active area, the third after the demosaic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpcodeList {
+    One,
+    Two,
+    Three,
+}
+
+impl OpcodeList {
+    pub fn name(self) -> &'static str {
+        match self {
+            OpcodeList::One => "OpcodeList1",
+            OpcodeList::Two => "OpcodeList2",
+            OpcodeList::Three => "OpcodeList3",
+        }
+    }
+}
+
+/// One opcode of the first two lists, run on the mosaic.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MosaicOp {
+    /// `OpcodeList2`'s.
+    GainMap(GainMap),
+    /// The first list's or the second's.
+    BadPixels(OpcodeList, BadPixels),
+}
+
+/// The most warps a file's correction is read with: a camera writes one
+/// or two, and each is a resample of every pixel.
+pub const MAX_WARPS: usize = 4;
+
+/// What a DNG's three opcode lists ask of the develop, the rest logged
+/// as left.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Corrections {
+    /// The first two lists' opcodes, the first's then the second's, each
+    /// in its file order: a constant bad-pixel test sees the values the
+    /// opcodes before it made.
+    pub mosaic: Vec<MosaicOp>,
+    /// `OpcodeList3`'s rectilinear warps, a superseded one left out, at
+    /// most [`MAX_WARPS`].
+    pub warps: Vec<Warp>,
+}
+
+impl Corrections {
+    /// The gain maps, in order.
+    pub fn gain_maps(&self) -> impl Iterator<Item = &GainMap> {
+        gain_maps_of(&self.mosaic)
+    }
+}
+
+/// The gain maps of a mosaic's opcodes, in order.
+pub fn gain_maps_of(ops: &[MosaicOp]) -> impl Iterator<Item = &GainMap> {
+    ops.iter().filter_map(|op| match op {
+        MosaicOp::GainMap(map) => Some(map),
+        MosaicOp::BadPixels(..) => None,
+    })
 }
 
 /// One opcode of a list, its parameters unread.
@@ -147,18 +327,72 @@ pub fn parse_list(bytes: &[u8]) -> Vec<Opcode<'_>> {
 /// of it named in the log as left undone. A gain map that will not read
 /// is left the same way.
 pub fn gain_maps(list: &[u8]) -> Vec<GainMap> {
-    let mut maps = Vec::new();
-    for op in parse_list(list) {
-        if op.id == GAIN_MAP {
-            match parse_gain_map(op.params) {
-                Some(map) => maps.push(map),
-                None => log::warn!("DNG {op} out of shape, left undone"),
+    corrections(None, Some(list), None)
+        .gain_maps()
+        .cloned()
+        .collect()
+}
+
+/// What the three lists, those a file has, ask of the develop: each
+/// opcode read is kept in the list's order, and every other named in
+/// the log as left undone, as is one that will not read.
+///
+/// A rectilinear warp that follows an applied, optional
+/// `WarpRectilinear2` is the older readers' copy of it and is left out,
+/// as the SDK leaves it: a phone writes its distortion both ways.
+pub fn corrections(
+    list1: Option<&[u8]>,
+    list2: Option<&[u8]>,
+    list3: Option<&[u8]>,
+) -> Corrections {
+    let mut out = Corrections::default();
+    for (which, bytes) in [
+        (OpcodeList::One, list1),
+        (OpcodeList::Two, list2),
+        (OpcodeList::Three, list3),
+    ] {
+        let Some(bytes) = bytes else { continue };
+        let mut after_warp_2 = false;
+        for op in parse_list(bytes) {
+            let name = which.name();
+            let follows_warp_2 = std::mem::take(&mut after_warp_2);
+            let read = match (which, op.id) {
+                (OpcodeList::Two, GAIN_MAP) => parse_gain_map(op.params).map(|map| {
+                    out.mosaic.push(MosaicOp::GainMap(map));
+                }),
+                (
+                    OpcodeList::One | OpcodeList::Two,
+                    FIX_BAD_PIXELS_CONSTANT | FIX_BAD_PIXELS_LIST,
+                ) => parse_bad_pixels(op.id, op.params).map(|fix| {
+                    out.mosaic.push(MosaicOp::BadPixels(which, fix));
+                }),
+                (OpcodeList::Three, WARP_RECTILINEAR | WARP_FISHEYE) if follows_warp_2 => {
+                    log::info!("DNG {name}: {op} left for the WarpRectilinear2 before it");
+                    continue;
+                }
+                (OpcodeList::Three, WARP_RECTILINEAR | WARP_RECTILINEAR_2) => {
+                    parse_warp(op.id, op.params).map(|warp| {
+                        after_warp_2 = op.id == WARP_RECTILINEAR_2 && op.optional();
+                        if warp.is_identity() {
+                            log::debug!("DNG {name}: {op} moves nothing");
+                        } else if out.warps.len() == MAX_WARPS {
+                            log::warn!("DNG {name}: {op} past the {MAX_WARPS}th warp, left");
+                        } else {
+                            out.warps.push(warp);
+                        }
+                    })
+                }
+                _ => {
+                    log_left(&op, name);
+                    continue;
+                }
+            };
+            if read.is_none() {
+                log::warn!("DNG {name}: {op} out of shape, left undone");
             }
-        } else {
-            log_left(&op, "OpcodeList2");
         }
     }
-    maps
+    out
 }
 
 /// Say in the log that an opcode is not applied, and whether the file
@@ -229,6 +463,104 @@ pub fn parse_gain_map(params: &[u8]) -> Option<GainMap> {
     Some(map)
 }
 
+/// A `WarpRectilinear` (`id` 1) or `WarpRectilinear2` (`id` 14)'s
+/// parameters, or `None` when they are out of shape: a plane count not
+/// one or three, a byte count not the planes' (the SDK's checks), a
+/// center outside the image, a valid range not within 0..1 and rising,
+/// or a coefficient that is not a number.
+pub fn parse_warp(id: u32, params: &[u8]) -> Option<Warp> {
+    let mut r = Reader {
+        bytes: params,
+        at: 0,
+    };
+    let planes = r.u32()?;
+    // A plane each of red, green and blue, or one for all three: the
+    // develop's camera RGB has no fourth, which the SDK would refuse.
+    if planes != 1 && planes != 3 {
+        return None;
+    }
+    let second = id == WARP_RECTILINEAR_2;
+    let per_plane = if second { RADIAL_TERMS + 4 } else { 6 };
+    let tail = if second { 20 } else { 16 };
+    if params.len() != 4 + planes as usize * per_plane * 8 + tail {
+        return None;
+    }
+    let mut sets = Vec::with_capacity(planes as usize);
+    for _ in 0..planes {
+        let mut plane = WarpPlane::identity();
+        if second {
+            for k in &mut plane.radial {
+                *k = r.f64()?;
+            }
+        } else {
+            for power in [0, 2, 4, 6] {
+                plane.radial[power] = r.f64()?;
+            }
+        }
+        plane.tangential = [r.f64()?, r.f64()?];
+        if second {
+            plane.valid = (r.f64()?, r.f64()?);
+        }
+        let (lo, hi) = plane.valid;
+        // Written so a NaN fails every test.
+        if !(0.0 <= lo && lo < hi && hi <= 1.0)
+            || !plane
+                .radial
+                .iter()
+                .chain(&plane.tangential)
+                .all(|k| k.is_finite())
+        {
+            return None;
+        }
+        sets.push(plane);
+    }
+    let warp = Warp {
+        planes: sets,
+        center_x: r.f64()?,
+        center_y: r.f64()?,
+        reciprocal: second && r.u32()? != 0,
+    };
+    let inside = |c: f64| (0.0..=1.0).contains(&c);
+    (inside(warp.center_x) && inside(warp.center_y)).then_some(warp)
+}
+
+/// A `FixBadPixelsConstant` (`id` 4) or `FixBadPixelsList` (`id` 5)'s
+/// parameters, or `None` when the byte count is not the one they say.
+pub fn parse_bad_pixels(id: u32, params: &[u8]) -> Option<BadPixels> {
+    let mut r = Reader {
+        bytes: params,
+        at: 0,
+    };
+    if id == FIX_BAD_PIXELS_CONSTANT {
+        let fix = BadPixels::Constant {
+            value: r.u32()?,
+            phase: r.u32()?,
+        };
+        return (params.len() == 8).then_some(fix);
+    }
+    let phase = r.u32()?;
+    let (points, rects) = (r.u32()?, r.u32()?);
+    // Checked: a count that wrapped could match a short list.
+    let size = u64::from(points)
+        .checked_mul(8)
+        .and_then(|p| p.checked_add(u64::from(rects).checked_mul(16)?))
+        .and_then(|n| n.checked_add(12))?;
+    if size != params.len() as u64 {
+        return None;
+    }
+    let points = (0..points)
+        .map(|_| Some([r.i32()?, r.i32()?]))
+        .collect::<Option<Vec<_>>>()?;
+    let rects = (0..rects)
+        .map(|_| Some([r.i32()?, r.i32()?, r.i32()?, r.i32()?]))
+        .collect::<Option<Vec<_>>>()?;
+    Some(BadPixels::List {
+        phase,
+        points,
+        rects,
+    })
+}
+
 /// Big-endian reads off a slice, `None` past its end.
 struct Reader<'a> {
     bytes: &'a [u8],
@@ -245,6 +577,10 @@ impl<'a> Reader<'a> {
 
     fn u32(&mut self) -> Option<u32> {
         Some(u32::from_be_bytes(self.take(4)?.try_into().ok()?))
+    }
+
+    fn i32(&mut self) -> Option<i32> {
+        Some(i32::from_be_bytes(self.take(4)?.try_into().ok()?))
     }
 
     fn f32(&mut self) -> Option<f32> {
@@ -297,6 +633,64 @@ pub(crate) fn gain_map_bytes(map: &GainMap) -> Vec<u8> {
         out.extend(g.to_be_bytes());
     }
     out
+}
+
+/// A warp's parameters as a file lays them out: `WarpRectilinear2`'s
+/// when `second`, else `WarpRectilinear`'s, whose radial terms are the
+/// even powers to 6.
+#[cfg(test)]
+pub(crate) fn warp_bytes(warp: &Warp, second: bool) -> Vec<u8> {
+    let mut out = (warp.planes.len() as u32).to_be_bytes().to_vec();
+    for p in &warp.planes {
+        let mut values: Vec<f64> = if second {
+            p.radial.to_vec()
+        } else {
+            [0, 2, 4, 6].iter().map(|&k| p.radial[k]).collect()
+        };
+        values.extend(p.tangential);
+        if second {
+            values.extend([p.valid.0, p.valid.1]);
+        }
+        for v in values {
+            out.extend(v.to_be_bytes());
+        }
+    }
+    out.extend(warp.center_x.to_be_bytes());
+    out.extend(warp.center_y.to_be_bytes());
+    if second {
+        out.extend(u32::from(warp.reciprocal).to_be_bytes());
+    }
+    out
+}
+
+/// A `FixBadPixelsList`'s parameters as a file lays them out.
+#[cfg(test)]
+pub(crate) fn bad_list_bytes(phase: u32, points: &[[i32; 2]], rects: &[[i32; 4]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for v in [phase, points.len() as u32, rects.len() as u32] {
+        out.extend(v.to_be_bytes());
+    }
+    for v in points.iter().flatten().chain(rects.iter().flatten()) {
+        out.extend(v.to_be_bytes());
+    }
+    out
+}
+
+/// A one-plane warp about the center with the radial terms `terms`, by
+/// power.
+#[cfg(test)]
+pub(crate) fn radial_warp(terms: &[(usize, f64)]) -> Warp {
+    let mut plane = WarpPlane::identity();
+    plane.radial = [0.0; RADIAL_TERMS];
+    for &(power, k) in terms {
+        plane.radial[power] = k;
+    }
+    Warp {
+        planes: vec![plane],
+        center_x: 0.5,
+        center_y: 0.5,
+        reciprocal: false,
+    }
 }
 
 /// A one-plane map of `points_v` by `points_h` points spread evenly over
@@ -392,6 +786,183 @@ mod tests {
         let mut huge = map;
         (huge.points_v, huge.points_h, huge.map_planes) = (u32::MAX, u32::MAX, u32::MAX);
         assert!(parse_gain_map(&gain_map_bytes(&huge)).is_none());
+    }
+
+    /// Both warps read back as written: `WarpRectilinear`'s four terms
+    /// land on the even powers, `WarpRectilinear2`'s fifteen on every
+    /// power with their valid range and reciprocal flag, three sets
+    /// read as three.
+    #[test]
+    fn the_warps_read_back_as_written() {
+        let first = radial_warp(&[(0, 0.987), (2, 0.0346), (4, -0.0619), (6, 0.0408)]);
+        let mut second = radial_warp(&[(0, 0.99), (1, 0.0004), (3, 0.2), (14, -0.2)]);
+        second.planes[0].tangential = [1e-4, -3e-4];
+        second.planes[0].valid = (0.0, 0.9);
+        second.reciprocal = true;
+        let mut three = second.clone();
+        three.planes = vec![
+            second.planes[0].clone(),
+            WarpPlane::identity(),
+            radial_warp(&[(0, 1.001)]).planes[0].clone(),
+        ];
+        (three.center_x, three.center_y) = (0.73, 0.69);
+        let list = list_bytes(&[
+            (WARP_RECTILINEAR, 1, warp_bytes(&first, false)),
+            (
+                FIX_BAD_PIXELS_CONSTANT,
+                1,
+                [0u32, 1].iter().flat_map(|v| v.to_be_bytes()).collect(),
+            ),
+            (WARP_RECTILINEAR_2, 0, warp_bytes(&second, true)),
+            (WARP_RECTILINEAR_2, 0, warp_bytes(&three, true)),
+        ]);
+        let read = corrections(None, None, Some(&list));
+        assert_eq!(read.warps, vec![first, second, three]);
+        // A bad-pixel list after the demosaic is left, as the SDK
+        // refuses one on more than one plane.
+        assert!(read.mosaic.is_empty());
+    }
+
+    /// The SDK's rule: a `WarpRectilinear` straight after an optional
+    /// `WarpRectilinear2` is the older readers' copy and is left out; one
+    /// after a required `WarpRectilinear2`, or with another opcode
+    /// between, is applied. An identity warp is read and dropped, and
+    /// still stands for the rule.
+    #[test]
+    fn a_warp_after_an_optional_warp_2_is_its_copy() {
+        let lens = radial_warp(&[(0, 0.99), (2, 0.02)]);
+        let older = radial_warp(&[(0, 0.98), (2, 0.03)]);
+        let ca = {
+            let mut w = radial_warp(&[(0, 1.0)]);
+            w.planes = vec![
+                radial_warp(&[(0, 1.001)]).planes[0].clone(),
+                WarpPlane::identity(),
+                radial_warp(&[(0, 0.999)]).planes[0].clone(),
+            ];
+            w
+        };
+        let phone = list_bytes(&[
+            (WARP_RECTILINEAR_2, 1, warp_bytes(&ca, true)),
+            (WARP_RECTILINEAR_2, 1, warp_bytes(&lens, true)),
+            (WARP_RECTILINEAR, 1, warp_bytes(&older, false)),
+        ]);
+        assert_eq!(
+            corrections(None, None, Some(&phone)).warps,
+            vec![ca, lens.clone()]
+        );
+
+        let required = list_bytes(&[
+            (WARP_RECTILINEAR_2, 0, warp_bytes(&lens, true)),
+            (WARP_RECTILINEAR, 1, warp_bytes(&older, false)),
+        ]);
+        assert_eq!(corrections(None, None, Some(&required)).warps.len(), 2);
+
+        let identity = radial_warp(&[(0, 1.0)]);
+        let nothing = list_bytes(&[
+            (WARP_RECTILINEAR_2, 1, warp_bytes(&identity, true)),
+            (WARP_RECTILINEAR, 1, warp_bytes(&older, false)),
+            (WARP_RECTILINEAR, 1, warp_bytes(&older, false)),
+        ]);
+        assert_eq!(corrections(None, None, Some(&nothing)).warps, vec![older]);
+    }
+
+    /// The bad-pixel opcodes read from the first two lists, each with its
+    /// list, and the second list's in its file order with its gain maps:
+    /// a constant before a gain map stays before it.
+    #[test]
+    fn the_mosaic_opcodes_keep_their_lists_and_order() {
+        let listed = bad_list_bytes(1, &[[10, 20], [-1, 4]], &[[0, 0, 2, 3]]);
+        let constant: Vec<u8> = [65535u32, 0].iter().flat_map(|v| v.to_be_bytes()).collect();
+        let map = even_map(4, 4, 2, 2, |_, _| 1.5);
+        let one = list_bytes(&[(FIX_BAD_PIXELS_LIST, 0, listed)]);
+        let two = list_bytes(&[
+            (FIX_BAD_PIXELS_CONSTANT, 1, constant),
+            (GAIN_MAP, 0, gain_map_bytes(&map)),
+        ]);
+        let read = corrections(Some(&one), Some(&two), None);
+        assert_eq!(read.gain_maps().collect::<Vec<_>>(), vec![&map]);
+        let list = BadPixels::List {
+            phase: 1,
+            points: vec![[10, 20], [-1, 4]],
+            rects: vec![[0, 0, 2, 3]],
+        };
+        assert_eq!(list.phase(), 1);
+        assert_eq!(
+            read.mosaic,
+            vec![
+                MosaicOp::BadPixels(OpcodeList::One, list),
+                MosaicOp::BadPixels(
+                    OpcodeList::Two,
+                    BadPixels::Constant {
+                        value: 65535,
+                        phase: 0
+                    }
+                ),
+                MosaicOp::GainMap(map),
+            ]
+        );
+    }
+
+    /// A file's correction is read with at most [`MAX_WARPS`] warps: a
+    /// list of a thousand would cost minutes a develop.
+    #[test]
+    fn the_warps_are_capped() {
+        let lens = radial_warp(&[(0, 0.99), (2, 0.02)]);
+        let many: Vec<_> = (0..20)
+            .map(|_| (WARP_RECTILINEAR, 0, warp_bytes(&lens, false)))
+            .collect();
+        let read = corrections(None, None, Some(&list_bytes(&many)));
+        assert_eq!(read.warps.len(), MAX_WARPS);
+    }
+
+    /// Damaged warps and bad-pixel lists are passed over, never a panic:
+    /// a plane count the develop has no planes for, a byte count that
+    /// does not match, a center off the image, a valid range backward,
+    /// a NaN, and point counts whose bytes would wrap.
+    #[test]
+    fn damaged_warps_and_lists_are_passed_over() {
+        let good = radial_warp(&[(0, 0.99), (2, 0.02)]);
+        assert!(parse_warp(WARP_RECTILINEAR, &warp_bytes(&good, false)).is_some());
+        let mut two = good.clone();
+        two.planes.push(WarpPlane::identity());
+        assert!(parse_warp(WARP_RECTILINEAR, &warp_bytes(&two, false)).is_none());
+        let bytes = warp_bytes(&good, true);
+        assert!(parse_warp(WARP_RECTILINEAR_2, &bytes[..bytes.len() - 1]).is_none());
+        assert!(parse_warp(WARP_RECTILINEAR, &bytes).is_none());
+        let mut off = good.clone();
+        off.center_x = 1.5;
+        assert!(parse_warp(WARP_RECTILINEAR_2, &warp_bytes(&off, true)).is_none());
+        let mut backward = good.clone();
+        backward.planes[0].valid = (0.8, 0.2);
+        assert!(parse_warp(WARP_RECTILINEAR_2, &warp_bytes(&backward, true)).is_none());
+        let mut nan = good.clone();
+        nan.planes[0].radial[3] = f64::NAN;
+        assert!(parse_warp(WARP_RECTILINEAR_2, &warp_bytes(&nan, true)).is_none());
+        let mut nan_range = good;
+        nan_range.planes[0].valid = (0.0, f64::NAN);
+        assert!(parse_warp(WARP_RECTILINEAR_2, &warp_bytes(&nan_range, true)).is_none());
+        assert!(parse_warp(WARP_RECTILINEAR, &[]).is_none());
+
+        let list = bad_list_bytes(0, &[[1, 2]], &[]);
+        assert!(parse_bad_pixels(FIX_BAD_PIXELS_LIST, &list).is_some());
+        assert!(parse_bad_pixels(FIX_BAD_PIXELS_LIST, &list[..list.len() - 2]).is_none());
+        assert!(parse_bad_pixels(FIX_BAD_PIXELS_CONSTANT, &[0; 7]).is_none());
+        assert!(parse_bad_pixels(FIX_BAD_PIXELS_CONSTANT, &[0; 12]).is_none());
+        // 2^29 points are 2^32 bytes, which a 32-bit sum wraps to 12.
+        let mut wrapped = bad_list_bytes(0, &[], &[]);
+        wrapped[4..8].copy_from_slice(&(1u32 << 29).to_be_bytes());
+        assert!(parse_bad_pixels(FIX_BAD_PIXELS_LIST, &wrapped).is_none());
+        let mut huge = wrapped;
+        huge[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(parse_bad_pixels(FIX_BAD_PIXELS_LIST, &huge).is_none());
+
+        // In a list, each is logged and the rest read.
+        let lens = radial_warp(&[(0, 0.99), (2, 0.02)]);
+        let list = list_bytes(&[
+            (WARP_RECTILINEAR_2, 1, vec![0, 0, 0, 2]),
+            (WARP_RECTILINEAR, 1, warp_bytes(&lens, false)),
+        ]);
+        assert_eq!(corrections(None, None, Some(&list)).warps, vec![lens]);
     }
 
     /// An empty area is the whole image, as the SDK reads one.

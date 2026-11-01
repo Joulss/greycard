@@ -436,12 +436,27 @@ pub struct DngTags {
     /// `greycard_edit::baseline` for the rule it waits on). `None` when
     /// the file has none, which is not the same as a zero.
     pub baseline_exposure: Option<f32>,
-    /// The `GainMap` opcodes of `OpcodeList2`, in the file's order: run
-    /// on the linear mosaic before the demosaic.
-    pub gain_maps: Vec<crate::opcodes::GainMap>,
-    /// The image `OpcodeList2`'s coordinates are measured in, in sensor
-    /// samples: the DNG's `ActiveArea`, or the whole frame when `None`.
+    /// The opcodes of `OpcodeList1` and `OpcodeList2` the develop runs,
+    /// the first's then the second's, each in its file order: bad-pixel
+    /// lists (the first's in sensor samples, the second's in the active
+    /// area's) and the second's gain maps, on the linear mosaic before
+    /// the demosaic.
+    pub mosaic: Vec<crate::opcodes::MosaicOp>,
+    /// The rectilinear warps of `OpcodeList3`, in order: a lens's
+    /// distortion, run on the demosaiced picture of the active area.
+    pub warps: Vec<crate::opcodes::Warp>,
+    /// The image `OpcodeList2`'s and `OpcodeList3`'s coordinates are
+    /// measured in, in sensor samples: the DNG's `ActiveArea`, or the
+    /// whole frame when `None`.
     pub opcode_area: Option<Rect>,
+}
+
+impl DngTags {
+    /// Whether the file's warps move each color by its own set: its own
+    /// correction of the lateral chromatic aberration.
+    pub fn warps_each_color(&self) -> bool {
+        self.warps.iter().any(|w| w.planes.len() > 1)
+    }
 }
 
 /// What the file says about the taking: the lens, and what the camera
