@@ -195,15 +195,7 @@ fn background_or_not(shape: &Shape, base: &[u8]) -> Vec<u8> {
     }
 }
 
-/// Whether the shape has anything for a model to go on.
-pub fn prompted(shape: &Shape) -> bool {
-    match shape {
-        Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } | Shape::Part { .. } => true,
-        Shape::Landscape { .. } => !shape.is_unknown(),
-        Shape::Object { picks, boxes } => !picks.is_empty() || !boxes.is_empty(),
-        _ => false,
-    }
-}
+pub use crate::stages::prompted;
 
 /// The long side of the preview the models see.
 const PREVIEW: u32 = 2048;

@@ -971,18 +971,7 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "(no message)".into())
 }
 
-/// A whole number of quarter turns clockwise as an orientation, for
-/// a picture that was already turned by its own tag at decode; None
-/// for no turn at all.
-pub fn quarters(turn: u8) -> Option<greycard_core::raw::Orientation> {
-    use greycard_core::raw::Orientation;
-    match turn % 4 {
-        1 => Some(Orientation::Rotate90),
-        2 => Some(Orientation::Rotate180),
-        3 => Some(Orientation::Rotate270),
-        _ => None,
-    }
-}
+pub use crate::stages::quarters;
 
 /// The open file: a raw to develop, or a picture already in the
 /// working space (its image taken out of its record, so the base

@@ -149,17 +149,6 @@ pub(super) fn to_ask_again(
     ai.to_ask_again(retouched_of(b, None), b.turn, live)
 }
 
-/// The edit a reduced develop for the models is made under: `edit`
-/// without its retouch. The models see the base, as the open frame's
-/// do, so the rasters [`masks_for`] makes go in the base's slots, and a
-/// Fill, which refuses the reduced develop, does not stop them.
-pub(super) fn models_see(edit: &Edit) -> Edit {
-    Edit {
-        retouch: Default::default(),
-        ..edit.clone()
-    }
-}
-
 /// How [`masks_for`] ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MasksMade {
@@ -202,11 +191,19 @@ pub(super) fn masks_for(
     };
     let edit = std::mem::take(&mut line.current);
     let turn = sidecar.turn;
-    let bare = models_see(&edit);
     if !crate::reduced::draws_learned(&edit) {
         return MasksMade::All;
     }
-    let developed = match crate::reduced::develop(path, &bare, turn, lenses) {
+    // The models see the reduced develop without the retouch, as they
+    // do the open frame's base, so the rasters go in the base's slots,
+    // and a Fill, which the reduced develop refuses, does not stop them.
+    let developed = match crate::reduced::develop_as(
+        path,
+        &edit,
+        turn,
+        lenses,
+        &crate::stages::Purpose::ModelsSee,
+    ) {
         Ok(developed) => developed,
         Err(why) => {
             tracing::info!("the masks of {name}: not made: {why}");
@@ -276,9 +273,14 @@ pub(super) fn person_on(
     let started = Instant::now();
     // A Fill's patch is the open frame's alone, and refuses the reduced
     // develop; the people are found on the base, which it is not in.
-    let edit = models_see(&job.edit);
-    let developed = crate::reduced::develop(&job.frame.path, &edit, job.turn, lenses)
-        .map_err(|why| why.to_string())?;
+    let developed = crate::reduced::develop_as(
+        &job.frame.path,
+        &job.edit,
+        job.turn,
+        lenses,
+        &crate::stages::Purpose::ModelsSee,
+    )
+    .map_err(|why| why.to_string())?;
     // Another file: its hash is the one a person found here records.
     ai.forget(Some(job.frame.path.clone()));
     let found = ai.person_on(

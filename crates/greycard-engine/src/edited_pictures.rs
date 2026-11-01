@@ -1063,15 +1063,7 @@ pub fn fitted_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
     )
 }
 
-/// The size of a develop of `full` once `geometry` has framed it, as
-/// `geometry::apply` cuts it.
-pub fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
-    if geometry.is_identity() {
-        return full;
-    }
-    let frame = geometry.frame(full.0 as f32, full.1 as f32);
-    (frame.size.0 as u32, frame.size.1 as u32)
-}
+pub use crate::stages::framed_size;
 
 /// A finished picture turned back by the frame's shown turns, so the
 /// strip's and the loupe's own turn at draw time puts it back: a turn is

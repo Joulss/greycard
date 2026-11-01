@@ -33,8 +33,7 @@ use greycard_gpu::wgpu;
 use greycard_render::detail::DetailPlanes;
 use greycard_render::finish::{Guide, Source, guide_plane};
 
-use crate::stages::{Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap};
-use crate::worker::quarters;
+use crate::stages::{Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
 
 /// The open file: a raw to develop, or a picture already in the
 /// working space, its image shared rather than copied.
@@ -706,7 +705,7 @@ fn start(
                 white: None,
                 clip_level: f32::INFINITY,
                 radius: None,
-                source: Source::raw(&frame.make, &frame.model),
+                source: Source::of_frame(frame),
                 profile: None,
                 full: (0, 0),
                 bin: 1,

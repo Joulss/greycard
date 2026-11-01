@@ -3517,29 +3517,45 @@ fn a_mask_asked_again_leaves_a_queued_ask_of_the_same_key() {
     assert_eq!(queued, vec![((1, 0), sky), ((2, 0), Shape::Subject {})]);
 }
 
-/// The models see the base: the mask cache's reduced develop drops the
-/// retouch (a Fill would refuse it, a heal would put the patched
-/// picture's raster in the base's slot) and keeps the rest.
+/// The models see the base: the mask cache's reduced develop of an
+/// edit with a retouch (a Fill would refuse it, a heal would put the
+/// patched picture's raster in the base's slot) is, to the bit, the
+/// reduced develop of the same edit without its retouch, through the
+/// Detail section.
 #[test]
 fn the_mask_cache_develops_without_the_retouch() {
+    use crate::stages::Purpose;
+    let dir = crate::testing::scratch_dir("models-see");
+    let path = dir.join("frame.dng");
+    crate::testing::linear_dng(&path, 96, 64, "Canon", "Canon EOS R5");
     let mut edit = Edit::default();
     edit.light.exposure = 0.7;
+    edit.detail.clarity = 0.4;
     edit.retouch.patches.push(greycard_edit::retouch::Patch {
         id: 1,
-        method: greycard_edit::retouch::Method::Fill,
-        points: vec![[0.5, 0.3]],
+        points: vec![[0.3, 0.3]],
+        radius: 0.05,
         ..Default::default()
     });
-    let seen = masks::models_see(&edit);
-    assert!(seen.retouch.is_empty());
-    assert_eq!(seen.light.exposure, 0.7);
-    assert_eq!(
-        Edit {
-            retouch: Default::default(),
-            ..edit
-        },
-        seen
-    );
+    edit.retouch.patches.push(greycard_edit::retouch::Patch {
+        id: 2,
+        method: greycard_edit::retouch::Method::Fill,
+        points: vec![[0.5, 0.3]],
+        radius: 0.05,
+        ..Default::default()
+    });
+    let seen = crate::reduced::develop_as(&path, &edit, 0, None, &Purpose::ModelsSee)
+        .expect("the models' picture develops");
+    let bare = Edit {
+        retouch: Default::default(),
+        ..edit
+    };
+    let reduced = crate::reduced::develop_as(&path, &bare, 0, None, &Purpose::Reduced)
+        .expect("the bare edit develops reduced");
+    assert_eq!((seen.image.width, seen.image.height), (96, 64));
+    assert!(seen.image.data == reduced.image.data);
+    assert_eq!((seen.full, seen.kind), (reduced.full, reduced.kind));
+    crate::testing::remove_dir_retry(&dir);
 }
 
 /// A retouch as the develop applied it is the edit's when the only

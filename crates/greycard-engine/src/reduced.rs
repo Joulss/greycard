@@ -11,7 +11,7 @@
 //! the size in place of the demosaic
 //! (`greycard_core::develop::reduced`) while the frame, as the edit's
 //! crop and straighten leave it, keeps twice 2048 on its long edge; under
-//! that the mosaic is demosaiced as in a full develop ([`bin_under`]), so
+//! that the mosaic is demosaiced as in a full develop ([`crate::stages::Facts::bin_under`]), so
 //! the 2048 picture is never brought up from fewer pixels. An X-Trans
 //! mosaic is binned 3x3 to a third, under the same rule at three times
 //! 2048. Then the
@@ -53,22 +53,26 @@
 //! open frame's masks are read from: made from the reduced develop's
 //! picture, which is what the models see at their own 2048 anyway, they
 //! serve the frame when it is opened too.
+//!
+//! The develop is a walk of the stage list under `Purpose::Reduced`
+//! (`stages`), where its bin and its skips are stated, not a second
+//! pipeline; the models' picture is the same walk under
+//! `Purpose::ModelsSee`, the retouch left out.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use greycard_core::develop::DevelopSettings;
-use greycard_core::develop::local_contrast::local_contrast;
-use greycard_core::develop::{defringe, dehaze, reduced};
 use greycard_core::image::WorkingImage;
 use greycard_edit::Edit;
 use greycard_edit::brush::Raster;
 
 use crate::ai::Ai;
 use crate::edited_pictures::{Edited, Shows};
+use crate::stages::{Purpose, Stage, Step, stages};
 use crate::version_key::Key;
+use crate::walk::{Buf, Input, Kept, NoHold, NoModels, plan, walk};
 
 /// How many reduced develops the pool runs at once: one while a frame
 /// is open in the editor, whose develop is what the user is waiting on
@@ -171,51 +175,21 @@ pub struct Developed {
 /// The learned masks' rasters by adjustment id and component.
 pub type Rasters = std::collections::HashMap<(u64, usize), Arc<Raster>>;
 
-/// The engine's settings for the reduced develop of `edit`: the edit's
-/// own, less what the reduced develop leaves out (the denoisers), with the
-/// frame's quarter turns on the camera's tag as the window has them.
-/// The grain is the finish's, and stays.
-pub fn settings(edit: &Edit, camera: greycard_core::raw::Orientation, turn: u8) -> DevelopSettings {
-    DevelopSettings {
-        denoise: None,
-        orientation: Some(camera.turned(i32::from(turn))),
-        ..edit.settings(&greycard_edit_io::Stores::user())
-    }
-}
-
-/// The bin for a frame whose full develop is `full` (oriented) under
-/// `geometry`, binned by `cell` ([`reduced::cell_of`] its pattern: 2,
-/// or 3 for X-Trans): `cell` only while the framed picture keeps at
-/// least `cell` times [`crate::edited_pictures::BIG`] on its long edge, so the
-/// 2048 picture is always brought down to and never up; 1 (the
-/// demosaic, a full develop of the frame) under a tighter crop or a
-/// straighten that takes it there. A 24 MP Bayer frame is binned down
-/// to about two thirds of its width.
-pub fn bin_under(
-    full: (usize, usize),
-    cell: usize,
-    geometry: &greycard_edit::geometry::Geometry,
-) -> usize {
-    let (w, h) = crate::edited_pictures::framed_size((full.0 as u32, full.1 as u32), geometry);
-    reduced::bin_for_cell(cell, w as usize, h as usize)
-}
-
-/// What the frame at `path` is: a raw decoded, or a picture file.
-enum Opened {
-    Raw(Box<greycard_core::raw::RawFrame>),
-    Picture(Box<greycard_core::picture::Picture>),
-}
-
-fn open(path: &Path) -> anyhow::Result<Opened> {
+/// The frame at `path` opened for a walk: a raw decoded whole, or a
+/// picture file with its image taken out of its record.
+fn open(path: &Path) -> anyhow::Result<Input> {
     if greycard_core::picture::is_picture_path(path) {
-        return Ok(Opened::Picture(Box::new(
-            greycard_core::picture::decode_picture_path(path)?,
-        )));
+        let mut picture = greycard_core::picture::decode_picture_path(path)?;
+        let image = std::mem::replace(&mut picture.image, WorkingImage::new(0, 0));
+        return Ok(Input::Picture {
+            image: Arc::new(image),
+            meta: Arc::new(picture),
+        });
     }
     // Read whole, never mapped: the thumbnails' pool develops every
     // edited frame of a folder, a share's among them, and a mapped file
     // whose volume goes away is a SIGBUS.
-    Ok(Opened::Raw(Box::new(
+    Ok(Input::Raw(Arc::new(
         greycard_core::decode::decode_path_unmapped(path)?,
     )))
 }
@@ -228,158 +202,88 @@ pub fn develop(
     turn: u8,
     lenses: Option<&greycard_lens::Database>,
 ) -> Result<Developed, Why> {
+    develop_as(path, edit, turn, lenses, &Purpose::Reduced)
+}
+
+/// The frame at `path` walked under `purpose`, the reduced develop or
+/// what the models see, on the CPU and from nothing kept: the list's
+/// bin and skips are the reduced develop's, and a fill it refuses
+/// leaves the picture without the edit.
+pub fn develop_as(
+    path: &Path,
+    edit: &Edit,
+    turn: u8,
+    lenses: Option<&greycard_lens::Database>,
+    purpose: &Purpose,
+) -> Result<Developed, Why> {
+    debug_assert!(
+        purpose.is_reduced(),
+        "the reduced develop walks Reduced or ModelsSee, whose fills are refused or left out"
+    );
     let started = Instant::now();
-    let opened = open(path).map_err(|e| Why::Failed(format!("{e:#}")))?;
+    let input = open(path).map_err(|e| Why::Failed(format!("{e:#}")))?;
     let decode = started.elapsed().as_secs_f64();
-    let started = Instant::now();
-    let (mut image, full, bin, clip_level, kind, white, identity) = match &opened {
-        Opened::Raw(frame) => {
-            let settings = settings(edit, frame.orientation, turn);
-            // The full develop's size, oriented, for the bin: the
-            // mosaic's crop turned as the settings turn it.
-            let crop = frame.effective_crop();
-            let turned = settings.orientation.unwrap_or(frame.orientation);
-            let full = if matches!(
-                turned,
-                greycard_core::raw::Orientation::Transpose
-                    | greycard_core::raw::Orientation::Rotate90
-                    | greycard_core::raw::Orientation::Transverse
-                    | greycard_core::raw::Orientation::Rotate270
-            ) {
-                (crop.height, crop.width)
-            } else {
-                (crop.width, crop.height)
-            };
-            let cell = match &frame.layout {
-                greycard_core::raw::SensorLayout::Cfa(pattern) => reduced::cell_of(pattern),
-                _ => reduced::BIN,
-            };
-            let bin = bin_under(full, cell, &edit.geometry);
-            let r = reduced::develop_reduced_by(frame, &settings, None, bin)
-                .map_err(|e| Why::Failed(e.to_string()))?;
-            let d = r.developed;
-            // The profile the white was resolved through, as the worker
-            // has it: the edit's DCP, else the file's own.
-            let profile = settings
-                .profile
-                .as_ref()
-                .map(|p| p.camera.clone())
-                .or_else(|| greycard_core::color::profile_from_frame(frame).ok());
-            let white = profile.map(|profile| {
-                let cols = d.white_balance.matrix_f32();
-                let matrix: [[f32; 3]; 3] =
-                    std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r]));
-                greycard_edit::WhiteShift::from_parts(
-                    profile,
-                    d.white_balance.coefficients_f32(),
-                    matrix,
-                    d.white_balance.temp_tint,
-                )
-            });
-            (
-                d.image,
-                (r.full.0 as u32, r.full.1 as u32),
-                r.bin,
-                d.clip_level,
-                greycard_render::finish::Source::of_frame(frame),
-                white,
-                (
-                    frame.make.clone(),
-                    frame.model.clone(),
-                    frame.shot.clone(),
-                    true,
-                ),
-            )
-        }
-        Opened::Picture(picture) => {
-            // A picture is its own base; a turn is applied to it as the
-            // worker applies it, and a large one is reduced by a whole
-            // factor as the open frame's picture is.
-            let turned = match crate::worker::quarters(turn) {
-                Some(o) => greycard_core::develop::orient(picture.image.clone(), o),
-                None => picture.image.clone(),
-            };
-            let full = (turned.width as u32, turned.height as u32);
-            let bin = bin_under((turned.width, turned.height), reduced::BIN, &edit.geometry);
-            let image = if bin > 1 {
-                crate::edited_pictures::reduce(&turned, bin)
-            } else {
-                turned
-            };
-            (
-                image,
-                full,
-                bin,
-                picture.clip_level(),
-                greycard_render::finish::Source::Display,
-                None,
-                (
-                    picture.make.clone(),
-                    picture.model.clone(),
-                    picture.shot.clone(),
-                    false,
-                ),
-            )
-        }
-    };
-    let develop = started.elapsed().as_secs_f64();
-    let started = Instant::now();
-    // The lens and the defringe, as `develop_job` has them after the
-    // base; the defringe's radius is in pixels and so is halved.
-    let (make, model, shot, raw) = &identity;
-    if !edit.lens.is_identity(lenses.is_some()) {
-        image = crate::worker::correct_lens_of(image, (make, model, shot, *raw), edit, lenses);
-    }
-    if let Some(mut options) = edit.lens.defringe() {
-        options.radius /= bin as f32;
-        defringe::defringe(&mut image, &options);
-    }
-    // The retouch: its patches are in units of the picture's width. A
-    // Fill is the model's and runs on the open frame alone; a picture
-    // without one is not the edit's.
-    let mut without = Vec::new();
-    if !edit.retouch.is_empty() {
-        let chosen = edit.retouch.choose_sources(&image);
-        let retouch = edit.retouch.with_sources(&chosen);
-        retouch.apply_with(&mut image, |patch, _, _| {
-            without.push(format!("the fill {}", patch.name()));
-            None
-        });
-    }
-    // The guide plane, after the retouch and before the local
-    // contrast, as the worker makes it: in the developed picture's own
-    // coordinates.
-    let guide = Arc::new(greycard_render::finish::guide_plane(&image));
-    // The masks' bands, of the picture at this size, as the worker
-    // makes them of the full one.
-    let detail = greycard_render::detail::DetailPlanes::make(
-        &image,
-        edit.detail.options(),
-        clip_level,
-        edit.detail_wants(),
+    let mut steps = stages(edit, purpose, &input.facts(turn), lenses);
+    // Nothing is kept for a walk after this one: a kept point holds its
+    // picture, and the next stage would copy it rather than change it.
+    steps.steps.retain(|s| !matches!(s, Step::Keep(_)));
+    let plan = plan(&steps, purpose, false);
+    let walked = walk(
+        &steps,
+        &plan,
+        &input,
+        &mut Kept::new(),
+        &mut NoModels,
+        &mut None,
+        &NoHold,
     )
-    .map(Arc::new);
-    if let Some(options) = edit.detail.options() {
-        local_contrast(&mut image, &options, clip_level);
+    .map_err(|e| Why::Failed(e.to_string()))?;
+    if !walked.without.is_empty() {
+        return Err(Why::Without(walked.without));
     }
-    if let Some(options) = edit.detail.dehaze_options() {
-        dehaze::dehaze(&mut image, &options);
-    }
-    if !without.is_empty() {
-        return Err(Why::Without(without));
-    }
+    // The develop to the binned picture, and the rest after it, for
+    // the log line.
+    let to_base = steps
+        .ops()
+        .take_while(|s| {
+            matches!(
+                s,
+                Stage::Prepare(_)
+                    | Stage::Ca(_)
+                    | Stage::Bin(_)
+                    | Stage::Demosaic(..)
+                    | Stage::Denoise(_)
+                    | Stage::IntoWorking { .. }
+                    | Stage::Orient(_)
+                    | Stage::Reduce(_)
+            )
+        })
+        .count();
+    let develop = walked.seconds.iter().take(to_base).map(|(_, s)| s).sum();
+    let rest = walked.seconds.iter().skip(to_base).map(|(_, s)| s).sum();
+    let white = walked.meta.white_shift();
+    // Let go of every other hold on the picture, so it is not copied.
+    drop(input);
+    let mut walked = walked;
+    walked.taps.masks = None;
+    let Buf::Working(image) = walked.buf else {
+        unreachable!("a walk on the CPU ends at a picture in memory")
+    };
     Ok(Developed {
-        image,
-        full,
-        bin,
-        clip_level,
-        guide,
-        kind,
+        image: Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone()),
+        full: walked.meta.full,
+        bin: walked.meta.bin,
+        clip_level: walked.meta.clip_level,
+        guide: walked
+            .taps
+            .guide
+            .unwrap_or_else(|| Arc::new(greycard_render::finish::Guide::NONE)),
+        kind: walked.meta.source,
         white,
-        detail,
+        detail: walked.taps.planes,
         decode,
         develop,
-        rest: started.elapsed().as_secs_f64(),
+        rest,
     })
 }
 
@@ -923,22 +827,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A Fill patch refuses the reduced develop, whose fills its model
+    /// does not make, and the picture is not kept; what the models see
+    /// leaves the retouch out, so the same edit develops for them.
     #[test]
-    fn the_settings_leave_the_sharpen_the_denoisers_and_the_dehaze_out() {
+    fn a_fill_refuses_the_reduced_develop_but_not_the_models_picture() {
+        let dir = scratch("fill-refused");
+        let path = dir.join("frame.dng");
+        crate::testing::linear_dng(&path, 96, 64, "Canon", "Canon EOS R5");
         let mut edit = Edit::default();
-        edit.detail.dehaze = 0.5;
-        edit.noise.strength = 0.5;
-        let s = settings(&edit, greycard_core::raw::Orientation::Normal, 1);
-        // The sharpen and the dehaze are no engine settings at all.
-        assert!(s.denoise.is_none());
-        assert_eq!(
-            s.orientation,
-            Some(greycard_core::raw::Orientation::Rotate90)
+        edit.retouch.patches.push(greycard_edit::retouch::Patch {
+            id: 1,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.3]],
+            radius: 0.05,
+            ..Default::default()
+        });
+        let reduced = develop_as(&path, &edit, 0, None, &crate::stages::Purpose::Reduced);
+        assert!(
+            matches!(reduced, Err(Why::Without(ref w)) if w.len() == 1),
+            "{:?}",
+            reduced.err()
         );
-        assert_eq!(
-            s.demosaic,
-            edit.settings(&greycard_edit_io::Stores::user()).demosaic
-        );
+        assert!(develop_as(&path, &edit, 0, None, &crate::stages::Purpose::ModelsSee).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// While editing, nothing begins until the window has been quiet

@@ -28,9 +28,6 @@ use greycard_edit::geometry::Geometry;
 use greycard_edit::retouch::Retouch;
 use greycard_edit::{DetailWants, Edit};
 
-use crate::ai::prompted;
-use crate::edited_pictures::framed_size;
-use crate::worker::quarters;
 use greycard_render::export;
 
 /// What a develop is for: all that varies between the callers.
@@ -798,6 +795,43 @@ fn corrections(
         .and_then(|db| db.profile_for(&id.make, &id.model, &id.shot, facts.is_raw()))
         .map(|p| p.correction(w, h, &id.shot, greycard_lens::Wanted::ALL));
     edit.lens.corrections(profile)
+}
+
+/// A whole number of quarter turns clockwise as an orientation, for
+/// a picture that was already turned by its own tag at decode; None
+/// for no turn at all.
+pub fn quarters(turn: u8) -> Option<Orientation> {
+    match turn % 4 {
+        1 => Some(Orientation::Rotate90),
+        2 => Some(Orientation::Rotate180),
+        3 => Some(Orientation::Rotate270),
+        _ => None,
+    }
+}
+
+/// Whether the shape has anything for a model to go on.
+pub fn prompted(shape: &greycard_edit::mask::Shape) -> bool {
+    match shape {
+        greycard_edit::mask::Shape::Subject {}
+        | greycard_edit::mask::Shape::Background {}
+        | greycard_edit::mask::Shape::Sky { .. }
+        | greycard_edit::mask::Shape::Part { .. } => true,
+        greycard_edit::mask::Shape::Landscape { .. } => !shape.is_unknown(),
+        greycard_edit::mask::Shape::Object { picks, boxes } => {
+            !picks.is_empty() || !boxes.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// The size of a develop of `full` once `geometry` has framed it, as
+/// `geometry::apply` cuts it.
+pub fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
+    if geometry.is_identity() {
+        return full;
+    }
+    let frame = geometry.frame(full.0 as f32, full.1 as f32);
+    (frame.size.0 as u32, frame.size.1 as u32)
 }
 
 #[cfg(test)]
