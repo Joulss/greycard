@@ -650,11 +650,9 @@ clears or a tester asks for it.
       fetched like a model. Waits on a read of the code's and the
       data's licenses, and on a port decision: GPU, and at what cost
       per frame. Asked 2026-10-18
-- [ ] The window fit by the platform's true work area instead of a
-      guessed margin: macOS `NSScreen.visibleFrame`, Windows
-      `SPI_GETWORKAREA` or `rcWork`, X11 `_NET_WORKAREA` (§306). The
-      guess held on a 14-inch MacBook with the default Dock (checked
-      2026-10-13); a large or side Dock is the case this is for
+- [ ] The work-area fit (§500) tried on the Mac with a large and a
+      side Dock and on Windows with a task bar at the top and two
+      monitors of different scale; built from the sources, not run
 - [ ] The long `run` and `develop_job` in `worker/` and `Look::run` in
       `roots/` cut into functions, a later round after the splits
       (§316, §318, §321)

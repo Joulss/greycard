@@ -4,10 +4,12 @@
 //! winit keeps that inside the screen: on a laptop shorter than the
 //! preferred height, the window's foot (and a sheet's, which measures
 //! itself against the window) lands under the Dock or the task bar.
-//! Neither reports the screen's work area, the part a menu bar, a Dock
-//! or a task bar leave, only the monitor's whole size; so we take that
-//! less a margin wide enough for a title bar, a menu bar and a Dock at
-//! its default size, which a platform's true work area would replace.
+//! Neither reports the screen's work area, the part a menu bar, a Dock,
+//! or a task bar leave, only the monitor's whole size. So we ask the
+//! platform for it (`work_area`) and take that less a title bar; where
+//! it does not say (Wayland, or an X11 window manager that sets none),
+//! the monitor's size less a margin wide enough for a title bar, a menu
+//! bar, and a Dock at its default size.
 
 use slint::ComponentHandle;
 
@@ -15,6 +17,7 @@ use crate::App;
 
 pub(crate) mod full_screen;
 pub(crate) mod scale;
+pub(crate) mod work_area;
 
 use scale::Scale;
 
@@ -25,15 +28,23 @@ pub(crate) const MARGIN_WIDTH: f32 = 80.0;
 /// notch) with a Dock at its default size (about 70) at the foot, or a
 /// task bar.
 pub(crate) const MARGIN_HEIGHT: f32 = 140.0;
+/// Logical pixels left free across inside a work area the platform
+/// reports: the window's frame, with a little to spare.
+pub(crate) const WORK_MARGIN_WIDTH: f32 = 16.0;
+/// Logical pixels left free down inside a work area: the window's
+/// title bar, which its size leaves out (28 on a Mac, about 31 on
+/// Windows, more under some Linux window managers).
+pub(crate) const WORK_MARGIN_HEIGHT: f32 = 48.0;
 
 /// The size to open at, in logical pixels: the size asked for, no
-/// larger than the monitor's less the margin, and no smaller than the
-/// layout's least. A monitor too small for even the least gets the
-/// least; the window then runs past the screen's foot, as any window
-/// with a minimum does there, and is moved or resized by the user.
+/// larger than the room (a work area, or a whole monitor) less the
+/// margin, and no smaller than the layout's least. A monitor too small
+/// for even the least gets the least; the window then runs past the
+/// screen's foot, as any window with a minimum does there, and is
+/// moved or resized by the user.
 pub(crate) fn fit(
     requested: (f32, f32),
-    monitor: (f32, f32),
+    room: (f32, f32),
     margin: (f32, f32),
     least: (f32, f32),
 ) -> (f32, f32) {
@@ -41,8 +52,8 @@ pub(crate) fn fit(
         asked.min(room - margin).max(least).round()
     };
     (
-        one(requested.0, monitor.0, margin.0, least.0),
-        one(requested.1, monitor.1, margin.1, least.1),
+        one(requested.0, room.0, margin.0, least.0),
+        one(requested.1, room.1, margin.1, least.1),
     )
 }
 
@@ -57,6 +68,18 @@ pub(crate) fn logical(physical: (u32, u32), scale: f64) -> Option<(f32, f32)> {
         (f64::from(physical.0) / scale) as f32,
         (f64::from(physical.1) / scale) as f32,
     ))
+}
+
+/// One of winit's monitors as the fit reads it: its size in physical
+/// pixels, its own scale, its work area in the same pixels where the
+/// platform reports one, and whether the system would open a new
+/// window on it (`opens_on`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Monitor {
+    pub(crate) size: (u32, u32),
+    pub(crate) scale: f64,
+    pub(crate) work: Option<work_area::Rect>,
+    pub(crate) opens_here: bool,
 }
 
 /// The window the fit is for, put in once it is built: the handler
@@ -156,19 +179,49 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
 /// startup info, which winit does not read. Elsewhere nothing asks.
 #[cfg(windows)]
 fn starts_maximized() -> bool {
-    use windows_sys::Win32::System::Threading::{
-        GetStartupInfoW, STARTF_USESHOWWINDOW, STARTUPINFOW,
-    };
+    use windows_sys::Win32::System::Threading::STARTF_USESHOWWINDOW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED;
+    let info = startup_info();
+    info.dwFlags & STARTF_USESHOWWINDOW != 0 && i32::from(info.wShowWindow) == SW_SHOWMAXIMIZED
+}
+
+/// The process's startup info, handed on by whatever started it.
+#[cfg(windows)]
+fn startup_info() -> windows_sys::Win32::System::Threading::STARTUPINFOW {
+    use windows_sys::Win32::System::Threading::{GetStartupInfoW, STARTUPINFOW};
     // SAFETY: GetStartupInfoW fills the struct given and cannot fail;
     // a zeroed STARTUPINFOW is a valid one to fill.
-    let info = unsafe {
+    unsafe {
         let mut info: STARTUPINFOW = std::mem::zeroed();
         info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
         GetStartupInfoW(&mut info);
         info
-    };
-    info.dwFlags & STARTF_USESHOWWINDOW != 0 && i32::from(info.wShowWindow) == SW_SHOWMAXIMIZED
+    }
+}
+
+/// Which of `monitors` the system opens a new window on: on Windows the
+/// one the process was started from when the shell says so (the
+/// startup info's monitor), else the primary.
+fn opens_on(
+    event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
+    monitors: &[slint::winit_030::winit::monitor::MonitorHandle],
+) -> Option<usize> {
+    #[cfg(windows)]
+    {
+        use slint::winit_030::winit::platform::windows::MonitorHandleExtWindows;
+        // Not in windows-sys: the shell sets it with the monitor's
+        // handle in hStdOutput.
+        const STARTF_USEMONITOR: u32 = 0x0000_0400;
+        let info = startup_info();
+        if info.dwFlags & STARTF_USEMONITOR != 0 {
+            let started = info.hStdOutput as isize;
+            if let Some(i) = monitors.iter().position(|m| m.hmonitor() == started) {
+                return Some(i);
+            }
+        }
+    }
+    let primary = event_loop.primary_monitor()?;
+    monitors.iter().position(|m| *m == primary)
 }
 
 #[cfg(not(windows))]
@@ -183,12 +236,15 @@ pub(crate) enum Plan {
     Wayland,
     /// No monitor with a size: the size asked for.
     NoMonitor((f32, f32)),
-    /// The monitor fitted to, in logical pixels, its scale, and the
-    /// size to open at.
+    /// The monitor fitted to, in logical pixels, its scale, its work
+    /// area where the platform reports one, the size to open at, and
+    /// where in the work area the window is centered (`place`).
     Fit {
         monitor: (f32, f32),
         scale: f64,
+        work: Option<(f32, f32)>,
         opened: (f32, f32),
+        at: Option<(i32, i32)>,
     },
 }
 
@@ -204,11 +260,18 @@ impl Plan {
             Plan::Fit {
                 monitor,
                 scale,
+                work,
                 opened,
-            } => format!(
-                "window: monitor {:.0}x{:.0} at {scale:.2}x, opening at {:.0}x{:.0}",
-                monitor.0, monitor.1, opened.0, opened.1
-            ),
+                ..
+            } => {
+                let work = work
+                    .map(|w| format!(", work area {:.0}x{:.0}", w.0, w.1))
+                    .unwrap_or_default();
+                format!(
+                    "window: monitor {:.0}x{:.0} at {scale:.2}x{work}, opening at {:.0}x{:.0}",
+                    monitor.0, monitor.1, opened.0, opened.1
+                )
+            }
         }
     }
 }
@@ -219,50 +282,136 @@ impl Plan {
 /// 125 % would read 960 x 540 and the window open at its least, and
 /// neither the fractional scale nor the work area is known before the
 /// window exists; the compositor places and sizes the window. Elsewhere
-/// the smallest of the monitors, by logical area, that holds the
-/// layout's least with the margins: the window opens on the focused
-/// screen, which need not be the primary one (a laptop with a main
-/// display beside it), and the smallest fits it wherever it opens. A
-/// monitor too small for the least (a little USB display) is passed
-/// over, so it does not shrink the window on the others; with none
-/// that holds it, the largest. Slint's logical pixels on each monitor
-/// are its own scale under the run's `scale`: times the interface
-/// scale setting, or the factor `SLINT_SCALE_FACTOR` sets by hand.
+/// each monitor's room is its work area less a title bar where the
+/// platform reports one, else its whole size less the guessed margins,
+/// and the fit takes the smallest room, by logical area, that holds the
+/// layout's least: the window opens on the focused screen, which need
+/// not be the primary one (a laptop with a main display beside it), and
+/// the smallest fits it wherever it opens. A monitor too small for the
+/// least (a little USB display) is passed over, so it does not shrink
+/// the window on the others; with none that holds it, the largest.
+/// Slint's logical pixels on each monitor are its own scale under the
+/// run's `scale`: times the interface scale setting, or the factor
+/// `SLINT_SCALE_FACTOR` sets by hand.
 pub(crate) fn plan(
     wayland: bool,
     asked: (f32, f32),
-    monitors: &[((u32, u32), f64)],
+    monitors: &[Monitor],
     scale: Scale,
     least: (f32, f32),
 ) -> Plan {
     if wayland {
         return Plan::Wayland;
     }
+    struct Sized {
+        monitor: (f32, f32),
+        scale: f64,
+        work: Option<(f32, f32)>,
+        room: (f32, f32),
+        margin: (f32, f32),
+        rect: Option<work_area::Rect>,
+        own: f64,
+        opens_here: bool,
+    }
     let sized: Vec<_> = monitors
         .iter()
-        .filter_map(|&(physical, own)| {
-            let scale = scale.on(own);
-            logical(physical, scale).map(|size| (size, scale))
+        .filter_map(|m| {
+            let scale = scale.on(m.scale);
+            let monitor = logical(m.size, scale)?;
+            // A work area larger than its monitor is read as the monitor.
+            let work = m
+                .work
+                .and_then(|w| logical((w.2, w.3), scale))
+                .map(|w| (w.0.min(monitor.0), w.1.min(monitor.1)));
+            let (room, margin) = match work {
+                Some(work) => (work, (WORK_MARGIN_WIDTH, WORK_MARGIN_HEIGHT)),
+                None => (monitor, (MARGIN_WIDTH, MARGIN_HEIGHT)),
+            };
+            // The system's pixels in Slint's: never fewer than the
+            // margin's own count, so an interface scale under 100 %
+            // does not shrink the room left for a title bar.
+            let system = (m.scale / scale).max(1.0) as f32;
+            Some(Sized {
+                monitor,
+                scale,
+                work,
+                room,
+                margin: (margin.0 * system, margin.1 * system),
+                rect: m.work.filter(|_| work.is_some()),
+                own: m.scale,
+                opens_here: m.opens_here,
+            })
         })
         .collect();
-    let area = |m: &((f32, f32), f64)| m.0.0 * m.0.1;
-    let holds = |m: &&((f32, f32), f64)| {
-        m.0.0 >= least.0 + MARGIN_WIDTH && m.0.1 >= least.1 + MARGIN_HEIGHT
-    };
+    // Each side held at 0, so two sides short of the margin do not
+    // multiply to a large area.
+    let area = |m: &Sized| (m.room.0 - m.margin.0).max(0.0) * (m.room.1 - m.margin.1).max(0.0);
+    let holds = |m: &&Sized| m.room.0 - m.margin.0 >= least.0 && m.room.1 - m.margin.1 >= least.1;
     let chosen = sized
         .iter()
         .filter(holds)
         .min_by(|a, b| area(a).total_cmp(&area(b)))
-        .or_else(|| sized.iter().max_by(|a, b| area(a).total_cmp(&area(b))))
-        .copied();
+        .or_else(|| sized.iter().max_by(|a, b| area(a).total_cmp(&area(b))));
     match chosen {
         None => Plan::NoMonitor(asked),
-        Some((monitor, scale)) => Plan::Fit {
-            monitor,
-            scale,
-            opened: fit(asked, monitor, (MARGIN_WIDTH, MARGIN_HEIGHT), least),
-        },
+        Some(m) => {
+            let opened = fit(asked, m.room, m.margin, least);
+            let frame = |m: &Sized| {
+                (
+                    WORK_MARGIN_WIDTH * m.own as f32,
+                    WORK_MARGIN_HEIGHT * m.own as f32,
+                )
+            };
+            // Placed where the system would open it, if the size fitted
+            // to the smallest room fits there with its frame; else on
+            // the smallest room's monitor.
+            let fits = |m: &&Sized| {
+                let frame = frame(m);
+                m.rect.is_some_and(|r| {
+                    f64::from(opened.0) * m.scale + f64::from(frame.0) <= f64::from(r.2)
+                        && f64::from(opened.1) * m.scale + f64::from(frame.1) <= f64::from(r.3)
+                })
+            };
+            let home = sized
+                .iter()
+                .filter(|s| s.opens_here)
+                .find(fits)
+                .unwrap_or(m);
+            Plan::Fit {
+                monitor: m.monitor,
+                scale: m.scale,
+                work: m.work,
+                opened,
+                at: home
+                    .rect
+                    .map(|rect| place(rect, opened, home.scale, frame(home))),
+            }
+        }
     }
+}
+
+/// Where the window goes in a work area, in the desktop's physical
+/// pixels: its outer size (the size opened at, in Slint's pixels at
+/// `scale`, and its `frame` in physical ones) centered in the area, and
+/// from its top-left corner when the area is the smaller. Windows
+/// creates a window where it likes, cascaded from the work area's
+/// corner, and winit's resize keeps that corner; the fit puts it here
+/// instead. macOS centers a new window in the visible frame itself, and
+/// an X11 window manager places it.
+pub(crate) fn place(
+    work: work_area::Rect,
+    opened: (f32, f32),
+    scale: f64,
+    frame: (f32, f32),
+) -> (i32, i32) {
+    let one = |start: i32, room: u32, size: f32, frame: f32| {
+        let outer = f64::from(size) * scale + f64::from(frame);
+        start + ((f64::from(room) - outer) / 2.0).max(0.0).round() as i32
+    };
+    (
+        one(work.0, work.2, opened.0, frame.0),
+        one(work.1, work.3, opened.1, frame.1),
+    )
 }
 
 /// Whether winit runs on Wayland.
@@ -297,18 +446,37 @@ fn fit_window(
     scale: Scale,
 ) -> (f32, f32) {
     let asked = (app.get_asked_width(), app.get_asked_height());
-    let monitors: Vec<_> = event_loop
-        .available_monitors()
-        .map(|m| {
+    let wayland = is_wayland(event_loop);
+    let handles: Vec<_> = event_loop.available_monitors().collect();
+    let home = opens_on(event_loop, &handles);
+    let monitors: Vec<_> = handles
+        .iter()
+        .zip(work_area::read(wayland, &handles))
+        .enumerate()
+        .map(|(i, (m, work))| {
             let p = m.size();
-            ((p.width, p.height), m.scale_factor())
+            Monitor {
+                size: (p.width, p.height),
+                scale: m.scale_factor(),
+                work,
+                opens_here: home == Some(i),
+            }
         })
         .collect();
     let least = (app.get_least_width(), app.get_least_height());
-    let plan = plan(is_wayland(event_loop), asked, &monitors, scale, least);
+    let plan = plan(wayland, asked, &monitors, scale, least);
     tracing::info!("{}", plan.line());
     let opened = match plan {
-        Plan::Fit { opened, .. } => opened,
+        Plan::Fit { opened, at, .. } => {
+            if cfg!(windows)
+                && let Some((x, y)) = at
+            {
+                tracing::info!("window: placed at {x},{y} in the work area");
+                app.window()
+                    .set_position(slint::PhysicalPosition::new(x, y));
+            }
+            opened
+        }
         // Nothing fitted: the size asked for, which under the interface
         // scale is set smaller by its percentage, so the window covers
         // what it would at 100 % rather than that times the scale.
@@ -353,6 +521,16 @@ mod tests {
     const LEAST: (f32, f32) = (560.0, 509.0);
     /// The preferred size, which the last test reads.
     const ASKED: (f32, f32) = (1500.0, 800.0);
+
+    /// A monitor with no work area reported.
+    fn m(size: (u32, u32), scale: f64) -> Monitor {
+        Monitor {
+            size,
+            scale,
+            work: None,
+            opens_here: false,
+        }
+    }
 
     /// A 14-inch MacBook at its default scaling: the preferred height
     /// fits under the menu bar and above the Dock, and the width is
@@ -419,8 +597,8 @@ mod tests {
     /// scale; and Wayland left alone.
     #[test]
     fn the_plan_from_the_monitors() {
-        let mac = ((3024, 1964), 2.0);
-        let main_display = ((3840, 2160), 1.5);
+        let mac = m((3024, 1964), 2.0);
+        let main_display = m((3840, 2160), 1.5);
         let line = |p: &Plan| p.line();
         let alone = plan(false, ASKED, &[mac], Scale::System, LEAST);
         assert_eq!(
@@ -432,14 +610,14 @@ mod tests {
             alone
         );
         assert_eq!(
-            plan(false, ASKED, &[((0, 0), 1.0), mac], Scale::System, LEAST),
+            plan(false, ASKED, &[m((0, 0), 1.0), mac], Scale::System, LEAST),
             alone
         );
         // A little USB display beside a 4K one: too small for the
         // least with the margins, it is passed over, and the window
         // opens as asked on the 4K.
-        let usb = ((1024, 600), 1.0);
-        let four_k = ((3840, 2160), 1.0);
+        let usb = m((1024, 600), 1.0);
+        let four_k = m((3840, 2160), 1.0);
         assert_eq!(
             line(&plan(false, ASKED, &[usb, four_k], Scale::System, LEAST)),
             "window: monitor 3840x2160 at 1.00x, opening at 1500x800"
@@ -449,7 +627,7 @@ mod tests {
             line(&plan(
                 false,
                 ASKED,
-                &[four_k, ((1366, 768), 1.0)],
+                &[four_k, m((1366, 768), 1.0)],
                 Scale::System,
                 LEAST
             )),
@@ -460,13 +638,13 @@ mod tests {
             line(&plan(
                 false,
                 ASKED,
-                &[((800, 480), 1.0)],
+                &[m((800, 480), 1.0)],
                 Scale::System,
                 LEAST
             )),
             "window: monitor 800x480 at 1.00x, opening at 720x509"
         );
-        let none = plan(false, ASKED, &[((0, 0), 1.0)], Scale::System, LEAST);
+        let none = plan(false, ASKED, &[m((0, 0), 1.0)], Scale::System, LEAST);
         assert_eq!(
             line(&none),
             "window: no monitor reported, opening at 1500x800"
@@ -488,7 +666,7 @@ mod tests {
             line(&plan(
                 false,
                 ASKED,
-                &[((1920, 1080), 1.0)],
+                &[m((1920, 1080), 1.0)],
                 Scale::Times(1.5),
                 LEAST
             )),
@@ -496,6 +674,225 @@ mod tests {
         );
         let wayland = plan(true, ASKED, &[mac], Scale::System, LEAST);
         assert_eq!(line(&wayland), "window: Wayland, left to the compositor");
+    }
+
+    /// The plan where the platform reports a work area: the room is
+    /// that less a title bar, not the monitor less the guess.
+    #[test]
+    fn the_plan_from_the_work_area() {
+        let at = |size, scale, work: (u32, u32)| Monitor {
+            size,
+            scale,
+            work: Some((0, 0, work.0, work.1)),
+            opens_here: false,
+        };
+        let line = |monitors: &[Monitor], scale| plan(false, ASKED, monitors, scale, LEAST).line();
+        // A 14-inch Mac with the Dock on the left (70 points) and the
+        // menu bar (37): the width gives way, the height does not.
+        assert_eq!(
+            line(&[at((3024, 1964), 2.0, (2884, 1890))], Scale::System),
+            "window: monitor 1512x982 at 2.00x, work area 1442x945, opening at 1426x800"
+        );
+        // The same with the Dock at its largest on the side.
+        assert_eq!(
+            line(&[at((3024, 1964), 2.0, (2768, 1890))], Scale::System),
+            "window: monitor 1512x982 at 2.00x, work area 1384x945, opening at 1368x800"
+        );
+        // A 13-inch Air at 1440 x 900 with a large Dock at the foot:
+        // shorter than the guess's 760, which ran under the Dock.
+        assert_eq!(
+            line(&[at((2880, 1800), 2.0, (2880, 1496))], Scale::System),
+            "window: monitor 1440x900 at 2.00x, work area 1440x748, opening at 1424x700"
+        );
+        // A 1080p laptop's 48-pixel task bar: as asked at 100 %; at
+        // 150 % a little more than the guess's 1200 x 580.
+        let laptop = at((1920, 1080), 1.0, (1920, 1032));
+        assert_eq!(
+            line(&[laptop], Scale::System),
+            "window: monitor 1920x1080 at 1.00x, work area 1920x1032, opening at 1500x800"
+        );
+        let laptop = at((1920, 1080), 1.5, (1920, 1032));
+        assert_eq!(
+            line(&[laptop], Scale::System),
+            "window: monitor 1280x720 at 1.50x, work area 1280x688, opening at 1264x640"
+        );
+        // A work area larger than its monitor is the monitor.
+        assert_eq!(
+            line(&[at((1920, 1080), 1.0, (4000, 1032))], Scale::System),
+            "window: monitor 1920x1080 at 1.00x, work area 1920x1032, opening at 1500x800"
+        );
+        // An empty one is none: the guess.
+        assert_eq!(
+            line(&[at((3024, 1964), 2.0, (0, 0))], Scale::System),
+            "window: monitor 1512x982 at 2.00x, opening at 1432x800"
+        );
+        // The smallest room wins: the Mac's, with its Dock, over a 4K
+        // display's, whichever reports a work area.
+        let four_k = m((3840, 2160), 1.0);
+        assert_eq!(
+            line(
+                &[four_k, at((3024, 1964), 2.0, (2768, 1890))],
+                Scale::System
+            ),
+            "window: monitor 1512x982 at 2.00x, work area 1384x945, opening at 1368x800"
+        );
+    }
+
+    /// Where the window goes in a work area: centered with its frame,
+    /// from the area's own origin (a monitor left of the primary, a
+    /// task bar at the top), and from the corner when it fills the area.
+    #[test]
+    fn the_window_is_placed_in_the_work_area() {
+        // A 1366 x 768 laptop at 100 % with a 48-pixel task bar: the
+        // fitted 1350 x 672 and its frame fill the area exactly.
+        let laptop = Monitor {
+            size: (1366, 768),
+            scale: 1.0,
+            work: Some((0, 0, 1366, 720)),
+            opens_here: false,
+        };
+        let Plan::Fit { opened, at, .. } = plan(false, ASKED, &[laptop], Scale::System, LEAST)
+        else {
+            panic!("no fit");
+        };
+        assert_eq!((opened, at), ((1350.0, 672.0), Some((0, 0))));
+        // The same with the task bar at the top.
+        let top = (0, 48, 1366, 720);
+        assert_eq!(place(top, opened, 1.0, (16.0, 48.0)), (0, 48));
+        // A 1080p display left of the primary, its task bar at the
+        // foot: the 1500 x 800 asked for, with its frame, centered.
+        let left = (-1920, 0, 1920, 1040);
+        assert_eq!(place(left, (1500.0, 800.0), 1.0, (16.0, 48.0)), (-1718, 96));
+        // At 150 %: Slint's pixels times the scale, the frame in the
+        // monitor's own.
+        let laptop = Monitor {
+            size: (1920, 1080),
+            scale: 1.5,
+            work: Some((0, 0, 1920, 1032)),
+            opens_here: false,
+        };
+        let Plan::Fit { opened, at, .. } = plan(false, ASKED, &[laptop], Scale::System, LEAST)
+        else {
+            panic!("no fit");
+        };
+        assert_eq!((opened, at), ((1264.0, 640.0), Some((0, 0))));
+        // The least, larger than the area, goes in at its corner.
+        assert_eq!(
+            place((100, 50, 400, 300), LEAST, 1.0, (16.0, 48.0)),
+            (100, 50)
+        );
+        // No work area, no place: the guess leaves it to the system.
+        let Plan::Fit { at, .. } = plan(false, ASKED, &[m((1366, 768), 1.0)], Scale::System, LEAST)
+        else {
+            panic!("no fit");
+        };
+        assert_eq!(at, None);
+    }
+
+    /// The monitor the window is placed on: the one the system opens
+    /// it on when the size fitted to the smallest room fits there, else
+    /// the smallest room's. A 1080p laptop at 150 % beside a 4K main
+    /// display keeps the laptop's size and opens on the main one.
+    #[test]
+    fn the_window_is_placed_where_the_system_opens_it() {
+        let laptop = |home| Monitor {
+            size: (1920, 1080),
+            scale: 1.5,
+            work: Some((-1920, 0, 1920, 1032)),
+            opens_here: home,
+        };
+        let main = |home| Monitor {
+            size: (3840, 2160),
+            scale: 1.5,
+            work: Some((0, 0, 3840, 2112)),
+            opens_here: home,
+        };
+        let placed = |monitors: &[Monitor]| match plan(false, ASKED, monitors, Scale::System, LEAST)
+        {
+            Plan::Fit { opened, at, .. } => (opened, at),
+            other => panic!("{other:?}"),
+        };
+        // The primary larger: the laptop's size, centered on the main
+        // display (1896 x 960 and a 24 x 72 frame in 3840 x 2112).
+        assert_eq!(
+            placed(&[laptop(false), main(true)]),
+            ((1264.0, 640.0), Some((960, 540)))
+        );
+        // The primary smaller: it is the smallest room too.
+        assert_eq!(
+            placed(&[laptop(true), main(false)]),
+            ((1264.0, 640.0), Some((-1920, 0)))
+        );
+        // No primary named: the smallest room's monitor.
+        assert_eq!(
+            placed(&[laptop(false), main(false)]),
+            ((1264.0, 640.0), Some((-1920, 0)))
+        );
+        // A primary too small for the size fitted elsewhere (a little
+        // display that does not hold the least): the fitted monitor.
+        let little = Monitor {
+            size: (800, 480),
+            scale: 1.0,
+            work: Some((0, 0, 800, 440)),
+            opens_here: true,
+        };
+        let four_k = Monitor {
+            size: (3840, 2160),
+            scale: 1.0,
+            work: Some((800, 0, 3840, 2112)),
+            opens_here: false,
+        };
+        assert_eq!(
+            placed(&[little, four_k]),
+            ((1500.0, 800.0), Some((800 + 1162, 632)))
+        );
+    }
+
+    /// The margins are the system's pixels: under an interface scale
+    /// below 100 % they are as many of Slint's smaller ones as it takes,
+    /// and above it they are not cut.
+    #[test]
+    fn the_margins_hold_under_a_small_interface_scale() {
+        let mac = Monitor {
+            size: (3024, 1964),
+            scale: 2.0,
+            work: Some((140, 74, 2884, 1890)),
+            opens_here: false,
+        };
+        let big = (4000.0, 4000.0);
+        let opened = |scale: Scale| match plan(false, big, &[mac], scale, LEAST) {
+            Plan::Fit { opened, .. } => opened,
+            other => panic!("{other:?}"),
+        };
+        // At 50 % Slint's pixel is the Mac's: 32 x 96 of them for the
+        // 16 x 48 points of frame and title bar.
+        assert_eq!(opened(Scale::Times(0.5)), (2852.0, 1794.0));
+        // SLINT_SCALE_FACTOR=1 on the same panel: the same.
+        assert_eq!(opened(Scale::ByHand(1.0)), (2852.0, 1794.0));
+        // At 150 % the margins stay 16 x 48 of Slint's pixels.
+        assert_eq!(opened(Scale::Times(1.5)), (945.0, 582.0));
+        // The guess's margins likewise: 160 x 280 at 50 %.
+        let bare = m((3024, 1964), 2.0);
+        assert_eq!(
+            match plan(false, big, &[bare], Scale::Times(0.5), LEAST) {
+                Plan::Fit { opened, .. } => opened,
+                other => panic!("{other:?}"),
+            },
+            (2864.0, 1684.0)
+        );
+    }
+
+    /// With no monitor that holds the least, the largest room: one
+    /// short of the margin both ways is no room at all, not a large
+    /// one from two shortfalls multiplied.
+    #[test]
+    fn a_room_short_both_ways_is_not_the_largest() {
+        let small = m((180, 200), 1.0);
+        let none = m((1, 1), 1.0);
+        assert_eq!(
+            plan(false, ASKED, &[small, none], Scale::System, LEAST).line(),
+            "window: monitor 180x200 at 1.00x, opening at 560x509"
+        );
     }
 
     /// The fit's inputs in the running editor: the preferred size the

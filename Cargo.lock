@@ -2213,6 +2213,7 @@ dependencies = [
  "webbrowser",
  "windows-sys 0.59.0",
  "winresource",
+ "x11rb",
  "zbus",
 ]
 

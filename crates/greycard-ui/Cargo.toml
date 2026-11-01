@@ -133,22 +133,28 @@ rfd = { version = "0.17", default-features = false }
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+# The window manager's work area on X11 (_NET_WORKAREA), read over a
+# connection of our own. winit and softbuffer already carry it.
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+x11rb = { version = "0.13", default-features = false }
+
 # The same rename on Windows: MoveFileExW without REPLACE_EXISTING. The
 # version and feature greycard-edit already asks for. And the startup
 # info (GetStartupInfoW), for a shortcut set to open the window
 # maximized: a module of the same crate, nothing new in the tree. The
 # precision touchpad's scrolling direction (RegGetValueW) and a wheel
-# message's source (GetCurrentInputMessageSource) are two more.
+# message's source (GetCurrentInputMessageSource) are two more, and a
+# monitor's work area (GetMonitorInfoW).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging"] }
 
 # The Finder's open: a method added to winit's application delegate,
 # and the URLs it is handed. winit carries both already on the Mac.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSString", "NSURL", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSEnumerator", "NSString", "NSURL", "NSValue"] }
 # The displays' profiles from ColorSync (CoreGraphics), and their names
-# (NSScreen). winit already carries all three on the Mac.
+# and work areas (NSScreen). winit already carries all three on the Mac.
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFData", "CFPreferences", "CFString"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGColorSpace", "CGDirectDisplay", "CGDisplayConfiguration", "CGError"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphics", "NSScreen"] }

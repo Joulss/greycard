@@ -80,6 +80,10 @@ design note behind it.
 
 ### Fixes
 
+- The window opens inside the Dock's, the task bar's, or the panel's
+  work area where the platform reports one, so a large or side Dock
+  narrows it rather than putting its foot under the Dock
+  ([§500](https://github.com/jessolmstead/greycard/blob/master/docs/notes/500-the-window-fit-to-the-work-area.md)).
 - A paste, a sync, or a preset over hundreds of frames no longer holds
   the window while the sidecars are written: 299 frames took 1.6 s
   here, now about 10 ms, and a file either lands whole or keeps its

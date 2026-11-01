@@ -512,3 +512,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§497. A lens picked by hand, and Adobe lens profiles](notes/497-a-lens-picked-by-hand-and-adobe-lens-profiles.md) (2026-11-01)
 - [§498. Many sidecars saved off the window's thread](notes/498-many-sidecars-saved-off-the-windows-thread.md) (2026-11-01)
 - [§499. Edit in another editor](notes/499-edit-in-another-editor.md) (2026-11-01)
+- [§500. The window fit to the work area](notes/500-the-window-fit-to-the-work-area.md) (2026-11-01)
