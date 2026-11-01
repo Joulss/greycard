@@ -47,6 +47,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "load-dynamic",
 ] }
 half.workspace = true
+memmap2.workspace = true
 ureq.workspace = true
 sha2.workspace = true
 # Microsoft's CPU-only ONNX Runtime, fetched where the processor cannot

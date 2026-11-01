@@ -15,10 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The remove's UNet loads on WebGPU with no word in the window:
-      27 s for Fast's and 40 s for Best's on the M5, at a frame's
-      first fill (§477). Core ML's share of this bug was Sky, now 1.1 s
-      cold (§466). Load it in the background or say "preparing"
 - [ ] The Library's camera thumbnails and the previews behind them
       are still made for the whole root at its first open, about a
       quarter of a CPU second a cold frame, an hour on a 12515-file
@@ -239,8 +235,9 @@ seconds.
       fix carries over, its Neural Engine compile time may too (§477)
 - [ ] A word in the window while a model loads or compiles for the
       first time, since a tester gave up on a 47 s load with nothing
-      shown (pixls, 2026-10-28); one with the first-run compile bug
-      above
+      shown (pixls, 2026-10-28); on an M5 the remove's UNet now loads
+      in under 2 s and Sky compiles in about 1 (§466, §482), an M1 and
+      other machines unmeasured
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's

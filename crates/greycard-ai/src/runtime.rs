@@ -37,6 +37,7 @@
 //! it is the library loaded, with the CPU the only provider
 //! ([`cpu_only`]).
 
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::{OnceLock, RwLock};
 
@@ -1206,6 +1207,9 @@ fn try_open(
     timed: bool,
     warm: &mut impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> ort::Result<(Session, Option<f64>)> {
+    // Declared before the builder, so that on an early return the
+    // builder, which holds pointers into them, goes first.
+    let weights = ExternalWeights::beside(path);
     let mut builder = Session::builder()?.with_optimization_level(level)?;
     if provider == Provider::CoreMl {
         builder = builder.with_disabled_optimizers(CORE_ML_UNFUSED)?;
@@ -1216,7 +1220,14 @@ fn try_open(
     if let Some(ep) = provider.dispatch(path, fixed) {
         builder = builder.with_execution_providers([ep])?;
     }
+    for (name, bytes) in weights.files() {
+        builder = builder.with_external_initializer_file_in_memory(name, Cow::Borrowed(bytes))?;
+    }
     let mut session = builder.commit_from_file(path)?;
+    // ONNX Runtime has copied what it needs: "the buffer can be freed
+    // after session creation" (`AddExternalInitializersFromFilesInMemory`).
+    drop(builder);
+    drop(weights);
     let mut run = None;
     if !skip_warm {
         warm(&mut session)?;
@@ -1227,6 +1238,70 @@ fn try_open(
         }
     }
     Ok((session, run))
+}
+
+/// A model's external weight files, each mapped once for the session
+/// being built.
+///
+/// ONNX Runtime maps an external initializer's bytes from its file one
+/// tensor at a time, an `mmap` each. The remove's UNet names 3216
+/// tensors in two files, and on macOS those calls took three quarters
+/// of a session's build: 10.4 s for the Fast UNet on an M5, 1.7 to 2.6 s
+/// with each file mapped once and handed over in memory, 9.2 s and 1.4 s
+/// for the 25-step one (§482). Every `*.onnx_data` beside the model is
+/// offered, under its own name, as the graph's `location` fields name
+/// them; ONNX Runtime takes the tensors a graph names from the files it
+/// names and passes over the rest. A file that cannot be opened or
+/// mapped is left to ONNX Runtime's own reading.
+struct ExternalWeights {
+    files: Vec<(String, memmap2::Mmap)>,
+}
+
+impl ExternalWeights {
+    fn beside(model: &Path) -> Self {
+        let Some(dir) = model.parent() else {
+            return Self { files: Vec::new() };
+        };
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "onnx_data") {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Ok(file) = std::fs::File::open(&path) else {
+                continue;
+            };
+            // SAFETY: the map is read only, and only while the session
+            // is built. The model store replaces a file by renaming a
+            // finished copy over it (`store.rs`), never by writing into
+            // it, so the mapped file is not truncated under the map.
+            match unsafe { memmap2::Mmap::map(&file) } {
+                Ok(map) => files.push((name.to_string(), map)),
+                Err(e) => log::debug!(
+                    "{}: not mapped ({e}); ONNX Runtime reads it",
+                    path.display()
+                ),
+            }
+        }
+        Self { files }
+    }
+
+    /// Each file's name and bytes, the bytes `'static` for the
+    /// builder's `Cow`.
+    fn files(&self) -> impl Iterator<Item = (&str, &'static [u8])> + '_ {
+        self.files.iter().map(|(name, map)| {
+            // SAFETY: the builder that holds these is dropped before
+            // `self` in `try_open`, on every path out of it, and ONNX
+            // Runtime has copied the tensors out by then; nothing keeps
+            // the slice past the map.
+            let bytes: &'static [u8] =
+                unsafe { std::slice::from_raw_parts(map.as_ptr(), map.len()) };
+            (name.as_str(), bytes)
+        })
+    }
 }
 
 fn first_line(s: &str) -> &str {
@@ -1402,6 +1477,49 @@ mod tests {
         assert!(other_file.exists());
         assert!(unknown.exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The weight files offered with a model are the `*.onnx_data`
+    /// beside it, under their own names and with their bytes; nothing
+    /// else in the folder, and nothing for a model with none.
+    #[test]
+    fn the_weights_beside_a_model_are_mapped_by_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-runtime-weights-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("unet-512.onnx");
+        std::fs::write(&model, b"graph").unwrap();
+        std::fs::write(dir.join("unet.onnx_data"), b"weights").unwrap();
+        std::fs::write(dir.join("unet-lora.onnx_data"), b"lora").unwrap();
+        std::fs::write(dir.join("LICENSE.txt"), b"text").unwrap();
+        let weights = ExternalWeights::beside(&model);
+        let mut files: Vec<(String, Vec<u8>)> = weights
+            .files()
+            .map(|(name, bytes)| (name.to_string(), bytes.to_vec()))
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                ("unet-lora.onnx_data".to_string(), b"lora".to_vec()),
+                ("unet.onnx_data".to_string(), b"weights".to_vec()),
+            ]
+        );
+        drop(weights);
+        let alone = dir.join("alone");
+        std::fs::create_dir_all(&alone).unwrap();
+        std::fs::write(alone.join("sky.onnx"), b"graph").unwrap();
+        assert_eq!(
+            ExternalWeights::beside(&alone.join("sky.onnx"))
+                .files()
+                .count(),
+            0
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A raced entry for `provider`, timed at `shape` in `run_us`.
