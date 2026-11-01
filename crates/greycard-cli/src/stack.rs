@@ -499,6 +499,7 @@ mod tests {
             crop: None,
             orientation: Orientation::Normal,
             shot: Default::default(),
+            dng: Default::default(),
         }
     }
 

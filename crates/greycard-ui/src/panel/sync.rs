@@ -3744,6 +3744,7 @@ mod tests {
             crop: None,
             orientation: Orientation::Normal,
             shot: Default::default(),
+            dng: Default::default(),
         };
         // The card as the camera saw it: grey, under the light's color.
         let pixel = [0.18 / gains[0], 0.18 / gains[1], 0.18 / gains[2]];

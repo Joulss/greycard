@@ -143,8 +143,12 @@ pub fn write_linear_dng<W: Write + Seek>(
             .unwrap_or(concat!("greycard ", env!("CARGO_PKG_VERSION"))),
     );
     root.add_tag(DngTag::AsShotNeutral, neutral(gains).as_slice());
-    if headroom > 1.0 {
-        root.add_tag(DngTag::BaselineExposure, baseline_exposure(headroom));
+    // The headroom's stops, and the source's own tag carried on top
+    // when it had one: a phone's DNG written out linear keeps its word.
+    let carried = frame.dng.baseline_exposure;
+    if carried.is_some() || headroom > 1.0 {
+        let stops = carried.unwrap_or(0.0) + headroom.log2();
+        root.add_tag(DngTag::BaselineExposure, baseline_exposure(stops));
     }
 
     for (slot, calibration) in calibrations.iter().enumerate() {
@@ -234,12 +238,11 @@ fn neutral(gains: [f32; 3]) -> [Rational; 3] {
     gains.map(|g| Rational::new_f64(f64::from(gains[1]) / f64::from(g), DENOMINATOR))
 }
 
-/// `BaselineExposure`: the stops a reader brightens by, undoing the
-/// headroom's scale.
-fn baseline_exposure(headroom: f32) -> SRational {
+/// `BaselineExposure`: the stops a reader brightens by.
+fn baseline_exposure(stops: f32) -> SRational {
     const DENOMINATOR: i32 = 10_000;
     SRational::new(
-        (f64::from(headroom).log2() * f64::from(DENOMINATOR)).round() as i32,
+        (f64::from(stops) * f64::from(DENOMINATOR)).round() as i32,
         DENOMINATOR,
     )
 }
@@ -372,15 +375,88 @@ mod tests {
         write_linear_dng(&mut buf, &frame, &image, [2.0, 1.0, 4.0], &options).unwrap();
         let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
         assert!(back.samples.to_f32().iter().all(|v| *v == 65535.0));
-        let be = baseline_exposure(2.0);
+        // The headroom's stop is read back as the file's baseline.
+        assert_eq!(back.dng.baseline_exposure, Some(1.0));
+        let be = baseline_exposure(1.0);
         assert_eq!((be.n, be.d), (10_000, 10_000));
-        assert_eq!(baseline_exposure(1.0).n, 0);
+        assert_eq!(baseline_exposure(0.0).n, 0);
         let options = LinearDngOptions {
             headroom: Some(0.5),
             ..Default::default()
         };
         let mut buf = Cursor::new(Vec::new());
         assert!(write_linear_dng(&mut buf, &frame, &image, [2.0, 1.0, 4.0], &options).is_err());
+    }
+
+    /// The headroom's stops are written, with the source's own tag
+    /// carried on top when it had one (a phone's DNG re-saved keeps its
+    /// word); a zero is a tag and is written; a source with neither
+    /// writes none.
+    #[test]
+    fn the_sources_baseline_is_carried_into_the_file() {
+        let mut frame = flat_frame();
+        frame.dng.baseline_exposure = Some(0.5);
+        let image = CameraImage::from_data(4, 4, vec![0.5; 48]).unwrap();
+        let write = |frame: &RawFrame, headroom| {
+            let mut buf = Cursor::new(Vec::new());
+            let options = LinearDngOptions {
+                headroom,
+                ..Default::default()
+            };
+            write_linear_dng(&mut buf, frame, &image, [2.0, 1.0, 4.0], &options).unwrap();
+            RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap()
+        };
+        assert_eq!(write(&frame, None).dng.baseline_exposure, Some(0.5));
+        let back = write(&frame, Some(2.0));
+        assert_eq!(back.dng.baseline_exposure, Some(1.5));
+        let shown = |f: &RawFrame, sample: f32| sample * f.dng.baseline_exposure.unwrap().exp2();
+        let stored = back.samples.to_f32()[0] / f32::from(WHITE_LEVEL);
+        assert!((shown(&back, stored) - shown(&frame, 0.5)).abs() < 1e-4);
+        frame.dng.baseline_exposure = Some(0.0);
+        assert_eq!(write(&frame, None).dng.baseline_exposure, Some(0.0));
+        frame.dng.baseline_exposure = None;
+        assert_eq!(write(&frame, None).dng.baseline_exposure, None);
+        assert_eq!(write(&frame, Some(2.0)).dng.baseline_exposure, Some(1.0));
+    }
+
+    /// A forward matrix written into a DNG is read back onto the
+    /// calibration of its illuminant: the decoder's own reading of the
+    /// tag, through a file of ours.
+    #[test]
+    fn a_forward_matrix_is_read_back_from_the_file() {
+        let mut frame = flat_frame();
+        let forward = vec![0.6, 0.2, 0.15, 0.25, 0.7, 0.05, 0.0, 0.1, 0.72];
+        frame.calibrations[0].forward_matrix = Some(forward.clone());
+        let image = CameraImage::from_data(4, 4, vec![0.5; 48]).unwrap();
+        let mut buf = Cursor::new(Vec::new());
+        write_linear_dng(
+            &mut buf,
+            &frame,
+            &image,
+            [2.0, 1.0, 4.0],
+            &Default::default(),
+        )
+        .unwrap();
+        let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+        let cal = &back.calibrations[0];
+        assert_eq!(cal.illuminant, frame.calibrations[0].illuminant);
+        let read = cal.forward_matrix.as_ref().expect("a forward matrix");
+        for (a, b) in read.iter().zip(&forward) {
+            assert!((a - b).abs() < 1e-4, "{read:?}");
+        }
+        // Without one in the file there is none.
+        let plain = flat_frame();
+        let mut buf = Cursor::new(Vec::new());
+        write_linear_dng(
+            &mut buf,
+            &plain,
+            &image,
+            [2.0, 1.0, 4.0],
+            &Default::default(),
+        )
+        .unwrap();
+        let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
+        assert_eq!(back.calibrations[0].forward_matrix, None);
     }
 
     #[test]

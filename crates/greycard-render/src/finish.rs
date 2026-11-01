@@ -91,6 +91,13 @@ impl Baseline {
         Baseline::of_stops(greycard_edit::baseline::for_make_model(make, model))
     }
 
+    /// The baseline of a decoded raw
+    /// ([`greycard_edit::baseline::for_frame`]): its body's for now, and
+    /// where a DNG's own tag will join it.
+    pub fn of_frame(frame: &greycard_core::RawFrame) -> Baseline {
+        Baseline::of_stops(greycard_edit::baseline::for_frame(frame))
+    }
+
     pub fn stops(self) -> f32 {
         f32::from(self.0) / 100.0
     }
@@ -103,6 +110,12 @@ impl Source {
     /// A raw's develop from this make and model.
     pub fn raw(make: &str, model: &str) -> Source {
         Source::Scene(Baseline::of_body(make, model))
+    }
+
+    /// A decoded raw's develop: [`Source::raw`] for now, through the
+    /// seam where a DNG's own baseline will join its body's.
+    pub fn of_frame(frame: &greycard_core::RawFrame) -> Source {
+        Source::Scene(Baseline::of_frame(frame))
     }
 
     /// Stops the exposure slider's zero stands for under `light` (the

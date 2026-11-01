@@ -360,6 +360,7 @@ mod tests {
             crop: None,
             orientation: Orientation::Rotate90,
             shot: Default::default(),
+            dng: Default::default(),
         }
     }
 

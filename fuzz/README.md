@@ -1,10 +1,11 @@
 # Fuzzing
 
-libFuzzer targets, through cargo-fuzz, over the text greycard reads
-from files it did not write. Each target asserts more than "never
-panics": whatever a reader accepts writes as JSON (or XMP, or filter
-text) and reads back the same, so a value the editor can read but not
-write again, such as a float that is not finite, is a crash.
+libFuzzer targets, through cargo-fuzz, over the text (and one binary
+list) greycard reads from files it did not write. Each target asserts
+more than "never panics": whatever a reader accepts writes as JSON (or
+XMP, or filter text) and reads back the same, so a value the editor
+can read but not write again, such as a float that is not finite, is a
+crash.
 
 | Target            | Reads                                                      |
 |-------------------|------------------------------------------------------------|
@@ -16,6 +17,7 @@ write again, such as a float that is not finite, is a crash.
 | `pp3`             | a RawTherapee profile                                      |
 | `xmp_meta`        | the rating, flag, label, keywords, and text of an XMP      |
 | `filter`          | the filter language, printed back and parsed again         |
+| `dng_opcodes`     | a DNG's opcode list, its gain maps applied to a buffer     |
 
 The seeds in `corpus/<target>/seed-*` are taken from the crates' own
 tests and fixtures. What a run adds to a corpus is ignored by git.

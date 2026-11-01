@@ -964,6 +964,7 @@ pub(crate) mod tests {
             crop: None,
             orientation: Default::default(),
             shot: Default::default(),
+            dng: Default::default(),
         }
     }
 

@@ -24,6 +24,7 @@ fn the_learned_denoiser_on_x_trans_is_unavailable_and_said_so() {
         crop: None,
         orientation: greycard_core::raw::Orientation::Normal,
         shot: Default::default(),
+        dng: Default::default(),
     };
     assert_eq!(denoise_unavailable(&frame, true), None);
     assert_eq!(denoise_unavailable(&frame, false), None);
@@ -394,6 +395,7 @@ pub(super) fn aberrated_frame(width: usize, height: usize) -> RawFrame {
         crop: None,
         orientation: greycard_core::raw::Orientation::Normal,
         shot: Default::default(),
+        dng: Default::default(),
     }
 }
 

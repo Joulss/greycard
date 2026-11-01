@@ -338,18 +338,13 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
-- [ ] A DNG's `ForwardMatrix` read on decode: the color code already
-      takes one when present, the rawler backend fills it with none,
-      so a DNG meant to go through its forward matrix gets the
-      inverted color matrix instead. Then the DNG opcodes, which
-      rawler copies through on write and applies on neither side:
-      gain maps first (phone DNGs, some Fuji and Leica), then the
-      rectilinear warp and the bad-pixel list (an outside review).
-      Three Pixel 9 DNGs on hand since 2026-10-31, one a camera, each
-      with four gain maps, WarpRectilinear, and on the ultra-wide and
-      the front WarpRectilinear2 (DNG 1.7); their `BaselineExposure`
-      (0.4 to 1.1 EV) is not applied either, the biggest visible
-      gap, and the one tag to read first
+- [ ] The rest of a phone's DNG (§474): the file's `BaselineExposure`
+      applied as our neutral plus its value, once the neutral is
+      measured from one Adobe-converted DNG of a reference body; the
+      rectilinear warps (a resample after the demosaic, placed on the
+      engine's stage list) and the bad-pixel list; the 3 MB
+      ProfileGainTableMap, the phone's local tone mapping, most of
+      the gap left to its own picture. Test set: three Pixel 9 DNGs
 
 - [ ] Color accuracy against a chart: a 48-patch chart shot per camera in
       daylight and under tungsten, kept with the samples, and an ignored

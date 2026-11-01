@@ -45,6 +45,7 @@ pub mod guided;
 pub mod horizon;
 pub mod image;
 pub mod lut;
+pub mod opcodes;
 pub mod output;
 pub mod picture;
 pub mod raw;

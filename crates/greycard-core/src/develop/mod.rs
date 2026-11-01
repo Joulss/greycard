@@ -13,6 +13,7 @@ pub mod defringe;
 pub mod dehaze;
 pub mod denoise;
 pub mod dual;
+pub mod gain_map;
 pub mod highlights;
 pub mod hotpixels;
 pub mod lens;
@@ -887,6 +888,10 @@ fn balanced_samples(
     let crop = frame.effective_crop();
     let (mut samples, width, height) = crop_samples(&normalized, frame.width, frame.channels, crop);
     drop(normalized);
+    // A DNG's gain maps go on the linear samples before anything reads
+    // them, as the specification runs `OpcodeList2`: the noise measured
+    // and every pass after see the mosaic the file meant.
+    apply_dng_gain_maps(frame, &mut samples, width, crop);
 
     let mut noise = None;
     let mut hot = None;
@@ -927,6 +932,38 @@ fn balanced_samples(
         }
     };
     Ok((samples, width, height, pattern, noise, hot))
+}
+
+/// The frame's DNG gain maps on its cropped, normalized samples. A crop
+/// that reaches outside the area the maps are measured in (which no
+/// camera writes) leaves them undone, said in the log.
+fn apply_dng_gain_maps(frame: &RawFrame, samples: &mut [f32], width: usize, crop: Rect) {
+    let maps = &frame.dng.gain_maps;
+    if maps.is_empty() {
+        return;
+    }
+    let area = frame.dng.opcode_area.unwrap_or(Rect {
+        x: 0,
+        y: 0,
+        width: frame.width,
+        height: frame.height,
+    });
+    if crop.x < area.x || crop.y < area.y {
+        log::warn!("DNG gain maps left undone: the crop {crop:?} is outside {area:?}");
+        return;
+    }
+    let at = gain_map::MapPlacement {
+        x: crop.x - area.x,
+        y: crop.y - area.y,
+        image_width: area.width,
+        image_height: area.height,
+    };
+    let held = gain_map::apply_gain_maps(samples, width, frame.channels, at, maps);
+    log::debug!(
+        "DNG gain maps: {} applied, {held} of {} samples held at the white",
+        maps.len(),
+        samples.len()
+    );
 }
 
 /// Subtract black, divide by the range to white, clamp to 0..1.
@@ -1224,6 +1261,7 @@ pub(crate) mod tests {
             crop: None,
             orientation: Orientation::Normal,
             shot: Default::default(),
+            dng: Default::default(),
         }
     }
 
@@ -1248,6 +1286,23 @@ pub(crate) mod tests {
             "blue with its own black {}",
             n[5]
         );
+    }
+
+    #[test]
+    fn a_dngs_gain_maps_go_on_the_mosaic() {
+        let settings = DevelopSettings {
+            hot_pixels: None,
+            chromatic_aberration: None,
+            ..Default::default()
+        };
+        let plain = demosaic(&flat_frame(), &settings).unwrap();
+        let mut frame = flat_frame();
+        frame.dng.gain_maps = vec![crate::opcodes::even_map(4, 4, 2, 2, |_, _| 0.5)];
+        let halved = demosaic(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&halved.image.data) {
+            assert!(close(*a * 0.5, *b), "{a} halved is not {b}");
+        }
+        assert!(plain.image.data.iter().any(|v| *v > 0.1));
     }
 
     #[test]

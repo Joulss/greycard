@@ -138,6 +138,12 @@ You do not need one. The default, **Embedded**, uses the color matrix
 the camera maker put in every raw file. That is what most people
 develop with.
 
+A DNG can carry more, and greycard applies some of it: the forward
+matrix made for the camera, and a phone's correction for its lens's
+dark corners. Not yet applied: a DNG's correction for lens
+distortion, and a phone's local tone mapping and exposure baseline,
+so a phone's DNG opens a little darker than the phone's own picture.
+
 A DCP profile gives Adobe's rendering of your camera, or a profile
 made for your own copy of it. Put `.dcp` files in the folder the
 section names (`greycard/profiles` in your data directory). The list

@@ -62,6 +62,7 @@ pub(crate) fn lenses(
                     lens_model: Some(name.to_string()),
                     ..Default::default()
                 },
+                dng: Default::default(),
             };
             if let Some([make, model]) = camera {
                 frame.make = make.clone();

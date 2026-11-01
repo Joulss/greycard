@@ -418,6 +418,30 @@ pub struct RawFrame {
     /// The engine reads none of it: it measures the noise it acts on
     /// from the frame itself.
     pub shot: Shot,
+    /// What a DNG's own tags ask of its develop; empty for every other
+    /// raw, and for a DNG that asks nothing.
+    pub dng: DngTags,
+}
+
+/// What a DNG says about rendering its samples beyond the levels and the
+/// calibrations: tags another format has no word for. The default asks
+/// nothing.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DngTags {
+    /// `BaselineExposure`, in stops: how far the samples sit under the
+    /// exposure their maker means them shown at. A phone that merges a
+    /// burst keeps its highlights by storing the merge darker, and says
+    /// here by how much. Carried, and applied by nothing here: how
+    /// bright a scene is shown is the consumer's tone mapping (see
+    /// `greycard_edit::baseline` for the rule it waits on). `None` when
+    /// the file has none, which is not the same as a zero.
+    pub baseline_exposure: Option<f32>,
+    /// The `GainMap` opcodes of `OpcodeList2`, in the file's order: run
+    /// on the linear mosaic before the demosaic.
+    pub gain_maps: Vec<crate::opcodes::GainMap>,
+    /// The image `OpcodeList2`'s coordinates are measured in, in sensor
+    /// samples: the DNG's `ActiveArea`, or the whole frame when `None`.
+    pub opcode_area: Option<Rect>,
 }
 
 /// What the file says about the taking: the lens, and what the camera
@@ -912,6 +936,7 @@ mod tests {
             }),
             orientation: Orientation::Normal,
             shot: Shot::default(),
+            dng: DngTags::default(),
         }
     }
 

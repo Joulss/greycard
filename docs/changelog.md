@@ -5,6 +5,12 @@ design note behind it.
 
 ## 0.10.0
 
+### Color
+
+- A phone's DNG opens without its dark corners: the gain maps and the
+  forward matrices in the file are applied
+  ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md)).
+
 ### Library
 
 - Stack bursts, in the frame menu, puts frames seconds apart that

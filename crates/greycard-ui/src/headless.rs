@@ -721,6 +721,7 @@ mod tests {
             crop: None,
             orientation: Orientation::Normal,
             shot: Default::default(),
+            dng: Default::default(),
         };
         let mut data = Vec::with_capacity(width * height * 3);
         for y in 0..height {

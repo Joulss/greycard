@@ -288,7 +288,7 @@ pub(crate) fn develop(
                 (r.full.0 as u32, r.full.1 as u32),
                 r.bin,
                 d.clip_level,
-                crate::finish::Source::raw(&frame.make, &frame.model),
+                crate::finish::Source::of_frame(frame),
                 white,
                 (
                     frame.make.clone(),

@@ -449,6 +449,7 @@ mod tests {
                 f_number: Some(f_number),
                 ..Default::default()
             },
+            dng: Default::default(),
         }
     }
 

@@ -18,8 +18,8 @@ pub use ::rawler::decoders::RawMetadata;
 use super::Decoder;
 use crate::error::{Error, Result};
 use crate::raw::{
-    Calibration, CfaColor, CfaPattern, LevelPattern, Levels, Mosaic, Orientation, RawFrame, Rect,
-    Samples, SensorLayout, Shot,
+    Calibration, CfaColor, CfaPattern, DngTags, LevelPattern, Levels, Mosaic, Orientation,
+    RawFrame, Rect, Samples, SensorLayout, Shot,
 };
 
 /// rawler's `Unsupported` prints all four of its fields whether or not
@@ -716,8 +716,30 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     let metadata = decoder
         .raw_metadata(source, &params)
         .map_err(decoder_error)?;
+    let active_area = image.active_area.map(|r| Rect {
+        x: r.p.x,
+        y: r.p.y,
+        width: r.d.w,
+        height: r.d.h,
+    });
     let mut frame = frame_from_rawler(image)?;
     judge_rows(&frame, up_front)?;
+    frame.dng = dng_tags(decoder.as_ref());
+    if !frame.dng.gain_maps.is_empty() {
+        frame.dng.opcode_area = active_area;
+    }
+    let forward = forward_matrices(decoder.as_ref());
+    with_forward_matrices(&mut frame.calibrations, &forward);
+    if let Some(stops) = frame.dng.baseline_exposure {
+        log::info!("BaselineExposure {stops:.2} EV carried, not applied");
+    }
+    if !forward.is_empty() || !frame.dng.gain_maps.is_empty() {
+        log::info!(
+            "DNG tags: forward matrices for illuminant(s) {:?}, {} gain map(s)",
+            forward.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            frame.dng.gain_maps.len()
+        );
+    }
     // rawler leaves the image's orientation at Normal (a TODO in its
     // `RawImage::new`); the EXIF tag has the camera's word.
     if frame.orientation == Orientation::Normal
@@ -765,6 +787,110 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
         );
     }
     Ok((frame, metadata))
+}
+
+/// The tags of a DNG's that rawler reads and leaves unparsed, from the
+/// IFDs its DNG decoder hands out; every other format's decoder hands
+/// out none, so another raw's are the default. A tag that is missing or
+/// will not read is left at its default: the file still develops, as
+/// it did before the tag was read.
+fn dng_tags(decoder: &dyn ::rawler::decoders::Decoder) -> DngTags {
+    use ::rawler::decoders::WellKnownIFD;
+    use ::rawler::tags::DngTag;
+    // The profile's tags (and `BaselineExposure`) live on IFD 0, which
+    // in a phone's DNG is the preview's and not the raw's.
+    let root = decoder.ifd(WellKnownIFD::VirtualDngRootTags).ok().flatten();
+    let baseline_exposure = root
+        .as_ref()
+        .and_then(|ifd| ifd.get_entry(DngTag::BaselineExposure))
+        .and_then(|e| e.value.get_f32(0).ok().flatten())
+        // Past sixteen stops either way is a damaged tag, not a picture.
+        .filter(|v| v.is_finite() && v.abs() <= 16.0);
+    // The opcode lists live on the raw image's IFD. Only the second's
+    // gain maps are applied; the first and the third (a lens's warp, a
+    // bad-pixel list) are named in the log as left.
+    let raw = decoder.ifd(WellKnownIFD::VirtualDngRawTags).ok().flatten();
+    let list = |tag: DngTag| -> Option<Vec<u8>> {
+        let e = raw.as_ref()?.get_entry(tag)?;
+        match &e.value {
+            ::rawler::formats::tiff::Value::Undefined(b)
+            | ::rawler::formats::tiff::Value::Byte(b) => Some(b.clone()),
+            _ => None,
+        }
+    };
+    for (tag, name) in [
+        (DngTag::OpcodeList1, "OpcodeList1"),
+        (DngTag::OpcodeList3, "OpcodeList3"),
+    ] {
+        if let Some(bytes) = list(tag) {
+            for op in crate::opcodes::parse_list(&bytes) {
+                crate::opcodes::log_left(&op, name);
+            }
+        }
+    }
+    let gain_maps = list(DngTag::OpcodeList2)
+        .map(|b| crate::opcodes::gain_maps(&b))
+        .unwrap_or_default();
+    DngTags {
+        baseline_exposure,
+        gain_maps,
+        opcode_area: None,
+    }
+}
+
+/// A DNG's `ForwardMatrix1` and `ForwardMatrix2`, each with the
+/// illuminant code of the `CalibrationIlluminant` beside it: rawler reads
+/// the color matrices onto its image and leaves these as tags. The tags
+/// are found as rawler finds the color matrices (IFD 0 first, then its
+/// sub-IFDs) and an illuminant is read as it reads one (D65 when
+/// missing or unknown), so a forward matrix lands on the calibration
+/// its color matrix did. None for another format, or for a matrix that
+/// is not three by three.
+fn forward_matrices(decoder: &dyn ::rawler::decoders::Decoder) -> Vec<(u16, Vec<f32>)> {
+    use ::rawler::decoders::WellKnownIFD;
+    use ::rawler::imgop::xyz::Illuminant;
+    use ::rawler::tags::DngTag;
+    let Some(root) = decoder.ifd(WellKnownIFD::Root).ok().flatten() else {
+        return Vec::new();
+    };
+    [
+        (DngTag::CalibrationIlluminant1, DngTag::ForwardMatrix1),
+        (DngTag::CalibrationIlluminant2, DngTag::ForwardMatrix2),
+    ]
+    .into_iter()
+    .filter_map(|(illuminant, matrix)| {
+        let m = root.get_entry_recursive(matrix)?;
+        if m.value.count() != 9 {
+            return None;
+        }
+        let m: Vec<f32> = (0..9)
+            .map(|i| m.value.get_f32(i).ok().flatten())
+            .collect::<Option<_>>()?;
+        if m.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        let code = root
+            .get_entry_recursive(illuminant)
+            .and_then(|e| e.value.get_u16(0).ok().flatten())
+            .and_then(|c| Illuminant::try_from(c).ok())
+            .map_or(Illuminant::D65 as u16, |i| i as u16);
+        Some((code, m))
+    })
+    .collect()
+}
+
+/// Put each forward matrix on the calibration of its illuminant; one
+/// whose illuminant no calibration has is dropped, as a forward matrix
+/// means nothing without the color matrix it pairs with.
+fn with_forward_matrices(calibrations: &mut [Calibration], forward: &[(u16, Vec<f32>)]) {
+    for (illuminant, matrix) in forward {
+        if let Some(c) = calibrations
+            .iter_mut()
+            .find(|c| c.illuminant == *illuminant)
+        {
+            c.forward_matrix = Some(matrix.clone());
+        }
+    }
 }
 
 /// The sensor's layout, said briefly.
@@ -891,6 +1017,7 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
         crop,
         orientation,
         shot: Default::default(),
+        dng: DngTags::default(),
     };
     frame.validate()?;
     Ok(frame)
@@ -905,7 +1032,8 @@ fn calibrations_of(image: &RawImage) -> Vec<Calibration> {
         .map(|(illuminant, matrix)| Calibration {
             illuminant: *illuminant as u16,
             color_matrix: matrix.clone(),
-            // rawler does not surface ForwardMatrix tags on RawImage.
+            // rawler leaves ForwardMatrix as a tag; a DNG's are put on
+            // by `with_forward_matrices`.
             forward_matrix: None,
         })
         .collect();
@@ -1559,6 +1687,29 @@ mod tests {
         // Nothing, or nothing but zeros.
         assert_eq!(iso(None, None, None), None);
         assert_eq!(iso(Some(0), Some(0), Some(0)), None);
+    }
+
+    /// A forward matrix goes to the calibration of its own illuminant,
+    /// and one for an illuminant with no color matrix is dropped.
+    #[test]
+    fn forward_matrices_land_on_their_illuminants_calibration() {
+        let cal = |illuminant| Calibration {
+            illuminant,
+            color_matrix: vec![1.0; 9],
+            forward_matrix: None,
+        };
+        let mut cals = vec![cal(17), cal(21)];
+        let a = vec![0.5; 9];
+        let d65 = vec![0.25; 9];
+        with_forward_matrices(
+            &mut cals,
+            &[(21, d65.clone()), (17, a.clone()), (23, vec![0.0; 9])],
+        );
+        assert_eq!(cals[0].forward_matrix.as_ref(), Some(&a));
+        assert_eq!(cals[1].forward_matrix.as_ref(), Some(&d65));
+        let mut none = vec![cal(21)];
+        with_forward_matrices(&mut none, &[]);
+        assert_eq!(none[0].forward_matrix, None);
     }
 
     #[test]
@@ -2279,9 +2430,11 @@ fn white_unguarded(path: &Path) -> Result<CameraWhite> {
     let image = decoder
         .raw_image(&source, &RawDecodeParams::default(), true)
         .map_err(decoder_error)?;
+    let mut calibrations = calibrations_of(&image);
+    with_forward_matrices(&mut calibrations, &forward_matrices(decoder.as_ref()));
     Ok(CameraWhite {
         as_shot_coefficients: as_shot(image.wb_coeffs),
-        calibrations: calibrations_of(&image),
+        calibrations,
     })
 }
 

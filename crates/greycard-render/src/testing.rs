@@ -132,6 +132,7 @@ pub fn white_shift() -> greycard_edit::WhiteShift {
         crop: None,
         orientation: Default::default(),
         shot: Default::default(),
+        dng: Default::default(),
     };
     let profile = greycard_core::color::profile_from_frame(&frame).expect("two calibrations");
     let base = greycard_core::color::white_balance_at(

@@ -1836,6 +1836,7 @@ mod tests {
             crop: None,
             orientation: Orientation::Normal,
             shot: Default::default(),
+            dng: Default::default(),
         };
         let scene = patches(w, h);
         let data: Vec<f32> = scene
