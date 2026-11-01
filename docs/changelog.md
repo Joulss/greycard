@@ -24,6 +24,12 @@ design note behind it.
 
 ### Library
 
+- A folder renamed under a root keeps its stacks, with the editor
+  open or closed
+  ([§486](https://github.com/jessolmstead/greycard/blob/master/docs/notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md)).
+- Shift+[ and Shift+] move the frame up or down in its stack, and an
+  open stack's tiles sit on a band
+  ([§486](https://github.com/jessolmstead/greycard/blob/master/docs/notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md)).
 - Ctrl+click (Cmd on a Mac) on a filter chip holds it out, drawn in
   red, so everything but the rejects is one click
   ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).

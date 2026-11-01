@@ -235,6 +235,15 @@ pub(crate) const COMPANION_SQL: &str = "coalesce(pairkey(files.folder, files.nam
      IN (SELECT pairkey(pr.folder, pr.name, 'raw') FROM files AS pr \
      WHERE pr.missing_since IS NULL), 0)";
 
+/// [`COMPANION_SQL`] for a listing of one folder, the folder bound as
+/// the statement's first parameter (`?1`): the raws' keys gathered
+/// from that folder's rows alone, through its index, rather than from
+/// the whole table. Still one list a statement, never a test of each
+/// JPEG against its folder.
+pub(crate) const COMPANION_IN_FOLDER_SQL: &str = "coalesce(pairkey(files.folder, files.name, \
+     'jpeg') IN (SELECT pairkey(pr.folder, pr.name, 'raw') FROM files AS pr \
+     WHERE pr.folder = ?1 AND pr.missing_since IS NULL), 0)";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +365,76 @@ mod tests {
             ]
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The one-folder listings over a synthetic library of 100,000
+    /// rows, 1,000 folders of 100: half raws, four in ten their
+    /// companions, one in ten a JPEG alone. Each answers for its folder
+    /// alone and is timed; run in release with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn one_folders_listing_over_a_hundred_thousand_rows() {
+        let mut lib = crate::Library::open_in_memory().unwrap();
+        let folder_of = |f: u32| PathBuf::from(format!("/library/{:04}/shoot", f));
+        {
+            let tx = lib.conn.unchecked_transaction().unwrap();
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash) \
+                     VALUES (?, ?, ?, ?, 0, 0, ?)",
+                )
+                .unwrap();
+            for f in 0..1_000u32 {
+                let folder = folder_of(f);
+                for i in 0..100u32 {
+                    let name = match i {
+                        0..50 => format!("IMG_{i:04}.CR3"),
+                        50..90 => format!("IMG_{:04}.JPG", i - 50),
+                        _ => format!("LONE_{i:04}.JPG"),
+                    };
+                    let path = folder.join(&name);
+                    stmt.execute(rusqlite::params![
+                        crate::path_bytes(&path),
+                        crate::path_bytes(&folder),
+                        folder.to_string_lossy(),
+                        name,
+                        format!("{f}-{i}"),
+                    ])
+                    .unwrap();
+                }
+            }
+            drop(stmt);
+            tx.commit().unwrap();
+        }
+        lib.conn.execute_batch("ANALYZE").unwrap();
+        let folder = folder_of(500);
+        let best = |what: &dyn Fn() -> usize, n: usize| {
+            assert_eq!(what(), n);
+            (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    what();
+                    t.elapsed().as_secs_f64() * 1e3
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        for apart in [false, true] {
+            lib.set_jpegs_apart(apart);
+            let n = if apart { 100 } else { 60 };
+            let rows = best(
+                &|| {
+                    lib.rows_in_canonical(&folder, crate::Order::NAME)
+                        .unwrap()
+                        .len()
+                },
+                n,
+            );
+            let count = best(&|| lib.count_in_canonical(&folder).unwrap(), n);
+            let bursts = best(&|| lib.burst_rows(&folder).unwrap().len(), n);
+            eprintln!(
+                "apart {apart}: rows_in_canonical {rows:.2} ms, count_in_canonical \
+                 {count:.2} ms, burst_rows {bursts:.2} ms"
+            );
+        }
     }
 }

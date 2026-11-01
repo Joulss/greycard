@@ -1526,21 +1526,12 @@ fn window_pass(
         match passed {
             Ok(r) => {
                 before += r.seen();
+                // Every field, the moves and the renames among them: a
+                // pass here may be the second half of a rename the
+                // library pairs once.
                 let stopped = r.stopped;
-                report.added += r.added;
-                report.moved += r.moved;
-                report.changed += r.changed;
-                report.changed_files.extend(r.changed_files);
-                report.rehashed.extend(r.rehashed);
-                report.meta_refreshed += r.meta_refreshed;
-                report.unchanged += r.unchanged;
-                report.styled += r.styled;
-                report.returned += r.returned;
-                report.missing += r.missing;
-                report.unavailable.extend(r.unavailable);
-                report.errors.extend(r.errors);
+                report.add(r);
                 if stopped {
-                    report.stopped = true;
                     break;
                 }
             }
@@ -2206,7 +2197,7 @@ pub(crate) fn told(app: &App, told: Told) {
             // follow the rows the pass wrote.
             crate::panel::collections::healed(&state, app, &report.rehashed);
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
-            crate::panel::stacks::healed(&state, app, &report.moved_files, &report.rehashed);
+            crate::panel::stacks::healed(&state, app, crate::stacks::Found::of(&report));
             // What the window knew of the folders under the pass is
             // looked at again by the next read.
             crate::roots::folders_passed(&mut state.borrow_mut(), &path);
@@ -2331,7 +2322,7 @@ pub(crate) fn told(app: &App, told: Told) {
             // is still there.
             crate::panel::collections::healed(&state, app, &report.rehashed);
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
-            crate::panel::stacks::healed(&state, app, &report.moved_files, &report.rehashed);
+            crate::panel::stacks::healed(&state, app, crate::stacks::Found::of(&report));
             if generation != state.borrow().views.index_generation {
                 return;
             }
@@ -2409,7 +2400,15 @@ pub(crate) fn told(app: &App, told: Told) {
             if !rehashed.is_empty() {
                 crate::panel::collections::healed(&state, app, &rehashed);
                 crate::panel::collections::members_changed(&mut state.borrow_mut(), app);
-                crate::panel::stacks::healed(&state, app, &[], &rehashed);
+                crate::panel::stacks::healed(
+                    &state,
+                    app,
+                    crate::stacks::Found {
+                        moved: &[],
+                        folders: &[],
+                        rehashed: &rehashed,
+                    },
+                );
             }
             reread(&state, app, false);
             // A shift's rows written: a list by capture time is read
@@ -2507,6 +2506,53 @@ mod busy_tests {
 mod tests {
     use super::*;
     use greycard_library::fixture::{A7, R5, R6, write_frame, write_mosaic_dng};
+
+    /// The window's folder pass says what the library found in it, a
+    /// folder's rename among it: the second half of a rename whose
+    /// first the watcher's pass over the old folder saw, which the
+    /// library pairs once and forgets.
+    #[test]
+    fn the_window_pass_says_a_rename_it_completes() {
+        let dir = crate::testing::scratch_dir("window-pass-rename");
+        let (shoot, renamed) = (dir.join("shoot"), dir.join("renamed"));
+        std::fs::create_dir_all(&shoot).unwrap();
+        for (i, frame) in [&R5, &R6, &A7].into_iter().enumerate() {
+            write_frame(&shoot.join(format!("x{i}.tif")), frame, i as u16 + 1);
+        }
+        let mut lib = Library::open(&dir.join("library.sqlite")).unwrap();
+        lib.index_tree(&dir, &mut |_| {}).unwrap();
+        let was = greycard_library::key_folder(&shoot);
+        std::fs::rename(&shoot, &renamed).unwrap();
+        let report = lib.index_tree(&shoot, &mut |_| {}).unwrap();
+        assert!(report.moved_folders.is_empty(), "{report:?}");
+        let waits = Waits {
+            wanted: Arc::new(AtomicU64::new(1)),
+            files: Arc::new(AtomicUsize::new(0)),
+            folders: Arc::new(AtomicBool::new(false)),
+            busy: Arc::new(Busy::default()),
+        };
+        let pass = Pass {
+            dirs: vec![renamed.clone()],
+            generation: 1,
+            started: Instant::now(),
+        };
+        let said = std::cell::RefCell::new(None);
+        let told = |t: Told| {
+            if let Told::Indexed { report, .. } = t {
+                *said.borrow_mut() = Some(report);
+            }
+        };
+        assert!(window_pass(&mut lib, pass, &dir, &told, &|_| {}, &waits).is_none());
+        let report = said.into_inner().expect("the pass said its report");
+        assert_eq!(
+            report.moved_folders,
+            [(was, greycard_library::key_folder(&renamed))],
+            "{report:?}"
+        );
+        assert_eq!(report.added, 3, "{report:?}");
+        drop(lib);
+        crate::testing::remove_dir_retry(&dir);
+    }
 
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

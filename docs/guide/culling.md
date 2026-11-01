@@ -266,9 +266,9 @@ top, until you open it.
 - **The badge:** a closed stack's top carries a layers mark and how
   many frames it holds, at its picture's bottom right. Click it, or
   press **S** in the grid, to open the stack: its frames follow the top,
-  marked "2/5" and so on. Click or **S** again to close it. In culling
-  and the loupe **S** is the soft proof, so open a stack there by its
-  badge on the filmstrip.
+  marked "2/5" and so on, on a band of their own in the grid. Click or
+  **S** again to close it. In culling and the loupe **S** is the soft
+  proof, so open a stack there by its badge on the filmstrip.
 - **Stack bursts** on the frame menu finds the bursts in the folders
   you are looking at, frames taken up to two seconds apart that look
   alike, and stacks each one, closed, with its sharpest frame on top.
@@ -277,7 +277,9 @@ top, until you open it.
   a card of raws, longer for Fuji's large previews; the index keeps
   what it learned, so the next time is quick.
 - **Set as top of stack** on the frame menu, or **Shift+S** in the
-  grid, puts a frame on top. **Remove from stack** takes the selected
+  grid, puts a frame on top. **Shift+[** and **Shift+]** in the grid
+  move the frame you are on up or down in its stack; moved to the first
+  place, it is the top. **Remove from stack** takes the selected
   frames out; a stack left with one frame is no stack. **Unstack**, or
   **Ctrl+Shift+G**, undoes it.
 - **Compare stack** on the frame menu opens culling on the stack's
@@ -290,8 +292,9 @@ top, until you open it.
   rejected frames behind a closed top. A frame moved out, or deleted,
   leaves its stack; Move back brings it back as a frame of its own.
 - Stacks are kept with your collections, on this machine. A stack
-  whose frame you rename in its folder follows it; a frame moved to
-  another folder leaves its stack.
+  whose frame you rename in its folder follows it, and so does one
+  whose folder you rename under a root of the library, open or
+  closed; a frame moved to another folder leaves its stack.
 
 `greycard library list` shows a closed stack's top alone, marked
 "stack of 3"; `--stacks expanded` lists every frame.

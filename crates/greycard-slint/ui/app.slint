@@ -210,6 +210,7 @@ export component App inherits Window {
     callback stack-toggle();
     callback stack-badge(int);
     callback stack-top(bool);
+    callback stack-step(int);
     callback stack-remove();
     callback stack-compare();
     /// Stack bursts: each burst of the folders listed made a stack.
@@ -2625,6 +2626,14 @@ export component App inherits Window {
             if ((chord == "S" || chord == "Shift+S") && root.grid-open && !root.lightbox
                 && !root.sheet-open()) {
                 if (chord == "Shift+S") { root.stack-top(false); } else { root.stack-toggle(); }
+                return accept;
+            }
+            // Shift+[ and Shift+] move the frame up or down in its
+            // stack, Lightroom's keys, beside S in the grid: a bracket
+            // with Shift is a brace on the boards that print one there.
+            if ((chord == "{" || chord == "}") && root.grid-open && !root.lightbox
+                && !root.sheet-open()) {
+                root.stack-step(chord == "{" ? -1 : 1);
                 return accept;
             }
             // B, as Lightroom has it for its quick collection: the

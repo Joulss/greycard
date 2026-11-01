@@ -250,6 +250,20 @@ impl Store {
         true
     }
 
+    /// The members at `a` and `b` in stack `id`'s references traded
+    /// places. True when they did.
+    pub(crate) fn swap(&mut self, id: &str, a: usize, b: usize) -> bool {
+        let Some(s) = self.stack_mut(id) else {
+            return false;
+        };
+        if a == b || a.max(b) >= s.refs.len() {
+            return false;
+        }
+        s.refs.swap(a, b);
+        self.save(id);
+        true
+    }
+
     /// The members at `at` in stack `id`'s references out of it; the
     /// stack goes when fewer than two are left. How many came out.
     pub(crate) fn remove_at(&mut self, id: &str, at: &[usize]) -> usize {
@@ -302,15 +316,47 @@ impl Store {
         !changed.is_empty()
     }
 
-    /// What an index pass found, carried into the members: a file found
-    /// renamed in its folder takes its references to the new name, one
-    /// found moved to another folder leaves its stack (a stack is one
-    /// folder's, and the frame is no longer in it), and one rewritten in
-    /// place gives the references at its path its new hash. True when a
-    /// stack changed.
-    pub(crate) fn heal(&mut self, moved: &[(PathBuf, PathBuf)], rehashed: &[Rehash]) -> bool {
-        if self.list.is_empty() || (moved.is_empty() && rehashed.is_empty()) {
+    /// What an index pass found, carried into the members: a folder
+    /// found renamed takes the references in it to the new folder, a
+    /// file found renamed in its folder takes its references to the new
+    /// name, one found moved to another folder leaves its stack (a stack
+    /// is one folder's, and the frame is no longer in it), and one
+    /// rewritten in place gives the references at its path its new
+    /// hash. True when a stack changed.
+    pub(crate) fn heal(&mut self, found: Found<'_>) -> bool {
+        let Found {
+            moved,
+            folders,
+            rehashed,
+        } = found;
+        if self.list.is_empty() || (moved.is_empty() && folders.is_empty() && rehashed.is_empty()) {
             return false;
+        }
+        let mut changed = BTreeSet::new();
+        // A frame is in one stack: a member carried to a frame another
+        // stack holds already, or one carried before it, leaves.
+        let moving = |r: &Reference| -> Option<String> {
+            let hint = PathBuf::from(&r.hint);
+            let (at, name) = (hint.parent()?, hint.file_name()?);
+            let (_, to) = folders.iter().find(|(from, _)| from == at)?;
+            Some(hint_of(&to.join(name)))
+        };
+        let mut held: HashSet<Frame> = self
+            .list
+            .iter()
+            .flat_map(|s| s.refs.iter())
+            .filter(|r| moving(r).is_none())
+            .map(frame_of)
+            .collect();
+        for s in &mut self.list {
+            s.refs.retain_mut(|r| {
+                let Some(to) = moving(r) else {
+                    return true;
+                };
+                changed.insert(s.id.clone());
+                r.hint = to;
+                held.insert(frame_of(r))
+            });
         }
         let (renamed, away): (Vec<_>, Vec<_>) = moved
             .iter()
@@ -324,7 +370,6 @@ impl Store {
             .iter()
             .map(|r| ((hint_of(&r.path), r.old.as_str()), r.new.as_str()))
             .collect();
-        let mut changed = BTreeSet::new();
         for s in &mut self.list {
             let before = s.refs.len();
             s.refs.retain(|r| !away.contains(&r.hint));
@@ -347,6 +392,26 @@ impl Store {
         }
         self.settle(&changed);
         !changed.is_empty()
+    }
+}
+
+/// What an index pass found that the stacks follow: files moved, by
+/// their old path and their new; folders renamed, the same; and files
+/// rewritten in place.
+#[derive(Clone, Copy)]
+pub(crate) struct Found<'a> {
+    pub(crate) moved: &'a [(PathBuf, PathBuf)],
+    pub(crate) folders: &'a [(PathBuf, PathBuf)],
+    pub(crate) rehashed: &'a [Rehash],
+}
+
+impl<'a> Found<'a> {
+    pub(crate) fn of(report: &'a greycard_library::Report) -> Self {
+        Found {
+            moved: &report.moved_files,
+            folders: &report.moved_folders,
+            rehashed: &report.rehashed,
+        }
     }
 }
 
@@ -733,20 +798,25 @@ mod tests {
         assert_eq!(back.list, store.list);
         // A pass found d renamed in its folder and b rewritten.
         let third = store.make(vec![r("/s/e", None), r("/s/f", None), r("/s/g", None)]);
-        assert!(store.heal(
-            &[(PathBuf::from("/s/d"), PathBuf::from("/s/d2"))],
-            &[Rehash {
+        assert!(store.heal(Found {
+            moved: &[(PathBuf::from("/s/d"), PathBuf::from("/s/d2"))],
+            folders: &[],
+            rehashed: &[Rehash {
                 path: PathBuf::from("/s/b"),
                 old: "h-/s/b".into(),
                 new: "new".into()
             }]
-        ));
+        }));
         let s = store.stack(&second).unwrap();
         assert_eq!(s.refs[0].hint, "/s/d2");
         assert_eq!(s.refs[1].hash, "new");
         assert!(store.by_hint.contains_key("/s/d2"));
         // g moved to another folder: it leaves its stack.
-        assert!(store.heal(&[(PathBuf::from("/s/g"), PathBuf::from("/t/g"))], &[]));
+        assert!(store.heal(Found {
+            moved: &[(PathBuf::from("/s/g"), PathBuf::from("/t/g"))],
+            folders: &[],
+            rehashed: &[],
+        }));
         let hints: Vec<&str> = store
             .stack(&third)
             .unwrap()
@@ -755,9 +825,59 @@ mod tests {
             .map(|r| r.hint.as_str())
             .collect();
         assert_eq!(hints, ["/s/e", "/s/f"]);
+        // The folder renamed: every member in it follows, by name; one
+        // in a folder under it is that folder's to follow.
+        let fourth = store.make(vec![r("/s/h", None), r("/s/i", None)]);
+        let fifth = store.make(vec![r("/s/in/j", None), r("/s/in/k", None)]);
+        assert!(store.heal(Found {
+            moved: &[],
+            folders: &[(PathBuf::from("/s"), PathBuf::from("/u"))],
+            rehashed: &[],
+        }));
+        let hints = |store: &Store, id: &str| -> Vec<String> {
+            store
+                .stack(id)
+                .unwrap()
+                .refs
+                .iter()
+                .map(|r| r.hint.clone())
+                .collect()
+        };
+        assert_eq!(hints(&store, &fourth), ["/u/h", "/u/i"]);
+        assert_eq!(hints(&store, &fifth), ["/s/in/j", "/s/in/k"]);
+        assert_eq!(hints(&store, &second), ["/u/d2", "/u/b"]);
+        assert!(store.by_hint.contains_key("/u/h"));
+        assert_eq!(Store::load(dir.clone()).list, store.list, "written");
+        assert!(!store.heal(Found {
+            moved: &[],
+            folders: &[(PathBuf::from("/s"), PathBuf::from("/u"))],
+            rehashed: &[],
+        }));
+        assert!(store.unstack(&fourth));
+        assert!(store.unstack(&fifth));
+        // Carried onto a frame another stack holds, it leaves its own.
+        let sixth = store.make(vec![r("/v/m", None), r("/v/n", None), r("/v/o", None)]);
+        let seventh = store.make(vec![r("/w/m", None), r("/w/p", None)]);
+        assert!(store.heal(Found {
+            moved: &[],
+            folders: &[(PathBuf::from("/v"), PathBuf::from("/w"))],
+            rehashed: &[],
+        }));
+        assert_eq!(hints(&store, &sixth), ["/w/n", "/w/o"]);
+        assert_eq!(hints(&store, &seventh), ["/w/m", "/w/p"]);
+        assert!(store.unstack(&sixth));
+        assert!(store.unstack(&seventh));
+        let hints: Vec<&str> = store
+            .stack(&third)
+            .unwrap()
+            .refs
+            .iter()
+            .map(|r| r.hint.as_str())
+            .collect();
+        assert_eq!(hints, ["/u/e", "/u/f"]);
         // e deleted by the window: one left, no stack.
         assert!(!store.left(&[PathBuf::from("/nowhere")]));
-        assert!(store.left(&[PathBuf::from("/s/e")]));
+        assert!(store.left(&[PathBuf::from("/u/e")]));
         assert!(store.stack(&third).is_none());
         assert!(store.unstack(&second));
         assert!(store.list.is_empty());

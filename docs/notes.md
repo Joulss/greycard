@@ -498,3 +498,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§483. Natural scrolling on Windows and GNOME](notes/483-natural-scrolling-on-windows-and-gnome.md) (2026-10-31)
 - [§484. Three asks: the log, held-out chips, and the folders](notes/484-three-asks-the-log-held-out-chips-and-the-folders.md) (2026-10-31)
 - [§485. The profile and look stores behind a loader](notes/485-the-profile-and-look-stores-behind-a-loader.md) (2026-10-31)
+- [§486. A renamed folder's stacks, and the stack in the grid](notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md) (2026-11-01)

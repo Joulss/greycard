@@ -4,8 +4,9 @@
 //! its badge or by S, and Compare stack.
 //!
 //! The keys are Lightroom's: Ctrl+G stacks the selection, Ctrl+Shift+G
-//! unstacks, S opens or closes, Shift+S puts the frame on top. S and
-//! Shift+S are the grid's, as in Lightroom's Library; everywhere else S
+//! unstacks, S opens or closes, Shift+S puts the frame on top, and
+//! Shift+[ and Shift+] move it up or down. S, Shift+S, and the Shift
+//! brackets are the grid's, as in Lightroom's Library; everywhere else S
 //! stays the proof, and in culling a stack opens and closes by its badge
 //! on the strip.
 //!
@@ -16,7 +17,6 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use greycard_library::Rehash;
 use greycard_library::collections::Reference;
 
 use crate::panel::browser::{chosen_frames, open_row, row_of};
@@ -270,6 +270,33 @@ pub(crate) fn set_top(st: &mut State, app: &App, worker: &Worker, from_menu: boo
     app.set_status(format!("{} on top of its stack", top_name(st, &top)).into());
 }
 
+/// Up or down in the stack (Shift+[ and Shift+]): the frame on screen
+/// trades places with the member listed before it (`by` -1) or after
+/// it (1); the first place is the top's. A closed stack's top moved
+/// down leaves the member after it on top, and on screen.
+pub(crate) fn step(st: &mut State, app: &App, worker: &Worker, by: i32) {
+    let Some((l, at)) = st.current.and_then(|c| stack_of(st, c)) else {
+        app.set_status("not in a stack".into());
+        return;
+    };
+    let Some(to) = at
+        .checked_add_signed(by as isize)
+        .filter(|&to| to < l.members.len())
+    else {
+        return;
+    };
+    if !st.views.stacks.swap(&l.id, l.refs[at], l.refs[to]) {
+        return;
+    }
+    settle(st, app, worker);
+    if !l.open
+        && let Some(top) = st.cell_of(l.members[to].file, l.members[to].version.as_deref())
+        && let Some(row) = row_of(st, top)
+    {
+        open_row(st, app, worker, row as i32, false);
+    }
+}
+
 /// Remove from stack: the frames chosen that are members out of their
 /// stacks; a stack left with one goes. A closed stack's top chosen is
 /// its top alone, and the next member comes up.
@@ -424,16 +451,11 @@ pub(crate) fn menu_asked(st: &State, app: &App, c: usize) {
     app.set_menu_stack_holds(holds as i32);
 }
 
-/// The index found members moved or rewritten: the stacks follow, and
-/// the list with them.
-pub(crate) fn healed(
-    state: &Rc<Shared>,
-    app: &App,
-    moved: &[(PathBuf, PathBuf)],
-    rehashed: &[Rehash],
-) {
+/// The index found members moved or rewritten, or their folder
+/// renamed: the stacks follow, and the list with them.
+pub(crate) fn healed(state: &Rc<Shared>, app: &App, found: crate::stacks::Found<'_>) {
     let mut st = state.borrow_mut();
-    if !st.views.stacks.heal(moved, rehashed) {
+    if !st.views.stacks.heal(found) {
         return;
     }
     if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
@@ -485,6 +507,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
         app.on_stack_top(move |from_menu| {
             if let Some(app) = app_weak.upgrade() {
                 set_top(&mut state.borrow_mut(), &app, &worker, from_menu);
+            }
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_stack_step(move |by| {
+            if let Some(app) = app_weak.upgrade() {
+                step(&mut state.borrow_mut(), &app, &worker, by);
             }
         });
     }
@@ -691,6 +721,113 @@ mod tests {
                 .collect();
         out.sort();
         out
+    }
+
+    /// Shift+[ and Shift+] move the frame on screen up and down in its
+    /// open stack, up to the top's place and no further either way; on a
+    /// closed stack's top, Shift+] puts the next member on top and on
+    /// screen. Each is on disk. Out of a stack, the key says so.
+    #[test]
+    fn the_shift_brackets_move_a_member_within_its_stack() {
+        let s = setup("step");
+        let app = &s.app;
+        choose(&s, 1, &[3, 4]);
+        with_modifier(app, Key::Control, || press(app, "g"));
+        press(app, "s");
+        let open = [
+            "x0.tif",
+            "x1.tif [1/3]",
+            "x3.tif [2/3]",
+            "x4.tif [3/3]",
+            "x2.tif",
+        ];
+        assert_eq!(rows(app), open);
+        choose(&s, 3, &[]);
+        // Shift+[ to the top: the stack stands where x3 does.
+        press(app, "{");
+        assert_eq!(on_disk(&s), [["x3.tif", "x1.tif", "x4.tif"]]);
+        assert_eq!(
+            rows(app),
+            [
+                "x0.tif",
+                "x2.tif",
+                "x3.tif [1/3]",
+                "x1.tif [2/3]",
+                "x4.tif [3/3]"
+            ]
+        );
+        assert_eq!(s.state.borrow().current, Some(cell(&s, 3)));
+        press(app, "{");
+        assert_eq!(on_disk(&s), [["x3.tif", "x1.tif", "x4.tif"]], "top already");
+        // Shift+] down, twice, and no further.
+        press(app, "}");
+        assert_eq!(rows(app), open);
+        press(app, "}");
+        press(app, "}");
+        assert_eq!(on_disk(&s), [["x1.tif", "x4.tif", "x3.tif"]]);
+        assert_eq!(s.state.borrow().current, Some(cell(&s, 3)));
+        wants_agree(&s);
+
+        // Closed, the top moved down: x4 on top, and on screen.
+        choose(&s, 1, &[]);
+        press(app, "s");
+        assert_eq!(rows(app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+        press(app, "}");
+        assert_eq!(on_disk(&s), [["x4.tif", "x1.tif", "x3.tif"]]);
+        assert_eq!(rows(app), ["x0.tif", "x2.tif", "x4.tif [3]"]);
+        assert_eq!(s.state.borrow().current, Some(cell(&s, 4)));
+        wants_agree(&s);
+
+        // Not a stack's: said, nothing moved.
+        choose(&s, 0, &[]);
+        press(app, "}");
+        assert_eq!(app.get_status(), "not in a stack");
+        assert_eq!(on_disk(&s), [["x4.tif", "x1.tif", "x3.tif"]]);
+        teardown(s);
+    }
+
+    /// A folder renamed by another hand keeps its stack, the editor
+    /// open: the watcher's two passes, the new folder's and the old's, in
+    /// either order, find the rename between them, the members follow by
+    /// name, and the list of the root shows the stack as it was. Renamed
+    /// back, its rows come back from missing, and the stack comes back.
+    #[test]
+    fn a_folder_renamed_keeps_its_stacks() {
+        let mut s = setup("renamed");
+        choose(&s, 1, &[3, 4]);
+        with_modifier(&s.app, Key::Control, || press(&s.app, "g"));
+        assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+        let shoot = s.files[0].parent().unwrap().to_path_buf();
+        let renamed = shoot.with_file_name("renamed");
+        let folder_of_members = |s: &Setup| -> Vec<PathBuf> {
+            let st = s.state.borrow();
+            st.views.stacks.list[0]
+                .refs
+                .iter()
+                .map(|r| Path::new(&r.hint).parent().unwrap().to_path_buf())
+                .collect()
+        };
+        for (from, to, first) in [(&shoot, &renamed, &renamed), (&renamed, &shoot, &renamed)] {
+            let key = greycard_library::key_folder(from);
+            std::fs::rename(from, to).unwrap();
+            let then = if first == to { from } else { to };
+            for pass in [first, then] {
+                let report = s.writer.index_tree(pass, &mut |_| {}).unwrap();
+                healed(&s.state, &s.app, crate::stacks::Found::of(&report));
+            }
+            open_view(&s.state, &s.app, &s.worker, View::Roots(None));
+            land_sent(&s.state, &s.app, &s.worker);
+            assert_eq!(rows(&s.app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+            assert_eq!(on_disk(&s), [["x1.tif", "x3.tif", "x4.tif"]]);
+            let at = greycard_library::key_folder(to);
+            assert_eq!(
+                folder_of_members(&s),
+                [&at; 3].map(PathBuf::clone),
+                "from {}",
+                key.display()
+            );
+        }
+        teardown(s);
     }
 
     /// Ctrl+G stacks the selection under the frame on screen, closed: its
@@ -919,7 +1056,7 @@ mod tests {
         std::fs::rename(&s.files[4], &renamed).unwrap();
         let report = s.writer.index_folder(&shoot, &mut |_| {}).unwrap();
         assert_eq!(report.moved_files.len(), 1, "{report:?}");
-        healed(&s.state, &s.app, &report.moved_files, &report.rehashed);
+        healed(&s.state, &s.app, crate::stacks::Found::of(&report));
         assert_eq!(on_disk(&s), [["x1.tif", "x5.tif"]]);
         teardown(s);
     }

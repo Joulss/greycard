@@ -550,6 +550,10 @@ pub struct Library {
     /// ([`Library::set_network`]); none, every folder is read as a
     /// local disk's.
     network: Option<far::Network>,
+    /// Folders lately gone and lately filled, kept for a few minutes so
+    /// the two halves of a rename met by separate passes find each
+    /// other ([`index::Renames`]).
+    renames: index::Renames,
 }
 
 /// What a file's EXIF says that a filter can ask about.
@@ -1187,6 +1191,7 @@ impl Library {
                     path: path.to_path_buf(),
                     read_only: false,
                     jpegs_apart: false,
+                    renames: index::Renames::default(),
                     network: None,
                 })
             }
@@ -1292,6 +1297,7 @@ impl Library {
                     path,
                     read_only,
                     jpegs_apart: false,
+                    renames: index::Renames::default(),
                     network: None,
                 });
             }
@@ -1390,6 +1396,7 @@ impl Library {
             path,
             read_only,
             jpegs_apart: false,
+            renames: index::Renames::default(),
             network: None,
         })
     }
@@ -1445,6 +1452,16 @@ impl Library {
             String::new()
         } else {
             format!(" AND NOT {}", pairs::COMPANION_SQL)
+        }
+    }
+
+    /// [`Library::frames_only`] for a listing of the one folder bound
+    /// as `?1`.
+    pub(crate) fn frames_only_in_folder(&self) -> String {
+        if self.jpegs_apart {
+            String::new()
+        } else {
+            format!(" AND NOT {}", pairs::COMPANION_IN_FOLDER_SQL)
         }
     }
 
@@ -2199,9 +2216,9 @@ impl Library {
         order: Order,
     ) -> Result<Vec<(PathBuf, RowMeta)>> {
         let sql = format!(
-            "SELECT files.path, {META_COLUMNS} FROM files WHERE folder = ? \
+            "SELECT files.path, {META_COLUMNS} FROM files WHERE folder = ?1 \
              AND missing_since IS NULL{} ORDER BY {}",
-            self.frames_only(),
+            self.frames_only_in_folder(),
             order.sql()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
@@ -2239,8 +2256,8 @@ impl Library {
     /// missing left out.
     pub fn count_in_canonical(&self, folder: &Path) -> Result<usize> {
         let sql = format!(
-            "SELECT count(*) FROM files WHERE folder = ? AND missing_since IS NULL{}",
-            self.frames_only()
+            "SELECT count(*) FROM files WHERE folder = ?1 AND missing_since IS NULL{}",
+            self.frames_only_in_folder()
         );
         let n: i64 = self
             .conn

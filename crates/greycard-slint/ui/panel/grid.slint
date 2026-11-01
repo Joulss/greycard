@@ -610,6 +610,30 @@ export component GridSheet inherits Rectangle {
                         }
                     }
                 }
+                // An open stack's band, as Lightroom draws one: a ground
+                // under each member's cell, reaching half the gap to its
+                // neighbors so the run reads as one, its ends rounded.
+                // Under the cells, so a cell's own ground goes over it:
+                // a second walk of the cells rather than a child of each,
+                // which would be drawn over its cell's ground.
+                for c in root.cells: Rectangle {
+                    property <GridPlace> p: root.place(c.row);
+                    property <bool> first: c.thumb.stack-place == 1;
+                    property <bool> last: c.thumb.stack-place == c.thumb.stack;
+                    property <length> reach: root.grid-gap / 2;
+                    visible: !root.lightbox && c.thumb.stack > 0 && c.thumb.stack-open;
+                    x: root.grid-left + self.p.col * root.grid-pitch - self.reach;
+                    y: root.grid-pad + root.grid-top + self.p.y - self.reach;
+                    width: root.grid-cell + 2 * self.reach;
+                    height: self.p.pic + root.grid-label + 2 * self.reach;
+                    // The border's tone: about 1.2:1 on the sheet in each
+                    // of the three themes, where the base is lost in Light.
+                    background: Theme.border;
+                    border-top-left-radius: self.first ? Theme.radius-md : 0;
+                    border-bottom-left-radius: self.first ? Theme.radius-md : 0;
+                    border-top-right-radius: self.last ? Theme.radius-md : 0;
+                    border-bottom-right-radius: self.last ? Theme.radius-md : 0;
+                }
                 for c in root.cells: cell := Rectangle {
                     property <int> i: c.row;
                     property <Thumb> t: c.thumb;

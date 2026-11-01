@@ -471,14 +471,8 @@ comes across with its ratings and collections.
       machine, so a set gathered on the laptop is not on the desktop;
       carry it through the archive as the sidecars are (§243), and the
       stacks with it (§334)
-- [ ] Stacks follow-ups (§334): a folder renamed loses its stacks, the
-      index seeing new files and missing ones rather than a move; a
-      member moved outside every root is not found again; Shift+[ and
-      Shift+] to move a member within its stack; a band round an open
-      stack as Lightroom draws; the one-folder queries behind the grid
-      (`rows_in_canonical`, `count_in_canonical`) still gather the
-      raws' keys from the whole table, 22 ms on a 100,000-row library
-      (§332), where a subquery limited to the folder would not
+- [ ] A stack member moved outside every root is not found again
+      (§334, §486)
 - [ ] The Lightroom mapper, after §342: the scales the fit proposes and
       did not ship (highlights, blacks, the curve, the mixer's bands)
       wait on a second shoot with export history; six exports from

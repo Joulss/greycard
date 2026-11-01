@@ -313,8 +313,8 @@ impl Library {
             "SELECT files.path, files.hash, files.mtime, files.taken_at, looks.signature, \
              looks.focus FROM files \
              LEFT JOIN looks ON looks.file = files.id AND looks.mtime = files.mtime \
-             WHERE files.folder = ? AND files.missing_since IS NULL{} ORDER BY files.name",
-            self.frames_only()
+             WHERE files.folder = ?1 AND files.missing_since IS NULL{} ORDER BY files.name",
+            self.frames_only_in_folder()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params![path_bytes(folder)], |r| {

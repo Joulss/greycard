@@ -235,6 +235,12 @@ pub(crate) const TABLE: &[Group] = &[
                 "S, Shift+S",
                 "In the grid, open or close a stack; make the frame its top",
             ),
+            // A brace is Shift and a bracket on most boards.
+            shown(
+                &["{", "}"],
+                "Shift+[ Shift+]",
+                "In the grid, move the frame up or down in its stack",
+            ),
             act("version", &["Ctrl+'"], "New version of the frame"),
             line(
                 &["Delete", "Backspace"],
@@ -1283,6 +1289,7 @@ mod tests {
                 (false, "Ctrl+G".to_string()),
                 (false, "Ctrl+Shift+G".to_string()),
                 (false, "S, Shift+S".to_string()),
+                (false, "Shift+[ Shift+]".to_string()),
             ]
         );
         // Keys are searched too, and a heading brings its group.
@@ -1681,6 +1688,11 @@ mod tests {
             keys("In the grid, open or close a stack; make the frame its top").as_deref(),
             Some("Q, Shift+S"),
             "S's other line goes with it"
+        );
+        assert_eq!(
+            keys("In the grid, move the frame up or down in its stack").as_deref(),
+            Some("Shift+[ Shift+]"),
+            "the braces' own line, as the sheet writes them"
         );
         assert!(map.set("undo", "Ctrl+U"));
         let row = binding_rows(&map, true)

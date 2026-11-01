@@ -202,6 +202,7 @@ with a drag moves the picture; a tap of **Space** still zooms.
 | Ctrl+G | Stack the selected frames |
 | Ctrl+Shift+G | Unstack them |
 | S, Shift+S | In the grid, open or close a stack; make the frame its top |
+| Shift+[ Shift+] | In the grid, move the frame up or down in its stack |
 | Ctrl+' | New version of the frame |
 | Delete | Delete the selected frames, after a confirmation |
 

@@ -48,6 +48,7 @@
 //! error in the report and keeps its row as it was, for the next pass.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -91,6 +92,16 @@ pub struct Report {
     /// Those files, by the path the row had and the one it has now: a
     /// stack whose member was at the old path follows it.
     pub moved_files: Vec<(PathBuf, PathBuf)>,
+    /// Folders found renamed, by the folder the rows had and the one
+    /// their files are in now: a folder gone, and one whose rows came
+    /// live (added, or back from missing) holding more than half its
+    /// files by name and content hash, the two found by this pass or
+    /// one a few minutes before it on the same connection
+    /// ([`Renames`]). The index keeps such files as rows of their own,
+    /// the old ones missing, since a folder gone is what an unmounted
+    /// drive looks like too; a stack in the old folder follows to the
+    /// new.
+    pub moved_folders: Vec<(PathBuf, PathBuf)>,
     /// Of those, the ones whose sidecar was left behind at the old
     /// path and carried to the new one by the pass.
     pub carried: usize,
@@ -151,10 +162,13 @@ impl Report {
         self.added + self.moved + self.changed + self.meta_refreshed + self.unchanged
     }
 
-    fn add(&mut self, other: Report) {
+    /// `other`'s counts and lists added to these: two passes said as
+    /// one.
+    pub fn add(&mut self, other: Report) {
         self.added += other.added;
         self.moved += other.moved;
         self.moved_files.extend(other.moved_files);
+        self.moved_folders.extend(other.moved_folders);
         self.carried += other.carried;
         self.changed += other.changed;
         self.changed_files.extend(other.changed_files);
@@ -460,7 +474,21 @@ impl Library {
             });
         }
         let existing = rows_in_folder(self.conn_mut(), &folder)?;
-        index_paths(
+        let live_before: HashSet<Vec<u8>> = existing
+            .iter()
+            .filter(|(_, r)| !r.missing)
+            .map(|(k, _)| k.clone())
+            .collect();
+        let gone: Files = if exists {
+            Files::new()
+        } else {
+            existing
+                .iter()
+                .filter(|(_, r)| !r.missing)
+                .filter_map(|(k, r)| Some((name_of(k)?, r.hash.clone())))
+                .collect()
+        };
+        let mut report = index_paths(
             self.conn_mut(),
             &dir,
             &files,
@@ -469,7 +497,19 @@ impl Library {
             progress,
             stop,
             far,
-        )
+        )?;
+        // One half of a rename: this folder gone with its files, or
+        // files come live in it.
+        let half = if !exists && !report.stopped && !gone.is_empty() {
+            self.renames.gone(folder, gone, Instant::now())
+        } else if exists && report.added + report.returned + report.moved > 0 {
+            let came = live_files(self.conn_mut(), &folder, Some(&live_before))?;
+            self.renames.live(folder, came, Instant::now())
+        } else {
+            None
+        };
+        report.moved_folders.extend(half);
+        Ok(report)
     }
 
     /// Index a folder and every folder under it, hidden ones (a
@@ -647,6 +687,7 @@ impl Library {
             {
                 continue;
             }
+            let had = live_files(self.conn_mut(), &folder, None)?;
             let marked = self.conn_mut().execute(
                 "UPDATE files SET missing_since = ? WHERE folder = ? AND missing_since IS NULL",
                 params![now, folder],
@@ -656,6 +697,9 @@ impl Library {
                 path_from_bytes(&folder).display()
             );
             walk.report.missing += marked;
+            if let Some(pair) = self.renames.gone(folder, had, Instant::now()) {
+                walk.report.moved_folders.push(pair);
+            }
         }
         Ok(walk.report.clone())
     }
@@ -1675,6 +1719,174 @@ impl Disk<'_> {
         self.in_use.insert(folder.to_vec(), in_use);
         in_use
     }
+}
+
+/// Files by name and content hash: what the two halves of a rename
+/// are matched by.
+type Files = HashSet<(OsString, String)>;
+
+fn name_of(path: &[u8]) -> Option<OsString> {
+    path_from_bytes(path).file_name().map(OsString::from)
+}
+
+/// The live rows of `folder` by name and hash, those of paths in
+/// `except` left out.
+fn live_files(
+    conn: &Connection,
+    folder: &[u8],
+    except: Option<&HashSet<Vec<u8>>>,
+) -> Result<Files> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT path, hash FROM files WHERE folder = ? AND missing_since IS NULL",
+    )?;
+    let rows = stmt.query_map(params![folder], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut out = Files::new();
+    for row in rows {
+        let (path, hash) = row?;
+        if except.is_some_and(|e| e.contains(&path)) {
+            continue;
+        }
+        if let Some(name) = name_of(&path) {
+            out.insert((name, hash));
+        }
+    }
+    Ok(out)
+}
+
+/// How long one half of a rename waits for the other: the watcher
+/// turns a rename into two passes, the old folder's and the new one's,
+/// in either order and not always at once.
+const RENAME_WAIT: Duration = Duration::from_secs(600);
+
+/// The most halves of each kind kept waiting; the oldest go first.
+const RENAME_MOST: usize = 64;
+
+/// One half of a rename: a folder and its files.
+#[derive(Debug)]
+struct Half {
+    folder: Vec<u8>,
+    files: Files,
+    at: Instant,
+}
+
+/// Folders lately gone and folders whose rows lately came live (added,
+/// or back from missing), each waiting a few minutes for the other
+/// half of a rename. A folder gone is renamed to the one come live that
+/// holds more than half its files by name and hash, the best such
+/// alone: a tie is no rename. Each half is matched once.
+#[derive(Debug, Default)]
+pub(crate) struct Renames {
+    gone: Vec<Half>,
+    live: Vec<Half>,
+}
+
+impl Renames {
+    /// Folder `folder` gone with `files`: the rename it completes, old
+    /// folder and new, or none and it waits.
+    pub(crate) fn gone(
+        &mut self,
+        folder: Vec<u8>,
+        files: Files,
+        now: Instant,
+    ) -> Option<(PathBuf, PathBuf)> {
+        if files.is_empty() {
+            return None;
+        }
+        self.prune(now);
+        // Gone, it is no folder its files came live in.
+        self.live.retain(|h| h.folder != folder);
+        let at = add(&mut self.gone, folder, files, now);
+        let g = &self.gone[at];
+        let to = best(&self.live, |l| renamed(g, l))?;
+        let (g, l) = (self.gone.remove(at), self.live.remove(to));
+        Some(said(g, l))
+    }
+
+    /// Files `files` come live in folder `folder`: the rename it
+    /// completes, or none and it waits.
+    pub(crate) fn live(
+        &mut self,
+        folder: Vec<u8>,
+        files: Files,
+        now: Instant,
+    ) -> Option<(PathBuf, PathBuf)> {
+        if files.is_empty() {
+            return None;
+        }
+        self.prune(now);
+        // Back, it is no folder gone.
+        self.gone.retain(|h| h.folder != folder);
+        let at = add(&mut self.live, folder, files, now);
+        let l = &self.live[at];
+        let from = best(&self.gone, |g| renamed(g, l))?;
+        let (g, l) = (self.gone.remove(from), self.live.remove(at));
+        Some(said(g, l))
+    }
+
+    fn prune(&mut self, now: Instant) {
+        for halves in [&mut self.gone, &mut self.live] {
+            halves.retain(|h| now.saturating_duration_since(h.at) < RENAME_WAIT);
+        }
+    }
+}
+
+/// `files` added to `folder`'s half, or a half of its own, the oldest
+/// dropped past [`RENAME_MOST`]: its place.
+fn add(halves: &mut Vec<Half>, folder: Vec<u8>, files: Files, now: Instant) -> usize {
+    if let Some(i) = halves.iter().position(|h| h.folder == folder) {
+        halves[i].files.extend(files);
+        halves[i].at = now;
+        return i;
+    }
+    if halves.len() >= RENAME_MOST {
+        halves.remove(0);
+    }
+    halves.push(Half {
+        folder,
+        files,
+        at: now,
+    });
+    halves.len() - 1
+}
+
+/// How many files folder `gone` and folder `live` share, when it is
+/// more than half of the gone one's: a rename of the one to the other.
+fn renamed(gone: &Half, live: &Half) -> Option<usize> {
+    if gone.folder == live.folder {
+        return None;
+    }
+    let n = gone
+        .files
+        .iter()
+        .filter(|f| live.files.contains(*f))
+        .count();
+    (2 * n > gone.files.len()).then_some(n)
+}
+
+/// The half of `among` with the highest `score`; none on a tie.
+fn best(among: &[Half], score: impl Fn(&Half) -> Option<usize>) -> Option<usize> {
+    let mut found = None;
+    let mut top = 0;
+    let mut tie = false;
+    for (i, h) in among.iter().enumerate() {
+        let Some(n) = score(h) else {
+            continue;
+        };
+        if n > top {
+            (found, top, tie) = (Some(i), n, false);
+        } else if n == top {
+            tie = true;
+        }
+    }
+    found.filter(|_| !tie)
+}
+
+fn said(gone: Half, live: Half) -> (PathBuf, PathBuf) {
+    let (from, to) = (path_from_bytes(&gone.folder), path_from_bytes(&live.folder));
+    log::info!("{}: renamed to {}", from.display(), to.display());
+    (from, to)
 }
 
 /// A row with this hash whose file is gone from a folder that is
@@ -5207,6 +5419,118 @@ pub(crate) mod tests {
         lib.index_folder(&new, &mut quiet()).unwrap();
         assert!(lib.found_at(&[id]).unwrap().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder renamed is said by its old path and its new: found in
+    /// one tree pass (the editor closed), or in two passes on the same
+    /// connection, one over each folder, in either order (the watcher's,
+    /// the editor open), and renamed back to a name whose rows are
+    /// missing. Copied twice and the original deleted is a tie, and no
+    /// rename; deleted with one of three files carried out first, none.
+    #[test]
+    fn a_renamed_folder_is_said_by_both_paths() {
+        let dir = scratch("folder-renamed");
+        let [a, b, c] = ["a", "b", "c"].map(|n| dir.join(n));
+        std::fs::create_dir_all(&a).unwrap();
+        write_frame(&a.join("x.tif"), &R5, 1);
+        write_frame(&a.join("y.tif"), &R6, 2);
+        write_frame(&a.join("z.tif"), &A7, 3);
+        let canon = |p: &Path| canonical(p).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        let ca = canon(&a);
+
+        // One pass over the root.
+        std::fs::rename(&a, &b).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            report.moved_folders,
+            [(ca.clone(), canon(&b))],
+            "{report:?}"
+        );
+        assert_eq!((report.added, report.missing), (3, 3), "{report:?}");
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert!(report.moved_folders.is_empty(), "nothing new: {report:?}");
+
+        // Two passes, the new folder's first.
+        std::fs::rename(&b, &c).unwrap();
+        let cb = ca.with_file_name("b");
+        let report = lib.index_tree(&c, &mut quiet()).unwrap();
+        assert!(report.moved_folders.is_empty(), "{report:?}");
+        let report = lib.index_tree(&b, &mut quiet()).unwrap();
+        assert_eq!(
+            report.moved_folders,
+            [(cb.clone(), canon(&c))],
+            "{report:?}"
+        );
+
+        // Back to a, whose rows come back from missing: the old
+        // folder's pass first.
+        let cc = canon(&c);
+        std::fs::rename(&c, &a).unwrap();
+        let report = lib.index_tree(&c, &mut quiet()).unwrap();
+        assert!(report.moved_folders.is_empty(), "{report:?}");
+        let report = lib.index_tree(&a, &mut quiet()).unwrap();
+        assert_eq!(report.moved_folders, [(cc, ca.clone())], "{report:?}");
+        assert_eq!(report.returned, 3, "{report:?}");
+
+        // Copied twice, the original deleted: a tie.
+        for to in [&b, &c] {
+            std::fs::create_dir_all(to).unwrap();
+            for name in ["x.tif", "y.tif", "z.tif"] {
+                std::fs::copy(a.join(name), to.join(name)).unwrap();
+            }
+        }
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        std::fs::remove_dir_all(&a).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert!(report.moved_folders.is_empty(), "{report:?}");
+        assert_eq!(report.missing, 3, "{report:?}");
+
+        // One file of three carried out, and the folder deleted.
+        std::fs::remove_dir_all(&c).unwrap();
+        let picks = dir.join("picks");
+        std::fs::create_dir_all(&picks).unwrap();
+        std::fs::rename(b.join("x.tif"), picks.join("x.tif")).unwrap();
+        std::fs::remove_dir_all(&b).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert!(report.moved_folders.is_empty(), "{report:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The halves of a rename wait a while and no longer; a new folder
+    /// is claimed once.
+    #[test]
+    fn a_half_of_a_rename_waits_and_is_matched_once() {
+        let files = |names: &[&str]| -> Files {
+            names
+                .iter()
+                .map(|n| (OsString::from(n), format!("h-{n}")))
+                .collect()
+        };
+        let t = Instant::now();
+        let mut r = Renames::default();
+        assert!(r.gone(b"/s/a".to_vec(), files(&["x", "y"]), t).is_none());
+        let late = t + RENAME_WAIT + Duration::from_secs(1);
+        assert!(
+            r.live(b"/s/b".to_vec(), files(&["x", "y"]), late).is_none(),
+            "too late"
+        );
+        // The live half waits now; a gone folder takes it, and a second
+        // gone folder of the same files finds nothing left.
+        let got = r.gone(b"/s/c".to_vec(), files(&["x", "y"]), late);
+        assert_eq!(got, Some((PathBuf::from("/s/c"), PathBuf::from("/s/b"))));
+        assert!(r.gone(b"/s/d".to_vec(), files(&["x", "y"]), late).is_none());
+        // Half of the files is not more than half.
+        let mut r = Renames::default();
+        r.gone(b"/s/a".to_vec(), files(&["x", "y"]), t);
+        assert!(r.live(b"/s/b".to_vec(), files(&["x"]), t).is_none());
+        // Kept to a bound.
+        let mut r = Renames::default();
+        for i in 0..RENAME_MOST + 5 {
+            r.gone(format!("/s/{i}").into_bytes(), files(&["x"]), t);
+        }
+        assert_eq!(r.gone.len(), RENAME_MOST);
     }
 
     /// A folder under the root that cannot be read is an error in the
