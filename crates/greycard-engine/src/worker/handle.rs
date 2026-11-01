@@ -835,7 +835,10 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool 
     // loads again when the fp16 one is here; a failure is logged, and
     // the editor's background fetch tries once more
     // (`ai::fetch_core_ml_quietly`).
-    if fetched && cfg!(target_os = "macos") && greycard_ai::registry::core_ml_file(model).is_some()
+    if fetched
+        && cfg!(target_os = "macos")
+        && greycard_ai::registry::core_ml_file(model).is_some()
+        && !greycard_ai::denoise::fp32_refused()
     {
         let spawned = std::thread::Builder::new()
             .name("core-ml-fetch".into())

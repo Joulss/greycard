@@ -222,15 +222,15 @@ fn fetch_core_ml_quietly(store: &Store, model: &'static Model) {
         s.0.push(model.id);
     }
     /// Takes the tier off the list under way however its fetch ends.
-    struct Done(&'static str, Option<&'static str>);
+    struct Done(&'static str, bool);
     impl Drop for Done {
         fn drop(&mut self) {
             let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
             s.0.retain(|id| *id != self.0);
             // A panic is a failure too, or one that always happens
             // would start a thread at every develop.
-            if let Some(failed) = self.1.or(std::thread::panicking().then_some(self.0)) {
-                s.1.push(failed);
+            if self.1 || std::thread::panicking() {
+                s.1.push(self.0);
             }
         }
     }
@@ -238,7 +238,7 @@ fn fetch_core_ml_quietly(store: &Store, model: &'static Model) {
     let spawned = std::thread::Builder::new()
         .name("core-ml-fetch".into())
         .spawn(move || {
-            let mut done = Done(model.id, None);
+            let mut done = Done(model.id, false);
             let result = store.fetch_core_ml(model, |_| {});
             match (result, store.core_ml_path(model).is_some()) {
                 (_, true) => log::info!(
@@ -247,7 +247,7 @@ fn fetch_core_ml_quietly(store: &Store, model: &'static Model) {
                 ),
                 (Err(e), false) => {
                     log::info!("{}: its file for Core ML did not arrive: {e}", model.name);
-                    done.1 = Some(model.id);
+                    done.1 = true;
                 }
                 // Another thread has it under way; asked again later.
                 (Ok(()), false) => {}

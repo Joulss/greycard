@@ -66,8 +66,8 @@ Where a develop says where the denoiser ran, it says "CoreML (fp16)"
 when the fp16 file is what runs, in the editor's develop line and the
 CLI's log. `GREYCARD_DENOISE_FP32=1` keeps Core ML on the tier's own
 file, for comparing the two on one Mac or a frame the fp16 file is
-suspected on, and the editor then fetches no fp16 file in the
-background. There is no setting: the difference is under what a
+suspected on, and the editor then fetches no fp16 file, in the
+background or after a tier's sheet. There is no setting: the difference is under what a
 person could choose by (§489), the tiers already hold the choice of
 quality against speed, and the providers already differ from each
 other a little without asking.
