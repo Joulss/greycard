@@ -96,6 +96,13 @@ pub fn start(verbose: u8) -> Option<PathBuf> {
     file.map(|(path, _)| path)
 }
 
+/// Start listening on the terminal alone: a launch that hands its
+/// path to the editor already running, whose own log this one must not
+/// move up a place.
+pub fn start_terminal(verbose: u8) {
+    install(None, verbose, true);
+}
+
 /// The file for this run, the earlier ones moved up a place, with a
 /// first line that says what was run even if nothing else follows.
 fn open(dir: PathBuf) -> Option<(PathBuf, File)> {

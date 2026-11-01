@@ -115,7 +115,34 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
     let source = home.0.join("frame.dng");
     dng(&source, 240, 160);
     let out = home.0.join("out.jpg");
-    let ran = editor(
+    // An editor running for this user: the export neither hands its
+    // frame to it nor listens beside it.
+    #[cfg(unix)]
+    let (runtime, running) = {
+        // Short: a socket's path has a hundred-odd bytes at most,
+        // which the target folder's can pass.
+        let runtime =
+            Scratch(std::env::temp_dir().join(format!("greycard-runtime-{}", std::process::id())));
+        std::fs::create_dir_all(&runtime.0).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&runtime.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // SAFETY: getuid cannot fail.
+        let uid = unsafe { libc::getuid() };
+        // Where the editor run below, its settings in the test's own
+        // folder, would look for one.
+        let config = home.0.join("config").join("greycard");
+        let key = greycard_ui::instance::config_key(Some(&config));
+        let socket =
+            greycard_ui::instance::socket_path(Some(runtime.0.clone()), None, uid, &key).unwrap();
+        let running = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        running.set_nonblocking(true).unwrap();
+        (runtime, running)
+    };
+    #[cfg(unix)]
+    let env = [("XDG_RUNTIME_DIR", runtime.0.as_os_str())];
+    #[cfg(not(unix))]
+    let env = [];
+    let ran = editor_with(
         &home.0,
         &[
             source.as_os_str(),
@@ -125,7 +152,18 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
             "--export".as_ref(),
             out.as_os_str(),
         ],
+        &env,
     );
+    #[cfg(unix)]
+    {
+        let reached = running.accept();
+        assert!(
+            matches!(&reached, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "the export reached the running editor"
+        );
+        // Nothing else made there: no lock, no socket of its own.
+        assert_eq!(std::fs::read_dir(&runtime.0).unwrap().count(), 1);
+    }
     let said = String::from_utf8_lossy(&ran.stderr);
     assert!(ran.status.success(), "{said}");
     assert!(said.contains("exported"), "{said}");

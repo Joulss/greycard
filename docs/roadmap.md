@@ -1005,8 +1005,9 @@ clears or a tester asks for it.
       still lightens the highlights of the positive; swapping the
       black and white points, as C1 and Lightroom make one do, turns
       every slider round (reddit, 2026-10-31)
-- [ ] One instance: a file sent to a running greycard opens in it,
-      not in a second window (discussion 51, 2026-10-28)
+- [ ] The Finder's reopen of a running greycard (a Dock click with
+      the app open) brought to the running window; it comes as an
+      Apple event winit does not deliver (§504)
 - [ ] The download progress shown where it cannot be missed while a
       dialog has the window greyed out (discussion 51, 2026-10-28)
 - [ ] A lighter canvas and a white one, for the light theme

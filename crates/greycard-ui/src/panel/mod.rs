@@ -14,6 +14,7 @@ pub(crate) mod deliver;
 pub(crate) mod edit;
 pub(crate) mod edit_in;
 pub(crate) mod export_queue;
+pub(crate) mod handed;
 pub(crate) mod history;
 pub(crate) mod import;
 pub(crate) mod landscape;

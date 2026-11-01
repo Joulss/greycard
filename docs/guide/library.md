@@ -23,6 +23,14 @@ opened, the open one checked. A folder that is no longer on the disk
 stays in the list. Choosing it says so, and if its drive is
 unplugged, "isn't reachable; is its drive connected?".
 
+greycard runs as one window. A file or folder you open from your file
+manager, by double-click or Open With, while greycard is running opens
+in that window, which comes to the front; starting greycard again with
+nothing to open brings the window up too. On Wayland the compositor
+decides whether the window comes forward or is only marked. An
+`--export` from the command line, and any other run with flags, works
+on its own and leaves the window alone.
+
 ## Filmstrip, grid and loupe
 
 - The **loupe** shows one frame large, for editing. The **filmstrip**

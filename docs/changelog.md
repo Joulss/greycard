@@ -52,6 +52,9 @@ design note behind it.
 
 ### Library
 
+- A file or folder opened while greycard runs opens in the running
+  window rather than a second one, on Linux, macOS, and Windows
+  ([§504](https://github.com/jessolmstead/greycard/blob/master/docs/notes/504-one-instance.md)).
 - The previews behind the Library's thumbnails are made for the
   frames near the screen and around the one being culled, not for
   the whole root at its first open; a frame shown before the list

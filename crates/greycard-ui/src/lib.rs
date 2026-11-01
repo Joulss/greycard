@@ -14,6 +14,7 @@ pub mod files;
 pub mod filter;
 pub mod gpu_marker;
 pub mod import;
+pub mod instance;
 pub mod log;
 pub mod mounts;
 pub mod naming;

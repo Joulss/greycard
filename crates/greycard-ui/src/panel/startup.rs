@@ -1,7 +1,7 @@
 use crate::filter::SavedBar;
 use crate::panel::assets::show_presets;
 use crate::panel::browser::{
-    grid_filled, open_folder, open_paths, rebuild_browser, row_of, show_thumb, time_select,
+    grid_filled, open_folder, rebuild_browser, row_of, show_thumb, time_select,
 };
 use crate::panel::color::{preview_white, white_key};
 use crate::panel::cull::{cull_frame, develop_landed, show_filter, standing_in};
@@ -22,6 +22,26 @@ pub(crate) use crate::preset_fit::preset_at_start;
 
 pub(crate) fn main() -> Result<std::process::ExitCode> {
     let cli = Cli::parse();
+    // A launch with a path alone, or with nothing, hands it to the
+    // editor this user has running, and ends. Before the log starts,
+    // which would move the running editor's file up a place.
+    let claimed = claim(&cli);
+    if let Some(instance::Claimed {
+        claim: instance::Claim::Handed(pid),
+        ..
+    }) = &claimed
+    {
+        log::start_terminal(cli.verbose);
+        tracing::info!("handed over to a running instance");
+        // One line, so a second editor started from a terminal beside
+        // the running one says why no window came.
+        if cli.path.is_some() {
+            eprintln!("opened in the running greycard (pid {pid})");
+        } else {
+            eprintln!("brought the running greycard forward (pid {pid})");
+        }
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
     // Before anything is said. The line is for the person at the
     // terminal, not the log, which knows where it is.
     if let Some(log) = log::start(cli.verbose) {
@@ -34,6 +54,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         tracing::warn!("{why}");
     }
     greycard_ai::Store::sweep_user_in_background();
+    let instance = claimed.and_then(said);
     // `--match-compare` measures the camera match and writes a report;
     // no window, no device.
     if let Some(out) = cli.match_compare.as_deref() {
@@ -310,6 +331,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         app.set_asked_height(h);
     }
     *fit_slot.borrow_mut() = Some(app.as_weak());
+    // Other launches heard from now on, the event loop there to take
+    // what they hand over.
+    if let Some(instance) = instance {
+        crate::panel::handed::serve(&app, instance);
+    }
     // A slider turns the wheel back under natural scrolling: a
     // wheel's way here, a touchpad's set per event where they differ.
     // Read on a thread nothing waits for: on GNOME it is two
@@ -1037,7 +1063,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             ) else {
                                 return;
                             };
-                            open_paths(&state, &app, &worker, &paths);
+                            crate::panel::handed::open(&state, &app, &worker, &paths);
                         })
                     };
                     let row = {
@@ -1058,7 +1084,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             ) else {
                                 return;
                             };
-                            open_paths(&state, &app, &worker, &from_finder);
+                            crate::panel::handed::open(&state, &app, &worker, &from_finder);
                         });
                     }
                     match row {
@@ -1821,6 +1847,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         ran => ran,
     };
     crate::gpu_lost::leaving();
+    // If the loop's exit did not already.
+    crate::panel::handed::leave();
     // An event loop that ended before any frame, on DX12 we chose, is
     // the device refused there (`gpu_marker`).
     crate::gpu_marker::run_ended();
@@ -1929,6 +1957,43 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     } else {
         std::process::ExitCode::SUCCESS
     })
+}
+
+/// The editor this user has running, reached or become, for a launch
+/// whose command line is a path alone or nothing; none for every other
+/// run (an export, a capture, a measurement), which keeps a window of
+/// its own or none and is never reached by another launch. A path that
+/// is not there is not handed over: this launch goes on and says so.
+fn claim(cli: &Cli) -> Option<instance::Claimed> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if !instance::plain_launch(&args) {
+        return None;
+    }
+    let paths = instance::absolute(cli.path.as_deref())?;
+    // Keyed by the configuration folder, so a run with one of its own
+    // never reaches the user's editor.
+    let config = settings::path();
+    let address = instance::Address::user(config.as_deref().and_then(Path::parent))?;
+    Some(address.claim(&instance::Launch::here(paths)))
+}
+
+/// The claim said in the log, now that it is open, and the editor to
+/// serve when this launch became it.
+fn said(claimed: instance::Claimed) -> Option<instance::Instance> {
+    if claimed.stale_removed {
+        tracing::info!("stale instance socket removed: the last editor did not quit cleanly");
+    }
+    match claimed.claim {
+        instance::Claim::Instance(instance) => {
+            tracing::info!("became the instance at {}", instance.address());
+            Some(instance)
+        }
+        instance::Claim::Alone(e) => {
+            tracing::warn!("no single instance, this window on its own: {e}");
+            None
+        }
+        instance::Claim::Handed(_) => None,
+    }
 }
 
 /// A histogram read back from the analysis: the backdrop of the curve
@@ -2286,6 +2351,9 @@ thread_local! {
 /// The loop is exiting: the choices are written while the window is
 /// still here to read them.
 pub(crate) fn exiting() {
+    // First: a launch from here on starts an editor of its own rather
+    // than hand its path to this one, now closing.
+    crate::panel::handed::leave();
     if let Some(hook) = AT_EXIT.with(|h| h.borrow_mut().take()) {
         hook();
     }

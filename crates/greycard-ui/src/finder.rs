@@ -5,7 +5,8 @@
 //! AppKit turns the event into `application:openURLs:` on the
 //! application's delegate, and the delegate is winit's, which does not
 //! answer it; `install` gives it the method, which lands the paths
-//! here.
+//! here. Another launch's path comes the same way on every platform
+//! (`panel::handed`).
 //!
 //! The paths wait in a queue until the editor says it can open them:
 //! the launch's event comes before the window has a device to develop
@@ -32,7 +33,6 @@ impl Queue {
     /// there is not. Handed on from a timer rather than called here,
     /// so the taker never runs inside whatever borrowed the state
     /// when the event came.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn arrive(&mut self, paths: Vec<PathBuf>) -> Option<Vec<PathBuf>> {
         if paths.is_empty() {
             return None;
@@ -45,9 +45,8 @@ impl Queue {
     }
 }
 
-/// Paths the desktop asked the editor to open. On the main thread.
-/// Only the Mac sends any yet.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// Paths the desktop, or another launch, asked the editor to open. On
+/// the main thread.
 pub fn arrive(paths: Vec<PathBuf>) {
     tracing::info!("the desktop asks to open {paths:?}");
     let Some(paths) = QUEUE.with(|q| q.borrow_mut().arrive(paths)) else {

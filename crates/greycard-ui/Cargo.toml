@@ -129,7 +129,8 @@ rfd = { version = "0.17", default-features = false }
 # The import's rename that never replaces (renameat2, renamex_np), its
 # read-back from the drive rather than the cache (posix_fadvise,
 # F_NOCACHE), and its sweep's check that a process is gone (kill with
-# signal 0). Already in the tree.
+# signal 0), and the user id a second launch finds the running
+# editor's socket by (getuid). Already in the tree.
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
@@ -144,9 +145,13 @@ x11rb = { version = "0.13", default-features = false }
 # maximized: a module of the same crate, nothing new in the tree. The
 # precision touchpad's scrolling direction (RegGetValueW) and a wheel
 # message's source (GetCurrentInputMessageSource) are two more, and a
-# monitor's work area (GetMonitorInfoW).
+# monitor's work area (GetMonitorInfoW). The named pipe a second
+# launch hands its path over (CreateNamedPipeW, overlapped I/O), the
+# user's SID it is named by and kept to (the process token, an SDDL
+# DACL), the session (ProcessIdToSessionId), and the foreground given
+# to the running editor (AllowSetForegroundWindow) are more.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging"] }
 
 # The Finder's open: a method added to winit's application delegate,
 # and the URLs it is handed. winit carries both already on the Mac.
