@@ -93,7 +93,8 @@ it ran: "CoreML (fp16)" is the half-precision copy of the model that
 Core ML runs on a Mac. To try the same frame with the full-precision
 one, quit greycard and start it from a terminal with
 `open --env GREYCARD_DENOISE_FP32=1 -a greycard`, and say in the
-report whether that changed it.
+report whether that changed it. (Started so, it also downloads no
+half-precision copy.)
 
 The quickest way to send it: **Report a problem…** at the bottom of
 greycard's left panel opens the bug report form in your browser with

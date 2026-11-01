@@ -49,16 +49,16 @@ already there, and says if it did not arrive. `Store::fetch` itself
 does not, so a failure is always said by the caller that can say it. A
 tier fetched before keeps working on its fp32 file, and the editor
 fetches the fp16 one in the background the first time the tier loads
-on Core ML, with no sheet, and again at later develops until one fetch
-of its own has failed: it comes from the same repository under the
-same license the tier's sheet showed, and the license note beside the
-tier is written again to name it. One thread fetches a file at a time,
-the others leaving it to that one, and a download stalled on one file
-holds up no other. A test build never fetches in the background,
-whichever constructor it takes; a debug `greycard-ui` built by `cargo
-test --workspace` or `--all-targets` is one, since greycard-ui's tests
-turn the engine's `testing` feature on, so a Mac checking the
-background fetch runs a plain or release build.
+with Core ML on offer, with no sheet, and again at later develops
+until one fetch of its own has failed: it comes from the same
+repository under the same license the tier's sheet showed, and the
+license note beside the tier is written again to name it. One thread
+fetches a file at a time, the others leaving it to that one, and a
+download stalled on one file holds up no other. A test build never
+fetches in the background, whichever constructor it takes; a debug
+`greycard-ui` built by `cargo test --workspace` or `--all-targets` is
+one, since greycard-ui's tests turn the engine's `testing` feature on,
+so a Mac checking the background fetch runs a plain or release build.
 
 ## Said, and refused
 
@@ -66,7 +66,8 @@ Where a develop says where the denoiser ran, it says "CoreML (fp16)"
 when the fp16 file is what runs, in the editor's develop line and the
 CLI's log. `GREYCARD_DENOISE_FP32=1` keeps Core ML on the tier's own
 file, for comparing the two on one Mac or a frame the fp16 file is
-suspected on. There is no setting: the difference is under what a
+suspected on, and the editor then fetches no fp16 file in the
+background. There is no setting: the difference is under what a
 person could choose by (§489), the tiers already hold the choice of
 quality against speed, and the providers already differ from each
 other a little without asking.
@@ -128,3 +129,8 @@ the sheet's fp16 download off the thread its waiters wait on, and a
 guard that clears the list however a fetch ends are the fixes; with
 them the CLI says a tier in place whose fp16 file did not come, and a
 note that cannot be written no longer fails a fetch that worked.
+A third review found the file still missed when it landed while the
+tier was loading, which the sheet's fetch makes likely (a download of
+under a second against a load of about one): whether the tier awaits
+it is now asked before the load. A panic in the background fetch now
+counts as its failure.

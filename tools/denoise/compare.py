@@ -18,12 +18,13 @@ two builds compare the two providers.
 Printed for each pair: the PSNR, and over four bands of luminance
 (deep shadows under 0.002 linear, shadows to 0.01, mids to 0.1,
 highlights above) the share of pixels, the mean and 99.9th percentile
-of the luminance difference in stops, and each channel's signed mean,
-which shows a lift where the mean alone shows only a spread. On Core
+of the luminance difference in stops, and each channel's signed mean
+in stops over values above LIFT_FLOOR, which shows a lift or a shift
+of the balance where the luminance alone shows only a spread. On Core
 ML on an M5 the fp16 files gave a PSNR of 74 to 83 dB, a 99.9th
 percentile under 0.01 stops outside the deep shadows, and every
-channel lifted by about +0.001 stops but on one frame, whose blue went
-0.0045 to 0.006 stops darker (§489); the deep shadows' figure, about
+channel lifted by 0.00005 to 0.0013 stops but on one frame, whose blue
+went 0.0045 to 0.006 stops darker (§489); the deep shadows' figure, about
 0.01 to 0.02, is one step of the 16-bit file there, the measure's
 floor.
 

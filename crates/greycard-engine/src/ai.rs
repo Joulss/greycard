@@ -227,7 +227,9 @@ fn fetch_core_ml_quietly(store: &Store, model: &'static Model) {
         fn drop(&mut self) {
             let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
             s.0.retain(|id| *id != self.0);
-            if let Some(failed) = self.1 {
+            // A panic is a failure too, or one that always happens
+            // would start a thread at every develop.
+            if let Some(failed) = self.1.or(std::thread::panicking().then_some(self.0)) {
                 s.1.push(failed);
             }
         }
@@ -1228,13 +1230,17 @@ impl Ai {
         if arrived || self.denoiser.as_ref().is_none_or(|(id, _)| *id != model.id) {
             self.denoiser = None;
             self.awaiting_fp16 = None;
+            // Asked before the load, which asks for itself: a file that
+            // lands while the tier loads is then still awaited, and the
+            // tier loads again at the next develop.
+            let had = store.core_ml_path(model).is_some();
             let denoiser = Denoiser::from_store(&store, model, &self.providers)
                 .map_err(|e| NoDenoiser::Failed(e.to_string()))?;
             self.denoiser = Some((model.id, denoiser));
             let wants = self.providers.contains(&Provider::CoreMl)
                 && greycard_ai::registry::core_ml_file(model).is_some()
                 && !greycard_ai::denoise::fp32_refused();
-            if wants && store.core_ml_path(model).is_none() {
+            if wants && !had {
                 self.awaiting_fp16 = Some(model.id);
             }
         }
