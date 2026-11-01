@@ -1950,27 +1950,30 @@ fn probe_now(path: &Path, report: &mut Report) -> Exif {
     disk_call();
     let probed = std::panic::catch_unwind(|| {
         if greycard_core::picture::is_picture_path(path) {
-            greycard_core::picture::probe_path(path).map(|p| (p, Some(FileMosaic::NotMosaic)))
+            greycard_core::picture::probe_path(path)
+                .map(|p| (p, Some(FileMosaic::NotMosaic), StyleTags::default()))
         } else {
             // The kind of mosaic on the same decoder as the EXIF: the
-            // image's description, no samples.
-            // A description that will not read costs the mosaic alone
-            // (stored unknown); the EXIF stands.
-            greycard_core::decode::probe_and_mosaic_path(path).map(|(p, m)| {
+            // image's description, no samples. A description that will
+            // not read costs the mosaic alone (stored unknown), and the
+            // maker's tags that will not read the style alone; the
+            // EXIF stands. All three from the pieces of the file they
+            // are in.
+            greycard_core::decode::index_read_path(path).map(|(p, m, style)| {
                 use greycard_core::decode::MosaicRead;
                 let mosaic = match m {
                     MosaicRead::Mosaic(m) => Some(FileMosaic::Mosaic(m)),
                     MosaicRead::NotMosaic => Some(FileMosaic::NotMosaic),
                     MosaicRead::Unknown => None,
                 };
-                (p, mosaic)
+                (p, mosaic, style_tags(path, style))
             })
         }
     });
     let failed = match probed {
-        Ok(Ok((p, mosaic))) => {
+        Ok(Ok((p, mosaic, style))) => {
             return Exif {
-                style: read_style(path),
+                style,
                 mosaic,
                 ..Exif::from_probe(&p)
             };
@@ -2000,7 +2003,16 @@ fn read_style(path: &Path) -> StyleTags {
     if !greycard_core::decode::is_raw_path(path) {
         return StyleTags::default();
     }
-    match greycard_core::decode::CameraStyle::read(path) {
+    style_tags(path, greycard_core::decode::CameraStyle::read(path))
+}
+
+/// A raw's maker's tags as the index keeps them; a reader's failure is
+/// a line in the log and no tags.
+fn style_tags(
+    path: &Path,
+    read: greycard_core::Result<Option<greycard_core::decode::CameraStyle>>,
+) -> StyleTags {
+    match read {
         Ok(Some(style)) => StyleTags::from_style(&style),
         Ok(None) => StyleTags::default(),
         Err(e) => {

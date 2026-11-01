@@ -503,3 +503,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§488. The engine, part two: the reduced develop as a walk](notes/488-the-engine-part-two-the-reduced-develop-as-a-walk.md) (2026-11-01)
 - [§489. The fp16 denoisers at high ISO, and a first compile](notes/489-the-fp16-denoisers-at-high-iso-and-a-first-compile.md) (2026-10-31)
 - [§490. A word while a model loads](notes/490-a-word-while-a-model-loads.md) (2026-11-01)
+- [§491. A first index pass reads the metadata alone](notes/491-a-first-index-pass-reads-the-metadata-alone.md) (2026-11-01)

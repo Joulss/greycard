@@ -1553,8 +1553,12 @@ mod tests {
     /// A linear DNG of our own writing: a raw rawler reads, which no
     /// sample raw in the repo may stand in for.
     fn a_dng() -> Vec<u8> {
+        a_dng_of(16, 12)
+    }
+
+    /// A linear DNG `width` by `height`, its directory written last.
+    fn a_dng_of(width: usize, height: usize) -> Vec<u8> {
         let frame = crate::develop::tests::flat_frame();
-        let (width, height) = (16, 12);
         let data = (0..width * height * 3)
             .map(|i| 0.05 + (i % 97) as f32 / 100.0)
             .collect();
@@ -2124,6 +2128,13 @@ mod tests {
                 (probe.clone(), mosaic, len),
                 "{name}"
             );
+            let ((p, m, style), _) = index_read_counted(&path).unwrap();
+            assert_eq!((p, m), (probe.clone(), mosaic), "{name}");
+            assert_eq!(
+                format!("{style:?}"),
+                format!("{:?}", super::super::style::CameraStyle::read(&path)),
+                "{name}"
+            );
             let short = probe_and_mosaic_with(&path, |_, _, _| Ok(Some((8, 0)))).unwrap();
             assert_eq!(short, (probe.clone(), mosaic, len + 8), "{name}");
             assert_eq!(
@@ -2164,8 +2175,80 @@ mod tests {
         // Not a raw by its name: the probe reads nothing.
         let clip = dir.join("clip.mov");
         std::fs::write(&clip, &dng).unwrap();
-        assert!(probe_and_mosaic_path(&clip).is_err());
+        assert!(probe_and_mosaic_with(&clip, cr3_ends).is_err());
+        assert!(index_read_path(&clip).is_err());
         assert!(mosaic_path(&clip).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A DNG past the head the hash reads is read in its pieces, its
+    /// directory at the end and not its samples, with the answers the
+    /// whole file gives; pieces rawler will not read, and a CR3 head on
+    /// which rawler's box parser panics, fall back to the whole file
+    /// instead.
+    #[test]
+    fn the_index_reads_a_raws_pieces_and_falls_back_to_the_whole() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-pieces-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dng = a_dng_of(160, 120);
+        let len = dng.len() as u64;
+        assert!(len > 2 * super::super::sparse::HEAD, "{len}");
+        let path = dir.join("frame.dng");
+        std::fs::write(&path, &dng).unwrap();
+        let (probe, mosaic) =
+            probe_and_mosaic_source(&read_whole(&path).unwrap().0, &path).unwrap();
+        let whole = (
+            probe,
+            mosaic.unwrap(),
+            format!("{:?}", super::super::style::CameraStyle::read(&path)),
+        );
+        let ((p, m, style), read) = index_read_counted(&path).unwrap();
+        assert_eq!((p, m, format!("{style:?}")), whole);
+        assert!(read < len / 2, "{read} of {len}");
+
+        // Every compression tag in the pieces turned to one no raw
+        // has: rawler finds no raw image in them, and the whole file
+        // answers. (A DNG's metadata and its mosaic pick the raw image
+        // by the same tags, so the two fail together here; a mosaic
+        // failing alone falls through to the same whole read.)
+        let unknown: Pieces = |sparse| {
+            super::super::sparse::fetch_metadata(sparse)?;
+            let compression = [0x03, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00];
+            let buf = sparse.buf_mut();
+            let mut at = 0;
+            while let Some(i) = buf[at..].windows(8).position(|w| w == compression) {
+                buf[at + i + 8] = 99;
+                at += i + 8;
+            }
+            assert!(at > 0, "no compression tag");
+            Ok(true)
+        };
+        let ((p, m, style), read) = index_read_with(&path, unknown).unwrap();
+        assert_eq!((p, m, format!("{style:?}")), whole);
+        assert!(read > len, "{read} of {len}");
+
+        // A CR3 whose media header has a version rawler asserts on.
+        let boxed = |kind: &[u8], body: &[u8]| {
+            let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+            b.extend_from_slice(kind);
+            b.extend_from_slice(body);
+            b
+        };
+        let mdhd = boxed(b"mdhd", &[[2, 0, 0, 0].as_slice(), &[0; 20]].concat());
+        let moov = boxed(b"moov", &boxed(b"trak", &boxed(b"mdia", &mdhd)));
+        let mut cr3 = boxed(b"ftyp", b"crx \0\0\0\x01crx isom");
+        cr3.extend_from_slice(&moov);
+        cr3.extend_from_slice(&boxed(b"mdat", &vec![7; 200_000]));
+        let path = dir.join("frame.CR3");
+        std::fs::write(&path, &cr3).unwrap();
+        assert!(index_read_path(&path).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2223,7 +2306,7 @@ mod tests {
         assert!(!raws.is_empty(), "no raws under GREYCARD_TEST_RAWS");
         // Files, their bytes, and what the probe and the mosaic, and
         // the preview, read of them.
-        let mut totals: std::collections::BTreeMap<String, (usize, u64, u64, u64)> =
+        let mut totals: std::collections::BTreeMap<String, (usize, u64, u64, u64, u64)> =
             Default::default();
         for path in &raws {
             let len = std::fs::metadata(path).unwrap().len();
@@ -2260,10 +2343,52 @@ mod tests {
                 }
                 (Err(a), Err(b)) => {
                     assert_eq!(a.to_string(), b.to_string(), "{}", path.display());
+                    assert_eq!(
+                        index_read_counted(path).unwrap_err().to_string(),
+                        a.to_string(),
+                        "{}",
+                        path.display()
+                    );
                     continue;
                 }
                 (a, b) => panic!("{}: {a:?} whole, {b:?} from the ends", path.display()),
             };
+            // The index's read: the probe and the mosaic as the whole
+            // file gives them, and the style as the file read whole.
+            let ((probe, mosaic, style), index_read) = index_read_counted(path).unwrap();
+            let (whole_probe, whole_mosaic) = probe_and_mosaic_source(&whole(), path).unwrap();
+            assert_eq!(probe, whole_probe, "{}", path.display());
+            assert_eq!(
+                mosaic,
+                whole_mosaic.unwrap_or(MosaicRead::Unknown),
+                "{}",
+                path.display()
+            );
+            assert_eq!(
+                format!("{style:?}"),
+                format!("{:?}", super::super::style::CameraStyle::read(path)),
+                "{}",
+                path.display()
+            );
+            // The pieces alone, the blocks not read filled with 0x00 and
+            // then 0xFF: rawler's metadata the same both ways, so it
+            // looked at no byte it was not given.
+            let file = std::fs::File::open(path).unwrap();
+            let mut sparse = super::super::sparse::Sparse::new(file, len).unwrap();
+            let _ = super::super::style::read_stream(&mut sparse);
+            if super::super::sparse::fetch_metadata(&mut sparse).unwrap() {
+                for byte in [0x00, 0xff] {
+                    let source =
+                        RawSource::new_from_shared_vec(std::sync::Arc::new(sparse.filled(byte)));
+                    let filled = guarded(|| None, || probe_source(&source));
+                    assert_eq!(
+                        filled.ok().as_ref(),
+                        Some(&whole_probe),
+                        "{} filled with {byte:#x}",
+                        path.display()
+                    );
+                }
+            }
             let (preview, preview_read) = preview_counted(path).unwrap();
             let expected = guarded(|| None, || preview_source(&whole(), true)).unwrap();
             assert_eq!(
@@ -2278,19 +2403,28 @@ mod tests {
                 path.display()
             );
             println!(
-                "{}: probe and mosaic {read}, preview {preview_read} of {len} bytes",
+                "{}: probe and mosaic {read}, the index's read {index_read}, \
+                 preview {preview_read} of {len} bytes",
                 path.display()
             );
             let t = totals.entry(format).or_default();
-            *t = (t.0 + 1, t.1 + len, t.2 + read, t.3 + preview_read);
+            *t = (
+                t.0 + 1,
+                t.1 + len,
+                t.2 + read,
+                t.3 + preview_read,
+                t.4 + index_read,
+            );
         }
-        for (format, (n, l, r, p)) in &totals {
+        for (format, (n, l, r, p, i)) in &totals {
             println!(
                 "{format}: {n} files of {:.1} MB; probe and mosaic {:.1} MB ({:.2}%), \
-                 preview {:.1} MB ({:.2}%)",
+                 the index's read {:.2} MB ({:.2}%), preview {:.1} MB ({:.2}%)",
                 *l as f64 / 1e6,
                 *r as f64 / 1e6,
                 100.0 * *r as f64 / *l as f64,
+                *i as f64 / 1e6,
+                100.0 * *i as f64 / *l as f64,
                 *p as f64 / 1e6,
                 100.0 * *p as f64 / *l as f64
             );
@@ -2450,7 +2584,7 @@ fn mosaic_of(image: &RawImage) -> Option<Mosaic> {
     }
 }
 
-/// What [`probe_and_mosaic_path`] says of a raw's mosaic.
+/// What [`index_read_path`] says of a raw's mosaic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MosaicRead {
     /// A mosaic of this kind.
@@ -2463,10 +2597,12 @@ pub enum MosaicRead {
     Unknown,
 }
 
-/// [`probe_path`] and the kind of mosaic, on one decoder: the metadata
+/// [`probe_path`] and the kind of mosaic, on one decoder, with the
+/// ends of the file to read given, and the bytes read: the metadata
 /// read and then the image's description without a sample, the file
-/// opened and its format found once. What the library's index reads.
-/// A failed metadata read fails the whole, as `probe_path` does; a
+/// opened and its format found once. The library's index reads these
+/// and the maker's style from fewer bytes: [`index_read_path`]. A
+/// failed metadata read fails the whole, as `probe_path` does; a
 /// description that will not read costs only the mosaic
 /// ([`MosaicRead::Unknown`]), so a raw keeps its camera, ISO, date and
 /// lens in the index whatever its image says.
@@ -2476,12 +2612,6 @@ pub enum MosaicRead {
 /// other format whole into memory. Ends that give no mosaic, or an
 /// error, or a panic, fall back to the whole file. An error for a file
 /// whose name is not a raw's, before a byte of it is read.
-pub fn probe_and_mosaic_path(path: &Path) -> Result<(Probe, MosaicRead)> {
-    probe_and_mosaic_with(path, cr3_ends).map(|(probe, mosaic, _)| (probe, mosaic))
-}
-
-/// [`probe_and_mosaic_path`] with the ends of the file to read given,
-/// and the bytes read.
 fn probe_and_mosaic_with(path: &Path, ends: Ends) -> Result<(Probe, MosaicRead, u64)> {
     not_raw(path)?;
     let mut tried = 0;
@@ -2513,6 +2643,98 @@ fn probe_and_mosaic_with(path: &Path, ends: Ends) -> Result<(Probe, MosaicRead, 
                 MosaicRead::Unknown
             });
             Ok((probe, mosaic, tried + whole))
+        },
+    )
+}
+
+/// What the library's index reads of a raw: its probe, its kind of
+/// mosaic, and the maker's style ([`CameraStyle::read`]), the style's failure
+/// apart, since the probe beside it stands.
+pub type IndexRead = (Probe, MosaicRead, Result<Option<super::style::CameraStyle>>);
+
+/// [`IndexRead`] from the pieces of the file its metadata is in (see
+/// `decode::sparse`): the style read from the file's own bytes as it
+/// asks for them, and rawler given the file's length in zeros with the
+/// metadata's pieces in place. The same answers as the whole file
+/// gives, a fraction of the bytes: on the samples about 200 KB a CR3,
+/// where its ends were 1.5 MB, under 300 KB a NEF, ARW, RAF, DNG, or
+/// RW2, which were read whole, and 1.1 MB an ORF, whose maker note
+/// holds a preview. Any error, or panic, or mosaic that will not read
+/// from the pieces falls back to the whole file. Never through a
+/// memory map.
+pub fn index_read_path(path: &Path) -> Result<IndexRead> {
+    index_read_counted(path).map(|(read, _)| read)
+}
+
+/// [`index_read_path`] and the bytes it read.
+fn index_read_counted(path: &Path) -> Result<(IndexRead, u64)> {
+    index_read_with(path, super::sparse::fetch_metadata)
+}
+
+/// How [`index_read_counted`] reads a file's pieces into place.
+type Pieces = fn(&mut super::sparse::Sparse<std::fs::File>) -> std::io::Result<bool>;
+
+/// [`index_read_counted`] with the pieces read by `fetch`.
+fn index_read_with(path: &Path, fetch: Pieces) -> Result<(IndexRead, u64)> {
+    not_raw(path)?;
+    let file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let Some(mut sparse) = super::sparse::Sparse::new(file, len) else {
+        let (probe, mosaic, read) = probe_and_mosaic_with(path, cr3_ends)?;
+        return Ok(((probe, mosaic, super::style::CameraStyle::read(path)), read));
+    };
+    // The head first, in one read: the style and the pieces both start
+    // there.
+    let _ = sparse.fetch(0, super::sparse::HEAD);
+    let style = guarded(
+        || half_copy_at(path),
+        || super::style::read_stream(&mut sparse),
+    );
+    // rawler's box parser, which the CR3's walk runs, panics on some
+    // damaged heads; that is a file read whole, as an error is.
+    let pieces = match guarded(|| None, || Ok(fetch(&mut sparse)?)) {
+        Ok(known) => known,
+        Err(e) => {
+            log::debug!("{}: its pieces: {e}; read whole", path.display());
+            false
+        }
+    };
+    let (buf, tried) = sparse.into_parts();
+    let source = RawSource::new_from_shared_vec(std::sync::Arc::new(buf)).with_path(path);
+    // A file small enough that its pieces were all of it is whole.
+    let whole = tried >= len;
+    if pieces && !whole {
+        match guarded(|| None, || probe_and_mosaic_source(&source, path)) {
+            Ok((probe, Ok(m))) => return Ok(((probe, m, style), tried)),
+            // Told by the compression tag, which the pieces hold: the
+            // whole file would end the same way.
+            Ok((probe, Err(e))) if e.contains(NIKON_HE) => {
+                log::warn!("{}: its mosaic: {e}", path.display());
+                return Ok(((probe, MosaicRead::Unknown, style), tried));
+            }
+            Ok((_, Err(e))) => {
+                log::debug!(
+                    "{}: no mosaic from its pieces: {e}; read whole",
+                    path.display()
+                )
+            }
+            Err(e) => log::debug!("{}: from its pieces: {e}; read whole", path.display()),
+        }
+    }
+    guarded(
+        || half_copy_at(path),
+        || {
+            let (source, read) = if whole {
+                (source, 0)
+            } else {
+                read_whole(path)?
+            };
+            let (probe, described) = probe_and_mosaic_source(&source, path)?;
+            let mosaic = described.unwrap_or_else(|e| {
+                log::warn!("{}: its mosaic: {e}", path.display());
+                MosaicRead::Unknown
+            });
+            Ok(((probe, mosaic, style), tried + read))
         },
     )
 }
@@ -2665,8 +2887,7 @@ fn mosaic_from_tags(dims: &[u32], pattern: &[u32], planes: Option<&[u32]>) -> Mo
 
 /// The kind of mosaic alone: the image's description without a sample
 /// and without the metadata read. `Ok(None)` for a raw that is not a
-/// mosaic. Never through a memory map, as [`probe_and_mosaic_path`]
-/// reads: a CR3 from its ends, any other format whole, and ends that
+/// mosaic. Never through a memory map: a CR3 from its ends, any other format whole, and ends that
 /// give no mosaic, or an error, fall back to the whole file.
 pub fn mosaic_path(path: &Path) -> Result<Option<Mosaic>> {
     mosaic_with(path, cr3_ends).map(|(mosaic, _)| mosaic)

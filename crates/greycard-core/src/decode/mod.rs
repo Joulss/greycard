@@ -12,10 +12,11 @@ use crate::error::Result;
 use crate::raw::{Orientation, RawFrame};
 
 pub mod rawler_backend;
+mod sparse;
 pub mod style;
 
 pub use rawler_backend::{
-    CameraWhite, MosaicRead, Probe, RawMetadata, RawlerDecoder, inside_decoder,
+    CameraWhite, IndexRead, MosaicRead, Probe, RawMetadata, RawlerDecoder, inside_decoder,
 };
 pub use style::{Adaptive, AdaptiveKind, CameraStyle, Maker};
 
@@ -92,11 +93,11 @@ pub fn probe_ends_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_ends_path(path.as_ref())
 }
 
-/// [`probe_path`] and the raw's kind of mosaic in one read of the file,
-/// from its ends where its format allows and never through a memory
-/// map: see `rawler_backend::probe_and_mosaic_path`.
-pub fn probe_and_mosaic_path(path: impl AsRef<Path>) -> Result<(Probe, MosaicRead)> {
-    rawler_backend::probe_and_mosaic_path(path.as_ref())
+/// What the library's index reads of a raw, its probe, its kind of
+/// mosaic, and its maker's style, from the pieces of the file they are
+/// in; see `rawler_backend::index_read_path`.
+pub fn index_read_path(path: impl AsRef<Path>) -> Result<rawler_backend::IndexRead> {
+    rawler_backend::index_read_path(path.as_ref())
 }
 
 /// A raw's kind of mosaic alone, without a sample decoded and without a

@@ -249,7 +249,7 @@ impl CameraStyle {
 }
 
 /// [`CameraStyle::read`] on any seekable source, unguarded.
-fn read_stream(mut file: impl Read + Seek) -> Result<Option<CameraStyle>> {
+pub(crate) fn read_stream(mut file: impl Read + Seek) -> Result<Option<CameraStyle>> {
     let mut head = [0u8; 16];
     let n = read_up_to(&mut file, &mut head)?;
     let head = &head[..n];
@@ -744,13 +744,65 @@ fn fujifilm_raf(mut file: impl Read + Seek) -> Result<CameraStyle> {
     file.read_exact(&mut header)?;
     let offset = be_u32_at(&header, 84);
     let len = be_u32_at(&header, 88);
-    // The EXIF segment is the JPEG's first or second; a segment is at
-    // most 64 KiB, so this much holds it.
-    let mut head = vec![0u8; len.min(160 * 1024) as usize];
-    file.seek(SeekFrom::Start(offset))?;
-    let n = read_up_to(&mut file, &mut head)?;
-    head.truncate(n);
+    let head = jpeg_head(&mut file, offset, len)?;
     fujifilm_from_jpeg(&head)
+}
+
+/// How much of a JPEG's head its EXIF is looked for in: the EXIF
+/// segment is the JPEG's first or second, and a segment is at most
+/// 64 KiB.
+const JPEG_HEAD: u64 = 160 * 1024;
+
+/// The head of the JPEG at `at`, `len` bytes long, as far as
+/// [`jpeg_exif`] looks into it: its markers and lengths and its APP1
+/// segments, read from the file, the other segments' bodies left as
+/// zeros, up to the EXIF segment's end or [`JPEG_HEAD`] bytes, or the
+/// file's end. `jpeg_exif` finds in it what it finds in the head read
+/// whole; a camera JPEG's thumbnail segment, the most of that head, is
+/// never read.
+fn jpeg_head(file: &mut (impl Read + Seek), at: u64, len: u64) -> std::io::Result<Vec<u8>> {
+    let end = len.min(JPEG_HEAD) as usize;
+    let mut head = vec![0u8; end];
+    // Bytes `from..to` of the head read into place; false where the
+    // file ends first, the head cut there.
+    let mut fill = |head: &mut Vec<u8>, from: usize, to: usize| -> std::io::Result<bool> {
+        let to = to.min(head.len());
+        if from >= to {
+            return Ok(true);
+        }
+        file.seek(SeekFrom::Start(at + from as u64))?;
+        let n = read_up_to(file, &mut head[from..to])?;
+        if from + n < to {
+            head.truncate(from + n);
+            return Ok(false);
+        }
+        Ok(true)
+    };
+    if !fill(&mut head, 0, 2)? || head[..2] != [0xff, 0xd8] {
+        return Ok(head);
+    }
+    let mut pos = 2;
+    while pos + 4 <= head.len() {
+        if !fill(&mut head, pos, pos + 4)? {
+            break;
+        }
+        let marker = head[pos + 1];
+        if head[pos] != 0xff || marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let next = pos + 2 + u16::from_be_bytes([head[pos + 2], head[pos + 3]]) as usize;
+        if marker == 0xe1 {
+            if !fill(&mut head, pos + 4, next)? {
+                break;
+            }
+            if next <= head.len() && head[pos + 4..].starts_with(b"Exif\0\0") {
+                head.truncate(next);
+                break;
+            }
+        }
+        pos = next;
+    }
+    Ok(head)
 }
 
 /// The settings from the head of a Fujifilm camera JPEG.
@@ -1203,9 +1255,14 @@ fn panasonic_from_jpeg<R: Read + Seek>(tiff: &mut Tiff<R>, ifd0: &[Field]) -> Re
     let Some(jpeg) = find(ifd0, PANASONIC_JPG_FROM_RAW) else {
         return Ok(CameraStyle::bare(Maker::Panasonic));
     };
-    // The EXIF segment is the JPEG's first; a segment is at most
-    // 64 KiB, so this much holds it.
-    let head = tiff.read_at(jpeg.at, (jpeg.count as u64).min(160 * 1024))?;
+    let n = (jpeg.count as u64).min(JPEG_HEAD);
+    if jpeg.at.checked_add(n).is_none_or(|end| end > tiff.len) {
+        return Err(note_error(format!(
+            "{n} bytes at {} run past the end of the file",
+            jpeg.at
+        )));
+    }
+    let head = jpeg_head(&mut tiff.r, jpeg.at, n)?;
     let Some(exif) = jpeg_exif(&head) else {
         return Ok(CameraStyle::bare(Maker::Panasonic));
     };
@@ -1306,6 +1363,53 @@ fn panasonic_from_note<R: Read + Seek>(tiff: &mut Tiff<R>, note: &Field) -> Resu
 mod tests {
     use super::*;
     use ::rawler::formats::tiff::GenericTiffReader;
+
+    /// A JPEG's head read by its segments gives `jpeg_exif` what the
+    /// head read whole gives it: the EXIF after a JFIF segment and an
+    /// XMP one, a JPEG with no EXIF before its scan, a file cut short,
+    /// a length that cuts the EXIF short, and no JPEG at all.
+    #[test]
+    fn a_jpegs_head_read_by_segments_finds_the_same_exif() {
+        let segment = |marker: u8, body: &[u8]| {
+            let mut s = vec![0xff, marker];
+            s.extend_from_slice(&(body.len() as u16 + 2).to_be_bytes());
+            s.extend_from_slice(body);
+            s
+        };
+        let exif: Vec<u8> = b"Exif\0\0II*\0".iter().copied().chain(1..=200).collect();
+        let jfif = segment(0xe0, &[7; 14]);
+        let xmp = segment(0xe1, b"http://ns.adobe.com/xap/1.0/\0<x/>");
+        let thumb = segment(0xe2, &[9; 60_000]);
+        let jpeg = |parts: &[&[u8]]| {
+            let mut j = vec![0xff, 0xd8];
+            parts.iter().for_each(|p| j.extend_from_slice(p));
+            j.extend_from_slice(&[0xff, 0xda, 0, 2]);
+            j.resize(j.len() + 300_000, 5);
+            j
+        };
+        let files = [
+            jpeg(&[&jfif, &xmp, &segment(0xe1, &exif)]),
+            jpeg(&[&thumb, &thumb, &segment(0xe1, &exif)]),
+            jpeg(&[&jfif, &thumb]),
+            jpeg(&[&jfif, &segment(0xe1, &exif)])[..40].to_vec(),
+            vec![1, 2, 3],
+        ];
+        for jpeg in &files[..2] {
+            let head = jpeg_head(&mut Cursor::new(jpeg), 0, jpeg.len() as u64).unwrap();
+            assert_eq!(jpeg_exif(&head), Some(&exif[6..]));
+        }
+        let at = 100u64;
+        for (i, jpeg) in files.iter().enumerate() {
+            for len in [jpeg.len() as u64, 30, 1 << 20] {
+                let mut file = vec![0u8; at as usize];
+                file.extend_from_slice(jpeg);
+                let end = (at + len.min(JPEG_HEAD)).min(file.len() as u64) as usize;
+                let whole = file[at as usize..end].to_vec();
+                let head = jpeg_head(&mut Cursor::new(&file), at, len).unwrap();
+                assert_eq!(jpeg_exif(&head), jpeg_exif(&whole), "file {i}, {len} bytes");
+            }
+        }
+    }
 
     const SHORT: u16 = 3;
     const LONG: u16 = 4;

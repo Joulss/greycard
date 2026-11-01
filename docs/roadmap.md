@@ -462,9 +462,6 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
-- [ ] The probe reads about 2 MB a CR3 on a first index pass, most of
-      it the file's head, which is what a pass over a network root
-      pays now that the reads have a limit (§472); read less
 - [ ] Collections carried across machines: the collections file is per
       machine, so a set gathered on the laptop is not on the desktop;
       carry it through the archive as the sidecars are (§243), and the

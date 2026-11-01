@@ -31,6 +31,10 @@ design note behind it.
 
 ### Library
 
+- A first index pass reads a raw's metadata alone, about 200 KB a
+  file instead of its head and tail or the whole file, so a network
+  root indexes in a quarter of the time
+  ([§491](https://github.com/jessolmstead/greycard/blob/master/docs/notes/491-a-first-index-pass-reads-the-metadata-alone.md)).
 - A folder renamed under a root keeps its stacks, with the editor
   open or closed
   ([§486](https://github.com/jessolmstead/greycard/blob/master/docs/notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md)).
