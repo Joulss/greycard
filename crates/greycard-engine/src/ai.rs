@@ -680,7 +680,7 @@ pub const PART_ASKS: &str = "a People mask needs a person picked";
 /// And of a Part whose person is not on the picture.
 pub const PART_NOBODY: &str = "a People mask's person isn't in this picture";
 
-/// Which of a frame's left-out items (`worker::write_export`'s) are
+/// Which of a frame's left-out items (an export's) are
 /// People shapes written empty: (asking, nobody).
 pub fn parts_left_out(items: &[String]) -> (usize, usize) {
     let n = |what: &str| items.iter().filter(|i| i.contains(what)).count();

@@ -518,3 +518,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§503. Refine edge on a mask](notes/503-refine-edge-on-a-mask.md) (2026-11-01)
 - [§504. One instance](notes/504-one-instance.md) (2026-11-01)
 - [§505. The engine, part two: the window's develop on the kept points](notes/505-the-engine-part-two-the-windows-develop-on-the-kept-points.md) (2026-11-01)
+- [§506. The engine, part two: the open file's export, and the end of part two](notes/506-the-engine-part-two-the-open-files-export-and-the-end-of-part-two.md) (2026-11-01)

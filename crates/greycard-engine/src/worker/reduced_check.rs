@@ -324,7 +324,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 &mut None,
                 &deliver,
             );
-            let Some(image) = image else {
+            let Some(_) = image else {
                 let why = match outcome {
                     Outcome::Failed { message, .. } => message,
                     _ => "no picture".into(),
@@ -341,13 +341,20 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 watermark: None,
                 ..greycard_render::export::Settings::default()
             };
-            let (rendered, left_out) = finish_export(
-                image.clone(),
-                &edit,
+            // Finished as the open file's export is, from the full
+            // develop's points; the reference edit differs from the
+            // edit only in what the develop makes, so its finish is
+            // the edit's.
+            let (rendered, left_out) = super::export::render_open(
+                &reference_edit,
+                0,
+                &input,
                 base.as_ref(),
-                &mut ai,
+                &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+                lenses.as_ref(),
                 &settings(2048),
-            );
+            )
+            .expect("finished");
             assert!(left_out.is_empty(), "{name}: {left_out:?}");
             let greycard_render::export::Pixels::Eight(rgb) = rendered.pixels else {
                 unreachable!("a JPEG's pixels are eight bits")

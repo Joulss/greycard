@@ -586,25 +586,23 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] The engine, part 2, last step (§454, §478): the open file's
-      export onto the window's kept points without dropping them,
-      `same_develop` retired; exports byte-equal before and after
-      (the crate, the list, and the walker landed, §476; the worker
-      moved, §478; the reduced develop walks, §488; the set export
-      walks, §496; the kept points carry the stand-in and the unmade
-      fills and match by picture, §501; the window's develop walks
-      and same_base, same_learned, and same_patched are gone, §505)
 - [ ] The engine, part 3 (§454): the viewport crate, the shader and
       its parity tests over gpu and render, Slint's pixel types out
-      of it. Waits on part 2
+      of it (part 2 done, §506)
 - [ ] The engine, part 4 (§454): `greycard export`, one settings
       subset reader for the window, headless export, and the command
-      line, the editor's `--export` kept an alias for a release.
-      Waits on part 2
+      line, the editor's `--export` kept an alias for a release
+      (part 2 done, §506)
 - [ ] Camera match and the measurement runners into the window's
-      library once the worker's frame develop is the engine's (§471);
-      explicit imports in place of the crate root's glob imports as
-      each file moves
+      library, now that the worker's frame develop is the engine's
+      (§471, §506); explicit imports in place of the crate root's
+      glob imports as each file moves
+- [ ] An export that differs by a bit under load: one bar run beside
+      a release build moved some 3800 samples of one frame by one
+      16-bit level; the suspects are rayon parallel sums whose
+      reduction order follows work-stealing (the sharpen's plane
+      mean, the defringe's), cast to f32. Sum in a fixed order and
+      rerun the bar under load (§506)
 - [ ] A one-page architecture document: each crate, what it may
       depend on, and which crate runs each pipeline stage, with the
       layer rule beside CLAUDE.md's core rule; §5 predates ai,

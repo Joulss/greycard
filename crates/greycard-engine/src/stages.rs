@@ -791,6 +791,34 @@ pub fn same_base(
     stages(a, &Purpose::Prefetch, facts, lenses) == stages(b, &Purpose::Prefetch, facts, lenses)
 }
 
+/// Whether `a` and `b` develop the same picture of the frame `facts`
+/// describes, with the same masks' bands beside it: the viewport's
+/// lists of the two up to the finish, their keeps, the learned masks'
+/// tap, and the refined masks' picture left out (a save makes the
+/// learned rasters and that picture on its own, and the window asks
+/// for them apart from a develop).
+pub fn same_develop(
+    a: &Edit,
+    b: &Edit,
+    facts: &Facts,
+    lenses: Option<&greycard_lens::Database>,
+) -> bool {
+    let developed = |e: &Edit| -> Vec<Step> {
+        stages(e, &Purpose::Viewport, facts, lenses)
+            .steps
+            .into_iter()
+            .take_while(|s| !matches!(s, Step::Op(Stage::Finish(_))))
+            .filter(|s| {
+                !matches!(
+                    s,
+                    Step::Keep(_) | Step::Tap(Tap::Masks(_) | Tap::MaskPicture)
+                )
+            })
+            .collect()
+    };
+    developed(a) == developed(b)
+}
+
 /// The long edge of the edit's pictures.
 pub const BIG: u32 = 2048;
 
@@ -1191,5 +1219,53 @@ mod tests {
         assert_ne!(a.steps[4], turned.steps[4]);
         // An exposure is the finish's, which reads it from the edit.
         assert_eq!(a, moved(&|e| e.light.exposure = 1.0));
+    }
+
+    /// Two edits develop the same picture when their lists to the
+    /// finish are one: the light and a look are the finish's, and so is
+    /// a mask's amount, but which bands the masks ask for is the
+    /// develop's, as are the demosaic and the Detail section. A mask's
+    /// refined edge is neither, nor a learned shape added to a mask.
+    #[test]
+    fn same_develop_reads_the_lists_to_the_finish() {
+        let facts = raw(0);
+        let same = |a: &Edit, b: &Edit| same_develop(a, b, &facts, None);
+        let edit = Edit::default();
+        let mut light = edit.clone();
+        light.light.exposure = 2.0;
+        assert!(same(&edit, &light));
+        let mut demosaic = edit.clone();
+        demosaic.demosaic = greycard_edit::Demosaic::Vng4;
+        assert!(!same(&edit, &demosaic));
+        let mut dehaze = edit.clone();
+        dehaze.detail.dehaze = 0.5;
+        assert!(!same(&edit, &dehaze));
+        let masked = |texture: f32, refine: f32| {
+            let mut e = edit.clone();
+            let mut a = greycard_edit::Adjustment {
+                id: 1,
+                ..Default::default()
+            };
+            a.mask
+                .components
+                .push(greycard_edit::mask::Component::default());
+            a.mask.refine = refine;
+            a.look.detail.texture = texture;
+            e.adjustments.push(a);
+            e
+        };
+        assert!(!same(&edit, &masked(-0.5, 0.0)), "the bands asked for");
+        assert!(same(&masked(-0.5, 0.0), &masked(-0.8, 0.0)), "their amount");
+        assert!(same(&masked(0.0, 0.0), &masked(0.0, 0.3)), "a refined edge");
+        let mut subject = masked(0.0, 0.0);
+        subject.adjustments[0].mask.components[0].shape = greycard_edit::mask::Shape::Subject {};
+        assert!(
+            stages(&subject, &Purpose::Viewport, &facts, None)
+                .steps
+                .iter()
+                .any(|s| matches!(s, Step::Tap(Tap::Masks(_)))),
+            "the learned masks' tap in the list"
+        );
+        assert!(same(&masked(0.0, 0.0), &subject), "a learned shape");
     }
 }

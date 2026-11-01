@@ -414,6 +414,29 @@ fn develop_turned(
     image.expect("a picture on the CPU")
 }
 
+/// The open file's export of `frame` under `edit`, walked from what
+/// `base` keeps of the window's develops: its pixels, and what of the
+/// edit it went without.
+fn export_held(
+    frame: &Arc<RawFrame>,
+    edit: &Edit,
+    base: Option<&FrameKept>,
+    ai: &mut Ai,
+    settings: &greycard_render::export::Settings,
+) -> (greycard_render::export::Rendered, Vec<String>) {
+    let deliver: Deliver = Arc::new(|_| {});
+    super::export::render_open(
+        edit,
+        0,
+        &Input::Raw(frame.clone()),
+        base,
+        &mut WorkerModels::new(ai, None, &deliver, 0),
+        None,
+        settings,
+    )
+    .expect("exported")
+}
+
 /// A develop that finds its base at another turn turns it rather than
 /// making it again, and the base, its guide plane, and the develop are
 /// the ones a develop at the new turn makes, to the bit: for a frame
@@ -647,7 +670,7 @@ fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
         ..Edit::default()
     };
     let mut base = None;
-    let image = develop_turned(&frame, &global, 0, &mut base);
+    develop_turned(&frame, &global, 0, &mut base);
     assert!(
         base.as_ref().unwrap().white_shift().is_some(),
         "a raw's base keeps its profile"
@@ -680,7 +703,7 @@ fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
     let mut render = |white| {
         let mut edit = global.clone();
         edit.adjustments.push(everywhere(white));
-        let (r, _) = finish_export(image.clone(), &edit, base.as_ref(), &mut ai, &settings);
+        let (r, _) = export_held(&frame, &edit, base.as_ref(), &mut ai, &settings);
         let greycard_render::export::Pixels::Sixteen(p) = r.pixels else {
             panic!("a TIFF is sixteen bits")
         };
@@ -760,10 +783,10 @@ fn a_masks_offset_follows_the_global_and_its_light_does_not() {
             ..Edit::default()
         };
         let mut base = None;
-        let image = develop_turned(&frame, &global, 0, &mut base);
+        develop_turned(&frame, &global, 0, &mut base);
         let mut edit = global.clone();
         edit.adjustments.push(everywhere(white));
-        let (r, _) = finish_export(image, &edit, base.as_ref(), &mut ai, &settings);
+        let (r, _) = export_held(&frame, &edit, base.as_ref(), &mut ai, &settings);
         let greycard_render::export::Pixels::Sixteen(p) = r.pixels else {
             panic!("a TIFF is sixteen bits")
         };
@@ -809,67 +832,113 @@ fn a_masks_offset_follows_the_global_and_its_light_does_not() {
     );
 }
 
-/// A last develop whose CA ran on the GPU is not handed to an export:
-/// it develops afresh on the CPU, and that picture is then reused.
+/// The open file's export walks from the window's points only where
+/// the CPU made them: on the CPU it goes on from the window's developed
+/// picture, and a base whose CA ran on the GPU is made again for it.
+/// Either way the file is the one a set frame's walk from nothing
+/// writes, and the window's points are left as they were.
 #[test]
-fn an_export_does_not_reuse_a_gpu_ca_develop() {
+fn an_export_walks_from_the_window_s_cpu_points_and_leaves_them() {
+    use crate::stages::Stage;
     let frame = Arc::new(aberrated_frame(400, 320));
-    // The reference, from nothing.
-    let (_, reference) = develop_once(&frame, &mut None, &mut None);
-    let reference = reference.unwrap();
-    // A base as a GPU session leaves it, and a last develop from it
-    // that is plainly not the reference: a flat grey picture.
-    let mut base = None;
-    let (_, image) = develop_once(&frame, &mut base, &mut None);
-    let image = image.unwrap();
-    let b = base.as_mut().unwrap();
-    b.on_gpu = true;
-    b.kept
-        .as_if_on_device(|s| matches!(s, crate::stages::Stage::Ca(_)));
-    let wrong = Arc::new(
-        WorkingImage::from_data(image.width, image.height, vec![0.5; image.data.len()]).unwrap(),
-    );
-    let mut last = Some(Last::made(
-        Edit::default(),
-        base.as_ref().unwrap(),
-        wrong.clone(),
-        &Outcome::Failed {
-            generation: 0,
-            message: String::new(),
-        },
-    ));
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Tiff,
+        ..Default::default()
+    };
     let mut ai = Ai::new();
     let deliver: Deliver = Arc::new(|_| {});
-    let input = Input::Raw(frame.clone());
-    let export = |last: &mut Option<Last>, base: &mut Option<FrameKept>, ai: &mut Ai| {
-        open_picture(
-            &Edit::default(),
-            0,
-            Some(&input),
-            last,
-            base,
-            ai,
-            None,
-            None,
-            &deliver,
-        )
-        .unwrap()
-        .0
+    let (fresh, _) = super::export::walk_export(
+        Input::Raw(frame.clone()),
+        &Edit::default(),
+        0,
+        &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+        None,
+        &settings,
+    )
+    .unwrap();
+    let mut base = None;
+    develop_once(&frame, &mut base, &mut None);
+    let developed = base
+        .as_ref()
+        .and_then(|b| b.kept.picture(Keep::Developed))
+        .expect("the CPU's walk keeps its developed picture")
+        .clone();
+    let (cpu, _) = export_held(&frame, &Edit::default(), base.as_ref(), &mut ai, &settings);
+    same_pixels(&cpu, &fresh);
+    let b = base.as_mut().unwrap();
+    assert!(Arc::ptr_eq(
+        b.kept.picture(Keep::Developed).unwrap(),
+        &developed
+    ));
+    b.kept.as_if_on_device(|s| matches!(s, Stage::Ca(_)));
+    let (gpu, _) = export_held(&frame, &Edit::default(), base.as_ref(), &mut ai, &settings);
+    same_pixels(&gpu, &fresh);
+    let b = base.as_ref().unwrap();
+    assert!(
+        b.kept
+            .ran_on_device(Keep::Base, |s| matches!(s, Stage::Ca(_))),
+        "the window's base as it was"
+    );
+    assert!(Arc::ptr_eq(
+        b.kept.picture(Keep::Developed).unwrap(),
+        &developed
+    ));
+}
+
+/// An export of the open file leaves what the window's develop keeps on
+/// the device where it is: the upload and the picture before the
+/// sharpen, from which the window's next sharpen move goes on.
+#[test]
+fn an_export_leaves_the_window_s_device_points() {
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("the window's device points across an export");
+        return;
     };
-    let got = export(&mut last, &mut base, &mut ai);
-    assert!(!Arc::ptr_eq(&got, &wrong), "the GPU develop was reused");
-    assert_eq!(
-        got.data, reference.data,
-        "the export's picture is the reference's"
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut gpu = Some(ctx);
+    let mut base = None;
+    let mut edit = Edit::default();
+    edit.detail.clarity = 0.5;
+    let mut develop = |edit: &Edit, base: &mut Option<FrameKept>| {
+        let (outcome, _) = develop_job(
+            &Input::Raw(frame.clone()),
+            edit,
+            0,
+            1,
+            base,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut gpu,
+            &deliver,
+        );
+        let Outcome::Developed {
+            detail: Some((_, ran)),
+            ..
+        } = outcome
+        else {
+            panic!("developed, with the local contrast");
+        };
+        ran
+    };
+    develop(&edit, &mut base);
+    let b = base.as_ref().unwrap();
+    assert!(b.kept.on_device(Keep::PreSharpen) && b.kept.has_upload());
+    let uploaded = b.kept.upload().unwrap().clone();
+    let settings = greycard_render::export::Settings::default();
+    export_held(&frame, &edit, base.as_ref(), &mut Ai::new(), &settings);
+    let b = base.as_ref().unwrap();
+    assert!(
+        b.kept.on_device(Keep::PreSharpen),
+        "the picture before the sharpen"
     );
     assert!(
-        last.as_ref().is_some_and(|l| !l.on_gpu),
-        "the last develop is the CPU's now"
+        Arc::ptr_eq(b.kept.upload().unwrap(), &uploaded),
+        "the upload"
     );
-    assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
-    // Now that it is the CPU's, it is reused.
-    let again = export(&mut last, &mut base, &mut ai);
-    assert!(Arc::ptr_eq(&got, &again), "the CPU develop is kept");
+    edit.sharpen.iterations += 1;
+    assert_eq!(develop(&edit, &mut base), DetailRan::Kept);
 }
 
 /// A device error in the CA correction falls back to the reference
@@ -2242,8 +2311,7 @@ fn an_export_says_which_learned_mask_it_went_without() {
     use greycard_edit::mask::Component;
     let frame = Arc::new(aberrated_frame(160, 120));
     let mut base = None;
-    let (_, image) = develop_once(&frame, &mut base, &mut None);
-    let image = image.unwrap();
+    develop_once(&frame, &mut base, &mut None);
     let empty = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/test-scratch")
         .join(format!("left-out-{}/models", std::process::id()));
@@ -2299,8 +2367,8 @@ fn an_export_says_which_learned_mask_it_went_without() {
         },
         ..greycard_edit::Adjustment::default()
     });
-    let (_, left_out) = finish_export(
-        image,
+    let (_, left_out) = export_held(
+        &frame,
         &edit,
         base.as_ref(),
         &mut ai,
@@ -3497,8 +3565,7 @@ fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
         let mut shown = ShownTexture::of(&Edit::default(), 0, &outcome, base.as_ref());
         assert!(shown.is_some(), "the develop left a texture on the device");
         gpu.as_ref().unwrap().device().destroy();
-        let mut last = None;
-        let redo = super::engine::lose_gpu(&mut gpu, &mut base, &mut shown, &mut last, again);
+        let redo = super::engine::lose_gpu(&mut gpu, &mut base, &mut shown, again);
         assert!(gpu.is_none() && shown.is_none());
         let b = base.as_ref().unwrap();
         assert!(!b.kept.has_upload() && !b.kept.on_device(Keep::PreSharpen));
@@ -3697,10 +3764,10 @@ fn a_cleared_retouch_brings_back_the_bases_guide() {
     assert_eq!(b.guide.data, own);
 }
 
-/// What the open file's develop and finish write for `input` under
-/// `edit` at `turn`, and what a set frame's walk of its stage list
-/// writes: each picture's pixels with what it went without, with no
-/// model in the store for either.
+/// What the open file's export writes for `input` under `edit` at
+/// `turn`, walked from the window's develop of it, and what a set
+/// frame's walk of its stage list writes: each picture's pixels with
+/// what it went without, with no model in the store for either.
 fn develop_and_walk(
     what: &str,
     input: &Input,
@@ -3719,15 +3786,19 @@ fn develop_and_walk(
     let deliver: Deliver = Arc::new(|_| {});
     let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
     let mut base = None;
-    let (outcome, image) = develop_job(
+    develop_job(
         input, edit, turn, 0, &mut base, &mut ai, None, None, &mut None, &deliver,
     );
-    let mut said = left_out_of(&outcome, base.as_ref());
-    let (mut developed, masks) =
-        finish_export(image.unwrap(), edit, base.as_ref(), &mut ai, &settings);
-    greycard_render::export::border(&mut developed, &settings);
-    greycard_render::export::mark(&mut developed, &settings).unwrap();
-    said.extend(masks);
+    let (developed, said) = super::export::render_open(
+        edit,
+        turn,
+        input,
+        base.as_ref(),
+        &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+        None,
+        &settings,
+    )
+    .unwrap();
     let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
     let walked = super::export::walk_export(
         input.clone(),
@@ -3979,7 +4050,7 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     assert!(*picture != greycard_render::refine::mask_picture(&patched));
     assert!(b.mask_picture.is_some());
     // The open frame's own pictures (`keep`) are made against it too.
-    assert!(masks::kept_picture(b, &edit).is_some());
+    assert!(b.mask_picture.is_some());
     // A Luminance shape reads the same lightness in the picture refined
     // against as the finish reads in the developed one, on average over
     // each texel, to the half float's rounding.
@@ -4019,7 +4090,7 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     let b = base.as_mut().unwrap();
     let made = masks::picture_for(b, &edit, None).expect("made for the save");
     assert!(*made == *picture);
-    assert!(masks::kept_picture(b, &edit).is_some());
+    assert!(b.mask_picture.is_some());
     assert!(masks::picture_for(b, &plain, None).is_none());
 }
 

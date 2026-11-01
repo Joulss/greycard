@@ -380,19 +380,6 @@ impl Edit {
             || !self.retouch.patches.is_empty()
     }
 
-    /// Whether two edits develop the same image; the rest is the viewport's.
-    pub fn same_develop(&self, other: &Edit) -> bool {
-        self.white_balance == other.white_balance
-            && self.noise == other.noise
-            && self.demosaic == other.demosaic
-            && self.camera == other.camera
-            && self.lens == other.lens
-            && self.retouch == other.retouch
-            && self.detail == other.detail
-            && self.sharpen == other.sharpen
-            && self.detail_wants() == other.detail_wants()
-    }
-
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("an edit serializes")
     }
@@ -530,8 +517,7 @@ mod tests {
         assert_eq!(edit.detail.texture, 0.4);
     }
 
-    /// Which bands the masks ask for, and that a change in which is a
-    /// new develop while a change of amount is not.
+    /// Which bands the masks ask for.
     #[test]
     fn the_bands_wanted_follow_the_masks_that_ask() {
         assert!(!Edit::default().detail_wants().any());
@@ -548,10 +534,6 @@ mod tests {
                 ..Default::default()
             }
         );
-        assert!(!texture.same_develop(&quiet));
-        let mut more = texture.clone();
-        more.adjustments[0].look.detail.texture = -0.8;
-        assert!(more.same_develop(&texture));
         // Off by the section's switch, by the adjustment's, or with
         // nothing in the mask: nothing asked.
         for off in [
@@ -805,13 +787,7 @@ mod tests {
         );
         assert!(matches!(s.white_point, WhitePoint::TempTint(_)));
         let mut other = edit.clone();
-        other.light.exposure = 2.0;
-        assert!(edit.same_develop(&other));
-        other.demosaic = Demosaic::Vng4;
-        assert!(!edit.same_develop(&other));
-        let mut other = edit.clone();
         other.detail.dehaze = 0.5;
-        assert!(!edit.same_develop(&other));
         // The engine's settings stop before the dehaze, which is a
         // stage of its own after the lens.
         assert_eq!(

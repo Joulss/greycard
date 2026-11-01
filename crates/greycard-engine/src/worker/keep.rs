@@ -62,16 +62,31 @@ pub(super) fn keep_open(
     // The develop in hand of this edit at this turn: the frame's turn is
     // not in the key, but the picture in hand is turned by it, and the
     // making takes it back out.
-    let cpu = hand
-        .last
-        .filter(|l| l.turn == keep.turn && l.edit.same_develop(&keep.edit));
-    let gpu = hand
-        .shown
-        .filter(|s| s.turn == keep.turn && s.edit.same_develop(&keep.edit));
+    let Some(base) = hand.base else {
+        if leaving {
+            left(edited);
+            return None;
+        }
+        return Some(keep);
+    };
+    let lenses = hand.lenses;
+    let of_keep = |edit: &Edit, turn: u8| {
+        turn == keep.turn
+            && crate::stages::same_develop(edit, &keep.edit, &base.facts_at(turn), lenses)
+    };
+    // On the CPU the window's walk keeps its developed picture; on the
+    // device it is the texture on screen.
+    let cpu = base
+        .developed_as
+        .as_ref()
+        .filter(|(edit, turn)| of_keep(edit, *turn))
+        .and_then(|_| base.kept.picture(crate::stages::Keep::Developed).cloned())
+        .map(|image| (image, base.left_out.clone()));
+    let gpu = hand.shown.filter(|s| of_keep(&s.edit, s.turn));
     let device = hand.gpu;
-    let (cpu, gpu, base) = match (cpu, gpu, hand.gpu, hand.base) {
-        (Some(l), _, _, Some(b)) => (Some(l), None, b),
-        (None, Some(s), Some(ctx), Some(b)) => (None, Some((s, ctx)), b),
+    let (cpu, gpu) = match (cpu, gpu, hand.gpu) {
+        (Some(l), _, _) => (Some(l), None),
+        (None, Some(s), Some(ctx)) => (None, Some((s, ctx))),
         _ => {
             if leaving {
                 left(edited);
@@ -86,7 +101,8 @@ pub(super) fn keep_open(
     // kept, and the frame shows the camera's until one can be.
     let (rasters, mut left_out) = learned_masks(&keep.edit, Some(&*base), ai);
     left_out.extend(
-        cpu.map(|l| &l.left_out)
+        cpu.as_ref()
+            .map(|(_, l)| l)
             .or(gpu.map(|(s, _)| &s.left_out))
             .into_iter()
             .flatten()
@@ -102,10 +118,10 @@ pub(super) fn keep_open(
     let factor =
         |source: (u32, u32)| crate::edited_pictures::factor_for(source, &keep.edit.geometry);
     let (developed, source, factor, read_back) = match (cpu, gpu) {
-        (Some(l), _) => {
-            let source = (l.image.width as u32, l.image.height as u32);
+        (Some((image, _)), _) => {
+            let source = (image.width as u32, image.height as u32);
             (
-                crate::edited_pictures::Developed::Full(l.image.clone()),
+                crate::edited_pictures::Developed::Full(image),
                 source,
                 factor(source),
                 None,

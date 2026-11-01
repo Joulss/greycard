@@ -428,23 +428,6 @@ pub(super) fn mask_picture(
     picture
 }
 
-/// The picture `edit`'s refined masks are made against as `b` keeps
-/// it: when the edit refines a mask and the kept one is of the base's
-/// patched picture under the edit's Detail section. None otherwise.
-pub(super) fn kept_picture(
-    b: &FrameKept,
-    edit: &Edit,
-) -> Option<Arc<greycard_render::refine::MaskPicture>> {
-    if !greycard_render::refine::refines(edit) {
-        return None;
-    }
-    let patched = b.patched_picture();
-    b.mask_picture
-        .as_ref()
-        .filter(|k| Arc::ptr_eq(&k.patched, &patched) && k.detail == edit.detail)
-        .map(|k| k.picture.clone())
-}
-
 /// The picture `edit`'s refined masks are made against on `b`, kept
 /// or made now from the base's patched picture (read back from the
 /// GPU's when that is it): None when the edit refines no mask.

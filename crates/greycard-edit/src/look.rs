@@ -1662,9 +1662,6 @@ mod tests {
         assert!(json.contains("\"Slide Warm\""), "{json}");
         let back = crate::Edit::from_json(&json).unwrap();
         assert_eq!(back.look_lut, edit.look_lut);
-        // A look is a finish, not a develop: choosing one does not
-        // send the picture back through the engine.
-        assert!(back.same_develop(&crate::Edit::default()));
     }
 
     /// A film preset is a look and a strength, so a preset carries the

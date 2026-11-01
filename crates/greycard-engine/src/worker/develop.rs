@@ -39,6 +39,12 @@ pub(super) fn develop_job(
         _ => held.insert(FrameKept::new(&facts)),
     };
     let from_shelf = std::mem::take(&mut h.from_shelf);
+    h.developed_as = None;
+    // The developed picture the last walk kept is the export's and the
+    // save's to start from, not the window's: a walk from it would not
+    // run the sharpen, whose blend and measure the viewport shows, and
+    // a walk with a device ends at the viewport's texture.
+    h.kept.take_working(Keep::Developed);
     let mut models = WorkerModels::new(ai, cache, deliver, generation);
     models.edit = edit.clone();
     models.turn = turn;
@@ -147,6 +153,7 @@ pub(super) fn develop_job(
     // CPU, read back from the device's picture before the sharpen.
     let mask_picture = if !greycard_render::refine::refines(edit) {
         h.mask_picture = None;
+        h.kept.forget_mask_picture();
         None
     } else if let Some(picture) = walked.taps.picture.clone() {
         h.mask_picture = Some(KeptMaskPicture {
@@ -258,25 +265,25 @@ pub(super) fn develop_job(
         sharpened,
         seconds,
     );
-    (
-        Outcome::Developed {
-            generation,
-            turn,
-            image,
-            kind: walked.meta.source,
-            guide: super::masks::guide_with(h, mask_picture),
-            planes: h.planes.clone(),
-            white: h.white(),
-            seconds,
-            detail: walked.detail.zip(detail_ran),
-            sharpen: walked.sharpen,
-            dehaze: walked.dehaze,
-            sources: walked.sources,
-            learned,
-            fills,
-        },
-        picture,
-    )
+    let outcome = Outcome::Developed {
+        generation,
+        turn,
+        image,
+        kind: walked.meta.source,
+        guide: super::masks::guide_with(h, mask_picture),
+        planes: h.planes.clone(),
+        white: h.white(),
+        seconds,
+        detail: walked.detail.zip(detail_ran),
+        sharpen: walked.sharpen,
+        dehaze: walked.dehaze,
+        sources: walked.sources,
+        learned,
+        fills,
+    };
+    h.developed_as = Some((edit.clone(), turn));
+    h.left_out = left_out_of(&outcome, Some(h));
+    (outcome, picture)
 }
 
 /// What the learned denoiser did for a walk of `edit`'s `steps`, as

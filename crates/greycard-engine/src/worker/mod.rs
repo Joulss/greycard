@@ -41,7 +41,7 @@ use self::{
     decode::{lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, left_out_words, run},
-    export::{export_other, finish_export, open_picture, scene_export, seeded, write_export},
+    export::{Written, export_open, export_other, seeded, walk_for_export},
     keep::keep_open,
     masks::{MasksMade, learned_masks, masks_for, person_on},
     thumbs::{cached_thumbnail_noting, thumb_lookup},
@@ -723,34 +723,6 @@ impl crate::walk::Hold for Background {
     }
 }
 
-/// The last develop, kept for an export under the same develop and the
-/// same orientation.
-struct Last {
-    edit: Edit,
-    turn: u8,
-    image: Arc<WorkingImage>,
-    /// Whether the base this picture came from had its CA or its lens
-    /// corrected on the GPU. The export's picture must be from the CPU.
-    on_gpu: bool,
-    /// What the develop left out of what the edit asked for
-    /// ([`left_out_of`]), for an export that takes this picture.
-    left_out: Vec<String>,
-}
-
-impl Last {
-    /// The develop that just finished, from the base it ran on, and
-    /// its outcome.
-    fn made(edit: Edit, held: &FrameKept, image: Arc<WorkingImage>, outcome: &Outcome) -> Self {
-        Self {
-            edit,
-            turn: held.turn,
-            image,
-            on_gpu: held.on_gpu,
-            left_out: left_out_of(outcome, Some(held)),
-        }
-    }
-}
-
 /// A save of the open frame's edit, waiting on the worker for the
 /// develop it is the picture of (`Job::Keep`).
 struct Keep {
@@ -800,28 +772,32 @@ impl ShownTexture {
 /// can be made from.
 struct InHand<'a> {
     opened: Option<&'a std::path::Path>,
-    last: Option<&'a Last>,
     shown: Option<&'a ShownTexture>,
     base: Option<&'a mut FrameKept>,
     gpu: Option<&'a greycard_gpu::Context>,
+    /// The lens database the frame's list reads.
+    lenses: Option<&'a greycard_lens::Database>,
 }
 
 /// A frame developed once on the CPU, as an export of a frame that is
 /// not open develops it, and finished as often as asked: the camera
 /// match's develop, which finishes each frame at two exposures.
-/// Everything the frame's own develop does after the base (the lens,
-/// the retouch, the detail, the sharpen) is in `image`; the finish
-/// under `edit` is [`FrameDevelop::finish`].
+/// Everything the walk does before the finish (the lens, the retouch,
+/// the detail, the sharpen) is in `image`, with what the finish reads
+/// beside it made under the develop's edit; the finish under another
+/// edit of the same develop is [`FrameDevelop::finish`].
 pub struct FrameDevelop {
     image: Arc<WorkingImage>,
-    base: Option<FrameKept>,
-    ai: Ai,
+    input: crate::finish::FinishInput,
+    /// What of the develop's edit was left out, said with each finish.
+    left_out: Vec<String>,
 }
 
 impl FrameDevelop {
-    /// Open the raw at `path` and develop it under `edit`, with the
-    /// lens database for the lens corrections. The export's own
-    /// develop, with no GPU and no learned denoiser's cache.
+    /// Open the raw at `path` and walk it under `edit` through the
+    /// export's list to the finish, with the lens database for the lens
+    /// corrections: the export's own develop, with no GPU and no
+    /// learned denoiser's cache.
     pub fn develop(
         path: &std::path::Path,
         edit: &Edit,
@@ -832,35 +808,48 @@ impl FrameDevelop {
             return Err("not a raw".into());
         }
         let mut ai = Ai::new();
-        let mut base = None;
         let deliver: Deliver = Arc::new(|_| {});
-        match develop_job(
-            &input, edit, 0, 0, &mut base, &mut ai, None, lenses, &mut None, &deliver,
-        ) {
-            (_, Some(image)) => Ok(FrameDevelop { image, base, ai }),
-            (Outcome::Failed { message, .. }, None) => Err(message),
-            _ => Err("the develop made no picture".into()),
-        }
+        let (image, input, left_out) = walk_for_export(
+            input.walked(),
+            edit,
+            0,
+            &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+            lenses,
+            &greycard_render::export::Settings::default(),
+            &mut crate::walk::Kept::new(),
+        )?;
+        Ok(FrameDevelop {
+            image,
+            input,
+            left_out,
+        })
     }
 
     /// A picture standing in for a develop, with no base: for a test
     /// of the finish.
     #[cfg(any(test, feature = "testing"))]
     pub fn of_image(image: WorkingImage) -> FrameDevelop {
+        let source = (image.width as u32, image.height as u32);
         FrameDevelop {
             image: Arc::new(image),
-            base: None,
-            ai: Ai::new(),
+            input: crate::finish::FinishInput {
+                source,
+                full: source,
+                guide: None,
+                planes: None,
+                rasters: Default::default(),
+                white: None,
+                clip_level: f32::INFINITY,
+                kind: Default::default(),
+            },
+            left_out: Vec::new(),
         }
     }
 
     /// What the finish is handed: a raw's develop and its body's
     /// baseline, as the export finishes it.
     pub fn source(&self) -> greycard_render::finish::Source {
-        self.base
-            .as_ref()
-            .map(|b| b.meta.source)
-            .unwrap_or_default()
+        self.input.kind
     }
 
     /// The developed picture finished under `edit` (whose develop is
@@ -871,17 +860,10 @@ impl FrameDevelop {
         edit: &Edit,
         settings: &greycard_render::export::Settings,
     ) -> greycard_render::export::Rendered {
-        let (rendered, left_out) = finish_export(
-            self.image.clone(),
-            edit,
-            self.base.as_ref(),
-            &mut self.ai,
-            settings,
-        );
-        for item in left_out {
+        for item in &self.left_out {
             tracing::warn!("{item}");
         }
-        rendered
+        crate::finish::render(&self.image, edit, &self.input, settings)
     }
 
     /// What the finish would be handed for `edit` and `settings`,
@@ -891,7 +873,20 @@ impl FrameDevelop {
         edit: &Edit,
         settings: &greycard_render::export::Settings,
     ) -> greycard_render::export::Scene {
-        scene_export(&self.image, edit, self.base.as_ref(), settings)
+        let framed;
+        let image: &WorkingImage = if edit.geometry.is_identity() {
+            &self.image
+        } else {
+            framed = greycard_render::geometry::apply(&self.image, &edit.geometry);
+            &framed
+        };
+        greycard_render::export::scene_framed(
+            image,
+            edit,
+            self.input.source,
+            settings,
+            self.input.guide.as_deref(),
+        )
     }
 }
 

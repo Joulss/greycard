@@ -118,9 +118,6 @@ pub(super) fn run(
     // The open file's quarter turns, from the job that opened it and
     // from every develop after.
     let mut turn: u8 = 0;
-    // The last develop, kept for an export under the same settings
-    // and the same turn.
-    let mut last: Option<Last> = None;
     // What the open frame's walks kept, so a change to a later stage
     // costs only the stages from it.
     let mut base: Option<FrameKept> = None;
@@ -167,7 +164,7 @@ pub(super) fn run(
         if !gpu_gone && (told.is_some() || lost_seen || gpu.as_ref().is_some_and(|c| c.is_lost())) {
             gpu_gone = true;
             let again = told.unwrap_or(true);
-            let redo = lose_gpu(&mut gpu, &mut base, &mut shown, &mut last, again);
+            let redo = lose_gpu(&mut gpu, &mut base, &mut shown, again);
             if let Some(job) = redo {
                 lock.lock()
                     .expect("worker queue")
@@ -405,10 +402,10 @@ pub(super) fn run(
         {
             let hand = InHand {
                 opened: opened_path.as_deref(),
-                last: last.as_ref(),
                 shown: shown.as_ref(),
                 base: base.as_mut(),
                 gpu: gpu.as_ref(),
+                lenses: lenses.as_deref(),
             };
             let keep = Keep {
                 frame,
@@ -435,16 +432,24 @@ pub(super) fn run(
             let leaving = match &job {
                 Job::Open { .. } => true,
                 Job::Develop { edit, turn, .. } => {
-                    !(edit.same_develop(&keep.edit) && *turn % 4 == keep.turn)
+                    !(*turn % 4 == keep.turn
+                        && base.as_ref().is_some_and(|b| {
+                            crate::stages::same_develop(
+                                edit,
+                                &keep.edit,
+                                &b.facts_at(keep.turn),
+                                lenses.as_deref(),
+                            )
+                        }))
                 }
                 _ => false,
             };
             let hand = InHand {
                 opened: opened_path.as_deref(),
-                last: last.as_ref(),
                 shown: shown.as_ref(),
                 base: base.as_mut(),
                 gpu: gpu.as_ref(),
+                lenses: lenses.as_deref(),
             };
             pending = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 keep_open(keep, leaving, hand, &mut ai, &edited, &deliver)
@@ -541,38 +546,31 @@ pub(super) fn run(
                             };
                         }
                         let start = Instant::now();
-                        // The frame on screen is the open file: its picture
-                        // is the last develop's when that was of this edit.
-                        // Any other is opened and developed on the side,
-                        // and the open file's state is left as it was.
+                        // The frame on screen is the open file: walked from
+                        // what the window's walks kept, which it leaves as
+                        // they were. Any other is opened and developed on
+                        // the side, and the open file's state is left as
+                        // it was.
                         let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
                             let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
                             rendered = edit.clone();
-                            open_picture(
+                            export_open(
                                 &edit,
                                 frame.turn % 4,
                                 input.as_ref(),
-                                &mut last,
-                                &mut base,
-                                &mut ai,
-                                cache.as_ref(),
+                                base.as_ref(),
+                                // Its fills are said under the generation
+                                // no develop has, as a set frame's are.
+                                &mut WorkerModels::new(&mut ai, cache.as_ref(), &deliver, 0),
                                 lenses.as_deref(),
-                                &deliver,
+                                Written {
+                                    settings: &set.settings,
+                                    path: &path,
+                                    source: opened_path.as_deref(),
+                                    metadata: metadata.as_deref(),
+                                    time_shift: frame.time_shift,
+                                },
                             )
-                            .and_then(|(image, mut left_out)| {
-                                left_out.extend(write_export(
-                                    image,
-                                    &edit,
-                                    base.as_ref(),
-                                    &mut ai,
-                                    opened_path.as_deref(),
-                                    metadata.as_deref(),
-                                    frame.time_shift,
-                                    &set.settings,
-                                    &path,
-                                )?);
-                                Ok(left_out)
-                            })
                         } else {
                             // The editor's People model, lent for the
                             // frame rather than a second one loaded.
@@ -618,7 +616,6 @@ pub(super) fn run(
                 // finished before they were put there and no job
                 // touches them, so they stay.
                 discard_base(&mut base, gpu.as_ref());
-                last = None;
                 ai.forget(opened_path.clone());
                 set_ai = None;
             }
@@ -768,7 +765,7 @@ pub(super) fn run(
                         opened_path = Some(path);
                         opened_file = coming;
                         let opened = input.as_ref().expect("just set");
-                        let (outcome, image) = develop_job(
+                        let (outcome, _) = develop_job(
                             opened,
                             &edit,
                             turn,
@@ -782,8 +779,6 @@ pub(super) fn run(
                         );
                         shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                         ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
-                        last = image
-                            .and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                         landed = base.is_some().then_some(generation);
                         developed =
                             matches!(outcome, Outcome::Developed { .. }).then_some(generation);
@@ -808,7 +803,7 @@ pub(super) fn run(
             } => {
                 if let Some(f) = &input {
                     turn = wanted % 4;
-                    let (outcome, image) = develop_job(
+                    let (outcome, _) = develop_job(
                         f,
                         &edit,
                         turn,
@@ -823,8 +818,6 @@ pub(super) fn run(
                     shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                     ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
-                    last =
-                        image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
                 }
             }
@@ -960,7 +953,6 @@ pub(super) fn run(
             // The base in hand is not trusted; the shelf's stay, as
             // after a panic in a set's frame.
             discard_base(&mut base, gpu.as_ref());
-            last = None;
             shown = None;
             // The next stamp restarts with the base; what was cached
             // under the old ones goes with them.
@@ -979,10 +971,10 @@ pub(super) fn run(
             if let Some(keep) = pending.take() {
                 let hand = InHand {
                     opened: opened_path.as_deref(),
-                    last: last.as_ref(),
                     shown: shown.as_ref(),
                     base: base.as_mut(),
                     gpu: gpu.as_ref(),
+                    lenses: lenses.as_deref(),
                 };
                 pending = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     keep_open(keep, false, hand, &mut ai, &edited, &deliver)
@@ -1027,7 +1019,6 @@ pub(super) fn lose_gpu(
     gpu: &mut Option<greycard_gpu::Context>,
     base: &mut Option<FrameKept>,
     shown: &mut Option<ShownTexture>,
-    last: &mut Option<Last>,
     again: bool,
 ) -> Option<Job> {
     if let Some(ctx) = gpu.take() {
@@ -1042,9 +1033,6 @@ pub(super) fn lose_gpu(
         generation: s.generation,
         turn: s.turn,
     });
-    if redo.is_some() {
-        *last = None;
-    }
     tracing::warn!(
         "the GPU device was lost; the engine's ops on the CPU from now on{}",
         if redo.is_some() {

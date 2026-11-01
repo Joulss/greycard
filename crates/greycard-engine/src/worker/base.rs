@@ -58,6 +58,12 @@ pub(super) struct FrameKept {
     /// from: the patched picture and the Detail section run on it, for
     /// the refined masks' picture to be read back from it.
     pub pre: Option<(Arc<WorkingImage>, greycard_edit::Detail)>,
+    /// The edit and the quarter turns of the last develop, and what it
+    /// left out of what the edit asked for ([`left_out_of`]): a save of
+    /// the frame makes its pictures from that develop when it is of the
+    /// edit saved, and says nothing kept when it went without.
+    pub developed_as: Option<(Edit, u8)>,
+    pub left_out: Vec<String>,
 }
 
 /// The refined masks' picture ([`greycard_render::refine::MaskPicture`])
@@ -89,6 +95,8 @@ impl FrameKept {
             on_gpu: false,
             mask_picture: None,
             pre: None,
+            developed_as: None,
+            left_out: Vec::new(),
         }
     }
 
@@ -189,14 +197,16 @@ impl FrameKept {
 }
 
 /// The window's list for `edit` on the frame `facts` describes, and
-/// where each step runs with a device `lent` or not. The window keeps
-/// no developed picture (the next develop is of another edit), and its
-/// picture before the sharpen only on the device, where it is what a
-/// sharpen move starts from; on the CPU that would be one more picture
-/// the size of the frame, held for a slider the CPU's sharpen is
-/// quick at. On the device the refined masks' picture is read back
-/// from the picture kept before the sharpen rather than tapped from
-/// one in memory, which a run there does not have.
+/// where each step runs with a device `lent` or not. On the CPU the
+/// window keeps its developed picture, which an export of the open
+/// frame and a save of its edit start from, and not its picture before
+/// the sharpen, one more picture the size of the frame held for a
+/// slider the CPU's sharpen is quick at. On the device it keeps the
+/// picture before the sharpen, which a sharpen move starts from, and
+/// its developed picture is the viewport's texture. On the device the
+/// refined masks' picture is read back from the picture kept before
+/// the sharpen rather than tapped from one in memory, which a run
+/// there does not have.
 pub(super) fn window_steps(
     edit: &Edit,
     facts: &Facts,
@@ -206,7 +216,7 @@ pub(super) fn window_steps(
     let purpose = Purpose::Viewport;
     let mut steps = stages(edit, &purpose, facts, lenses);
     steps.steps.retain(|s| match s {
-        Step::Keep(Keep::Developed) => false,
+        Step::Keep(Keep::Developed) => !lent,
         Step::Keep(Keep::PreSharpen) => lent,
         Step::Tap(Tap::MaskPicture) => !lent,
         _ => true,
@@ -241,6 +251,10 @@ pub(super) struct WorkerModels<'a> {
     pub fills: FillReport,
     /// Each learned mask not made, in words.
     pub masks: Vec<String>,
+    /// Run the retouch again over fills a kept point left unmade rather
+    /// than go on past them: an export says what each fill went
+    /// without, which only a run of the fill finds out.
+    pub run_unmade: bool,
 }
 
 impl<'a> WorkerModels<'a> {
@@ -260,6 +274,7 @@ impl<'a> WorkerModels<'a> {
             learned: LearnedReport::Off,
             fills: FillReport::default(),
             masks: Vec::new(),
+            run_unmade: false,
         }
     }
 }
@@ -336,7 +351,7 @@ impl crate::walk::Models for WorkerModels<'_> {
     }
 
     fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool {
-        self.ai.could_fill_more(retouch, picture)
+        self.run_unmade || self.ai.could_fill_more(retouch, picture)
     }
 
     fn rasters(

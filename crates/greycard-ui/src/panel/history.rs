@@ -371,7 +371,7 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     // so one left behind on the state just moved from made the next
     // read of the panel news to the history, and its save cut the
     // rows above the one clicked.
-    let develop = !edit.same_develop(&st.develop.edit);
+    let develop = !same_develop(&edit, &st.develop.edit);
     st.develop.edit = edit;
     if !develop {
         app.window().request_redraw();
@@ -390,6 +390,24 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
             turn: current_turn(st),
         });
     }
+}
+
+/// Whether `a` and `b` develop the same picture, so far as the window
+/// can tell without the frame: the sections a develop is made from, and
+/// which Detail bands the masks ask for. The rest (the light, a look,
+/// a mask's amounts) is the finish's. The worker's own test is the
+/// frame's list; this one only saves asking for a develop that would
+/// change nothing.
+fn same_develop(a: &Edit, b: &Edit) -> bool {
+    a.white_balance == b.white_balance
+        && a.noise == b.noise
+        && a.demosaic == b.demosaic
+        && a.camera == b.camera
+        && a.lens == b.lens
+        && a.retouch == b.retouch
+        && a.detail == b.detail
+        && a.sharpen == b.sharpen
+        && a.detail_wants() == b.detail_wants()
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {

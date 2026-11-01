@@ -442,7 +442,15 @@ mod tests {
     /// What the window's walk of a raw of `width` by `height` keeps under
     /// `edit` at `turn`.
     fn base(edit: &Edit, turn: u8, width: usize, height: usize) -> FrameKept {
-        FrameKept::walked(&raw(width, height), edit, turn)
+        cpu_points(FrameKept::walked(&raw(width, height), edit, turn))
+    }
+
+    /// `held` without the developed picture a walk on the CPU keeps,
+    /// which no frame left behind takes to the shelf: the sizes the
+    /// tests count are the shelf's.
+    fn cpu_points(mut held: FrameKept) -> FrameKept {
+        held.kept.take_working(Keep::Developed);
+        held
     }
 
     fn file(name: &str) -> FileKey {
@@ -530,12 +538,12 @@ mod tests {
     /// A raw's develop under the learned denoiser at `strength`, its
     /// pair kept.
     fn paired(strength: f32) -> FrameKept {
-        FrameKept::walked_with(
+        cpu_points(FrameKept::walked_with(
             &crate::walk::Input::Raw(raw(32, 24)),
             &learned(strength),
             0,
             &mut Network,
-        )
+        ))
     }
 
     /// A base shelved is taken back for its file under an edit with
@@ -965,7 +973,7 @@ mod tests {
         shelf.put(file("a"), b);
         assert_eq!(shelf.bytes(), with, "still counted, with the base");
         let b = shelf.take(&file("a"), &edit, 0, true, None).unwrap();
-        let kept = super::super::masks::kept_picture(&b, &edit).expect("kept");
+        let kept = b.mask_picture.as_ref().expect("kept").picture.clone();
         assert!(Arc::ptr_eq(&kept, &picture));
     }
 

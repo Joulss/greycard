@@ -3029,9 +3029,10 @@ mod tests {
     fn a_multi_frame_presets_words_ride_the_develop_that_lands() {
         let app = window(2);
         let (state, _worker) = state_for(&app, folder(2));
-        // A white balance, not a light control: `same_develop` reads
-        // the raw develop's own inputs, and exposure is the finish's,
-        // so only this asks the worker for a fresh one.
+        // A white balance, not a light control: the history's
+        // `same_develop` reads the raw develop's own inputs, and
+        // exposure is the finish's, so only this asks the worker for a
+        // fresh one.
         let edit = Edit {
             white_balance: WhiteBalance::Custom {
                 temperature: 3200.0,

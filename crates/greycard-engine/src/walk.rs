@@ -391,8 +391,10 @@ struct Point {
     ran: Ran,
 }
 
-/// What walks keep for the walks after them.
-#[derive(Default)]
+/// What walks keep for the walks after them. A clone shares every
+/// picture it holds, and is a walk's own to resume from and keep in
+/// without touching the original's.
+#[derive(Clone, Default)]
 pub struct Kept {
     points: Vec<Point>,
     /// The masks' bands, with the steps to the picture they were made
@@ -746,6 +748,11 @@ impl Kept {
             (Some(a), Some(b)) => same_picture(&a, &b),
             _ => false,
         }
+    }
+
+    /// Let go of the refined masks' picture: the edit refines no mask.
+    pub fn forget_mask_picture(&mut self) {
+        self.mask_picture = None;
     }
 
     /// The refined masks' picture a walk on the CPU tapped.

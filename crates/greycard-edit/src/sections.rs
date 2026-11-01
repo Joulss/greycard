@@ -638,8 +638,6 @@ mod tests {
         e.detail.enabled = true;
         e.detail.texture = -3.0;
         assert_eq!(e.detail.options().unwrap().texture, -1.0);
-        // It is part of the develop: a develop of it is another.
-        assert!(!Edit::default().same_develop(&e));
         assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
     }
 
