@@ -341,8 +341,9 @@ pub fn defringe(image: &mut WorkingImage, options: &DefringeOptions) -> Defringe
         .collect();
 
     // Double for the sum, as the reference has it: a 45 MP frame is
-    // more terms than an f32 accumulator keeps honest.
-    let mean = (deviation.par_iter().map(|&v| v as f64).sum::<f64>() / n as f64) as f32;
+    // more terms than an f32 accumulator keeps honest. In a fixed order,
+    // so the threshold does not move with how the threads shared it.
+    let mean = (super::sum::sum_f64(&deviation, |&v| v as f64) / n as f64) as f32;
     if mean <= 0.0 || !mean.is_finite() {
         return empty;
     }
@@ -382,7 +383,9 @@ pub fn defringe(image: &mut WorkingImage, options: &DefringeOptions) -> Defringe
         .for_each(|d| *d = 1.0 / (*d + mean));
     let weights = deviation;
 
-    let (replaced, before, after) = image
+    // The rows' chroma sums added in order, so the means the stats
+    // report are the same however the threads shared the rows.
+    let rows = image
         .data
         .par_chunks_mut(width * 3)
         .enumerate()
@@ -428,8 +431,10 @@ pub fn defringe(image: &mut WorkingImage, options: &DefringeOptions) -> Defringe
                 count += 1;
             }
             (count, before, after)
-        })
-        .reduce(|| (0, 0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
+        });
+    let (replaced, before, after) = super::sum::in_order(rows, (0, 0.0, 0.0), |a, b| {
+        (a.0 + b.0, a.1 + b.1, a.2 + b.2)
+    });
 
     let mean_of = |total: f64| {
         if replaced == 0 {

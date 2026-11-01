@@ -125,36 +125,35 @@ pub fn inpaint_opposed(
 
     // Chrominance offset: unclipped photosites near clipped ones, the
     // difference between what they read and what the opposed average
-    // would have guessed.
+    // would have guessed. Each row sums its own in parallel and the
+    // rows are added in order, so the offset is the same to the bit
+    // however the threads shared them.
     let lo = clips.map(|c| LOW_CLIP * c);
-    let (sums, votes) = (0..height)
-        .into_par_iter()
-        .map(|y| {
-            let mut sums = [0.0f64; 3];
-            let mut votes = [0usize; 3];
-            for x in 0..width {
-                let c = color(x, y);
-                let v = samples[y * width + x];
-                if v > lo[c] && v < clips[c] && dilated[block(x, y)][c] {
-                    let (ref_avg, _) = mosaic.refavg(x, y, c);
-                    sums[c] += f64::from(v - ref_avg);
-                    votes[c] += 1;
-                }
+    let rows = (0..height).into_par_iter().map(|y| {
+        let mut sums = [0.0f64; 3];
+        let mut votes = [0usize; 3];
+        for x in 0..width {
+            let c = color(x, y);
+            let v = samples[y * width + x];
+            if v > lo[c] && v < clips[c] && dilated[block(x, y)][c] {
+                let (ref_avg, _) = mosaic.refavg(x, y, c);
+                sums[c] += f64::from(v - ref_avg);
+                votes[c] += 1;
             }
-            (sums, votes)
-        })
-        .reduce(
-            || ([0.0f64; 3], [0usize; 3]),
-            |a, b| {
-                let mut s = a.0;
-                let mut v = a.1;
-                for c in 0..3 {
-                    s[c] += b.0[c];
-                    v[c] += b.1[c];
-                }
-                (s, v)
-            },
-        );
+        }
+        (sums, votes)
+    });
+    let (sums, votes) = super::sum::in_order(
+        rows,
+        ([0.0f64; 3], [0usize; 3]),
+        |(mut s, mut v), (row_sums, row_votes)| {
+            for c in 0..3 {
+                s[c] += row_sums[c];
+                v[c] += row_votes[c];
+            }
+            (s, v)
+        },
+    );
     for c in 0..3 {
         stats.votes[c] = votes[c];
         stats.chrominance[c] = if votes[c] > MIN_VOTES {

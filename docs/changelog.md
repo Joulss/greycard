@@ -98,6 +98,9 @@ design note behind it.
 
 ### Fixes
 
+- An export could differ by one level at the right and bottom tile
+  edges between machines or thread counts
+  ([§510](https://github.com/jessolmstead/greycard/blob/master/docs/notes/510-the-same-export-at-any-thread-count.md)).
 - The window opens inside the Dock's, the task bar's, or the panel's
   work area where the platform reports one, so a large or side Dock
   narrows it rather than putting its foot under the Dock

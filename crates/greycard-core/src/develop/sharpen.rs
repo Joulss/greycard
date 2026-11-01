@@ -318,9 +318,10 @@ pub fn sharpen_with_mask(
 }
 
 /// The mean of a plane, summed in double so a large picture does not
-/// saturate a single-precision total.
+/// saturate a single-precision total, and in a fixed order so a busy
+/// machine gets the same threshold out of it.
 fn mean(plane: &[f32]) -> f32 {
-    (plane.par_iter().map(|&v| v as f64).sum::<f64>() / plane.len() as f64) as f32
+    (super::sum::sum_f64(plane, |&v| v as f64) / plane.len() as f64) as f32
 }
 
 /// CIE L* of a luminance relative to white at one. Shared.

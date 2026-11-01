@@ -275,15 +275,47 @@ impl Scratch {
         }
     }
 
-    fn reset(&mut self) {
-        for b in [
+    /// The float buffers, in declaration order.
+    fn buffers(&mut self) -> [&mut Vec<f32>; 26] {
+        [
+            &mut self.cfa,
+            &mut self.green,
+            &mut self.delhvsqsum,
+            &mut self.dirwts0,
+            &mut self.dirwts1,
+            &mut self.vcd,
+            &mut self.hcd,
+            &mut self.vcdalt,
+            &mut self.hcdalt,
+            &mut self.cddiffsq,
             &mut self.hvwt,
             &mut self.dgrb0,
             &mut self.dgrb1,
+            &mut self.dgintv,
+            &mut self.dginth,
             &mut self.dgrb2h,
             &mut self.dgrb2v,
+            &mut self.delp,
+            &mut self.delm,
+            &mut self.dgrbsq1p,
+            &mut self.dgrbsq1m,
+            &mut self.rbm,
+            &mut self.rbp,
             &mut self.pmwt,
-        ] {
+            &mut self.rbint,
+            &mut self.nyqutest,
+        ]
+    }
+
+    /// Every buffer back to zero, as a new scratch has it. A tile cut
+    /// short by the right or the bottom edge reads a few cells past its
+    /// own extent that no pass of its own writes (the reference's loop
+    /// bounds, kept; the reference's buffers are never cleared either),
+    /// and they held what a larger tile run before on this scratch left
+    /// there. Which tile that was follows the splitting, so the frame
+    /// came out a level differently at another thread count.
+    fn reset(&mut self) {
+        for b in self.buffers() {
             b.fill(0.0);
         }
         self.nyquist.fill(0);
@@ -1020,6 +1052,126 @@ mod tests {
         (0..width * height)
             .map(|i| rgb[pattern.color_at(i / width, i % width).rgb_index().unwrap()])
             .collect()
+    }
+
+    /// A mosaic with what sends AMaZE down each of its branches: a
+    /// corner where the green sites and the others are pushed apart (a
+    /// strong chroma offset on the Bayer lattice), smooth gradients,
+    /// noise, and a clipped patch.
+    fn busy(width: usize, height: usize, pattern: &CfaPattern) -> Vec<f32> {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        (0..width * height)
+            .map(|i| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let noise = (state >> 40) as f32 / (1u64 << 24) as f32;
+                let (y, x) = (i / width, i % width);
+                let c = pattern.color_at(y, x).rgb_index().unwrap() as f32;
+                let fine = if (x + y) % 2 == 0 { 0.15 } else { -0.15 };
+                let v = 0.35 + 0.2 * (x as f32 / 9.0).sin() + 0.05 * c + 0.1 * noise;
+                let v = if x < width / 3 && y < height / 3 {
+                    v + fine
+                } else {
+                    v
+                };
+                if (width / 2..width / 2 + 40).contains(&x)
+                    && (height / 2..height / 2 + 30).contains(&y)
+                {
+                    1.3
+                } else {
+                    v
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_tile_does_not_read_what_the_last_tile_left_in_its_scratch() {
+        // A tile run on a scratch full of anything must come out as on
+        // a new one: the strict form of the test below, reaching the
+        // cells a full tile over-reads too, which no tile writes. Sizes
+        // that cut the last row and column of tiles short, and one that
+        // does not.
+        let pattern = bayer("RGGB");
+        for (width, height) in [(300usize, 270usize), (256, 256), (420, 333)] {
+            let samples = busy(width, height, &pattern);
+            let image = Image {
+                samples: &samples,
+                width,
+                height,
+                pattern: &pattern,
+                ceiling: 1.3,
+            };
+            let step = (TS - 2 * MARGIN) as isize;
+            let first = -(MARGIN as isize);
+            let tops = (0..).map(|k| first + k * step);
+            for top in tops.take_while(|&t| t + (MARGIN as isize) < height as isize) {
+                let lefts = (0..).map(|k| first + k * step);
+                for left in lefts.take_while(|&l| l + (MARGIN as isize) < width as isize) {
+                    let fresh = Scratch::new().run(&image, top, left);
+                    let mut used = Scratch::new();
+                    for b in used.buffers() {
+                        b.fill(0.37);
+                    }
+                    used.nyquist.fill(1);
+                    used.nyquist2.fill(1);
+                    let after = used.run(&image, top, left);
+                    let differ = fresh
+                        .data
+                        .iter()
+                        .zip(&after.data)
+                        .filter(|(a, b)| a.to_bits() != b.to_bits())
+                        .count();
+                    assert_eq!(differ, 0, "{width}x{height}, the tile at ({top}, {left})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_short_tile_after_a_full_one_comes_out_as_on_a_new_scratch() {
+        // The bug as it ran: a tile cut short by the right or the bottom
+        // edge reads cells past its own extent, which a full tile run
+        // before it on the same scratch had written. Which tile that was
+        // is the splitting's choice, so the short tile's output moved
+        // with the thread count. White noise, at a size where these two
+        // pairs showed it: 158 samples and 4.
+        let pattern = bayer("RGGB");
+        let (width, height) = (420, 333);
+        let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ 1;
+        let samples: Vec<f32> = (0..width * height)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                0.05 + 0.9 * (state >> 40) as f32 / (1u64 << 24) as f32
+            })
+            .collect();
+        let image = Image {
+            samples: &samples,
+            width,
+            height,
+            pattern: &pattern,
+            ceiling: 1.0,
+        };
+        let interior = TS - 2 * MARGIN;
+        // Cut by the bottom, then cut by the right.
+        for (before, short) in [((-16, 112), (240, -16)), ((112, -16), (112, 368))] {
+            let fresh = Scratch::new().run(&image, short.0, short.1);
+            assert!(fresh.rows < interior || fresh.cols < interior);
+            let mut used = Scratch::new();
+            let full = used.run(&image, before.0, before.1);
+            assert_eq!((full.rows, full.cols), (interior, interior));
+            let after = used.run(&image, short.0, short.1);
+            let differ = fresh
+                .data
+                .iter()
+                .zip(&after.data)
+                .filter(|(a, b)| a.to_bits() != b.to_bits())
+                .count();
+            assert_eq!(differ, 0, "the tile at {short:?} after {before:?}");
+        }
     }
 
     #[test]

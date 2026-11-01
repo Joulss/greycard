@@ -28,6 +28,7 @@ pub mod retouch;
 pub mod segments;
 pub mod sharpen;
 pub mod sites;
+pub(crate) mod sum;
 pub mod vng4;
 pub mod xtrans;
 

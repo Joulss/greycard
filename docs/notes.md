@@ -522,3 +522,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§507. Structure, a wider and softer local contrast](notes/507-structure-a-wider-softer-local-contrast.md) (2026-11-01)
 - [§508. The fp16 denoisers on Core ML](notes/508-the-fp16-denoisers-on-core-ml.md) (2026-11-01)
 - [§509. The engine, part three: the viewport crate](notes/509-the-engine-part-three-the-viewport-crate.md) (2026-11-01)
+- [§510. The same export at any thread count](notes/510-the-same-export-at-any-thread-count.md) (2026-11-01)

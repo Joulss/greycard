@@ -589,12 +589,6 @@ touches.
       library, now that the worker's frame develop is the engine's
       (§471, §506); explicit imports in place of the crate root's
       glob imports as each file moves
-- [ ] An export that differs by a bit under load: one bar run beside
-      a release build moved some 3800 samples of one frame by one
-      16-bit level; the suspects are rayon parallel sums whose
-      reduction order follows work-stealing (the sharpen's plane
-      mean, the defringe's), cast to f32. Sum in a fixed order and
-      rerun the bar under load (§506)
 - [ ] A one-page architecture document: each crate, what it may
       depend on, and which crate runs each pipeline stage, with the
       layer rule beside CLAUDE.md's core rule; §5 predates ai,

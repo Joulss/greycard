@@ -250,13 +250,18 @@ fn apply(
         Some(m) => m.chunks_mut(w).map(Some).collect(),
         None => (0..h).map(|_| None).collect(),
     };
-    let (sum, min) = image
-        .data
-        .par_chunks_mut(w * 3)
-        .zip(map_rows.into_par_iter())
-        .enumerate()
-        .map(|(y, (row, map_row))| clear_row(row, map_row, y, model, &columns))
-        .reduce(|| (0.0, f32::INFINITY), |x, y| (x.0 + y.0, x.1.min(y.1)));
+    // The rows' sums added in order, so the mean the log reports is the
+    // same however the threads shared the rows.
+    let (sum, min) = super::sum::in_order(
+        image
+            .data
+            .par_chunks_mut(w * 3)
+            .zip(map_rows.into_par_iter())
+            .enumerate()
+            .map(|(y, (row, map_row))| clear_row(row, map_row, y, model, &columns)),
+        (0.0, f32::INFINITY),
+        |x, y| (x.0 + y.0, x.1.min(y.1)),
+    );
     (model.stats((sum / (w * h) as f64) as f32, min), map)
 }
 
