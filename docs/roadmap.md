@@ -434,6 +434,14 @@ ask for first.
       and Portrait differ from each other (issue #49, 0.8.1; §122
       applies the matrix and hue map only); the tone curve stays a
       Look choice. After 0.9.0
+- [ ] A lens picked by hand when the file names none: the database's
+      lenses for the body offered in LENS, kept in the edit, and
+      Adobe's LCP files read from the profiles folder beside the DCPs
+      (distortion, vignetting, and chromatic aberration as a model;
+      the generator's output for a lens the database lacks)
+      (discussion 59, 2026-10-31)
+- [ ] A status line and a cancel while Stack bursts reads a big
+      root's previews, a minute a card and longer for Fuji
 - [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
       that project under the GPL, so they can be hosted by us as the
       Sky model is and fetched into the profile directory from the
