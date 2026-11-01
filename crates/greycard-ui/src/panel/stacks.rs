@@ -1061,6 +1061,79 @@ mod tests {
         teardown(s);
     }
 
+    /// A stack another machine made in this shoot, carried beside its
+    /// frames, comes in with the pass over the folder and shows in the
+    /// grid; this window's own is carried there in turn.
+    #[test]
+    fn a_stack_carried_from_another_machine_shows_in_the_grid() {
+        let mut s = setup("carried");
+        let shoot = s.files[0].parent().unwrap().to_path_buf();
+        let refs: Vec<Reference> = [3, 0, 1]
+            .iter()
+            .map(|&i| {
+                let row = s.writer.by_path(&s.files[i]).unwrap().unwrap();
+                Reference {
+                    hash: row.hash,
+                    hint: crate::collections::hint_of(&row.path),
+                    version: None,
+                }
+            })
+            .collect();
+        let mut theirs = greycard_library::stacks::Stack::new(refs);
+        theirs.stamp(1, "elsewhere");
+        greycard_library::carry::put(
+            &shoot,
+            &greycard_library::carry::Item::Stack(theirs.clone()),
+        )
+        .unwrap();
+        let report = s.writer.index_folder(&shoot, &mut |_| {}).unwrap();
+        assert_eq!(report.sets.len(), 1, "{report:?}");
+        crate::panel::carried::landed(&s.state, &s.app, &report.sets);
+        land_sent(&s.state, &s.app, &s.worker);
+        assert_eq!(rows(&s.app), ["x2.tif", "x3.tif [3]", "x4.tif"]);
+        assert_eq!(on_disk(&s), [["x3.tif", "x0.tif", "x1.tif"]]);
+        // A pass that finds the copy as it was brings nothing again.
+        let again = s.writer.index_folder(&shoot, &mut |_| {}).unwrap();
+        assert!(again.sets.is_empty());
+
+        // With a carrier, this window's stack goes beside its frames.
+        {
+            let mut st = s.state.borrow_mut();
+            let library = s.dir.join("index").join("library.sqlite");
+            st.views
+                .library
+                .roots
+                .save(&greycard_library::Roots::path_beside(&library))
+                .unwrap();
+            crate::panel::carried::attach(&mut st, &library);
+        }
+        let made = {
+            let mut st = s.state.borrow_mut();
+            let refs: Vec<Reference> = [2, 4]
+                .iter()
+                .map(|&i| {
+                    let row = s.writer.by_path(&s.files[i]).unwrap().unwrap();
+                    Reference {
+                        hash: row.hash,
+                        hint: crate::collections::hint_of(&row.path),
+                        version: None,
+                    }
+                })
+                .collect();
+            st.views.stacks.make(refs)
+        };
+        let names: Vec<String> = greycard_library::carry::read_folder(&shoot)
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert!(names.contains(&format!("{made}.stack.json")), "{names:?}");
+        assert!(
+            names.contains(&format!("{}.stack.json", theirs.id)),
+            "{names:?}"
+        );
+        teardown(s);
+    }
+
     /// A version is a member by its own: on top, it shows beside its
     /// file's own; its file's own stacked under it is behind it.
     #[test]

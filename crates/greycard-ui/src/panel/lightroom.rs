@@ -565,12 +565,16 @@ fn took_up(state: &Rc<Shared>, app: &App) {
         let Some(path) = st.views.index_path.clone() else {
             return;
         };
+        let carrying = st.views.collections.carrier.is_some();
         st.views.collections =
             crate::collections::Store::load(crate::collections::Store::dir_beside(&path));
         crate::panel::collections::show(&st, app);
         st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
             &crate::collections::Store::dir_beside(&path),
         ));
+        if carrying {
+            crate::panel::carried::attach(&mut st, &path);
+        }
         st.lightroom
             .report
             .as_ref()

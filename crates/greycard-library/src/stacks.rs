@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::carry::Lineage;
 use crate::collections::{Reference, Stamp, new_id, now, stamp_of, write_atomic};
 
 /// The folder the stacks are kept in, under the collections'.
@@ -42,6 +43,9 @@ pub struct Stack {
     /// Shown with its members in the list, not as its top alone.
     pub open: bool,
     pub refs: Vec<Reference>,
+    /// Its revisions, for the copy carried beside its frames
+    /// (`carry`); whether it is open is no part of them.
+    pub lineage: Lineage,
 }
 
 /// A stack's file as it is written.
@@ -54,6 +58,8 @@ pub struct StackFile {
     pub open: bool,
     #[serde(default)]
     pub refs: Vec<Reference>,
+    #[serde(default, skip_serializing_if = "Lineage::is_empty")]
+    pub lineage: Lineage,
 }
 
 impl Stack {
@@ -64,15 +70,17 @@ impl Stack {
             made: now(),
             open: false,
             refs,
+            lineage: Lineage::default(),
         }
     }
 
-    fn to_file(&self) -> StackFile {
+    pub(crate) fn to_file(&self) -> StackFile {
         StackFile {
             version: VERSION,
             made: self.made,
             open: self.open,
             refs: self.refs.clone(),
+            lineage: self.lineage.clone(),
         }
     }
 
@@ -135,12 +143,15 @@ pub fn read_folder(dir: &Path, up_to: u32) -> Folder {
                 if let Some(stamp) = stamp_of(&path) {
                     folder.stamps.insert(id.to_string(), stamp);
                 }
-                folder.list.push(Stack {
+                let mut stack = Stack {
                     id: id.to_string(),
                     made: f.made,
                     open: f.open,
                     refs: f.refs,
-                });
+                    lineage: f.lineage,
+                };
+                stack.seed();
+                folder.list.push(stack);
             }
             Ok(f) => log::warn!(
                 "stack {}: version {} is a later build's; left alone",
@@ -365,6 +376,8 @@ mod tests {
             r("a", "/shoot/a.CR3", None),
             r("a", "/shoot/a.CR3", Some("v1")),
         ]);
+        // A file read is given its first revision; one written has it.
+        s.seed();
         s.write(&dir).unwrap();
         let text = std::fs::read_to_string(file_of(&dir, &s.id)).unwrap();
         assert!(!text.contains("\"open\""), "{text}");
@@ -405,6 +418,7 @@ mod tests {
         let dir = scratch("old");
         let mut c = crate::collections::Collection::new("Picks");
         c.add(&[("h".into(), PathBuf::from("/shoot/a.CR3"), None)]);
+        c.seed();
         c.write(&dir).unwrap();
         let before = crate::collections::read_folder(&dir, crate::collections::PLAIN_VERSION);
         Stack::new(vec![

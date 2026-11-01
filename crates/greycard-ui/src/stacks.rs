@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use greycard_library::Rehash;
+use greycard_library::carry::{Gone, Item};
 use greycard_library::collections::{Reference, Stamp, hint_of, stamp_of};
 pub(crate) use greycard_library::stacks::Stack;
 use greycard_library::stacks::{VERSION, file_of, read_folder, read_stack};
@@ -62,6 +63,9 @@ pub(crate) struct Store {
     /// A folder listed from the disk, to its path as the index keys it,
     /// asked once a session.
     canon: RefCell<HashMap<PathBuf, PathBuf>>,
+    /// The writer of the copies carried beside the frames, the
+    /// collections' own; none for a session that carries nothing.
+    pub(crate) carrier: Option<std::rc::Rc<crate::carried::Carrier>>,
 }
 
 impl Store {
@@ -153,19 +157,89 @@ impl Store {
                 }
             }
         }
-        let Some(s) = self.stack(id) else {
+        let Some(s) = self.stack_mut(id) else {
             return;
         };
+        s.stamp(crate::carried::now(), crate::carried::host());
+        let s = s.clone();
         match s.write(&dir) {
             Ok(stamp) => {
+                if let Some(c) = &self.carrier {
+                    c.put(Item::Stack(s));
+                }
                 self.stamps.insert(id.to_string(), stamp);
             }
             Err(e) => tracing::warn!("stack not saved to {}: {e}", file.display()),
         }
     }
 
+    /// Every stack carried as it stands, as the collections' are.
+    pub(crate) fn carry_all(&self) {
+        if let Some(c) = &self.carrier {
+            for s in &self.list {
+                c.put(Item::Stack(s.clone()));
+            }
+        }
+    }
+
+    /// A stack carried here from another machine, or joined with one,
+    /// taken as ours and written: added, or put in place of ours, open
+    /// as ours was. A frame stays in one stack, the one made first (by
+    /// the order every machine judges stacks in): a frame another stack
+    /// here holds leaves the later of the two, and a stack left with
+    /// fewer than two goes, as on the machine that made it once it meets
+    /// the other.
+    pub(crate) fn take(&mut self, mut stack: Stack) {
+        let key = |s: &Stack| (s.made, s.id.clone());
+        let theirs: HashSet<Frame> = stack.refs.iter().map(frame_of).collect();
+        let mut changed = BTreeSet::new();
+        let mut lost: HashSet<Frame> = HashSet::new();
+        for o in &mut self.list {
+            if o.id == stack.id {
+                continue;
+            }
+            let shared: HashSet<Frame> = o
+                .refs
+                .iter()
+                .map(frame_of)
+                .filter(|f| theirs.contains(f))
+                .collect();
+            if shared.is_empty() {
+                continue;
+            }
+            if key(o) < key(&stack) {
+                lost.extend(shared);
+            } else {
+                o.refs.retain(|r| !shared.contains(&frame_of(r)));
+                changed.insert(o.id.clone());
+            }
+        }
+        stack.refs.retain(|r| !lost.contains(&frame_of(r)));
+        if stack.refs.len() < 2 {
+            if self.stack(&stack.id).is_some() {
+                self.delete(&stack.id);
+            }
+        } else {
+            match self.stack_mut(&stack.id) {
+                Some(ours) => {
+                    stack.open = ours.open;
+                    *ours = stack.clone();
+                }
+                None => {
+                    self.list.push(stack.clone());
+                    greycard_library::stacks::sort(&mut self.list);
+                }
+            }
+            self.save(&stack.id);
+        }
+        self.settle(&changed);
+    }
+
     /// Stack `id` gone, with its file.
     fn delete(&mut self, id: &str) {
+        if let (Some(c), Some(s)) = (&self.carrier, self.stack(id)) {
+            c.bury(Gone::of(&Item::Stack(s.clone())));
+        }
         self.list.retain(|s| s.id != id);
         self.stamps.remove(id);
         if let Some(dir) = &self.dir {

@@ -901,6 +901,9 @@ pub struct Report {
     pub canceled: usize,
     /// The folders written to, for the indexer.
     pub folders: Vec<PathBuf>,
+    /// Collections and stacks carried between a folder and its other
+    /// side (`greycard_library::carry::across`).
+    pub sets: usize,
 }
 
 /// Remove the temporaries a run before left in `folder`: an hour since
@@ -1117,6 +1120,45 @@ pub fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
             What::TheirsNewer { .. } => report.theirs_newer.push(item.frame.clone()),
             What::Taken { .. } => report.taken.push(item.frame.clone()),
             What::Unreadable(why) => report.failed.push((item.frame.clone(), why.clone())),
+        }
+    }
+    // The collections and stacks carried beside the frames go with
+    // them, folder by folder, as the sidecars do.
+    if plan.ask.sidecars && report.canceled == 0 {
+        let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for item in &plan.items {
+            let other = match &item.what {
+                What::Copy { to, .. } => to,
+                What::Sidecars { there, .. }
+                | What::Same { there, .. }
+                | What::TheirsNewer { there } => there,
+                _ => continue,
+            };
+            if let (Some(a), Some(b)) = (item.frame.parent(), other.parent()) {
+                let pair = (a.to_path_buf(), b.to_path_buf());
+                if !pairs.contains(&pair) {
+                    pairs.push(pair);
+                }
+            }
+        }
+        for (a, b) in pairs {
+            (hooks.beat)();
+            let done = greycard_library::carry::across(&a, &b);
+            if done.apart > 0 {
+                tracing::info!(
+                    "archive: {} carried sets in {} went their own ways; joined when read",
+                    done.apart,
+                    b.display()
+                );
+            }
+            if done.written > 0 {
+                report.sets += done.written;
+                for f in [a, b] {
+                    if !written.contains(&f) {
+                        written.push(f);
+                    }
+                }
+            }
         }
     }
     // A sidecar under the hidden folder is its frame's folder's.

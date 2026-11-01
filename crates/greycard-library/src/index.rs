@@ -140,6 +140,10 @@ pub struct Report {
     /// Folders a tree pass did not go into: symbolic links, which
     /// could lead back up the tree.
     pub skipped: Vec<PathBuf>,
+    /// The collections, smart collections, and stacks carried in the
+    /// folders passed over (`carry`), each file once on a connection
+    /// until it changes: what the editor joins into its own.
+    pub sets: Vec<crate::carry::File>,
     /// The pass was asked to stop and did, between two batches: what
     /// it wrote is written, and nothing was marked missing, since the
     /// files it did not reach were not looked for.
@@ -182,6 +186,7 @@ impl Report {
         self.errors.extend(other.errors);
         self.unreadable.extend(other.unreadable);
         self.skipped.extend(other.skipped);
+        self.sets.extend(other.sets);
         self.stopped |= other.stopped;
     }
 }
@@ -289,9 +294,21 @@ pub fn is_indexed_path(path: &Path) -> bool {
 }
 
 /// The files of one folder, sorted, not descending.
+#[cfg(test)]
 fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    list_folder_marked(dir).map(|(files, _)| files)
+}
+
+/// [`list_folder`], and whether the sidecars' folder is in it: where it
+/// is not, there are no carried sets to look for.
+fn list_folder_marked(dir: &Path) -> std::io::Result<(Vec<PathBuf>, bool)> {
+    let mut hidden = false;
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
+        .inspect(|e| {
+            hidden |= e.file_name() == greycard_edit::SIDECAR_FOLDER
+                && e.file_type().is_ok_and(|t| t.is_dir());
+        })
         .filter(|e| is_indexed_path(&e.path()))
         // Regular files, or links to them: a named pipe's read would
         // never return. The entry's own type, from the listing, so a
@@ -305,7 +322,7 @@ fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         .map(|e| e.path())
         .collect();
     files.sort();
-    Ok(files)
+    Ok((files, hidden))
 }
 
 /// Whether a folder has no entries at all, hidden ones included.
@@ -457,10 +474,10 @@ impl Library {
         if !exists && !has_rows_under(self.conn_mut(), &folder)? {
             return Err(no_such_folder(&dir));
         }
-        let files = if exists {
-            read_far(far, &dir, list_folder)?
+        let (files, hidden) = if exists {
+            read_far(far, &dir, list_folder_marked)?
         } else {
-            Vec::new()
+            (Vec::new(), false)
         };
         if exists
             && files.is_empty()
@@ -501,15 +518,53 @@ impl Library {
         // One half of a rename: this folder gone with its files, or
         // files come live in it.
         if !exists && !report.stopped && !gone.is_empty() {
-            let pairs = self.renames.gone(vec![(dir, gone)], Instant::now());
+            let pairs = self.renames.gone(vec![(dir.clone(), gone)], Instant::now());
             report.moved_folders.extend(pairs);
         } else if exists && report.added + report.returned + report.moved > 0 {
             let came = live_files(self.conn_mut(), &folder, Some(&live_before))?;
             report
                 .moved_folders
-                .extend(self.renames.live(dir, came, Instant::now()));
+                .extend(self.renames.live(dir.clone(), came, Instant::now()));
+        }
+        if hidden && !report.stopped {
+            report.sets = self.read_sets(&dir, far);
         }
         Ok(report)
+    }
+
+    /// The carried sets in `dir` not read on this connection at the
+    /// size and time they have now: only those are read. One that
+    /// cannot be read is said in the log and tried again by the next
+    /// pass.
+    fn read_sets(&mut self, dir: &Path, far: Option<&Far>) -> Vec<crate::carry::File> {
+        let sets = crate::carry::sets_dir(dir);
+        let names = match read_far(far, &sets, crate::carry::list_stamped) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(e) => {
+                log::warn!("carried sets {}: {e}", sets.display());
+                return Vec::new();
+            }
+        };
+        let mut found = Vec::new();
+        for (name, stamp) in names {
+            let path = sets.join(&name);
+            if self.sets_seen.get(&path) == Some(&stamp) {
+                continue;
+            }
+            match read_far(far, &path, |p| std::fs::read(p)) {
+                Ok(bytes) => {
+                    self.sets_seen.insert(path, stamp);
+                    found.push(crate::carry::File {
+                        folder: dir.to_path_buf(),
+                        name,
+                        bytes,
+                    });
+                }
+                Err(e) => log::warn!("carried set {}: {e}", path.display()),
+            }
+        }
+        found
     }
 
     /// Index a folder and every folder under it, hidden ones (a
@@ -2966,6 +3021,34 @@ pub(crate) mod tests {
         fn drop(&mut self) {
             crate::set_lens_database(None);
         }
+    }
+
+    #[test]
+    fn a_pass_reports_a_carried_set_once_until_it_changes() {
+        let dir = scratch("carried-sets");
+        let (r5, _r6, _a7) = shoot(&dir);
+        let mut c = crate::collections::Collection::new("Picks");
+        c.add(&[(hash::hash_file(&r5).unwrap(), r5.clone(), None)]);
+        c.stamp(1, "laptop");
+        let item = crate::carry::Item::Collection(c.clone());
+        crate::carry::put(&dir, &item).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        let first = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(first.sets.len(), 1, "{first:?}");
+        assert_eq!(first.added, 3, "the sets' folder holds no frame");
+        assert!(lib.index_tree(&dir, &mut quiet()).unwrap().sets.is_empty());
+        c.name = "Renamed".into();
+        c.stamp(2, "laptop");
+        crate::carry::put(&dir, &crate::carry::Item::Collection(c)).unwrap();
+        let again = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(again.sets.len(), 1);
+        let Ok(crate::carry::Parsed::Item(crate::carry::Item::Collection(back))) =
+            again.sets[0].parse()
+        else {
+            panic!("{:?}", again.sets);
+        };
+        assert_eq!(back.name, "Renamed");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

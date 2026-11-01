@@ -34,6 +34,7 @@ use greycard_edit::meta::Meta;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
 pub mod bursts;
+pub mod carry;
 pub mod collections;
 pub mod export_record;
 mod far;
@@ -554,6 +555,10 @@ pub struct Library {
     /// the two halves of a rename met by separate passes find each
     /// other ([`index::Renames`]).
     renames: index::Renames,
+    /// Each carried set's file a pass has read on this connection, by
+    /// its size and time then: a pass reports a file again only when
+    /// they changed ([`Report::sets`]).
+    sets_seen: HashMap<PathBuf, carry::Seen>,
 }
 
 /// What a file's EXIF says that a filter can ask about.
@@ -1192,6 +1197,7 @@ impl Library {
                     read_only: false,
                     jpegs_apart: false,
                     renames: index::Renames::default(),
+                    sets_seen: HashMap::new(),
                     network: None,
                 })
             }
@@ -1298,6 +1304,7 @@ impl Library {
                     read_only,
                     jpegs_apart: false,
                     renames: index::Renames::default(),
+                    sets_seen: HashMap::new(),
                     network: None,
                 });
             }
@@ -1397,6 +1404,7 @@ impl Library {
             read_only,
             jpegs_apart: false,
             renames: index::Renames::default(),
+            sets_seen: HashMap::new(),
             network: None,
         })
     }

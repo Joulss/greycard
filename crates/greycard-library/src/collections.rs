@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::carry::Lineage;
 use crate::filter::Saved;
 
 /// The folder the collections are kept in, beside the library.
@@ -53,8 +54,8 @@ pub const HELD_OUT_VERSION: u32 = 3;
 /// The shape a file without a version in it is written at.
 pub const PLAIN_VERSION: u32 = 1;
 
-const SMART_END: &str = ".smart.json";
-const PLAIN_END: &str = ".json";
+pub(crate) const SMART_END: &str = ".smart.json";
+pub(crate) const PLAIN_END: &str = ".json";
 
 /// One frame of a collection: the picture by its content hash, the
 /// version of it, and the path it was last seen at.
@@ -101,6 +102,9 @@ pub struct Collection {
     pub made: u64,
     /// The frames, in the collection's own order.
     pub refs: Vec<Reference>,
+    /// Its revisions, for the copies carried beside its frames
+    /// (`carry`).
+    pub lineage: Lineage,
 }
 
 /// A smart collection: the filter bar's question under a name.
@@ -115,6 +119,7 @@ pub struct Smart {
     pub filter: Saved,
     /// The one root it looks under; none for all of them.
     pub root: Option<PathBuf>,
+    pub lineage: Lineage,
 }
 
 /// A collection's file as it is written.
@@ -128,20 +133,27 @@ pub struct CollectionFile {
     pub made: u64,
     #[serde(default)]
     pub refs: Vec<Reference>,
+    /// Left out while there is none, so a build that keeps none writes
+    /// the file it always wrote.
+    #[serde(default, skip_serializing_if = "Lineage::is_empty")]
+    pub lineage: Lineage,
 }
 
+/// A smart collection's file as it is written.
 #[derive(Serialize, Deserialize)]
-struct SmartFile {
-    version: u32,
-    name: String,
+pub(crate) struct SmartFile {
+    pub(crate) version: u32,
+    pub(crate) name: String,
     #[serde(default)]
-    set: String,
+    pub(crate) set: String,
     #[serde(default)]
-    made: u64,
+    pub(crate) made: u64,
     #[serde(default)]
-    filter: Saved,
+    pub(crate) filter: Saved,
     #[serde(default)]
-    root: Option<String>,
+    pub(crate) root: Option<String>,
+    #[serde(default, skip_serializing_if = "Lineage::is_empty")]
+    pub(crate) lineage: Lineage,
 }
 
 /// What an add did: frames added at the end, and members whose hint
@@ -216,6 +228,7 @@ impl Collection {
             set,
             made: now(),
             refs: Vec::new(),
+            lineage: Lineage::default(),
         }
     }
 
@@ -370,7 +383,7 @@ impl Collection {
 
     /// The shape its file is written at: 2 when a reference names a
     /// version, else 1, so a build that knows no versions reads it.
-    fn file_version(&self) -> u32 {
+    pub(crate) fn file_version(&self) -> u32 {
         if self.refs.iter().any(|r| r.version.is_some()) {
             PICTURE_VERSION
         } else {
@@ -385,6 +398,7 @@ impl Collection {
             set: self.set.clone(),
             made: self.made,
             refs: self.refs.clone(),
+            lineage: self.lineage.clone(),
         }
     }
 
@@ -409,10 +423,11 @@ impl Smart {
             made: now(),
             filter,
             root,
+            lineage: Lineage::default(),
         }
     }
 
-    fn to_file(&self) -> SmartFile {
+    pub(crate) fn to_file(&self) -> SmartFile {
         let f = &self.filter;
         let held_out =
             !(f.not_flags.is_empty() && f.not_labels.is_empty() && f.not_facets.is_empty());
@@ -427,6 +442,7 @@ impl Smart {
             made: self.made,
             filter: self.filter.clone(),
             root: self.root.as_deref().map(hint_of),
+            lineage: self.lineage.clone(),
         }
     }
 
@@ -463,12 +479,16 @@ pub fn file_of(dir: &Path, id: &str, smart: bool) -> PathBuf {
 
 /// Write `text` to `path` through a part file beside it, renamed over
 /// it, so a crash mid-write never leaves half a file. The part file
-/// carries the process's id, so two editors never write the same one.
+/// carries the process's id and a count of its own, so two editors, or
+/// two writes of one (a late one and its retry), never write the same
+/// one.
 pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }
-    let part = path.with_extension(format!("json.{}.part", std::process::id()));
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let part = path.with_extension(format!("json.{}-{n}.part", std::process::id()));
     // On the disk before it takes the old one's name: a crash before
     // the filesystem flushes could otherwise keep the rename and lose
     // the data, an empty file in place of the one there was. The part
@@ -517,14 +537,17 @@ pub fn read_folder(dir: &Path, up_to: u32) -> Folder {
                     if let Some(stamp) = stamp_of(&path) {
                         folder.stamps.insert(id.to_string(), stamp);
                     }
-                    folder.smart.push(Smart {
+                    let mut smart = Smart {
                         id: id.to_string(),
                         name: f.name,
                         set: f.set,
                         made: f.made,
                         filter: f.filter,
                         root: f.root.map(PathBuf::from),
-                    })
+                        lineage: f.lineage,
+                    };
+                    smart.seed();
+                    folder.smart.push(smart)
                 }
                 Ok(f) => log::warn!(
                     "collection {}: version {} is a later build's; left alone",
@@ -539,13 +562,16 @@ pub fn read_folder(dir: &Path, up_to: u32) -> Folder {
                     if let Some(stamp) = stamp_of(&path) {
                         folder.stamps.insert(id.to_string(), stamp);
                     }
-                    folder.list.push(Collection {
+                    let mut c = Collection {
                         id: id.to_string(),
                         name: f.name,
                         set: f.set,
                         made: f.made,
                         refs: f.refs,
-                    })
+                        lineage: f.lineage,
+                    };
+                    c.seed();
+                    folder.list.push(c)
                 }
                 Ok(f) => log::warn!(
                     "collection {}: version {} is a later build's; left alone",

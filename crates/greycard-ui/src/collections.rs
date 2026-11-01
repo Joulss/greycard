@@ -45,6 +45,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use greycard_library::carry::Item;
 use greycard_library::collections::stamp_of;
 use greycard_library::{Library, Rehash, RowMeta};
 
@@ -88,6 +89,9 @@ pub struct Store {
     /// joined against, so only the other side's own additions and
     /// removals are taken.
     bases: std::collections::HashMap<String, HashSet<(String, Option<String>)>>,
+    /// The writer of the copies carried beside the frames; none for a
+    /// session that carries nothing.
+    pub carrier: Option<std::rc::Rc<crate::carried::Carrier>>,
 }
 
 impl Store {
@@ -258,6 +262,12 @@ impl Store {
         let Some(dir) = self.dir.clone() else {
             return;
         };
+        let (at, host) = (crate::carried::now(), crate::carried::host());
+        if let Some(c) = self.collection_mut(id) {
+            c.stamp(at, host);
+        } else if let Some(s) = self.smart.iter_mut().find(|s| s.id == id) {
+            s.stamp(at, host);
+        }
         let written = if let Some(c) = self.collection(id) {
             c.write(&dir)
         } else if let Some(s) = self.smart(id) {
@@ -272,6 +282,7 @@ impl Store {
                     let base = c.refs.iter().map(Reference::owned_pair).collect();
                     self.bases.insert(id.to_string(), base);
                 }
+                self.carry(id);
             }
             Err(e) => tracing::warn!(
                 "collection not saved to {}: {e}",
@@ -280,8 +291,67 @@ impl Store {
         }
     }
 
+    /// `id` as it is carried; none when it is not here.
+    pub fn item(&self, id: &str) -> Option<Item> {
+        self.collection(id)
+            .cloned()
+            .map(Item::Collection)
+            .or_else(|| self.smart(id).cloned().map(Item::Smart))
+    }
+
+    /// `id`'s copies beside its frames written as it stands.
+    fn carry(&self, id: &str) {
+        if let (Some(carrier), Some(item)) = (&self.carrier, self.item(id)) {
+            carrier.put(item);
+        }
+    }
+
+    /// Every one carried as it stands: the copies of a set made before
+    /// the carry, or whose write failed, written; the rest pass at no
+    /// cost.
+    pub fn carry_all(&self) {
+        for id in self
+            .list
+            .iter()
+            .map(|c| &c.id)
+            .chain(self.smart.iter().map(|s| &s.id))
+        {
+            self.carry(id);
+        }
+    }
+
+    /// A collection or smart collection carried here from another
+    /// machine, or joined with one, taken as ours and written: added,
+    /// or put in place of ours. A smart collection keeps the folder
+    /// ours looks under. Its id.
+    pub fn take(&mut self, item: Item) -> Option<String> {
+        let id = item.id().to_string();
+        match item {
+            Item::Collection(c) => match self.collection_mut(&id) {
+                Some(ours) => *ours = c,
+                None => self.list.push(c),
+            },
+            Item::Smart(mut s) => match self.smart.iter_mut().find(|o| o.id == id) {
+                Some(ours) => {
+                    if ours.root.is_some() == s.root.is_some() {
+                        s.root = ours.root.clone();
+                    }
+                    *ours = s;
+                }
+                None => self.smart.push(s),
+            },
+            Item::Stack(_) => return None,
+        }
+        self.sort();
+        self.save(&id);
+        Some(id)
+    }
+
     /// The collection or smart collection `id` gone, with its file.
     pub fn delete(&mut self, id: &str) -> bool {
+        if let (Some(carrier), Some(item)) = (&self.carrier, self.item(id)) {
+            carrier.bury(greycard_library::carry::Gone::of(&item));
+        }
         let smart = self.smart(id).is_some();
         let before = self.list.len() + self.smart.len();
         self.list.retain(|c| c.id != id);
@@ -884,8 +954,9 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("broken.json"), "{ not json").unwrap();
         let back = Store::load(dir.clone());
-        assert_eq!(back.list, vec![c]);
-        assert_eq!(back.smart, vec![s.clone()]);
+        // As the store holds them, each stamped with its first revision.
+        assert_eq!(back.list, store.list);
+        assert_eq!(back.smart, store.smart);
         assert_eq!(back.smart[0].filter.filter(), filter);
         assert_eq!(
             std::fs::read_to_string(dir.join("broken.json")).unwrap(),
@@ -1563,7 +1634,7 @@ mod tests {
             "the file's own: no key"
         );
         assert_eq!(v["refs"][1]["version"], "0123456789abcdef");
-        assert_eq!(Store::load(dir.clone()).list, vec![c.clone()]);
+        assert_eq!(Store::load(dir.clone()).list, store.list);
         // An older build: reads up to 1, and leaves the file alone.
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(Store::load_reading(dir.clone(), 1).list.is_empty());
@@ -1598,7 +1669,7 @@ mod tests {
         let file = dir.join(format!("{id}.smart.json"));
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
         assert_eq!(v["version"], 3);
-        assert_eq!(Store::load(dir.clone()).smart, vec![s.clone()]);
+        assert_eq!(Store::load(dir.clone()).smart, store.smart);
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(Store::load_reading(dir.clone(), 2).smart.is_empty());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);

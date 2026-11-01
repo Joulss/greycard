@@ -462,10 +462,10 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
-- [ ] Collections carried across machines: the collections file is per
-      machine, so a set gathered on the laptop is not on the desktop;
-      carry it through the archive as the sidecars are (§243), and the
-      stacks with it (§334)
+- [ ] Carried sets' leftovers (§493): a write that times out but
+      finishes later leaves a copy no record lists; `.gone.json` and
+      stale part files never cleaned; a destination stack misses a
+      frame renamed on one side until Back up carries the rename
 - [ ] A stack member moved outside every root is not found again
       (§334, §486)
 - [ ] The Lightroom mapper, after §342: the scales the fit proposes and

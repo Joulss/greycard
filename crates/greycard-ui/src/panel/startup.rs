@@ -841,6 +841,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
                 &crate::collections::Store::dir_beside(path),
             ));
+            // Both carried beside their frames, for another machine.
+            if !cli.no_sidecars {
+                crate::panel::carried::attach(&mut st, path);
+            }
         }
         st.views.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
         if cli.roots.is_empty() {
@@ -1764,6 +1768,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     save_edit(&mut st, edit);
                 }
                 save_choices(&app, &st, panes);
+                // The collections' and stacks' copies asked for, a
+                // moment's wait: one held up goes at the next launch.
+                if let Some(c) = &st.views.collections.carrier {
+                    c.wait(crate::carried::QUIT_WAIT);
+                }
             }));
         });
         keep_choices(&app, &state, cli.hide_panels)

@@ -4,6 +4,7 @@
 //! names these at the paths it always has.
 
 pub mod archive;
+pub mod carried;
 pub mod collections;
 pub mod delete;
 pub mod display;

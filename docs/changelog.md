@@ -37,6 +37,10 @@ design note behind it.
 
 ### Library
 
+- Collections, smart collections, and stacks travel with their frames
+  through a backup or an archive and join on another machine, a
+  conflict kept as both
+  ([§493](https://github.com/jessolmstead/greycard/blob/master/docs/notes/493-collections-and-stacks-carried-beside-their-frames.md)).
 - A first index pass reads a raw's metadata alone, about 200 KB a
   file instead of its head and tail or the whole file, so a network
   root indexes in a quarter of the time
