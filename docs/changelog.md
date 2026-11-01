@@ -50,6 +50,10 @@ design note behind it.
 
 ### Fixes
 
+- The status line says "preparing..." while a model loads, and the
+  remove's model starts loading when the Fill is taken in hand where
+  the machine keeps it open
+  ([§490](https://github.com/jessolmstead/greycard/blob/master/docs/notes/490-a-word-while-a-model-loads.md)).
 - The last three runs' logs are kept as greycard-ui-1.log to -3.log,
   names GitHub's issue form takes
   ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).

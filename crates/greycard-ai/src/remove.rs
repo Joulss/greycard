@@ -74,6 +74,7 @@ use crate::registry::{File, REMOVE, REMOVE_FAST};
 use crate::runtime::{self, Error, Provider, Result};
 use crate::store::Store;
 
+mod held;
 mod middle;
 mod mottle;
 mod scale;
@@ -1228,11 +1229,11 @@ fn run1(session: &mut Session, shape: [usize; 4], data: &[f32]) -> Result<Vec<f3
     Ok(v)
 }
 
-/// The three sessions kept open, for one size.
+/// The VAE's sessions kept open, for one size; the UNet is held in
+/// [`UNET`].
 struct Resident {
     size: usize,
     encoder: Option<Session>,
-    unet: Option<Session>,
     decoder: Option<Session>,
 }
 
@@ -1240,9 +1241,93 @@ impl Resident {
     fn slot(&mut self, part: Part) -> &mut Option<Session> {
         match part {
             Part::Encoder => &mut self.encoder,
-            Part::Unet => &mut self.unet,
             Part::Decoder => &mut self.decoder,
+            Part::Unet => unreachable!("the UNet is held in UNET, never here"),
         }
+    }
+}
+
+/// The UNet held open between removals where the [`Memory`] mode keeps
+/// it, one a process, whichever [`Remove`] runs it: so the one opened
+/// ahead of the first removal ([`prepare`]) is the one it runs.
+static UNET: held::Slot<Session> = held::Slot::new();
+
+/// The side the UNet is opened at ahead of a removal ([`prepare`]),
+/// before its window is known: the larger, which every window past it
+/// is also taken down to.
+pub const PREPARED: usize = MAX;
+
+/// The UNet graph a removal by `steps` runs at `size`.
+fn unet_path(store: &Store, steps: Steps, size: usize) -> std::path::PathBuf {
+    match steps {
+        Steps::Lcm4 => store
+            .dir(&REMOVE_FAST)
+            .join(format!("unet-lcm-{size}.onnx")),
+        Steps::Euler25 => store.path(&REMOVE, file(&format!("unet-{size}.onnx"))),
+    }
+}
+
+/// A session of one of the remove's graphs, on WebGPU. No warm-up:
+/// with WebGPU the only provider there is nothing to fall through to,
+/// and a warm-up of the UNet is a step's time on every open.
+fn open_graph(path: &std::path::Path) -> Result<Session> {
+    let loaded = runtime::open(
+        path,
+        GraphOptimizationLevel::Level3,
+        &[Provider::WebGpu],
+        None,
+        |_| Ok(()),
+    )?;
+    Ok(loaded.session)
+}
+
+/// The UNet a removal by `steps` will run, opened now on a thread of
+/// its own and held for it, so its load, tens of seconds on a Mac's
+/// WebGPU, overlaps the drawing of the hole: for the moment a Fill
+/// the remove makes is taken in hand. Only where the [`Memory`] mode
+/// keeps the UNet open anyway: one at a time, it would sit beside the
+/// encoder at the removal's peak. Nothing when the store lacks the
+/// files, the runtime cannot be had, or it is held or opening already.
+pub fn prepare(store: &Store, steps: Steps) {
+    if !store.have(&REMOVE) || (steps == Steps::Lcm4 && !store.have(&REMOVE_FAST)) {
+        return;
+    }
+    if runtime::status().is_err() {
+        return;
+    }
+    let path = unet_path(store, steps, PREPARED);
+    if UNET.holds(&path) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("remove-prepare".into())
+        .spawn(move || {
+            let resident = std::env::var("GREYCARD_REMOVE_RESIDENT").ok();
+            let tiled = std::env::var("GREYCARD_REMOVE_TILED").ok();
+            let policy = policy(Some(Machine::here()), resident.as_deref(), tiled.as_deref());
+            if !policy.memory.keeps(Part::Unet) {
+                log::debug!(
+                    "remove: the UNet not opened ahead ({}: one session at a time)",
+                    policy.why
+                );
+                return;
+            }
+            let t = Instant::now();
+            match UNET.prepare(&path, || open_graph(&path)) {
+                Ok(true) => log::info!(
+                    "remove: the {} UNet opened ahead of the removal in {:.2}s",
+                    match steps {
+                        Steps::Euler25 => "25-step",
+                        Steps::Lcm4 => "4-step",
+                    },
+                    t.elapsed().as_secs_f64()
+                ),
+                Ok(false) => {}
+                Err(e) => log::warn!("remove: the UNet could not be opened ahead: {e}"),
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("remove: no thread to open the UNet ahead on: {e}");
     }
 }
 
@@ -1347,7 +1432,11 @@ impl Remove {
             return Err(Error::Missing(REMOVE_FAST.name));
         }
         if steps != self.steps {
-            let held = self.resident.as_mut().and_then(|r| r.unet.take()).is_some();
+            let wanted: Vec<_> = SIZES
+                .iter()
+                .map(|&size| unet_path(&self.store, steps, size))
+                .collect();
+            let held = UNET.let_go_unless(|p| wanted.iter().any(|w| w == p));
             if held {
                 log::info!(
                     "remove: {} from the next removal: the {} UNet let go, 5.1 GB",
@@ -1538,26 +1627,13 @@ impl Remove {
         })
     }
 
-    fn open(&self, part: Part, size: usize) -> Result<Session> {
-        let path = if part == Part::Unet && self.steps == Steps::Lcm4 {
-            self.store
-                .dir(&REMOVE_FAST)
-                .join(format!("unet-lcm-{size}.onnx"))
+    fn path(&self, part: Part, size: usize) -> std::path::PathBuf {
+        if part == Part::Unet {
+            unet_path(&self.store, self.steps, size)
         } else {
             self.store
                 .path(&REMOVE, Self::graph(part, self.graph_size(part, size)))
-        };
-        // No warm-up: with WebGPU the only provider there is nothing
-        // to fall through to, and a warm-up of the UNet is a step's
-        // time on every open.
-        let loaded = runtime::open(
-            &path,
-            GraphOptimizationLevel::Level3,
-            &[Provider::WebGpu],
-            None,
-            |_| Ok(()),
-        )?;
-        Ok(loaded.session)
+        }
     }
 
     /// `f` on the session for `part` at `size` (the [`TILE`] graph
@@ -1572,6 +1648,14 @@ impl Remove {
         f: impl FnOnce(&mut Session) -> Result<T>,
     ) -> Result<(T, f64)> {
         let keep = self.memory.keeps(part);
+        let path = self.path(part, size);
+        if part == Part::Unet && keep {
+            let t = Instant::now();
+            let mut lease = UNET.acquire(&path, || open_graph(&path))?;
+            let load = t.elapsed().as_secs_f64();
+            let out = f(lease.value());
+            return Ok((out?, load));
+        }
         let kept = if keep {
             if self.resident.as_ref().is_some_and(|r| r.size != size) {
                 self.resident = None;
@@ -1579,7 +1663,6 @@ impl Remove {
             let r = self.resident.get_or_insert(Resident {
                 size,
                 encoder: None,
-                unet: None,
                 decoder: None,
             });
             r.slot(part).take()
@@ -1589,7 +1672,7 @@ impl Remove {
         let t = Instant::now();
         let mut session = match kept {
             Some(s) => s,
-            None => self.open(part, size)?,
+            None => open_graph(&path)?,
         };
         let load = t.elapsed().as_secs_f64();
         let out = f(&mut session);

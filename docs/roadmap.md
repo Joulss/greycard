@@ -17,8 +17,10 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
-      them in 1.5 to 2.6 s from a warm cache. Time the editor's own
-      first fill, cold, before taking this off
+      them in 1.5 to 2.6 s from a warm cache. The window says
+      "preparing..." while it loads and the load starts when the Fill
+      is taken in hand (§490). Time the editor's own first fill, cold,
+      before taking this off
 - [ ] The Library's camera thumbnails and the previews behind them
       are still made for the whole root at its first open, about a
       quarter of a CPU second a cold frame, an hour on a 12515-file
@@ -235,11 +237,6 @@ seconds.
       47 s (pixls, 2026-10-28). Waits on the UNet and VAE exported
       for the ML Program compiler at fp16; the Subject Conv's parse
       fix carries over, its Neural Engine compile time may too (§477)
-- [ ] A word in the window while a model loads or compiles for the
-      first time, since a tester gave up on a 47 s load with nothing
-      shown (pixls, 2026-10-28); on an M5 the remove's UNet now loads
-      in about 2 s on the bench and Sky compiles in about 1 (§466,
-      §482), an M1 and other machines unmeasured
 - [ ] The non-local means' symmetric-offset halving, §128's leftover:
       the means are the larger half of the hybrid denoise again (about
       4.4 s of the 45 MP denoise at six threads against the chain's

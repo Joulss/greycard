@@ -1673,6 +1673,12 @@ export component App inherits Window {
     callback develop-changed();
 
     in property <string> status;
+    /// A model loading or compiling for longer than a moment: the
+    /// status line says so over its own words until the model is
+    /// ready or has failed, and then says them again.
+    in property <bool> preparing;
+    /// The status line as shown.
+    out property <string> status-shown: root.preparing ? "preparing..." : root.status;
     /// What waits to go to an archive ("3 edits waiting for Archive"),
     /// beside the status while there is any; a click on it tries now.
     in property <string> sync-note;
@@ -2996,10 +3002,10 @@ export component App inherits Window {
                 level-end(a, b, c, d) => { root.level-end(a, b, c, d); }
                 guide-stroke(a, b, c, d) => { root.guide-stroke(a, b, c, d); }
                 guide-kept: root.guide-kept;
-                status: root.status;
+                status: root.status-shown;
                 sync-note: root.sync-note;
                 sync-retry => { root.sync-retry(); }
-                placeholder-status: root.placeholder-status;
+                placeholder-status: root.preparing ? "" : root.placeholder-status;
                 canvas-choice <=> root.canvas-choice;
                 canvas-colors: root.canvas-colors;
                 busy: root.busy || root.export-running || root.import-running;
@@ -4044,7 +4050,7 @@ export component App inherits Window {
         // Said here only with the pane, which says it under Import,
         // put away.
         import-line: root.left-hidden ? root.import-status : "";
-        status-line: root.status;
+        status-line: root.status-shown;
         sync-note: root.sync-note;
         sync-retry => { root.sync-retry(); }
         focus-keys => { keys.focus(); }

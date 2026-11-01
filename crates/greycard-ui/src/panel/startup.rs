@@ -931,6 +931,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().develop.guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
+    crate::preparing::install(&app);
     // The keys as the user bound them, once the handler and the sheet
     // are wired.
     crate::keys::load(&app, &remembered.keys);

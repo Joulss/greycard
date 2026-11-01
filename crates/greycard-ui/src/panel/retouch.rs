@@ -151,6 +151,33 @@ pub(crate) fn fill_chosen(st: &mut State, app: &App, name: &str) -> bool {
     true
 }
 
+/// The remove's UNet opened ahead, on a thread of its own, for a Fill
+/// it will make: called the moment the Fill is taken in hand, or its
+/// choice changed with it in hand, so the load overlaps the drawing.
+/// Nothing for LaMa's Fill, with no Fill in hand, or where the remove
+/// keeps one session at a time (`greycard_ai::remove::prepare`).
+fn prepare_remove(st: &State) {
+    use greycard_ai::remove::Steps;
+    if st.develop.retouching != Some(RetouchMethod::Fill) {
+        return;
+    }
+    let steps = match drawn_fill(st) {
+        FillChoice::Fast => Steps::Lcm4,
+        FillChoice::Best => Steps::Euler25,
+        FillChoice::Patch => return,
+    };
+    let Some(store) = st.develop.store.as_ref() else {
+        return;
+    };
+    #[cfg(test)]
+    {
+        let _ = store;
+        tests::PREPARED.with(|p| p.borrow_mut().push(steps));
+    }
+    #[cfg(not(test))]
+    greycard_ai::remove::prepare(store, steps);
+}
+
 /// Whether `patch` is a Fill the generative remove made.
 fn made_by_remove(st: &State, patch: &Patch) -> bool {
     patch.method == RetouchMethod::Fill
@@ -240,6 +267,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if offer {
                 st.sheets.remove_offered = true;
                 offer_model(&mut st, &app, &greycard_ai::REMOVE, false);
+            } else {
+                prepare_remove(&st);
             }
         });
     }
@@ -250,8 +279,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
+            let before = drawn_fill(&st);
             let changed = fill_chosen(&mut st, &app, &name);
             show_patches(&st, &st.develop.edit, &app);
+            if drawn_fill(&st) != before {
+                prepare_remove(&st);
+            }
             if changed {
                 develop_soon(&mut st, state.clone(), worker.clone(), app.as_weak());
             }
@@ -388,6 +421,12 @@ mod tests {
     use crate::testing::{press, retouch_state, window};
     use crate::*;
     use slint::platform::Key;
+
+    thread_local! {
+        /// The UNets [`super::prepare_remove`] would have opened ahead.
+        pub(super) static PREPARED: std::cell::RefCell<Vec<greycard_ai::remove::Steps>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
 
     /// A develop landing for the state developing now, with which
     /// engine made each Fill.
@@ -747,6 +786,72 @@ mod tests {
         app2.invoke_fill_chosen("Patch".into());
         assert_eq!(app2.get_fill_choice(), "Patch");
         assert_eq!(state2.borrow().develop.fill_choice, Some(FillChoice::Patch));
+
+        crate::ai::set_test_webgpu(None);
+        crate::ai::set_test_unified(None);
+        drop(state2);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The remove's UNet is opened ahead the moment its Fill is taken
+    /// in hand, and for the other remove when the choice moves with
+    /// the Fill in hand; never for Heal or Clone, LaMa's Fill, a Fill
+    /// put down, a stroke drawn, or a machine without WebGPU.
+    #[test]
+    fn the_unet_is_opened_ahead_when_the_fill_is_taken_in_hand_and_only_then() {
+        use greycard_ai::remove::Steps;
+        let dir = crate::testing::scratch_dir("fill-ahead");
+        let store = greycard_ai::Store::at(&dir);
+        for m in [
+            &greycard_ai::FILL,
+            &greycard_ai::REMOVE,
+            &greycard_ai::REMOVE_FAST,
+        ] {
+            for f in m.files {
+                let path = store.path(m, f);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::File::create(&path)
+                    .unwrap()
+                    .set_len(f.bytes)
+                    .unwrap();
+            }
+        }
+        crate::ai::set_test_webgpu(Some(true));
+        crate::ai::set_test_unified(Some(false));
+        let taken = || PREPARED.with(|p| std::mem::take(&mut *p.borrow_mut()));
+        taken();
+
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().develop.store = Some(store.clone());
+        app.invoke_retouch_toggled("Heal".into());
+        app.invoke_retouch_toggled("Clone".into());
+        assert_eq!(taken(), [], "not for Heal or Clone");
+        app.invoke_retouch_toggled("Fill".into());
+        assert_eq!(taken(), [Steps::Euler25], "Best, in hand");
+        app.invoke_place_pressed(10.0, 10.0, false);
+        app.invoke_place_released();
+        assert_eq!(taken(), [], "not again for a stroke");
+        app.invoke_patch_changed(-1);
+        app.invoke_fill_chosen("Fast".into());
+        assert_eq!(taken(), [Steps::Lcm4], "the choice moved in hand");
+        app.invoke_fill_chosen("Fast".into());
+        app.invoke_fill_chosen("Patch".into());
+        assert_eq!(taken(), [], "not for the same choice, or LaMa's");
+        app.invoke_retouch_toggled("Fill".into());
+        assert_eq!(app.get_retouch_mode(), "");
+        app.invoke_fill_chosen("Best".into());
+        assert_eq!(taken(), [], "not with the Fill put down");
+        app.invoke_retouch_toggled("Fill".into());
+        assert_eq!(taken(), [Steps::Euler25]);
+
+        crate::ai::set_test_webgpu(Some(false));
+        let app2 = window(1);
+        let (state2, _worker2) = retouch_state(&app2);
+        state2.borrow_mut().develop.store = Some(store.clone());
+        app2.invoke_retouch_toggled("Fill".into());
+        assert_eq!(app2.get_retouch_mode(), "Fill");
+        assert_eq!(taken(), [], "not without WebGPU");
 
         crate::ai::set_test_webgpu(None);
         crate::ai::set_test_unified(None);

@@ -201,10 +201,14 @@ Settings sheet's Editing category has it too. Before you choose, it is
 Best, or Fast on a machine whose GPU shares its memory, where Best takes
 a minute on a recent Mac and up to four on an M1, and Fast a quarter of
 that; the first fill after a launch adds the model's load, a minute or
-so on an M1. Choosing one whose model is not downloaded offers the
-download; choose it again once it is here. On a machine without a GPU
-the two removes are greyed, and the tooltip says why. A Fill drawn
-before a model arrived keeps what made it until you choose again.
+so on an M1. Where the GPU shares 16 GB or more, the load starts the
+moment you take **Fill** in hand, so it runs while you draw. The status
+line says "preparing..." while it lasts, as it does whenever a model
+takes more than a moment to load. Choosing one whose model is not
+downloaded offers the download; choose it again once it is here. On a
+machine without a GPU the two removes are greyed, and the tooltip says
+why. A Fill drawn before a model arrived keeps what made it until you
+choose again.
 
 The generative remove is a second download, 5.5 GB under the CreativeML
 Open RAIL++-M license, offered once the first time you choose **Fill**

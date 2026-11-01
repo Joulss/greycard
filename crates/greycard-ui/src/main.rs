@@ -38,6 +38,7 @@ mod measure_lightroom;
 mod owners;
 mod panel;
 mod placeholder;
+mod preparing;
 mod render;
 mod report;
 mod roots;

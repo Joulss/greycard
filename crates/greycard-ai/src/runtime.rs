@@ -862,6 +862,83 @@ pub fn open(
     open_fixed(path, level, providers, remember, &[], warm)
 }
 
+/// A model's sessions being opened, counted across threads, and who
+/// hears when the first starts and the last ends ([`on_loading`]).
+struct Loads {
+    state: std::sync::Mutex<(usize, Option<Listener>)>,
+}
+
+type Listener = std::sync::Arc<dyn Fn(bool) + Send + Sync>;
+
+impl Loads {
+    const fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new((0, None)),
+        }
+    }
+
+    fn listen(&self, listener: Listener) {
+        self.lock().1 = Some(listener);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, (usize, Option<Listener>)> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// One more under way; the listener told under the lock, so its
+    /// starts and ends arrive in the order they happened.
+    fn begin(&'static self) -> Loading {
+        let mut s = self.lock();
+        s.0 += 1;
+        if s.0 == 1
+            && let Some(l) = &s.1
+        {
+            l(true);
+        }
+        Loading { loads: self }
+    }
+
+    fn end(&self) {
+        let mut s = self.lock();
+        s.0 = s.0.saturating_sub(1);
+        if s.0 == 0
+            && let Some(l) = &s.1
+        {
+            l(false);
+        }
+    }
+}
+
+static LOADS: Loads = Loads::new();
+
+/// A load under way, from [`loading`] until dropped.
+#[must_use = "the load ends when this is dropped"]
+pub struct Loading {
+    loads: &'static Loads,
+}
+
+impl Drop for Loading {
+    fn drop(&mut self) {
+        self.loads.end();
+    }
+}
+
+/// Marks a load under way until the answer is dropped: every [`open`]
+/// holds one from the start, the runtime's own load included, to its
+/// session warmed or its failure.
+pub fn loading() -> Loading {
+    LOADS.begin()
+}
+
+/// `listener` told `true` when a model starts loading with none other
+/// under way, and `false` when the last under way is ready or has
+/// failed, on the loading thread: for a window's word while a model
+/// loads or compiles. One listener a process; a later call replaces
+/// it. It must not load a model itself.
+pub fn on_loading(listener: impl Fn(bool) + Send + Sync + 'static) {
+    LOADS.listen(std::sync::Arc::new(listener));
+}
+
 /// [`open`], with the model's free dimensions named in `fixed` set to
 /// their sizes on Core ML, which compiles a static graph for the
 /// Neural Engine only when every shape is known at load. The other
@@ -876,6 +953,7 @@ pub fn open_fixed(
     fixed: &[(&str, i64)],
     mut warm: impl FnMut(&mut Session) -> ort::Result<()>,
 ) -> Result<Loaded> {
+    let _loading = loading();
     if let Err(why) = init() {
         return Err(Error::Unavailable(why.clone()));
     }
@@ -2042,5 +2120,28 @@ mod tests {
         // or written for it even with somewhere to write to.
         assert!(!record::path(&dir).exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A fake loader's loads, two of them overlapping: the listener
+    /// hears the start once, at the first, and the end once, at the
+    /// last; a load after that starts it again.
+    #[test]
+    fn the_listener_hears_the_first_start_and_the_last_end() {
+        let loads: &'static Loads = Box::leak(Box::new(Loads::new()));
+        let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        {
+            let heard = heard.clone();
+            loads.listen(std::sync::Arc::new(move |on| {
+                heard.lock().unwrap().push(on)
+            }));
+        }
+        let first = loads.begin();
+        let second = std::thread::spawn(move || loads.begin()).join().unwrap();
+        drop(first);
+        assert_eq!(*heard.lock().unwrap(), [true]);
+        std::thread::spawn(move || drop(second)).join().unwrap();
+        assert_eq!(*heard.lock().unwrap(), [true, false]);
+        drop(loads.begin());
+        assert_eq!(*heard.lock().unwrap(), [true, false, true, false]);
     }
 }
