@@ -15,12 +15,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A model's first run under WebGPU on a Mac has sat for minutes
-      with no word in the window (2026-10-25), and a second wait came
-      on the next frame; neither names the model. Core ML's share was
-      Sky's weights written as text, 27 s cold and 4.5 s a launch,
-      now 1.1 s and 0.23 s (§466). Name the model, then compile in the
-      background or say "preparing" while it runs
+- [ ] The remove's UNet loads on WebGPU with no word in the window:
+      27 s for Fast's and 40 s for Best's on the M5, at a frame's
+      first fill (§477). Core ML's share of this bug was Sky, now 1.1 s
+      cold (§466). Load it in the background or say "preparing"
 - [ ] The Library's camera thumbnails and the previews behind them
       are still made for the whole root at its first open, about a
       quarter of a CPU second a cold frame, an hour on a 12515-file
@@ -219,19 +217,20 @@ seconds.
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
       GPU (§378, §386)
-- [ ] The Subject model back on Core ML, kept off it since the ML
-      Program compile fails on a dilated Conv ("Required param 'pad'
-      is missing") after 2 min 22 s (§441); waits on that Conv
-      exported with explicit pads, or an ONNX Runtime that takes it
-- [ ] The denoisers exported at fp16 as well, so Core ML can place
-      them on the Neural Engine: at fp32 every op falls to the CPU
-      when the Neural Engine is asked for (M5, 2026-10-25)
+- [ ] The Subject model back on Core ML: explicit zero pads get it
+      through the parser, but the Neural Engine's compile ran past
+      25 min and the GPU alone is four times slower than WebGPU
+      (§477); waits on a compile that finishes in seconds
+- [ ] The denoisers at fp16 on the Neural Engine: 0.08 s a tile
+      against fp32's 0.21 s on the M5, a first compile of 112 s, and
+      answers up to 2.6e-3 off (§477); waits on a comparison on real
+      raws and a compile done before the first denoise
 - [ ] The generative remove on Core ML: on WebGPU over Metal a UNet
       call is 2.5 s on an M5 and 8.7 s on an M1, so Best is 71 s and
       230 s warm, Fast 18 s and 70 s, and the first load 17 s and
       47 s (pixls, 2026-10-28). Waits on the UNet and VAE exported
-      for the ML Program compiler at fp16, and on the Subject Conv
-      fix above, which is the same compiler
+      for the ML Program compiler at fp16; the Subject Conv's parse
+      fix carries over, its Neural Engine compile time may too (§477)
 - [ ] A word in the window while a model loads or compiles for the
       first time, since a tester gave up on a 47 s load with nothing
       shown (pixls, 2026-10-28); one with the first-run compile bug
