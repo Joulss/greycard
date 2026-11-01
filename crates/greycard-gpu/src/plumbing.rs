@@ -76,6 +76,21 @@ pub(crate) fn layout_at(
     })
 }
 
+/// A compute pipeline for `entry`, its workgroup memory left as it
+/// comes rather than zeroed first.
+///
+/// wgpu zeroes a kernel's `var<workgroup>` arrays at the start of every
+/// workgroup unless told not to. On Metal that clearing cost more than
+/// the kernels: the local contrast's column pass, whose array is 2304
+/// floats, took 144 ms at 24 MP with it and 3.5 ms without, and the
+/// whole local contrast went from 0.98 s to 0.08 s on an M5 (§480).
+/// It is safe only because every kernel here writes each element of
+/// its workgroup memory before any invocation reads it, behind a
+/// barrier: the box passes load their whole window first, the
+/// reductions have every invocation store its slot, and a flag is set
+/// by one invocation ahead of `workgroupUniformLoad`. A new kernel
+/// must keep to that; one that reads an element it did not write gets
+/// whatever the last workgroup left there.
 pub(crate) fn pipeline(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
@@ -87,7 +102,10 @@ pub(crate) fn pipeline(
         layout: Some(layout),
         module,
         entry_point: Some(entry),
-        compilation_options: Default::default(),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: false,
+            ..Default::default()
+        },
         cache: None,
     })
 }

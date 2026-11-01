@@ -190,7 +190,9 @@ Look section's job.
       screenshot tests. The §377 handler's dispatch is the machinery
 - [ ] The Slint pin (§377) dropped once a release carries the logical
       size fix, as femtovg's is; the muda context menu's positions on
-      Windows and macOS carry the same mistake and are not in the patch
+      Windows may carry the same mistake and are not in the patch. On
+      a Mac at a Scale of 150% the menus open at the pointer
+      (2026-10-31), whatever the code's reading said
 - [ ] The sort shown as a labeled control: today it is the arrows at
       the end of the filter's row, and a tester who found a shoot in
       reverse order found no way to turn it. Asked 2026-10-18
@@ -217,9 +219,10 @@ seconds.
 - [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
       of a fresh base's 1.9 s on eight threads, now the lens is on the
       GPU (§378, §386); on an M5, 2.8 s of 6.5 to 7.0 s at 102 MP (§479)
-- [ ] A Clarity or Dehaze move at 102 MP takes 3.9 s and 2.4 s on an
-      M5, most of it the capture sharpen's 20 iterations run again
-      after the move, and a readback in its tile indices (§479)
+- [ ] A Clarity or Dehaze move at 102 MP takes 2.2 s and 2.0 s on an
+      M5, nearly all of it the capture sharpen's 20 iterations run
+      again after the move (§479, §480). Sharpen at the viewport's
+      scale while a slider is held, or only what is on screen
 - [ ] The Subject model back on Core ML: explicit zero pads get it
       through the parser, but the Neural Engine's compile ran past
       25 min and the GPU alone is four times slower than WebGPU

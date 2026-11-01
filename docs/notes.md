@@ -492,3 +492,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§477. Subject and the denoisers on the Neural Engine, measured](notes/477-subject-and-the-denoisers-on-the-neural-engine-measured.md) (2026-10-31)
 - [§478. The engine, part two: the worker below the window](notes/478-the-engine-part-two-the-worker-below-the-window.md) (2026-10-31)
 - [§479. The editor timed on an M5](notes/479-the-editor-timed-on-an-m5.md) (2026-10-31)
+- [§480. Workgroup memory left unzeroed](notes/480-workgroup-memory-left-unzeroed.md) (2026-10-31)

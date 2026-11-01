@@ -37,6 +37,10 @@ design note behind it.
 - The Keys sheet reaches its last row, and the camera match sheet's
   group list its last group, by the wheel
   ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).
+- On a Mac, Texture and Clarity themselves run about ten times
+  quicker, and a Clarity move on a 102 MP frame shows in 2.2 s
+  rather than 3.9 s
+  ([§480](https://github.com/jessolmstead/greycard/blob/master/docs/notes/480-workgroup-memory-left-unzeroed.md)).
 - On a Mac, the first Sky mask no longer waits about 27 seconds for
   Core ML, nor 4.5 at each launch after; the Sky model and the
   learned denoiser open in under half a second once they have run
