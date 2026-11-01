@@ -220,24 +220,21 @@ mod tests {
     #[test]
     fn the_launch_is_built_per_platform() {
         let file = Path::new("/p/IMG_0001-edit.greycard.tif");
+        // Handed over absolute, which on Windows puts the current
+        // drive before a rooted path.
+        let handed = std::path::absolute(file).unwrap();
+        let handed = handed.to_str().unwrap();
         let mac = launch(
             Path::new("/Applications/Photoshop.app"),
             file,
             Platform::Mac,
         );
         assert_eq!(mac.program, Path::new("open"));
-        assert_eq!(
-            args(&mac),
-            [
-                "-a",
-                "/Applications/Photoshop.app",
-                "/p/IMG_0001-edit.greycard.tif"
-            ]
-        );
+        assert_eq!(args(&mac), ["-a", "/Applications/Photoshop.app", handed]);
         // A plain program chosen on a Mac is run.
         let tool = launch(Path::new("/usr/local/bin/tool"), file, Platform::Mac);
         assert_eq!(tool.program, Path::new("/usr/local/bin/tool"));
-        assert_eq!(args(&tool), ["/p/IMG_0001-edit.greycard.tif"]);
+        assert_eq!(args(&tool), [handed]);
 
         let exe = Path::new(r"C:\Program Files\Topaz\Topaz.exe");
         let win = launch(exe, file, Platform::Windows);
@@ -249,18 +246,14 @@ mod tests {
         assert_eq!(gio.program, Path::new("gio"));
         assert_eq!(
             args(&gio),
-            [
-                "launch",
-                "/usr/share/applications/gimp.desktop",
-                "/p/IMG_0001-edit.greycard.tif"
-            ]
+            ["launch", "/usr/share/applications/gimp.desktop", handed]
         );
         let run = launch(Path::new("/usr/bin/gimp"), file, Platform::Linux);
         assert_eq!(run.program, Path::new("/usr/bin/gimp"));
-        assert_eq!(args(&run), ["/p/IMG_0001-edit.greycard.tif"]);
+        assert_eq!(args(&run), [handed]);
         let back = fallback(file);
         assert_eq!(back.program, Path::new("xdg-open"));
-        assert_eq!(args(&back), ["/p/IMG_0001-edit.greycard.tif"]);
+        assert_eq!(args(&back), [handed]);
     }
 
     #[test]
