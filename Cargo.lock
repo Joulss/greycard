@@ -2186,13 +2186,13 @@ dependencies = [
  "greycard-match",
  "greycard-render",
  "greycard-slint",
+ "greycard-viewport",
  "half",
  "i-slint-backend-testing",
  "image",
  "lcms2",
  "libc",
  "log",
- "naga",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
@@ -2215,6 +2215,25 @@ dependencies = [
  "winresource",
  "x11rb",
  "zbus",
+]
+
+[[package]]
+name = "greycard-viewport"
+version = "0.9.1"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "greycard-core",
+ "greycard-edit",
+ "greycard-gpu",
+ "greycard-render",
+ "half",
+ "image",
+ "lcms2",
+ "naga",
+ "pollster",
+ "rayon",
+ "tracing",
 ]
 
 [[package]]

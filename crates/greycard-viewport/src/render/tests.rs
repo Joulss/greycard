@@ -1,10 +1,10 @@
 use super::scopes::ANALYSIS_WIDTH;
 use super::*;
-use crate::finish::Baked;
 use greycard_core::image::WorkingImage;
 use greycard_edit::brush::{RASTER_WIDTH, WIDE_RASTER_WIDTH};
 use greycard_edit::mask::{Component, Mode, Shape};
 use greycard_edit::{Look, Mask};
+use greycard_render::finish::Baked;
 use rayon::prelude::*;
 
 /// Both shaders parse and validate. Nothing else in `cargo test`
@@ -28,6 +28,43 @@ fn the_shaders_parse_and_validate() {
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+    }
+}
+
+/// A literal of the viewport shader's, `const NAME: f32 = value;` at
+/// the start of a line.
+fn shader_literal(name: &str) -> f32 {
+    let shader = include_str!("../viewport.wgsl");
+    let prefix = format!("const {name}: f32 = ");
+    let line = shader.lines().find(|l| l.starts_with(&prefix)).expect(name);
+    line.trim_start_matches(&prefix)
+        .trim_end_matches(';')
+        .parse()
+        .unwrap()
+}
+
+/// The shader's AgX white, past which everything is white, is the
+/// render crate's to a millionth.
+#[test]
+fn the_shaders_agx_white_past_is_the_cpus() {
+    let value = greycard_render::agx::WHITE_PAST;
+    let literal = shader_literal("AGX_WHITE_PAST");
+    eprintln!("AGX_WHITE_PAST: cpu {value:.8}, shader {literal:.8}");
+    assert!(
+        (literal - value).abs() <= 2e-6 * value.abs().max(1.0),
+        "shader AGX_WHITE_PAST {literal} against {value}"
+    );
+}
+
+/// The shader's fade of the color shifts at black is the render
+/// crate's exactly.
+#[test]
+fn the_shaders_shift_fade_at_black_is_the_cpus() {
+    for (name, value) in [
+        ("SHADE_BLACK", greycard_render::finish::SHADE_BLACK),
+        ("SHADE_LIGHT", greycard_render::finish::SHADE_LIGHT),
+    ] {
+        assert_eq!(shader_literal(name), value, "the shader's {name}");
     }
 }
 
@@ -100,9 +137,9 @@ fn gpu_against_cpu(
     exposure: f32,
     covered: bool,
 ) -> (f32, f32) {
-    use crate::finish::{local_ab, sample};
+    use greycard_render::finish::{local_ab, sample};
     let (w, h) = (image.width, image.height);
-    let halves = crate::worker::Halves::from_image(image, None);
+    let halves = Halves::from_image(image, None);
     let seen = WorkingImage {
         width: w,
         height: h,
@@ -301,7 +338,7 @@ fn the_weighted_scopes_are_the_cpus() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let mut view = View::blank();
     view.center = (w as f32 / 2.0, h as f32 / 2.0);
     view.plane = (w as f32, h as f32);
@@ -433,7 +470,7 @@ fn the_color_under_the_pointer_is_in_the_scopes_bins() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    let halves = crate::worker::Halves::from_image(&image, None);
+    let halves = Halves::from_image(&image, None);
     renderer.upload(&halves);
     assert_eq!(
         renderer.analyzed_at(0.5, 0.5, 0.0),
@@ -589,7 +626,7 @@ fn a_lost_scopes_read_back_is_made_again() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let mut view = View::blank();
     view.center = (w as f32 / 2.0, h as f32 / 2.0);
     view.plane = (w as f32, h as f32);
@@ -643,7 +680,7 @@ fn the_scopes_read_the_export_not_the_monitors_table() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let mut view = View::blank();
     view.center = (w as f32 / 2.0, h as f32 / 2.0);
     view.plane = (w as f32, h as f32);
@@ -656,11 +693,11 @@ fn the_scopes_read_the_export_not_the_monitors_table() {
             .to_vec();
         let navigator = renderer.take_navigator().expect("the navigator's picture");
         let read = points.map(|(u, v)| renderer.analyzed_at(u, v, 0.0).expect("a reading"));
-        (bins, navigator.to_rgba8().expect("rgba"), read)
+        (bins, navigator, read)
     };
     let (plain, plain_nav, plain_read) = take(&mut renderer);
     use crate::display;
-    use crate::export::Space;
+    use greycard_render::export::Space;
     let tables = [
         (
             "an Adobe RGB monitor",
@@ -679,12 +716,12 @@ fn the_scopes_read_the_export_not_the_monitors_table() {
             ),
         ),
     ];
-    let rgb = |px: &[slint::Rgba8Pixel]| -> Vec<[f32; 3]> {
+    let rgb = |px: &[[u8; 4]]| -> Vec<[f32; 3]> {
         px.iter()
-            .map(|p| [p.r, p.g, p.b].map(|c| f32::from(c) / 255.0))
+            .map(|p| [p[0], p[1], p[2]].map(|c| f32::from(c) / 255.0))
             .collect()
     };
-    let (nw, nh) = (plain_nav.width() as usize, plain_nav.height() as usize);
+    let (nw, nh) = (plain_nav.width as usize, plain_nav.height as usize);
     for (what, table) in tables {
         let table = table.expect("the table");
         if what.contains("proof") {
@@ -699,13 +736,13 @@ fn the_scopes_read_the_export_not_the_monitors_table() {
         // The navigator went through the table, and the viewport with
         // it: the same picture drawn at the navigator's size.
         let moved = nav
-            .as_slice()
+            .pixels
             .iter()
-            .zip(plain_nav.as_slice())
+            .zip(&plain_nav.pixels)
             .filter(|(a, b)| a != b)
             .count();
         assert!(
-            moved > nav.as_slice().len() / 2,
+            moved > nav.pixels.len() / 2,
             "{what}: the navigator moved {moved}"
         );
         let shown = View {
@@ -717,13 +754,13 @@ fn the_scopes_read_the_export_not_the_monitors_table() {
         assert!(
             viewport
                 .pixels()
-                .zip(nav.as_slice())
-                .all(|(a, b)| [a[0], a[1], a[2]] == [b.r, b.g, b.b]),
+                .zip(&nav.pixels)
+                .all(|(a, b)| [a[0], a[1], a[2]] == [b[0], b[1], b[2]]),
             "{what}: the navigator is not the viewport"
         );
         // Binned as the scopes would have binned it before, the
         // table's picture is another histogram.
-        let tabled = scope::bins(Scope::Rgb, &rgb(nav.as_slice()), nw, nh);
+        let tabled = scope::bins(Scope::Rgb, &rgb(&nav.pixels), nw, nh);
         assert_ne!(tabled, plain[0], "{what}: the table changed no level");
     }
 }
@@ -887,7 +924,7 @@ fn the_mixer_reads_the_color_windows_mean() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let mut view = View::blank();
     view.center = (w as f32 / 2.0, h as f32 / 2.0);
     view.plane = (w as f32, h as f32);
@@ -948,11 +985,11 @@ fn a_texture_read_through_a_turn_is_the_turned_texture() {
             .flat_map(|y| (0..w / scale).map(move |x| (x, y)))
             .map(|(x, y)| at(x, y))
             .collect();
-        crate::finish::Guide {
+        greycard_render::finish::Guide {
             width: w / scale,
             height: h / scale,
             scale,
-            range: crate::finish::plane_range(&data),
+            range: greycard_render::finish::plane_range(&data),
             data,
             picture: None,
         }
@@ -973,7 +1010,7 @@ fn a_texture_read_through_a_turn_is_the_turned_texture() {
         let (w, h) = (turned.width, turned.height);
         let (gw, gh) = (iw / scale, ih / scale);
         let turned_guide = guide_of(w, h, &|x, y| {
-            let (tx, ty) = crate::placeholder::texel_of(
+            let (tx, ty) = crate::render::texel_of(
                 (x as i64, y as i64),
                 (w as u32 / scale as u32, h as u32 / scale as u32),
                 quarters,
@@ -1002,8 +1039,8 @@ fn a_texture_read_through_a_turn_is_the_turned_texture() {
         )]);
         local.baked.light.exposure = 1.0;
         view.locals = vec![local];
-        let mut shot = |source: &WorkingImage, guide: &crate::finish::Guide, lag: u8| {
-            renderer.upload(&crate::worker::Halves::from_image(source, None));
+        let mut shot = |source: &WorkingImage, guide: &greycard_render::finish::Guide, lag: u8| {
+            renderer.upload(&Halves::from_image(source, None));
             renderer.set_guide(guide);
             let v = View {
                 source_turn: lag,
@@ -1042,13 +1079,13 @@ fn a_texture_read_through_a_turn_is_the_turned_texture() {
 /// holds it.
 #[test]
 fn the_pick_reads_the_mean_of_its_square_at_each_size() {
-    use crate::panel::viewport::{SAMPLE_SIZES, sample_reach};
+    use crate::render::{SAMPLE_SIZES, sample_reach};
     let Some((device, queue)) = device("the pick sample's check") else {
         return;
     };
     let image = field();
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let (w, h) = (image.width as i64, image.height as i64);
     let held = |x: i64, y: i64, k: usize| {
         half::f16::from_f32(image.data[(y * w + x) as usize * 3 + k]).to_f32()
@@ -1108,14 +1145,14 @@ fn a_pick_through_a_turn_reads_the_pixel_the_turned_develop_has() {
             (40, 150),
             (size.0 as i64 - 1, size.1 as i64 - 2),
         ];
-        renderer.upload(&crate::worker::Halves::from_image(&turned, None));
+        renderer.upload(&Halves::from_image(&turned, None));
         let developed: Vec<_> = points
             .iter()
             .map(|&(x, y)| renderer.sample(x, y, 2).expect("sampled"))
             .collect();
-        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        renderer.upload(&Halves::from_image(&image, None));
         for (k, &(x, y)) in points.iter().enumerate() {
-            let (tx, ty) = crate::placeholder::texel_of((x, y), size, lag);
+            let (tx, ty) = crate::render::texel_of((x, y), size, lag);
             let lagging = renderer.sample(tx, ty, 2).expect("sampled");
             assert!(
                 lagging.is_some(),
@@ -1141,7 +1178,7 @@ fn the_light_switch_off_keeps_the_base_curve_on_the_gpu() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let mut view = View::blank();
     view.center = (w as f32 / 2.0, h as f32 / 2.0);
     view.plane = (w as f32, h as f32);
@@ -1172,13 +1209,13 @@ fn the_light_switch_off_keeps_the_base_curve_on_the_gpu() {
         .map(|v| half::f16::from_f32(*v).to_f32())
         .collect();
     let global = Baked::global(&greycard_edit::Edit::default(), Source::SCENE);
-    let to_out = crate::export::Space::Srgb.matrix();
+    let to_out = greycard_render::export::Space::Srgb.matrix();
     let mut worst = 0.0f32;
     for y in 0..h {
         for x in 0..w {
             let i = (y * w + x) * 3;
             let px = [seen[i], seen[i + 1], seen[i + 2]];
-            let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+            let cpu = greycard_render::finish::finish_pixel(px, &global, &[], &to_out);
             let gpu = off.get_pixel(x as u32, y as u32);
             for k in 0..3 {
                 worst = worst.max((cpu[k] - f32::from(gpu[k]) / 255.0).abs());
@@ -1216,7 +1253,7 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
     let image = parity_frame();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let seen = WorkingImage {
         width: w,
         height: h,
@@ -1226,7 +1263,7 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
             .map(|v| half::f16::from_f32(*v).to_f32())
             .collect(),
     };
-    let to_out = crate::export::Space::Srgb.matrix();
+    let to_out = greycard_render::export::Space::Srgb.matrix();
     let tagged = |comments: &[&str]| {
         let mut t = (*look_tables()[0]).clone();
         t.comments = comments.iter().map(|c| c.to_string()).collect();
@@ -1246,7 +1283,7 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
         let target = renderer.render(w as u32, h as u32, &view).0;
         let shown = renderer.read_back(&target).expect("read back");
         let gpu: Vec<u8> = shown.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
-        let cpu = crate::finish::finish_with(
+        let cpu = greycard_render::finish::finish_with(
             &seen,
             None,
             &Baked::global(edit, Source::SCENE),
@@ -1311,20 +1348,20 @@ fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, wh
     let image = parity_frame();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let seen: Vec<f32> = image
         .data
         .iter()
         .map(|v| half::f16::from_f32(*v).to_f32())
         .collect();
-    let to_out = crate::export::Space::Srgb.matrix();
+    let to_out = greycard_render::export::Space::Srgb.matrix();
     let mut edit = greycard_edit::Edit {
         display_curve: curve,
         ..Default::default()
     };
     // At the default baseline and at a body's own, whose display white
     // and AgX's fit reach the shader through its uniforms.
-    let (make, model) = crate::testing::GFX;
+    let (make, model) = greycard_render::testing::GFX;
     for source in [Source::SCENE, Source::raw(make, model)] {
         let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], 0.0f32);
         // The signed difference's mean and its root mean square over
@@ -1350,7 +1387,7 @@ fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, wh
                 for x in 0..w {
                     let i = (y * w + x) * 3;
                     let px = [seen[i], seen[i + 1], seen[i + 2]];
-                    let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+                    let cpu = greycard_render::finish::finish_pixel(px, &global, &[], &to_out);
                     let gpu = shown.get_pixel(x as u32, y as u32);
                     let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
                     for k in 0..3 {
@@ -1400,8 +1437,8 @@ fn a_display_curves_gap_before_the_point_curves() {
     let image = parity_frame();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
-    renderer.set_output(crate::export::Space::Rec2020.matrix());
+    renderer.upload(&Halves::from_image(&image, None));
+    renderer.set_output(greycard_render::export::Space::Rec2020.matrix());
     let seen: Vec<f32> = image
         .data
         .iter()
@@ -1437,7 +1474,7 @@ fn a_display_curves_gap_before_the_point_curves() {
                     for x in 0..w {
                         let i = (y * w + x) * 3;
                         let px = [seen[i], seen[i + 1], seen[i + 2]];
-                        let before = crate::finish::pick(
+                        let before = greycard_render::finish::pick(
                             px,
                             &look.light,
                             &look.mixer,
@@ -1513,7 +1550,7 @@ fn the_cost_of_a_4k_frame() {
     };
     let image = parity_frame();
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let (w, h) = (3840u32, 2160u32);
     for curve in greycard_edit::DisplayCurve::ALL {
         let edit = greycard_edit::Edit {
@@ -1559,7 +1596,7 @@ fn the_sample_grid_reads_the_pixels_on_its_points() {
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
     assert!(renderer.sample_grid(64).unwrap().is_none());
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let (grid, width) = renderer.sample_grid(64).unwrap().unwrap();
     let step = w / 64;
     assert_eq!(width, (step / 2..w).step_by(step).count());
@@ -1585,13 +1622,13 @@ fn a_rendered_picture_takes_a_clip_on_the_gpu_as_on_the_cpu() {
     let image = field();
     let (w, h) = (image.width, image.height);
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let seen: Vec<f32> = image
         .data
         .iter()
         .map(|v| half::f16::from_f32(*v).to_f32())
         .collect();
-    let to_out = crate::export::Space::Srgb.matrix();
+    let to_out = greycard_render::export::Space::Srgb.matrix();
     let mut worst_of = |source: Source| {
         let mut view = View::blank();
         view.center = (w as f32 / 2.0, h as f32 / 2.0);
@@ -1606,7 +1643,7 @@ fn a_rendered_picture_takes_a_clip_on_the_gpu_as_on_the_cpu() {
             for x in 0..w {
                 let i = (y * w + x) * 3;
                 let px = [seen[i], seen[i + 1], seen[i + 2]];
-                let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+                let cpu = greycard_render::finish::finish_pixel(px, &global, &[], &to_out);
                 let gpu = shown.get_pixel(x as u32, y as u32);
                 for k in 0..3 {
                     worst = worst.max((cpu[k] - f32::from(gpu[k]) / 255.0).abs());
@@ -1629,7 +1666,7 @@ fn a_rendered_picture_takes_a_clip_on_the_gpu_as_on_the_cpu() {
 #[test]
 #[ignore]
 fn a_real_frames_range_masks() {
-    use crate::finish::{local_ab, sample};
+    use greycard_render::finish::{local_ab, sample};
     let Some(path) = std::env::var_os("GREYCARD_MASK_FRAME") else {
         panic!("set GREYCARD_MASK_FRAME to a raw");
     };
@@ -1674,10 +1711,10 @@ fn a_real_frames_range_masks() {
     // with no local, a luminance window alone (no mean), a color
     // window.
     let global = Baked::global(&greycard_edit::Edit::default(), Source::SCENE);
-    let to_out = crate::export::Space::Srgb.matrix();
+    let to_out = greycard_render::export::Space::Srgb.matrix();
     let once = |locals: &[Local]| {
         let start = std::time::Instant::now();
-        let out: Vec<u8> = crate::finish::finish_with(
+        let out: Vec<u8> = greycard_render::finish::finish_with(
             &image,
             None,
             &global,
@@ -1826,7 +1863,7 @@ struct Case {
     /// Which guide plane, if any: 0 the picture's own, 1 a coarser
     /// one (the test's `guides`).
     guide: Option<usize>,
-    space: crate::export::Space,
+    space: greycard_render::export::Space,
     /// The detail planes are handed to both sides (the test's
     /// `planes`), for the masks' Detail to read.
     planes: bool,
@@ -2284,7 +2321,8 @@ fn random_case(
     let display = rng.chance(0.25);
     let guide = rng.chance(0.6);
     let coarse = rng.chance(0.5);
-    let space = crate::export::Space::ALL[rng.below(crate::export::Space::ALL.len())];
+    let space =
+        greycard_render::export::Space::ALL[rng.below(greycard_render::export::Space::ALL.len())];
     // AgX half the time: drawn last, so the draws before it are
     // the ones every seed had before.
     if rng.chance(0.5) && has("display curve") {
@@ -2329,7 +2367,7 @@ fn random_case(
         space: if has("output space") {
             space
         } else {
-            crate::export::Space::Srgb
+            greycard_render::export::Space::Srgb
         },
         planes,
     }
@@ -2340,7 +2378,7 @@ fn random_case(
 /// of the way, varying pixel to
 /// pixel, so a plane read at the wrong texel shows; the airlight
 /// warm, and the clip at one, where the frame has highlights past.
-fn parity_planes(w: usize, h: usize) -> crate::detail::DetailPlanes {
+fn parity_planes(w: usize, h: usize) -> greycard_render::detail::DetailPlanes {
     let mut rng = Rng::new(7, u64::MAX - 1);
     let data = (0..w * h)
         .flat_map(|_| {
@@ -2353,11 +2391,11 @@ fn parity_planes(w: usize, h: usize) -> crate::detail::DetailPlanes {
         })
         .map(half::f16::from_f32)
         .collect();
-    crate::detail::DetailPlanes {
+    greycard_render::detail::DetailPlanes {
         width: w,
         height: h,
         data,
-        meta: crate::detail::DetailMeta {
+        meta: greycard_render::detail::DetailMeta {
             airlight: [0.9, 0.86, 0.8],
             clip_level: 1.0,
         },
@@ -2606,17 +2644,17 @@ fn both_sides_with(
     queue: &gpu::Queue,
     image: &WorkingImage,
     edit: &greycard_edit::Edit,
-    planes: Option<&Arc<crate::detail::DetailPlanes>>,
+    planes: Option<&Arc<greycard_render::detail::DetailPlanes>>,
 ) -> (Vec<u8>, Vec<u8>) {
     let (w, h) = (image.width, image.height);
-    let shift = crate::testing::white_shift();
+    let shift = greycard_render::testing::white_shift();
     let locals: Vec<Local> = edit
         .adjustments
         .iter()
         .map(|a| Local::of(a, vec![None; a.mask.components.len()], Some(&shift)))
         .collect();
     let mut renderer = Renderer::new(device, queue);
-    renderer.upload(&crate::worker::Halves::from_image(image, None));
+    renderer.upload(&Halves::from_image(image, None));
     renderer.set_detail(planes);
     let bands = planes.map(|p| p.to_image());
     let view = View {
@@ -2631,7 +2669,7 @@ fn both_sides_with(
     let gpu = shown.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
     let (iw, ih) = (w as f32, h as f32);
     let vignette = edit.vignette;
-    let cpu = crate::finish::finish_with(
+    let cpu = greycard_render::finish::finish_with(
         image,
         None,
         &Baked::global(edit, Source::SCENE),
@@ -2649,7 +2687,7 @@ fn both_sides_with(
         None,
         bands.as_ref().zip(planes.map(|p| &p.meta)),
         None,
-        &crate::export::Space::Srgb.matrix(),
+        &greycard_render::export::Space::Srgb.matrix(),
         |v| (v * 255.0).round() as u8,
     );
     (cpu, gpu)
@@ -2673,13 +2711,13 @@ fn a_masks_detail_timed_on_the_gpu() {
                 .map(|i| 0.05 + (i % 97) as f32 / 200.0)
                 .collect(),
         };
-        let planes = Arc::new(crate::detail::DetailPlanes {
+        let planes = Arc::new(greycard_render::detail::DetailPlanes {
             width: w,
             height: h,
             data: (0..w * h * 4)
                 .map(|i| half::f16::from_f32((i % 13) as f32 / 20.0 - 0.3))
                 .collect(),
-            meta: crate::detail::DetailMeta {
+            meta: greycard_render::detail::DetailMeta {
                 airlight: [0.9, 0.86, 0.8],
                 clip_level: 1.0,
             },
@@ -2691,7 +2729,7 @@ fn a_masks_detail_timed_on_the_gpu() {
             },
         });
         let mut renderer = Renderer::new(&device, &queue);
-        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        renderer.upload(&Halves::from_image(&image, None));
         let look = Look {
             detail: greycard_edit::Detail {
                 enabled: true,
@@ -2756,7 +2794,7 @@ fn a_masks_detail_on_both_sides() {
         return;
     };
     let image = parity_frame();
-    let planes = crate::detail::DetailPlanes::make(
+    let planes = greycard_render::detail::DetailPlanes::make(
         &image,
         None,
         1.0,
@@ -3002,7 +3040,7 @@ fn a_masks_white_balance_holds_under_a_moving_global() {
         height: h,
         data,
     };
-    let shift = crate::testing::white_shift();
+    let shift = greycard_render::testing::white_shift();
     let preview = shift
         .to_temp_tint(greycard_core::TempTint {
             cct: 6500.0,
@@ -3029,7 +3067,7 @@ fn a_masks_white_balance_holds_under_a_moving_global() {
         .map(|a| Local::of(a, vec![None], Some(&shift)))
         .collect();
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     let view = View {
         center: (w as f32 / 2.0, h as f32 / 2.0),
         plane: (w as f32, h as f32),
@@ -3065,7 +3103,7 @@ fn a_masks_white_balance_holds_under_a_moving_global() {
         .collect();
     let iw = w as f32;
     let cpu = |locals: &[Local]| {
-        crate::finish::finish_with(
+        greycard_render::finish::finish_with(
             &developed,
             None,
             &Baked::global(&edit, Source::SCENE),
@@ -3075,7 +3113,7 @@ fn a_masks_white_balance_holds_under_a_moving_global() {
             None,
             None,
             None,
-            &crate::export::Space::Srgb.matrix(),
+            &greycard_render::export::Space::Srgb.matrix(),
             |v| (v * 255.0).round() as u8,
         )
     };
@@ -3219,7 +3257,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
     // Half floats on the GPU (`set_guide`), so the CPU is handed
     // them rounded the same way, as it is the picture and the look
     // tables.
-    let native = crate::finish::guide_plane(&seen);
+    let native = greycard_render::finish::guide_plane(&seen);
     let coarse = {
         let s = 4;
         let (gw, gh) = (w / s, h / s);
@@ -3230,11 +3268,11 @@ fn the_shader_is_the_cpu_over_random_edits() {
                 block.sum::<f32>() / (s * s) as f32
             })
             .collect();
-        crate::finish::Guide {
+        greycard_render::finish::Guide {
             width: gw,
             height: gh,
             scale: s,
-            range: crate::finish::plane_range(&data),
+            range: greycard_render::finish::plane_range(&data),
             data,
             picture: None,
         }
@@ -3247,11 +3285,11 @@ fn the_shader_is_the_cpu_over_random_edits() {
     });
     let pool = raster_pool(seed, aspect);
     let tables = look_tables();
-    let shift = crate::testing::white_shift();
+    let shift = greycard_render::testing::white_shift();
     let planes = Arc::new(parity_planes(w, h));
     let planes_image = planes.to_image();
     let mut renderer = Renderer::new(&device, &queue);
-    renderer.upload(&crate::worker::Halves::from_image(&image, None));
+    renderer.upload(&Halves::from_image(&image, None));
     // The picture with each channel in turn moved by `NUDGE` of the
     // pixel's largest, up and down.
     // `FINEST` is the last step's answers: the steps run from the
@@ -3324,7 +3362,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
         renderer.set_look(case.look.as_ref());
         renderer.set_output(case.space.matrix());
         let guide = case.guide.map(|k| &guides[k]);
-        renderer.set_guide(guide.unwrap_or(&crate::finish::Guide::NONE));
+        renderer.set_guide(guide.unwrap_or(&greycard_render::finish::Guide::NONE));
         renderer.set_detail(case.planes.then_some(&planes));
         let detail = case.planes.then_some((&planes_image, &planes.meta));
         let view = View {
@@ -3339,7 +3377,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
         let shown = renderer.read_back(&target).expect("read back");
         // The export's side, as `export::render` sets it up: the
         // guide only where it says the export reads one.
-        let reads = crate::export::reads_guide(edit);
+        let reads = greycard_render::export::reads_guide(edit);
         let global = Baked::global(edit, case.source);
         let (iw, ih) = (w as f32, h as f32);
         let vignette = edit.vignette;
@@ -3356,7 +3394,7 @@ fn the_shader_is_the_cpu_over_random_edits() {
         };
         let look = case.look.as_ref().filter(|l| !l.is_off());
         let finish = |image: &WorkingImage, global: &Baked| {
-            crate::finish::finish_with(
+            greycard_render::finish::finish_with(
                 image,
                 None,
                 global,

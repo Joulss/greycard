@@ -404,9 +404,9 @@ impl Brushes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::finish::Baked;
     use greycard_edit::mask::{Component, Mode, Shape};
     use greycard_edit::{Look, Mask};
+    use greycard_render::finish::Baked;
 
     /// What the shader is given for a mask with a shape switched off
     /// is what it is given for the same mask without that shape at

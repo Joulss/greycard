@@ -117,11 +117,7 @@ fn wait_on(device: &wgpu::Device, lost: &AtomicBool) -> Result<()> {
         Ok(Err(e)) => Err(Error::ReadBack(format!("waiting for the device: {e}"))),
         Err(payload) => {
             lost.store(true, Ordering::Release);
-            let message = payload
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| payload.downcast_ref::<&str>().copied())
-                .unwrap_or("wgpu panicked in its wait");
+            let message = panic_text(payload.as_ref()).unwrap_or("wgpu panicked in its wait");
             Err(Error::Lost(
                 message.lines().last().unwrap_or(message).trim().to_string(),
             ))
@@ -130,6 +126,21 @@ fn wait_on(device: &wgpu::Device, lost: &AtomicBool) -> Result<()> {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// A panic's text, which is a `&str` or a `String` for every `panic!`
+/// with one; `None` otherwise.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> Option<&str> {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+}
+
+/// A panic's message, which is a `&str` or a `String` for every
+/// `panic!` with a text, and nothing readable otherwise.
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    panic_text(payload).unwrap_or("(no message)").to_string()
+}
 
 /// What [`Context::kept_bytes`] reports, per op.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

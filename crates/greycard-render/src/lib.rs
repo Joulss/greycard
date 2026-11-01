@@ -15,6 +15,7 @@ pub mod detail;
 pub mod export;
 pub mod finish;
 pub mod geometry;
+pub mod halves;
 pub mod reduce;
 pub mod refine;
 pub mod watermark;

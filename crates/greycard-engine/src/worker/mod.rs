@@ -82,45 +82,9 @@ impl Developed {
     }
 }
 
-/// A developed image as the GPU takes it: RGBA half floats, alpha one.
-pub struct Halves {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<half::f16>,
-}
+/// The picture the viewport uploads, the render crate's.
+pub use greycard_render::halves::Halves;
 
-impl Halves {
-    /// The picture, with `mask` in the alpha when there is one: the
-    /// sharpen's blend, for the viewport to paint where it acted.
-    /// Zero alpha otherwise, so nothing is painted.
-    pub fn from_image(image: &WorkingImage, mask: Option<&[f32]>) -> Self {
-        use rayon::prelude::*;
-        // A row at a time, in parallel: a 24 MP frame is a hundred
-        // million conversions.
-        let (w, h) = (image.width, image.height);
-        let mut pixels = vec![half::f16::ZERO; w * h * 4];
-        pixels
-            .par_chunks_mut(w * 4)
-            .zip(image.data.par_chunks(w * 3))
-            .enumerate()
-            .for_each(|(y, (out, row))| {
-                let mask = mask.map(|m| &m[y * w..(y + 1) * w]);
-                let (out, _) = out.as_chunks_mut::<4>();
-                let (row, _) = row.as_chunks::<3>();
-                for (x, (o, px)) in out.iter_mut().zip(row).enumerate() {
-                    o[0] = half::f16::from_f32(px[0]);
-                    o[1] = half::f16::from_f32(px[1]);
-                    o[2] = half::f16::from_f32(px[2]);
-                    o[3] = half::f16::from_f32(mask.map_or(0.0, |m| m[x]));
-                }
-            });
-        Self {
-            width: w as u32,
-            height: h as u32,
-            pixels,
-        }
-    }
-}
 use greycard_core::RgbSpace;
 use greycard_core::raw::RawFrame;
 use greycard_edit::brush::Raster;
@@ -953,21 +917,14 @@ impl Blame {
     }
 }
 
-/// A panic's message, which is a `&str` or a `String` for every
-/// `panic!` with a text, and nothing readable otherwise.
 /// Whether a panic's message is wgpu's for a lost device: what it
 /// panics with when a wait, or a buffer it maps for itself, meets one.
 pub fn says_lost(message: &str) -> bool {
     message.contains("device is lost")
 }
 
-pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
-    payload
-        .downcast_ref::<&str>()
-        .map(|s| s.to_string())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "(no message)".into())
-}
+/// A panic's message, the GPU crate's.
+pub use greycard_gpu::panic_message;
 
 pub use crate::stages::quarters;
 

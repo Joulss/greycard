@@ -925,8 +925,10 @@ mod tests {
     }
 
     /// Mid grey through the switch in AgX mode is where the curve per
-    /// channel puts it, within a thousandth of a display stop, and the
-    /// shader's literal gain is the CPU's to a millionth.
+    /// channel puts it, within a thousandth of a display stop, and
+    /// what the shader takes with the frame's white is the CPU's. The
+    /// viewport crate's tests hold the shader's literal
+    /// `AGX_WHITE_PAST` to [`WHITE_PAST`].
     #[test]
     fn mid_grey_through_agx_is_per_channels() {
         use greycard_edit::DisplayCurve;
@@ -968,28 +970,6 @@ mod tests {
                 agx.curve.shoulder_scale
             ]
         );
-        let shader = include_str!("../../greycard-ui/src/viewport.wgsl");
-        let wanted = [("AGX_WHITE_PAST", WHITE_PAST)];
-        let literals: Vec<f32> = wanted
-            .iter()
-            .map(|(name, value)| {
-                let prefix = format!("const {name}: f32 = ");
-                let line = shader.lines().find(|l| l.starts_with(&prefix)).expect(name);
-                let literal: f32 = line
-                    .trim_start_matches(&prefix)
-                    .trim_end_matches(';')
-                    .parse()
-                    .unwrap();
-                eprintln!("{name}: cpu {value:.8}, shader {literal:.8}");
-                literal
-            })
-            .collect();
-        for ((name, value), literal) in wanted.iter().zip(literals) {
-            assert!(
-                (literal - value).abs() <= 2e-6 * value.abs().max(1.0),
-                "shader {name} {literal} against {value}"
-            );
-        }
     }
 
     /// The sRGB formation's departure, measured and pinned: Blender's

@@ -1085,8 +1085,8 @@ pub fn shade(c: [f32; 3], curves: &CurveLut) -> [f32; 3] {
 /// do change, since the cast the shift gave them was a steep function
 /// of their sub-level light (the notes measure it). The shader's
 /// `SHADE_BLACK` and `SHADE_LIGHT` are these.
-pub(crate) const SHADE_BLACK: f32 = 2e-6;
-pub(crate) const SHADE_LIGHT: f32 = 4e-6;
+pub const SHADE_BLACK: f32 = 2e-6;
+pub const SHADE_LIGHT: f32 = 4e-6;
 
 /// How much of its light the color shifts read in a pixel whose
 /// largest channel is `top`: none under [`SHADE_BLACK`], all of it
@@ -3243,7 +3243,7 @@ mod tests {
     /// root has moved: the shift reads light under `SHADE_BLACK` as
     /// black, reads it faded in up to `SHADE_LIGHT`, and from there is
     /// what it was; under it the pixel keeps its own light. The
-    /// shader's two literals are these.
+    /// viewport crate's tests hold the shader's two literals to these.
     #[test]
     fn the_color_shifts_are_still_at_black() {
         let blue_black = Curves {
@@ -3322,17 +3322,6 @@ mod tests {
             for k in 0..3 {
                 assert!((after[k] - c[k]).abs() < 1e-3 * v, "{c:?} {after:?}");
             }
-        }
-        let shader = include_str!("../../greycard-ui/src/viewport.wgsl");
-        for (name, value) in [("SHADE_BLACK", SHADE_BLACK), ("SHADE_LIGHT", SHADE_LIGHT)] {
-            let prefix = format!("const {name}: f32 = ");
-            let line = shader.lines().find(|l| l.starts_with(&prefix)).expect(name);
-            let literal: f32 = line
-                .trim_start_matches(&prefix)
-                .trim_end_matches(';')
-                .parse()
-                .unwrap();
-            assert_eq!(literal, value, "the shader's {name}");
         }
     }
 

@@ -8,7 +8,7 @@ use super::*;
 /// wgpu can do that. Every poll of the device, on any thread, collects
 /// the callbacks of the maps that are done and fires them after; but a
 /// `Surface::configure` that gives up because the worker submitted
-/// during its wait (see `crate::gpu_errors`) drops what it collected
+/// during its wait (see the window's `gpu_errors`) drops what it collected
 /// instead (wgpu-core 30, `Device::configure_surface`). The scopes'
 /// read back is submitted in one frame and collected in a later one,
 /// so a configure between the two can take it, and the channel is left
@@ -204,7 +204,7 @@ impl Renderer {
         let weigh_by = weigh_by.filter(|&k| k < v.locals.len().min(MAX_LOCALS));
         // Collect a finished read back, or let a lost one go and
         // analyze again ([`unmap_lost`]).
-        let _ = crate::gpu_lost::poll(&self.device, gpu::PollType::Poll);
+        let _ = crate::lost::poll(&self.device, gpu::PollType::Poll);
         let bins = self.scopes.in_flight.as_ref().map(|rx| rx.try_recv());
         if let Some(Err(TryRecvError::Disconnected)) = bins {
             self.scopes.in_flight = None;
@@ -250,21 +250,17 @@ impl Renderer {
                     // The analysis picture, then the navigator's.
                     let (w, h) = (t.width(), t.height());
                     let bytes = (w * h * 4) as usize;
-                    let mut analysis = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                    analysis.make_mut_bytes().copy_from_slice(&data[..bytes]);
-                    let mut navigator = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                    navigator
-                        .make_mut_bytes()
-                        .copy_from_slice(&data[bytes..2 * bytes]);
+                    let analysis = Rgba8::from_bytes(w, h, &data[..bytes]);
+                    let navigator = Rgba8::from_bytes(w, h, &data[bytes..2 * bytes]);
                     drop(data);
                     // Kept with the mask's coverage in the alpha, which
                     // the readout weighs by as the bins were weighed;
                     // not when a new source came in after it was taken,
                     // which is the last image's picture at its shape.
                     if !self.scopes.source_changed {
-                        self.scopes.pixels = Some(analysis);
+                        self.scopes.pixels = analysis;
                     }
-                    self.scopes.picture = Some(slint::Image::from_rgba8(navigator));
+                    self.scopes.picture = navigator;
                 }
                 staging.unmap();
             }
@@ -448,7 +444,7 @@ impl Renderer {
     /// The navigator's picture read back since the last take: the
     /// whole frame under the edit as the screen shows it, through the
     /// monitor's table, 512 wide.
-    pub fn take_navigator(&mut self) -> Option<slint::Image> {
+    pub fn take_navigator(&mut self) -> Option<Rgba8> {
         self.scopes.picture.take()
     }
 
@@ -462,9 +458,9 @@ impl Renderer {
     pub fn analyzed_at(&self, u: f32, v: f32, radius: f32) -> Option<scope::Reading> {
         let buf = self.scopes.pixels.as_ref()?;
         scope::under_pointer(
-            buf.as_slice(),
-            buf.width() as usize,
-            buf.height() as usize,
+            &buf.pixels,
+            buf.width as usize,
+            buf.height as usize,
             u,
             v,
             radius,

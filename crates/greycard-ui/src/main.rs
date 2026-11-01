@@ -39,7 +39,6 @@ mod owners;
 mod panel;
 mod placeholder;
 mod preparing;
-mod render;
 mod report;
 mod roots;
 mod rows;
@@ -66,7 +65,11 @@ pub(crate) use greycard_ui::{
 
 // What renders a developed frame into a picture or a file, in a crate
 // of its own below the window; named here as the modules were.
-pub(crate) use greycard_render::{agx, detail, export, finish, watermark};
+pub(crate) use greycard_render::{detail, export, finish, watermark};
+
+// The viewport's renderer, in a crate of its own below the window;
+// named here as the module was.
+pub(crate) use greycard_viewport::render;
 
 // The develop below the window, the worker and what it holds, in the
 // engine's crate; named here as the modules were.
@@ -1138,7 +1141,7 @@ thread_local! {
     static WORKER: RefCell<Option<Rc<Worker>>> = const { RefCell::new(None) };
 }
 
-// Keep the wgpu types in one place for the renderer module.
+// The wgpu types by one short name.
 pub(crate) use wgpu as gpu;
 
 /// `WxH` in logical pixels, each 200 to 16384.

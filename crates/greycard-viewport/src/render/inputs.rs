@@ -223,8 +223,8 @@ impl Renderer {
     }
 
     pub(super) const TYPICAL_RANGE: [f32; 4] = [
-        crate::finish::FRAME_TYPICAL[0],
-        crate::finish::FRAME_TYPICAL[1],
+        greycard_render::finish::FRAME_TYPICAL[0],
+        greycard_render::finish::FRAME_TYPICAL[1],
         0.0,
         0.0,
     ];
@@ -232,7 +232,7 @@ impl Renderer {
     /// Put the tone equalizer's guide plane on the GPU. Its texels
     /// stand for `scale` source pixels each way, so the shader divides
     /// a source position by what the texture covers to sample it.
-    pub fn set_guide(&mut self, guide: &crate::finish::Guide) {
+    pub fn set_guide(&mut self, guide: &greycard_render::finish::Guide) {
         self.redraw = true;
         let (w, h) = (guide.width as u32, guide.height as u32);
         if guide.data.is_empty() || w == 0 || h == 0 {
@@ -291,7 +291,7 @@ impl Renderer {
     ///
     /// The same planes landing again with a develop that kept them are
     /// not uploaded again: 360 MB at 45 MP.
-    pub fn set_detail(&mut self, planes: Option<&Arc<crate::detail::DetailPlanes>>) {
+    pub fn set_detail(&mut self, planes: Option<&Arc<greycard_render::detail::DetailPlanes>>) {
         if let (Some(p), Some(up)) = (planes, self.detail_of.as_ref().and_then(|w| w.upgrade()))
             && Arc::ptr_eq(p, &up)
         {
@@ -311,7 +311,7 @@ impl Renderer {
         // The shader reads them only at the source's size; another
         // size is a bug in whoever carried them, said here.
         if let Some(source) = &self.source {
-            crate::detail::fits(
+            greycard_render::detail::fits(
                 (planes.width, planes.height),
                 source.width() as usize,
                 source.height() as usize,

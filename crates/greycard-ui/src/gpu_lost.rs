@@ -21,7 +21,7 @@
 //! start again could lose it the same way for ever. It quits, saved.
 //!
 //! Until the quit, nothing on the window's thread may panic on the
-//! dead device: the viewport's waits go through [`poll`], the
+//! dead device: the viewport's waits go through its `lost::poll`, the
 //! uncaptured handler lets every error through once [`lost`] says so,
 //! and a panic of Slint's drawing that still comes is caught around
 //! the event loop ([`survive`]).
@@ -33,9 +33,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use greycard_gpu::wgpu;
 
 /// What a loss leaves for the rest of the run.
-struct Loss {
-    /// The window's device is lost.
-    lost: AtomicBool,
+struct Loss<'a> {
+    /// The window's device is lost: the viewport's flag, which its
+    /// waits read and set.
+    lost: &'a AtomicBool,
     /// greycard is to start again as the quit ends.
     again: AtomicBool,
     /// The quit is under way: a device-lost callback now is the
@@ -43,10 +44,10 @@ struct Loss {
     leaving: AtomicBool,
 }
 
-impl Loss {
-    const fn new() -> Self {
+impl<'a> Loss<'a> {
+    const fn new(lost: &'a AtomicBool) -> Self {
         Self {
-            lost: AtomicBool::new(false),
+            lost,
             again: AtomicBool::new(false),
             leaving: AtomicBool::new(false),
         }
@@ -92,12 +93,10 @@ impl Loss {
     }
 }
 
-static LOSS: Loss = Loss::new();
+static LOSS: Loss<'static> = Loss::new(&greycard_viewport::lost::LOST);
 
 /// Whether the window's device has been lost this run.
-pub(crate) fn lost() -> bool {
-    LOSS.lost.load(Ordering::SeqCst)
-}
+pub(crate) use greycard_viewport::lost::lost;
 
 /// Set the window's device-lost callback, once its device is made.
 /// `cpu_ops` is whether this run was started with `--cpu-ops`;
@@ -123,26 +122,6 @@ pub(crate) fn install(
 /// The quit is under way: the device let go from here on is no loss.
 pub(crate) fn leaving() {
     LOSS.leaving.store(true, Ordering::SeqCst);
-}
-
-/// Wait on the window's device as `poll_type` says, for the
-/// viewport's read backs and its scopes: an error rather than wgpu's
-/// panic once the device is lost.
-pub(crate) fn poll(device: &wgpu::Device, poll_type: wgpu::PollType) -> Result<(), String> {
-    if lost() {
-        return Err("the GPU device was lost".into());
-    }
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(poll_type))) {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(payload) => {
-            LOSS.lost.store(true, Ordering::SeqCst);
-            Err(format!(
-                "the GPU device was lost: {}",
-                crate::worker::panic_message(payload.as_ref())
-            ))
-        }
-    }
 }
 
 /// `run`, the window's event loop, with a panic after the device was
@@ -223,7 +202,7 @@ enum AfterQuit {
     StartAgain,
 }
 
-impl Loss {
+impl Loss<'_> {
     /// [`start_again`]'s choice. A scripted run fails on any loss,
     /// `--cpu-ops` or not, since its capture never comes.
     fn after_quit(&self, scripted: bool) -> AfterQuit {
@@ -364,7 +343,8 @@ mod tests {
     fn a_scripted_run_fails_on_any_loss() {
         let none = |_: bool| {};
         for cpu_ops in [false, true] {
-            let loss = Loss::new();
+            let flag = AtomicBool::new(false);
+            let loss = Loss::new(&flag);
             assert_eq!(loss.after_quit(true), AfterQuit::Nothing);
             loss.on_lost(wgpu::DeviceLostReason::Unknown, "", cpu_ops, &none, &|| {});
             assert_eq!(loss.after_quit(true), AfterQuit::Fail);
@@ -399,7 +379,8 @@ mod tests {
     #[test]
     fn a_loss_quits_once_and_starts_again_only_off_cpu_ops() {
         for cpu_ops in [false, true] {
-            let loss = Loss::new();
+            let flag = AtomicBool::new(false);
+            let loss = Loss::new(&flag);
             let told = Mutex::new(Vec::new());
             let quits = Mutex::new(0);
             let tell = |again: bool| told.lock().unwrap().push(again);
@@ -412,7 +393,8 @@ mod tests {
             assert!(loss.lost.load(Ordering::SeqCst));
             assert_eq!(loss.again.load(Ordering::SeqCst), !cpu_ops);
         }
-        let loss = Loss::new();
+        let flag = AtomicBool::new(false);
+        let loss = Loss::new(&flag);
         loss.leaving.store(true, Ordering::SeqCst);
         let quit = || panic!("no quit while leaving");
         assert!(!loss.on_lost(

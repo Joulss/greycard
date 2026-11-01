@@ -1,5 +1,41 @@
 use super::*;
 
+/// The color pick's sample sizes: the side of the square it takes
+/// the mean over, in the picture's own pixels, since the viewport's
+/// develop is full size: at fit on a 6000 pixel frame, 41 is about 7
+/// screen pixels and 5 under one. The first is the droppers' own 5x5.
+pub const SAMPLE_SIZES: [i32; 4] = [5, 11, 21, 41];
+
+/// `size` if it is one of [`SAMPLE_SIZES`], else the first.
+pub fn sample_size(size: i32) -> i32 {
+    if SAMPLE_SIZES.contains(&size) {
+        size
+    } else {
+        SAMPLE_SIZES[0]
+    }
+}
+
+/// The reach each way of a square of `size` pixels a side, as
+/// [`Renderer::sample`] takes it.
+pub fn sample_reach(size: i32) -> u32 {
+    (sample_size(size) as u32 - 1) / 2
+}
+
+/// The texture pixel holding pixel `(x, y)` of a source of `size`
+/// that the texture stands `lag` quarter turns clockwise behind: the
+/// shader's `texel_at` for whole pixels, which is `develop::orient`'s
+/// own map for Rotate90, Rotate180 and Rotate270. What the droppers
+/// read the texture at while a turn's develop is on its way.
+pub fn texel_of((x, y): (i64, i64), size: (u32, u32), lag: u8) -> (i64, i64) {
+    let (w, h) = (i64::from(size.0), i64::from(size.1));
+    match lag % 4 {
+        1 => (y, w - 1 - x),
+        2 => (w - 1 - x, h - 1 - y),
+        3 => (h - 1 - y, x),
+        _ => (x, y),
+    }
+}
+
 impl Renderer {
     pub fn has_image(&self) -> bool {
         self.source.is_some()
@@ -64,7 +100,7 @@ impl Renderer {
         slice.map_async(gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        crate::gpu_lost::poll(&self.device, gpu::PollType::wait_indefinitely())
+        crate::lost::poll(&self.device, gpu::PollType::wait_indefinitely())
             .map_err(anyhow::Error::msg)
             .context("waiting for the sample")?;
         rx.recv()
@@ -145,7 +181,7 @@ impl Renderer {
         slice.map_async(gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        crate::gpu_lost::poll(&self.device, gpu::PollType::wait_indefinitely())
+        crate::lost::poll(&self.device, gpu::PollType::wait_indefinitely())
             .map_err(anyhow::Error::msg)
             .context("waiting for the sample grid")?;
         rx.recv()
@@ -172,5 +208,44 @@ impl Renderer {
         buffer.unmap();
         let width = (step / 2..w).step_by(step as usize).count();
         Ok(Some((out, width)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::texel_of;
+
+    /// A pixel of the turned source is read from the texture where
+    /// `orient` took it from, for each quarter.
+    #[test]
+    fn a_texel_of_the_turned_source_is_where_orient_took_it_from() {
+        use greycard_core::develop::orient;
+        use greycard_core::image::WorkingImage;
+        use greycard_core::raw::Orientation;
+        let (w, h) = (5usize, 3usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: (0..w * h * 3).map(|v| v as f32).collect(),
+        };
+        for (lag, o) in [
+            (0u8, Orientation::Normal),
+            (1, Orientation::Rotate90),
+            (2, Orientation::Rotate180),
+            (3, Orientation::Rotate270),
+        ] {
+            let turned = orient(image.clone(), o);
+            let size = (turned.width as u32, turned.height as u32);
+            for y in 0..turned.height {
+                for x in 0..turned.width {
+                    let (tx, ty) = texel_of((x as i64, y as i64), size, lag);
+                    assert_eq!(
+                        turned.pixel(x, y),
+                        image.pixel(tx as usize, ty as usize),
+                        "{lag} quarters at {x},{y}"
+                    );
+                }
+            }
+        }
     }
 }

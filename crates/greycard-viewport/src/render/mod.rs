@@ -5,16 +5,17 @@
 use std::sync::Arc;
 
 use crate::display::Lut3d;
-use crate::worker::Halves;
 use anyhow::{Context, Result};
+use greycard_render::halves::Halves;
 
-use crate::finish::{Local, MAX_LOCALS, RasterRef, Source};
-use crate::gpu;
+use crate::Rgba8;
 use crate::scope::{self, Scope};
 use greycard_core::lut;
 use greycard_edit::curve::LUT_SIZE;
 use greycard_edit::mask::Shape;
 use greycard_edit::{BlackWhite, Color, CurveLut, Grain, Light, Mixer, Tint, Vignette};
+use greycard_gpu::wgpu as gpu;
+use greycard_render::finish::{Local, MAX_LOCALS, RasterRef, Source};
 
 mod draw;
 mod inputs;
@@ -28,6 +29,8 @@ use self::{
     locals::{Brushes, LocalsGpu, locals_gpu, range_reads},
     scopes::EditKey,
 };
+
+pub use self::sample::{SAMPLE_SIZES, sample_reach, sample_size, texel_of};
 
 /// The canvas's four levels, by name, index matching `app.slint`'s
 /// `canvas-colors` swatches and the shader's `canvas` uniform:
@@ -260,11 +263,11 @@ pub struct Renderer {
     guide_cover: [f32; 4],
     /// The masks' detail planes, Rgba16Float at the source's size:
     /// texture, clarity, haze, and structure
-    /// (`crate::detail::DetailPlanes`). A texel of nothing when there
+    /// (`greycard_render::detail::DetailPlanes`). A texel of nothing when there
     /// are none.
     detail: gpu::Texture,
     /// The planes it holds, to know them again (`set_detail`).
-    detail_of: Option<std::sync::Weak<crate::detail::DetailPlanes>>,
+    detail_of: Option<std::sync::Weak<greycard_render::detail::DetailPlanes>>,
     /// Its `Params::detail` and `Params::detail_clip`.
     detail_meta: [f32; 4],
     detail_clip: [f32; 4],
@@ -275,7 +278,7 @@ pub struct Renderer {
     /// Working space to the output's, rows: the export's space, so
     /// the viewport shows what the export will hold.
     output: [[f32; 3]; 3],
-    oklab: crate::finish::Oklab,
+    oklab: greycard_render::finish::Oklab,
     scopes: Scopes,
     /// What the target holds: the size and the view it was drawn
     /// for. `render` draws again only for another view or size, or
@@ -314,10 +317,10 @@ struct Scopes {
     /// picture read, not yet taken.
     picture_staging: Option<gpu::Buffer>,
     picture_in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
-    picture: Option<slint::Image>,
+    picture: Option<Rgba8>,
     /// The last picture read, kept: what the readout under the
     /// pointer reads, so it lands on the scopes' own traces.
-    pixels: Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>,
+    pixels: Option<Rgba8>,
     /// A new source came in since the picture in flight was taken:
     /// that picture is the last image's, perhaps at another shape,
     /// and is not kept for the readout.
@@ -544,7 +547,7 @@ impl Renderer {
         };
         let guide = Self::guide_texture(device, 1, 1);
         let detail = Self::detail_texture(device, 1, 1);
-        let output = crate::export::Space::Srgb.matrix();
+        let output = greycard_render::export::Space::Srgb.matrix();
         Self {
             scopes: Scopes::new(device),
             drawn: None,
@@ -571,7 +574,7 @@ impl Renderer {
             frame_range: Self::TYPICAL_RANGE,
             look,
             output,
-            oklab: crate::finish::Oklab::for_working_space(),
+            oklab: greycard_render::finish::Oklab::for_working_space(),
         }
     }
 }

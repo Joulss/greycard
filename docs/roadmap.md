@@ -581,13 +581,10 @@ still inside the window's crate; the big move waits on its design
 section, and the small items go first since they shrink what it
 touches.
 
-- [ ] The engine, part 3 (§454): the viewport crate, the shader and
-      its parity tests over gpu and render, Slint's pixel types out
-      of it (part 2 done, §506)
 - [ ] The engine, part 4 (§454): `greycard export`, one settings
       subset reader for the window, headless export, and the command
       line, the editor's `--export` kept an alias for a release
-      (part 2 done, §506)
+      (parts 2 and 3 done, §506, §509)
 - [ ] Camera match and the measurement runners into the window's
       library, now that the worker's frame develop is the engine's
       (§471, §506); explicit imports in place of the crate root's

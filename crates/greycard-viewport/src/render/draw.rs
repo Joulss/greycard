@@ -107,7 +107,7 @@ struct Params {
     /// CPU's; in z the sample's exposure, the global one without the
     /// baseline.
     range: [f32; 4],
-    /// The masks' Detail (`crate::detail`): the airlight in xyz and in
+    /// The masks' Detail (`greycard_render::detail`): the airlight in xyz and in
     /// w whether there are planes to read; the gains and the dehaze's
     /// strength and floor; the develop's clip level in x (none under
     /// zero), the fade's start as a share of it in y, and Structure's
@@ -203,10 +203,10 @@ impl Renderer {
             .unwrap_or([1.0, 1.0]);
         let (ox, oy, tw, th) = rect.unwrap_or((0, 0, target.width(), target.height()));
         let m = self.output;
-        let rail = crate::agx::rail_weights_for(&m);
+        let rail = greycard_render::agx::rail_weights_for(&m);
         let w = v.white;
-        let display = crate::finish::White::of(v.source, &v.light);
-        let agx = crate::agx::shader_params(display.agx);
+        let display = greycard_render::finish::White::of(v.source, &v.light);
+        let agx = greycard_render::agx::shader_params(display.agx);
         let params = Params {
             view: [tw as f32, th as f32],
             image,
@@ -756,7 +756,7 @@ impl Renderer {
         slice.map_async(gpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        crate::gpu_lost::poll(&self.device, gpu::PollType::wait_indefinitely())
+        crate::lost::poll(&self.device, gpu::PollType::wait_indefinitely())
             .map_err(anyhow::Error::msg)
             .context("waiting for the read back")?;
         rx.recv()

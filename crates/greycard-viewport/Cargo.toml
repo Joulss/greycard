@@ -1,0 +1,43 @@
+[package]
+name = "greycard-viewport"
+version.workspace = true
+description = "The viewport: the shader that draws a developed frame on the window's device, held to the render crate's reference, the scopes' binning, and the monitor's display table"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+
+[dependencies]
+greycard-core = { path = "../greycard-core" }
+greycard-edit = { path = "../greycard-edit" }
+# The device and its types; the window lends Slint's.
+greycard-gpu = { path = "../greycard-gpu" }
+# The finish the shader is held to, AgX, the detail bands, and the
+# export's spaces.
+greycard-render = { path = "../greycard-render" }
+anyhow.workspace = true
+bytemuck.workspace = true
+# The render crate's half and lcms2, feature for feature.
+half = { workspace = true, features = ["bytemuck"] }
+lcms2.workspace = true
+image.workspace = true
+tracing.workspace = true
+
+[features]
+# The scopes' test pictures the window's tests of their drawing share
+# with these. Turned on by greycard-ui's dev-dependency only.
+testing = []
+
+[dev-dependencies]
+# The shader compiler wgpu already carries, so `cargo test` parses
+# and validates the WGSL without a GPU.
+naga.workspace = true
+# For a device of our own in the shader's tests.
+pollster.workspace = true
+rayon.workspace = true
+# The render crate's test helpers (a camera profile, a scratch
+# folder's removal) and the CPU references the shader is held to.
+greycard-render = { path = "../greycard-render", features = ["testing"] }

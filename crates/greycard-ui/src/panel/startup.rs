@@ -1638,11 +1638,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let new_picture = picture.is_some();
                     if let Some(picture) = picture {
                         if let Some(path) = std::env::var_os("GREYCARD_UI_NAVIGATOR")
-                            && let Some(rgba) = picture.to_rgba8()
                             && let Some(img) = image::RgbaImage::from_raw(
-                                rgba.width(),
-                                rgba.height(),
-                                rgba.as_bytes().to_vec(),
+                                picture.width,
+                                picture.height,
+                                picture.as_bytes().to_vec(),
                             )
                             && let Err(e) = img.save(&path)
                         {
@@ -1654,7 +1653,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // be, or the rows would move out from under
                         // the pointer and the peek end.
                         if st.develop.peek.is_none() {
-                            app.set_navigator(picture);
+                            let buf =
+                                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                                    picture.as_bytes(),
+                                    picture.width,
+                                    picture.height,
+                                );
+                            app.set_navigator(slint::Image::from_rgba8(buf));
                         }
                     }
                     if in_flight {

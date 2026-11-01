@@ -17,10 +17,10 @@ rayon.workspace = true
 image.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
-# The detail bands are half floats, and the export's ICC profiles and
-# conversions are lcms2's. Both are greycard-ui's, feature for feature,
-# so a build of this crate alone resolves them as the editor's build
-# does.
+# The detail bands and the viewport's upload are half floats, and the
+# export's ICC profiles and conversions are lcms2's. Both are
+# greycard-ui's, feature for feature, so a build of this crate alone
+# resolves them as the editor's build does.
 half = { workspace = true, features = ["bytemuck"] }
 lcms2.workspace = true
 # The watermark's text: the system's sans-serif found the way Slint
@@ -33,8 +33,9 @@ unicode-script = "0.5"
 [features]
 # The test helpers the editor's own tests share with these (a camera
 # profile, a scratch folder's removal, a watermark picture), and the
-# references they hold the viewport to. Turned on by greycard-ui's
-# dev-dependency only.
+# references the viewport's tests hold it to. Turned on by the
+# dev-dependencies of greycard-ui, greycard-engine, and
+# greycard-viewport, and by greycard-engine's own `testing`.
 testing = ["greycard-core/testing"]
 
 [dev-dependencies]

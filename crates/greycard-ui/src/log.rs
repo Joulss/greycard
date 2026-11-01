@@ -44,7 +44,7 @@ pub fn kept(n: usize) -> String {
 /// Of the library crate, the catalog import, whose night-long write
 /// says how far it is, and the listing and the export record, which
 /// were the editor's and keep its lines.
-const OURS: [&str; 12] = [
+const OURS: [&str; 13] = [
     "greycard_ui",
     "greycard_core",
     "greycard_edit",
@@ -54,6 +54,7 @@ const OURS: [&str; 12] = [
     "greycard_gpu",
     "greycard_render",
     "greycard_engine",
+    "greycard_viewport",
     "greycard_library::lightroom_catalog",
     "greycard_library::files",
     "greycard_library::export_record",
@@ -370,6 +371,7 @@ mod tests {
         assert!(spec.split(',').any(|d| d == "warn"), "{spec}");
         assert!(spec.contains("greycard_core=info"), "{spec}");
         assert!(spec.contains("greycard_engine=info"), "{spec}");
+        assert!(spec.contains("greycard_viewport=info"), "{spec}");
         assert!(
             spec.contains("greycard_library::lightroom_catalog=info"),
             "{spec}"

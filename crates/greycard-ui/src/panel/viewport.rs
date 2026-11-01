@@ -611,9 +611,9 @@ fn view_in_frame(
 #[cfg(test)]
 thread_local! {
     /// The analysis picture the readout under the pointer reads in a
-    /// test, which has no GPU to read one back from: its pixels, with
-    /// the coverage in the alpha, and its width and height.
-    pub(crate) static HOVER_PICTURE: std::cell::RefCell<Option<(Vec<slint::Rgba8Pixel>, usize, usize)>> =
+    /// test, which has no GPU to read one back from, with the coverage
+    /// in the alpha.
+    pub(crate) static HOVER_PICTURE: std::cell::RefCell<Option<greycard_viewport::Rgba8>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -621,9 +621,9 @@ thread_local! {
 fn analyzed_at(st: &State, u: f32, v: f32, radius: f32) -> Option<scope::Reading> {
     #[cfg(test)]
     if let Some(read) = HOVER_PICTURE.with(|p| {
-        p.borrow()
-            .as_ref()
-            .map(|(px, w, h)| scope::under_pointer(px, *w, *h, u, v, radius))
+        p.borrow().as_ref().map(|p| {
+            scope::under_pointer(&p.pixels, p.width as usize, p.height as usize, u, v, radius)
+        })
     }) {
         return read;
     }
@@ -761,26 +761,8 @@ pub(crate) fn view_to_plane(st: &State, app: &App, x: f32, y: f32) -> (f32, f32)
     (r.0 / pw, r.1 / ph)
 }
 
-/// The color pick's sample sizes: the side of the square it takes
-/// the mean over, in the picture's own pixels, since the viewport's
-/// develop is full size: at fit on a 6000 pixel frame, 41 is about 7
-/// screen pixels and 5 under one. The first is the droppers' own 5x5.
-pub(crate) const SAMPLE_SIZES: [i32; 4] = [5, 11, 21, 41];
-
-/// `size` if it is one of [`SAMPLE_SIZES`], else the first.
-pub(crate) fn sample_size(size: i32) -> i32 {
-    if SAMPLE_SIZES.contains(&size) {
-        size
-    } else {
-        SAMPLE_SIZES[0]
-    }
-}
-
-/// The reach each way of a square of `size` pixels a side, as
-/// [`sample_view_at`] takes it.
-pub(crate) fn sample_reach(size: i32) -> u32 {
-    (sample_size(size) as u32 - 1) / 2
-}
+/// The color pick's sample sizes, the viewport's.
+pub(crate) use greycard_viewport::render::{SAMPLE_SIZES, sample_reach, sample_size};
 
 /// The developed picture under a point of the view (logical pixels):
 /// the mean of the square of `reach` pixels each way about it, in the
@@ -2867,18 +2849,19 @@ mod tests {
         let (app, state, _worker) = hover_frame(1.0);
         // The analysis picture: red on its left half, blue on its
         // right, all selected.
-        let picture: Vec<slint::Rgba8Pixel> = (0..16 * 8)
+        let picture: Vec<[u8; 4]> = (0..16 * 8)
             .map(|i| {
                 let (r, b) = if i % 16 < 8 { (200, 40) } else { (40, 200) };
-                slint::Rgba8Pixel {
-                    r,
-                    g: 40,
-                    b,
-                    a: 0xff,
-                }
+                [r, 40, b, 0xff]
             })
             .collect();
-        HOVER_PICTURE.with(|p| *p.borrow_mut() = Some((picture, 16, 8)));
+        HOVER_PICTURE.with(|p| {
+            *p.borrow_mut() = Some(greycard_viewport::Rgba8 {
+                width: 16,
+                height: 8,
+                pixels: picture,
+            })
+        });
         let red = scope::readout([200.0, 40.0, 40.0].map(|c| c / 255.0));
         let blue = scope::readout([40.0, 40.0, 200.0].map(|c| c / 255.0));
         let (mx, my) = view_middle(&app);
@@ -2933,7 +2916,7 @@ mod tests {
         // This frame developed again under the resting pointer: the
         // upload drops the analysis, and what is shown stays until
         // the new one is back, rather than blink.
-        let picture = HOVER_PICTURE.with(|p| p.borrow_mut().replace((Vec::new(), 0, 0)));
+        let picture = HOVER_PICTURE.with(|p| p.borrow_mut().replace(Default::default()));
         show_hover(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_scope_readout(), blue.as_str(), "a re-develop");
         assert_eq!(app.get_scope_marks().row_count(), 4);
@@ -2957,7 +2940,7 @@ mod tests {
 
         // A step to another frame, its develop not landed: the one on
         // the GPU is the last frame's, and the readout goes.
-        HOVER_PICTURE.with(|p| *p.borrow_mut() = Some((Vec::new(), 0, 0)));
+        HOVER_PICTURE.with(|p| *p.borrow_mut() = Some(Default::default()));
         state.borrow_mut().develop.shown_turn = Some((7, 0));
         show_hover(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_scope_readout(), "", "a frame step");
