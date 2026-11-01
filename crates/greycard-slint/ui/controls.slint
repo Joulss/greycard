@@ -412,10 +412,11 @@ export global Typing {
     // Counted up to close whatever field is open.
     in-out property <int> cancel: 0;
     // The panel's text boxes focused (the filter's words, a custom
-    // aspect, a mask's name, and the frame's title and keywords): each counts itself in as it takes the focus
-    // and out as it loses it, so the order of the two between boxes
-    // does not matter. While above zero, the pointer crossing the
-    // picture leaves the keys with the box.
+    // aspect, the words that find a lens, a mask's name, and the
+    // frame's title and keywords): each counts itself in as it takes
+    // the focus and out as it loses it, so the order of the two
+    // between boxes does not matter. While above zero, the pointer
+    // crossing the picture leaves the keys with the box.
     in-out property <int> boxes: 0;
     public function box-focus(has: bool) {
         self.boxes = has ? self.boxes + 1 : max(0, self.boxes - 1);

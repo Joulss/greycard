@@ -1524,6 +1524,11 @@ export component App inherits Window {
     in property <[string]> lens-choice-keys: [""];
     in-out property <string> lens-choice: "";
     in-out property <int> lens-choice-index: 0;
+    // The Maker row over the picker, All first, and the words that
+    // narrow it: the window's, not the edit's.
+    in property <[string]> lens-makers: ["All"];
+    in-out property <int> lens-maker-index: 0;
+    in-out property <string> lens-filter: "";
     in-out property <bool> lens-profile-on: true;
     in-out property <bool> lens-distortion: true;
     in-out property <bool> lens-ca: true;
@@ -1546,6 +1551,7 @@ export component App inherits Window {
     in-out property <float> lens-defringe-green-width: 120;
     in-out property <float> lens-defringe-green-amount: 1;
     callback fetch-lenses();
+    callback lens-rows-changed();
     in-out property <bool> sharpen-auto-radius: true;
     in-out property <float> sharpen-radius: 0.75;
     in-out property <float> sharpen-iterations: 20;
@@ -3659,6 +3665,10 @@ export component App inherits Window {
                             lens-choice-keys: root.lens-choice-keys;
                             lens-choice <=> root.lens-choice;
                             lens-choice-index <=> root.lens-choice-index;
+                            lens-makers: root.lens-makers;
+                            lens-maker-index <=> root.lens-maker-index;
+                            lens-filter <=> root.lens-filter;
+                            lens-rows-changed => { root.lens-rows-changed(); }
                             lens-profile-on <=> root.lens-profile-on;
                             lens-distortion <=> root.lens-distortion;
                             lens-ca <=> root.lens-ca;

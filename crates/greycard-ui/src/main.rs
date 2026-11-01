@@ -1030,6 +1030,7 @@ impl State {
                 store: None,
                 lens: LensReport::NoDatabase,
                 lens_options: Vec::new(),
+                lens_frame: None,
                 profiles: Vec::new(),
                 camera: (String::new(), String::new()),
                 other_names: Vec::new(),

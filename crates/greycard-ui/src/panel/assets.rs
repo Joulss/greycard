@@ -579,46 +579,203 @@ pub(crate) fn show_import_report(app: &App, report: Report) {
 /// The picker's first row: the lens the file names, or none.
 pub(crate) const FROM_THE_FILE: &str = "From the file";
 
-/// What the LENS panel says of the open file: the picker, with the
-/// lens the edit chose; and under it the profile found for what the
-/// file names, or why there is none, or the lens picked.
+/// The Maker row's first entry: every maker's lenses.
+pub(crate) const ALL_MAKERS: &str = "All";
+
+/// The Maker row's entries for `options`: All, then each maker of a
+/// row, alphabetically. A maker with no row is not there.
+pub(crate) fn lens_makers(options: &[greycard_engine::lens::LensOption]) -> Vec<String> {
+    let mut makers: Vec<String> = options
+        .iter()
+        .map(|o| o.maker.clone())
+        .filter(|m| !m.is_empty())
+        .collect();
+    makers.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
+    makers.dedup();
+    std::iter::once(ALL_MAKERS.to_string())
+        .chain(makers)
+        .collect()
+}
+
+/// Whether a row's `label` holds every word of `filter`, case aside.
+fn lens_matches(label: &str, filter: &str) -> bool {
+    let label = label.to_lowercase();
+    filter
+        .split_whitespace()
+        .all(|w| label.contains(&w.to_lowercase()))
+}
+
+/// What the Lens row shows: the keys and labels of its rows, and which
+/// is chosen.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LensRows {
+    pub(crate) keys: Vec<String>,
+    pub(crate) labels: Vec<String>,
+    pub(crate) index: usize,
+}
+
+/// The Lens row's rows: From the file, then those of `options` by
+/// `maker` (every maker's for none) whose label and maker between them
+/// hold every word of `filter`. The lens `chosen` is always among them,
+/// first after From the file when the maker or the filter would leave it
+/// out; one not
+/// among `options` (a preset or a sidecar from another body or another
+/// machine) is listed by its name, after the rest, and has no maker.
+pub(crate) fn lens_rows(
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    maker: Option<&str>,
+    filter: &str,
+) -> LensRows {
+    use greycard_edit::LensChoice;
+    let mut keys = vec![String::new()];
+    let mut labels = vec![FROM_THE_FILE.to_string()];
+    for o in options {
+        let named = format!("{} {}", o.label, o.maker);
+        if maker.is_none_or(|m| m == o.maker) && lens_matches(&named, filter) {
+            keys.push(o.choice.key());
+            labels.push(o.label.clone());
+        }
+    }
+    let key = chosen.key();
+    let listed = options.iter().find(|o| o.choice == *chosen);
+    let label = match (listed, chosen) {
+        (Some(o), _) => o.label.clone(),
+        (None, LensChoice::Database(name) | LensChoice::Lcp(name)) => name.clone(),
+        (None, LensChoice::FromFile) => FROM_THE_FILE.to_string(),
+    };
+    let index = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
+        let shown = listed.is_none() && maker.is_none() && lens_matches(&label, filter);
+        let at = if shown { keys.len() } else { 1 };
+        keys.insert(at, key);
+        labels.insert(at, label);
+        at
+    });
+    LensRows {
+        keys,
+        labels,
+        index,
+    }
+}
+
+/// The maker the Maker row has chosen; none for All.
+fn shown_maker(app: &App) -> Option<String> {
+    let index = usize::try_from(app.get_lens_maker_index()).ok()?;
+    let maker = app.get_lens_makers().row_data(index)?;
+    (index > 0).then(|| maker.to_string())
+}
+
+/// Put the Lens row's rows on the panel for the Maker row and the
+/// filter as they stand, `chosen` among them; its label.
+pub(crate) fn show_lens_rows(
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    app: &App,
+) -> String {
+    let maker = shown_maker(app);
+    let rows = lens_rows(options, chosen, maker.as_deref(), &app.get_lens_filter());
+    let label = rows.labels[rows.index].clone();
+    let model = |v: Vec<String>| {
+        ModelRc::new(VecModel::from(
+            v.into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<_>>(),
+        ))
+    };
+    app.set_lens_choice_keys(model(rows.keys));
+    app.set_lens_choice_labels(model(rows.labels));
+    app.set_lens_choice_index(rows.index as i32);
+    label
+}
+
+/// Whether the open frame is another than the one the LENS filter and
+/// Maker row were last set for; it is theirs from here.
+pub(crate) fn another_lens_frame(st: &mut State) -> bool {
+    let frame = st.current.and_then(|i| st.key_of(i));
+    let another = frame != st.develop.lens_frame;
+    st.develop.lens_frame = frame;
+    another
+}
+
+/// After an open that shows the panel an edit with no develop to
+/// follow (an offline frame, culling): the filter and the Maker row
+/// as a develop's open sets them, when the frame is another.
+pub(crate) fn lens_frame_shown(st: &mut State, app: &App) {
+    if another_lens_frame(st) {
+        let d = &st.develop;
+        show_lens_opened(&d.lens, &d.lens_options, &d.edit.lens.chosen, app, true);
+    }
+}
+
+/// [`show_lens`] for a frame just opened, `opened` when it is another
+/// frame than the last: the filter is cleared, and the Maker row shows
+/// the maker of the lens the edit chose.
+pub(crate) fn show_lens_opened(
+    report: &LensReport,
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    app: &App,
+    opened: bool,
+) {
+    if opened {
+        app.set_lens_filter("".into());
+    }
+    show_lens_as(report, options, chosen, app, opened);
+}
+
+/// What the LENS panel says of the open file: the Maker row, the
+/// picker with the lens the edit chose, and under it the profile found
+/// for what the file names, or why there is none, or the lens picked.
 ///
-/// A lens the edit picked that is not among `options` (a preset or a
-/// sidecar from another body or another machine) is still listed, by
-/// its name, and chosen, so the panel says what the edit says; its
-/// name is shown greyed, as a profile not found is.
+/// The Maker row keeps its maker while the list has it, and turns to
+/// the chosen lens's when it would hide it; a lens picked under All
+/// leaves it at All. A lens the edit picked that is not among
+/// `options` is still listed (see [`lens_rows`]), and its name is
+/// shown greyed, as a profile not found is.
 pub(crate) fn show_lens(
     report: &LensReport,
     options: &[greycard_engine::lens::LensOption],
     chosen: &greycard_edit::LensChoice,
     app: &App,
 ) {
-    use greycard_edit::LensChoice;
-    let mut keys = vec![slint::SharedString::new()];
-    let mut labels = vec![slint::SharedString::from(FROM_THE_FILE)];
-    for o in options {
-        keys.push(o.choice.key().into());
-        labels.push(o.label.as_str().into());
+    show_lens_as(report, options, chosen, app, false);
+}
+
+fn show_lens_as(
+    report: &LensReport,
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    app: &App,
+    follow: bool,
+) {
+    let makers = lens_makers(options);
+    let chosen_maker = options
+        .iter()
+        .find(|o| o.choice == *chosen)
+        .map(|o| o.maker.clone())
+        .filter(|m| !m.is_empty());
+    let mut maker = shown_maker(app).filter(|m| makers.contains(m));
+    if let Some(m) = chosen_maker
+        && (follow || maker.as_ref().is_some_and(|shown| *shown != m))
+    {
+        maker = Some(m);
     }
-    let key = chosen.key();
-    let listed = keys.iter().position(|k| k.as_str() == key);
-    let index = listed.unwrap_or_else(|| {
-        keys.push(key.as_str().into());
-        labels.push(match chosen {
-            LensChoice::Database(name) | LensChoice::Lcp(name) => name.as_str().into(),
-            LensChoice::FromFile => FROM_THE_FILE.into(),
-        });
-        keys.len() - 1
-    });
-    let label = labels[index].clone();
-    app.set_lens_choice_keys(ModelRc::new(VecModel::from(keys)));
-    app.set_lens_choice_labels(ModelRc::new(VecModel::from(labels)));
-    app.set_lens_choice(key.into());
-    app.set_lens_choice_index(index as i32);
+    let index = maker
+        .and_then(|m| makers.iter().position(|n| *n == m))
+        .unwrap_or(0);
+    app.set_lens_makers(ModelRc::new(VecModel::from(
+        makers
+            .into_iter()
+            .map(slint::SharedString::from)
+            .collect::<Vec<_>>(),
+    )));
+    app.set_lens_maker_index(index as i32);
+    let label = show_lens_rows(options, chosen, app);
+    app.set_lens_choice(chosen.key().into());
     app.set_lens_database(!matches!(report, LensReport::NoDatabase));
     if !chosen.is_from_file() {
-        app.set_lens_available(listed.is_some());
-        app.set_lens_profile(label);
+        app.set_lens_available(options.iter().any(|o| o.choice == *chosen));
+        app.set_lens_profile(label.into());
         return;
     }
     app.set_lens_available(matches!(report, LensReport::Found { .. }));
@@ -904,6 +1061,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if st.sheets.fetch.is_none() && !st.sheets.fetching {
                 offer_lenses(&mut st, &app, false);
             }
+        });
+    }
+    // The Maker row or the filter changed: the Lens row shows the rows
+    // they leave, the chosen lens among them.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_lens_rows_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            let chosen = greycard_edit::LensChoice::from_key(app.get_lens_choice().as_str());
+            show_lens_rows(&st.develop.lens_options, &chosen, &app);
         });
     }
     // The model sheet answered.
@@ -2173,10 +2343,12 @@ mod tests {
             LensOption {
                 choice: LensChoice::Database("Canon RF 50mm F1.8 STM".into()),
                 label: "Canon RF 50mm F1.8 STM".into(),
+                maker: "Canon".into(),
             },
             LensOption {
                 choice: LensChoice::Lcp("hand.lcp".into()),
                 label: "Hand 35mm".into(),
+                maker: "Hand".into(),
             },
         ];
         let found = LensReport::Found {
@@ -2211,6 +2383,296 @@ mod tests {
         assert_eq!(labels[3], "Nikon Z 50mm f/1.8 S");
         assert_eq!(app.get_lens_choice_index(), 3);
         assert!(!app.get_lens_available());
+    }
+
+    /// A picker's options: three makers' lenses and a profile.
+    fn maker_options() -> Vec<greycard_engine::lens::LensOption> {
+        use greycard_edit::LensChoice;
+        use greycard_engine::lens::LensOption;
+        let row = |choice, label: &str, maker: &str| LensOption {
+            choice,
+            label: label.into(),
+            maker: maker.into(),
+        };
+        let db = |name: &str| LensChoice::Database(name.into());
+        vec![
+            row(
+                db("Canon RF 24-70mm F2.8L IS USM"),
+                "Canon RF 24-70mm F2.8L IS USM",
+                "Canon",
+            ),
+            row(
+                db("Canon RF 50mm F1.8 STM"),
+                "Canon RF 50mm F1.8 STM",
+                "Canon",
+            ),
+            row(
+                db("Sigma 24-70mm F2.8 DG DN Art"),
+                "Sigma 24-70mm F2.8 DG DN Art",
+                "Sigma",
+            ),
+            row(
+                db("Samyang AF 35mm F1.4"),
+                "Samyang AF 35mm F1.4",
+                "Samyang",
+            ),
+            row(
+                LensChoice::Lcp("art.lcp".into()),
+                "SIGMA 35mm F1.4 DG HSM Art",
+                "Sigma",
+            ),
+        ]
+    }
+
+    /// The Maker row: All, then each maker of a row once,
+    /// alphabetically; the Lens row narrowed by maker, by words, and
+    /// by both, From the file always first, every row under its own
+    /// key whatever is left out, and the chosen lens shown when the
+    /// narrowing would leave it out.
+    #[test]
+    fn the_lens_rows_narrow_by_maker_and_words_and_keep_the_choice() {
+        use greycard_edit::LensChoice;
+        let options = maker_options();
+        assert_eq!(
+            lens_makers(&options),
+            [ALL_MAKERS, "Canon", "Samyang", "Sigma"]
+        );
+        assert_eq!(lens_makers(&[]), [ALL_MAKERS]);
+        let from = LensChoice::FromFile;
+        let labels = |r: &LensRows| r.labels.clone();
+        let all = lens_rows(&options, &from, None, "");
+        assert_eq!(all.labels.len(), 6);
+        assert_eq!(all.labels[0], FROM_THE_FILE);
+        assert_eq!(all.index, 0);
+
+        let sigma = lens_rows(&options, &from, Some("Sigma"), "");
+        assert_eq!(
+            labels(&sigma),
+            [
+                FROM_THE_FILE,
+                "Sigma 24-70mm F2.8 DG DN Art",
+                "SIGMA 35mm F1.4 DG HSM Art"
+            ]
+        );
+        let zooms = lens_rows(&options, &from, None, "24-70");
+        assert_eq!(
+            labels(&zooms),
+            [
+                FROM_THE_FILE,
+                "Canon RF 24-70mm F2.8L IS USM",
+                "Sigma 24-70mm F2.8 DG DN Art"
+            ]
+        );
+        // Every word, in any order, case aside.
+        let art = lens_rows(&options, &from, None, "art  sigma");
+        assert_eq!(
+            labels(&art),
+            [
+                FROM_THE_FILE,
+                "Sigma 24-70mm F2.8 DG DN Art",
+                "SIGMA 35mm F1.4 DG HSM Art"
+            ]
+        );
+        let both = lens_rows(&options, &from, Some("Sigma"), "35");
+        assert_eq!(labels(&both), [FROM_THE_FILE, "SIGMA 35mm F1.4 DG HSM Art"]);
+        let none = lens_rows(&options, &from, Some("Canon"), "sigma");
+        assert_eq!(labels(&none), [FROM_THE_FILE]);
+
+        // The keys are the options' own, row for row, however
+        // narrowed: a pick reads the same lens either way.
+        for rows in [&all, &sigma, &zooms, &art, &both, &none] {
+            assert_eq!(rows.keys.len(), rows.labels.len());
+            assert_eq!(rows.keys[0], "");
+            for (key, label) in rows.keys.iter().zip(&rows.labels).skip(1) {
+                let o = options.iter().find(|o| o.label == *label).unwrap();
+                assert_eq!(*key, o.choice.key());
+            }
+        }
+
+        // The chosen lens left out by the maker or the words: shown
+        // all the same, first after From the file, and chosen.
+        let fifty = LensChoice::Database("Canon RF 50mm F1.8 STM".into());
+        let kept = lens_rows(&options, &fifty, Some("Sigma"), "");
+        assert_eq!(
+            labels(&kept),
+            [
+                FROM_THE_FILE,
+                "Canon RF 50mm F1.8 STM",
+                "Sigma 24-70mm F2.8 DG DN Art",
+                "SIGMA 35mm F1.4 DG HSM Art"
+            ]
+        );
+        assert_eq!(kept.index, 1);
+        assert_eq!(kept.keys[1], fifty.key());
+        let kept = lens_rows(&options, &fifty, None, "24-70");
+        assert_eq!(kept.labels[1], "Canon RF 50mm F1.8 STM");
+        assert_eq!(kept.index, 1);
+        // Not left out: in its own place.
+        let shown = lens_rows(&options, &fifty, Some("Canon"), "");
+        assert_eq!(shown.index, 2);
+        assert_eq!(shown.labels.len(), 3);
+        // From the file chosen under words that match nothing: the
+        // one row, chosen.
+        let bare = lens_rows(&options, &from, None, "nothing");
+        assert_eq!(
+            (labels(&bare), bare.index),
+            (vec![FROM_THE_FILE.to_string()], 0)
+        );
+
+        // The words find a lens by its maker too, where its name
+        // does not say it.
+        let laowa = vec![greycard_engine::lens::LensOption {
+            choice: LensChoice::Database("Laowa 15mm f/2 Zero-D".into()),
+            label: "Laowa 15mm f/2 Zero-D".into(),
+            maker: "Venus".into(),
+        }];
+        let venus = lens_rows(&laowa, &from, None, "venus 15mm");
+        assert_eq!(labels(&venus), [FROM_THE_FILE, "Laowa 15mm f/2 Zero-D"]);
+    }
+
+    /// An open with no develop to follow it (an offline frame, or one
+    /// in culling) sets the filter and the Maker row as a develop's
+    /// does: cleared and following the edit's lens for another frame,
+    /// kept for the same one.
+    #[test]
+    fn an_open_without_a_develop_follows_the_frame_change_rule() {
+        use greycard_edit::LensChoice;
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        let mut st = state.borrow_mut();
+        st.develop.lens = LensReport::NoLensName;
+        st.develop.lens_options = maker_options();
+        st.develop.edit.lens.chosen = LensChoice::Lcp("art.lcp".into());
+        let maker = |app: &App| {
+            app.get_lens_makers()
+                .row_data(app.get_lens_maker_index() as usize)
+                .unwrap()
+                .to_string()
+        };
+        st.current = Some(0);
+        app.set_lens_filter("24-70".into());
+        lens_frame_shown(&mut st, &app);
+        assert_eq!(app.get_lens_filter(), "");
+        assert_eq!(maker(&app), "Sigma");
+        // The same frame again: the words stay.
+        app.set_lens_filter("art".into());
+        lens_frame_shown(&mut st, &app);
+        assert_eq!(app.get_lens_filter(), "art");
+        // Another: cleared.
+        st.current = Some(1);
+        lens_frame_shown(&mut st, &app);
+        assert_eq!(app.get_lens_filter(), "");
+        // A develop's open of that frame after it keeps them.
+        app.set_lens_filter("dg".into());
+        assert!(!another_lens_frame(&mut st));
+        assert_eq!(app.get_lens_filter(), "dg");
+    }
+
+    /// The Maker row on the panel: a frame opened under a picked lens
+    /// shows its maker; a lens picked under All leaves All; a maker the
+    /// chosen lens is not of turns to the lens's; the filter is cleared
+    /// by another frame and kept by the same one; and the Maker row and
+    /// the filter, changed, narrow the Lens row with the choice kept.
+    #[test]
+    fn the_maker_row_follows_the_opened_frame_and_keeps_its_choice() {
+        use greycard_edit::LensChoice;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let options = maker_options();
+        state.borrow_mut().develop.lens_options = options.clone();
+        let strings = |m: ModelRc<slint::SharedString>| -> Vec<String> {
+            m.iter().map(|s| s.to_string()).collect()
+        };
+        let maker =
+            |app: &App| strings(app.get_lens_makers())[app.get_lens_maker_index() as usize].clone();
+        let report = LensReport::NoLensName;
+
+        // Opened under the Samyang: Samyang, its row chosen.
+        let samyang = LensChoice::Database("Samyang AF 35mm F1.4".into());
+        show_lens_opened(&report, &options, &samyang, &app, true);
+        assert_eq!(
+            strings(app.get_lens_makers()),
+            [ALL_MAKERS, "Canon", "Samyang", "Sigma"]
+        );
+        assert_eq!(maker(&app), "Samyang");
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [FROM_THE_FILE, "Samyang AF 35mm F1.4"]
+        );
+        assert_eq!(app.get_lens_choice_index(), 1);
+        assert_eq!(app.get_lens_profile(), "Samyang AF 35mm F1.4");
+
+        // All chosen, then a lens picked: All stays.
+        app.set_lens_maker_index(0);
+        app.invoke_lens_rows_changed();
+        assert_eq!(app.get_lens_choice_labels().row_count(), 6);
+        let art = LensChoice::Lcp("art.lcp".into());
+        show_lens(&report, &options, &art, &app);
+        assert_eq!(maker(&app), ALL_MAKERS);
+        assert_eq!(app.get_lens_choice_index(), 5);
+        assert_eq!(app.get_lens_profile(), "SIGMA 35mm F1.4 DG HSM Art");
+
+        // Canon chosen while the edit's lens is a Sigma (an undo, a
+        // paste): the row turns to Sigma, so the choice reads back.
+        app.set_lens_maker_index(1);
+        show_lens(&report, &options, &art, &app);
+        assert_eq!(maker(&app), "Sigma");
+
+        // From the file: the maker stays as it was.
+        show_lens(&report, &options, &LensChoice::FromFile, &app);
+        assert_eq!(maker(&app), "Sigma");
+
+        // Words typed: the Lens row narrows, the choice kept on it.
+        app.set_lens_choice(art.key().into());
+        app.set_lens_filter("24-70".into());
+        app.invoke_lens_rows_changed();
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [
+                FROM_THE_FILE,
+                "SIGMA 35mm F1.4 DG HSM Art",
+                "Sigma 24-70mm F2.8 DG DN Art"
+            ]
+        );
+        assert_eq!(app.get_lens_choice_index(), 1);
+        assert_eq!(
+            strings(app.get_lens_choice_keys()),
+            ["", "lcp:art.lcp", "database:Sigma 24-70mm F2.8 DG DN Art"]
+        );
+        // The panel reads the choice as before.
+        let edit = read_edit(&app, &greycard_edit::Edit::default(), None);
+        assert_eq!(edit.lens.chosen, art);
+
+        // The same frame opened again keeps the words; another clears
+        // them, and its edit's lens's maker is shown.
+        show_lens_opened(&report, &options, &art, &app, false);
+        assert_eq!(app.get_lens_filter(), "24-70");
+        let fifty = LensChoice::Database("Canon RF 50mm F1.8 STM".into());
+        show_lens_opened(&report, &options, &fifty, &app, true);
+        assert_eq!(app.get_lens_filter(), "");
+        assert_eq!(maker(&app), "Canon");
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [
+                FROM_THE_FILE,
+                "Canon RF 24-70mm F2.8L IS USM",
+                "Canon RF 50mm F1.8 STM"
+            ]
+        );
+        assert_eq!(app.get_lens_choice_index(), 2);
+
+        // Another body's list without that maker: All.
+        let fewer: Vec<_> = options
+            .iter()
+            .filter(|o| o.maker != "Canon")
+            .cloned()
+            .collect();
+        show_lens_opened(&report, &fewer, &LensChoice::FromFile, &app, true);
+        assert_eq!(maker(&app), ALL_MAKERS);
+        assert_eq!(
+            strings(app.get_lens_makers()),
+            [ALL_MAKERS, "Samyang", "Sigma"]
+        );
     }
 
     /// The CAMERA PROFILE rows for `profiles` on an EOS 850D, also

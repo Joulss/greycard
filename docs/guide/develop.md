@@ -364,10 +364,13 @@ denoiser.
 
 ## Lens
 
-Corrects what the lens does to the picture. **Lens**, at the top,
+Corrects what the lens does to the picture. **Lens**, near the top,
 picks whose profile corrects it. **From the file**, the default, is the
-lens the file names. The line under it names the profile found, or
-says why none was:
+lens the file names. **Maker**, above it, narrows the list to one
+maker's lenses, or **All**. The field beside **Maker**, **Find a
+lens**, narrows it further to the lenses whose name or maker holds
+every word typed, such as "24-70" or "sigma art". The line under
+**Lens** names the profile found, or says why none was:
 
 - "no lens profiles on this machine": click **Get lens profiles**.
 - "the file names no lens": for example a manual or adapted lens. Pick

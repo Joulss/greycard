@@ -58,6 +58,10 @@ design note behind it.
   the file names none, and Adobe lens profiles (.lcp) placed beside
   the camera profiles
   ([§497](https://github.com/jessolmstead/greycard/blob/master/docs/notes/497-a-lens-picked-by-hand-and-adobe-lens-profiles.md)).
+- LENS gains a Maker row above Lens, with a Find a lens field beside
+  it, to narrow the picker's few hundred lenses to one maker's or to
+  those whose name or maker holds the words typed
+  ([§516](https://github.com/jessolmstead/greycard/blob/master/docs/notes/516-the-lens-picker-by-maker-and-a-filter.md)).
 - A phone's DNG opens without its dark corners: the gain maps and the
   forward matrices in the file are applied
   ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md)).

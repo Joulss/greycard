@@ -1,9 +1,9 @@
 // The LENS section: the lens picked or the profile the database
 // found, the manual corrections, and the defringe.
 
-import { ComboBox } from "std-widgets.slint";
+import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, Steps, Toggle, PanelButton } from "../controls.slint";
+import { Section, EditSlider, Steps, Toggle, PanelButton, Typing } from "../controls.slint";
 
 export component LensSection inherits Section {
     in-out property <bool> lens-enabled;
@@ -18,6 +18,10 @@ export component LensSection inherits Section {
     in property <[string]> lens-choice-keys;
     in-out property <string> lens-choice;
     in-out property <int> lens-choice-index;
+    in property <[string]> lens-makers;
+    in-out property <int> lens-maker-index;
+    in-out property <string> lens-filter;
+    callback lens-rows-changed();
     in-out property <bool> lens-profile-on;
     in-out property <bool> lens-distortion;
     in-out property <bool> lens-ca;
@@ -46,7 +50,36 @@ export component LensSection inherits Section {
     on <=> root.lens-enabled;
     switched => { root.develop-changed(); }
     // Which lens: the file's, or one picked by
-    // hand for a file that names none.
+    // hand for a file that names none. The
+    // maker and the words narrow the list; the
+    // words share the maker's row, whose names
+    // are short, so the lens's name has the
+    // width of its own.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        Text { text: "Maker"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        ComboBox {
+            min-width: 64px;
+            horizontal-stretch: 1;
+            model: root.lens-makers;
+            current-index <=> root.lens-maker-index;
+            selected(v) => { root.lens-rows-changed(); }
+        }
+        LineEdit {
+            width: 96px;
+            text <=> root.lens-filter;
+            placeholder-text: "Find a lens";
+            accessible-label: "Find a lens";
+            edited(t) => { root.lens-rows-changed(); }
+            // Enter or Escape gives the keys back to the window.
+            accepted(t) => { Typing.done += 1; }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { Typing.done += 1; return accept; }
+                return reject;
+            }
+            changed has-focus => { Typing.box-focus(self.has-focus); }
+        }
+    }
     HorizontalLayout {
         spacing: Theme.space-2;
         Text { text: "Lens"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }

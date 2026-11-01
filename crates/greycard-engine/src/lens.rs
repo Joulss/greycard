@@ -20,6 +20,8 @@ pub struct LensOption {
     pub choice: LensChoice,
     /// The lens's name.
     pub label: String,
+    /// Who made the lens, one spelling a maker (see [`options_in`]).
+    pub maker: String,
 }
 
 /// The profile's correction for a picture `width` by `height` of the
@@ -126,11 +128,17 @@ pub fn options(db: Option<&Database>, identity: Identity) -> Vec<LensOption> {
 /// camera's JPEGs, or one made on this body and one on another) are
 /// one row: the one made on the kind of picture this is, then the one
 /// made on this body, then the first by file name.
+///
+/// A maker is spelled one way across the rows: the database writes
+/// "Nikon" and "Nikon Corporation", "Olympus" and "Olympus Imaging
+/// Corp.", and the shortest of those sharing a first word stands for
+/// them all. An Adobe profile is filed as `Makers::of_profile` says.
 pub fn options_in(
     db: Option<&Database>,
     (make, model, _, raw): Identity,
     profiles: Option<&Path>,
 ) -> Vec<LensOption> {
+    let makers = Makers::of(db);
     let mut out: Vec<LensOption> = db
         .and_then(|db| db.camera(make, model).map(|c| db.lenses_for(c)))
         .unwrap_or_default()
@@ -138,6 +146,7 @@ pub fn options_in(
         .map(|l| LensOption {
             choice: LensChoice::Database(l.name().to_string()),
             label: l.name().to_string(),
+            maker: makers.spelled(&l.maker),
         })
         .collect();
     // A profile made on another body is read at this body's sensor
@@ -160,10 +169,107 @@ pub fn options_in(
     }
     adobe.sort_by_key(|l| l.lens.to_lowercase());
     out.extend(adobe.into_iter().map(|l| LensOption {
+        maker: makers.of_profile(&l),
         choice: LensChoice::Lcp(l.file),
         label: l.lens,
     }));
     out
+}
+
+/// The database's lens makers by first word, each the shortest
+/// spelling of those sharing it; and each maker's series words, the
+/// word after the maker's in its lenses' names ("EF", "RF", "FE",
+/// "XF", "NIKKOR"), by which a profile names a lens without its maker.
+struct Makers {
+    spelling: std::collections::HashMap<String, String>,
+    series: std::collections::HashSet<(String, String)>,
+}
+
+impl Makers {
+    fn of(db: Option<&Database>) -> Self {
+        let mut spelling = std::collections::HashMap::<String, String>::new();
+        let mut series = std::collections::HashSet::new();
+        for lens in db.into_iter().flat_map(|db| &db.lenses) {
+            let maker = &lens.maker;
+            let Some(word) = first_word(maker) else {
+                continue;
+            };
+            for name in &lens.models {
+                if let Some(second) = series_word(name) {
+                    series.insert((word.clone(), second));
+                }
+            }
+            let kept = spelling.entry(word).or_insert_with(|| maker.clone());
+            if rank(maker) < rank(kept) {
+                *kept = maker.clone();
+            }
+        }
+        Self { spelling, series }
+    }
+
+    /// `maker` as the rows spell it.
+    fn spelled(&self, maker: &str) -> String {
+        first_word(maker)
+            .and_then(|w| self.spelling.get(&w))
+            .cloned()
+            .unwrap_or_else(|| maker.to_string())
+    }
+
+    /// The maker an Adobe profile's row is filed under: the one its
+    /// lens's name starts with; the camera's maker when the name
+    /// starts with one of that maker's series words, by its leading
+    /// letters so "EF24-105mm" counts as EF (a profile's make is the
+    /// camera's, not the lens's); else the name's first word as
+    /// written.
+    fn of_profile(&self, l: &lcp::Listed) -> String {
+        let first = first_word(&l.lens);
+        if let Some(maker) = first.as_ref().and_then(|w| self.spelling.get(w)) {
+            return maker.clone();
+        }
+        let make = l.make.as_deref().map(str::trim).filter(|m| !m.is_empty());
+        let letters: Option<String> = first
+            .as_ref()
+            .map(|w| w.chars().take_while(|c| c.is_alphabetic()).collect())
+            .filter(|w: &String| !w.is_empty());
+        if let (Some(make), Some(letters)) = (make, letters)
+            && let Some(maker) = first_word(make)
+            && self.series.contains(&(maker, letters))
+        {
+            return self.spelled(make);
+        }
+        l.lens
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    }
+}
+
+/// A name's first word, lower case, up to a hyphen, letters and
+/// digits alone: what two spellings of a maker share ("Nikon" and
+/// "Nikon Corporation", "Schneider" and "Schneider-Kreuznach"), a
+/// leading number kept with it ("7Artisans").
+fn first_word(name: &str) -> Option<String> {
+    let word = name.split_whitespace().next()?.split('-').next()?;
+    let word: String = word
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    (!word.is_empty()).then_some(word)
+}
+
+/// A lens name's second word, lower case, when it names a series and
+/// not a focal length.
+fn series_word(name: &str) -> Option<String> {
+    first_word(name.split_whitespace().nth(1)?).filter(|w| !w.chars().any(|c| c.is_ascii_digit()))
+}
+
+/// The spelling preferred: the shortest, then not all capitals, then
+/// the first alphabetically.
+fn rank(maker: &str) -> (usize, bool, &str) {
+    let all_capitals = !maker.chars().any(char::is_lowercase);
+    (maker.chars().count(), all_capitals, maker)
 }
 
 #[cfg(test)]
@@ -192,6 +298,73 @@ mod tests {
             .replace("RAW", if raw { "True" } else { "False" })
     }
 
+    /// A lens of `maker` on `mount`, for a database in a test.
+    fn db_lens(maker: &str, model: &str, mount: &str) -> String {
+        format!(
+            "<lens><maker>{maker}</maker><model>{model}</model><mount>{mount}</mount>\
+             <cropfactor>1</cropfactor><calibration>\
+             <distortion model=\"poly3\" focal=\"50\" k1=\"0\"/>\
+             </calibration></lens>"
+        )
+    }
+
+    /// Each row's maker: the database's spellings of one maker are
+    /// one, and an Adobe profile made on a Canon is filed under the
+    /// maker its lens's name starts with, under Canon only when the
+    /// name starts with one of Canon's series.
+    #[test]
+    fn the_picker_rows_carry_one_maker_spelling() {
+        let dir = crate::testing::scratch_dir("lens-makers");
+        let made = |lens: &str| {
+            lcp("Canon EOS R6", true)
+                .replace("Hand 35mm", lens)
+                .replace("stCamera:Model=", "stCamera:Make=\"Canon\" stCamera:Model=")
+        };
+        std::fs::write(dir.join("a.lcp"), made("SIGMA 35mm F1.4 DG HSM Art")).unwrap();
+        std::fs::write(dir.join("b.lcp"), made("Hand 35mm")).unwrap();
+        std::fs::write(dir.join("c.lcp"), made("RF 100mm F2.8 L Macro")).unwrap();
+        std::fs::write(dir.join("d.lcp"), made("7Artisans 35mm F1.4")).unwrap();
+        std::fs::write(dir.join("e.lcp"), made("EF24-105mm f/4L IS USM")).unwrap();
+        let mut db = Database::default();
+        db.read_xml(&format!(
+            "<lensdatabase version=\"2\"><camera><maker>Canon</maker>\
+             <model>Canon EOS R6</model><mount>Canon RF</mount>\
+             <cropfactor>1</cropfactor></camera>{}{}{}{}{}{}</lensdatabase>",
+            db_lens("Canon", "Canon RF 50mm F1.8 STM", "Canon RF"),
+            db_lens("Canon", "Canon EF 50mm f/1.8 STM", "Canon EF"),
+            db_lens("Canon Inc.", "Canon RF 85mm F2 Macro IS STM", "Canon RF"),
+            db_lens("SIGMA", "Sigma 24-70mm F2.8 DG DN Art", "Canon RF"),
+            db_lens("Sigma", "Sigma 18-35mm F1.8 DC HSM", "Nikon F AF"),
+            db_lens("7Artisans", "7Artisans 25mm f/1.8", "Fujifilm X"),
+        ))
+        .unwrap();
+        let shot = Shot::default();
+        let options = options_in(Some(&db), ("Canon", "EOS R6", &shot, true), Some(&dir));
+        let makers: Vec<(&str, &str)> = options
+            .iter()
+            .map(|o| (o.label.as_str(), o.maker.as_str()))
+            .collect();
+        assert_eq!(
+            makers,
+            [
+                ("Canon RF 50mm F1.8 STM", "Canon"),
+                ("Canon RF 85mm F2 Macro IS STM", "Canon"),
+                ("Sigma 24-70mm F2.8 DG DN Art", "Sigma"),
+                // Profiles: a third party's under its own name, not
+                // the camera's; one named by the camera maker's series
+                // under the camera's maker, by its leading letters
+                // when the name runs the series into the focal length;
+                // a maker that starts with a number under its own name.
+                ("7Artisans 35mm F1.4", "7Artisans"),
+                ("EF24-105mm f/4L IS USM", "Canon"),
+                ("Hand 35mm", "Hand"),
+                ("RF 100mm F2.8 L Macro", "Canon"),
+                ("SIGMA 35mm F1.4 DG HSM Art", "Sigma"),
+            ]
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     #[test]
     fn the_picker_offers_one_adobe_row_a_lens_and_the_choice_corrects() {
         let dir = crate::testing::scratch_dir("lens-options");
@@ -210,6 +383,7 @@ mod tests {
             [LensOption {
                 choice: LensChoice::Lcp("c.lcp".into()),
                 label: "Hand 35mm".into(),
+                maker: "Hand".into(),
             }]
         );
         // A rendered picture takes the one made on JPEGs, once the

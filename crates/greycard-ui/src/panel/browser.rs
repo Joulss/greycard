@@ -2332,6 +2332,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
             st.develop.edit = edit;
         }
         cull_select(st, app, i);
+        crate::panel::assets::lens_frame_shown(st, app);
         show_set(st, app);
         return;
     }
@@ -2381,6 +2382,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         app.set_busy(false);
         show_history(st, app);
         crate::rows::say_offline_for(st, app, i, ": nothing to develop, and no change is kept");
+        crate::panel::assets::lens_frame_shown(st, app);
         show_set(st, app);
         return;
     }

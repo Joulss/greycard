@@ -1,5 +1,7 @@
 use crate::export_name;
-use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
+use crate::panel::assets::{
+    another_lens_frame, offer_lenses_once, offer_model, show_lens_opened, show_looks, show_profiles,
+};
 use crate::panel::browser::{
     chosen_frames, count_thumb, end_thumb_turn, file_name, release_thumbnails, show_no_thumb,
     show_thumb, thumb_turns,
@@ -537,7 +539,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     );
                 }
             }
-            show_lens(&lens, &lens_options, &st.develop.edit.lens.chosen, app);
+            // Another frame than the last: the lens filter is
+            // cleared and the Maker row follows the edit's lens.
+            let another = another_lens_frame(&mut st);
+            let chosen = &st.develop.edit.lens.chosen;
+            show_lens_opened(&lens, &lens_options, chosen, app, another);
             st.develop.lens_options = lens_options;
             // No database on the machine: the first time a picture
             // is up, the download is offered without being asked for.
