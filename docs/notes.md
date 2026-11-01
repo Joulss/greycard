@@ -501,3 +501,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§486. A renamed folder's stacks, and the stack in the grid](notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md) (2026-11-01)
 - [§487. Start in the Library, names as typed, and brush keys](notes/487-start-in-the-library-names-as-typed-and-brush-keys.md) (2026-11-01)
 - [§488. The engine, part two: the reduced develop as a walk](notes/488-the-engine-part-two-the-reduced-develop-as-a-walk.md) (2026-11-01)
+- [§489. The fp16 denoisers at high ISO, and a first compile](notes/489-the-fp16-denoisers-at-high-iso-and-a-first-compile.md) (2026-10-31)
