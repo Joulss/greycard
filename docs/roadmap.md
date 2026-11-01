@@ -1092,7 +1092,8 @@ clears or a tester asks for it.
       feathered edge, inverted and combined like the rest
       (discussion 59, 2026-11-01)
 - [ ] A Midtones slider in Light between Highlights and Shadows, so
-      the middle lifts without the curve (discussion 59, 2026-11-01)
+      the middle lifts without the curve (discussion 59, 2026-11-01);
+      weighed before and left out as unneeded, not settled
 
 ## Blocked
 
