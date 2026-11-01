@@ -1316,9 +1316,9 @@ fn try_open(
 /// ONNX Runtime reads them, and a model the table does not suit opens
 /// as it did before the table. The options are set once and copied for
 /// each attempt, and each attempt registers its provider afresh; a
-/// failure setting the options is not retried, and a provider that
-/// fails the graph itself fails both builds and is recorded as
-/// failing once.
+/// failure setting the options or registering the provider is not
+/// retried, and a provider that fails the graph itself fails both
+/// builds and is recorded as failing once.
 fn build_session(
     path: &Path,
     level: GraphOptimizationLevel,
@@ -1340,16 +1340,17 @@ fn build_session(
     // made, but lets go once for every session made from it, so two
     // sessions from one registration let the context go once too often
     // and the next session on it crashes.
-    let attempt = |builder: SessionBuilder, table: &[(&str, &[u8])]| {
-        let builder = match provider.dispatch(path, fixed) {
+    // A provider that will not register fails here, once, and is not
+    // retried: only the build is.
+    let registered = |builder: SessionBuilder| -> ort::Result<SessionBuilder> {
+        Ok(match provider.dispatch(path, fixed) {
             Some(ep) => builder.with_execution_providers([ep])?,
             None => builder,
-        };
-        with_table(builder, table, path)
+        })
     };
     let table = weights.files();
     if !table.is_empty() {
-        match attempt(options.clone(), &table) {
+        match with_table(registered(options.clone())?, &table, path) {
             Ok(session) => return Ok(session),
             Err(e) => log::info!(
                 "{}: the session with its weights in memory failed ({}); built again from the files",
@@ -1358,7 +1359,7 @@ fn build_session(
             ),
         }
     }
-    attempt(options, &[])
+    with_table(registered(options)?, &[], path)
 }
 
 /// The session `builder` makes with `table`'s files handed over in

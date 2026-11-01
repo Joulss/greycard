@@ -145,4 +145,9 @@ one registration: a failed build with the table and a fallback from
 the original released the shared device context twice, and the
 process died. Registering the provider on each attempt's own copy is
 the fix. The WebGPU test above dies with SIGSEGV on the clone of
-`d9e4c92` and passes on the fix.
+`a86dcf9` and passes on the fix. A fourth review confirmed the fix
+against `ort`'s source, nothing else on the options shared and freed
+twice, and found registering inside the retried step had made a
+provider that will not register fail twice, logged as the table's
+failure; registration now fails once, before the build, and only the
+build is retried.
