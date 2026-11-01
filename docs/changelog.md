@@ -76,6 +76,11 @@ design note behind it.
 
 ### Fixes
 
+- A paste, a sync, or a preset over hundreds of frames no longer holds
+  the window while the sidecars are written: 299 frames took 1.6 s
+  here, now about 10 ms, and a file either lands whole or keeps its
+  old sidecar
+  ([§498](https://github.com/jessolmstead/greycard/blob/master/docs/notes/498-many-sidecars-saved-off-the-windows-thread.md)).
 - The status line says "preparing..." while a model loads, and the
   remove's model starts loading when the Fill is taken in hand where
   the machine keeps it open

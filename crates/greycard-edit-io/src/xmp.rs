@@ -1281,6 +1281,21 @@ pub fn save_dated(
     turn: Option<Turn>,
     taken: impl FnOnce() -> Option<String>,
 ) -> Result<Option<Adopted>> {
+    let Some(staged) = stage_dated(frame, meta, turn, taken)? else {
+        return Ok(None);
+    };
+    Ok(Some(staged.commit()?))
+}
+
+/// The first half of [`save_dated`]: the XMP read, the new one written
+/// and synced under a temporary name beside it, and nothing renamed.
+/// None when there is nothing to write and no file.
+pub fn stage_dated(
+    frame: &Path,
+    meta: &Meta,
+    turn: Option<Turn>,
+    taken: impl FnOnce() -> Option<String>,
+) -> Result<Option<Staged>> {
     let says_something = !meta.is_empty() || turn.is_some_and(|t| t.quarters != 0);
     let Some(path) = write_path(frame, says_something) else {
         return Ok(None);
@@ -1296,15 +1311,40 @@ pub fn save_dated(
     };
     let mark = Adopted::of(&path, text.as_bytes());
     if existing.as_deref() == Some(text.as_bytes()) {
-        return Ok(Some(mark));
+        return Ok(Some(Staged { file: None, mark }));
     }
-    let tmp = path.with_extension("xmp.tmp");
     // On the disk before it takes the old one's name: a crash before
     // the filesystem flushes could keep the rename and lose the data,
     // and Lightroom's sidecar would be left empty.
-    greycard_edit::write_synced(&tmp, text.as_bytes())?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(Some(mark))
+    let file = greycard_edit::Staged::write(&path, text.as_bytes())?;
+    Ok(Some(Staged {
+        file: Some(file),
+        mark,
+    }))
+}
+
+/// An XMP written and synced beside the frame and not yet renamed into
+/// place ([`stage_dated`]), with the mark for what it holds; no file
+/// when the one there already holds it.
+#[derive(Debug)]
+pub struct Staged {
+    file: Option<greycard_edit::Staged>,
+    mark: Adopted,
+}
+
+impl Staged {
+    /// The mark for what the XMP will hold once it is renamed.
+    pub fn mark(&self) -> &Adopted {
+        &self.mark
+    }
+
+    /// Rename it into place; the mark for what is now on disk.
+    pub fn commit(self) -> std::io::Result<Adopted> {
+        if let Some(file) = self.file {
+            file.commit()?;
+        }
+        Ok(self.mark)
+    }
 }
 
 #[cfg(test)]

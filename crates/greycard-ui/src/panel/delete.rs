@@ -572,6 +572,9 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         let edit = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(st, edit);
     }
+    // A batch of sidecars still out lands first: renamed after the
+    // delete, a sidecar would be put back beside a frame that is gone.
+    crate::panel::saves::finish(st, None);
     let plan = delete::plan(
         &asked.frames,
         &st.files,

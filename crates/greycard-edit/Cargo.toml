@@ -20,6 +20,11 @@ dirs.workspace = true
 blake3.workspace = true
 # The host's name on a revision. Already in the tree through x11rb.
 gethostname = "1"
+[features]
+# A count of the synced writes, for the tests of the crates that write
+# through them.
+testing = []
+
 [target.'cfg(unix)'.dependencies]
 # The errors a sync gives on a volume that cannot sync. Already in the
 # tree through greycard-ai and greycard-ui.

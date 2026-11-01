@@ -184,6 +184,12 @@ pub(crate) fn camera_time(st: &mut State, file: usize) -> Option<String> {
     camera_time_read(st, file, true)
 }
 
+/// [`camera_time`] as far as the window has read it already, with
+/// nothing read now.
+pub(crate) fn camera_time_kept(st: &State, file: usize) -> Option<String> {
+    st.sheets.time_shift.times.get(st.files.get(file)?).cloned()
+}
+
 /// [`camera_time`], the file itself read only with `read_file`: the
 /// info line, which follows every arrow in culling, takes what is kept
 /// and what the index has, and never reads a raw for it.

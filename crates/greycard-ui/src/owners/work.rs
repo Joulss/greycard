@@ -49,4 +49,7 @@ pub(crate) struct Work {
     /// The writes behind the saves to the archives' copies (§233):
     /// see [`sync`].
     pub(crate) sync: sync::Sync,
+    /// The batches of sidecars being saved off the window's thread:
+    /// see [`crate::panel::saves`].
+    pub(crate) saves: crate::panel::saves::Saves,
 }

@@ -236,6 +236,9 @@ fn send_view(
     on: Option<Option<PathBuf>>,
 ) {
     let mut st = state.borrow_mut();
+    // As a folder's listing: a batch of sidecars out lands before
+    // the rows are read.
+    crate::panel::saves::finish(&mut st, None);
     st.views.view_generation += 1;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
@@ -300,6 +303,10 @@ pub(crate) fn open_listing(
     select: Select,
 ) {
     let mut st = state.borrow_mut();
+    // The sidecars are read from disk off the window's thread: a batch
+    // of them still being saved lands first, or the read would take
+    // the files it had not renamed yet.
+    crate::panel::saves::finish(&mut st, None);
     let asked = Instant::now();
     // A view of the roots still being read is dropped by the
     // generation, and nothing is loading any more.

@@ -80,7 +80,12 @@ pub use migration::migrate;
 pub use sections::{
     Demosaic, Detail, DisplayCurve, Learned, Light, Noise, Sharpen, Tone, WhiteBalance,
 };
-pub use sidecar::{Placement, SIDECAR_FOLDER, Settled, Sidecar, sync_is_unsupported, write_synced};
+#[cfg(feature = "testing")]
+pub use sidecar::synced_writes;
+pub use sidecar::{
+    Placement, SIDECAR_FOLDER, Settled, Sidecar, Staged, replace_synced, sync_is_unsupported,
+    write_synced,
+};
 
 /// The schema version this build writes.
 pub const VERSION: u32 = 6;

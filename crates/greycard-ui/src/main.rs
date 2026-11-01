@@ -863,6 +863,7 @@ impl State {
                 export_presets: Vec::new(),
                 export_last_folder: None,
                 sync: sync::Sync::default(),
+                saves: Default::default(),
             },
             culling: owners::Culling {
                 cull: None,

@@ -642,20 +642,36 @@ impl Sidecar {
         stamp: &sync::Stamp,
     ) -> Result<()> {
         self.advance(stamp);
+        self.stage_in(raw, placement)?.commit()?;
+        Self::drop_other(raw, placement);
+        Ok(())
+    }
+
+    /// The first half of a save already advanced ([`Self::advance`]):
+    /// the file written and synced under a temporary name where
+    /// `placement` puts it, the hidden folder made when it is not there
+    /// yet, and nothing renamed. A batch stages every frame's before it
+    /// commits any; [`Self::drop_other`] follows each commit.
+    pub fn stage_in(&self, raw: &Path, placement: Placement) -> Result<Staged> {
         let path = Self::path_in(raw, placement);
         if placement == Placement::Folder
             && let Some(folder) = path.parent()
         {
             Self::folder_under(folder.parent().unwrap_or(Path::new("")))?;
         }
-        self.write_to(&path)?;
+        Ok(Staged::write(&path, self.to_json().as_bytes())?)
+    }
+
+    /// The copy in the place `placement` does not name removed, after a
+    /// save to the one it does: superseded either way (see
+    /// [`Self::save_in`]). A failure is said and not returned.
+    pub fn drop_other(raw: &Path, placement: Placement) {
         let other = Self::path_in(raw, placement.other());
         if other.exists()
             && let Err(e) = std::fs::remove_file(&other)
         {
             log::warn!("{}: superseded but not removed: {e}", other.display());
         }
-        Ok(())
     }
 
     /// What a save does to the struct before the file is written: the
@@ -680,25 +696,7 @@ impl Sidecar {
     /// file again in another place, a copy of one frame on an archive
     /// (§233). [`Self::save_in`] is the save; this is only the write.
     pub fn write_to(&self, path: &Path) -> Result<()> {
-        // A temporary name of this write's own: two writes to one path
-        // at once (a write given up and going on alone, and the next
-        // one) must not share a file and rename a torn one into place.
-        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let tmp = path.with_file_name(format!(".{name}.{}-{n}.tmp", std::process::id()));
-        // Synced before the rename: a crash before the filesystem
-        // flushes could otherwise keep the rename and lose the data,
-        // an empty sidecar in place of the one there was.
-        write_synced(&tmp, self.to_json().as_bytes())?;
-        if let Err(e) = std::fs::rename(&tmp, path) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.into());
-        }
-        Ok(())
+        Ok(replace_synced(path, self.to_json().as_bytes())?)
     }
 
     /// Whether `raw` has a sidecar in the place `placement` does not
@@ -750,6 +748,87 @@ pub enum Settled {
     Dropped,
 }
 
+/// Replace the file at `path` with `bytes`, whole: written and synced
+/// under a temporary name beside it, then renamed over it
+/// ([`Staged`]). A crash leaves the old file or the new one, never an
+/// empty one, and a failure leaves the old one and no temporary file.
+/// The sidecars are written so, and the rejects queue.
+pub fn replace_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    Staged::write(path, bytes)?.commit()
+}
+
+/// A file written whole and synced under a temporary name beside the
+/// one it is to replace, and not yet renamed over it: the first half
+/// of [`replace_synced`], for a batch that writes and syncs every file
+/// before it renames any. Dropped uncommitted, the temporary file goes.
+#[derive(Debug)]
+pub struct Staged {
+    temp: PathBuf,
+    path: PathBuf,
+    done: bool,
+}
+
+impl Staged {
+    /// `bytes` written to a temporary file beside `path` and synced
+    /// ([`write_synced`]). The temporary name is this write's own, so
+    /// two writes to one path at once (a write given up and going on
+    /// alone, and the next one) never share a file and rename a torn
+    /// one into place.
+    pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<Self> {
+        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let temp = path.with_file_name(format!(".{name}.{}-{n}.tmp", std::process::id()));
+        write_synced(&temp, bytes)?;
+        Ok(Self {
+            temp,
+            path: path.to_path_buf(),
+            done: false,
+        })
+    }
+
+    /// The file this replaces.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The temporary file, until it is renamed.
+    pub fn temp(&self) -> &Path {
+        &self.temp
+    }
+
+    /// Rename the temporary file over the one it replaces. On a
+    /// failure the old file is as it was and the temporary one goes.
+    pub fn commit(mut self) -> std::io::Result<()> {
+        std::fs::rename(&self.temp, &self.path)?;
+        self.done = true;
+        Ok(())
+    }
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = std::fs::remove_file(&self.temp);
+        }
+    }
+}
+
+#[cfg(feature = "testing")]
+thread_local! {
+    static SYNCED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many writes [`write_synced`] has made on this thread: a test's
+/// proof that a file went through it.
+#[cfg(feature = "testing")]
+pub fn synced_writes() -> u64 {
+    SYNCED.with(std::cell::Cell::get)
+}
+
 /// Write `bytes` to a new file at `path` and wait until they are on
 /// the disk: the temporary half of a write renamed into place, which
 /// must be whole before it takes the old file's name, or a crash
@@ -762,6 +841,8 @@ pub enum Settled {
 pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     static SAID: std::sync::Once = std::sync::Once::new();
+    #[cfg(feature = "testing")]
+    SYNCED.with(|n| n.set(n.get() + 1));
     let mut f = std::fs::File::create(path)?;
     let written = f.write_all(bytes).and_then(|()| match f.sync_data() {
         Err(e) if sync_is_unsupported(&e) => {

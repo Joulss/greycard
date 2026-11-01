@@ -510,3 +510,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§495. Previews near the screen, and around the cull](notes/495-previews-near-the-screen-and-around-the-cull.md) (2026-11-01)
 - [§496. The engine, part two: the set export as a walk](notes/496-the-engine-part-two-the-set-export-as-a-walk.md) (2026-11-01)
 - [§497. A lens picked by hand, and Adobe lens profiles](notes/497-a-lens-picked-by-hand-and-adobe-lens-profiles.md) (2026-11-01)
+- [§498. Many sidecars saved off the window's thread](notes/498-many-sidecars-saved-off-the-windows-thread.md) (2026-11-01)

@@ -2012,6 +2012,9 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         app.set_status("a delete is still under way".into());
         return;
     }
+    // A batch of sidecars still out lands first, or its renames would
+    // put sidecars back where the frames were.
+    crate::panel::saves::finish(st, None);
     // Those already out, in a rejects folder, stay where they are and
     // are not counted.
     let rejected: Vec<usize> = (0..st.files.len())
@@ -2218,6 +2221,7 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
         app.set_status("no frame chosen is in a rejects folder".into());
         return;
     }
+    crate::panel::saves::finish(st, None);
     let moved = cull::move_back(&st.files, &frames, st.views.jpegs_apart);
     for (i, why) in &moved.skipped {
         tracing::warn!("{} left where it is: {why}", file_name(&st.files[*i]));

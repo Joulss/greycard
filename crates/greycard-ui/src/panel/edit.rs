@@ -59,6 +59,8 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
     if !file_writable(st, file) {
         return;
     }
+    // Saved here, it is no longer a batch's to save.
+    crate::panel::saves::take_back(st, file);
     // A frame followed to an archive's copy has its XMP written there
     // by the archive write, from the sidecar, off the window's thread.
     if st.window.xmp_sidecars && !crate::sync::followed(st, file) {
@@ -83,6 +85,17 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
     save_file(st, file);
 }
 
+/// [`write_file`] of each of `files`: one alone on the window's
+/// thread, two or more as a batch off it ([`crate::panel::saves`]),
+/// marked saved when the batch lands.
+pub(crate) fn write_files(st: &mut State, files: &[usize]) {
+    match files {
+        [] => {}
+        [file] => write_file(st, *file),
+        _ => crate::panel::saves::save(st, files),
+    }
+}
+
 /// [`save_file`] of cell `c`'s file.
 pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
     st.file_at(c).is_some_and(|file| save_file(st, file))
@@ -96,6 +109,7 @@ pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
 /// one revision, however many of its lines moved. True when the save
 /// was made.
 pub(crate) fn save_file(st: &mut State, file: usize) -> bool {
+    crate::panel::saves::take_back(st, file);
     if crate::sync::followed(st, file) {
         st.sidecars[file].advance(&greycard_edit::sync::Stamp::now());
         crate::sync::after_save(st, file);

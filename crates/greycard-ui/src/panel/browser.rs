@@ -638,8 +638,8 @@ fn tags_shown(
     was_shown: &[bool],
     moved: &[usize],
 ) -> Option<usize> {
+    crate::panel::edit::write_files(st, moved);
     for &f in moved {
-        crate::panel::edit::write_file(st, f);
         show_badges_of_file(st, app, f);
     }
     app.set_reject_count(reject_count(st) as i32);

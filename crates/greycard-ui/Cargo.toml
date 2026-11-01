@@ -106,6 +106,9 @@ greycard-render = { path = "../greycard-render", features = ["testing"] }
 greycard-engine = { path = "../greycard-engine", features = ["testing"] }
 # Frames with real EXIF, for the library index's tests.
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
+# The count of synced writes, for the tests that a file goes through
+# the shared write.
+greycard-edit = { path = "../greycard-edit", features = ["testing"] }
 # A second connection that holds the library's write lock, for the
 # test of a locked index. The library's own, so nothing new in the tree.
 rusqlite.workspace = true

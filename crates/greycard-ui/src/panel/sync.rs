@@ -432,9 +432,8 @@ fn lay_shifted_over_targets(
     moved.sort_unstable();
     let written = selection::union(&moved, &seeded);
     // Each file written once, however many of its lines moved.
-    for file in st.files_of(&written) {
-        crate::panel::edit::write_file(st, file);
-    }
+    let files = st.files_of(&written);
+    crate::panel::edit::write_files(st, &files);
     for &f in &written {
         let (turns, flip) = thumb_turns(st, app, f);
         show_thumb(st, app, f, turns, flip);
@@ -4392,5 +4391,66 @@ mod tests {
         app.invoke_frame_menu_asked(-1);
         assert_eq!(app.get_menu_count(), 3);
         assert_eq!(app.get_menu_paste_count(), 0, "nothing copied");
+    }
+
+    /// The window's hold for a paste onto 300 frames, timed: the frames
+    /// under `GREYCARD_BULK_DIR` (a folder on the disk to be measured),
+    /// their sidecars beside them. Run by hand with `--ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn time_a_paste_onto_300_frames() {
+        let Some(dir) = std::env::var_os("GREYCARD_BULK_DIR").map(PathBuf::from) else {
+            return;
+        };
+        const N: usize = 300;
+        for write in [false, true] {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("the folder");
+            let files: Vec<PathBuf> = (0..N)
+                .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+                .collect();
+            let app = window(N);
+            let (state, _worker) = state_for(&app, files.clone());
+            state.borrow_mut().window.write_sidecars = write;
+            app.invoke_select(0);
+            app.set_exposure(0.8);
+            with_control(&app, || press(&app, "c"));
+            state.borrow_mut().views.picked = (0..N).collect();
+            with_control(&app, || press(&app, "v"));
+            assert!(app.get_sync_open());
+            choose(&app, |s| s == Section::Light);
+            crate::panel::saves::tests::HOLD.set(true);
+            let t = std::time::Instant::now();
+            app.invoke_sync_applied();
+            let held = t.elapsed();
+            crate::panel::saves::tests::HOLD.set(false);
+            // The batch's thread let finish, then its landing on the
+            // window's thread timed alone.
+            let t = std::time::Instant::now();
+            let landing = loop {
+                let l = std::time::Instant::now();
+                let zero = Some(std::time::Duration::ZERO);
+                if crate::panel::saves::finish(&mut state.borrow_mut(), zero) {
+                    break l.elapsed();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            };
+            println!(
+                "paste onto {} frames, sidecars {}: window held {:.1} ms, the batch's \
+                 thread {:.1} ms, its landing {:.1} ms",
+                N - 1,
+                if write { "written" } else { "off" },
+                held.as_secs_f64() * 1e3,
+                t.elapsed().as_secs_f64() * 1e3,
+                landing.as_secs_f64() * 1e3
+            );
+            assert!(
+                app.get_status().starts_with("pasted"),
+                "{}",
+                app.get_status()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

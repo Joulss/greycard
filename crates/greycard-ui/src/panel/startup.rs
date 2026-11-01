@@ -1803,6 +1803,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // made it. First, while the index is open to hear of the saves;
     // a frame still standing in is read for it here.
     crate::panel::words::send_title(&state, &app);
+    // A batch of sidecars still being saved is waited for while it
+    // moves, and landed while the index and the worker are there to
+    // hear of it.
+    crate::panel::saves::finish(&mut state.borrow_mut(), Some(crate::sync::QUIT_WRITE_WAIT));
     // An import running stops as Stop stops it, after the file in
     // hand, which lands whole rather than being cut off with the
     // process.
@@ -1981,6 +1985,10 @@ pub(crate) fn save_at_quit(
     wait: std::time::Duration,
 ) -> crate::sync::QuitWrites {
     save_edit(st, edit);
+    // A batch of sidecars out is waited for while it moves; one that
+    // has stopped (a share that stopped answering) is left, its files
+    // not yet renamed keeping their old sidecars.
+    crate::panel::saves::finish(st, Some(wait));
     let followed = crate::sync::write_followed_at_quit(st, wait);
     crate::sync::note_unsent_at_quit(st);
     followed

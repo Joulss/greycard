@@ -737,14 +737,11 @@ clears or a tester asks for it.
       look), and a preset or a sync that would spread the missing
       name; today only the Camera section says it, and only while
       open (§373)
-- [ ] The rejects queue synced to disk before its rename, as the
-      sidecars and presets are since §373; the caches and the
-      downloads can be made again and stay as they are
-- [ ] The bulk sidecar save off the window's thread, or batched
-      (every temporary file written and synced, then every rename):
-      the sync of §373 costs about 5 ms a file here, so a paste onto
-      hundreds of frames holds the window for seconds. Measure on a
-      network share and on a Mac first, where a sync costs more
+- [ ] A sidecar batch's writes a few at a time (four or eight) where
+      the share rewards it, measured on a network share and on a Mac
+      first (§498)
+- [ ] A rename into place retried on Windows' sharing violation, from
+      a scanner or a sync client holding the old sidecar open (§498)
 - [ ] Every test's scratch folder removed through the testing helpers
       (`remove_scratch` where the state holds the index open,
       `remove_dir_retry` otherwise), the 290-odd bare `remove_dir_all`

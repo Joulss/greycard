@@ -786,8 +786,8 @@ pub fn read_queue(path: &Path) -> std::io::Result<Read> {
     }
 }
 
-/// Write the queue to `path` through a file beside it renamed over it;
-/// an empty queue removes the file.
+/// Write the queue to `path` through a file beside it, synced and
+/// renamed over it; an empty queue removes the file.
 pub fn write_queue(path: &Path, queue: &[Queued]) -> std::io::Result<()> {
     let queue: Vec<&Queued> = queue.iter().filter(|q| !q.frames.is_empty()).collect();
     if queue.is_empty() {
@@ -813,11 +813,10 @@ pub fn write_queue(path: &Path, queue: &[Queued]) -> std::io::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }
-    let part = path.with_extension(format!("json.{}.part", std::process::id()));
-    std::fs::write(&part, text)?;
-    std::fs::rename(&part, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&part);
-    })
+    // Synced before the rename, as a sidecar is: the queue is the one
+    // record of what is waiting to go, and a crash inside the
+    // filesystem's flush must not leave it empty.
+    greycard_edit::replace_synced(path, text.as_bytes())
 }
 
 /// Change the queue at `path` as it is on disk now and write it back:
@@ -1368,8 +1367,17 @@ mod tests {
         assert_eq!(read.queue[0].frames.len(), 1);
         assert_eq!(read.queue[0].frames[0].mtime, Some(5));
         assert_eq!(read.dropped.len(), 4, "{:?}", read.dropped);
-        // Written and read again: the same, nothing dropped.
+        // Written and read again: the same, nothing dropped. The write
+        // is the sidecars' own, synced before its rename, and leaves
+        // nothing beside the queue.
+        let synced = greycard_edit::synced_writes();
         write_queue(&path, &read.queue).unwrap();
+        assert_eq!(greycard_edit::synced_writes(), synced + 1);
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [QUEUE_FILE], "{names:?}");
         let again = read_queue(&path).unwrap();
         assert_eq!(again.queue, read.queue);
         assert!(again.dropped.is_empty());

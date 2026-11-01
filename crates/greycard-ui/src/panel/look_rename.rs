@@ -829,6 +829,9 @@ fn summary(
 /// other sidecar handed to a thread. An error is the status line's
 /// words, and nothing was changed.
 pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Result<(), String> {
+    // The thread reads and rewrites sidecars on disk: a batch of them
+    // still being saved lands first.
+    crate::panel::saves::finish(st, None);
     let old = asked.name.as_str();
     let looks = list_in(Some(asked.store.clone()));
     let files = files_of(&looks, old, &asked.store);
