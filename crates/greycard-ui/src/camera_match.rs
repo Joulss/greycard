@@ -112,12 +112,30 @@ impl Group {
             .unwrap_or_else(|| look_name(&self.camera, &self.maker, &self.style))
     }
 
-    /// Whether every frame is from one folder: one session, as a
-    /// rule, whose light and lens are all the fit will see.
+    /// Whether every frame the fit would develop is from one folder:
+    /// one session, as a rule, whose light and lens are all the fit
+    /// will see. A frame with a copy in another folder (a backup: the
+    /// same file name, taken at the same time) counts in the first
+    /// folder that holds it, so a shoot and its backup are one folder.
     pub(crate) fn one_folder(&self) -> bool {
-        let mut folders = self.frames.iter().map(Frame::folder);
+        let mut first: HashMap<(&std::ffi::OsStr, &str), &Path> = HashMap::new();
+        let mut frames: Vec<&Frame> = self.frames.iter().collect();
+        frames.sort_by(|a, b| order(a, b));
+        for f in &frames {
+            if let (Some(name), Some(taken)) = (f.path.file_name(), f.taken.as_deref()) {
+                first.entry((name, taken)).or_insert(f.folder());
+            }
+        }
+        let sampled = sample(&self.frames, SAMPLE);
+        let mut folders = sampled.iter().map(|f| {
+            match (f.path.file_name(), f.taken.as_deref()) {
+                (Some(name), Some(taken)) => first.get(&(name, taken)).copied(),
+                _ => None,
+            }
+            .unwrap_or(f.folder())
+        });
         match folders.next() {
-            Some(first) => folders.all(|f| f == first),
+            Some(one) => folders.all(|f| f == one),
             None => false,
         }
     }
@@ -454,6 +472,22 @@ impl Plan {
 
 /// Why a group the user unchecked is left alone.
 pub(crate) const NOT_CHOSEN: &str = "not chosen";
+/// Why a group whose frames are all from one folder gets no table in
+/// the library.
+pub(crate) const ONE_FOLDER: &str = "all from one folder, so the fit would be narrow";
+
+/// What a run is over. In the library a group whose sample is all
+/// from one folder gets no table ([`ONE_FOLDER`]); a folder the user
+/// chose is one folder on purpose, and fits with a note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Scope {
+    #[default]
+    Library,
+    Folder,
+}
+/// Why a fitted table is not written: what it does to the greys
+/// ([`greycard_match::grey`]).
+pub(crate) const TINTS_GREYS: &str = "refused: the fit would tint greys it never saw";
 
 /// A table already in the store under a group's name.
 #[derive(Debug, Clone, PartialEq)]
@@ -576,12 +610,19 @@ pub(crate) fn plan(
     curve: DisplayCurve,
     replace: bool,
 ) -> Vec<Plan> {
-    plan_chosen(groups, existing, curve, replace, &vec![true; groups.len()])
+    plan_chosen(
+        groups,
+        existing,
+        curve,
+        replace,
+        &vec![true; groups.len()],
+        Scope::Library,
+    )
 }
 
 /// The plan for every group against the tables in the store, `chosen`
 /// saying which groups the user wants fitted (one flag a group; a
-/// missing flag is a yes). The groups with enough frames fit; for each
+/// missing flag is a yes), over `scope`. The groups with enough frames fit; for each
 /// style, the one of those with the most frames in the run (the
 /// first, on a tie) is the donor a body without enough borrows from,
 /// and the run uses the same one.
@@ -599,6 +640,7 @@ pub(crate) fn plan_chosen(
     curve: DisplayCurve,
     replace: bool,
     chosen: &[bool],
+    scope: Scope,
 ) -> Vec<Plan> {
     let is_chosen = |i: usize| chosen.get(i).copied().unwrap_or(true);
     let mut plans: Vec<Plan> = groups
@@ -607,6 +649,9 @@ pub(crate) fn plan_chosen(
             let n = g.candidates();
             if n < MIN_FRAMES {
                 return Plan::Skip(too_few(n));
+            }
+            if scope == Scope::Library && g.one_folder() {
+                return Plan::Skip(ONE_FOLDER.to_string());
             }
             let at = existing.get(&variant_stem(&g.name(), curve));
             match may_write(at, &g.camera, false, n, curve, replace) {
@@ -783,7 +828,7 @@ pub(crate) struct GroupResult {
     pub(crate) left_out: usize,
     /// The camera's vignetting against the lens profile's, per lens.
     pub(crate) radial: Vec<RadialLine>,
-    /// Every frame from one folder.
+    /// Every frame from one folder: a folder's run fits it, with a note.
     pub(crate) one_folder: bool,
     /// The warning when the table written replaced one the match would
     /// otherwise have left alone.
@@ -807,6 +852,8 @@ pub(crate) enum Outcome {
         measured: Option<f32>,
     },
     Skipped(String),
+    /// Fitted and not written, and why ([`TINTS_GREYS`]).
+    Refused(String),
     Failed(String),
     Canceled,
 }
@@ -847,6 +894,7 @@ impl GroupResult {
             Outcome::Skipped(why) => {
                 format!("{} {}: skipped, {why}", self.camera, style_word(self))
             }
+            Outcome::Refused(why) => format!("{}: {why}", self.name),
             Outcome::Failed(why) => format!("{}: not written, {why}", self.name),
             Outcome::Canceled => format!("{}: canceled", self.name),
         };
@@ -1226,6 +1274,25 @@ pub(crate) fn fit_group_counted(
     }
 }
 
+/// Whether a fitted table may be written: its greys rendered
+/// alike, one cast or none along the axis, and its lightness rising
+/// ([`greycard_match::grey`]). The log says the numbers either way.
+fn greys_hold(name: &str, model: &Model) -> bool {
+    let axis = model.grey_axis();
+    let holds = axis.holds();
+    tracing::info!(
+        "camera match {name}: greys cast a {:+.4} b {:+.4} per unit of lightness, drifting by up \
+         to {:.4}; lightness falls by up to {:.4} (at {:.2}); {}",
+        axis.cast[0],
+        axis.cast[1],
+        axis.drift,
+        axis.fall,
+        axis.fall_at,
+        if holds { "kept" } else { TINTS_GREYS }
+    );
+    holds
+}
+
 /// Every kept frame's pairs as the fit takes them: the render side,
 /// the camera side, and each pair's frame.
 fn stacked(kept: &[Kept]) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<usize>) {
@@ -1309,6 +1376,7 @@ pub(crate) struct Choices<'a> {
     pub(crate) curve: DisplayCurve,
     pub(crate) replace: bool,
     pub(crate) chosen: &'a [bool],
+    pub(crate) scope: Scope,
 }
 
 /// Run the camera match over `groups`, writing into the look store at
@@ -1344,9 +1412,10 @@ fn run_with(
         curve,
         replace,
         chosen,
+        scope,
     } = choices;
     let existing = existing_in(store);
-    let plans = plan_chosen(groups, &existing, curve, replace, chosen);
+    let plans = plan_chosen(groups, &existing, curve, replace, chosen, scope);
     let mut results: Vec<Option<GroupResult>> = vec![None; groups.len()];
     // The models fitted and written, by group, with their frames.
     let mut fitted: HashMap<usize, (Model, usize)> = HashMap::new();
@@ -1453,6 +1522,11 @@ fn run_with(
             if kept.len() >= MIN_FRAMES {
                 let (x, y, _) = stacked(&kept);
                 let model = Model::fit(&x, &y, LutParams::default());
+                if !greys_hold(&name, &model) {
+                    result.outcome = Outcome::Refused(TINTS_GREYS.to_string());
+                    results[i] = Some(result);
+                    continue;
+                }
                 fitted.insert(i, (model, kept.len()));
                 result.outcome = Outcome::Skipped(
                     "not chosen; its frames were read for the look a chosen body borrows, \
@@ -1510,6 +1584,12 @@ fn run_with(
                     }
                 })
             };
+            if !greys_hold(&name, &model) {
+                // Said with the groups that have no table, below.
+                result.outcome = Outcome::Refused(TINTS_GREYS.to_string());
+                results[i] = Some(result);
+                continue;
+            }
             result.radial = radial_lines(&model, &kept);
             result.replaced = replaces;
             result.outcome = match write_look(store, g, &g.camera, kept.len(), curve, &model) {
@@ -1566,7 +1646,7 @@ fn run_with(
                 .map(|(model, frames)| (from, model, *frames, replaces)),
             _ => None,
         };
-        if cancel.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) && !matches!(result.outcome, Outcome::Refused(_)) {
             result.outcome = Outcome::Canceled;
         } else if let Some((from, model, frames, replaces)) = donor {
             let kept = kept_for.remove(&i).unwrap_or_default();
@@ -1846,6 +1926,198 @@ mod tests {
         assert!(g.one_folder());
     }
 
+    fn group_of(frames: Vec<Frame>) -> Group {
+        Group {
+            camera: "Canon EOS R6m2".into(),
+            make: "Canon".into(),
+            model: "Canon EOS R6m2".into(),
+            maker: "Canon".into(),
+            style: "Canon Faithful".into(),
+            frames,
+            look: None,
+        }
+    }
+
+    /// One folder is the sample's, not the group's: a second folder of
+    /// adaptive frames the sample leaves out does not count, a backup
+    /// of the shoot does not count, and one frame of another folder
+    /// among forty does, since the sample takes from every folder.
+    #[test]
+    fn one_folder_is_counted_on_the_sample_with_a_backup_once() {
+        let shoot: Vec<Frame> = (0..40).map(|i| frame("shoot", i, true)).collect();
+        assert!(group_of(shoot.clone()).one_folder());
+        let mut with_adaptive = shoot.clone();
+        with_adaptive.extend((40..60).map(|i| frame("other", i, false)));
+        assert!(group_of(with_adaptive).one_folder());
+        let mut backed_up = shoot.clone();
+        backed_up.extend(shoot.iter().map(|f| Frame {
+            path: Path::new("/backup").join(f.path.strip_prefix("/").unwrap()),
+            ..f.clone()
+        }));
+        assert!(group_of(backed_up.clone()).one_folder());
+        let mut two = shoot.clone();
+        two.push(frame("other", 99, true));
+        let g = group_of(two);
+        assert!(!g.one_folder());
+        assert!(
+            sample(&g.frames, SAMPLE)
+                .iter()
+                .any(|f| f.path.starts_with("/shots/other"))
+        );
+        // A backup of a two-folder group is still two folders.
+        let mut two_backed = backed_up;
+        two_backed.push(frame("other", 99, true));
+        assert!(!group_of(two_backed).one_folder());
+    }
+
+    /// A group with the frames for a fit, all from one folder: in the
+    /// library it is refused before anything is developed, in the
+    /// sheet's words; in a folder's run, where one folder is the
+    /// point, it fits, and its result line says it is narrow.
+    #[test]
+    fn a_group_from_one_folder_gets_no_table_in_the_library_and_fits_in_its_folder() {
+        let store = scratch_store("one-folder");
+        let g = group_of((0..40).map(|i| frame("shoot", i, true)).collect());
+        let groups = std::slice::from_ref(&g);
+        assert_eq!(
+            plan(groups, &HashMap::new(), CH, false),
+            [Plan::Skip(ONE_FOLDER.to_string())]
+        );
+        let (results, heard) = run_synthetic(groups, &store, false, &[]);
+        assert_eq!(results[0].outcome, Outcome::Skipped(ONE_FOLDER.to_string()));
+        assert!(
+            results[0].line().ends_with(ONE_FOLDER),
+            "{}",
+            results[0].line()
+        );
+        assert!(!heard.iter().any(|p| matches!(p, Progress::Frame { .. })));
+        assert!(!store.join("Canon EOS R6m2 Faithful.cube").exists());
+
+        assert_eq!(
+            plan_chosen(groups, &HashMap::new(), CH, false, &[], Scope::Folder),
+            [Plan::Fit { replaces: None }]
+        );
+        let mut seed = 0;
+        let results = run_with(
+            groups,
+            &store,
+            Choices {
+                curve: CH,
+                replace: false,
+                chosen: &[],
+                scope: Scope::Folder,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &mut |_| {
+                seed += 1;
+                Ok(Kept {
+                    pairs: synthetic_pairs(seed),
+                    lens: None,
+                })
+            },
+        );
+        assert!(
+            matches!(results[0].outcome, Outcome::Fitted { .. }),
+            "{:?}",
+            results[0]
+        );
+        assert!(
+            results[0]
+                .line()
+                .contains("; all from one folder, so a narrow fit"),
+            "{}",
+            results[0].line()
+        );
+        assert!(store.join("Canon EOS R6m2 Faithful.cube").exists());
+        crate::testing::remove_dir_retry(&store);
+    }
+
+    /// A camera that casts its greys, as the synthetic one does (red
+    /// up and blue down, the same at every grey), keeps that cast in
+    /// its table: the hold takes it from the greys the frames show, so
+    /// the fit passes the grey check and every grey carries the
+    /// camera's cast.
+    #[test]
+    fn the_camera_s_own_cast_on_its_greys_is_kept() {
+        use greycard_match::color::{decode3, oklab};
+        let kept: Vec<Kept> = (1..=24)
+            .map(|seed| Kept {
+                pairs: synthetic_pairs(seed),
+                lens: None,
+            })
+            .collect();
+        let (x, y, _) = stacked(&kept);
+        let model = Model::fit(&x, &y, LutParams::default());
+        let axis = model.grey_axis();
+        assert!(axis.holds(), "{axis:?}");
+        let camera = greycard_match::grey::grey_axis(camera_of);
+        assert!(camera.cast[1] > 0.01, "{camera:?}");
+        for k in 0..2 {
+            assert!(
+                (axis.cast[k] - camera.cast[k]).abs() < 0.003,
+                "{axis:?} against {camera:?}"
+            );
+        }
+        for step in 4..=28 {
+            let g = [step as f32 / 32.0; 3];
+            let (ours, theirs) = (oklab(decode3(model.apply(g))), oklab(decode3(camera_of(g))));
+            for c in 1..3 {
+                assert!(
+                    (ours[c] - theirs[c]).abs() < 0.004,
+                    "grey {}: {ours:?} against the camera's {theirs:?}",
+                    g[0]
+                );
+            }
+        }
+    }
+
+    /// The grey check's wiring: a fit whose greys' cast changes along
+    /// the axis is not written, and its line says why. The hold keeps
+    /// greys no pair reached at the cast the data shows, so the case is
+    /// made here with greys the data does contain, the camera's green
+    /// falling a fifth from the darks to the lights, which no camera
+    /// style does; it stands for whatever gets past the hold.
+    #[test]
+    fn the_grey_check_refuses_a_tinted_table_and_writes_nothing() {
+        let store = scratch_store("tints-greys");
+        let g = synthetic_group("Canon EOS R6m2", "Canon Faithful", 24);
+        let mut seed = 0;
+        let mut heard = Vec::new();
+        let results = run_with(
+            std::slice::from_ref(&g),
+            &store,
+            Choices {
+                curve: CH,
+                replace: false,
+                chosen: &[],
+                scope: Scope::Library,
+            },
+            &AtomicBool::new(false),
+            &mut |p| heard.push(p),
+            &mut |_| {
+                seed += 1;
+                let mut pairs = synthetic_pairs(seed);
+                for p in &mut pairs.pairs {
+                    let t = ((p.render[1] - 0.3) / 0.4).clamp(0.0, 1.0);
+                    p.jpeg = [p.render[0], p.render[1] * (1.0 - 0.2 * t), p.render[2]];
+                }
+                Ok(Kept { pairs, lens: None })
+            },
+        );
+        assert_eq!(
+            results[0].outcome,
+            Outcome::Refused(TINTS_GREYS.to_string())
+        );
+        assert_eq!(
+            results[0].line(),
+            format!("Canon EOS R6m2 Faithful: {TINTS_GREYS}")
+        );
+        assert_eq!(heard.last(), Some(&Progress::Done(results[0].clone())));
+        assert!(!store.join("Canon EOS R6m2 Faithful.cube").exists());
+        crate::testing::remove_dir_retry(&store);
+    }
+
     #[test]
     fn under_twenty_fixed_frames_every_fixed_one_and_the_rest_adaptive() {
         let frames: Vec<Frame> = (0..80).map(|i| frame("a", i, i % 8 == 0)).collect();
@@ -1889,7 +2161,9 @@ mod tests {
             model: camera.into(),
             maker: "Canon".into(),
             style: style.into(),
-            frames: (0..n).map(|i| frame(camera, i, true)).collect(),
+            frames: (0..n)
+                .map(|i| frame(&format!("{camera}/{}", i % 2), i, true))
+                .collect(),
             look: None,
         };
         let groups = vec![
@@ -1932,6 +2206,7 @@ mod tests {
                 curve: DisplayCurve::Channels,
                 replace: false,
                 chosen: &[],
+                scope: Scope::Library,
             },
             None,
             &AtomicBool::new(false),
@@ -1953,7 +2228,7 @@ mod tests {
     }
 
     /// The synthetic camera: the develop through a fixed rendering, a
-    /// gentle curve and a warm cast.
+    /// gentle curve and a warm cast, which it puts on its greys too.
     fn camera_of(x: [f32; 3]) -> [f32; 3] {
         use greycard_match::color::{decode3, encode3};
         let lin = decode3(x);
@@ -2051,6 +2326,7 @@ mod tests {
                 curve,
                 replace,
                 chosen,
+                scope: Scope::Library,
             },
             &AtomicBool::new(false),
             &mut |p| heard.push(p),
@@ -2247,24 +2523,59 @@ mod tests {
         let none = HashMap::new();
         let ch = DisplayCurve::Channels;
         // Everything checked: as before.
-        let p = plan_chosen(&groups, &none, ch, false, &[true, true, true]);
+        let p = plan_chosen(
+            &groups,
+            &none,
+            ch,
+            false,
+            &[true, true, true],
+            Scope::Library,
+        );
         assert!(matches!(p[0], Plan::Borrow { donor: 1, .. }));
         assert!(p[1].is_fit() && p[2].is_fit());
         // The Standard group unchecked is skipped; nothing else moves.
-        let p = plan_chosen(&groups, &none, ch, false, &[true, true, false]);
+        let p = plan_chosen(
+            &groups,
+            &none,
+            ch,
+            false,
+            &[true, true, false],
+            Scope::Library,
+        );
         assert!(matches!(&p[2], Plan::Skip(why) if why == NOT_CHOSEN));
         assert!(p[1].is_fit());
         // The donor unchecked: the borrower still borrows from it, and
         // the donor is read only.
-        let p = plan_chosen(&groups, &none, ch, false, &[true, false, true]);
+        let p = plan_chosen(
+            &groups,
+            &none,
+            ch,
+            false,
+            &[true, false, true],
+            Scope::Library,
+        );
         assert!(matches!(p[0], Plan::Borrow { donor: 1, .. }), "{p:?}");
         assert_eq!(p[1], Plan::Donor);
         // Nobody borrows from it: it is skipped, not read.
-        let p = plan_chosen(&groups, &none, ch, false, &[false, false, true]);
+        let p = plan_chosen(
+            &groups,
+            &none,
+            ch,
+            false,
+            &[false, false, true],
+            Scope::Library,
+        );
         assert!(matches!(&p[0], Plan::Skip(w) if w == NOT_CHOSEN));
         assert!(matches!(&p[1], Plan::Skip(w) if w == NOT_CHOSEN));
         // A borrower unchecked borrows nothing.
-        let p = plan_chosen(&groups, &none, ch, false, &[false, true, true]);
+        let p = plan_chosen(
+            &groups,
+            &none,
+            ch,
+            false,
+            &[false, true, true],
+            Scope::Library,
+        );
         assert!(matches!(&p[0], Plan::Skip(w) if w == NOT_CHOSEN));
 
         // Run it: only the checked group's table is written, the frames
@@ -2398,6 +2709,7 @@ mod tests {
                     curve: DisplayCurve::Channels,
                     replace: false,
                     chosen: &[],
+                    scope: Scope::Library,
                 },
                 &cancel,
                 &mut |p| {
@@ -3159,6 +3471,7 @@ mod tests {
                 curve: CH,
                 replace: false,
                 chosen: &[],
+                scope: Scope::Library,
             },
             &AtomicBool::new(false),
             &mut |_| {},
@@ -3295,6 +3608,7 @@ mod tests {
                 curve,
                 replace: false,
                 chosen: &[],
+                scope: Scope::Library,
             },
             lenses.as_ref(),
             &AtomicBool::new(false),

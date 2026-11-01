@@ -529,3 +529,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§514. The engine, part four: `greycard export`](notes/514-the-engine-part-four-greycard-export.md) (2026-11-01)
 - [§515. The architecture document](notes/515-the-architecture-document.md) (2026-11-01)
 - [§516. The lens picker by maker, and a filter](notes/516-the-lens-picker-by-maker-and-a-filter.md) (2026-11-01)
+- [§517. The camera match holds unseen greys, and the library refuses a narrow fit](notes/517-the-camera-match-holds-unseen-greys.md) (2026-11-01)

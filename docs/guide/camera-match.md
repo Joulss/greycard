@@ -42,8 +42,11 @@ a slider, you get the camera's rendering of the changed picture.
   teaches the look less. They come in two kinds, below.
 - **Variety.** Frames from many shoots, places and light make a better
   look than one session. The sample takes a few frames from every
-  folder first for this reason, and the sheet warns when every frame is
-  from one folder.
+  folder first for this reason. In the library, a group whose sample
+  is all from one folder gets no table ("all from one folder, so the
+  fit would be narrow"); a backup copy of a folder counts as the same
+  folder. Fitting **This folder** fits it anyway, and says it will be
+  narrow.
 
 ### The adaptive settings
 
@@ -81,7 +84,9 @@ out of every group too, so a frame is never taken as fixed on a guess.
 2. In the **LOOK** section, press **Fit this camera's look…**.
 3. Choose where to look for frames: **Library** (every root of your
    [library](library.md)) or **This folder**. The library is the
-   default when you have one, since it holds the most variety.
+   default when you have one, since it holds the most variety. A
+   folder fits too, with the note that the fit will be narrow; in the
+   library, a group whose frames are all from one folder gets no look.
 4. Read the list. Each line is one body and style: how many frames it
    has, how many have the adaptive settings off, and what the fit will
    do with it.
@@ -108,7 +113,7 @@ comes back.
 |---|---|
 | fits on N of them | Enough frames: it gets a look of its own |
 | too few; borrows the look fitted on X | Under 20 frames, but another body with the same style has enough: it gets that body's look under its own name |
-| skipped | Too few frames and nothing to borrow, or a look it should not replace (the reason follows) |
+| skipped | Too few frames and nothing to borrow, every frame from one folder (in the library), or a look it should not replace (the reason follows) |
 | not chosen | You unticked it |
 | read only, for a borrow | Unticked, but a ticked group borrows from it, so its frames are still developed |
 
@@ -228,8 +233,9 @@ look to use it on another machine.
 - A look fitted under **AgX** lands a little further from the camera
   than one fitted under per channel, since the camera's own tone is
   closer to per channel.
-- A fit from one folder is usually one session's light and lens, and
-  may not suit other shoots.
+- A fit that would tint greys is not written, and its line says
+  "refused: the fit would tint greys it never saw". Fitting from more
+  shoots, with neutral things in them, is the way past it.
 - While a run is going, the sheet stays open.
 
 For how the camera match was measured, see

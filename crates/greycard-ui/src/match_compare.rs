@@ -1189,7 +1189,17 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
     // store: who fits, who borrows from whom. Planned over every group,
     // so narrowing to some does not change a borrower's donor.
     let all = survey.groups;
-    let all_plans = cm::plan_chosen(&all, &HashMap::new(), DisplayCurve::Channels, false, &[]);
+    // Planned as a folder's run is, so a set from one folder is still
+    // fitted and measured: the harness measures what the library's
+    // rule would refuse.
+    let all_plans = cm::plan_chosen(
+        &all,
+        &HashMap::new(),
+        DisplayCurve::Channels,
+        false,
+        &[],
+        cm::Scope::Folder,
+    );
     let (groups, plans) = narrowed(all, all_plans, &opts.only);
     let samples: Vec<Vec<cm::Frame>> = groups
         .iter()
@@ -1329,14 +1339,26 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                 // into the store.
                 if let Some(dir) = &opts.write {
                     let frames = d.frames().len();
-                    match cm::write_look(dir, g, &g.camera, frames, curve, &f.model) {
-                        Ok(path) => eprintln!(
+                    let axis = f.model.grey_axis();
+                    match axis
+                        .holds()
+                        .then(|| cm::write_look(dir, g, &g.camera, frames, curve, &f.model))
+                    {
+                        Some(Ok(path)) => eprintln!(
                             "match compare: wrote {} ({frames} frames, fitted ΔE {:.4}, held out {})",
                             path.display(),
                             f.fitted,
                             f.held_out.map_or("-".to_string(), |h| format!("{h:.4}"))
                         ),
-                        Err(e) => eprintln!("match compare: {} not written: {e}", g.name()),
+                        Some(Err(e)) => eprintln!("match compare: {} not written: {e}", g.name()),
+                        None => eprintln!(
+                            "match compare: {} {}: greys' cast drifts by up to {:.4}, \
+                             lightness falls by up to {:.4}",
+                            g.name(),
+                            cm::TINTS_GREYS,
+                            axis.drift,
+                            axis.fall
+                        ),
                     }
                 }
                 [
@@ -2535,7 +2557,14 @@ mod tests {
             look: None,
         };
         let groups = vec![group("R5", 30), group("R6m2", 40), group("R7", 3)];
-        let plans = cm::plan_chosen(&groups, &HashMap::new(), DisplayCurve::Channels, false, &[]);
+        let plans = cm::plan_chosen(
+            &groups,
+            &HashMap::new(),
+            DisplayCurve::Channels,
+            false,
+            &[],
+            cm::Scope::Folder,
+        );
         let (kept, plans) = narrowed(groups, plans, &["R7".to_string()]);
         let names: Vec<&str> = kept.iter().map(|g| g.camera.as_str()).collect();
         assert_eq!(names, vec!["R6m2", "R7"]);

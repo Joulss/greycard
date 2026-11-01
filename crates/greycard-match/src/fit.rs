@@ -25,6 +25,17 @@
 //! past them ([`FLAT_CHROMA`]), so a saturated color no frame showed
 //! is still what the matrix and curves make of it, the table near
 //! identity there as before.
+//!
+//! One more term holds the greys no pair reaches. The per-channel
+//! curves are fitted on whatever colors the frames had, so after one
+//! shoot under warm light they tint greys the shoot never showed, and
+//! the smoothness term, which costs nothing for a straight line,
+//! carries the data's slope there too. So near the grey axis a node
+//! with little support is pulled hard ([`LutParams::hold`]) toward the
+//! input's own chroma plus the cast the data's greys show: a grey no
+//! frame showed comes out as the camera renders the greys it did show,
+//! grey when it showed none, at the lightness the data and the
+//! smoothness give it.
 
 use crate::LUT_SIZE;
 use crate::color::{
@@ -69,6 +80,19 @@ pub struct LutParams {
     pub smoothness: f32,
     /// Weight pulling each node's residual to zero.
     pub pull: f32,
+    /// Weight, on top of `pull`, holding a node near the grey axis
+    /// that few pairs support to the input's own chroma plus the cast
+    /// the data's near-grey pairs show (its a and b; its lightness is
+    /// left to the data and the smoothness). A node's
+    /// support is its share of the data term, the pairs' trilinear
+    /// weights on it, one vote a node on average; the hold falls
+    /// linearly from all of `hold` at none to nothing at `supported`.
+    pub hold: f32,
+    /// The support at which a node is held by `pull` alone.
+    pub supported: f32,
+    /// The input chroma (Oklab) up to which the hold holds whole,
+    /// fading to none at twice it.
+    pub neutral: f32,
     /// Weight on the model's lightness changing across chroma: the
     /// gradient of the whole model's output lightness, along the
     /// lattice, with its part along the input's own lightness taken
@@ -83,11 +107,21 @@ impl Default for LutParams {
         LutParams {
             smoothness: 0.5,
             pull: 0.02,
+            hold: HOLD,
+            supported: SUPPORTED,
+            neutral: NEUTRAL,
             flatness: 32.0,
             iterations: 300,
         }
     }
 }
+
+/// [`LutParams::hold`]'s default.
+pub const HOLD: f32 = 4.0;
+/// [`LutParams::supported`]'s default.
+pub const SUPPORTED: f32 = 1.0;
+/// [`LutParams::neutral`]'s default.
+pub const NEUTRAL: f32 = 0.02;
 
 /// The ridge's weight, as a fraction of the data's own energy.
 pub const RIDGE: f32 = 0.02;
@@ -281,6 +315,38 @@ impl Model {
         // the nodes and against the pairs, so smoothness and pull mean
         // the same at any set size.
         let rho = nodes as f32 / x_enc.len().max(1) as f32;
+        // Each node's support: its votes in the data term.
+        let mut support = vec![0.0f32; nodes];
+        for cs in &corners {
+            for &(i, w) in cs {
+                support[i] += rho * w;
+            }
+        }
+        // The hold's weight at each node, and the a and b of the
+        // residual it holds the node to: the one that gives the input's
+        // own chroma and the cast the data's greys show.
+        let cast = GreyCast::of(x_enc, y_enc, params.neutral);
+        let (held, targets): (Vec<f32>, Vec<[f32; 2]>) = (0..nodes)
+            .map(|i| {
+                let x = node_color(i, n);
+                let input = oklab(decode3(x));
+                let weight = params.hold
+                    * held_share(support[i], params.supported)
+                    * near_grey(input[1].hypot(input[2]), params.neutral);
+                if weight == 0.0 {
+                    return (0.0, [0.0; 2]);
+                }
+                let b = self.base_lab(x);
+                let c = cast.at(input[0]);
+                (
+                    weight,
+                    [
+                        input[1] + c[0] * input[0] - b[1],
+                        input[2] + c[1] * input[0] - b[2],
+                    ],
+                )
+            })
+            .unzip();
         // The flatness term, on lightness alone: at each node, the way
         // the input's own lightness rises, along which the output's may
         // change freely; the lightness the matrix and curves give it,
@@ -313,6 +379,15 @@ impl Model {
                     rhs[i] += rho * w * res[c];
                 }
             }
+            // The hold is on a and b alone: lightness is left to the
+            // data and the smoothness, since the matrix and curves' own
+            // can fall back on itself between the greys the data has.
+            let holds = c > 0;
+            if holds {
+                for ((r, h), t) in rhs.iter_mut().zip(&held).zip(&targets) {
+                    *r += h * t[c - 1];
+                }
+            }
             if flat {
                 let mut pushed = vec![0.0f32; nodes];
                 across_chroma_gram(&base_lightness, &mut pushed, n, &rises, &weights);
@@ -332,8 +407,8 @@ impl Model {
                 if flat {
                     across_chroma_gram(v, out, n, &rises, &weights);
                 }
-                for (o, vi) in out.iter_mut().zip(v) {
-                    *o += params.pull * vi;
+                for ((o, vi), h) in out.iter_mut().zip(v).zip(&held) {
+                    *o += (params.pull + if holds { *h } else { 0.0 }) * vi;
                 }
             };
             let sol = conjugate_gradient(apply, &rhs, params.iterations);
@@ -418,6 +493,11 @@ impl Model {
         Coupling { mean, p95 }
     }
 
+    /// What the model does to the grey ramp ([`crate::grey`]).
+    pub fn grey_axis(&self) -> crate::grey::GreyAxis {
+        crate::grey::grey_axis(|x| self.apply(x))
+    }
+
     /// Mean ΔE of the model's output against the camera's, over
     /// encoded pairs.
     pub fn mean_delta_e(&self, x_enc: &[[f32; 3]], y_enc: &[[f32; 3]]) -> f32 {
@@ -448,6 +528,123 @@ pub fn cell(x_enc: [f32; 3], n: usize) -> [(usize, f32); 8] {
         *o = (idx, w);
     }
     out
+}
+
+/// Lightness bins the greys' cast is read in.
+const CAST_BINS: usize = 8;
+/// The weight of near-grey pairs (one a pair, less as its chroma nears
+/// the edge of [`LutParams::neutral`]'s reach) a bin, or the whole
+/// set, needs before its cast is trusted.
+const CAST_MIN: f32 = 8.0;
+
+/// The cast the camera puts on the develop's greys, as the data shows
+/// it: over the pairs whose input is near grey, the camera's a and b
+/// less the input's, fitted per unit of the input's lightness (a
+/// channel gain gives a cast in proportion to lightness in Oklab) with
+/// the input's own chroma as a second term, so that a camera that
+/// scales the near-greys' chroma, over a set whose near-greys lean one
+/// way (a warm room's), does not read as a cast. Read per lightness
+/// bin, with the whole set's where a bin has too few, and none where
+/// the set has too few.
+struct GreyCast {
+    bins: [Option<[f32; 2]>; CAST_BINS],
+    all: [f32; 2],
+}
+
+/// Sums for the cast's least squares on one set of pairs: per channel
+/// (a, b), the camera's less the input's (`d`) against the input's
+/// lightness (`l`) and its own chroma in that channel (`i`), so a camera
+/// that only scales chroma (`d` in proportion to `i`) shows no cast.
+#[derive(Clone, Copy, Default)]
+struct CastSums {
+    w: f64,
+    ll: f64,
+    li: [f64; 2],
+    ii: [f64; 2],
+    ld: [f64; 2],
+    id: [f64; 2],
+}
+
+impl CastSums {
+    fn add(&mut self, w: f64, l: f64, i: [f64; 2], d: [f64; 2]) {
+        self.w += w;
+        self.ll += w * l * l;
+        for c in 0..2 {
+            self.li[c] += w * l * i[c];
+            self.ii[c] += w * i[c] * i[c];
+            self.ld[c] += w * l * d[c];
+            self.id[c] += w * i[c] * d[c];
+        }
+    }
+
+    fn merge(&mut self, o: &CastSums) {
+        self.w += o.w;
+        self.ll += o.ll;
+        for c in 0..2 {
+            self.li[c] += o.li[c];
+            self.ii[c] += o.ii[c];
+            self.ld[c] += o.ld[c];
+            self.id[c] += o.id[c];
+        }
+    }
+
+    /// The cast per unit of lightness, when there is weight enough.
+    fn cast(&self) -> Option<[f32; 2]> {
+        if self.w < CAST_MIN as f64 || self.ll <= 0.0 {
+            return None;
+        }
+        Some([0, 1].map(|c| {
+            let det = self.ll * self.ii[c] - self.li[c] * self.li[c];
+            if det > 1e-9 * self.ll * self.ii[c].max(1e-12) {
+                ((self.ld[c] * self.ii[c] - self.li[c] * self.id[c]) / det) as f32
+            } else {
+                (self.ld[c] / self.ll) as f32
+            }
+        }))
+    }
+}
+
+impl GreyCast {
+    fn of(x_enc: &[[f32; 3]], y_enc: &[[f32; 3]], neutral: f32) -> GreyCast {
+        let mut sums = [CastSums::default(); CAST_BINS];
+        for (x, y) in x_enc.iter().zip(y_enc) {
+            let (i, o) = (oklab(decode3(*x)), oklab(decode3(*y)));
+            let w = near_grey(i[1].hypot(i[2]), neutral);
+            if w == 0.0 {
+                continue;
+            }
+            let k = ((i[0] * CAST_BINS as f32) as usize).min(CAST_BINS - 1);
+            sums[k].add(
+                w as f64,
+                i[0] as f64,
+                [i[1] as f64, i[2] as f64],
+                [(o[1] - i[1]) as f64, (o[2] - i[2]) as f64],
+            );
+        }
+        let mut all = CastSums::default();
+        for s in &sums {
+            all.merge(s);
+        }
+        GreyCast {
+            bins: sums.map(|s| s.cast()),
+            all: all.cast().unwrap_or([0.0; 2]),
+        }
+    }
+
+    /// The cast per unit of lightness at input lightness `l`.
+    fn at(&self, l: f32) -> [f32; 2] {
+        let k = ((l * CAST_BINS as f32) as usize).min(CAST_BINS - 1);
+        self.bins[k].unwrap_or(self.all)
+    }
+}
+
+/// How much of [`LutParams::hold`] a node of `support` votes takes:
+/// all at none, falling linearly to none at `supported`.
+fn held_share(support: f32, supported: f32) -> f32 {
+    if supported <= 0.0 {
+        return 0.0;
+    }
+    1.0 - (support / supported).min(1.0)
 }
 
 /// `out += λ DᵀD v` for the second difference along each axis of an
@@ -585,7 +782,21 @@ pub const FLAT_CHROMA_END: f32 = 0.15;
 /// The flatness term's share at a node of input chroma `c`: one up to
 /// [`FLAT_CHROMA`], none past [`FLAT_CHROMA_END`], a smoothstep between.
 fn flat_reach(c: f32) -> f32 {
-    let t = ((c - FLAT_CHROMA) / (FLAT_CHROMA_END - FLAT_CHROMA)).clamp(0.0, 1.0);
+    fade(c, FLAT_CHROMA, FLAT_CHROMA_END)
+}
+
+/// The hold's share at a node of input chroma `c`: one up to
+/// `neutral`, none past twice it; none at all with no `neutral`.
+fn near_grey(c: f32, neutral: f32) -> f32 {
+    if neutral <= 0.0 {
+        return 0.0;
+    }
+    fade(c, neutral, 2.0 * neutral)
+}
+
+/// One up to `from`, none past `to`, a smoothstep between.
+fn fade(c: f32, from: f32, to: f32) -> f32 {
+    let t = ((c - from) / (to - from)).clamp(0.0, 1.0);
     1.0 - t * t * (3.0 - 2.0 * t)
 }
 
@@ -905,6 +1116,60 @@ mod tests {
         // pull and, in lightness, the flatness term.
         let c = m.correction([0.0, 0.0, 0.0]);
         assert!(c.iter().all(|v| v.abs() < 0.01), "{c:?}");
+    }
+
+    /// One shoot under warm light: every pair in an orange cluster,
+    /// and the camera's green lower there than the develop's. Nothing
+    /// says what a grey does. Without the hold the curves and the
+    /// table carry the cluster's green onto the greys, which go
+    /// magenta; with it the greys from mid-grey up stay neutral at the
+    /// matrix and curves' lightness, and the cluster fits as well.
+    #[test]
+    fn greys_no_pair_reaches_stay_neutral() {
+        let x: Vec<[f32; 3]> = colors(4000)
+            .into_iter()
+            .map(|c| [0.5 + 0.4 * c[0], 0.3 + 0.25 * c[1], 0.1 + 0.2 * c[2]])
+            .collect();
+        let y: Vec<[f32; 3]> = x
+            .iter()
+            .map(|c| [c[0], c[1] * 0.88, (c[2] + 0.04).min(1.0)])
+            .collect();
+        let held = Model::fit(&x, &y, LutParams::default());
+        let free = Model::fit(
+            &x,
+            &y,
+            LutParams {
+                hold: 0.0,
+                ..LutParams::default()
+            },
+        );
+        let spread = |m: &Model| {
+            (16..33)
+                .map(|k| {
+                    let o = m.apply([k as f32 / 32.0; 3]);
+                    o[0].max(o[1]).max(o[2]) - o[0].min(o[1]).min(o[2])
+                })
+                .fold(0.0f32, f32::max)
+        };
+        eprintln!(
+            "grey spread from mid-grey up: {} held, {} free",
+            spread(&held),
+            spread(&free)
+        );
+        assert!(spread(&free) > 0.05, "without the hold {}", spread(&free));
+        assert!(spread(&held) < 0.02, "with it {}", spread(&held));
+        // The greys come out at the matrix and curves' own lightness,
+        // the hold leaving lightness to them where no data says
+        // otherwise; white itself (step 32) is pinned to white, so it is
+        // left out.
+        for k in 16..32 {
+            let g = [k as f32 / 32.0; 3];
+            let (out, base) = (oklab(decode3(held.apply(g)))[0], held.base_lab(g)[0]);
+            assert!((out - base).abs() < 0.01, "{g:?}: {out} against {base}");
+        }
+        assert!(held.grey_axis().holds(), "{:?}", held.grey_axis());
+        let (a, b) = (held.mean_delta_e(&x, &y), free.mean_delta_e(&x, &y));
+        assert!(a < b + 0.001, "fitted {a} against {b}");
     }
 
     #[test]

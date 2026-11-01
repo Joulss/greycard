@@ -16,6 +16,8 @@
 //!   per-channel monotone curves kept only where they help, and a
 //!   residual table on a lattice, solved as a regularized least
 //!   squares.
+//! - [`grey`]: the fitted model's grey ramp, the check a table must
+//!   pass to be written: greys kept near neutral, lightness rising.
 //! - [`cube`]: the model written as a `.cube` the engine's look slot
 //!   reads.
 //! - [`radial`]: the lightness left after the look, regressed on the
@@ -33,6 +35,7 @@ pub mod color;
 pub mod cube;
 pub mod exposure;
 pub mod fit;
+pub mod grey;
 pub mod pairs;
 pub mod radial;
 pub mod register;
@@ -55,4 +58,8 @@ pub const LUT_SIZE: usize = 33;
 ///
 /// 1. Everything before §260: the table's residual in encoded sRGB.
 /// 2. §260: the residual in Oklab, and lightness held off chroma.
+///
+/// The hold on greys no pair reaches is not a bump: on sets from
+/// several folders it moves no table by more than a few thousandths,
+/// and a bump would ask every fit-2 table to be refitted.
 pub const FIT_VERSION: u32 = 2;

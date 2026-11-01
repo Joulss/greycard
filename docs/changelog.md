@@ -62,6 +62,11 @@ design note behind it.
   it, to narrow the picker's few hundred lenses to one maker's or to
   those whose name or maker holds the words typed
   ([§516](https://github.com/jessolmstead/greycard/blob/master/docs/notes/516-the-lens-picker-by-maker-and-a-filter.md)).
+- A library-wide camera match no longer writes a table that would tint
+  greys its frames never showed, and says so; a camera's own cast on
+  its greys is kept, and a group from one folder gets no table of its
+  own
+  ([§517](https://github.com/jessolmstead/greycard/blob/master/docs/notes/517-the-camera-match-holds-unseen-greys.md)).
 - A phone's DNG opens without its dark corners: the gain maps and the
   forward matrices in the file are applied
   ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md)).

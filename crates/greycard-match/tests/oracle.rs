@@ -69,13 +69,15 @@ fn held_out_mean(
 }
 
 /// The fit as the Python has it: the defaults without the flatness
-/// term, which the script never had. It trades fitted error for
+/// term and the hold on nodes no pair reaches, which the script never
+/// had. It trades fitted error for
 /// lightness kept off chroma, so with it on the fitted figure is not
 /// the script's; [`the_default_keeps_lightness_off_chroma`] holds what
 /// it does instead.
 fn reference() -> LutParams {
     LutParams {
         flatness: 0.0,
+        hold: 0.0,
         ..LutParams::default()
     }
 }
@@ -248,6 +250,9 @@ fn sweep_the_lattice_regularization() {
             let params = LutParams {
                 smoothness,
                 pull,
+                hold: 0.0,
+                supported: d.supported,
+                neutral: d.neutral,
                 flatness: 0.0,
                 iterations: 300,
             };

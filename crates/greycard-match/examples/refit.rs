@@ -56,4 +56,19 @@ fn main() {
         de,
         args[3]
     );
+    let grey = model.grey_axis();
+    println!(
+        "greys: cast a {:+.4} b {:+.4} per unit of lightness, drifting by up to {:.4}; \
+         lightness falls by up to {:.4} (at {:.2}){}",
+        grey.cast[0],
+        grey.cast[1],
+        grey.drift,
+        grey.fall,
+        grey.fall_at,
+        if grey.holds() {
+            ""
+        } else {
+            "; the editor would not write it"
+        }
+    );
 }

@@ -130,6 +130,8 @@ pub(crate) struct Sheet {
     /// What the unchecked groups are remembered under: "library", or
     /// the folder's path.
     scope_key: String,
+    /// What the survey was over: the library, or the one folder chosen.
+    scope: fit::Scope,
     /// The groups left unchecked, by their look names. A group not
     /// here is checked, so one seen for the first time is.
     unchecked: std::collections::BTreeSet<String>,
@@ -469,6 +471,7 @@ fn show(st: &State, app: &App) {
                 sheet.curve,
                 app.get_match_replace(),
                 &chosen,
+                sheet.scope,
             );
             let rows: Vec<MatchGroup> = groups
                 .iter()
@@ -521,6 +524,11 @@ fn start_survey(st: &mut State, app: &App) {
         scope: app.get_match_scope().to_string(),
         library: library_of(st),
         folder: folder_of(st),
+    };
+    st.camera_match.scope = if at.scope == LIBRARY {
+        fit::Scope::Library
+    } else {
+        fit::Scope::Folder
     };
     // What the scope's last run left unchecked; a refit's sheet starts
     // with everything of its look's checked and keeps nothing.
@@ -642,6 +650,7 @@ fn start_run(st: &mut State, app: &App) {
         return;
     }
     let curve = st.camera_match.curve;
+    let scope = st.camera_match.scope;
     let replace = app.get_match_replace();
     let cancel = Arc::new(AtomicBool::new(false));
     st.camera_match.cancel = Some(cancel.clone());
@@ -681,6 +690,7 @@ fn start_run(st: &mut State, app: &App) {
                     curve,
                     replace,
                     chosen: &chosen,
+                    scope,
                 },
                 lenses.as_ref(),
                 &cancel,
@@ -1117,7 +1127,17 @@ mod tests {
         );
         assert!(!line.contains("narrow"), "{line}");
         let one = group("Canon EOS R6m2", &["a"], MIN_FRAMES + 2, MIN_FRAMES + 2);
-        assert!(group_line(&one, &Plan::Fit { replaces: None }).contains("narrow"));
+        // A folder's run fits it and says so; the library's refuses it.
+        let line = group_line(&one, &Plan::Fit { replaces: None });
+        assert!(
+            line.contains("; all from one folder, so the fit will be narrow"),
+            "{line}"
+        );
+        let narrow = Plan::Skip(fit::ONE_FOLDER.to_string());
+        assert!(
+            group_line(&one, &narrow)
+                .ends_with(" — skipped: all from one folder, so the fit would be narrow")
+        );
         let warned = Plan::Fit {
             replaces: Some("replaces a table fitted on this body from 60 frames".into()),
         };
