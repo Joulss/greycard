@@ -249,7 +249,7 @@ fn the_sky_over_real_frames() {
             let t = Instant::now();
             let made = ai
                 .raster(
-                    b.stamp,
+                    b.base(),
                     &b.image,
                     &b.edit,
                     b.meta.source,
@@ -489,7 +489,7 @@ fn the_landscape_over_real_frames() {
             let t = Instant::now();
             let raster = ai
                 .raster(
-                    b.stamp,
+                    b.base(),
                     &b.image,
                     &b.edit,
                     b.meta.source,
@@ -729,7 +729,7 @@ fn parts_on_real_frames() {
         let shape = part(p.label, None);
         let made = ai
             .raster(
-                b.stamp,
+                b.base(),
                 &b.image,
                 &b.edit,
                 b.meta.source,
@@ -759,7 +759,7 @@ fn parts_on_real_frames() {
     assert!(her.picture.is_some());
     let made = ai
         .raster(
-            b.stamp,
+            b.base(),
             &b.image,
             &b.edit,
             b.meta.source,
@@ -780,7 +780,7 @@ fn parts_on_real_frames() {
     // hers, and on a picture of one, all but everyone's.
     let everyone = ai
         .raster(
-            b.stamp,
+            b.base(),
             &b.image,
             &b.edit,
             b.meta.source,
@@ -793,7 +793,7 @@ fn parts_on_real_frames() {
         .raster;
     let made = ai
         .raster(
-            b.stamp,
+            b.base(),
             &b.image,
             &b.edit,
             b.meta.source,
@@ -827,7 +827,7 @@ fn parts_on_real_frames() {
     if edge {
         let subject = ai
             .raster(
-                b.stamp,
+                b.base(),
                 &b.image,
                 &b.edit,
                 b.meta.source,
@@ -868,7 +868,7 @@ fn parts_on_real_frames() {
         let shape = part("Top", Some(p.person()));
         let made = ai
             .raster(
-                g.stamp,
+                g.base(),
                 &g.image,
                 &g.edit,
                 g.meta.source,
@@ -928,7 +928,7 @@ fn parts_on_real_frames() {
     for (i, p) in group.iter().enumerate() {
         let made = ai
             .raster(
-                g.stamp,
+                g.base(),
                 &g.image,
                 &g.edit,
                 g.meta.source,
@@ -965,7 +965,7 @@ fn parts_on_real_frames() {
     if edge {
         let subject = ai
             .raster(
-                g.stamp,
+                g.base(),
                 &g.image,
                 &g.edit,
                 g.meta.source,
@@ -996,7 +996,7 @@ fn parts_on_real_frames() {
         .enumerate()
         .map(|(i, p)| {
             ai.raster(
-                g.stamp,
+                g.base(),
                 &g.image,
                 &g.edit,
                 g.meta.source,
@@ -1032,7 +1032,7 @@ fn parts_on_real_frames() {
     }
     let made = ai
         .raster(
-            g.stamp,
+            g.base(),
             &g.image,
             &g.edit,
             g.meta.source,
@@ -1075,7 +1075,7 @@ fn parts_on_real_frames() {
     }
     let made = ai
         .raster(
-            e.stamp,
+            e.base(),
             &e.image,
             &bright,
             e.meta.source,
@@ -1101,7 +1101,7 @@ fn parts_on_real_frames() {
     turned.turn(Turned::new(1, 1.0 / aspect));
     let made = ai
         .raster(
-            t.stamp,
+            t.base(),
             &t.image,
             &t.edit,
             t.meta.source,
@@ -1141,7 +1141,7 @@ fn parts_on_real_frames() {
     let g = develop("5M0A4169", &plain, 0, &mut ai);
     let made = ai
         .raster(
-            g.stamp,
+            g.base(),
             &g.image,
             &g.edit,
             g.meta.source,
@@ -1164,7 +1164,7 @@ fn parts_on_real_frames() {
     let o = develop("DSCF0848", &plain, 0, &mut ai);
     let made = ai
         .raster(
-            o.stamp,
+            o.base(),
             &o.image,
             &o.edit,
             o.meta.source,
@@ -1190,7 +1190,7 @@ fn parts_on_real_frames() {
     let b = develop("DSCF0835", &plain, 0, &mut ai);
     let made = ai
         .raster(
-            b.stamp,
+            b.base(),
             &b.image,
             &b.edit,
             b.meta.source,
@@ -1231,7 +1231,7 @@ fn parts_on_real_frames() {
     let (c, _) = &couples[1];
     let made = ai
         .raster(
-            c.stamp,
+            c.base(),
             &c.image,
             &c.edit,
             c.meta.source,
@@ -1685,4 +1685,144 @@ fn the_remove_fills_a_spot_on_a_raw() {
     let (back, _) = filled(&mut ai, &patch);
     assert!(t.elapsed().as_secs_f64() < 1.0, "seed 0's fill was kept");
     assert_eq!(back.data, out.data);
+}
+
+/// A Sky mask's raster on one real frame, as the viewport makes it and
+/// as each export reads it: the window's export of the open frame, and
+/// a run with no window (another `Ai`, the same disk). Each export
+/// must draw the viewport's raster, to the byte; and an export whose
+/// cache has none (another disk) makes its own from the reference's
+/// base, which is said, not checked. Set `GREYCARD_SAMPLE` to a raw
+/// with a sky and `GREYCARD_MODELS` to a store holding the Sky model
+/// and SAM whose parent may take a `masks` folder; run with
+/// `--ignored --nocapture`; without both it passes at once.
+#[test]
+#[ignore]
+fn an_export_s_sky_is_the_viewport_s() {
+    use crate::mask_base::Size;
+    let (Some(sample), Some(models)) = (
+        std::env::var_os("GREYCARD_SAMPLE").map(PathBuf::from),
+        std::env::var_os("GREYCARD_MODELS").map(PathBuf::from),
+    ) else {
+        return;
+    };
+    let store = greycard_ai::Store::at(&models);
+    let (input, _) = timed_open(&sample).unwrap();
+    let mut edit = Edit::default();
+    let mut a = greycard_edit::Adjustment {
+        id: 1,
+        ..Default::default()
+    };
+    a.mask.components.push(greycard_edit::mask::Component {
+        shape: Shape::Sky { picks: Vec::new() },
+        ..Default::default()
+    });
+    a.look.light.exposure = -0.7;
+    edit.adjustments.push(a);
+    let key = (1, 0);
+    let deliver: Deliver = Arc::new(|_| {});
+
+    // The viewport: developed on the GPU where there is one, the mask
+    // asked for as `Job::Mask` asks.
+    let mut gpu = greycard_gpu::Context::own()
+        .inspect_err(|e| println!("no GPU, the viewport on the CPU: {e}"))
+        .ok();
+    let mut ai = Ai::for_test_on_disk(store.clone());
+    ai.forget(Some(sample.clone()));
+    let mut base = None;
+    develop_job(
+        &input, &edit, 0, 1, &mut base, &mut ai, None, None, &mut gpu, &deliver,
+    );
+    let b = base.as_ref().expect("a base");
+    let shape = Shape::Sky { picks: Vec::new() };
+    let viewport = ai
+        .raster_retouched(
+            b.base(),
+            &b.image,
+            None,
+            &b.edit,
+            b.meta.source,
+            b.turn,
+            key,
+            &shape,
+            None,
+        )
+        .expect("the viewport's sky")
+        .0;
+    println!(
+        "viewport: base on the GPU {}, {}x{}, made on {:?} in {:.2} s, {:.1}% sky",
+        b.on_gpu,
+        viewport.raster.width,
+        viewport.raster.height,
+        viewport.provider,
+        viewport.seconds,
+        share(viewport.raster.data())
+    );
+
+    let settings = greycard_render::export::Settings::default();
+    let export = |ai: &mut Ai, kept: &mut crate::walk::Kept| {
+        let (_, finish, left_out) = super::export::walk_for_export(
+            input.walked(),
+            &edit,
+            0,
+            &mut WorkerModels::new(ai, None, &deliver, 0),
+            None,
+            &settings,
+            kept,
+        )
+        .expect("the export's walk");
+        assert!(left_out.is_empty(), "{left_out:?}");
+        finish.rasters[&key].clone()
+    };
+    // The window's export of the open frame, from the window's points.
+    let window = export(&mut ai, &mut b.kept.clone());
+    // No window: another process's models, the same disk.
+    let mut alone = Ai::for_test_on_disk(store.clone());
+    alone.forget(Some(sample.clone()));
+    assert_eq!(
+        alone.base_print(&edit, 0, Size::Full),
+        b.print,
+        "the export works the viewport's print out"
+    );
+    let headless = export(&mut alone, &mut crate::walk::Kept::new());
+    let differ = |a: &[u8], b: &[u8]| a.iter().zip(b).filter(|(a, b)| a != b).count();
+    println!(
+        "window's export: {} texels differ; with no window: {}",
+        differ(window.data(), viewport.raster.data()),
+        differ(headless.data(), viewport.raster.data())
+    );
+    // Another disk: made from the export's own base, the reference's.
+    let cold_dir = thumb_scratch("export-sky-elsewhere");
+    let elsewhere = cold_dir.join("models");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    for entry in std::fs::read_dir(&models).unwrap().flatten() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(entry.path(), elsewhere.join(entry.file_name())).unwrap();
+    }
+    let mut cold = Ai::for_test_on_disk(greycard_ai::Store::at(&elsewhere));
+    cold.forget(Some(sample.clone()));
+    let own = export(&mut cold, &mut crate::walk::Kept::new());
+    let flips = viewport
+        .raster
+        .data()
+        .iter()
+        .zip(own.data())
+        .filter(|(a, b)| (**a > 127) != (**b > 127))
+        .count();
+    println!(
+        "an export with a cold cache, from the CPU base: {} texels differ, {} across the half, \
+         {:.1}% sky",
+        differ(own.data(), viewport.raster.data()),
+        flips,
+        share(own.data())
+    );
+    // The links go, not what they name.
+    greycard_core::testing::remove_dir_retry(&cold_dir);
+    assert_eq!(window.data(), viewport.raster.data());
+    assert_eq!(headless.data(), viewport.raster.data());
+}
+
+/// The share of a raster over half, in percent.
+fn share(data: &[u8]) -> f64 {
+    100.0 * data.iter().filter(|&&v| v > 127).count() as f64 / data.len().max(1) as f64
 }

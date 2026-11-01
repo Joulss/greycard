@@ -45,6 +45,7 @@ pub(super) fn develop_job(
     // run the sharpen, whose blend and measure the viewport shows, and
     // a walk with a device ends at the viewport's texture.
     h.kept.take_working(Keep::Developed);
+    let print = ai.base_print(edit, turn, crate::mask_base::Size::Full);
     let mut models = WorkerModels::new(ai, cache, deliver, generation);
     models.edit = edit.clone();
     models.turn = turn;
@@ -86,11 +87,16 @@ pub(super) fn develop_job(
         BaseFrom::Kept
     };
     // The masks' models see the base under the edit it was made for,
-    // as their cache keeps it by the base's stamp.
+    // as their kept work of it is known by the base's stamp.
     if made || turned || h.stamp == 0 {
         h.edit = edit.clone();
     }
     h.turn = turn;
+    // The masks' print is the edit's now, not the one the base was made
+    // under: an export of this edit works it out alike, so a change the
+    // base did not need makes the masks again on the same picture
+    // rather than leave the viewport's apart from the export's.
+    h.print = print;
     h.meta = walked.meta.clone();
     if let Some(image) = h.kept.picture(Keep::Base) {
         h.image = image.clone();

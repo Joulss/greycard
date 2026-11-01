@@ -36,6 +36,9 @@ pub(super) struct FrameKept {
     /// Counts the base pictures made of the frame, for the learned
     /// masks to know theirs.
     pub stamp: u64,
+    /// The print of the base under the last develop's edit, which the
+    /// learned masks' rasters are kept by ([`crate::mask_base::print`]).
+    pub print: crate::ai::Print,
     /// Taken back from the shelf and not walked from since: the next
     /// develop's line says where its base came from.
     pub from_shelf: bool,
@@ -76,6 +79,14 @@ pub(super) struct KeptMaskPicture {
 }
 
 impl FrameKept {
+    /// The base the learned masks are made from or read for.
+    pub(super) fn base(&self) -> crate::ai::Base {
+        crate::ai::Base {
+            stamp: self.stamp,
+            print: self.print,
+        }
+    }
+
     /// Nothing kept yet of a frame `facts` describes.
     pub(super) fn new(facts: &Facts) -> Self {
         Self {
@@ -87,6 +98,10 @@ impl FrameKept {
             edit: Edit::default(),
             turn: 0,
             stamp: 0,
+            print: crate::ai::Print {
+                hash: 0,
+                size: crate::mask_base::Size::Full,
+            },
             from_shelf: false,
             image: Arc::new(WorkingImage::new(0, 0)),
             meta: Meta::empty(),
@@ -366,11 +381,20 @@ impl crate::walk::Models for WorkerModels<'_> {
         if how != crate::stages::Masks::Make {
             return crate::walk::Rasters::new();
         }
+        // The print the viewport keeps its rasters by for this edit: an
+        // export of the open frame reads the viewport's, and one of
+        // another frame or with no window reads or makes the same.
+        let print = self
+            .ai
+            .base_print(&self.edit, self.turn, crate::mask_base::Size::Full);
         let (rasters, left_out) = super::masks::learned_rasters(
             &self.edit,
             self.ai,
             &super::masks::On {
-                stamp: EXPORT_STAMP,
+                base: crate::ai::Base {
+                    stamp: EXPORT_STAMP,
+                    print,
+                },
                 image: base,
                 retouched: patched.map(|p| crate::ai::Retouched {
                     retouch: p.retouch,
@@ -476,6 +500,7 @@ impl FrameKept {
         held.edit = edit.clone();
         held.turn = turn;
         held.stamp = 1;
+        held.print = crate::mask_base::print(None, edit, turn, crate::mask_base::Size::Full);
         held.meta = walked.meta;
         held.guide = walked
             .taps

@@ -3595,6 +3595,50 @@ fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
     }
 }
 
+/// A drag that moves the base (a white balance, a lens) asks for its
+/// masks once, after its last develop: each develop's asks of a new base
+/// wait in place of the last's until the develops have been quiet a
+/// while, and none is made between two develops of the drag.
+#[test]
+fn a_drag_s_new_bases_ask_for_their_masks_once_after_it() {
+    let lock = Mutex::new(Queue::default());
+    let sky = Shape::Sky { picks: Vec::new() };
+    let start = Instant::now();
+    let tick = std::time::Duration::from_millis(300);
+    // Five develops of a drag, a third of a second apart, each from a
+    // base the panel's mask was not made from.
+    for i in 0..5 {
+        let at = start + tick * i;
+        super::engine::after_develop(&lock, (Vec::new(), vec![((1, 0), sky.clone(), None)]), at);
+        let mut q = lock.lock().unwrap();
+        super::engine::settle_due(&mut q, at + tick / 2);
+        assert!(q.masks.is_empty(), "nothing made during the drag ({i})");
+    }
+    let last = start + tick * 4;
+    {
+        let mut q = lock.lock().unwrap();
+        let left = masks::settling_left(&q.settling, last).unwrap();
+        assert_eq!(left, masks::SETTLE, "due a settle after the last develop");
+        super::engine::settle_due(&mut q, last + masks::SETTLE);
+        let queued: Vec<_> = q.masks.iter().map(|(k, s, _)| (*k, s.clone())).collect();
+        assert_eq!(queued, vec![((1, 0), sky.clone())], "one mask job");
+        assert!(q.settling.is_none());
+        q.masks.clear();
+        super::engine::settle_due(&mut q, last + masks::SETTLE * 3);
+        assert!(q.masks.is_empty(), "and only one");
+    }
+    // A develop back on the mask's own base asks nothing, and lets go of
+    // what a drag's earlier develop held; a fill's moved patches are
+    // asked for at once.
+    super::engine::after_develop(&lock, (Vec::new(), vec![((1, 0), sky.clone(), None)]), last);
+    super::engine::after_develop(&lock, (vec![((2, 0), sky.clone(), None)], Vec::new()), last);
+    let mut q = lock.lock().unwrap();
+    assert!(q.settling.is_none());
+    assert_eq!(q.masks.len(), 1);
+    super::engine::settle_due(&mut q, last + masks::SETTLE * 2);
+    assert_eq!(q.masks.len(), 1);
+}
+
 /// A mask the worker asks for again behind a develop does not take the
 /// place of one the panel queued for the same key, which is newer.
 #[test]

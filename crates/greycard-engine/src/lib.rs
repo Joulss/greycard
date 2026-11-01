@@ -27,6 +27,7 @@ pub mod fit_lightroom;
 pub mod headless;
 pub mod lens;
 pub mod made;
+pub mod mask_base;
 pub mod match_compare;
 pub mod measure_baseline;
 pub mod measure_crop;

@@ -581,6 +581,9 @@ struct Queue {
     /// picked (Subject; `None` for a shape whose model is not in
     /// question, Object among them, which always wants SAM).
     masks: std::collections::VecDeque<(Key, Shape, Option<&'static greycard_ai::Model>)>,
+    /// The masks a develop's new base asks for, moved to `masks` once
+    /// the develops have been quiet a while (`masks::Settling`).
+    settling: Option<masks::Settling>,
     /// The people on the open picture are wanted (`Job::People`).
     people: bool,
     /// What the Landscape button offers is wanted (`Job::Landscape`).

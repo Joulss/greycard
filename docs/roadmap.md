@@ -589,8 +589,6 @@ touches.
 
 - [ ] The editor's `--export` flag dropped, one release after §514
       made it an alias of `greycard export`
-- [ ] The learned-mask cache keyed by the base it was made from, so an
-      export's masks are the viewport's (§454, §236)
 - [ ] Explicit imports in place of greycard-ui's crate-root glob
       imports, 49 `use crate::*` left after the runners' move (§521)
 

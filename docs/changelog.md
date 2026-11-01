@@ -129,6 +129,10 @@ design note behind it.
 
 ### Fixes
 
+- A Sky, Subject, or other learned mask is made again after a white
+  balance, lens, or noise change, so it no longer keeps the outline
+  from before a distortion correction, in the viewport or an export
+  ([§522](https://github.com/jessolmstead/greycard/blob/master/docs/notes/522-the-learned-masks-kept-by-their-base.md)).
 - A settings file that will not parse, a hand edit with a typo say, is
   kept as `settings.json.bad` rather than written over with the
   defaults

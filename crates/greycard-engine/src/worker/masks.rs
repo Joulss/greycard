@@ -23,7 +23,7 @@ pub(super) fn learned_masks(
         edit,
         ai,
         &On {
-            stamp: b.stamp,
+            base: b.base(),
             image: &b.image,
             retouched: retouched_of(b, Some(edit)),
             edit: &b.edit,
@@ -70,8 +70,8 @@ pub(super) fn look_left_out(edit: &Edit) -> Option<String> {
 /// The picture the learned masks are made on, and what the models'
 /// cache knows it by.
 pub(super) struct On<'a> {
-    /// Counts the pictures made, for the masks to know theirs.
-    pub stamp: u64,
+    /// Which picture it is, and the print its rasters are kept by.
+    pub base: crate::ai::Base,
     pub image: &'a WorkingImage,
     /// The picture with its retouch applied, when a patch is on it.
     pub retouched: Option<crate::ai::Retouched<'a>>,
@@ -99,7 +99,7 @@ pub(super) fn learned_rasters(edit: &Edit, ai: &mut Ai, on: &On<'_>) -> (Rasters
                 continue;
             }
             match ai.raster_retouched(
-                on.stamp,
+                on.base,
                 on.image,
                 on.retouched,
                 on.edit,
@@ -168,16 +168,18 @@ pub(super) fn same_retouch(edit: &Retouch, applied: &Retouch) -> bool {
         })
 }
 
-/// The learned components the panel was given a raster of whose
-/// patches the develop of `edit` on `base` changed: each to be asked for
-/// again, behind the develop.
-pub(super) fn to_ask_again(
-    edit: &Edit,
-    base: Option<&FrameKept>,
-    ai: &Ai,
-) -> Vec<(Key, Shape, Option<&'static greycard_ai::Model>)> {
+/// A learned component to be asked for again: its key, its shape, and
+/// the model it was asked with.
+pub(super) type Ask = (Key, Shape, Option<&'static greycard_ai::Model>);
+
+/// The learned components the panel was given a raster of that the
+/// develop of `edit` on `base` asks for again: those whose Fill patches
+/// it changed, at once, and those it gave another base (a white
+/// balance, a lens, a noise moved), to wait for the develops to settle
+/// ([`Settling`]).
+pub(super) fn to_ask_again(edit: &Edit, base: Option<&FrameKept>, ai: &Ai) -> (Vec<Ask>, Vec<Ask>) {
     let Some(b) = base else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let live = |key: Key, shape: &Shape| {
         edit.adjustments
@@ -186,7 +188,47 @@ pub(super) fn to_ask_again(
             .and_then(|a| a.mask.components.get(key.1))
             .is_some_and(|c| c.enabled && c.shape == *shape)
     };
-    ai.to_ask_again(retouched_of(b, None), b.turn, live)
+    (
+        ai.to_ask_again(retouched_of(b, None), b.print, b.turn, live),
+        ai.of_another_base(b.print, live),
+    )
+}
+
+/// How long the develops must have been quiet before the masks a new
+/// base asks for are made: a mask's model runs for seconds and cannot
+/// be stopped, so one begun between two develops of a drag would hold
+/// the next behind it.
+pub(super) const SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The masks a new base asks for, held until the develops settle: each
+/// develop puts its own in place of the last's, and the time they are
+/// due moves with it, so a drag asks once, after its last develop.
+pub(super) struct Settling {
+    pub due: Instant,
+    pub asks: Vec<Ask>,
+}
+
+/// After a develop at `now`: its asks of a new base held in `slot` until
+/// [`SETTLE`] from now, in place of any held before (none when it asks
+/// none: the base is the one the masks were made from again).
+pub(super) fn settle(slot: &mut Option<Settling>, asks: Vec<Ask>, now: Instant) {
+    *slot = (!asks.is_empty()).then(|| Settling {
+        due: now + SETTLE,
+        asks,
+    });
+}
+
+/// The asks held in `slot`, taken once they are due at `now`.
+pub(super) fn settled(slot: &mut Option<Settling>, now: Instant) -> Option<Vec<Ask>> {
+    if slot.as_ref().is_some_and(|s| s.due <= now) {
+        return slot.take().map(|s| s.asks);
+    }
+    None
+}
+
+/// How long until the asks held in `slot` are due, if any are held.
+pub(super) fn settling_left(slot: &Option<Settling>, now: Instant) -> Option<std::time::Duration> {
+    slot.as_ref().map(|s| s.due.saturating_duration_since(now))
 }
 
 /// How [`masks_for`] ended.
@@ -208,9 +250,8 @@ pub(super) enum MasksMade {
 /// reduced for the picture the models see, and each learned shape the
 /// edit draws is made as an export of the frame would make it,
 /// `waiting` asked between two whether to give way. The rasters go in
-/// the cache the open frame's masks are read from, made from the
-/// reduced develop's picture, which the models see at their own 2048
-/// anyway.
+/// the cache under the reduced base's print, where the reduced develop
+/// reads them; the open frame makes its own from the full develop.
 pub(super) fn masks_for(
     frame: &Frame,
     ai: &mut Ai,
@@ -251,6 +292,13 @@ pub(super) fn masks_for(
         }
     };
     ai.forget(Some(path.to_path_buf()));
+    // Kept by the reduced base's print, where the reduced develop reads
+    // them: the open frame and an export make their own from the full
+    // develop.
+    let base = crate::ai::Base {
+        stamp: 1,
+        print: ai.base_print(&edit, turn, crate::mask_base::Size::Reduced),
+    };
     let (mut made, mut wanted) = (0, 0);
     for a in &edit.adjustments {
         if !a.enabled || a.mask.is_empty() {
@@ -272,7 +320,7 @@ pub(super) fn masks_for(
             let full = (developed.full.0 as usize, developed.full.1 as usize);
             match ai.raster_for(
                 full,
-                1,
+                base,
                 &developed.image,
                 &edit,
                 developed.kind,

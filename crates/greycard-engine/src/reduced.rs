@@ -50,10 +50,11 @@
 //! so nothing is decoded over and over for a picture that cannot be
 //! kept; until then the frame shows the camera's JPEG.
 //!
-//! The rasters the worker makes for this go into the mask cache the
-//! open frame's masks are read from: made from the reduced develop's
-//! picture, which is what the models see at their own 2048 anyway, they
-//! serve the frame when it is opened too.
+//! The rasters the worker makes for this go into the mask cache under
+//! the reduced base's print (`mask_base`), where this develop reads
+//! them: made from the reduced develop's picture, they are a proxy's,
+//! and the open frame and an export, whose base is the full develop's,
+//! make their own rather than read them.
 //!
 //! The develop is a walk of the stage list under `Purpose::Reduced`
 //! (`stages`), where its bin and its skips are stated, not a second
@@ -309,12 +310,16 @@ pub fn look_ready(edit: &Edit) -> Result<(), Why> {
 /// whose model is not in the store, `Why::Masks` the ones the worker is
 /// to make first.
 pub fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Result<(), Why> {
+    if !draws_learned(edit) {
+        return Ok(());
+    }
     let mut to_make = Vec::new();
     let mut no_model = Vec::new();
     // The frame's size as its file says it stands, read only for a Sky,
     // the one shape whose raster's width follows it: a frame the rule
     // gives the wide raster is not ready on its old narrow one.
     let mut frame = None;
+    let print = crate::mask_base::print(Some(path), edit, turn, crate::mask_base::Size::Reduced);
     for a in &edit.adjustments {
         if !a.enabled || a.mask.is_empty() {
             continue;
@@ -332,7 +337,7 @@ pub fn masks_ready(ai: &mut Ai, path: &Path, edit: &Edit, turn: u8) -> Result<()
                 }),
                 _ => None,
             };
-            match ai.raster_ready(path, &c.shape, turn, size) {
+            match ai.raster_ready(path, &c.shape, turn, size, print) {
                 crate::ai::Ready::Cached => {}
                 crate::ai::Ready::ToMake => {
                     to_make.push(format!("{}'s {}", a.name, c.shape.name()))
@@ -365,7 +370,11 @@ pub fn rasters(
     full: (u32, u32),
 ) -> Result<Rasters, Why> {
     let mut rasters = Rasters::new();
+    if !draws_learned(edit) {
+        return Ok(rasters);
+    }
     let mut missing = Vec::new();
+    let print = crate::mask_base::print(Some(path), edit, turn, crate::mask_base::Size::Reduced);
     for a in &edit.adjustments {
         if !a.enabled || a.mask.is_empty() {
             continue;
@@ -374,7 +383,7 @@ pub fn rasters(
             if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
                 continue;
             }
-            match ai.cached_raster(path, &c.shape, turn, full) {
+            match ai.cached_raster(path, &c.shape, turn, full, print) {
                 Some(raster) => {
                     rasters.insert((a.id, i), raster);
                 }
@@ -1103,6 +1112,12 @@ mod tests {
                 &frame.path,
                 &edit.adjustments[0].mask.components[0].shape,
                 0,
+                crate::mask_base::print(
+                    Some(&frame.path),
+                    &edit,
+                    0,
+                    crate::mask_base::Size::Reduced,
+                ),
             )
             .expect("a slot in the mask cache");
         std::fs::create_dir_all(slot.parent().unwrap()).unwrap();

@@ -1,10 +1,11 @@
 //! The learned masks, on the worker: the models, the preview they see,
 //! and the rasters they made. A mask is made once for a shape and kept
-//! until the shape changes or another file is opened; it sees the base
-//! develop as it was then, since a subject does not move when the
-//! white balance does. Made rasters are also kept on disk, keyed by
-//! the file, the model and the shape, so opening a file again does not
-//! run the model again; so are made fills, beside them.
+//! until the shape or the base it was made from changes, or another
+//! file is opened. Made rasters are also kept on disk, keyed by the
+//! base's print (`mask_base`: the file, what made the base, the turn,
+//! and the size), the model, and the shape, so opening a file again or
+//! exporting it does not run the model again, and the viewport and an
+//! export read one raster; so are made fills, beside them.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -35,6 +36,8 @@ use greycard_edit::brush::{RASTER_WIDTH, Raster, WIDE_RASTER_WIDTH, raster_heigh
 use greycard_edit::key::{LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, SKY_PIPELINE};
 use greycard_edit::mask::Shape;
 use greycard_edit::retouch::{Patch, Retouch};
+
+pub use crate::mask_base::{Base, Print};
 
 /// A learned component: its adjustment's id and its index in the mask.
 pub type Key = (u64, usize);
@@ -479,17 +482,24 @@ pub struct Ai {
     /// Part's person records the picture they were picked on by.
     picture: Option<(PathBuf, Option<String>)>,
     /// What has been made, by component and the base's turn, with the
-    /// shape it was made for.
-    cache: HashMap<(Key, u8), (Shape, Arc<Raster>)>,
+    /// shape it was made for and the print of the base it was made
+    /// from ([`crate::mask_base::print`]).
+    cache: HashMap<(Key, u8), (Shape, Print, Arc<Raster>)>,
+    /// The print of the base the raster being made or read is of, set
+    /// by each way in with its base: its size names the disk slot, and
+    /// its hash the raster in it.
+    print: Print,
     /// What has been made again on the retouched picture, by component
     /// and the base's turn, with the shape and the print of the patches
-    /// it was made under ([`Retouched::print_over`]).
-    retouched: HashMap<(Key, u8), (Shape, u64, Arc<Raster>)>,
+    /// it was made under ([`Retouched::print_over`]), and the base's
+    /// print.
+    retouched: HashMap<(Key, u8), Remade>,
     /// What the open frame's panel was last given for each component:
     /// the shape, the model asked with, and the print of the Fill
-    /// patches over it, none when none is. A develop whose retouch
-    /// changes that print asks for it again ([`Ai::to_ask_again`]).
-    given: HashMap<Key, (Shape, Option<&'static Model>, Option<u64>)>,
+    /// patches over it, none when none is, and the print of the base it
+    /// was made from. A develop whose retouch or base changes either
+    /// print asks for it again ([`Ai::to_ask_again`]).
+    given: HashMap<Key, Given>,
     /// The components whose second run on the retouched picture failed
     /// and were given the base's raster: tried again when a model
     /// arrives ([`Ai::retry_fallbacks`]), since the failure may be one.
@@ -524,6 +534,15 @@ pub struct Ai {
     #[cfg(any(test, feature = "testing"))]
     pub scene_runs: usize,
 }
+
+/// A raster made again on the retouched picture: the shape, the print
+/// of the Fill patches it was made under, the base's print, and the
+/// raster.
+type Remade = (Shape, u64, Print, Arc<Raster>);
+
+/// What the panel was given of a component: the shape, the model asked
+/// with, the print of the Fill patches over it, and the base's print.
+type Given = (Shape, Option<&'static Model>, Option<u64>, Print);
 
 /// A base's picture with its retouch applied: the retouch as the
 /// develop applied it (sources chosen), the picture, and the Fill
@@ -1311,6 +1330,10 @@ impl Ai {
             parts_view: None,
             picture: None,
             cache: HashMap::new(),
+            print: crate::mask_base::Print {
+                hash: 0,
+                size: crate::mask_base::Size::Full,
+            },
             retouched: HashMap::new(),
             given: HashMap::new(),
             fell_back: std::collections::HashSet::new(),
@@ -1401,6 +1424,12 @@ impl Ai {
             .1)
     }
 
+    /// The print of the open file's base under `edit` at `turn`, made
+    /// at `size` ([`crate::mask_base::print`]).
+    pub fn base_print(&self, edit: &Edit, turn: u8, size: crate::mask_base::Size) -> Print {
+        crate::mask_base::print(self.file.as_deref(), edit, turn, size)
+    }
+
     /// Another file: nothing made so far applies.
     pub fn forget(&mut self, file: Option<PathBuf>) {
         self.file = file;
@@ -1488,8 +1517,9 @@ impl Ai {
         self.subject_matte = None;
         self.other_side.subject_matte = None;
         // A Whole person made without Subject's edge is made again.
-        self.cache.retain(|_, (s, _)| !takes_subject_edge(s));
-        self.retouched.retain(|_, (s, _, _)| !takes_subject_edge(s));
+        self.cache.retain(|_, (s, _, _)| !takes_subject_edge(s));
+        self.retouched
+            .retain(|_, (s, _, _, _)| !takes_subject_edge(s));
     }
 
     /// Whether the fill model is in the store, so a fill not kept
@@ -2013,8 +2043,11 @@ impl Ai {
     }
 
     /// Where a made raster for `shape` on the open file lives on disk:
-    /// under the models' cache, named by a hash of the file, the
-    /// model's id and the shape. `model` is `raster`'s own, so the
+    /// under the models' cache, in a slot named by a hash of the file,
+    /// the model's id and the shape, and in it the raster of the base
+    /// of print `self.print`, the print in its name: a raster of
+    /// another base is not read, and the slot keeps the last base's
+    /// alone ([`write_raster`]). `model` is `raster`'s own, so the
     /// cache is keyed on the exact file it is about to load or has
     /// loaded, not a second, independent guess that can name a
     /// different file (notes, the Subject rewrite offer).
@@ -2043,7 +2076,7 @@ impl Ai {
         if !self.disk {
             return None;
         }
-        let file = self.file.as_ref()?;
+        let file = crate::mask_base::canonical(self.file.as_ref()?);
         let model = match shape {
             Shape::Subject {} | Shape::Background {} => self.subject_model(model)?,
             Shape::Sky { .. } | Shape::Landscape { .. } => &SKY,
@@ -2098,7 +2131,14 @@ impl Ai {
         if let Some(print) = self.salt {
             ("retouched", print).hash(&mut h);
         }
-        Some(root.join(format!("{:016x}.png", h.finish())))
+        // A proxy's raster, the reduced develop's, beside the full
+        // develop's. Only hashed for the proxy, so the full develop's
+        // slot is the name the cache gave it before rasters were kept
+        // by their base, which the first write in it removes.
+        if self.print.size == crate::mask_base::Size::Reduced {
+            "reduced".hash(&mut h);
+        }
+        Some(root.join(format!("{:016x}-{:016x}.png", h.finish(), self.print.hash)))
     }
 
     /// Whether the raster for `shape` of the frame at `file` at `turn`
@@ -2113,17 +2153,20 @@ impl Ai {
     /// masks are made before a develop is spent on it. Where the file
     /// will not say, a Sky's raster in either width's slot counts, and
     /// one of the width the frame does not take is not read after the
-    /// develop ([`Ai::cached_raster`]).
+    /// develop ([`Ai::cached_raster`]). `print` is the print of the
+    /// base the raster would be read for ([`crate::mask_base::print`]).
     pub fn raster_ready(
         &mut self,
         file: &Path,
         shape: &Shape,
         turn: u8,
         frame: Option<(usize, usize)>,
+        print: Print,
     ) -> Ready {
         if self.file.as_deref() != Some(file) {
             self.forget(Some(file.to_path_buf()));
         }
+        self.print = print;
         let rule;
         let widths: &[usize] = match (shape, frame) {
             (_, Some(frame)) => {
@@ -2154,10 +2197,17 @@ impl Ai {
     /// Where the raster for `shape` of `file` at `turn` is kept on disk:
     /// for a test that puts one there as the worker would.
     #[cfg(any(test, feature = "testing"))]
-    pub fn cached_path_of(&mut self, file: &Path, shape: &Shape, turn: u8) -> Option<PathBuf> {
+    pub fn cached_path_of(
+        &mut self,
+        file: &Path,
+        shape: &Shape,
+        turn: u8,
+        print: Print,
+    ) -> Option<PathBuf> {
         if self.file.as_deref() != Some(file) {
             self.forget(Some(file.to_path_buf()));
         }
+        self.print = print;
         self.cached_path(shape, None, turn)
     }
 
@@ -2174,20 +2224,22 @@ impl Ai {
 
     /// The raster for `shape` of the frame at `file` from the disk cache
     /// alone, for a develop of the frame whose full develop is `full`
-    /// (width, height) at `turn`: nothing is loaded and no model runs.
-    /// The reduced develop's, which keeps no picture of a frame whose
-    /// masks are not made yet. The raster's width is the frame's
-    /// (`brush::raster_width`).
+    /// (width, height) at `turn`, of the base `print` names: nothing is
+    /// loaded and no model runs. The reduced develop's, which keeps no
+    /// picture of a frame whose masks are not made yet. The raster's
+    /// width is the frame's (`brush::raster_width`).
     pub fn cached_raster(
         &mut self,
         file: &Path,
         shape: &Shape,
         turn: u8,
         full: (u32, u32),
+        print: Print,
     ) -> Option<Arc<Raster>> {
         if self.file.as_deref() != Some(file) {
             self.forget(Some(file.to_path_buf()));
         }
+        self.print = print;
         let aspect = full.1 as f32 / full.0 as f32;
         let width = raster_width(shape, (full.0 as usize, full.1 as usize));
         let height = raster_height(width, aspect);
@@ -2199,8 +2251,8 @@ impl Ai {
     }
 
     /// The raster for `shape`, from the cache when it was made for this
-    /// shape, else from the model on the preview of the base develop
-    /// `stamp` of `image` under `edit`, finished as `kind` is. `model`
+    /// shape on a base of the same print, else from the model on the
+    /// preview of `base` (`image`) under `edit`, finished as `kind` is. `model`
     /// is the file to load for a Subject shape when one is not loaded
     /// already — `panel::mask::step`'s own choice, passed down through
     /// `Job::Mask` so the worker never has to re-derive it (and
@@ -2215,7 +2267,7 @@ impl Ai {
     #[allow(clippy::too_many_arguments)]
     pub fn raster(
         &mut self,
-        stamp: u64,
+        base: Base,
         image: &WorkingImage,
         edit: &Edit,
         kind: greycard_render::finish::Source,
@@ -2225,7 +2277,7 @@ impl Ai {
         model: Option<&'static Model>,
     ) -> Result<Made, String> {
         let frame = (image.width, image.height);
-        self.raster_for(frame, stamp, image, edit, kind, turn, key, shape, model)
+        self.raster_for(frame, base, image, edit, kind, turn, key, shape, model)
     }
 
     /// [`Ai::raster`] on a picture of a frame whose full develop is
@@ -2239,7 +2291,7 @@ impl Ai {
     pub fn raster_for(
         &mut self,
         frame: (usize, usize),
-        stamp: u64,
+        base: Base,
         image: &WorkingImage,
         edit: &Edit,
         kind: greycard_render::finish::Source,
@@ -2248,7 +2300,7 @@ impl Ai {
         shape: &Shape,
         model: Option<&'static Model>,
     ) -> Result<Made, String> {
-        self.raster_of(frame, stamp, image, edit, kind, turn, key, shape, model)
+        self.raster_of(frame, base, image, edit, kind, turn, key, shape, model)
             .map_err(|e| match greycard_ai::runtime::status() {
                 Err(why) => why.to_string(),
                 Ok(_) => e,
@@ -2268,7 +2320,7 @@ impl Ai {
     #[allow(clippy::too_many_arguments)]
     pub fn raster_retouched(
         &mut self,
-        stamp: u64,
+        base: Base,
         image: &WorkingImage,
         retouched: Option<Retouched<'_>>,
         edit: &Edit,
@@ -2278,7 +2330,7 @@ impl Ai {
         shape: &Shape,
         model: Option<&'static Model>,
     ) -> Result<(Made, Option<u64>), String> {
-        let made = self.raster(stamp, image, edit, kind, turn, key, shape, model)?;
+        let made = self.raster(base, image, edit, kind, turn, key, shape, model)?;
         if made.part.is_some() {
             return Ok((made, None));
         }
@@ -2287,9 +2339,10 @@ impl Ai {
         else {
             return Ok((made, None));
         };
-        if let Some((s, p, raster)) = self.retouched.get(&(key, turn))
+        if let Some((s, p, b, raster)) = self.retouched.get(&(key, turn))
             && s == shape
             && *p == print
+            && *b == base.print
         {
             let raster = raster.clone();
             return Ok((
@@ -2308,11 +2361,23 @@ impl Ai {
         // slot of the print's own; the base's raster and kept work stay
         // where they were.
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (stamp, r.picture_print(), "retouched").hash(&mut h);
+        (base.stamp, r.picture_print(), "retouched").hash(&mut h);
         let kept = self.cache.remove(&(key, turn));
         self.salt = Some(print);
         self.swap_side();
-        let again = self.raster(h.finish(), r.image, edit, kind, turn, key, shape, model);
+        let again = self.raster(
+            Base {
+                stamp: h.finish(),
+                print: base.print,
+            },
+            r.image,
+            edit,
+            kind,
+            turn,
+            key,
+            shape,
+            model,
+        );
         self.swap_side();
         self.salt = None;
         self.cache.remove(&(key, turn));
@@ -2348,6 +2413,7 @@ impl Ai {
             Some(Unresolved::Nobody) => {
                 let blank = vec![0u8; made.raster.width * made.raster.height];
                 self.salt = Some(print);
+                self.print = base.print;
                 let slot = self.cached_path_at(shape, model, turn, made.raster.width);
                 self.salt = None;
                 if let Some(path) = &slot {
@@ -2365,8 +2431,10 @@ impl Ai {
                     "the masks of {name}: {shape_name} not settled on the retouched picture; the base's kept"
                 );
                 // Kept under the print: asking again would ask the same.
-                self.retouched
-                    .insert((key, turn), (shape.clone(), print, made.raster.clone()));
+                self.retouched.insert(
+                    (key, turn),
+                    (shape.clone(), print, base.print, made.raster.clone()),
+                );
                 return Ok((made, Some(print)));
             }
         }
@@ -2377,21 +2445,25 @@ impl Ai {
                 again.seconds
             );
         }
-        self.retouched
-            .insert((key, turn), (shape.clone(), print, again.raster.clone()));
+        self.retouched.insert(
+            (key, turn),
+            (shape.clone(), print, base.print, again.raster.clone()),
+        );
         Ok((again, Some(print)))
     }
 
     /// The open frame's panel was given the raster of `shape` at `key`,
-    /// asked with `model`, under the Fill patches of `print`.
+    /// asked with `model`, under the Fill patches of `print`, made from
+    /// the base of print `base`.
     pub fn given(
         &mut self,
         key: Key,
         shape: &Shape,
         model: Option<&'static Model>,
         print: Option<u64>,
+        base: Print,
     ) {
-        self.given.insert(key, (shape.clone(), model, print));
+        self.given.insert(key, (shape.clone(), model, print, base));
     }
 
     /// A model arrived: the components given the base's raster for a
@@ -2402,7 +2474,7 @@ impl Ai {
             .fell_back
             .drain()
             .filter_map(|key| {
-                let (shape, model, _) = self.given.get(&key)?;
+                let (shape, model, _, _) = self.given.get(&key)?;
                 Some((key, shape.clone(), *model))
             })
             .collect();
@@ -2410,21 +2482,26 @@ impl Ai {
         again
     }
 
-    /// The components given to the panel whose raster a develop under
-    /// `retouched` at `turn` changed the patches of, still `live` with
-    /// the same shape: each to be asked for again, with its model.
+    /// The components given to the panel whose raster a develop of the
+    /// base of print `base_print` under `retouched` at `turn` changed
+    /// the patches of, still `live` with the same shape: each to be
+    /// asked for again, with its model. One given from another base is
+    /// [`Ai::of_another_base`]'s.
     pub fn to_ask_again(
         &self,
         retouched: Option<Retouched<'_>>,
+        base_print: Print,
         turn: u8,
         live: impl Fn(Key, &Shape) -> bool,
     ) -> Vec<(Key, Shape, Option<&'static Model>)> {
         let mut again: Vec<_> = self
             .given
             .iter()
-            .filter(|(key, (shape, _, _))| live(**key, shape))
-            .filter_map(|(key, (shape, model, print))| {
-                let (s, base) = self.cache.get(&(*key, turn))?;
+            .filter(|(key, (shape, _, _, made_from))| {
+                *made_from == base_print && live(**key, shape)
+            })
+            .filter_map(|(key, (shape, model, print, _))| {
+                let (s, _, base) = self.cache.get(&(*key, turn))?;
                 if s != shape {
                     return None;
                 }
@@ -2436,11 +2513,31 @@ impl Ai {
         again
     }
 
+    /// The components given to the panel from a base other than the one
+    /// of print `base_print`, still `live` with the same shape: each to
+    /// be made again from this one, with its model.
+    pub fn of_another_base(
+        &self,
+        base_print: Print,
+        live: impl Fn(Key, &Shape) -> bool,
+    ) -> Vec<(Key, Shape, Option<&'static Model>)> {
+        let mut again: Vec<_> = self
+            .given
+            .iter()
+            .filter(|(key, (shape, _, _, made_from))| {
+                *made_from != base_print && live(**key, shape)
+            })
+            .map(|(key, (shape, model, _, _))| (*key, shape.clone(), *model))
+            .collect();
+        again.sort_by_key(|(k, _, _)| *k);
+        again
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn raster_of(
         &mut self,
         frame: (usize, usize),
-        stamp: u64,
+        base: Base,
         image: &WorkingImage,
         edit: &Edit,
         kind: greycard_render::finish::Source,
@@ -2449,8 +2546,11 @@ impl Ai {
         shape: &Shape,
         model: Option<&'static Model>,
     ) -> Result<Made, String> {
-        if let Some((s, r)) = self.cache.get(&(key, turn))
+        let stamp = base.stamp;
+        self.print = base.print;
+        if let Some((s, p, r)) = self.cache.get(&(key, turn))
             && s == shape
+            && *p == base.print
         {
             return Ok(Made {
                 note: self.empty_note(shape, r),
@@ -2473,7 +2573,7 @@ impl Ai {
         {
             let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
-                .insert((key, turn), (shape.clone(), raster.clone()));
+                .insert((key, turn), (shape.clone(), self.print, raster.clone()));
             return Ok(Made {
                 note: self.empty_note(shape, &raster),
                 raster,
@@ -2498,7 +2598,7 @@ impl Ai {
             }
             let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
-                .insert((key, turn), (shape.clone(), raster.clone()));
+                .insert((key, turn), (shape.clone(), self.print, raster.clone()));
             return Ok(Made {
                 raster,
                 provider: Some(*provider),
@@ -2548,7 +2648,7 @@ impl Ai {
                     write_raster(path, height, raster.data());
                 }
                 self.cache
-                    .insert((key, turn), (shape.clone(), raster.clone()));
+                    .insert((key, turn), (shape.clone(), self.print, raster.clone()));
             }
             let note = match (&part, &edgeless) {
                 (Some(p), _) => Some(part_note(p, self.file.as_deref())),
@@ -2603,7 +2703,7 @@ impl Ai {
             }
             let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
-                .insert((key, turn), (shape.clone(), raster.clone()));
+                .insert((key, turn), (shape.clone(), self.print, raster.clone()));
             return Ok(Made {
                 note,
                 raster,
@@ -2625,7 +2725,7 @@ impl Ai {
             }
             let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
-                .insert((key, turn), (shape.clone(), raster.clone()));
+                .insert((key, turn), (shape.clone(), self.print, raster.clone()));
             return Ok(Made {
                 note,
                 raster,
@@ -2646,7 +2746,7 @@ impl Ai {
             }
             let raster = Arc::new(Raster::from_data(aspect, width, data));
             self.cache
-                .insert((key, turn), (shape.clone(), raster.clone()));
+                .insert((key, turn), (shape.clone(), self.print, raster.clone()));
             return Ok(Made {
                 raster,
                 provider: Some(provider),
@@ -2699,7 +2799,7 @@ impl Ai {
         }
         let raster = Arc::new(Raster::from_data(aspect, width, data));
         self.cache
-            .insert((key, turn), (shape.clone(), raster.clone()));
+            .insert((key, turn), (shape.clone(), self.print, raster.clone()));
         Ok(Made {
             raster,
             provider: Some(provider),
@@ -3887,8 +3987,55 @@ fn write_raster(path: &Path, height: usize, data: &[u8]) {
         std::fs::rename(&part, path)?;
         Ok(())
     };
-    if let Err(e) = write() {
-        tracing::warn!("mask cache {}: {e}", path.display());
+    match write() {
+        Ok(()) => evict_other_bases(path),
+        Err(e) => tracing::warn!("mask cache {}: {e}", path.display()),
+    }
+}
+
+/// How many bases' rasters a slot keeps on disk: the last made, and
+/// two before it, so virtual copies of one frame whose bases differ
+/// (a white balance each) are read in turn rather than made again.
+const BASES_A_SLOT: usize = 3;
+
+/// The rasters of `path`'s slot (`<slot>-<print>.png`,
+/// [`Ai::cached_path_at`]) but the newest [`BASES_A_SLOT`] removed, and
+/// the slot's raster from before rasters were kept by their base
+/// (`<slot>.png`), which no print names: the folder keeps a few a slot
+/// however often a white balance or a lens moves the base.
+fn evict_other_bases(path: &Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    let Some((slot, _)) = name.split_once('-') else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let unprinted = format!("{slot}.png");
+    let mut others = Vec::new();
+    for entry in entries.flatten() {
+        let other = entry.file_name();
+        let Some(other) = other.to_str() else {
+            continue;
+        };
+        if other == unprinted {
+            let _ = std::fs::remove_file(entry.path());
+        } else if other != name
+            && other.ends_with(".png")
+            && other.split_once('-').is_some_and(|(s, _)| s == slot)
+        {
+            let made = entry.metadata().and_then(|m| m.modified()).ok();
+            others.push((made, entry.path()));
+        }
+    }
+    // Newest first; the written one is newest of all.
+    others.sort_by_key(|(made, _)| std::cmp::Reverse(*made));
+    for (_, other) in others.into_iter().skip(BASES_A_SLOT - 1) {
+        // Read meanwhile by another run, or held open on Windows: left
+        // for the next write to take.
+        let _ = std::fs::remove_file(other);
     }
 }
 
@@ -4570,7 +4717,8 @@ mod tests {
         let model = Some(&greycard_ai::SUBJECT);
         let image = WorkingImage::new(200, 100);
         let base = Arc::new(half_shape());
-        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
+        ai.cache
+            .insert((key, 0), (shape.clone(), Print::test(1), base.clone()));
         let edit = Edit::default();
         let kind = greycard_render::finish::Source::default();
         let off = Retouch {
@@ -4588,7 +4736,7 @@ mod tests {
         };
         let (made, print) = ai
             .raster_retouched(
-                1,
+                Base::stamped(1),
                 &image,
                 Some(retouched(&off)),
                 &edit,
@@ -4601,16 +4749,16 @@ mod tests {
             .unwrap();
         assert!(Arc::ptr_eq(&made.raster, &base));
         assert_eq!(print, None);
-        ai.given(key, &shape, model, print);
+        ai.given(key, &shape, model, print, Print::test(1));
         assert!(
-            ai.to_ask_again(Some(retouched(&off)), 0, |_, _| true)
+            ai.to_ask_again(Some(retouched(&off)), Print::test(1), 0, |_, _| true)
                 .is_empty()
         );
-        let again = ai.to_ask_again(Some(retouched(&on)), 0, |_, _| true);
+        let again = ai.to_ask_again(Some(retouched(&on)), Print::test(1), 0, |_, _| true);
         assert_eq!(again.len(), 1);
         assert_eq!(again[0].0, key);
         assert!(
-            ai.to_ask_again(Some(retouched(&on)), 0, |_, _| false)
+            ai.to_ask_again(Some(retouched(&on)), Print::test(1), 0, |_, _| false)
                 .is_empty(),
             "a shape no longer drawn"
         );
@@ -4630,7 +4778,7 @@ mod tests {
         write_raster(&slot, height, &vec![7u8; width * height]);
         let (made, print) = ai
             .raster_retouched(
-                1,
+                Base::stamped(1),
                 &image,
                 Some(retouched(&on)),
                 &edit,
@@ -4644,18 +4792,22 @@ mod tests {
         assert_eq!(print, Some(print_on));
         assert!(made.raster.data().iter().all(|&v| v == 7));
         // The base's raster is where it was, for the next question.
-        assert!(Arc::ptr_eq(&ai.cache[&(key, 0)].1, &base));
-        ai.given(key, &shape, model, print);
+        assert!(Arc::ptr_eq(&ai.cache[&(key, 0)].2, &base));
+        ai.given(key, &shape, model, print, Print::test(1));
         assert!(
-            ai.to_ask_again(Some(retouched(&on)), 0, |_, _| true)
+            ai.to_ask_again(Some(retouched(&on)), Print::test(1), 0, |_, _| true)
                 .is_empty()
         );
         // Taken away, the base's again.
         assert_eq!(
-            ai.to_ask_again(Some(retouched(&off)), 0, |_, _| true).len(),
+            ai.to_ask_again(Some(retouched(&off)), Print::test(1), 0, |_, _| true)
+                .len(),
             1
         );
-        assert_eq!(ai.to_ask_again(None, 0, |_, _| true).len(), 1);
+        assert_eq!(
+            ai.to_ask_again(None, Print::test(1), 0, |_, _| true).len(),
+            1
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -4682,18 +4834,37 @@ mod tests {
             image: &image,
             unmade: &[],
         };
-        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
-        ai.given(key, &shape, None, None);
+        ai.cache
+            .insert((key, 0), (shape.clone(), Print::test(1), base.clone()));
+        ai.given(key, &shape, None, None, Print::test(1));
         // Reopened: what was given is forgotten with the rest.
         ai.forget(Some(file));
-        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
-        assert!(ai.to_ask_again(Some(retouched), 0, |_, _| true).is_empty());
+        ai.cache
+            .insert((key, 0), (shape.clone(), Print::test(1), base.clone()));
+        assert!(
+            ai.to_ask_again(Some(retouched), Print::test(1), 0, |_, _| true)
+                .is_empty()
+        );
         // The panel's ask after the open, on no retouch yet.
         let (_, print) = ai
-            .raster_retouched(1, &image, None, &edit, kind, 0, key, &shape, None)
+            .raster_retouched(
+                Base::stamped(1),
+                &image,
+                None,
+                &edit,
+                kind,
+                0,
+                key,
+                &shape,
+                None,
+            )
             .unwrap();
-        ai.given(key, &shape, None, print);
-        assert_eq!(ai.to_ask_again(Some(retouched), 0, |_, _| true).len(), 1);
+        ai.given(key, &shape, None, print, Print::test(1));
+        assert_eq!(
+            ai.to_ask_again(Some(retouched), Print::test(1), 0, |_, _| true)
+                .len(),
+            1
+        );
     }
 
     /// A shape that cannot be made again (here no model, no slot) keeps
@@ -4713,7 +4884,8 @@ mod tests {
         let edit = Edit::default();
         let kind = greycard_render::finish::Source::default();
         let base = Arc::new(half_shape());
-        ai.cache.insert((key, 0), (shape.clone(), base.clone()));
+        ai.cache
+            .insert((key, 0), (shape.clone(), Print::test(1), base.clone()));
         ai.preview_of(1, &image, &edit, kind);
         let on = Retouch {
             enabled: true,
@@ -4727,7 +4899,7 @@ mod tests {
         let want = retouched.print_over(&base).map(|p| p.0);
         let (made, print) = ai
             .raster_retouched(
-                1,
+                Base::stamped(1),
                 &image,
                 Some(retouched),
                 &edit,
@@ -4740,8 +4912,11 @@ mod tests {
             .unwrap();
         assert!(Arc::ptr_eq(&made.raster, &base), "the base's kept");
         assert_eq!(print, want);
-        ai.given(key, &shape, None, print);
-        assert!(ai.to_ask_again(Some(retouched), 0, |_, _| true).is_empty());
+        ai.given(key, &shape, None, print, Print::test(1));
+        assert!(
+            ai.to_ask_again(Some(retouched), Print::test(1), 0, |_, _| true)
+                .is_empty()
+        );
         assert_eq!(
             ai.preview.as_ref().map(|p| p.0),
             Some(1),
@@ -4769,7 +4944,7 @@ mod tests {
         write_raster(&slot, height, &vec![7u8; width * height]);
         let (made, print) = ai
             .raster_retouched(
-                1,
+                Base::stamped(1),
                 &image,
                 Some(retouched),
                 &edit,
@@ -5369,6 +5544,7 @@ mod tests {
         // none, and the last check below wants a load that fails.
         ai.store = None;
         ai.file = Some(PathBuf::from("frame.CR3"));
+        ai.print = Print::test(1);
         let base: Vec<u8> = (0..RASTER_WIDTH * RASTER_WIDTH)
             .map(|i| (i % 256) as u8)
             .collect();
@@ -5378,7 +5554,7 @@ mod tests {
 
         let background = ai
             .raster(
-                5,
+                Base::stamped(5),
                 &image,
                 &edit,
                 greycard_render::finish::Source::SCENE,
@@ -5399,7 +5575,7 @@ mod tests {
         // The Subject reads the very same run, not a second one.
         let subject = ai
             .raster(
-                5,
+                Base::stamped(5),
                 &image,
                 &edit,
                 greycard_render::finish::Source::SCENE,
@@ -5414,7 +5590,7 @@ mod tests {
 
         // A different stamp (a new base develop) is not the same run.
         let stale = ai.raster(
-            6,
+            Base::stamped(6),
             &image,
             &edit,
             greycard_render::finish::Source::SCENE,
@@ -5453,6 +5629,7 @@ mod tests {
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         ai.file = Some(PathBuf::from("open.CR3"));
+        ai.print = Print::test(1);
         ai.providers = vec![Provider::WebGpu, Provider::Cpu];
         let shape = Shape::Subject {};
 
@@ -5474,7 +5651,7 @@ mod tests {
         write_raster(&original_path, RASTER_WIDTH, &data);
         let made = ai
             .raster(
-                1,
+                Base::stamped(1),
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 greycard_render::finish::Source::SCENE,
@@ -5511,6 +5688,7 @@ mod tests {
         let store = Store::at(dir.join("models"));
         ai.store = Some(store.clone());
         ai.file = Some(PathBuf::from("DSCF0153.RAF"));
+        ai.print = Print::test(1);
         let shape = Shape::Sky { picks: Vec::new() };
         let without_sam = ai.cached_path(&shape, None, 0).expect("a path");
         write_raster(
@@ -5520,7 +5698,7 @@ mod tests {
         );
         let made = ai
             .raster(
-                1,
+                Base::stamped(1),
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 greycard_render::finish::Source::SCENE,
@@ -5534,7 +5712,7 @@ mod tests {
         // Asked again, from the memory cache: said again.
         let again = ai
             .raster(
-                1,
+                Base::stamped(1),
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 greycard_render::finish::Source::SCENE,
@@ -5566,6 +5744,205 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// One raster for one base, whoever asks: the viewport's raster is
+    /// the window's export's (the same in memory, though its picture is
+    /// another and its stamp the export's), and a run with no window
+    /// reads it from disk. A base of another print (the white balance
+    /// moved, the reduced develop's) reads none of it, and a panel given
+    /// a raster of the old base asks for it again.
+    #[test]
+    fn one_base_one_raster_and_another_base_none_of_it() {
+        use crate::mask_base::{Size, print};
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-base-print-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        crate::testing::remove_dir_retry(&dir);
+        let store = Store::at(dir.join("models"));
+        let file = dir.join("frame.RAF");
+        let sky = Shape::Sky { picks: Vec::new() };
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        let frame = (6000usize, 4000usize);
+        let rows = raster_height(RASTER_WIDTH, 4000.0 / 6000.0);
+        let full = print(Some(&file), &edit, 0, Size::Full);
+        let fresh = || {
+            let mut ai = Ai::new();
+            ai.store = Some(store.clone());
+            ai.forget(Some(file.clone()));
+            ai
+        };
+        let mut ai = fresh();
+        assert_eq!(ai.base_print(&edit, 0, Size::Full), full);
+        ai.print = full;
+        let slot = ai
+            .cached_path_at(&sky, None, 0, RASTER_WIDTH)
+            .expect("a slot");
+        write_raster(&slot, rows, &vec![9u8; RASTER_WIDTH * rows]);
+        let kind = greycard_render::finish::Source::SCENE;
+        let ask = |ai: &mut Ai, base: Base, picture: (usize, usize), edit: &Edit| {
+            ai.raster_for(
+                frame,
+                base,
+                &WorkingImage::new(picture.0, picture.1),
+                edit,
+                kind,
+                0,
+                (1, 0),
+                &sky,
+                None,
+            )
+        };
+        let viewport = ask(
+            &mut ai,
+            Base {
+                stamp: 5,
+                print: full,
+            },
+            (6, 4),
+            &edit,
+        )
+        .expect("the viewport's raster");
+        assert!(viewport.raster.data().iter().all(|&v| v == 9));
+        ai.given((1, 0), &sky, None, None, full);
+        // The window's export: its own picture, the export's stamp, and
+        // the edit's print, worked out from the edit alike.
+        let export_print = ai.base_print(&edit, 0, Size::Full);
+        let export = ask(
+            &mut ai,
+            Base {
+                stamp: 1,
+                print: export_print,
+            },
+            (12, 8),
+            &edit,
+        )
+        .expect("the export's raster");
+        assert!(Arc::ptr_eq(&export.raster, &viewport.raster));
+        // No window: another process, the same disk.
+        let mut alone = fresh();
+        let headless = ask(
+            &mut alone,
+            Base {
+                stamp: 1,
+                print: full,
+            },
+            (12, 8),
+            &edit,
+        )
+        .expect("the headless raster");
+        assert!(headless.provider.is_none(), "read, not made");
+        assert_eq!(headless.raster.data(), viewport.raster.data());
+
+        // The white balance moved: another base, and none of the old.
+        let mut warmer = edit.clone();
+        warmer.white_balance = greycard_edit::WhiteBalance::Custom {
+            temperature: 6500.0,
+            tint: 0.0,
+        };
+        let moved = ai.base_print(&warmer, 0, Size::Full);
+        assert_ne!(moved, full);
+        let stale = ask(
+            &mut ai,
+            Base {
+                stamp: 6,
+                print: moved,
+            },
+            (6, 4),
+            &warmer,
+        );
+        assert!(
+            stale.is_err(),
+            "made again with no model to make it, not read: {:?}",
+            stale.map(|m| m.raster.data()[0])
+        );
+        assert!(
+            ai.to_ask_again(None, full, 0, |_, _| true).is_empty(),
+            "the same base: nothing to ask"
+        );
+        assert!(
+            ai.to_ask_again(None, moved, 0, |_, _| true).is_empty(),
+            "no fill moved"
+        );
+        assert!(ai.of_another_base(full, |_, _| true).is_empty());
+        let again = ai.of_another_base(moved, |_, _| true);
+        assert_eq!(
+            again
+                .iter()
+                .map(|(k, s, _)| (*k, s.clone()))
+                .collect::<Vec<_>>(),
+            vec![((1, 0), sky.clone())],
+            "a new base: asked for again"
+        );
+        // The reduced develop's base is a proxy's: it reads none of the
+        // full develop's, before the decode or after.
+        let reduced = print(Some(&file), &edit, 0, Size::Reduced);
+        assert_ne!(reduced, full);
+        assert!(!matches!(
+            alone.raster_ready(&file, &sky, 0, Some(frame), reduced),
+            Ready::Cached
+        ));
+        assert!(
+            alone
+                .cached_raster(&file, &sky, 0, (6000, 4000), reduced)
+                .is_none()
+        );
+        assert!(matches!(
+            alone.raster_ready(&file, &sky, 0, Some(frame), full),
+            Ready::Cached
+        ));
+        // The reduced develop's raster in a slot beside the full one's:
+        // each read back, neither removed by the other.
+        alone.print = reduced;
+        let proxy_slot = alone
+            .cached_path_at(&sky, None, 0, RASTER_WIDTH)
+            .expect("a slot");
+        let stem = |p: &Path| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            name.split_once('-').unwrap().0.to_string()
+        };
+        assert_ne!(stem(&proxy_slot), stem(&slot));
+        write_raster(&proxy_slot, rows, &vec![3u8; RASTER_WIDTH * rows]);
+        assert!(slot.is_file());
+        let read = |ai: &mut Ai, print| {
+            ai.cached_raster(&file, &sky, 0, (6000, 4000), print)
+                .expect("read back")
+                .data()[0]
+        };
+        assert_eq!(read(&mut alone, reduced), 3);
+        assert_eq!(read(&mut alone, full), 9);
+        assert_eq!(read(&mut alone, reduced), 3);
+
+        // A slot keeps the newest three bases' rasters, and lets go of
+        // its raster from before rasters were kept by their base.
+        let unprinted = slot.with_file_name(format!("{}.png", stem(&slot)));
+        std::fs::write(&unprinted, b"made before prints").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&slot)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000))
+            .unwrap();
+        let newer: Vec<PathBuf> = [moved, Print::test(7), Print::test(8)]
+            .into_iter()
+            .map(|print| {
+                ai.print = print;
+                let p = ai
+                    .cached_path_at(&sky, None, 0, RASTER_WIDTH)
+                    .expect("a slot");
+                assert_eq!(stem(&p), stem(&slot));
+                write_raster(&p, rows, &vec![4u8; RASTER_WIDTH * rows]);
+                assert!(!unprinted.exists(), "the raster from before prints goes");
+                p
+            })
+            .collect();
+        assert!(!slot.exists(), "the oldest of four goes");
+        assert!(newer.iter().all(|p| p.is_file()));
+        assert!(proxy_slot.is_file(), "another slot's is not touched");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// A Sky on a frame past the raster rule (`brush::raster_width`) is
     /// kept in a slot of its own, the wide raster's; a Sky on a frame
     /// under it, and every other shape on any frame, keeps the slot it
@@ -5586,6 +5963,7 @@ mod tests {
         ai.store = Some(Store::at(dir.join("models")));
         let file = PathBuf::from("frame.RAF");
         ai.file = Some(file.clone());
+        ai.print = Print::test(1);
         let sky = Shape::Sky { picks: Vec::new() };
         let slot = |ai: &Ai, shape: &Shape, frame: (usize, usize)| {
             ai.cached_path_at(shape, None, 0, raster_width(shape, frame))
@@ -5625,41 +6003,44 @@ mod tests {
         // Its size known before the decode: not ready, so its masks are
         // made before a develop is spent on it. Not known: either slot.
         assert!(!matches!(
-            ai.raster_ready(&file, &sky, 0, sized),
+            ai.raster_ready(&file, &sky, 0, sized, Print::test(1)),
             Ready::Cached
         ));
         assert!(matches!(
-            ai.raster_ready(&file, &sky, 0, None),
+            ai.raster_ready(&file, &sky, 0, None, Print::test(1)),
             Ready::Cached
         ));
         assert!(matches!(
-            ai.raster_ready(&file, &sky, 0, Some((3000, 4000))),
+            ai.raster_ready(&file, &sky, 0, Some((3000, 4000)), Print::test(1)),
             Ready::Cached
         ));
-        assert!(ai.cached_raster(&file, &sky, 0, full).is_none());
+        assert!(
+            ai.cached_raster(&file, &sky, 0, full, Print::test(1))
+                .is_none()
+        );
         // A frame of that aspect under the rule still reads it.
         let small = ai
-            .cached_raster(&file, &sky, 0, (3000, 4000))
+            .cached_raster(&file, &sky, 0, (3000, 4000), Print::test(1))
             .expect("the narrow raster");
         assert_eq!((small.width, small.height), (RASTER_WIDTH, 2731));
 
         // The wide one made: ready, read back at its width.
         std::fs::remove_file(&narrow).unwrap();
         assert!(!matches!(
-            ai.raster_ready(&file, &sky, 0, None),
+            ai.raster_ready(&file, &sky, 0, None, Print::test(1)),
             Ready::Cached
         ));
         write_raster(&wide, 5461, &vec![7u8; WIDE_RASTER_WIDTH * 5461]);
         assert!(matches!(
-            ai.raster_ready(&file, &sky, 0, sized),
+            ai.raster_ready(&file, &sky, 0, sized, Print::test(1)),
             Ready::Cached
         ));
         assert!(matches!(
-            ai.raster_ready(&file, &sky, 0, None),
+            ai.raster_ready(&file, &sky, 0, None, Print::test(1)),
             Ready::Cached
         ));
         let read = ai
-            .cached_raster(&file, &sky, 0, full)
+            .cached_raster(&file, &sky, 0, full, Print::test(1))
             .expect("the wide raster");
         assert_eq!((read.width, read.height), (WIDE_RASTER_WIDTH, 5461));
         assert!(read.data().iter().all(|&v| v == 7));
@@ -5667,7 +6048,7 @@ mod tests {
         let made = ai
             .raster_for(
                 (full.0 as usize, full.1 as usize),
-                1,
+                Base::stamped(1),
                 &WorkingImage::new(3, 4),
                 &Edit::default(),
                 greycard_render::finish::Source::SCENE,
@@ -5711,6 +6092,7 @@ mod tests {
             ai.store = Some(Store::at(dir.join("models")));
             let file = PathBuf::from("frame.RAF");
             ai.file = Some(file.clone());
+            ai.print = Print::test(1);
             let sky = Shape::Sky { picks: Vec::new() };
             assert_eq!(raster_width(&sky, frame), WIDE_RASTER_WIDTH);
             let slot = ai
@@ -5722,7 +6104,7 @@ mod tests {
             let made = ai
                 .raster_for(
                     frame,
-                    1,
+                    Base::stamped(1),
                     &WorkingImage::new(picture.0, picture.1),
                     &Edit::default(),
                     greycard_render::finish::Source::SCENE,
@@ -5740,7 +6122,13 @@ mod tests {
             assert_eq!(made.raster.aspect, frame.1 as f32 / frame.0 as f32);
             // The reduced develop's read, by the frame's size.
             let read = ai
-                .cached_raster(&file, &sky, 0, (frame.0 as u32, frame.1 as u32))
+                .cached_raster(
+                    &file,
+                    &sky,
+                    0,
+                    (frame.0 as u32, frame.1 as u32),
+                    Print::test(1),
+                )
                 .expect("the reduced develop reads it");
             assert_eq!(read.height, rows);
             crate::testing::remove_dir_retry(&dir);
@@ -6128,6 +6516,7 @@ mod tests {
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         ai.file = Some(PathBuf::from("square.CR3"));
+        ai.print = Print::test(1);
         let shape = Shape::Subject {};
         let model = Some(&greycard_ai::SUBJECT);
         let flat = ai.cached_path(&shape, model, 0).expect("a path");
@@ -6138,7 +6527,7 @@ mod tests {
         write_raster(&flat, RASTER_WIDTH, &vec![9u8; RASTER_WIDTH * RASTER_WIDTH]);
         let ask = |ai: &mut Ai, turn: u8| {
             ai.raster(
-                1,
+                Base::stamped(1),
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 greycard_render::finish::Source::SCENE,
@@ -6168,6 +6557,7 @@ mod tests {
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         ai.file = Some(PathBuf::from("DSCF0835.RAF"));
+        ai.print = Print::test(1);
         let person = |x: f32| {
             Some(greycard_edit::mask::Person {
                 signature: greycard_edit::mask::Signature {
@@ -6477,6 +6867,7 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
         let mut ai = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
         ai.file = Some(PathBuf::from("coast.CR3"));
+        ai.print = Print::test(1);
         let (w, h) = (64usize, 64usize);
         let mut image = WorkingImage::new(w, h);
         for (i, p) in image
@@ -6514,7 +6905,16 @@ mod tests {
         );
         let water = Shape::of_kind("Water");
         let made = ai
-            .raster(1, &image, &edit, kind, 0, (1, 0), &water, None)
+            .raster(
+                Base::stamped(1),
+                &image,
+                &edit,
+                kind,
+                0,
+                (1, 0),
+                &water,
+                None,
+            )
             .expect("the water");
         assert!(made.note.is_none());
         let data = made.raster.data();
@@ -6524,7 +6924,16 @@ mod tests {
         let building = Shape::of_kind("Building");
         for _ in 0..2 {
             let made = ai
-                .raster(1, &image, &edit, kind, 0, (1, 1), &building, None)
+                .raster(
+                    Base::stamped(1),
+                    &image,
+                    &edit,
+                    kind,
+                    0,
+                    (1, 1),
+                    &building,
+                    None,
+                )
                 .expect("an empty building");
             assert!(made.raster.data().iter().all(|&v| v == 0));
             assert_eq!(made.note.as_deref(), Some("no building found in coast.CR3"));
@@ -6537,7 +6946,7 @@ mod tests {
         ai.sky_cut = Some(((1, (RASTER_WIDTH, height)), Some(marked), None));
         let sky = Shape::Sky { picks: Vec::new() };
         let made = ai
-            .raster(1, &image, &edit, kind, 0, (2, 0), &sky, None)
+            .raster(Base::stamped(1), &image, &edit, kind, 0, (2, 0), &sky, None)
             .expect("the kept sky");
         assert!(
             made.raster.data().iter().all(|&v| v == 128),
@@ -6550,7 +6959,16 @@ mod tests {
             }],
         };
         let made = ai
-            .raster(1, &image, &edit, kind, 0, (2, 1), &picked, None)
+            .raster(
+                Base::stamped(1),
+                &image,
+                &edit,
+                kind,
+                0,
+                (2, 1),
+                &picked,
+                None,
+            )
             .expect("a sky with a pick");
         assert!(
             made.raster.data().iter().any(|&v| v != 128),
@@ -6571,6 +6989,7 @@ mod tests {
         let mut ai = Ai::new();
         ai.store = Some(Store::at(dir.join("models")));
         ai.file = Some(PathBuf::from("coast.CR3"));
+        ai.print = Print::test(1);
         let mut slots: Vec<PathBuf> = ["Water", "Foliage", "Mountain", "Building", "Sky"]
             .into_iter()
             .map(|k| ai.cached_path(&Shape::of_kind(k), None, 0).expect("a slot"))

@@ -225,6 +225,8 @@ pub(super) fn run(
                 if let Some(job) = q.mask_picture.take() {
                     break job;
                 }
+                // A new base's masks once the develops have settled.
+                settle_due(&mut q, Instant::now());
                 if let Some((key, shape, model)) = q.masks.pop_front() {
                     break Job::Mask { key, shape, model };
                 }
@@ -358,12 +360,18 @@ pub(super) fn run(
                         continue;
                     }
                     Due::Wait(wait) => {
+                        let wait = masks::settling_left(&q.settling, Instant::now())
+                            .map_or(wait, |left| wait.min(left));
                         q = cv.wait_timeout(q, wait).expect("worker queue").0;
                         continue;
                     }
                     Due::Nothing => {}
                 }
-                q = cv.wait(q).expect("worker queue");
+                // Woken for the masks a new base asks for, once due.
+                q = match masks::settling_left(&q.settling, Instant::now()) {
+                    Some(left) => cv.wait_timeout(q, left).expect("worker queue").0,
+                    None => cv.wait(q).expect("worker queue"),
+                };
             }
         };
         if let Some((d, q)) = device.take() {
@@ -778,7 +786,11 @@ pub(super) fn run(
                             &deliver,
                         );
                         shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
-                        ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
+                        after_develop(
+                            lock,
+                            masks::to_ask_again(&edit, base.as_ref(), &ai),
+                            Instant::now(),
+                        );
                         landed = base.is_some().then_some(generation);
                         developed =
                             matches!(outcome, Outcome::Developed { .. }).then_some(generation);
@@ -816,7 +828,11 @@ pub(super) fn run(
                         &deliver,
                     );
                     shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
-                    ask_again(lock, masks::to_ask_again(&edit, base.as_ref(), &ai));
+                    after_develop(
+                        lock,
+                        masks::to_ask_again(&edit, base.as_ref(), &ai),
+                        Instant::now(),
+                    );
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                     deliver(outcome);
                 }
@@ -828,7 +844,7 @@ pub(super) fn run(
                 let outcome = match &base {
                     Some(b) => {
                         match ai.raster_retouched(
-                            b.stamp,
+                            b.base(),
                             &b.image,
                             masks::retouched_of(b, None),
                             &b.edit,
@@ -839,7 +855,7 @@ pub(super) fn run(
                             model,
                         ) {
                             Ok((made, print)) => {
-                                ai.given(key, &shape, model, print);
+                                ai.given(key, &shape, model, print, b.print);
                                 Outcome::Mask {
                                     key,
                                     shape,
@@ -1157,6 +1173,35 @@ fn has_live_part(edit: &Edit) -> bool {
                 .live()
                 .any(|(_, c)| matches!(c.shape, Shape::Part { .. }))
     })
+}
+
+/// What a develop asks of the masks: those whose fills it moved at
+/// once ([`ask_again`]), those its new base asks for held until the
+/// develops settle ([`masks::settle`]).
+pub(super) fn after_develop(
+    lock: &Mutex<Queue>,
+    (now, rebased): (Vec<masks::Ask>, Vec<masks::Ask>),
+    at: Instant,
+) {
+    ask_again(lock, now);
+    masks::settle(
+        &mut lock.lock().expect("worker queue").settling,
+        rebased,
+        at,
+    );
+}
+
+/// The masks a new base asked for moved to the masks wanted, once the
+/// develops have been quiet long enough at `now`; a key the panel has
+/// queued meanwhile keeps the panel's ask.
+pub(super) fn settle_due(q: &mut Queue, now: Instant) {
+    if let Some(asks) = masks::settled(&mut q.settling, now) {
+        for ask in asks {
+            if !q.masks.iter().any(|(k, _, _)| *k == ask.0) {
+                q.masks.push_back(ask);
+            }
+        }
+    }
 }
 
 /// The learned masks a develop's retouch changed the patches of, queued
