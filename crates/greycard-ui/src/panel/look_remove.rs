@@ -377,7 +377,7 @@ impl Job {
     pub(crate) fn run_guarded(self) -> Done {
         let (name, how, files) = (self.name.clone(), self.how, self.files.clone());
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.run_with(delete::system_trash)
+            self.run_with(crate::panel::delete::system_trash)
         })) {
             Ok(done) => done,
             Err(payload) => Done {

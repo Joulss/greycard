@@ -16,6 +16,9 @@ use crate::panel::viewport::{
     source_to_view, sync_display, write_screenshot, zoom_label,
 };
 use crate::*;
+// What the import also lays at its landing, off the window, in the
+// library.
+pub(crate) use crate::preset_fit::preset_at_start;
 
 pub(crate) fn main() -> Result<std::process::ExitCode> {
     let cli = Cli::parse();
@@ -803,13 +806,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // The collections, kept beside the library whatever the roots,
         // into the sidebar's model the window already holds.
         if let Some(path) = &library_path {
-            let (rows, names) = (
-                st.views.collections.rows.clone(),
-                st.views.collections.names.clone(),
-            );
             st.views.collections =
                 crate::collections::Store::load(crate::collections::Store::dir_beside(path));
-            (st.views.collections.rows, st.views.collections.names) = (rows, names);
             crate::panel::collections::show(&st, &app);
             // The stacks, in their folder among the collections.
             st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
@@ -1943,57 +1941,6 @@ pub(crate) fn save_at_quit(
     let followed = crate::sync::write_followed_at_quit(st, wait);
     crate::sync::note_unsent_at_quit(st);
     followed
-}
-
-/// `--preset`: lay `preset` over `file`'s edit as one step named for
-/// it, and write the sidecar where `placement` says (`None`: the run
-/// writes no sidecars). Written here and not left to the quit's
-/// `save_edit`, which finds the panel equal to the step already
-/// recorded and so writes nothing: the step would be lost on close.
-///
-/// The preset goes on the line of `version` (the file's own for none);
-/// a line that is not there takes nothing. A raw's line still waiting on
-/// its ISO's learned-denoiser blend (never developed,
-/// `files::line_never_developed`) is given it first, as
-/// `panel::sync::lay_over_targets` gives a target: the step makes the
-/// edit no longer the default, and once written the next launch would
-/// take that to mean the blend was seeded already. A preset that
-/// changes nothing records and writes nothing. True when the sidecar
-/// was written.
-pub(crate) fn preset_at_start(
-    sidecar: &mut Sidecar,
-    version: Option<&str>,
-    file: &Path,
-    preset: &Preset,
-    placement: Option<greycard_edit::Placement>,
-) -> bool {
-    let Some(line) = sidecar.line_mut(version) else {
-        return false;
-    };
-    let applied = preset.applied(&line.current);
-    if applied == line.current {
-        return false;
-    }
-    let mut over = line.current.clone();
-    if crate::files::line_never_developed(line)
-        && !greycard_core::picture::is_picture_path(file)
-        && let Ok(p) = greycard_core::decode::probe_path(file)
-    {
-        over.noise.learned_strength = greycard_edit::Noise::blend_for_iso(p.iso);
-        line.current.noise.learned_strength = over.noise.learned_strength;
-    }
-    let label = greycard_edit::history::preset_label(&preset.name);
-    if !line.record_as(preset.applied(&over), Some(label)) {
-        return false;
-    }
-    match placement.map(|p| sidecar.save_in(file, p)) {
-        Some(Ok(())) => true,
-        Some(Err(e)) => {
-            tracing::warn!("{}: sidecar not saved: {e}", file.display());
-            false
-        }
-        None => false,
-    }
 }
 
 /// The monitor's profile as the panel has it, and where it is from,

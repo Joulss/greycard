@@ -69,6 +69,26 @@ pub(crate) struct Done {
     keys: Vec<(PathBuf, Option<(String, u64)>)>,
 }
 
+/// The system trash: the `trash` crate's. Here on the window's side
+/// and not in `crate::delete`, which is in the library: a library's
+/// `cfg(test)` is not set when the binary's tests build it, so a
+/// stand-in there would not stand in for them. Called only on the
+/// delete's own thread, never the window's: the crate may copy a file
+/// into the home trash, and on Windows it sets up COM for the thread it
+/// is first called on.
+#[cfg(not(test))]
+pub(crate) fn system_trash(paths: &[PathBuf]) -> Result<(), String> {
+    trash::delete_all(paths).map_err(|e| e.to_string())
+}
+
+/// A test build has no way to the real trash: whatever calls this
+/// in a test is a bug, and fails the test rather than putting a file
+/// in the user's trash.
+#[cfg(test)]
+pub(crate) fn system_trash(paths: &[PathBuf]) -> Result<(), String> {
+    panic!("a test reached the system trash with {paths:?}");
+}
+
 impl Job {
     /// The delete itself, off the window's thread: the thumbnails'
     /// keys first (a hash of each frame's head), then the files, then
@@ -80,7 +100,7 @@ impl Job {
             .iter()
             .map(|d| (d.frame.clone(), crate::worker::thumb_key(&d.frame)))
             .collect();
-        let deleted = delete::delete(&self.plan, self.how, &self.allowed, delete::system_trash);
+        let deleted = delete::delete(&self.plan, self.how, &self.allowed, system_trash);
         if self.which == Which::Rejects {
             for dir in &self.allowed {
                 delete::remove_if_empty(dir);
@@ -1457,5 +1477,12 @@ pub(crate) mod tests {
         assert_eq!(*answers.borrow(), [1]);
         press(&app, Key::Escape);
         assert_eq!(*answers.borrow(), [1, 0]);
+    }
+
+    /// No test can reach the real trash: the test build's is a panic.
+    #[test]
+    #[should_panic(expected = "a test reached the system trash")]
+    fn a_test_build_has_no_way_to_the_system_trash() {
+        let _ = system_trash(&[PathBuf::from("/nowhere/at/all")]);
     }
 }

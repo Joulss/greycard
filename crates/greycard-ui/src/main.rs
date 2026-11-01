@@ -14,15 +14,12 @@
 
 mod adapter;
 mod ai;
-mod archive;
 mod camera_match;
 mod carry;
 mod cells;
 mod chooser;
 mod clipboard;
-mod collections;
 mod cull;
-mod delete;
 mod edited;
 mod edited_pictures;
 mod entry;
@@ -31,10 +28,8 @@ mod finder;
 mod fit_lightroom;
 mod gpu_errors;
 mod gpu_lost;
-mod gpu_marker;
 mod grid;
 mod headless;
-mod import;
 mod keys;
 mod library;
 mod lightbox;
@@ -68,12 +63,12 @@ mod version_key;
 mod versions;
 mod window_fit;
 mod worker;
-mod zoom;
 
 // The modules with no window in them, in the library beside this
 // binary; named here as they were when they were the binary's own.
 pub(crate) use greycard_ui::{
-    display, files, filter, log, naming, outline, scrolling, selection, tags, wheel,
+    archive, collections, delete, display, files, filter, gpu_marker, import, log, naming, outline,
+    preset_fit, rejects, scrolling, selection, tags, wheel, zoom,
 };
 
 // What renders a developed frame into a picture or a file, in a crate
@@ -927,6 +922,7 @@ impl State {
                 facets_last: RefCell::new(Vec::new()),
                 library: roots::Library::default(),
                 collections: collections::Store::default(),
+                collections_held: Default::default(),
                 recent: panel::recent::Recent::default(),
                 tree: tree::Tree::default(),
                 view: roots::View::Folder,

@@ -32,6 +32,20 @@ use crate::panel::browser::chosen_frames;
 use crate::roots::View;
 use crate::*;
 
+/// The collections as the window shows them, beside the store's: the
+/// sidebar's rows and the frame menu's names, one model each for the
+/// session, and the sheet's question while it is up.
+#[derive(Default)]
+pub(crate) struct Held {
+    /// The sidebar's rows, replaced only when they change.
+    pub(crate) rows: Rc<VecModel<CollectionChip>>,
+    /// The frame menu's names, replaced only when they change: a model
+    /// made afresh rebuilds the menu's items under a menu that is up.
+    pub(crate) names: Rc<VecModel<slint::SharedString>>,
+    /// The sheet's question while it is up.
+    pub(crate) asked: Option<Asked>,
+}
+
 /// What the collection sheet is asking, while it is up.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Asked {
@@ -119,16 +133,17 @@ pub(crate) fn show(st: &State, app: &App) {
             order: Default::default(),
         }))
         .collect();
-    if !store.rows.iter().eq(chips.iter().cloned()) {
-        store.rows.set_vec(chips);
+    let held = &st.views.collections_held;
+    if !held.rows.iter().eq(chips.iter().cloned()) {
+        held.rows.set_vec(chips);
     }
     let names: Vec<slint::SharedString> = store
         .list
         .iter()
         .map(|c| full_name(&c.set, &c.name).into())
         .collect();
-    if !store.names.iter().eq(names.iter().cloned()) {
-        store.names.set_vec(names);
+    if !held.names.iter().eq(names.iter().cloned()) {
+        held.names.set_vec(names);
     }
     app.set_collection_open(open.map(|id| name_of(st, id)).unwrap_or_default().into());
     app.set_collection_reorder(open.is_some() && hand);
@@ -629,7 +644,7 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
     app.set_collection_sheet_asks_name(asks);
     app.set_collection_sheet_verb(verb.into());
     app.set_collection_sheet_name(name.into());
-    st.views.collections.asked = Some(asked);
+    st.views.collections_held.asked = Some(asked);
     app.set_collection_sheet_open(true);
 }
 
@@ -641,14 +656,14 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     let typed = app.get_collection_sheet_name().trim().to_string();
     let named = !crate::collections::split_name(&typed).1.is_empty();
     let mut st = state.borrow_mut();
-    let Some(asked) = st.views.collections.asked.take() else {
+    let Some(asked) = st.views.collections_held.asked.take() else {
         app.set_collection_sheet_open(false);
         return;
     };
     // A version's name: no sets, and a blank one keeps the sheet up.
     if let Asked::Version { path, id } = asked {
         if typed.is_empty() {
-            st.views.collections.asked = Some(Asked::Version { path, id });
+            st.views.collections_held.asked = Some(Asked::Version { path, id });
             return;
         }
         app.set_collection_sheet_open(false);
@@ -658,7 +673,7 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     }
     if !named && !matches!(asked, Asked::Delete(_) | Asked::QueueOut { .. }) {
         // Nothing typed: the sheet stays, as it was.
-        st.views.collections.asked = Some(asked);
+        st.views.collections_held.asked = Some(asked);
         return;
     }
     app.set_collection_sheet_open(false);
@@ -852,9 +867,11 @@ fn picked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str) {
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
-    app.set_collections(ModelRc::from(state.borrow().views.collections.rows.clone()));
+    app.set_collections(ModelRc::from(
+        state.borrow().views.collections_held.rows.clone(),
+    ));
     app.set_collection_names(ModelRc::from(
-        state.borrow().views.collections.names.clone(),
+        state.borrow().views.collections_held.names.clone(),
     ));
     show(&state.borrow(), app);
     {
@@ -1246,7 +1263,7 @@ mod tests {
             state
                 .borrow()
                 .views
-                .collections
+                .collections_held
                 .rows
                 .row_data(0)
                 .unwrap()
@@ -1373,7 +1390,7 @@ mod tests {
             state
                 .borrow()
                 .views
-                .collections
+                .collections_held
                 .rows
                 .row_data(0)
                 .unwrap()
@@ -1664,7 +1681,7 @@ mod tests {
             state
                 .borrow()
                 .views
-                .collections
+                .collections_held
                 .rows
                 .row_data(0)
                 .unwrap()
@@ -1677,7 +1694,7 @@ mod tests {
             !state
                 .borrow()
                 .views
-                .collections
+                .collections_held
                 .rows
                 .row_data(0)
                 .unwrap()
@@ -1693,7 +1710,7 @@ mod tests {
             state
                 .borrow()
                 .views
-                .collections
+                .collections_held
                 .rows
                 .row_data(0)
                 .unwrap()
@@ -1856,7 +1873,7 @@ mod tests {
             state
                 .borrow()
                 .views
-                .collections
+                .collections_held
                 .rows
                 .row_data(0)
                 .unwrap()

@@ -44,53 +44,40 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 use greycard_library::collections::stamp_of;
 use greycard_library::{Library, Rehash, RowMeta};
 
-use crate::CollectionChip;
-use crate::panel::export_queue::Presence;
-
 // The files and their writer are the library's, so the command line's
-// Lightroom import writes them as the editor does.
-#[cfg(test)]
-pub(crate) use greycard_library::collections::{Added, DIR};
-pub(crate) use greycard_library::collections::{
-    Collection, Frame, Pair, Reference, Smart, Stamp, VERSION, file_of, full_name, hint_of,
-    read_collection, split_name,
+// Lightroom import writes them as the editor does. `Added` and `DIR`
+// only the tests name, the binary's among them, which build this
+// library without cfg(test).
+pub use greycard_library::collections::{
+    Added, Collection, DIR, Frame, Pair, Reference, Smart, Stamp, VERSION, file_of, full_name,
+    hint_of, read_collection, split_name,
 };
 
 /// The collections as the editor holds them: the folder they are kept
 /// in, each one, and what the window marks with them.
 #[derive(Default)]
-pub(crate) struct Store {
+pub struct Store {
     /// None for a session that keeps nothing (a test's, unless it gives
     /// one), or with no data directory.
-    pub(crate) dir: Option<PathBuf>,
-    pub(crate) list: Vec<Collection>,
-    pub(crate) smart: Vec<Smart>,
+    pub dir: Option<PathBuf>,
+    pub list: Vec<Collection>,
+    pub smart: Vec<Smart>,
     /// The collection B adds to outside a collection's own view: the
     /// last one added to from the menu or made.
-    pub(crate) target: Option<String>,
+    pub target: Option<String>,
     /// The index's rows whose hash is a member of any collection, each
     /// with the versions of it that are: a cell is marked when its own
     /// version is among its row's, so a version in a collection marks
     /// that version's cell and not the original's.
-    pub(crate) member_ids: std::collections::HashMap<i64, HashSet<Option<String>>>,
-    /// The sidebar's rows, one model for the session, its rows replaced
-    /// only when they change.
-    pub(crate) rows: Rc<slint::VecModel<CollectionChip>>,
+    pub member_ids: std::collections::HashMap<i64, HashSet<Option<String>>>,
     /// The last read of a collection: its id, how many of its
     /// references were missing, and how many of those Forget missing
     /// may drop (the rest hinted under an offline root).
-    pub(crate) missing: Option<(String, usize, usize)>,
-    /// The sheet's question while it is up.
-    pub(crate) asked: Option<crate::panel::collections::Asked>,
-    /// The frame menu's names of the collections, one model for the
-    /// session, replaced only when they change: a model made afresh
-    /// rebuilds the menu's items under a menu that is up.
-    pub(crate) names: Rc<slint::VecModel<slint::SharedString>>,
+    pub missing: Option<(String, usize, usize)>,
     /// Each file's content hash as it was when read or last written
     /// here: a file whose bytes differ was written since by another
     /// editor or by hand, and is read and joined before ours goes over
@@ -105,14 +92,14 @@ pub(crate) struct Store {
 
 impl Store {
     /// The folder for a library at `library`: beside it.
-    pub(crate) fn dir_beside(library: &Path) -> PathBuf {
+    pub fn dir_beside(library: &Path) -> PathBuf {
         greycard_library::collections::dir_beside(library)
     }
 
     /// Every collection in `dir`. A file that will not read, or one a
     /// later build wrote, is said and left where it is: nothing here
     /// writes to a file it did not read.
-    pub(crate) fn load(dir: PathBuf) -> Store {
+    pub fn load(dir: PathBuf) -> Store {
         Store::load_reading(dir, VERSION)
     }
 
@@ -146,27 +133,27 @@ impl Store {
     }
 
     /// By set, then name, case aside: the sidebar's order.
-    pub(crate) fn sort(&mut self) {
+    pub fn sort(&mut self) {
         let key = |set: &str, name: &str| (set.to_lowercase(), name.to_lowercase());
         self.list.sort_by_key(|c| key(&c.set, &c.name));
         self.smart.sort_by_key(|s| key(&s.set, &s.name));
     }
 
-    pub(crate) fn collection(&self, id: &str) -> Option<&Collection> {
+    pub fn collection(&self, id: &str) -> Option<&Collection> {
         self.list.iter().find(|c| c.id == id)
     }
 
-    pub(crate) fn collection_mut(&mut self, id: &str) -> Option<&mut Collection> {
+    pub fn collection_mut(&mut self, id: &str) -> Option<&mut Collection> {
         self.list.iter_mut().find(|c| c.id == id)
     }
 
-    pub(crate) fn smart(&self, id: &str) -> Option<&Smart> {
+    pub fn smart(&self, id: &str) -> Option<&Smart> {
         self.smart.iter().find(|s| s.id == id)
     }
 
     /// Whether `id` is taken: by a collection here, or by a file in
     /// the folder.
-    pub(crate) fn id_taken(&self, id: &str) -> bool {
+    pub fn id_taken(&self, id: &str) -> bool {
         self.collection(id).is_some()
             || self.smart(id).is_some()
             || [false, true]
@@ -175,7 +162,7 @@ impl Store {
     }
 
     /// Every member hash, each once.
-    pub(crate) fn hashes(&self) -> HashSet<&str> {
+    pub fn hashes(&self) -> HashSet<&str> {
         self.list
             .iter()
             .flat_map(|c| c.refs.iter().map(|r| r.hash.as_str()))
@@ -183,7 +170,7 @@ impl Store {
     }
 
     /// Every member frame, (hash, version), each once.
-    pub(crate) fn pairs(&self) -> HashSet<Pair<'_>> {
+    pub fn pairs(&self) -> HashSet<Pair<'_>> {
         self.list
             .iter()
             .flat_map(|c| c.refs.iter().map(Reference::pair))
@@ -204,7 +191,7 @@ impl Store {
     /// A file that will not read is kept beside itself as `.json.bad`
     /// before ours goes over it. A smart collection is ours, and the
     /// other is said in the log.
-    pub(crate) fn save(&mut self, id: &str) {
+    pub fn save(&mut self, id: &str) {
         let smart = self.smart(id).is_some();
         if let Some(file) = self.file_of(id, smart)
             && let Some(now) = stamp_of(&file)
@@ -294,7 +281,7 @@ impl Store {
     }
 
     /// The collection or smart collection `id` gone, with its file.
-    pub(crate) fn delete(&mut self, id: &str) -> bool {
+    pub fn delete(&mut self, id: &str) -> bool {
         let smart = self.smart(id).is_some();
         let before = self.list.len() + self.smart.len();
         self.list.retain(|c| c.id != id);
@@ -326,7 +313,7 @@ impl Store {
     /// stays as it was, missing. Only a member's hash is asked of the
     /// index.
     /// Each collection changed is written; their ids.
-    pub(crate) fn heal(
+    pub fn heal(
         &mut self,
         rehashed: &[Rehash],
         copies: &dyn Fn(&str) -> Option<Vec<PathBuf>>,
@@ -417,7 +404,7 @@ impl Store {
     /// whose id the index's row does not list is dropped only when the
     /// sidecar on disk reads and lacks the id; one that will not read
     /// cannot tell, and keeps it.
-    pub(crate) fn forget_missing(
+    pub fn forget_missing(
         &mut self,
         id: &str,
         lib: Option<&Library>,
@@ -498,14 +485,14 @@ impl Store {
             };
             match answer_of(at) {
                 None => kept_away += 1,
-                Some(_) => match crate::panel::export_queue::version_presence(at, version) {
-                    Presence::Deleted => {
+                Some(_) => match greycard_edit::Sidecar::load(at) {
+                    Ok(Some(s)) if s.version(version).is_none() => {
                         gone.insert(r.pair());
                     }
                     // In the sidecar after all: the index has yet to
                     // read it.
-                    Presence::There => on_disk += 1,
-                    Presence::Unsure | Presence::Absent => unsure += 1,
+                    Ok(Some(_)) => on_disk += 1,
+                    Ok(None) | Err(_) => unsure += 1,
                 },
             }
         }
@@ -531,7 +518,7 @@ impl Store {
     /// What a read of a collection found to change in it, put in: each
     /// reference of `was` takes its new hash and hint. True when the
     /// collection changed, which is then written.
-    pub(crate) fn apply(&mut self, id: &str, changes: &[Change]) -> bool {
+    pub fn apply(&mut self, id: &str, changes: &[Change]) -> bool {
         let Some(c) = self.collection_mut(id) else {
             return false;
         };
@@ -550,8 +537,7 @@ impl Store {
 
 /// The editor's look at folders, each with a time limit: whether each
 /// is there, or `None` when it did not answer in time.
-pub(crate) type Answers<'a> =
-    dyn Fn(&[PathBuf]) -> std::collections::HashMap<PathBuf, Option<bool>> + 'a;
+pub type Answers<'a> = dyn Fn(&[PathBuf]) -> std::collections::HashMap<PathBuf, Option<bool>> + 'a;
 
 /// What Forget missing did, by its own fresh read: how many it dropped,
 /// how many are missing still, and of those, how many are perhaps only
@@ -559,57 +545,57 @@ pub(crate) type Answers<'a> =
 /// not answer) and how many have a file at the hint the index has not
 /// read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Forgot {
-    pub(crate) forgotten: usize,
-    pub(crate) missing: usize,
-    pub(crate) away: usize,
-    pub(crate) on_disk: usize,
+pub struct Forgot {
+    pub forgotten: usize,
+    pub missing: usize,
+    pub away: usize,
+    pub on_disk: usize,
     /// Versions whose file is there and whose sidecar will not read, or
     /// is not there: whether the version is gone cannot be told.
-    pub(crate) unsure: usize,
+    pub unsure: usize,
 }
 
 /// A reference that a read of its collection found somewhere else: the
 /// hash it had and its version, and the hash and the hint it has now.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Change {
-    pub(crate) was: String,
-    pub(crate) version: Option<String>,
-    pub(crate) hash: String,
-    pub(crate) hint: String,
+pub struct Change {
+    pub was: String,
+    pub version: Option<String>,
+    pub hash: String,
+    pub hint: String,
 }
 
 /// A collection read from the index for the browser.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Shown {
+pub struct Shown {
     /// The files to list, each once, in the order their first frame
     /// comes.
-    pub(crate) listed: Vec<(PathBuf, RowMeta)>,
+    pub listed: Vec<(PathBuf, RowMeta)>,
     /// The frames to show, each file's path and the version of it, each
     /// (hash, version) once, in the collection's order or by capture
     /// time: two versions of one picture are two frames of one file. A
     /// version the index does not list (`lost`) is among them too, at
     /// the file it was looked for in when that file is listed: the
     /// window shows it while the sidecar it holds has it.
-    pub(crate) frames: Vec<(PathBuf, Option<String>)>,
+    pub frames: Vec<(PathBuf, Option<String>)>,
     /// References with nothing at their hash or their hint, and
     /// versions their file's row does not list.
-    pub(crate) missing: usize,
+    pub missing: usize,
     /// The missing whose hint is under no root that is away: what
     /// Forget missing may drop, once it has looked at the disk.
-    pub(crate) gone: Vec<Reference>,
+    pub gone: Vec<Reference>,
     /// The versions whose file is found and whose sidecar, as the index
     /// last read it, does not have them (deleted here or on another
     /// machine): each with the file it was looked for in, under no root
     /// that is away. Missing, and never dropped by a read, since a join
     /// may bring the version back; Forget missing asks the sidecar
     /// itself.
-    pub(crate) lost: Vec<(Reference, PathBuf)>,
+    pub lost: Vec<(Reference, PathBuf)>,
     /// Of the missing, those hinted under a root that is away: perhaps
     /// only out of reach, and kept.
-    pub(crate) away: usize,
+    pub away: usize,
     /// References found moved or rewritten, for the file.
-    pub(crate) changes: Vec<Change>,
+    pub changes: Vec<Change>,
 }
 
 /// Where each of `refs` is shown from, by the index alone: the hinted
@@ -626,7 +612,7 @@ pub(crate) struct Shown {
 /// path), a version after its file's own and otherwise the
 /// collection's order kept among equals; with none, in the
 /// collection's own order.
-pub(crate) fn resolve(
+pub fn resolve(
     lib: &Library,
     refs: &[Reference],
     away: &[PathBuf],
@@ -797,8 +783,18 @@ mod tests {
     use crate::filter::{Filter, Saved, SavedBar};
     use greycard_library::fixture::{A7, R5, R6, write_frame};
 
+    /// A folder no other test has used, made, and canonical: the index
+    /// keys folders by their canonical path, and on macOS the temporary
+    /// directory is a link.
     fn scratch(what: &str) -> PathBuf {
-        let dir = crate::testing::scratch_dir(&format!("collections-{what}"));
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-collections-{what}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         dunce::canonicalize(&dir).unwrap()
     }
@@ -899,7 +895,7 @@ mod tests {
         assert!(back.delete(&sid));
         assert!(!dir.join(format!("{sid}.smart.json")).exists());
         assert!(dir.join("later.json").exists());
-        crate::testing::remove_dir_retry(dir.parent().unwrap());
+        greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
     }
 
     #[test]
@@ -1056,7 +1052,7 @@ mod tests {
         assert_eq!(shown.missing, 1);
         assert_eq!(shown.listed.len(), 1);
         assert!(shown.changes.is_empty(), "{:?}", shown.changes);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Both copies of a picture rewritten in one pass, each to a hash of
@@ -1167,7 +1163,7 @@ mod tests {
         first.save(&id);
         let back = Store::load(dir.clone());
         assert_eq!(hashes(back.collection(&id).unwrap()), ["dd"]);
-        crate::testing::remove_dir_retry(dir.parent().unwrap());
+        greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
     }
     /// A collection's file that will not read any more (a hand edit
     /// gone wrong since it was read) is kept beside itself as
@@ -1197,7 +1193,7 @@ mod tests {
         // Their removal of a and addition of b are both taken.
         let back = Store::load(dir.clone());
         assert_eq!(hashes(back.collection(&id).unwrap()), ["cc", "bb"]);
-        crate::testing::remove_dir_retry(dir.parent().unwrap());
+        greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
     }
     #[test]
     fn a_file_broken_on_disk_is_kept_aside_before_it_is_written() {
@@ -1220,7 +1216,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
         let back = Store::load(dir.clone());
         assert_eq!(hashes(back.collection(&id).unwrap()), ["aa", "bb"]);
-        crate::testing::remove_dir_retry(dir.parent().unwrap());
+        greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
     }
     /// Two copies of a frame and three references, one of them to a
     /// hash nothing has: opened, each picture once, from the hint while
@@ -1323,7 +1319,7 @@ mod tests {
             (None, None) => std::cmp::Ordering::Equal,
         });
         assert_eq!(taken, sorted);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Forget missing drops the references the index has nowhere, by the
@@ -1414,7 +1410,7 @@ mod tests {
             .unwrap();
         assert_eq!((forgot.forgotten, forgot.missing), (1, 0));
         assert_eq!(hashes(&store.list[0]), [&ha, &hc]);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A reference whose hint is a file on disk the index has not read
@@ -1472,7 +1468,7 @@ mod tests {
             "the network mount is never looked at: {:?}",
             looked.borrow()
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A folder that cannot be read answers the look with no, and its
@@ -1525,7 +1521,7 @@ mod tests {
             );
             assert_eq!(hashes(&store.list[0]), ["0123456789abcdef"]);
         }
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A version of `path`'s picture named `name`, made in its sidecar
@@ -1583,7 +1579,7 @@ mod tests {
         assert_eq!(v["version"], 1);
         assert_eq!(v["refs"].as_array().unwrap().len(), 1);
         assert_eq!(Store::load_reading(dir.clone(), 1).list.len(), 1);
-        crate::testing::remove_dir_retry(dir.parent().unwrap());
+        greycard_render::testing::remove_dir_retry(dir.parent().unwrap());
     }
 
     /// Two versions of a picture are two frames: each added once, each
@@ -1696,7 +1692,7 @@ mod tests {
         let shown = resolve(&lib, &refs, std::slice::from_ref(&shoot), &[], None).unwrap();
         assert_eq!((shown.missing, shown.away), (1, 1));
         assert!(shown.lost.is_empty());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Forget missing drops a version whose file is there only when its
@@ -1753,6 +1749,6 @@ mod tests {
             .map(|r| PathBuf::from(&r.hint))
             .collect();
         assert_eq!(left, [b, d]);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }

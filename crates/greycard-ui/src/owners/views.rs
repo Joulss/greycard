@@ -108,6 +108,8 @@ pub(crate) struct Views {
     /// The collections and smart collections, and what the browser
     /// marks with them.
     pub(crate) collections: collections::Store,
+    /// The window's models of them and the sheet's question.
+    pub(crate) collections_held: panel::collections::Held,
     /// The folder open, as the Open folder button names it, and the
     /// folders opened before it.
     pub(crate) recent: panel::recent::Recent,

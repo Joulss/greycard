@@ -42,10 +42,10 @@ use std::time::{Duration, Instant, SystemTime};
 use greycard_edit::{SIDECAR_FOLDER, Sidecar};
 use greycard_library::Library;
 
-pub(crate) mod rejects;
+pub mod rejects;
 
 /// The ending of a copy's temporary name, which a later run removes.
-pub(crate) const TEMPORARY: &str = ".greycard-backup";
+pub const TEMPORARY: &str = ".greycard-backup";
 
 /// How old a temporary has to be before a run takes it for one a crash
 /// left: a copy under way writes to its temporary at every chunk, so an
@@ -54,17 +54,17 @@ const STALE_AFTER: Duration = Duration::from_secs(60 * 60);
 
 /// A job's word that it is still moving: shared, so a wait on the
 /// library's lock can say it too.
-pub(crate) type Beat = Arc<dyn Fn() + Send + Sync>;
+pub type Beat = Arc<dyn Fn() + Send + Sync>;
 
-/// A beat nobody listens to.
-#[cfg(test)]
-pub(crate) fn no_beat() -> Beat {
+/// A beat nobody listens to. Built whatever the build: the binary's
+/// tests use it, and they build this library without cfg(test).
+pub fn no_beat() -> Beat {
     Arc::new(|| {})
 }
 
 /// Which way the copy goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Direction {
+pub enum Direction {
     /// From here to an archive.
     BackUp,
     /// From an archive to a local root.
@@ -73,7 +73,7 @@ pub(crate) enum Direction {
 
 /// The frames a copy is over.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Frames {
+pub enum Frames {
     /// These frames, as chosen.
     Chosen(Vec<PathBuf>),
     /// A folder and every folder under it: the hidden ones left out,
@@ -84,33 +84,33 @@ pub(crate) enum Frames {
 
 /// A copy asked for: everything the look needs, taken from the window.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Ask {
-    pub(crate) direction: Direction,
-    pub(crate) frames: Frames,
+pub struct Ask {
+    pub direction: Direction,
+    pub frames: Frames,
     /// Walk a folder's rejects folders too.
-    pub(crate) include_rejects: bool,
+    pub include_rejects: bool,
     /// Carry the sidecars: false under `--no-sidecars`, which neither
     /// reads nor writes one.
-    pub(crate) sidecars: bool,
+    pub sidecars: bool,
     /// Where each frame's path is taken relative to.
-    pub(crate) base: PathBuf,
+    pub base: PathBuf,
     /// Where each frame goes: this folder, at its path under `base`.
-    pub(crate) dest: PathBuf,
+    pub dest: PathBuf,
     /// Where a copy already there is looked for by hash: the archive
     /// for a backup, the local roots for a bring-back.
-    pub(crate) other_side: Vec<PathBuf>,
+    pub other_side: Vec<PathBuf>,
     /// The roots a folder's walk never goes into: every archive for a
     /// backup (a folder of no root's with an archive inside it), the
     /// local roots for a bring-back.
-    pub(crate) skip: Vec<PathBuf>,
+    pub skip: Vec<PathBuf>,
     /// The library's database, read for the hashes, and written with
     /// the copies' rows and their whole-file hashes.
-    pub(crate) index: Option<PathBuf>,
+    pub index: Option<PathBuf>,
 }
 
 impl Ask {
     /// Where `frame` goes.
-    pub(crate) fn dest_of(&self, frame: &Path) -> PathBuf {
+    pub fn dest_of(&self, frame: &Path) -> PathBuf {
         match frame.strip_prefix(&self.base) {
             Ok(rel) if !rel.as_os_str().is_empty() => self.dest.join(rel),
             _ => self
@@ -122,11 +122,11 @@ impl Ask {
 
 /// One sidecar file to copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SidecarCopy {
-    pub(crate) from: PathBuf,
-    pub(crate) to: PathBuf,
+pub struct SidecarCopy {
+    pub from: PathBuf,
+    pub to: PathBuf,
     /// Over an older copy of it there, judged older file by file.
-    pub(crate) replace: bool,
+    pub replace: bool,
 }
 
 /// Two `.gcd`s of one frame that went their own ways, to be joined
@@ -134,16 +134,16 @@ pub(crate) struct SidecarCopy {
 /// the copy is from, `theirs` the frame on the other side, each with
 /// the sidecar path found there.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SidecarJoin {
-    pub(crate) mine: PathBuf,
-    pub(crate) mine_sidecar: PathBuf,
-    pub(crate) theirs: PathBuf,
-    pub(crate) theirs_sidecar: PathBuf,
+pub struct SidecarJoin {
+    pub mine: PathBuf,
+    pub mine_sidecar: PathBuf,
+    pub theirs: PathBuf,
+    pub theirs_sidecar: PathBuf,
 }
 
 /// What is to be done with one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum What {
+pub enum What {
     /// Not on the other side: the frame and its sidecars copied.
     Copy {
         to: PathBuf,
@@ -175,25 +175,25 @@ pub(crate) enum What {
 
 /// One frame of a plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Item {
-    pub(crate) frame: PathBuf,
-    pub(crate) size: u64,
-    pub(crate) what: What,
+pub struct Item {
+    pub frame: PathBuf,
+    pub size: u64,
+    pub what: What,
 }
 
 /// What a copy would do, before anything is done.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Plan {
-    pub(crate) ask: Ask,
-    pub(crate) items: Vec<Item>,
+pub struct Plan {
+    pub ask: Ask,
+    pub items: Vec<Item>,
     /// Frames in the rejects folders a folder's walk found, left out
     /// unless the ask includes them.
-    pub(crate) rejects: usize,
+    pub rejects: usize,
 }
 
 impl Plan {
     /// The frames to copy whole, and their bytes.
-    pub(crate) fn copies(&self) -> (usize, u64) {
+    pub fn copies(&self) -> (usize, u64) {
         self.items
             .iter()
             .filter(|i| matches!(i.what, What::Copy { .. }))
@@ -201,7 +201,7 @@ impl Plan {
     }
 
     /// How many frames go as sidecars alone.
-    pub(crate) fn sidecars_only(&self) -> usize {
+    pub fn sidecars_only(&self) -> usize {
         self.items
             .iter()
             .filter(|i| matches!(i.what, What::Sidecars { .. }))
@@ -210,7 +210,7 @@ impl Plan {
 
     /// How many are there already, and how many of those under
     /// another folder than this frame's would be.
-    pub(crate) fn same(&self) -> (usize, usize) {
+    pub fn same(&self) -> (usize, usize) {
         self.items.iter().fold((0, 0), |(n, e), i| match i.what {
             What::Same { elsewhere, .. } => (n + 1, e + usize::from(elsewhere)),
             _ => (n, e),
@@ -219,7 +219,7 @@ impl Plan {
 
     /// The frames some of whose sidecars over there are the newer, left
     /// as they are: all of them, or beside the newer ones that go.
-    pub(crate) fn theirs_newer(&self) -> Vec<&Path> {
+    pub fn theirs_newer(&self) -> Vec<&Path> {
         self.items
             .iter()
             .filter(|i| {
@@ -232,7 +232,7 @@ impl Plan {
             .collect()
     }
 
-    pub(crate) fn taken(&self) -> Vec<&Path> {
+    pub fn taken(&self) -> Vec<&Path> {
         self.items
             .iter()
             .filter(|i| matches!(i.what, What::Taken { .. }))
@@ -240,7 +240,7 @@ impl Plan {
             .collect()
     }
 
-    pub(crate) fn unreadable(&self) -> Vec<(&Path, &str)> {
+    pub fn unreadable(&self) -> Vec<(&Path, &str)> {
         self.items
             .iter()
             .filter_map(|i| match &i.what {
@@ -251,7 +251,7 @@ impl Plan {
     }
 
     /// Whether running it would copy anything at all.
-    pub(crate) fn has_work(&self) -> bool {
+    pub fn has_work(&self) -> bool {
         self.items
             .iter()
             .any(|i| matches!(i.what, What::Copy { .. } | What::Sidecars { .. }))
@@ -263,7 +263,7 @@ impl Plan {
 /// root's with the archive inside it) left out, and the rejects folders
 /// unless `rejects`; with how many frames the rejects folders hold,
 /// taken or not. By path.
-pub(crate) fn walk(
+pub fn walk(
     dir: &Path,
     rejects: bool,
     skip: &[PathBuf],
@@ -298,7 +298,7 @@ pub(crate) fn walk(
                 if skipped(&e.path()) {
                     continue;
                 }
-                let rejected = in_rejects || name == std::ffi::OsStr::new(crate::cull::REJECTS);
+                let rejected = in_rejects || name == std::ffi::OsStr::new(crate::rejects::REJECTS);
                 stack.push((e.path(), rejected));
             } else if kind.is_file() && greycard_library::is_indexed_path(&e.path()) {
                 left += usize::from(in_rejects);
@@ -313,7 +313,7 @@ pub(crate) fn walk(
 }
 
 /// The frames an ask is over: those chosen, or the folder's walk.
-pub(crate) fn frames_of(ask: &Ask, beat: &dyn Fn()) -> (Vec<PathBuf>, usize) {
+pub fn frames_of(ask: &Ask, beat: &dyn Fn()) -> (Vec<PathBuf>, usize) {
     match &ask.frames {
         Frames::Chosen(f) => (f.clone(), 0),
         Frames::Folder(dir) => walk(dir, ask.include_rejects, &ask.skip, beat, &|| false),
@@ -323,7 +323,7 @@ pub(crate) fn frames_of(ask: &Ask, beat: &dyn Fn()) -> (Vec<PathBuf>, usize) {
 /// The sidecars that travel with a frame: the `.gcd` the editor would
 /// read ([`Sidecar::find`], beside or under the hidden folder), and the
 /// frame's XMPs.
-pub(crate) fn travelling(frame: &Path) -> Vec<PathBuf> {
+pub fn travelling(frame: &Path) -> Vec<PathBuf> {
     Sidecar::find(frame)
         .into_iter()
         .chain(greycard_edit_io::xmp::paths_of(frame))
@@ -332,7 +332,7 @@ pub(crate) fn travelling(frame: &Path) -> Vec<PathBuf> {
 
 /// Where `sidecar`, one of `frame`'s, goes for the frame at `to`: the
 /// same placement, its name taken over from the frame's to `to`'s.
-pub(crate) fn sidecar_at(sidecar: &Path, frame: &Path, to: &Path) -> PathBuf {
+pub fn sidecar_at(sidecar: &Path, frame: &Path, to: &Path) -> PathBuf {
     let name = sidecar
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -386,7 +386,7 @@ fn modified(p: &Path) -> Option<SystemTime> {
 /// their own ways are joined and the join written to both (the third
 /// of the tuple); each XMP by its mtime against the one its name gives
 /// it there. The same bytes on both sides is nothing to do.
-pub(crate) fn compare_sidecars(
+pub fn compare_sidecars(
     mine: &Path,
     theirs: &Path,
 ) -> (Vec<SidecarCopy>, bool, Option<SidecarJoin>) {
@@ -469,7 +469,7 @@ fn is_gcd(path: &Path) -> bool {
 /// (§233): the side the copy is from gets the save, which makes the
 /// revision, and the other side the same bytes; the archive write
 /// behind a later save then finds the copies the same.
-pub(crate) fn join_sidecars(join: &SidecarJoin) -> Result<(), String> {
+pub fn join_sidecars(join: &SidecarJoin) -> Result<(), String> {
     let ours = Sidecar::read(&join.mine_sidecar).map_err(|e| format!("reading it: {e}"))?;
     let theirs =
         Sidecar::read(&join.theirs_sidecar).map_err(|e| format!("reading the copy: {e}"))?;
@@ -510,7 +510,7 @@ fn key_of(frame: &Path, meta: &std::fs::Metadata, lib: Option<&Library>) -> Opti
 /// Whole-file hashes read to settle whether two files are one, kept to
 /// be written to the index's rows when the job is done: path, size,
 /// hash.
-pub(crate) type Settled = RefCell<Vec<(PathBuf, u64, String)>>;
+pub type Settled = RefCell<Vec<(PathBuf, u64, String)>>;
 
 /// The whole-file hash the index keeps for `path`, trusted only while
 /// the row's size and time are the file's now: a file written again in
@@ -561,7 +561,7 @@ fn whole_of(
 
 /// Whether two files of one key and size are one file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Verdict {
+pub enum Verdict {
     Same,
     Other,
     /// Not settled: their times differ and no whole hash of both is on
@@ -618,7 +618,7 @@ fn judged(
 
 /// What a look for a frame's copy found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Find {
+pub enum Find {
     Copy(PathBuf),
     /// A file of its key and size that could not be told from it
     /// without reading both whole.
@@ -630,7 +630,7 @@ pub(crate) enum Find {
 /// under `roots`, by hash first, confirmed on the disk by existence and
 /// size, and by the whole file when there is doubt ([`judged`], which
 /// reads whole only with `settle`). `frame` itself is never its own copy.
-pub(crate) fn find_copy(
+pub fn find_copy(
     frame: &Path,
     size: u64,
     key: &str,
@@ -666,7 +666,7 @@ pub(crate) fn find_copy(
 
 /// The whole hashes a job settled, written to their rows (a row of
 /// another size is not given one). The waits on the lock beat.
-pub(crate) fn keep_whole(index: &Path, settled: &Settled, beat: &Beat) {
+pub fn keep_whole(index: &Path, settled: &Settled, beat: &Beat) {
     let settled = settled.borrow();
     if settled.is_empty() {
         return;
@@ -686,7 +686,7 @@ pub(crate) fn keep_whole(index: &Path, settled: &Settled, beat: &Beat) {
 /// beside it or under the hidden folder, or an XMP of its name. A frame
 /// copied in beside one would read another frame's rating, flag or
 /// edit, whatever its own sidecars are.
-pub(crate) fn sidecar_there(to: &Path) -> Option<PathBuf> {
+pub fn sidecar_there(to: &Path) -> Option<PathBuf> {
     [
         Sidecar::path_in(to, greycard_edit::Placement::Beside),
         Sidecar::path_in(to, greycard_edit::Placement::Folder),
@@ -700,7 +700,7 @@ pub(crate) fn sidecar_there(to: &Path) -> Option<PathBuf> {
 /// while it waits on the lock: a wait on the index is the index's, not
 /// a share that stopped answering (§215). The handler waits 10 ms a
 /// try, up to rusqlite's own five seconds.
-pub(crate) fn open_index(path: &Path, write: bool, beat: &Beat) -> Option<Library> {
+pub fn open_index(path: &Path, write: bool, beat: &Beat) -> Option<Library> {
     thread_local! {
         static BUSY_BEAT: RefCell<Option<Beat>> = const { RefCell::new(None) };
     }
@@ -730,7 +730,7 @@ pub(crate) fn open_index(path: &Path, write: bool, beat: &Beat) -> Option<Librar
 /// at its destination, and its sidecars compared with the copy's.
 /// `beat` is called at every frame, so a share that stops answering
 /// can be told from a slow one.
-pub(crate) fn plan(ask: &Ask, beat: &Beat) -> Plan {
+pub fn plan(ask: &Ask, beat: &Beat) -> Plan {
     let (frames, rejects) = frames_of(ask, &**beat);
     let lib = ask
         .index
@@ -846,24 +846,24 @@ pub(crate) fn plan(ask: &Ask, beat: &Beat) -> Plan {
 
 /// What a run of a plan is given to say it is moving, be stopped, and
 /// count its bytes; and, in a test, a hand in each file.
-pub(crate) struct Hooks<'a> {
+pub struct Hooks<'a> {
     /// Called at every chunk read or written, and between files.
-    pub(crate) beat: &'a dyn Fn(),
+    pub beat: &'a dyn Fn(),
     /// Set to stop between frames.
-    pub(crate) cancel: &'a AtomicBool,
+    pub cancel: &'a AtomicBool,
     /// The frames' bytes copied so far, for the bar.
-    pub(crate) bytes: &'a AtomicU64,
+    pub bytes: &'a AtomicU64,
     /// A test's hand before each frame is copied.
     #[cfg(test)]
-    pub(crate) before_frame: Option<&'a dyn Fn(&Path)>,
+    pub before_frame: Option<&'a dyn Fn(&Path)>,
     /// A test's hand on each temporary file once written, before it is
     /// read back.
     #[cfg(test)]
-    pub(crate) tamper: Option<&'a dyn Fn(&Path)>,
+    pub tamper: Option<&'a dyn Fn(&Path)>,
 }
 
 impl<'a> Hooks<'a> {
-    pub(crate) fn new(beat: &'a dyn Fn(), cancel: &'a AtomicBool, bytes: &'a AtomicU64) -> Self {
+    pub fn new(beat: &'a dyn Fn(), cancel: &'a AtomicBool, bytes: &'a AtomicU64) -> Self {
         Hooks {
             beat,
             cancel,
@@ -878,36 +878,36 @@ impl<'a> Hooks<'a> {
 
 /// What a run did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Report {
+pub struct Report {
     /// The frames copied whole: from, to, size, the whole file's hash.
-    pub(crate) copied: Vec<(PathBuf, PathBuf, u64, String)>,
+    pub copied: Vec<(PathBuf, PathBuf, u64, String)>,
     /// Frames whose sidecars alone went, and how many sidecar files
     /// were copied in all.
-    pub(crate) sidecars_only: usize,
-    pub(crate) sidecar_files: usize,
+    pub sidecars_only: usize,
+    pub sidecar_files: usize,
     /// There already and the same, and of those under another folder.
-    pub(crate) same: usize,
-    pub(crate) elsewhere: usize,
+    pub same: usize,
+    pub elsewhere: usize,
     /// Left, wholly or in part, because sidecars there are the newer.
-    pub(crate) theirs_newer: Vec<PathBuf>,
+    pub theirs_newer: Vec<PathBuf>,
     /// Left because another file has the name there, or a sidecar's.
-    pub(crate) taken: Vec<PathBuf>,
+    pub taken: Vec<PathBuf>,
     /// Frames that failed, and why: a mismatch on the read-back among
     /// them, whose copy is removed.
-    pub(crate) failed: Vec<(PathBuf, String)>,
+    pub failed: Vec<(PathBuf, String)>,
     /// Temporaries a run before left, removed.
-    pub(crate) stale: Vec<PathBuf>,
+    pub stale: Vec<PathBuf>,
     /// Frames not reached because the run was canceled.
-    pub(crate) canceled: usize,
+    pub canceled: usize,
     /// The folders written to, for the indexer.
-    pub(crate) folders: Vec<PathBuf>,
+    pub folders: Vec<PathBuf>,
 }
 
 /// Remove the temporaries a run before left in `folder`: an hour since
 /// their last write, and not of a process running here (a copy set
 /// aside, or another window's). Another machine's live copy writes to
 /// its temporary at every chunk, so the hour keeps it too.
-pub(crate) fn sweep(folder: &Path) -> Vec<PathBuf> {
+pub fn sweep(folder: &Path) -> Vec<PathBuf> {
     let mut gone = Vec::new();
     let Ok(entries) = std::fs::read_dir(folder) else {
         return gone;
@@ -945,7 +945,7 @@ pub(crate) fn sweep(folder: &Path) -> Vec<PathBuf> {
 /// the cache, named `to` only when the two agree, `from`'s mtime kept.
 /// `replace` lets it go over a file at `to` (an older sidecar); otherwise
 /// one there is an error and left. The whole hash and the size.
-pub(crate) fn copy_file(
+pub fn copy_file(
     from: &Path,
     to: &Path,
     replace: bool,
@@ -977,7 +977,7 @@ pub(crate) fn copy_file(
 /// looked at between frames. The temporaries a run before left in the
 /// folders it writes to are removed first. Never deletes anything but
 /// its own temporaries.
-pub(crate) fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
+pub fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
     let mut report = Report::default();
     // The folders it will write to, each once.
     let mut folders: Vec<PathBuf> = Vec::new();
@@ -1143,7 +1143,7 @@ pub(crate) fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
 /// want later (§216). A row is written for a copy the index has not
 /// seen yet; a row of another size is not given the hash. The waits on
 /// the library's lock beat.
-pub(crate) fn record(index: &Path, report: &Report, beat: &Beat) {
+pub fn record(index: &Path, report: &Report, beat: &Beat) {
     if report.copied.is_empty() {
         return;
     }
@@ -1168,9 +1168,9 @@ pub(crate) fn record(index: &Path, report: &Report, beat: &Beat) {
 /// those that hold a copy, and of those that hold a file of its key and
 /// size that cannot be told from it without reading both whole.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Where {
-    pub(crate) on: Vec<usize>,
-    pub(crate) unknown: Vec<usize>,
+pub struct Where {
+    pub on: Vec<usize>,
+    pub unknown: Vec<usize>,
 }
 
 /// Which archives hold a copy of each of `frames`, by hash and confirmed
@@ -1179,7 +1179,7 @@ pub(crate) struct Where {
 /// pair only a whole read would settle is unknown (the Back up sheet's
 /// plan settles it). None when `stop` said to stop, between frames: a
 /// newer ask has overtaken this one.
-pub(crate) fn on_archives(
+pub fn on_archives(
     frames: &[PathBuf],
     archives: &[PathBuf],
     lib: Option<&Library>,
@@ -1229,7 +1229,7 @@ pub(crate) fn on_archives(
 /// the frame is listed from the archive instead, where it can be
 /// opened. Nothing is asked of the disk here; `present` is what the
 /// caller already knows.
-pub(crate) fn hide_local_copies<T>(
+pub fn hide_local_copies<T>(
     rows: Vec<(PathBuf, T)>,
     archives: &[PathBuf],
     key: impl Fn(&T) -> &str,
@@ -1250,7 +1250,7 @@ pub(crate) fn hide_local_copies<T>(
 }
 
 /// How a supervised job ended for the window.
-pub(crate) enum Heard<R> {
+pub enum Heard<R> {
     /// Done, in time; or done after it was set aside (`late`).
     Done { result: R, late: bool },
     /// Quiet for the wait: set aside. It goes on alone, and its
@@ -1267,7 +1267,7 @@ pub(crate) enum Heard<R> {
 /// answered its look and then stopped), and `Done` when it ends, late
 /// or not. As §215's lanes do for the indexer's passes, a hung job
 /// holds its own thread and nothing of the window's.
-pub(crate) fn supervise<R: Send + 'static>(
+pub fn supervise<R: Send + 'static>(
     name: &str,
     wait: Duration,
     job: impl FnOnce(&Beat) -> R + Send + 'static,
@@ -1323,7 +1323,7 @@ pub(crate) fn supervise<R: Send + 'static>(
 }
 
 /// A size in words: "12.3 MB", "512 KB", "40 bytes".
-pub(crate) fn size_words(bytes: u64) -> String {
+pub fn size_words(bytes: u64) -> String {
     const MB: f64 = 1_000_000.0;
     match bytes {
         b if b >= 1_000_000_000 => format!("{:.1} GB", b as f64 / 1e9),
@@ -1340,7 +1340,7 @@ mod tests {
     use greycard_library::fixture::{A7, R5, R6, write_frame};
     use std::sync::Arc;
 
-    pub(crate) fn scratch(what: &str) -> PathBuf {
+    pub fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "greycard-ui-archive-{what}-{}-{}",
             std::process::id(),
@@ -1367,7 +1367,7 @@ mod tests {
     /// folder in the shoot with one frame.
     fn shoot(root: &Path) -> Vec<PathBuf> {
         let dir = root.join("shoot");
-        std::fs::create_dir_all(dir.join(crate::cull::REJECTS)).unwrap();
+        std::fs::create_dir_all(dir.join(crate::rejects::REJECTS)).unwrap();
         let files: Vec<PathBuf> = ["a.tif", "b.tif", "c.tif"]
             .iter()
             .map(|n| dir.join(n))
@@ -1377,7 +1377,7 @@ mod tests {
         }
         rate(&files[1], 3, 1, Placement::Beside);
         rate(&files[2], 2, 1, Placement::Folder);
-        write_frame(&dir.join(crate::cull::REJECTS).join("r.tif"), &R5, 9);
+        write_frame(&dir.join(crate::rejects::REJECTS).join("r.tif"), &R5, 9);
         files
     }
 
@@ -1438,7 +1438,7 @@ mod tests {
         assert!(there.join(SIDECAR_FOLDER).join("c.tif.gcd").is_file());
         assert!(!there.join("c.tif.gcd").exists());
         // The rejects left out, and nothing temporary left behind.
-        assert!(!there.join(crate::cull::REJECTS).exists());
+        assert!(!there.join(crate::rejects::REJECTS).exists());
         let temps = std::fs::read_dir(&there)
             .unwrap()
             .flatten()
@@ -1474,8 +1474,8 @@ mod tests {
         assert_eq!(with.rejects, 1);
         assert_eq!(with.copies().0, 1);
         run(&with, &quiet_hooks(&cancel, &bytes));
-        assert!(there.join(crate::cull::REJECTS).join("r.tif").is_file());
-        crate::testing::remove_dir_retry(&dir);
+        assert!(there.join(crate::rejects::REJECTS).join("r.tif").is_file());
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A shoot renamed here after its backup, or an archive reorganized
@@ -1507,7 +1507,7 @@ mod tests {
         std::fs::remove_file(elsewhere.join("renamed.tif")).unwrap();
         let plan = super::plan(&backup_ask(&local, &nas, &db, false), &no_beat());
         assert_eq!(plan.copies().0, 3);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1546,7 +1546,7 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().ends_with(TEMPORARY))
             .collect();
         assert!(left.is_empty(), "the temporary removed");
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1586,7 +1586,7 @@ mod tests {
         assert_eq!(report.stale, std::slice::from_ref(&stale));
         assert!(!stale.exists());
         assert!(fresh.exists() && own.exists(), "a live writer's are kept");
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A frame there already takes the newer `.gcd` across, in either
@@ -1656,7 +1656,7 @@ mod tests {
         run(&plan, &quiet_hooks(&cancel, &bytes));
         assert_eq!(read(&files[2]), 4);
         assert_eq!(read(&files[0]), 1);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Two `.gcd`s of one frame edited on both sides since the backup
@@ -1785,7 +1785,7 @@ mod tests {
             (here.meta.rating, here.meta.label),
             (2, greycard_edit::meta::Label::Red)
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Probe L: Back up planned while the archive's copy is ahead (to
@@ -1832,7 +1832,7 @@ mod tests {
         );
         let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
         assert_eq!(here, copy);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Bring back skips a frame already under a local root, wherever it
@@ -1887,7 +1887,7 @@ mod tests {
                 .join("y.tif")
                 .exists()
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Another file at the destination's name is never written over.
@@ -1909,7 +1909,7 @@ mod tests {
             std::fs::read(there.join("a.tif")).unwrap(),
             b"another picture"
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1932,7 +1932,7 @@ mod tests {
         let report = run(&plan, &hooks);
         assert_eq!(report.copied.len(), 1);
         assert_eq!(report.canceled, 2);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// The share-hang path, with a slow fake: a job that beats, then
@@ -2060,7 +2060,7 @@ mod tests {
             }
             Heard::Aside | Heard::Lost => panic!("set aside twice, or lost"),
         }
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2172,7 +2172,7 @@ mod tests {
         assert_eq!(lib.whole_hash(&late).unwrap(), None);
         assert_eq!(lib.whole_hash(&files[2]).unwrap(), None);
         drop(lib);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -2259,7 +2259,7 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].to, greycard_edit_io::xmp::paths_of(b)[0]);
         assert!(back[0].replace);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A sidecar left at the destination with no frame beside it keeps
@@ -2292,7 +2292,7 @@ mod tests {
         );
         // The others went whole.
         assert!(there.join("a.tif").is_file() && there.join("c.tif").is_file());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// The copy's rows wait on a library another writer holds without
@@ -2341,7 +2341,7 @@ mod tests {
                 .is_some()
         );
         drop(lib);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// §197's open case, settled the hash-first way: a file at the
@@ -2405,7 +2405,7 @@ mod tests {
         // Asked again: decided from the rows, the same way.
         let second = plan(&ask, &no_beat());
         assert_eq!(second.items, first.items);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A frame with no sidecar of its own is still kept out by a sidecar
@@ -2450,7 +2450,7 @@ mod tests {
         let report = run(&plan, &quiet_hooks(&cancel, &bytes));
         assert!(report.taken.contains(a));
         assert!(!there.join("a.tif").exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A job whose thread ends without a result is said, so nothing
@@ -2480,7 +2480,7 @@ mod tests {
         write_frame(&dir.join("a.tif"), &R5, 1);
         let (frames, _) = walk(&dir, false, &[], &|| {}, &|| true);
         assert!(frames.is_empty());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A folder of no root's with the archive inside it: the walk never
@@ -2495,7 +2495,7 @@ mod tests {
         write_frame(&nas.join("z.tif"), &R6, 2);
         let (frames, _) = walk(&top, false, std::slice::from_ref(&nas), &|| {}, &|| false);
         assert_eq!(frames, [top.join("a.tif")]);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// Under `--no-sidecars` the frames go without them, and nothing of
@@ -2518,7 +2518,7 @@ mod tests {
         let there = nas.join("local").join("shoot");
         assert!(!there.join("b.tif.gcd").exists());
         assert!(!there.join(SIDECAR_FOLDER).exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A whole hash on a row is the file's only while the row's size and
@@ -2559,6 +2559,6 @@ mod tests {
             What::Taken { to: copy.clone() },
             "not the frame backed up before"
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }

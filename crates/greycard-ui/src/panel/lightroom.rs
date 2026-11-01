@@ -565,13 +565,8 @@ fn took_up(state: &Rc<Shared>, app: &App) {
         let Some(path) = st.views.index_path.clone() else {
             return;
         };
-        let (rows, names) = (
-            st.views.collections.rows.clone(),
-            st.views.collections.names.clone(),
-        );
         st.views.collections =
             crate::collections::Store::load(crate::collections::Store::dir_beside(&path));
-        (st.views.collections.rows, st.views.collections.names) = (rows, names);
         crate::panel::collections::show(&st, app);
         st.views.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
             &crate::collections::Store::dir_beside(&path),

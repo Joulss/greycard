@@ -27,11 +27,11 @@ use std::time::{Duration, SystemTime};
 use greycard_library::Library;
 
 use super::{Beat, Hooks, key_of, open_index, whole_from_row};
-use crate::cull::{REJECTS, rejects_dir};
 use crate::delete::{self, Deleted, How};
+use crate::rejects::{REJECTS, rejects_dir};
 
 /// The queue's file name, beside `roots.json`.
-pub(crate) const QUEUE_FILE: &str = "archive-queue.json";
+pub const QUEUE_FILE: &str = "archive-queue.json";
 
 /// The queue file's version.
 const QUEUE_VERSION: u64 = 1;
@@ -42,18 +42,18 @@ const SAME_TIME: Duration = Duration::from_secs(2);
 
 /// One reject, as a run and the queue carry it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Entry {
+pub struct Entry {
     /// Its content key (§72's head and size).
-    pub(crate) hash: String,
+    pub hash: String,
     /// Its file name, for saying it.
-    pub(crate) name: String,
+    pub name: String,
     /// The size it had.
-    pub(crate) size: u64,
+    pub size: u64,
     /// The whole file's BLAKE3, when the index kept one of the file as
     /// it was.
-    pub(crate) whole: Option<String>,
+    pub whole: Option<String>,
     /// Its mtime, nanoseconds since the epoch.
-    pub(crate) mtime: Option<i64>,
+    pub mtime: Option<i64>,
 }
 
 /// One reject a run is over: its entry, and the copies the sheet
@@ -64,14 +64,14 @@ pub(crate) struct Entry {
 /// may have changed while the archive was away, so they look the reject
 /// up again by its hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Item {
-    pub(crate) entry: Entry,
-    pub(crate) listed: Option<Vec<PathBuf>>,
+pub struct Item {
+    pub entry: Entry,
+    pub listed: Option<Vec<PathBuf>>,
 }
 
 impl Item {
     /// A queued reject, looked up by its hash when it runs.
-    pub(crate) fn queued(entry: Entry) -> Item {
+    pub fn queued(entry: Entry) -> Item {
         Item {
             entry,
             listed: None,
@@ -125,7 +125,7 @@ fn near(a: i64, b: i64) -> bool {
 
 /// The entry for a frame here: its key from its row when the row is of
 /// the file as it is, else read from its head.
-pub(crate) fn entry_of(frame: &Path, lib: Option<&Library>) -> Result<Entry, String> {
+pub fn entry_of(frame: &Path, lib: Option<&Library>) -> Result<Entry, String> {
     let meta = std::fs::metadata(frame).map_err(|e| e.to_string())?;
     if !meta.is_file() {
         return Err("not a file".into());
@@ -145,7 +145,7 @@ pub(crate) fn entry_of(frame: &Path, lib: Option<&Library>) -> Result<Entry, Str
 
 /// Whether a file is a reject's copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Seen {
+pub enum Seen {
     Copy,
     /// Its key and size, and nothing short of reading both whole would
     /// tell whether it is the same file.
@@ -157,7 +157,7 @@ pub(crate) enum Seen {
 /// a file of that size, of that head (its row's when the row is of the
 /// file as it is now, else read), and the same by the whole hashes when
 /// both are known, else by the time.
-pub(crate) fn seen_on_disk(entry: &Entry, there: &Path, lib: Option<&Library>) -> Seen {
+pub fn seen_on_disk(entry: &Entry, there: &Path, lib: Option<&Library>) -> Seen {
     let Ok(meta) = std::fs::metadata(there) else {
         return Seen::Other;
     };
@@ -201,16 +201,16 @@ fn seen_in_index(entry: &Entry, row: &greycard_library::Entry, lib: &Library) ->
 
 /// Where `entry`'s copies are under `archive`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Found {
-    pub(crate) copies: Vec<PathBuf>,
+pub struct Found {
+    pub copies: Vec<PathBuf>,
     /// Files of its key and size that could not be told from it.
-    pub(crate) unknown: Vec<PathBuf>,
+    pub unknown: Vec<PathBuf>,
 }
 
 /// `entry`'s copies under `archive`, by hash in the index at any path,
 /// each confirmed on the disk when `on_disk` (the archive answered),
 /// else as the index has it. `not` is never its own copy.
-pub(crate) fn find(
+pub fn find(
     entry: &Entry,
     archive: &Path,
     lib: Option<&Library>,
@@ -246,32 +246,32 @@ pub(crate) fn find(
 
 /// One frame of the rejects folder, and what was found of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Reject {
-    pub(crate) frame: PathBuf,
+pub struct Reject {
+    pub frame: PathBuf,
     /// Its entry, or why it could not be read.
-    pub(crate) entry: Result<Entry, String>,
-    pub(crate) found: Found,
+    pub entry: Result<Entry, String>,
+    pub found: Found,
 }
 
 /// What the sheet shows: each reject with its copies on the archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Look {
-    pub(crate) archive: PathBuf,
+pub struct Look {
+    pub archive: PathBuf,
     /// Whether the archive answered its look; when not, the copies are
     /// as the index last saw them.
-    pub(crate) answered: bool,
-    pub(crate) dir: PathBuf,
-    pub(crate) rejects: Vec<Reject>,
+    pub answered: bool,
+    pub dir: PathBuf,
+    pub rejects: Vec<Reject>,
 }
 
 impl Look {
     /// The rejects with a copy found.
-    pub(crate) fn with_copies(&self) -> impl Iterator<Item = &Reject> {
+    pub fn with_copies(&self) -> impl Iterator<Item = &Reject> {
         self.rejects.iter().filter(|r| !r.found.copies.is_empty())
     }
 
     /// How many copies, and their bytes.
-    pub(crate) fn copies(&self) -> (usize, u64) {
+    pub fn copies(&self) -> (usize, u64) {
         self.with_copies().fold((0, 0), |(n, b), r| {
             let size = r.entry.as_ref().map(|e| e.size).unwrap_or(0);
             let k = r.found.copies.len();
@@ -281,7 +281,7 @@ impl Look {
 
     /// How many copies a move would move: those not in a rejects
     /// folder there already.
-    pub(crate) fn to_move(&self) -> usize {
+    pub fn to_move(&self) -> usize {
         self.with_copies()
             .flat_map(|r| r.found.copies.iter())
             .filter(|c| !in_rejects(c))
@@ -290,7 +290,7 @@ impl Look {
 
     /// What a run from the sheet is over: each reject with a copy
     /// found, and the copies listed.
-    pub(crate) fn items(&self) -> Vec<Item> {
+    pub fn items(&self) -> Vec<Item> {
         self.with_copies()
             .filter_map(|r| {
                 Some(Item {
@@ -302,7 +302,7 @@ impl Look {
     }
 
     /// The rejects with no copy found and none in doubt.
-    pub(crate) fn none_found(&self) -> Vec<&Path> {
+    pub fn none_found(&self) -> Vec<&Path> {
         self.rejects
             .iter()
             .filter(|r| r.entry.is_ok() && r.found.copies.is_empty() && r.found.unknown.is_empty())
@@ -312,7 +312,7 @@ impl Look {
 
     /// The rejects with a file on the archive that could not be told
     /// from them: listed, never acted on.
-    pub(crate) fn not_known(&self) -> Vec<&Path> {
+    pub fn not_known(&self) -> Vec<&Path> {
         self.rejects
             .iter()
             .filter(|r| !r.found.unknown.is_empty())
@@ -320,7 +320,7 @@ impl Look {
             .collect()
     }
 
-    pub(crate) fn unreadable(&self) -> Vec<(&Path, &str)> {
+    pub fn unreadable(&self) -> Vec<(&Path, &str)> {
         self.rejects
             .iter()
             .filter_map(|r| match &r.entry {
@@ -335,7 +335,7 @@ impl Look {
 /// `archive`: on its disk when it `answered`, else in the index alone.
 /// A rejects folder that is a link is refused, as §190's delete refuses
 /// it.
-pub(crate) fn look(
+pub fn look(
     dir: &Path,
     archive: &Path,
     answered: bool,
@@ -435,24 +435,24 @@ fn note(folders: &mut Vec<PathBuf>, d: &Path) {
 
 /// What a run of the moves did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Moves {
+pub struct Moves {
     /// Each copy moved: the reject's name, where it was, where it went.
-    pub(crate) moved: Vec<(String, PathBuf, PathBuf)>,
+    pub moved: Vec<(String, PathBuf, PathBuf)>,
     /// How many `.gcd`s went with them.
-    pub(crate) sidecars: usize,
+    pub sidecars: usize,
     /// Copies in a rejects folder there already, left where they are.
-    pub(crate) already: usize,
+    pub already: usize,
     /// The entries done: every copy found moved or in a rejects folder.
-    pub(crate) done: Vec<Entry>,
+    pub done: Vec<Entry>,
     /// The entries that could not be done, and why: kept in the queue.
-    pub(crate) left: Vec<(Entry, String)>,
+    pub left: Vec<(Entry, String)>,
     /// The rejects with a copy there that could not be told from them,
     /// left alone, beside copies of theirs that were moved.
-    pub(crate) not_known: Vec<String>,
+    pub not_known: Vec<String>,
     /// The entries not reached because the run was canceled.
-    pub(crate) canceled: Vec<Entry>,
+    pub canceled: Vec<Entry>,
     /// The folders written to, for the indexer.
-    pub(crate) folders: Vec<PathBuf>,
+    pub folders: Vec<PathBuf>,
 }
 
 /// Move each entry's copies on `archive` into a `rejects` folder beside
@@ -462,7 +462,7 @@ pub(crate) struct Moves {
 /// disk at the moment it goes. One entry at a time, the cancel looked
 /// at between them, `hooks.bytes` counting the entries. Nothing is
 /// deleted.
-pub(crate) fn run_moves(
+pub fn run_moves(
     archive: &Path,
     items: &[Item],
     index: Option<&Path>,
@@ -521,10 +521,10 @@ pub(crate) fn run_moves(
             }
             // An orphaned sidecar there keeps the copy whole where it
             // is: on the archive nothing is written over (§197).
-            match crate::cull::move_rejects_as(
+            match crate::rejects::move_rejects_as(
                 std::slice::from_ref(copy),
                 &[0],
-                crate::cull::Orphans::Keep,
+                crate::rejects::Orphans::Keep,
                 true,
             ) {
                 Ok(m) if m.files == [0] => {
@@ -559,22 +559,22 @@ pub(crate) fn run_moves(
 
 /// What a run of the deletes did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Deletes {
+pub struct Deletes {
     /// What went, as `crate::delete` says it, over every copy.
-    pub(crate) deleted: Deleted,
+    pub deleted: Deleted,
     /// The copies refused before anything went (a link, a folder
     /// outside the archive), and why.
-    pub(crate) refused: Vec<(PathBuf, String)>,
+    pub refused: Vec<(PathBuf, String)>,
     /// The rejects with no copy found there at the moment of the delete.
-    pub(crate) not_found: Vec<String>,
+    pub not_found: Vec<String>,
     /// The rejects with a copy there that could not be told from them,
     /// left alone.
-    pub(crate) not_known: Vec<String>,
+    pub not_known: Vec<String>,
     /// The entries not reached because the run was canceled, or the
     /// trash refused one before them.
-    pub(crate) canceled: usize,
+    pub canceled: usize,
     /// The folders deleted from, for the indexer.
-    pub(crate) folders: Vec<PathBuf>,
+    pub folders: Vec<PathBuf>,
 }
 
 /// The folders a delete on `archive` may reach for `copies`: their own,
@@ -602,7 +602,7 @@ fn allowed_under(archive: &Path, copies: &[PathBuf]) -> Vec<PathBuf> {
 /// moment it goes. The cancel is looked at between entries; the first
 /// refusal of the trash stops the run, as §190's does, and never turns
 /// into a permanent delete.
-pub(crate) fn run_deletes(
+pub fn run_deletes(
     archive: &Path,
     items: &[Item],
     index: Option<&Path>,
@@ -663,21 +663,21 @@ pub(crate) fn run_deletes(
 
 /// One archive's queued moves.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Queued {
-    pub(crate) archive: PathBuf,
-    pub(crate) frames: Vec<Entry>,
+pub struct Queued {
+    pub archive: PathBuf,
+    pub frames: Vec<Entry>,
 }
 
 /// The queue as read: what it holds, and what was dropped from it as
 /// malformed, said.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Read {
-    pub(crate) queue: Vec<Queued>,
-    pub(crate) dropped: Vec<String>,
+pub struct Read {
+    pub queue: Vec<Queued>,
+    pub dropped: Vec<String>,
 }
 
 /// Where the queue is kept for the roots file at `roots`.
-pub(crate) fn queue_path(roots: &Path) -> PathBuf {
+pub fn queue_path(roots: &Path) -> PathBuf {
     roots.with_file_name(QUEUE_FILE)
 }
 
@@ -718,7 +718,7 @@ fn entry_value(e: &Entry) -> serde_json::Value {
 /// path, or a frame's that lacks its hash, its name or its size, is
 /// dropped and said, and the rest kept. None for a file that is not a
 /// queue at all.
-pub(crate) fn parse_queue(bytes: &[u8]) -> Option<Read> {
+pub fn parse_queue(bytes: &[u8]) -> Option<Read> {
     let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
     let list = value.get("queue")?.as_array()?;
     let mut read = Read::default();
@@ -764,7 +764,7 @@ pub(crate) fn parse_queue(bytes: &[u8]) -> Option<Read> {
 /// queue is set aside as `archive-queue.json.unreadable` and said, so
 /// the next write does not put an empty queue over something a person
 /// might want back.
-pub(crate) fn read_queue(path: &Path) -> std::io::Result<Read> {
+pub fn read_queue(path: &Path) -> std::io::Result<Read> {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Read::default()),
@@ -788,7 +788,7 @@ pub(crate) fn read_queue(path: &Path) -> std::io::Result<Read> {
 
 /// Write the queue to `path` through a file beside it renamed over it;
 /// an empty queue removes the file.
-pub(crate) fn write_queue(path: &Path, queue: &[Queued]) -> std::io::Result<()> {
+pub fn write_queue(path: &Path, queue: &[Queued]) -> std::io::Result<()> {
     let queue: Vec<&Queued> = queue.iter().filter(|q| !q.frames.is_empty()).collect();
     if queue.is_empty() {
         return match std::fs::remove_file(path) {
@@ -822,7 +822,7 @@ pub(crate) fn write_queue(path: &Path, queue: &[Queued]) -> std::io::Result<()> 
 
 /// Change the queue at `path` as it is on disk now and write it back:
 /// what was dropped from it as malformed comes back to be said.
-pub(crate) fn edit_queue<T>(
+pub fn edit_queue<T>(
     path: &Path,
     change: impl FnOnce(&mut Vec<Queued>) -> T,
 ) -> std::io::Result<(Read, T)> {
@@ -833,7 +833,7 @@ pub(crate) fn edit_queue<T>(
 }
 
 /// `entries` added to `archive`'s queue, each frame once by its hash.
-pub(crate) fn enqueue(queue: &mut Vec<Queued>, archive: &Path, entries: &[Entry]) {
+pub fn enqueue(queue: &mut Vec<Queued>, archive: &Path, entries: &[Entry]) {
     let q = match queue.iter_mut().position(|q| q.archive == archive) {
         Some(i) => &mut queue[i],
         None => {
@@ -852,7 +852,7 @@ pub(crate) fn enqueue(queue: &mut Vec<Queued>, archive: &Path, entries: &[Entry]
 }
 
 /// `done` taken out of `archive`'s queue.
-pub(crate) fn dequeue(queue: &mut Vec<Queued>, archive: &Path, done: &[Entry]) {
+pub fn dequeue(queue: &mut Vec<Queued>, archive: &Path, done: &[Entry]) {
     for q in queue.iter_mut().filter(|q| q.archive == archive) {
         q.frames.retain(|e| !done.iter().any(|d| d.hash == e.hash));
     }
@@ -998,7 +998,7 @@ mod tests {
             .find(|r| r.frame == c.frames[2])
             .unwrap();
         assert_eq!(r.found.copies, [c.there.join("c.tif")]);
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1028,7 +1028,7 @@ mod tests {
         assert!(moves.moved.is_empty());
         assert_eq!(moves.left.len(), 1);
         assert!(c.there.join("a.tif").is_file());
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1063,7 +1063,7 @@ mod tests {
         assert!(c.there.join("c.tif").is_file());
         assert!(c.frames.iter().all(|f| f.is_file()));
         assert_eq!(moves.folders, [c.there.clone(), out.clone()]);
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1091,7 +1091,7 @@ mod tests {
         assert!(c.there.join(SIDECAR_FOLDER).join("b.tif.gcd").is_file());
         assert!(c.there.join("b.xmp").is_file());
         assert_eq!(std::fs::read(out.join("b.xmp")).unwrap(), b"someone else's");
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1139,7 +1139,7 @@ mod tests {
             );
             assert!(std::fs::symlink_metadata(c.nas.join("linked").join("a.tif")).is_ok());
         }
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     /// The run acts on the copies the sheet listed and no others: one
@@ -1193,7 +1193,7 @@ mod tests {
         );
         assert!(later2.is_file(), "{moves:?}");
         assert!(rejects_dir(&c.nas.join("later")).join("a.tif").is_file());
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     /// The rejects folder a copy would go to, a link or leading out of
@@ -1233,7 +1233,7 @@ mod tests {
         );
         assert!(moves.moved.is_empty(), "{moves:?}");
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     /// A folder on the archive that is a link out of it is not one the
@@ -1250,7 +1250,7 @@ mod tests {
             &[c.nas.join("door").join("x.tif"), c.there.join("a.tif")],
         );
         assert_eq!(allowed, [dunce::canonicalize(&c.there).unwrap()]);
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1268,7 +1268,7 @@ mod tests {
         assert_eq!(moves.canceled.len(), 1);
         assert_eq!(moves.canceled[0].name, "b.tif");
         assert!(c.there.join("b.tif").is_file());
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     /// The share-hang path with a slow fake: a run held in the middle
@@ -1326,7 +1326,7 @@ mod tests {
             Heard::Aside | Heard::Lost => panic!("set aside twice, or lost"),
         }
         assert!(c.there.join("b.tif").is_file());
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     /// The archive not answering: the copies as the index has them,
@@ -1340,7 +1340,7 @@ mod tests {
         assert!(!look.answered);
         assert_eq!(look.copies().0, 2);
         assert_eq!(look.not_known().len(), 1);
-        crate::testing::remove_dir_retry(&c.dir);
+        greycard_render::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1387,6 +1387,6 @@ mod tests {
         assert_eq!(read.dropped.len(), 1);
         assert!(path.with_extension("json.unreadable").is_file());
         assert!(!path.exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }

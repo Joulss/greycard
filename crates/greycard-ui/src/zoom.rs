@@ -1,20 +1,47 @@
 //! What the viewport shows a picture at: the zoom asked for, or the
 //! fit that brings the whole of it into the room it has, and how
-//! much room that is when the compare view has laid several out.
+//! much room that is when the compare view has laid several out, and
+//! where it lays them.
 //!
 //! Pure, and here rather than in the viewport's callbacks, because
 //! the fit is read in six places a frame — the pan, the wheel, the
 //! crop's drag, the mask handles, the readout — and every one of
 //! them has to come out with the same number.
 
-use crate::cull;
+/// The gap between compared frames, physical pixels.
+pub const TILE_GAP: u32 = 4;
+
+/// The compare view's grid: one frame, two side by side, or three or
+/// four in a square (a set of four at the end of a folder of three
+/// is three tiles, and the fourth cell is empty).
+pub fn tile_grid(n: usize) -> (u32, u32) {
+    match n {
+        0 | 1 => (1, 1),
+        2 => (2, 1),
+        _ => (2, 2),
+    }
+}
+
+/// Where each of `n` tiles goes in a view of `width` by `height`
+/// physical pixels: x, y, width, height, with [`TILE_GAP`] between.
+pub fn tile_rects(width: u32, height: u32, n: usize) -> Vec<(u32, u32, u32, u32)> {
+    let (cols, rows) = tile_grid(n);
+    let w = (width.saturating_sub(TILE_GAP * (cols - 1)) / cols).max(1);
+    let h = (height.saturating_sub(TILE_GAP * (rows - 1)) / rows).max(1);
+    (0..n.max(1))
+        .map(|k| {
+            let (c, r) = (k as u32 % cols, k as u32 / cols);
+            (c * (w + TILE_GAP), r * (h + TILE_GAP), w, h)
+        })
+        .collect()
+}
 
 /// The part of a `vw` by `vh` view one picture has: all of it, or
 /// its tile of a compare view of `compare` frames. The tiles are all
 /// one size, so the first one's is every one's.
 pub fn cell(vw: u32, vh: u32, compare: usize) -> (u32, u32) {
     if compare > 1 {
-        let (_, _, w, h) = cull::tile_rects(vw, vh, compare)[0];
+        let (_, _, w, h) = tile_rects(vw, vh, compare)[0];
         (w, h)
     } else {
         (vw, vh)

@@ -612,7 +612,7 @@ pub fn hash_whole(path: &Path) -> std::io::Result<String> {
 
 /// [`hash_whole`], calling `beat` at every chunk read, with how many
 /// bytes were read.
-pub(crate) fn hash_whole_beating(path: &Path, beat: &dyn Fn()) -> std::io::Result<(String, u64)> {
+pub fn hash_whole_beating(path: &Path, beat: &dyn Fn()) -> std::io::Result<(String, u64)> {
     let mut file = std::fs::File::open(path)?;
     hash_reader_beating(&mut file, beat)
 }
@@ -655,7 +655,7 @@ pub fn temporary(to: &Path) -> PathBuf {
 
 /// [`temporary`] with an ending of the caller's: a backup's temporaries
 /// are its own, and its sweep never takes an import's.
-pub(crate) fn temporary_ending(to: &Path, ending: &str) -> PathBuf {
+pub fn temporary_ending(to: &Path, ending: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let name = name_of(to);
@@ -668,7 +668,7 @@ fn temporary_pid(name: &str) -> Option<u32> {
 }
 
 /// [`temporary_pid`] for a temporary with `ending`.
-pub(crate) fn temporary_pid_ending(name: &str, ending: &str) -> Option<u32> {
+pub fn temporary_pid_ending(name: &str, ending: &str) -> Option<u32> {
     let rest = name.strip_suffix(ending)?;
     let (_, last) = rest.rsplit_once('.')?;
     last.split_once('-')?.0.parse().ok()
@@ -676,7 +676,7 @@ pub(crate) fn temporary_pid_ending(name: &str, ending: &str) -> Option<u32> {
 
 /// Whether process `pid` is running. Unix asks with signal 0; elsewhere
 /// it cannot be told cheaply and a temporary is judged by its age alone.
-pub(crate) fn alive(pid: u32) -> bool {
+pub fn alive(pid: u32) -> bool {
     if pid == std::process::id() {
         return true;
     }
@@ -903,20 +903,20 @@ pub fn land_from(
 }
 
 /// How [`land_with`] lands a file beyond the import's way.
-pub(crate) struct Landing<'a> {
+pub struct Landing<'a> {
     /// The temporary's ending: [`TEMPORARY`] for an import.
-    pub(crate) ending: &'a str,
+    pub ending: &'a str,
     /// Go over a file already at the name (a backup's older sidecar);
     /// otherwise one there is an error and left.
-    pub(crate) replace: bool,
+    pub replace: bool,
     /// Called at every chunk written or read back.
-    pub(crate) beat: &'a dyn Fn(),
+    pub beat: &'a dyn Fn(),
     /// Counts the bytes written, for a bar.
-    pub(crate) bytes: Option<&'a AtomicU64>,
+    pub bytes: Option<&'a AtomicU64>,
     /// A test's hand on the temporary once written, before it is read
     /// back.
     #[cfg(test)]
-    pub(crate) tamper: Option<&'a dyn Fn(&Path)>,
+    pub tamper: Option<&'a dyn Fn(&Path)>,
 }
 
 impl Default for Landing<'_> {
@@ -936,7 +936,7 @@ impl Default for Landing<'_> {
 /// temporary beside `to`, the bytes hashed as they stream, the
 /// temporary read back past the cache and hashed again, and named `to`
 /// only when the two agree; `to` takes `modified`.
-pub(crate) fn land_with(
+pub fn land_with(
     src: &mut dyn Read,
     modified: Option<std::time::SystemTime>,
     length: Option<u64>,
@@ -1649,7 +1649,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
     }
     if let (Some(preset), Some(placement)) = (&opts.preset, opts.placement) {
         let (preset, left_off) =
-            crate::panel::sync::preset_fitted(preset, &opts.profiles, || body.clone());
+            crate::preset_fit::preset_fitted(preset, &opts.profiles, || body.clone());
         if left_off {
             tracing::warn!(
                 "import: {}: the preset's camera profile was made for another camera, left off",
@@ -1661,13 +1661,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
             .ok()
             .flatten()
             .unwrap_or_default();
-        crate::panel::startup::preset_at_start(
-            &mut sidecar,
-            None,
-            &frame,
-            &preset,
-            Some(placement),
-        );
+        crate::preset_fit::preset_at_start(&mut sidecar, None, &frame, &preset, Some(placement));
         if sidecar.current_label.is_some() {
             report.preset += 1;
         }

@@ -131,7 +131,7 @@ pub(crate) fn new_version(
 /// The name sheet over version `id` of `path`: the collections' sheet,
 /// its field holding `name`, all of it chosen.
 fn ask_name(st: &mut State, app: &App, path: &Path, id: &str, name: &str, fresh: bool) {
-    st.views.collections.asked = Some(crate::panel::collections::Asked::Version {
+    st.views.collections_held.asked = Some(crate::panel::collections::Asked::Version {
         path: path.to_path_buf(),
         id: id.to_string(),
     });
@@ -1794,7 +1794,7 @@ mod tests {
             assert_eq!(cull.compare, 3);
             assert_eq!(cull.anchor, 4, "on the file's own cell, no slide");
             assert_eq!(compared(&st), [4, 5, 6], "the three and no other");
-            assert_eq!(crate::cull::tile_grid(3), (2, 2), "the fourth empty");
+            assert_eq!(crate::zoom::tile_grid(3), (2, 2), "the fourth empty");
             assert_eq!(st.current, Some(5), "the version right-clicked in focus");
             assert_eq!(crate::panel::browser::chosen_frames(&st), [5]);
         }

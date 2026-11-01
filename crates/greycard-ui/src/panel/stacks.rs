@@ -854,10 +854,10 @@ mod tests {
         // Add to collection takes the top's frame, not the stack's.
         app.invoke_collection_menu_add(-1);
         assert!(matches!(
-            &state.borrow().views.collections.asked,
+            &state.borrow().views.collections_held.asked,
             Some(crate::panel::collections::Asked::New { add }) if add.len() == 1
         ));
-        state.borrow_mut().views.collections.asked = None;
+        state.borrow_mut().views.collections_held.asked = None;
         app.set_collection_sheet_open(false);
         // x3, behind the top, rated; the filter at three stars.
         {

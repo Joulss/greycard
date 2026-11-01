@@ -329,7 +329,13 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
         })
         .collect();
     assert_eq!(hints, hand, "the collection's own order is kept");
-    let row = state.borrow().views.collections.rows.row_data(0).unwrap();
+    let row = state
+        .borrow()
+        .views
+        .collections_held
+        .rows
+        .row_data(0)
+        .unwrap();
     assert!(row.capture);
     assert_eq!(row.order, "capture time", "the open row names its order");
 
@@ -353,7 +359,7 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
         state
             .borrow()
             .views
-            .collections
+            .collections_held
             .rows
             .row_data(0)
             .unwrap()
@@ -363,7 +369,13 @@ fn a_collection_keeps_its_hand_order_until_a_sort_and_comes_back_to_it() {
     land_all(&state, &app, &worker);
     assert_eq!(rows_shown(&app), hand);
     assert_eq!(app.get_sort_menu().words, "Hand order");
-    let row = state.borrow().views.collections.rows.row_data(0).unwrap();
+    let row = state
+        .borrow()
+        .views
+        .collections_held
+        .rows
+        .row_data(0)
+        .unwrap();
     assert!(!row.capture);
     assert_eq!(row.order, "");
     // Another collection is in its own order still.

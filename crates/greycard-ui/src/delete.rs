@@ -37,7 +37,7 @@ use greycard_edit::{Placement, SIDECAR_FOLDER, Sidecar};
 /// asking it: on Linux a file on another disk or a network mount may
 /// have none, and that failure is remembered for the folder
 /// ([`offer`]).
-pub(crate) const TRASH_SUPPORTED: bool = cfg!(any(
+pub const TRASH_SUPPORTED: bool = cfg!(any(
     windows,
     target_os = "macos",
     all(unix, not(target_os = "android"), not(target_os = "ios"))
@@ -45,11 +45,11 @@ pub(crate) const TRASH_SUPPORTED: bool = cfg!(any(
 
 /// What the sheet offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Offer {
+pub struct Offer {
     /// "Move to the trash": the default button, and what Enter does.
-    pub(crate) trash: bool,
+    pub trash: bool,
     /// "Delete permanently": never the default, never Enter's.
-    pub(crate) permanent: bool,
+    pub permanent: bool,
 }
 
 /// What the sheet offers: the trash wherever the platform has one;
@@ -57,7 +57,7 @@ pub(crate) struct Offer {
 /// choice the user has to make with the pointer, where the trash has
 /// already refused files from this folder this session. A trash that
 /// fails never becomes a permanent delete of its own accord.
-pub(crate) fn offer(supported: bool, refused_here: bool) -> Offer {
+pub fn offer(supported: bool, refused_here: bool) -> Offer {
     Offer {
         trash: supported,
         permanent: !supported || refused_here,
@@ -66,84 +66,84 @@ pub(crate) fn offer(supported: bool, refused_here: bool) -> Offer {
 
 /// How the files go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum How {
+pub enum How {
     Trash,
     Permanent,
 }
 
 /// One frame to delete, and what goes with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Doomed {
-    pub(crate) frame: PathBuf,
+pub struct Doomed {
+    pub frame: PathBuf,
     /// The camera's JPEGs beside the raw, which go with it.
-    pub(crate) companions: Vec<PathBuf>,
-    pub(crate) sidecars: Vec<PathBuf>,
+    pub companions: Vec<PathBuf>,
+    pub sidecars: Vec<PathBuf>,
 }
 
 /// What a delete would touch, and what it refuses.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Plan {
-    pub(crate) frames: Vec<Doomed>,
+pub struct Plan {
+    pub frames: Vec<Doomed>,
     /// The frames left alone, and why.
-    pub(crate) refused: Vec<(PathBuf, String)>,
+    pub refused: Vec<(PathBuf, String)>,
 }
 
 impl Plan {
-    pub(crate) fn sidecars(&self) -> usize {
+    pub fn sidecars(&self) -> usize {
         self.frames.iter().map(|d| d.sidecars.len()).sum()
     }
 
-    pub(crate) fn companions(&self) -> usize {
+    pub fn companions(&self) -> usize {
         self.frames.iter().map(|d| d.companions.len()).sum()
     }
 }
 
 /// What a delete did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Deleted {
+pub struct Deleted {
     /// The frames no longer on disk: deleted now, or found gone
     /// already between the sheet and the confirm.
-    pub(crate) frames: Vec<PathBuf>,
+    pub frames: Vec<PathBuf>,
     /// How many of them were gone already.
-    pub(crate) vanished: usize,
+    pub vanished: usize,
     /// How many sidecars went with them.
-    pub(crate) sidecars: usize,
+    pub sidecars: usize,
     /// The camera's JPEGs beside them that went with them: the index
     /// forgets their rows with the frames'.
-    pub(crate) companions: Vec<PathBuf>,
+    pub companions: Vec<PathBuf>,
     /// The camera's JPEGs left behind when their raw went, and why: half
     /// a pair, said so.
-    pub(crate) companions_left: Vec<(PathBuf, String)>,
+    pub companions_left: Vec<(PathBuf, String)>,
     /// The frames that could not be deleted, and why; each is whole
     /// where it was, its sidecars with it.
-    pub(crate) failed: Vec<(PathBuf, String)>,
+    pub failed: Vec<(PathBuf, String)>,
     /// The trash refused something, and the delete stopped there.
-    pub(crate) trash_refused: Option<Refusal>,
+    pub trash_refused: Option<Refusal>,
     /// The frames after a refusal, not tried.
-    pub(crate) untried: usize,
+    pub untried: usize,
 }
 
 /// What the trash refused, as found on disk afterwards: `trash`
 /// stops at its first error, so part of a frame may have gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Refusal {
-    pub(crate) frame: PathBuf,
-    pub(crate) why: String,
+pub struct Refusal {
+    pub frame: PathBuf,
+    pub why: String,
     /// Whether the frame itself went (to the trash, or before).
-    pub(crate) frame_gone: bool,
+    pub frame_gone: bool,
     /// Whether it had gone before the confirm, by another hand: the
     /// trash never had it.
-    pub(crate) was_gone: bool,
+    pub was_gone: bool,
     /// Its sidecars still where they were.
-    pub(crate) left: Vec<PathBuf>,
+    pub left: Vec<PathBuf>,
     /// How many of its sidecars went to the trash.
-    pub(crate) sidecars_gone: usize,
+    pub sidecars_gone: usize,
 }
 
 /// The folders a delete may reach, as the disk spells them: each of
 /// `dirs` canonical. A folder that will not canonicalize (gone, or
 /// not the user's to read) is left out, and so is everything in it.
-pub(crate) fn allowed(dirs: &[PathBuf]) -> Vec<PathBuf> {
+pub fn allowed(dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     for d in dirs {
         if let Ok(c) = dunce::canonicalize(d)
@@ -197,7 +197,7 @@ fn deletable(path: &Path, allowed: &[PathBuf]) -> Result<bool, String> {
 
 /// Every sidecar of `frame` that is there: its `.gcd` in both places
 /// (a folder whose setting was flipped can hold both), and its XMPs.
-pub(crate) fn sidecars_of(frame: &Path) -> Vec<PathBuf> {
+pub fn sidecars_of(frame: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = [Placement::Beside, Placement::Folder]
         .into_iter()
         .map(|p| Sidecar::path_in(frame, p))
@@ -216,12 +216,7 @@ pub(crate) fn sidecars_of(frame: &Path) -> Vec<PathBuf> {
 /// Unless `apart`, each raw takes the camera's JPEGs beside it as its
 /// folder holds them now, but for a JPEG `listed` (the window's files),
 /// which is a frame of its own there.
-pub(crate) fn plan(
-    frames: &[PathBuf],
-    listed: &[PathBuf],
-    allowed: &[PathBuf],
-    apart: bool,
-) -> Plan {
+pub fn plan(frames: &[PathBuf], listed: &[PathBuf], allowed: &[PathBuf], apart: bool) -> Plan {
     let mut plan = Plan::default();
     let mut pairs = companions_of(frames, listed, apart);
     let mut folders = Folders::default();
@@ -262,7 +257,7 @@ pub(crate) fn plan(
 /// their folders hold them now, each folder read once: none when the
 /// JPEGs are listed `apart`, and none that `listed` names, which is a
 /// frame of its own.
-pub(crate) fn companions_of(
+pub fn companions_of(
     raws: &[PathBuf],
     listed: &[PathBuf],
     apart: bool,
@@ -283,7 +278,7 @@ pub(crate) fn companions_of(
 
 /// The names in each folder asked about, each folder read once.
 #[derive(Default)]
-pub(crate) struct Folders(HashMap<PathBuf, Vec<std::ffi::OsString>>);
+pub struct Folders(HashMap<PathBuf, Vec<std::ffi::OsString>>);
 
 impl Folders {
     fn names(&mut self, dir: &Path) -> &[std::ffi::OsString] {
@@ -304,11 +299,7 @@ impl Folders {
 /// there and nothing else of its stem is: the pair's, which goes where
 /// the pair goes, though it is neither file's alone
 /// ([`greycard_edit_io::xmp::paths_of`]).
-pub(crate) fn shared_xmp(
-    raw: &Path,
-    companions: &[PathBuf],
-    folders: &mut Folders,
-) -> Option<PathBuf> {
+pub fn shared_xmp(raw: &Path, companions: &[PathBuf], folders: &mut Folders) -> Option<PathBuf> {
     let short = greycard_edit_io::xmp::short_path(raw);
     std::fs::symlink_metadata(&short).ok()?;
     let (dir, stem) = (
@@ -329,26 +320,9 @@ pub(crate) fn shared_xmp(
     (!others).then_some(short)
 }
 
-/// The system trash, for the window: the `trash` crate's. Called
-/// only on the delete's own thread (`panel::delete`), never the
-/// window's: the crate may copy a file into the home trash, and on
-/// Windows it sets up COM for the thread it is first called on.
-#[cfg(not(test))]
-pub(crate) fn system_trash(paths: &[PathBuf]) -> Result<(), String> {
-    trash::delete_all(paths).map_err(|e| e.to_string())
-}
-
-/// A test build has no way to the real trash: whatever calls this
-/// in a test is a bug, and fails the test rather than putting a file
-/// in the user's trash.
-#[cfg(test)]
-pub(crate) fn system_trash(paths: &[PathBuf]) -> Result<(), String> {
-    panic!("a test reached the system trash with {paths:?}");
-}
-
 /// Delete what `plan` names, `how`. `trash` is the system trash for
-/// [`How::Trash`] ([`system_trash`], or a stand-in under test) and is
-/// never called for [`How::Permanent`].
+/// [`How::Trash`] (the window's `panel::delete::system_trash`, or a
+/// stand-in under test) and is never called for [`How::Permanent`].
 ///
 /// Each frame is checked again at the moment it goes: one gone since
 /// the sheet counts as gone and its sidecars still go; one that has
@@ -358,7 +332,7 @@ pub(crate) fn system_trash(paths: &[PathBuf]) -> Result<(), String> {
 /// frame whose raw went is counted gone even when a sidecar stayed.
 /// The first refusal stops the delete, the frames after it untried,
 /// and the permanent path is never taken in its place.
-pub(crate) fn delete(
+pub fn delete(
     plan: &Plan,
     how: How,
     allowed: &[PathBuf],
@@ -476,13 +450,13 @@ pub(crate) fn delete(
 }
 
 /// A count and its noun: "1 frame", "3 frames".
-pub(crate) fn count(n: usize, noun: &str) -> String {
+pub fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
 }
 
 /// The camera's JPEGs that go with the frames, as a list's middle
 /// item: ", 2 camera JPEGs"; empty for none.
-pub(crate) fn companion_words(n: usize) -> String {
+pub fn companion_words(n: usize) -> String {
     if n == 0 {
         String::new()
     } else {
@@ -500,7 +474,7 @@ fn name(p: &Path) -> String {
 /// how, then what the trash refused, worded from what is on disk
 /// after, then what was left and why. `refused` are the frames the
 /// confirm's own check left alone.
-pub(crate) fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -> String {
+pub fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -> String {
     let mut out = if done.frames.is_empty() {
         "nothing was deleted".to_string()
     } else {
@@ -608,7 +582,7 @@ pub(crate) fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -
 /// Take away a folder a delete emptied: its hidden sidecar folder,
 /// then the folder itself, each only when there is nothing left in
 /// it. For the rejects folder, which the move of the rejects made.
-pub(crate) fn remove_if_empty(dir: &Path) {
+pub fn remove_if_empty(dir: &Path) {
     // Fails, as it is meant to, on a folder with anything in it, and
     // never follows a link: a link is not a directory to remove_dir.
     let _ = std::fs::remove_dir(dir.join(SIDECAR_FOLDER));
@@ -732,7 +706,7 @@ mod tests {
         assert_eq!(done.vanished, 0);
         assert!(done.failed.is_empty() && done.trash_refused.is_none());
         assert_eq!(all(&dir), ["C.CR3", "D.CR3", "D.xmp", "notes.txt"]);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A raw takes the camera's JPEG beside it, the JPEG's own sidecar
@@ -788,7 +762,7 @@ mod tests {
         let p = plan(&both, &both, &ok, false);
         assert_eq!(p.frames.len(), 2);
         assert_eq!(p.companions(), 0);
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -833,7 +807,7 @@ mod tests {
             assert!(link.exists() && away.exists() && files[3].exists());
             assert!(files[1].exists());
         }
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -865,7 +839,7 @@ mod tests {
             ]
         );
         // And a whole folder gone: nothing to do, nothing panics.
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
         let done = delete(&p, How::Permanent, &ok, never);
         assert!(done.frames.is_empty());
         assert_eq!(done.failed.len(), 2);
@@ -916,7 +890,7 @@ mod tests {
              (no trash on this disk); 2 frames still where they were: ask again to \
              delete permanently"
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// The trash stops at its first error: here it takes the raw and
@@ -953,7 +927,7 @@ mod tests {
              refused B.CR3.gcd (left in .greycard): the sidecar would not go; 1 frame \
              still where it was: ask again to delete permanently"
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// A raw gone before the confirm, and the trash refusing the
@@ -980,7 +954,7 @@ mod tests {
              gone already, and the trash refused A.CR3.gcd (left in the folder), \
              A.CR3.xmp (left in the folder), A.xmp (left in the folder): refused"
         );
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     /// `delete` checks each path again whatever the plan says: a plan
@@ -1030,14 +1004,7 @@ mod tests {
             assert!(away.exists() && elsewhere.join("B.CR3").exists());
             assert!(dir.join("moved").join("A.CR3").exists());
         }
-        crate::testing::remove_dir_retry(&dir);
-    }
-
-    /// No test can reach the real trash: the test build's is a panic.
-    #[test]
-    #[should_panic(expected = "a test reached the system trash")]
-    fn a_test_build_has_no_way_to_the_system_trash() {
-        let _ = system_trash(&[PathBuf::from("/nowhere/at/all")]);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1052,6 +1019,6 @@ mod tests {
         std::fs::remove_file(rejects.join("notes.txt")).unwrap();
         remove_if_empty(&rejects);
         assert!(!rejects.exists() && dir.exists());
-        crate::testing::remove_dir_retry(&dir);
+        greycard_render::testing::remove_dir_retry(&dir);
     }
 }

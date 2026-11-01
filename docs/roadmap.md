@@ -620,14 +620,10 @@ touches.
       subset reader for the window, headless export, and the command
       line, the editor's `--export` kept an alias for a release.
       Waits on part 2
-- [ ] The window's remaining windowless modules into its library
-      (§467): import after the panel's four helpers move below it,
-      archive after cull's rejects half splits out, collections
-      without its Slint chip, zoom without cull's tile rects, delete
-      with the trash stand-in moved to its caller, the GPU marker
-      with its own scratch helper; camera match and the measurement
-      runners after part 2; explicit imports in place of the 44 glob
-      imports of the crate root as each moves
+- [ ] Camera match and the measurement runners into the window's
+      library once the worker's frame develop is the engine's (§471);
+      explicit imports in place of the crate root's glob imports as
+      each file moves
 - [ ] The profile and look stores out of greycard-edit: `settings()`
       reads the camera profile and the look table through them, so a
       loader handed in first, then the listing half to

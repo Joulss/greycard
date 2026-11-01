@@ -493,7 +493,7 @@ fn start(
                         &items,
                         index.as_deref(),
                         how,
-                        delete::system_trash,
+                        crate::panel::delete::system_trash,
                         &hooks,
                         beat,
                     )),

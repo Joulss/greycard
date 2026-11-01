@@ -48,7 +48,7 @@ static WE_SET: AtomicBool = AtomicBool::new(false);
 
 /// The backends a start sets the window up on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Backend {
+pub enum Backend {
     /// Slint's own choice, with nothing set.
     Default,
     /// DX12 alone.
@@ -74,17 +74,17 @@ impl Backend {
 
 /// What the marker file holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Marker {
+pub struct Marker {
     /// The backends a start was setting up on and did not finish: it
     /// died there, unless it is this start.
-    pub(crate) setup: Option<Backend>,
+    pub setup: Option<Backend>,
     /// Those a start died setting up on before.
-    pub(crate) died: Vec<Backend>,
+    pub died: Vec<Backend>,
 }
 
 impl Marker {
     /// The file's text. A line a word: the reader takes what it knows.
-    pub(crate) fn text(&self) -> String {
+    pub fn text(&self) -> String {
         let mut text = String::from("# greycard: GPU setup under way, or died in it\n");
         if let Some(setup) = self.setup {
             text.push_str(&format!("setup: {}\n", setup.name()));
@@ -97,7 +97,7 @@ impl Marker {
     }
 
     /// The file's text read back; what it does not know it leaves out.
-    pub(crate) fn parse(text: &str) -> Self {
+    pub fn parse(text: &str) -> Self {
         let mut marker = Marker::default();
         for line in text.lines() {
             if let Some(name) = line.strip_prefix("setup:") {
@@ -116,7 +116,7 @@ impl Marker {
 
 /// What to do to the environment before the select.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Env {
+pub enum Env {
     /// Nothing: the variable is the user's.
     Leave,
     /// Set it, to the name given, with our marker beside it.
@@ -127,7 +127,7 @@ pub(crate) enum Env {
 
 /// What to do to the marker file at a moment of the start.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum File {
+pub enum File {
     Leave,
     Write(Marker),
     Remove,
@@ -135,15 +135,15 @@ pub(crate) enum File {
 
 /// The start's choice from what the marker said.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Plan {
-    pub(crate) env: Env,
+pub struct Plan {
+    pub env: Env,
     /// Written before the select.
-    pub(crate) now: File,
+    pub now: File,
     /// Once the window's device is made.
-    pub(crate) made: File,
+    pub made: File,
     /// Said at warn, and at info.
-    pub(crate) warn: Option<String>,
-    pub(crate) info: Option<String>,
+    pub warn: Option<String>,
+    pub info: Option<String>,
 }
 
 /// The choice, from the marker's text (`None` for no file), whether
@@ -152,7 +152,7 @@ pub(crate) struct Plan {
 /// any, and the backend to fall back on here (DX12 on Windows, none
 /// elsewhere). A live start's marker is its own: this one reads what
 /// died before and writes nothing.
-pub(crate) fn decide(
+pub fn decide(
     found: Option<&str>,
     live: bool,
     by_hand: Option<&str>,
@@ -255,7 +255,7 @@ fn env_for(backend: Backend) -> Env {
 /// a death: the default backends tried next, in this process, with the
 /// fallback counted as failed so a death on the default after it does
 /// not send the next start back to it.
-pub(crate) fn after_fallback_error(died: &[Backend]) -> Marker {
+pub fn after_fallback_error(died: &[Backend]) -> Marker {
     let mut died: Vec<_> = died
         .iter()
         .copied()
@@ -414,7 +414,7 @@ fn end(how: End) {
 
 /// Right after the window's event loop ends: one that ended with no
 /// device made, on the fallback, counts it as failed.
-pub(crate) fn run_ended() {
+pub fn run_ended() {
     end(End::RunEnded);
 }
 
@@ -429,7 +429,7 @@ fn take_pending() -> Option<Pending> {
 
 /// Held by the window's start: dropped with no device made, it leaves
 /// the marker as [`at_end`] has it.
-pub(crate) struct Guard;
+pub struct Guard;
 
 impl Drop for Guard {
     fn drop(&mut self) {
@@ -440,7 +440,7 @@ impl Drop for Guard {
 /// Before Slint's select, and before `WGPUSettings` reads the
 /// environment: the marker read, said, and written, and
 /// `WGPU_BACKEND` set to match. On the window's thread, once.
-pub(crate) fn start() -> Guard {
+pub fn start() -> Guard {
     let Some(path) = path() else {
         return Guard;
     };
@@ -498,14 +498,14 @@ pub(crate) fn start() -> Guard {
 /// Once the window's device is made: nothing is left for the end to
 /// leave. What the select left is not written again ([`selected`] did,
 /// and does nothing a second time).
-pub(crate) fn device_made() {
+pub fn device_made() {
     selected();
     take_pending();
 }
 
 /// Once Slint's select has come back with a backend: the setup did not
 /// die, and the lock is let go. Once; again is nothing.
-pub(crate) fn selected() {
+pub fn selected() {
     let mut pending = PENDING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -523,7 +523,7 @@ pub(crate) fn selected() {
 /// backends, so the caller selects again on those, in this process (a
 /// failed select sets no platform), before anything looks for a
 /// software adapter. False, and nothing done, otherwise.
-pub(crate) fn fallback_failed(why: &dyn std::fmt::Display) -> bool {
+pub fn fallback_failed(why: &dyn std::fmt::Display) -> bool {
     if !WE_SET.swap(false, Ordering::Relaxed) {
         return false;
     }
@@ -559,7 +559,7 @@ pub(crate) fn fallback_failed(why: &dyn std::fmt::Display) -> bool {
 }
 
 /// A command we start, without the variable where we set it.
-pub(crate) fn scrub(command: &mut std::process::Command) -> &mut std::process::Command {
+pub fn scrub(command: &mut std::process::Command) -> &mut std::process::Command {
     if WE_SET.load(Ordering::Relaxed) {
         command.env_remove(WGPU_BACKEND).env_remove(OURS);
     }
@@ -569,6 +569,21 @@ pub(crate) fn scrub(command: &mut std::process::Command) -> &mut std::process::C
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A folder no other test has used, made: the window's scratch
+    /// helper is the binary's, out of reach of the library's tests.
+    fn scratch(what: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-{what}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     const WINDOWS: Option<Backend> = Some(Backend::Dx12);
     const LINUX: Option<Backend> = None;
@@ -812,7 +827,7 @@ mod tests {
 
     #[test]
     fn a_held_lock_reads_as_a_live_start() {
-        let dir = crate::testing::scratch_dir("gpu-marker-lock");
+        let dir = scratch("gpu-marker-lock");
         let path = path_under(&dir);
         let first = take_lock(&path).expect("the first start takes it");
         assert!(first.is_some());
@@ -825,7 +840,7 @@ mod tests {
 
     #[test]
     fn the_file_is_written_and_removed_where_asked() {
-        let dir = crate::testing::scratch_dir("gpu-marker");
+        let dir = scratch("gpu-marker");
         let path = path_under(&dir);
         let marker = Marker {
             setup: Some(Backend::Default),

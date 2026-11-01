@@ -44,6 +44,9 @@ use crate::*;
 use greycard_core::TempTint;
 use greycard_core::raw::Mosaic;
 use greycard_edit::camera::{self, ProfileChoice};
+// The fit of a preset's profile to a frame, which the import also
+// asks, off the window, in the library.
+pub(crate) use crate::preset_fit::{preset_fitted, probed_body, profile_fits};
 use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
 use greycard_edit::preset::{Choice, Part};
 
@@ -210,30 +213,6 @@ pub(crate) fn as_source(mut edit: Edit, mosaic: Option<Mosaic>) -> Edit {
     edit
 }
 
-/// Whether a camera profile may go to a frame of `body` (make and
-/// model). A profile the directory has not got, or one that names no
-/// camera, cannot be checked and goes, as it would in a preset; one
-/// made for a camera goes only to that camera's frames, and a frame
-/// that cannot say what took it does not get it.
-pub(crate) fn profile_fits(entry: Option<&camera::Entry>, body: Option<camera::Body>) -> bool {
-    let Some(entry) = entry else {
-        return true;
-    };
-    if entry
-        .unique_camera_model
-        .as_deref()
-        .is_none_or(|u| u.trim().is_empty())
-    {
-        return true;
-    }
-    body.is_some_and(|body| entry.fits(body))
-}
-
-/// A probed file's camera, as a profile's fit reads it.
-pub(crate) fn probed_body(p: &greycard_core::decode::Probe) -> camera::Body<'_> {
-    camera::Body::new(&p.make, &p.model, &p.other_names)
-}
-
 /// `preset` as it reaches `file`: itself, when it carries no named
 /// camera profile or the profile fits `file`'s body; with Camera
 /// taken out, and `true`, when it does not. The check
@@ -248,33 +227,6 @@ pub(crate) fn preset_for_body(
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> (Preset, bool) {
     preset_fitted(preset, profiles, || probe(st, file))
-}
-
-/// [`preset_for_body`] with no state: `body` says what took the frame
-/// (make and model), asked only when the preset names a profile. The
-/// import runs this on its own thread, where there is no `State`.
-pub(crate) fn preset_fitted(
-    preset: &Preset,
-    profiles: &[camera::Entry],
-    body: impl FnOnce() -> Option<greycard_core::decode::Probe>,
-) -> (Preset, bool) {
-    let named = match &preset.edit.camera.profile {
-        ProfileChoice::Named(name) if preset.sections.contains(&Section::Camera) => {
-            profiles.iter().find(|e| &e.name == name)
-        }
-        _ => None,
-    };
-    let Some(entry) = named else {
-        return (preset.clone(), false);
-    };
-    let body = body();
-    if profile_fits(Some(entry), body.as_ref().map(probed_body)) {
-        (preset.clone(), false)
-    } else {
-        let mut without = preset.clone();
-        without.sections.retain(|s| *s != Section::Camera);
-        (without, true)
-    }
 }
 
 /// What a sync did: the frames it moved, and the frames the camera
