@@ -30,32 +30,39 @@ with the fp16 file races once. Core ML failing the fp16 file is
 remembered under that hash too, and the next load, seeing it, hands
 Core ML the tier's own file under its own hash, so a Mac whose Core ML
 cannot run fp16 (an older chip or system, a file damaged on disk at
-its full size) goes back to fp32 on Core ML, as before, rather than
-to WebGPU for good; a new system or build tries the fp16 file again.
-The denoise cache's key is left as it was: the provider was never in it, and the fp16 answer is the same
-network's within about 0.001 stops, so the file arriving does not
-throw away a Mac's answers.
+its full size) goes back to fp32 on Core ML, as before, rather than to
+WebGPU for good; a new system or build tries the fp16 file again. The
+denoise cache's key is left as it was: the provider was never in it,
+and the fp16 answer is the same network's within about 0.001 stops (a
+channel within 0.006, §489), so the file arriving does not throw away
+a Mac's answers.
 
 ## How a Mac gets it
 
 On a Mac, the editor's fetch of a tier, from its sheet, fetches the
-fp16 file after the tier is said to be here, since the tier runs
-without it; the CLI's `models --fetch` fetches it after the tier, or
-alone for a tier already there, and says if it did not arrive.
-`Store::fetch` itself does not, so a failure is always said by the
-caller that can say it. A tier fetched before keeps working on its
-fp32 file, and the editor fetches the fp16 one in the background the
-first time the tier loads on Core ML, once a process, with no sheet:
-it comes from the same repository under the same license the tier's
-sheet showed, and the license note beside the tier is written again
-to name it. Core ML opens it from the tier's next load. One thread
-fetches a file at a time, the others leaving it to that one, and a
-download stalled on one file holds up no other. A test build never
-fetches in the background, whichever constructor it takes.
+fp16 file on a thread of its own after the tier is said to be here,
+since the tier runs without it; the tier's first develop meanwhile
+loads its own file, and the editor loads the tier again at the first
+develop after the fp16 file is here, from either fetch; the CLI's
+`models --fetch` fetches it after the tier, or alone for a tier
+already there, and says if it did not arrive. `Store::fetch` itself
+does not, so a failure is always said by the caller that can say it. A
+tier fetched before keeps working on its fp32 file, and the editor
+fetches the fp16 one in the background the first time the tier loads
+on Core ML, with no sheet, and again at later develops until one fetch
+of its own has failed: it comes from the same repository under the
+same license the tier's sheet showed, and the license note beside the
+tier is written again to name it. One thread fetches a file at a time,
+the others leaving it to that one, and a download stalled on one file
+holds up no other. A test build never fetches in the background,
+whichever constructor it takes; a debug `greycard-ui` built by `cargo
+test --workspace` or `--all-targets` is one, since greycard-ui's tests
+turn the engine's `testing` feature on, so a Mac checking the
+background fetch runs a plain or release build.
 
 ## Said, and refused
 
-Where a develop says where the denoiser ran, it says "CoreML, fp16"
+Where a develop says where the denoiser ran, it says "CoreML (fp16)"
 when the fp16 file is what runs, in the editor's develop line and the
 CLI's log. `GREYCARD_DENOISE_FP32=1` keeps Core ML on the tier's own
 file, for comparing the two on one Mac or a frame the fp16 file is
@@ -109,3 +116,15 @@ fp32 file, a lock a file, the callers fetching and saying, and the
 note written again are the fixes; with them, tests of the plan and of
 the note, a test build kept from fetching, and fp16.py's checks made
 exits rather than asserts, with the graph's input and output names.
+
+A second review found the sheet's fetch saying the tier was here
+before its fp16 file came, so the tier's first develop loaded the fp32
+file on Core ML and kept it for the session, and the background fetch,
+finding the file under way elsewhere, said it had arrived and gave up
+on the tier for the process; and the store's list of files under way
+not cleared by a panic. The tier loaded again when its fp16 file
+comes, the background fetch giving up only on a failure of its own,
+the sheet's fp16 download off the thread its waiters wait on, and a
+guard that clears the list however a fetch ends are the fixes; with
+them the CLI says a tier in place whose fp16 file did not come, and a
+note that cannot be written no longer fails a fetch that worked.

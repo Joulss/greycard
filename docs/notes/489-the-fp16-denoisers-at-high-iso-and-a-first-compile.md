@@ -34,6 +34,18 @@ deep shadows, the measure's floor, lower: the fp16 networks do not
 part from fp32 as the noise rises. The difference is again a lift,
 every band brighter by about 0.001 stops on average, too small to see.
 
+*Corrected 2026-11-01:* that holds for the luminance, not for every
+channel. Measured a channel at a time (each channel's signed mean in
+stops, over values above 0.0046), five of the six frames have every
+channel brighter by 0.00005 to 0.0013 stops, green the most; the
+sixth, the darker R6 II frame (median luminance 0.022), has red and
+green brighter by 0.001 to 0.0017 and blue darker by 0.0045 to 0.006
+under all three tiers. That is about 0.4%, a fraction of the smallest
+difference an eye tells side by side, and blue weighs 6% in the
+luminance, so the table above does not show it; but on that frame the
+fp16 networks move the balance a little, not only the level.
+`tools/denoise/compare.py` prints the channels so.
+
 Best's denoise of a 45 MP frame took about 10 s with the fp32 file and
 4.1 to 4.6 s with the fp16, 2.2 to 2.4 times quicker, which is §481's
 ratio at Best.

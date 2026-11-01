@@ -828,15 +828,25 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool 
             message: e.to_string(),
         },
     });
-    // On a Mac a denoiser tier's fp16 file follows, after the tier is
-    // said to be here, since the tier runs without it; a failure is
-    // logged, and the editor tries again at the tier's first load on
-    // Core ML (`ai::fetch_core_ml_quietly`).
-    if fetched
-        && cfg!(target_os = "macos")
-        && let Err(e) = store.fetch_core_ml(model, |_| {})
+    // On a Mac a denoiser tier's fp16 file follows on a thread of its
+    // own, after the tier is said to be here, since the tier runs
+    // without it and what waits on this fetch should not wait on that
+    // one. The tier's first develop meanwhile loads its own file and
+    // loads again when the fp16 one is here; a failure is logged, and
+    // the editor's background fetch tries once more
+    // (`ai::fetch_core_ml_quietly`).
+    if fetched && cfg!(target_os = "macos") && greycard_ai::registry::core_ml_file(model).is_some()
     {
-        tracing::info!("{name}: its file for Core ML did not arrive: {e}");
+        let spawned = std::thread::Builder::new()
+            .name("core-ml-fetch".into())
+            .spawn(move || {
+                if let Err(e) = store.fetch_core_ml(model, |_| {}) {
+                    tracing::info!("{name}: its file for Core ML did not arrive: {e}");
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::info!("{name}: no thread to fetch its file for Core ML: {e}");
+        }
     }
     fetched
 }

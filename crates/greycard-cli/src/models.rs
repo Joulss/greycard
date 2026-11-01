@@ -184,6 +184,8 @@ fn fetch_models(
         // Close the rewritten line before anything else is printed,
         // so a failure does not land on the end of it.
         reporter.done();
+        // The tier whole, its fp16 file after it: a failure of that one
+        // is said as its own, the tier being in place.
         let fetched = fetched.and_then(|()| match core_ml {
             Some(_) => {
                 let mut reporter = FetchReport::new();
@@ -191,12 +193,14 @@ fn fetch_models(
                 reporter.done();
                 // Another thread's fetch of it returns at once: whether
                 // it is here is the answer.
-                extra.and_then(|()| match store.core_ml_path(model) {
-                    Some(_) => Ok(()),
-                    None => Err(greycard_ai::store::Error::Io(std::io::Error::other(
-                        "its file for Core ML is being fetched elsewhere",
-                    ))),
-                })
+                let why = match (extra, store.core_ml_path(model)) {
+                    (_, Some(_)) => return Ok(()),
+                    (Err(e), None) => e.to_string(),
+                    (Ok(()), None) => "another fetch of it is under way".to_string(),
+                };
+                Err(greycard_ai::store::Error::Io(std::io::Error::other(
+                    format!("the tier is in place, but its file for Core ML did not arrive: {why}"),
+                )))
             }
             None => Ok(()),
         });

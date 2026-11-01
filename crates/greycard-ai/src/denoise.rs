@@ -186,6 +186,11 @@ fn fp32_wanted(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.is_empty() && v != "0")
 }
 
+/// Whether [`FP32_VAR`] keeps Core ML on the tier's own file this run.
+pub fn fp32_refused() -> bool {
+    fp32_wanted(std::env::var(FP32_VAR).ok().as_deref())
+}
+
 /// The file Core ML opens for a tier and the hash its load is
 /// remembered under: the tier's fp16 file, here as `fp16`, where Core
 /// ML is `offered` and has not `failed` that file on record, under
@@ -288,7 +293,7 @@ impl Denoiser {
         if !store.have(model) {
             return Err(Error::Missing(model.name));
         }
-        let fp32 = fp32_wanted(std::env::var(FP32_VAR).ok().as_deref());
+        let fp32 = fp32_refused();
         if fp32 {
             log::info!("{FP32_VAR} is set: Core ML opens the tier's fp32 file");
         }
@@ -343,7 +348,7 @@ impl Denoiser {
     /// ML whether the tier's fp16 file is what runs.
     pub fn label(&self) -> &'static str {
         if self.fp16 {
-            "CoreML, fp16"
+            "CoreML (fp16)"
         } else {
             self.provider().label()
         }

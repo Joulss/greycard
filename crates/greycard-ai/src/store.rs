@@ -214,6 +214,17 @@ impl Store {
         // file, and one stalled download holds up no other file's.
         static UNDER_WAY: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
         let under_way = || UNDER_WAY.lock().unwrap_or_else(|e| e.into_inner());
+        /// Takes the path off the list however the fetch ends, a panic
+        /// in `progress` included.
+        struct Done<'a>(&'a Path);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                UNDER_WAY
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .retain(|p| p != self.0);
+            }
+        }
         {
             let mut list = under_way();
             if list.contains(&path) || self.extra_path(model, file).is_some() {
@@ -221,19 +232,17 @@ impl Store {
             }
             list.push(path.clone());
         }
-        let fetched = (|| {
-            std::fs::create_dir_all(self.dir(model))?;
-            let part = path.with_file_name(format!("{}.part", file.name));
-            fetch_to(file, &part, &mut progress)?;
-            std::fs::rename(&part, &path)?;
-            std::fs::write(
-                self.dir(model).join(model.license_file()),
-                model.license_note(),
-            )?;
-            Ok(())
-        })();
-        under_way().retain(|p| *p != path);
-        fetched
+        let _done = Done(&path);
+        std::fs::create_dir_all(self.dir(model))?;
+        let part = path.with_file_name(format!("{}.part", file.name));
+        fetch_to(file, &part, &mut progress)?;
+        std::fs::rename(&part, &path)?;
+        // The file is here whatever becomes of the note.
+        let note = self.dir(model).join(model.license_file());
+        if let Err(e) = std::fs::write(&note, model.license_note()) {
+            log::warn!("{}: {e}", note.display());
+        }
+        Ok(())
     }
 
     /// A CPU-only runtime's directory: `<root>/<id>`, beside the models.

@@ -198,34 +198,61 @@ fn background_or_not(shape: &Shape, base: &[u8]) -> Vec<u8> {
 pub use crate::stages::prompted;
 
 /// Fetch `model`'s file for Core ML in the background where it has one
-/// the store lacks, once a process. A Mac that had a denoiser tier
-/// before its fp16 file was published gets it with no sheet, the
-/// tier's license having been shown when the tier came, from the same
-/// place under the same license; Core ML opens it from the tier's next
-/// load, and until then the tier's own file, as before.
+/// the store lacks. A Mac that had a denoiser tier before its fp16 file
+/// was published gets it with no sheet, the tier's license having been
+/// shown when the tier came, from the same place under the same
+/// license; [`Ai::denoiser`] loads the tier again once it is here.
+/// Asked at every develop while the tier waits for it, so it starts at
+/// most one fetch a tier at a time, leaves a file another thread is
+/// fetching to that one, and gives up on a tier for the process only
+/// once a fetch of its own has failed.
 fn fetch_core_ml_quietly(store: &Store, model: &'static Model) {
-    static TRIED: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    // The tiers being fetched here, and those whose fetch failed.
+    static STATE: std::sync::Mutex<(Vec<&'static str>, Vec<&'static str>)> =
+        std::sync::Mutex::new((Vec::new(), Vec::new()));
+    let state = || STATE.lock().unwrap_or_else(|e| e.into_inner());
     if greycard_ai::registry::core_ml_file(model).is_none() || store.core_ml_path(model).is_some() {
         return;
     }
     {
-        let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
-        if tried.contains(&model.id) {
+        let mut s = state();
+        if s.0.contains(&model.id) || s.1.contains(&model.id) {
             return;
         }
-        tried.push(model.id);
+        s.0.push(model.id);
+    }
+    /// Takes the tier off the list under way however its fetch ends.
+    struct Done(&'static str, Option<&'static str>);
+    impl Drop for Done {
+        fn drop(&mut self) {
+            let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+            s.0.retain(|id| *id != self.0);
+            if let Some(failed) = self.1 {
+                s.1.push(failed);
+            }
+        }
     }
     let store = store.clone();
     let spawned = std::thread::Builder::new()
         .name("core-ml-fetch".into())
-        .spawn(move || match store.fetch_core_ml(model, |_| {}) {
-            Ok(()) => log::info!(
-                "{}: its file for Core ML arrived; Core ML opens it from the next load",
-                model.name
-            ),
-            Err(e) => log::info!("{}: its file for Core ML did not arrive: {e}", model.name),
+        .spawn(move || {
+            let mut done = Done(model.id, None);
+            let result = store.fetch_core_ml(model, |_| {});
+            match (result, store.core_ml_path(model).is_some()) {
+                (_, true) => log::info!(
+                    "{}: its file for Core ML arrived; the tier loads it at its next develop",
+                    model.name
+                ),
+                (Err(e), false) => {
+                    log::info!("{}: its file for Core ML did not arrive: {e}", model.name);
+                    done.1 = Some(model.id);
+                }
+                // Another thread has it under way; asked again later.
+                (Ok(()), false) => {}
+            }
         });
     if let Err(e) = spawned {
+        state().0.retain(|id| *id != model.id);
         log::info!(
             "{}: no thread to fetch its file for Core ML: {e}",
             model.name
@@ -261,6 +288,10 @@ pub struct Ai {
     /// The learned denoiser loaded, by its model's id: one at a time,
     /// since each holds the GPU's memory.
     denoiser: Option<(&'static str, Denoiser)>,
+    /// The tier of that denoiser when it was loaded without its fp16
+    /// file for Core ML, which the store may yet fetch: loaded again
+    /// once the file is here ([`Ai::denoiser`]).
+    awaiting_fp16: Option<&'static str>,
     /// Fills made, by patch id and seed, with the patch, the window
     /// and the engine each was made for: a seed's fill is kept when
     /// "Another" moves the patch on to the next, so undo is free. Each
@@ -1136,6 +1167,7 @@ impl Ai {
             fell_back: std::collections::HashSet::new(),
             salt: None,
             other_side: Side::default(),
+            awaiting_fp16: None,
             disk: true,
             // Never in a test build, whichever constructor it uses.
             quiet_fetch: !cfg!(any(test, feature = "testing")),
@@ -1187,14 +1219,27 @@ impl Ai {
         if self.providers.is_empty() {
             self.providers = Provider::available();
         }
-        if self.denoiser.as_ref().is_none_or(|(id, _)| *id != model.id) {
+        // Loaded without its fp16 file, which has come since (from the
+        // sheet's fetch, or the background one): loaded again, once.
+        let arrived = self.awaiting_fp16 == Some(model.id) && store.core_ml_path(model).is_some();
+        if arrived {
+            tracing::info!("{}: its file for Core ML is here; loading it", model.name);
+        }
+        if arrived || self.denoiser.as_ref().is_none_or(|(id, _)| *id != model.id) {
             self.denoiser = None;
+            self.awaiting_fp16 = None;
             let denoiser = Denoiser::from_store(&store, model, &self.providers)
                 .map_err(|e| NoDenoiser::Failed(e.to_string()))?;
             self.denoiser = Some((model.id, denoiser));
-            if self.quiet_fetch && self.providers.contains(&Provider::CoreMl) {
-                fetch_core_ml_quietly(&store, model);
+            let wants = self.providers.contains(&Provider::CoreMl)
+                && greycard_ai::registry::core_ml_file(model).is_some()
+                && !greycard_ai::denoise::fp32_refused();
+            if wants && store.core_ml_path(model).is_none() {
+                self.awaiting_fp16 = Some(model.id);
             }
+        }
+        if self.quiet_fetch && self.awaiting_fp16 == Some(model.id) {
+            fetch_core_ml_quietly(&store, model);
         }
         Ok(&mut self
             .denoiser

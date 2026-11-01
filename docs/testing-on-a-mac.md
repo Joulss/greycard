@@ -89,7 +89,7 @@ The most useful things you can send, in order:
    or `greycard-ui --version` in a terminal.
 
 If the learned denoise looks wrong, the log's develop lines say where
-it ran: "CoreML, fp16" is the half-precision copy of the model that
+it ran: "CoreML (fp16)" is the half-precision copy of the model that
 Core ML runs on a Mac. To try the same frame with the full-precision
 one, quit greycard and start it from a terminal with
 `open --env GREYCARD_DENOISE_FP32=1 -a greycard`, and say in the

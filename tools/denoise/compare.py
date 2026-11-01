@@ -5,11 +5,12 @@
 For the fp16 denoisers against the fp32 ones (§481, §489, §508): each
 pair is the same raw developed by the CLI with the two files,
 
-    greycard -v develop RAW --ai-denoise denoise-v20.onnx      -o a.tif
-    greycard -v develop RAW --ai-denoise denoise-v20-fp16.onnx -o b.tif
+    greycard -v develop RAW --ai-denoise /path/to/denoise-v20.onnx      -o a.tif
+    greycard -v develop RAW --ai-denoise /path/to/denoise-v20-fp16.onnx -o b.tif
 
 the default output, a 16-bit linear Rec.2020 TIFF. Naming the files by
-path keeps the denoise cache out of it. The log says which provider
+path keeps the denoise cache out of it; a path is a file's path, not
+a name looked up in the model store. The log says which provider
 ran and the denoiser's time: the default build runs WebGPU (racing
 Core ML on a Mac), a build with the `cuda` feature CUDA first, so the
 two builds compare the two providers.
@@ -20,9 +21,11 @@ highlights above) the share of pixels, the mean and 99.9th percentile
 of the luminance difference in stops, and each channel's signed mean,
 which shows a lift where the mean alone shows only a spread. On Core
 ML on an M5 the fp16 files gave a PSNR of 74 to 83 dB, a 99.9th
-percentile under 0.01 stops outside the deep shadows, and a lift of
-about +0.001 stops; the deep shadows' figure, about 0.01 to 0.02, is
-one step of the 16-bit file there, the measure's floor.
+percentile under 0.01 stops outside the deep shadows, and every
+channel lifted by about +0.001 stops but on one frame, whose blue went
+0.0045 to 0.006 stops darker (§489); the deep shadows' figure, about
+0.01 to 0.02, is one step of the 16-bit file there, the measure's
+floor.
 
 Needs numpy and tifffile (`pip install numpy tifffile imagecodecs`;
 imagecodecs for the CLI's compressed TIFFs).
@@ -43,6 +46,10 @@ BANDS = [
 WEIGHTS = np.array([0.2627, 0.6780, 0.0593])
 # Under this a pixel's ratio is mostly the file's step, not the network.
 FLOOR = 1.5e-4
+# A channel's lift is a mean of signed ratios, which the file's steps
+# bias where they are a large part of the value; over this (about 300
+# of 65535) a step is under 0.5% of it.
+LIFT_FLOOR = 0.0046
 
 
 def read(path):
@@ -71,8 +78,11 @@ def compare(path_a, path_b):
         lift = []
         for c, channel in enumerate("RGB"):
             x, y = a[..., c][ok], b[..., c][ok]
-            kept = (x > FLOOR) & (y > FLOOR)
-            lift.append(f"{channel} {np.log2(y[kept] / x[kept]).mean():+.4f}")
+            kept = (x > LIFT_FLOOR) & (y > LIFT_FLOOR)
+            if kept.any():
+                lift.append(f"{channel} {np.log2(y[kept] / x[kept]).mean():+.4f}")
+            else:
+                lift.append(f"{channel} -")
         print(
             f"  {name:12} {100 * share:5.1f}% of pixels: |Δ| mean {np.abs(stops).mean():.4f} stops,"
             f" 99.9th {np.percentile(np.abs(stops), 99.9):.4f}; lift {', '.join(lift)}"

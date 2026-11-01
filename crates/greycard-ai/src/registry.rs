@@ -615,9 +615,9 @@ const CORE_ML_FILES: &[(&str, File)] = &[
 /// The file Core ML opens in place of `model`'s own, where it has one:
 /// kept in the model's directory but not one of its [`Model::files`],
 /// so a store without it still has the model and every other provider
-/// keeps the model's own file. The store fetches it with the model on a
-/// Mac ([`crate::Store::fetch`]), or alone
-/// ([`crate::Store::fetch_core_ml`]).
+/// keeps the model's own file. The store fetches it alone
+/// ([`crate::Store::fetch_core_ml`]), which the editor and the CLI do
+/// after the model on a Mac.
 pub fn core_ml_file(model: &Model) -> Option<&'static File> {
     CORE_ML_FILES
         .iter()
