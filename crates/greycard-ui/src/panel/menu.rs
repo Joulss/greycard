@@ -439,7 +439,7 @@ mod tests {
         // Inside the set, on a frame that is not the current one: the
         // set stands, the frame on screen with it, and the menu is
         // about both.
-        let (x, y) = strip_cell(3);
+        let (x, y) = strip_cell(&app, 3);
         right_click(&app, x, y);
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(chosen_frames(&state.borrow()), vec![1, 3]);
@@ -458,7 +458,7 @@ mod tests {
             .collect();
         assert_eq!(ratings, [0, 2, 0, 2, 0, 0]);
         // Outside it: that frame opened, alone.
-        let (x, y) = strip_cell(4);
+        let (x, y) = strip_cell(&app, 4);
         right_click(&app, x, y);
         assert_eq!(state.borrow().current, Some(4));
         assert_eq!(chosen_frames(&state.borrow()), vec![4]);
@@ -486,7 +486,7 @@ mod tests {
         let meta = slint::platform::Key::Meta;
         app.window()
             .dispatch_event(WindowEvent::KeyPressed { text: meta.into() });
-        let (x, y) = strip_cell(3);
+        let (x, y) = strip_cell(&app, 3);
         crate::testing::click(&app, x, y);
         app.window()
             .dispatch_event(WindowEvent::KeyReleased { text: meta.into() });
@@ -522,7 +522,7 @@ mod tests {
         }
         app.invoke_select(1);
         state.borrow_mut().views.picked = vec![1, 3];
-        let (x, y) = strip_cell(3);
+        let (x, y) = strip_cell(&app, 3);
         right_click(&app, x, y);
         assert_eq!(app.get_menu_file(), "IMG_0003.CR3");
         app.invoke_menu_copy();
@@ -534,7 +534,7 @@ mod tests {
         }
         // On the frame on screen, the panel's edit, recorded or not.
         app.set_exposure(-0.4);
-        let (x, y) = strip_cell(1);
+        let (x, y) = strip_cell(&app, 1);
         right_click(&app, x, y);
         app.invoke_menu_copy();
         assert_eq!(
@@ -548,7 +548,7 @@ mod tests {
         );
         // Ctrl+C, after a right-click on another frame: the frame on
         // screen still.
-        right_click(&app, strip_cell(3).0, strip_cell(3).1);
+        right_click(&app, strip_cell(&app, 3).0, strip_cell(&app, 3).1);
         app.invoke_copy_asked();
         assert_eq!(
             state
@@ -569,7 +569,7 @@ mod tests {
         let (state, _worker) = state_for(&app, folder(6));
         app.invoke_select(1);
         // The menu opened over frame 1, and left open.
-        let (x, y) = strip_cell(1);
+        let (x, y) = strip_cell(&app, 1);
         let position = slint::LogicalPosition::new(x, y);
         for event in [
             WindowEvent::PointerMoved { position },
@@ -586,7 +586,7 @@ mod tests {
         }
         assert!(app.get_menu_up(), "the menu took the keys' focus");
         // A left click on frame 4 closes it and opens nothing.
-        let (x, y) = strip_cell(4);
+        let (x, y) = strip_cell(&app, 4);
         crate::testing::click(&app, x, y);
         assert_eq!(state.borrow().current, Some(1));
         assert!(!app.get_menu_up(), "and gave it back as it closed");
@@ -594,7 +594,7 @@ mod tests {
         crate::testing::click(&app, x, y);
         assert_eq!(state.borrow().current, Some(4));
         // Closed by Escape instead: the next click is a click.
-        let (x, y) = strip_cell(2);
+        let (x, y) = strip_cell(&app, 2);
         let position = slint::LogicalPosition::new(x, y);
         app.window().dispatch_event(WindowEvent::PointerPressed {
             position,
@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(state.borrow().current, Some(2));
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_menu_up(), "Escape closed it");
-        let (x, y) = strip_cell(5);
+        let (x, y) = strip_cell(&app, 5);
         crate::testing::click(&app, x, y);
         assert_eq!(state.borrow().current, Some(5));
     }
@@ -694,7 +694,7 @@ mod tests {
             ElementHandle::find_by_accessible_label(&app, "Export...").collect::<Vec<_>>()
         };
         let under: Vec<_> = items().iter().map(|e| e.absolute_position()).collect();
-        let position = slint::LogicalPosition::new(strip_cell(0).0, strip_cell(0).1);
+        let position = slint::LogicalPosition::new(strip_cell(&app, 0).0, strip_cell(&app, 0).1);
         for event in [
             WindowEvent::PointerMoved { position },
             WindowEvent::PointerPressed {

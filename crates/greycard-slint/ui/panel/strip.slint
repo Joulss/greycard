@@ -3,13 +3,12 @@
 // foot.
 
 import { Theme } from "../theme.slint";
-import { Thumb, ThumbCell } from "../structs.slint";
+import { StripPlace, Thumb, ThumbCell } from "../structs.slint";
 import { ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 
 export component Filmstrip inherits Rectangle {
-    /// Every row, for the strip's length; the cells are drawn from
-    /// `cells`, the rows on screen and a margin, each placed by its
-    /// row.
+    /// Every row; the cells are drawn from `cells`, the rows on screen
+    /// and a margin, each placed by its row.
     in property <[Thumb]> thumbs;
     in property <[ThumbCell]> cells;
     in-out property <int> selected;
@@ -34,16 +33,26 @@ export component Filmstrip inherits Rectangle {
     in property <int> menu-at: -1;
     changed menu-at => {
         if (self.menu-at >= 0 && self.menu-at < self.thumbs.length) {
+            let p = self.strip-place(self.menu-at, self.shape);
             self.frame-menu(self.menu-at,
-                strip.absolute-position.x + strip.content-x + self.strip-pad
-                    + self.menu-at * self.strip-pitch + self.strip-item / 2,
+                strip.absolute-position.x + strip.content-x + p.x + p.width / 2,
                 strip.absolute-position.y + strip.height / 2);
         }
     }
     in property <int> meta-stars;
-    in property <length> strip-item;
-    in property <length> strip-pitch;
+    /// The layout's number, which changes as the rows' shapes come in:
+    /// passed with each question so a binding asks again.
+    in property <int> shape;
+    /// Where row `row`'s cell is along the row, and its width, at
+    /// layout `shape`; and the row's whole length, both pads included.
+    pure callback strip-place(int, int) -> StripPlace;
+    pure callback strip-length(int) -> length;
+    /// The pictures' height, and the ring each is inset by in its cell.
+    in property <length> strip-photo;
+    in property <length> strip-ring;
     in property <length> strip-pad;
+    /// A cell's height: the picture in its ring and the name's line.
+    in property <length> cell-h;
     /// The padding under the cells, where the scroll bar runs: the
     /// pad, or more for a thumb too wide for it.
     in property <length> strip-foot;
@@ -73,7 +82,12 @@ export component Filmstrip inherits Rectangle {
     in-out property <length> content-x <=> strip.content-x;
     out property <length> content-width: strip.content-width;
 
-    height: 148px + root.strip-foot - root.strip-pad;
+    height: root.strip-pad + root.cell-h + root.strip-foot;
+    // A new list of another length: the strip is laid out afresh from
+    // its start. Its length changing as shapes come in is not that, and
+    // the window holds the scroll still under those.
+    property <int> count: root.thumbs.length;
+    changed count => { root.strip-relay(); }
     background: Theme.surface;
     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
     // A wheel over the strip scrolls it sideways. Slint's
@@ -93,7 +107,7 @@ export component Filmstrip inherits Rectangle {
             return accept;
         }
         strip := Flickable {
-            content-width: max(self.width, root.thumbs.length * root.strip-pitch + 2 * root.strip-pad);
+            content-width: max(self.width, root.strip-length(root.shape));
             // No room to move in y, or the Flickable takes the
             // vertical wheel for itself: its content would
             // otherwise be the row's preferred height, a few
@@ -101,60 +115,65 @@ export component Filmstrip inherits Rectangle {
             // nudge the thumbnails up instead of along.
             content-height: self.height;
             changed content-x => { root.strip-report(); }
-            // The first layout, and a folder swapped in.
+            // The first layout, and a new width.
             changed width => { root.strip-relay(); }
-            changed content-width => { root.strip-relay(); }
-            // Each cell where its row puts it, as the layout that
-            // held a cell for every row put them: the pad, then a
-            // pitch a row.
+            // Each cell where its row puts it, its picture's shape at
+            // the row's height: the picture in the ring, the name
+            // under it, a gap between cells.
             for c in root.cells: cell := Rectangle {
                 property <int> i: c.row;
                 property <Thumb> t: c.thumb;
-                x: root.strip-pad + self.i * root.strip-pitch;
+                property <StripPlace> p: root.strip-place(self.i, root.shape);
+                x: self.p.x;
                 y: root.strip-pad;
-                height: parent.height - root.strip-pad - root.strip-foot;
+                width: self.p.width;
+                height: root.cell-h;
                 // The current frame, and the set it is one of:
                 // every frame in the set wears the selection's
                 // ground, the current one its ring as well.
                 property <bool> on: i == root.selected;
                 property <bool> in-set: on || t.chosen;
-                width: root.strip-item;
-                border-radius: Theme.radius-md;
+                border-radius: Theme.radius-sm;
                 background: in-set ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
                 border-width: on ? 2px : (in-set ? 1px : 0);
                 border-color: on ? Theme.accent : Theme.accent-muted;
                 animate background { duration: Theme.quick; }
-                // The picture is shorter than the row's full 96px by
-                // the color label's band and a gap above it, whether
-                // or not this frame carries one: reserved so a label
-                // never moves the name below it, and so the band
-                // (drawn further down, inside the border) never
-                // covers the border or the name's own descenders.
-                property <length> photo-h: 96px - 5px;
-                VerticalLayout {
-                    padding: Theme.space-2;
-                    spacing: Theme.space-1;
-                    Image {
-                        source: t.image;
-                        // A frame whose root is offline: there, but
-                        // not to be had until the drive is back.
-                        opacity: t.offline ? 0.4 : 1;
-                        height: photo-h;
-                        image-fit: contain;
-                    }
-                    Text {
-                        text: t.name;
-                        color: in-set ? Theme.text : Theme.text-secondary;
-                        font-size: Theme.font-xs;
-                        horizontal-alignment: center;
-                        overflow: elide;
-                    }
+                // The picture, inset by the ring alone; below it the
+                // gap where a color label's band goes, whether or not
+                // this frame carries one, so a label never moves the
+                // name, and the name.
+                property <length> ring: root.strip-ring;
+                property <length> photo-h: root.strip-photo;
+                property <length> photo-w: self.width - 2 * self.ring;
+                Image {
+                    x: ring;
+                    y: ring;
+                    width: photo-w;
+                    height: photo-h;
+                    source: t.image;
+                    // A frame whose root is offline: there, but not
+                    // to be had until the drive is back.
+                    opacity: t.offline ? 0.4 : 1;
+                    image-fit: contain;
+                }
+                Text {
+                    x: 0;
+                    y: ring + photo-h + Theme.space-1;
+                    width: parent.width;
+                    // To the cell's foot, the descenders' room.
+                    height: parent.height - self.y;
+                    text: t.name;
+                    color: in-set ? Theme.text : Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: top;
+                    overflow: elide;
                 }
                 // Where the picture would be, as the grid marks it.
                 if t.failed: Rectangle {
-                    x: Theme.space-2;
-                    y: Theme.space-2;
-                    width: parent.width - 2 * Theme.space-2;
+                    x: ring;
+                    y: ring;
+                    width: photo-w;
                     height: photo-h;
                     border-radius: Theme.radius-sm;
                     border-width: 1px;
@@ -172,8 +191,8 @@ export component Filmstrip inherits Rectangle {
                 // not push the name out of the middle, and
                 // the cell's height is the strip's.
                 ThumbBadges {
-                    x: Theme.space-2 + Theme.space-1;
-                    y: Theme.space-2 + photo-h - self.height - Theme.space-1;
+                    x: ring + Theme.space-1;
+                    y: ring + photo-h - self.height - Theme.space-1;
                     rating: t.rating;
                     flag: t.flag;
                     label: t.label;
@@ -182,8 +201,8 @@ export component Filmstrip inherits Rectangle {
                 // The picture's top right corner: the badges are at
                 // the bottom left, so the two never meet.
                 marks := ThumbMarks {
-                    x: parent.width - Theme.space-2 - Theme.space-1 - self.width;
-                    y: Theme.space-2 + Theme.space-1;
+                    x: parent.width - ring - Theme.space-1 - self.width;
+                    y: ring + Theme.space-1;
                     edited: t.edited;
                     exported: t.exported;
                     collected: t.collected;
@@ -191,10 +210,10 @@ export component Filmstrip inherits Rectangle {
                 }
                 // A version's name on the top left, short of the marks.
                 ThumbTag {
-                    x: Theme.space-2 + Theme.space-1;
-                    y: Theme.space-2 + Theme.space-1;
+                    x: ring + Theme.space-1;
+                    y: ring + Theme.space-1;
                     name: t.version;
-                    most: parent.width - 2 * (Theme.space-2 + Theme.space-1)
+                    most: parent.width - 2 * (ring + Theme.space-1)
                         - (marks.visible ? marks.width + Theme.space-1 : 0);
                 }
                 // The strip sits beside the developed picture, where a
@@ -204,9 +223,9 @@ export component Filmstrip inherits Rectangle {
                 // the name below, and clear of the badges over the
                 // picture above.
                 if t.label > 0: Rectangle {
-                    x: Theme.radius-md;
-                    y: Theme.space-2 + photo-h + 2px;
-                    width: parent.width - 2 * Theme.radius-md;
+                    x: ring;
+                    y: ring + photo-h + 1px;
+                    width: photo-w;
                     height: 3px;
                     background: Theme.label-color(t.label);
                 }
@@ -251,8 +270,8 @@ export component Filmstrip inherits Rectangle {
                 // The stack's badge on the picture's bottom right, over
                 // the cell's press so a click on it is the badge's.
                 ThumbStack {
-                    x: parent.width - Theme.space-2 - Theme.space-1 - self.width;
-                    y: Theme.space-2 + photo-h - self.height - Theme.space-1;
+                    x: parent.width - ring - Theme.space-1 - self.width;
+                    y: ring + photo-h - self.height - Theme.space-1;
                     count: t.stack;
                     place: t.stack-place;
                     open: t.stack-open;

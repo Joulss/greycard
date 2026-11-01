@@ -30,7 +30,7 @@ use std::rc::Rc;
 
 use slint::{Model, ModelNotify, ModelRc, ModelTracker};
 
-use crate::{App, Thumb, ThumbCell, grid};
+use crate::{App, Thumb, ThumbCell, grid, strip};
 
 /// The views that draw the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,13 +83,15 @@ struct Between {
 /// has come; what has come since the last layout, waiting to be laid
 /// out in one pass; the layout's number, which the window passes back
 /// with every question so a binding asks again when it moves; and the
-/// layout last asked for, kept for the next question.
+/// layouts last asked for, the grid's and the strip's, kept for the
+/// next question.
 #[derive(Default)]
 struct Shape {
     aspects: Vec<f32>,
     pending: Vec<(usize, f32)>,
     serial: i32,
     cache: Option<(Key, Rc<grid::Layout>)>,
+    strip: Option<(i32, Rc<strip::Layout>)>,
 }
 
 /// What a layout is made from.
@@ -396,6 +398,22 @@ pub(crate) fn layout(
         started.elapsed().as_secs_f64() * 1e3
     );
     store.cache = Some((key, made.clone()));
+    made
+}
+
+/// The strip's layout of the rows by their shapes: the one last made
+/// when no shape has changed since, else made now.
+pub(crate) fn strip_layout(app: &App) -> Rc<strip::Layout> {
+    let shared = shared(app);
+    let mut store = shared.shape.borrow_mut();
+    if let Some((serial, l)) = &store.strip
+        && *serial == store.serial
+    {
+        return l.clone();
+    }
+    let aspects = &store.aspects;
+    let made = Rc::new(strip::Layout::new(aspects.len(), |i| aspects[i]));
+    store.strip = Some((store.serial, made.clone()));
     made
 }
 

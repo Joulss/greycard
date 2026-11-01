@@ -1853,7 +1853,7 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, _worker) = state_for(&app, folder(6));
         // A frame open, the set that frame alone.
-        let (x, y) = strip_cell(1);
+        let (x, y) = strip_cell(&app, 1);
         click(&app, x, y);
         assert_eq!(state.borrow().current, Some(1));
         assert_eq!(app.get_set_count(), 1);
@@ -1867,9 +1867,9 @@ mod tests {
         // Ctrl+click two more: the set grows, the frame on screen
         // does not move, and the rows say which are chosen.
         with_modifier(&app, Key::Control, || {
-            let (x, y) = strip_cell(3);
+            let (x, y) = strip_cell(&app, 3);
             click(&app, x, y);
-            let (x, y) = strip_cell(4);
+            let (x, y) = strip_cell(&app, 4);
             click(&app, x, y);
         });
         assert_eq!(chosen_frames(&state.borrow()), vec![1, 3, 4]);
@@ -1913,13 +1913,13 @@ mod tests {
         app.invoke_select(1);
         // Shift+click four rows along: the run, the anchor kept.
         with_modifier(&app, Key::Shift, || {
-            let (x, y) = strip_cell(4);
+            let (x, y) = strip_cell(&app, 4);
             click(&app, x, y);
         });
         assert_eq!(chosen_frames(&state.borrow()), vec![1, 2, 3, 4]);
         assert_eq!(state.borrow().current, Some(1));
         // A plain click on the frame on screen: back to it alone.
-        let (x, y) = strip_cell(1);
+        let (x, y) = strip_cell(&app, 1);
         click(&app, x, y);
         assert_eq!(chosen_frames(&state.borrow()), vec![1]);
         // Shift and the arrow: the current frame moves and the set
@@ -2443,7 +2443,7 @@ mod tests {
         app.invoke_select(1);
         with_modifier(&app, Key::Control, || {
             for i in [3, 4] {
-                let (x, y) = strip_cell(i);
+                let (x, y) = strip_cell(&app, i);
                 click(&app, x, y);
             }
         });
@@ -2539,9 +2539,9 @@ mod tests {
         }
         app.invoke_select(0);
         with_modifier(&app, Key::Control, || {
-            let (x, y) = strip_cell(1);
+            let (x, y) = strip_cell(&app, 1);
             click(&app, x, y);
-            let (x, y) = strip_cell(2);
+            let (x, y) = strip_cell(&app, 2);
             click(&app, x, y);
         });
         assert_eq!(chosen_frames(&state.borrow()), vec![0, 1, 2]);
@@ -3227,9 +3227,9 @@ mod tests {
 
         // Two more chosen: the sheet, over the two, the source said.
         with_control(&app, || {
-            let (x, y) = strip_cell(0);
+            let (x, y) = strip_cell(&app, 0);
             click(&app, x, y);
-            let (x, y) = strip_cell(3);
+            let (x, y) = strip_cell(&app, 3);
             click(&app, x, y);
         });
         assert_eq!(chosen_frames(&state.borrow()), vec![0, 1, 3]);
@@ -4366,7 +4366,7 @@ mod tests {
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (state, _worker) = state_for(&app, folder(6));
-        let (x, y) = strip_cell(1);
+        let (x, y) = strip_cell(&app, 1);
         click(&app, x, y);
         assert_eq!(
             crate::testing::count_labeled(&app, "Sync"),
@@ -4374,9 +4374,9 @@ mod tests {
             "one frame, no button"
         );
         with_modifier(&app, Key::Control, || {
-            let (x, y) = strip_cell(3);
+            let (x, y) = strip_cell(&app, 3);
             click(&app, x, y);
-            let (x, y) = strip_cell(4);
+            let (x, y) = strip_cell(&app, 4);
             click(&app, x, y);
         });
         assert_eq!(chosen_frames(&state.borrow()), vec![1, 3, 4]);

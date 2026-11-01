@@ -47,6 +47,7 @@ mod settings;
 mod shared;
 mod sort;
 mod stacks;
+mod strip;
 mod sync;
 #[cfg(test)]
 pub(crate) mod testing;

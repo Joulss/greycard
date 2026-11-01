@@ -21,8 +21,8 @@ use crate::panel::history::show_history;
 use crate::tags::{self, Tags};
 use crate::worker::{self, Job, Worker};
 use crate::{
-    App, GridPlace, STATE, Shared, State, Thumb, WORKER, cells, chooser, cull, files, filter, grid,
-    selection, settings,
+    App, GridPlace, STATE, Shared, State, StripPlace, StripSpan, Thumb, WORKER, cells, chooser,
+    cull, files, filter, grid, selection, settings, strip,
 };
 
 /// A folder's first round of thumbnails as it comes back from the
@@ -1334,6 +1334,65 @@ pub(crate) fn grid_layout(app: &App) {
     );
 }
 
+/// The strip's layout by the rows' shapes, asked of the arithmetic in
+/// `strip`: where each frame's cell is, how long the row is, what a
+/// scroll shows, and the scroll that shows a frame. The window's own
+/// geometry is set from the same constants.
+///
+/// The layout's number comes with each call so a binding that asks
+/// follows the shapes as they come; the answer is the layout as it
+/// stands.
+pub(crate) fn strip_layout(app: &App) {
+    app.set_strip_photo(strip::PHOTO);
+    app.set_strip_ring(strip::RING);
+    app.set_strip_pad(strip::PAD);
+    let weak = app.as_weak();
+    app.on_strip_place(move |row, _| {
+        weak.upgrade()
+            .and_then(|app| cells::strip_layout(&app).place(row))
+            .map_or_else(StripPlace::default, |(x, width)| StripPlace { x, width })
+    });
+    let weak = app.as_weak();
+    app.on_strip_length(move |_| {
+        weak.upgrade()
+            .map_or(2.0 * strip::PAD, |app| cells::strip_layout(&app).length())
+    });
+    let weak = app.as_weak();
+    app.on_strip_shown(move |offset, view, _| {
+        let shown = weak
+            .upgrade()
+            .and_then(|app| cells::strip_layout(&app).shown(offset, view));
+        let (first, last) = shown.unwrap_or((-1, -1));
+        StripSpan { first, last }
+    });
+    let weak = app.as_weak();
+    app.on_strip_reveal_to(move |offset, view, row, _| {
+        weak.upgrade().map_or(offset, |app| {
+            cells::strip_layout(&app).reveal(offset, view, row)
+        })
+    });
+}
+
+/// The strip held still under the shapes that made `before` into the
+/// layout it has now ([`strip::held`]), and what it shows said again
+/// whether or not the scroll moved: narrower cells bring rows on
+/// screen at the same scroll, and those need cells and pictures.
+fn hold_strip(app: &App, before: &strip::Layout) {
+    let view = app.get_strip_view();
+    if view <= 0.0 {
+        return;
+    }
+    let after = cells::strip_layout(app);
+    let scroll = app.get_strip_scroll();
+    app.invoke_strip_hold(strip::held(
+        before,
+        &after,
+        scroll,
+        view,
+        app.get_selected(),
+    ));
+}
+
 /// The `shape` the window passes the layout's questions now: the
 /// layout's number, or square in the lightbox.
 pub(crate) fn grid_shape(app: &App) -> i32 {
@@ -1373,7 +1432,9 @@ fn note_shape(app: &App, row: usize, aspect: f32) {
     }
 }
 
-/// The shapes noted since the last layout laid out: the rows move, and
+/// The shapes noted since the last layout laid out: the strip's cells
+/// move, and its scroll with them so what is on screen stays
+/// ([`strip::held`]). The grid's rows move, and
 /// the sheet's scroll moves with them so what was on screen stays. A
 /// sheet scrolled to its end stays at its end, as near it as shows the
 /// selected frame whole when that was whole on screen; short of the
@@ -1403,9 +1464,11 @@ pub(crate) fn reshape(app: &App) {
     };
     let laid = |shape: i32| cells::layout(app, cell, cols, count, &heads, shape);
     let before = laid(grid_shape(app));
+    let strip_before = cells::strip_layout(app);
     if !cells::take_aspects(app) {
         return;
     }
+    hold_strip(app, &strip_before);
     if !app.get_grid_open() || app.get_lightbox() {
         return;
     }
@@ -3254,6 +3317,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     app.on_grid_columns(grid::columns);
     app.on_grid_slack(grid::slack);
     grid_layout(app);
+    strip_layout(app);
     app.on_grid_tiles_top(grid::tiles_top);
     app.on_grid_common_pitch(grid::common_pitch);
     app.on_bar_length(grid::bar_length);
@@ -4228,6 +4292,125 @@ mod tests {
         );
     }
 
+    /// The strip's cells take their pictures' shapes, a portrait narrow
+    /// and a landscape wide, and a shape that comes in for a frame left
+    /// of the view moves nothing on screen: a click where a frame was
+    /// is still that frame. A frame chosen past the right edge comes in
+    /// with the pad beside it.
+    #[test]
+    fn the_strips_cells_take_their_shapes_and_a_late_one_moves_nothing_in_view() {
+        use crate::panel::deliver::deliver;
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(120);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = crate::testing::folder(120);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().current = Some(0);
+        app.set_selected(0);
+        press(&app, Key::Shift);
+        let settle = || {
+            for _ in 0..10 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        let clicks = Rc::new(RefCell::new(Vec::new()));
+        let c = clicks.clone();
+        app.on_frame_clicked(move |row, _, _| c.borrow_mut().push(row));
+        // Before any shape: every cell the 3:2 landscape's.
+        let (_, was_last) = state.borrow().views.strip_shown.unwrap();
+        assert_eq!(
+            Some((0, was_last)),
+            cells::strip_layout(&app).shown(0.0, app.get_strip_view())
+        );
+        // The first twenty, alternately portrait and landscape.
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                (0..20)
+                    .map(|i| match i % 2 {
+                        0 => portrait_for(&files, i),
+                        _ => picture_shaped(&files, i, 3, 2),
+                    })
+                    .collect(),
+            )),
+        );
+        settle();
+        assert_eq!(app.get_strip_scroll(), 0.0);
+        // The portraits narrowed the row at the same scroll: the rows
+        // that came on screen at the right are said, so they have cells
+        // and their pictures are asked for (the worker is handed the
+        // range and the rows near it as the strip says it).
+        let (first, last) = state.borrow().views.strip_shown.unwrap();
+        assert_eq!(
+            Some((first, last)),
+            cells::strip_layout(&app).shown(0.0, app.get_strip_view())
+        );
+        assert!(last > was_last, "{last} after {was_last}");
+        assert_eq!(
+            state.borrow().views.near_rows,
+            Some((first as usize, last as usize))
+        );
+        for row in was_last + 1..=last {
+            assert!(cells::has_cell(&app, row as usize), "row {row} has no cell");
+        }
+        // The cells drawn are the layout's: a portrait's picture 61
+        // wide, a landscape's 137, each in its ring.
+        let drawn: Vec<(f32, f32)> = ElementHandle::find_by_element_id(&app, "Filmstrip::cell")
+            .map(|e| (e.absolute_position().x, e.size().width))
+            .collect();
+        for row in 0..4 {
+            let (left, width) = cells::strip_layout(&app).place(row).unwrap();
+            assert!(drawn.contains(&(left, width)), "row {row}: {drawn:?}");
+        }
+        assert_eq!(
+            cells::strip_layout(&app).place(0).unwrap().1,
+            strip::cell_width(1.5)
+        );
+        assert_eq!(
+            cells::strip_layout(&app).place(1).unwrap().1,
+            strip::cell_width(2.0 / 3.0)
+        );
+        // Along the strip, past frames whose pictures have not come.
+        assert!(app.invoke_scroll_by(5000.0));
+        settle();
+        let scroll = app.get_strip_scroll();
+        assert_eq!(scroll, 5000.0);
+        let (first, last) = state.borrow().views.strip_shown.unwrap();
+        assert!(first > 30, "{first}");
+        let on_screen = |row: i32| {
+            let (left, width) = cells::strip_layout(&app).place(row).unwrap();
+            (left - app.get_strip_scroll(), width)
+        };
+        let was: Vec<_> = (first..=last).map(on_screen).collect();
+        let (x, y) = crate::testing::strip_cell(&app, first as usize + 2);
+        // Frames 21 to 29, left of the view, come in as portraits: the
+        // row is shorter before the view, and the view moves with it.
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                (21..30).map(|i| portrait_for(&files, i)).collect(),
+            )),
+        );
+        settle();
+        assert!(app.get_strip_scroll() < scroll, "the row before shrank");
+        let now: Vec<_> = (first..=last).map(on_screen).collect();
+        assert_eq!(now, was, "the frames on screen moved");
+        crate::testing::click(&app, x, y);
+        assert_eq!(*clicks.borrow(), vec![first + 2]);
+        // The first frame past the right edge, chosen: in view with the
+        // pad after it, at the strip's right.
+        let past = last + 1;
+        app.set_selected(past);
+        press(&app, Key::Shift);
+        let (left, width) = cells::strip_layout(&app).place(past).unwrap();
+        assert_eq!(
+            left + width + strip::PAD,
+            app.get_strip_scroll() + app.get_strip_view()
+        );
+    }
+
     /// The strip and the grid make cells for the rows on screen and a
     /// margin, however long the list: five thousand frames are a strip
     /// of a screen's width and a grid of seven rows, and no more rows
@@ -4235,11 +4418,12 @@ mod tests {
     #[test]
     fn five_thousand_frames_make_cells_for_the_screen_alone() {
         let (app, state, _files) = five_thousand();
-        // The strip, 1500 wide at 186 a frame: eight and a part on
-        // screen, and cells for a part more and the margin either side.
-        assert_eq!(cells_on_screen(&app, "Filmstrip::cell"), 9);
+        // The strip, 1500 wide over square pictures, 95 a cell and 4
+        // between: fifteen and a part on screen, and cells for a part
+        // more and the margin either side.
+        assert_eq!(cells_on_screen(&app, "Filmstrip::cell"), 16);
         let strip = app.get_strip_cells().row_count();
-        assert!(strip <= 10 + 2 * cells::STRIP_MARGIN, "{strip}");
+        assert!(strip <= 17 + 2 * cells::STRIP_MARGIN, "{strip}");
         assert_eq!(app.get_cells_made() as usize, strip, "the grid is closed");
         assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 0);
         press(&app, "g");
@@ -5325,10 +5509,10 @@ mod tests {
         (app, seen)
     }
 
-    /// The row the strip scrolls along: a pitch a frame and the pad at
-    /// either end.
-    fn strip_row(count: usize) -> f32 {
-        count as f32 * 186.0 + 2.0 * 12.0
+    /// The row the strip scrolls along, as the window lays it out now:
+    /// its cells and the pad at either end.
+    fn strip_row(app: &App) -> f32 {
+        cells::strip_layout(app).length()
     }
 
     #[test]
@@ -5339,7 +5523,7 @@ mod tests {
         assert_eq!((at.y, size.height), (950.0 - 12.0, 12.0));
         let w = size.width;
         assert!(w > 1000.0, "{w}");
-        assert_eq!(max, (strip_row(40) - w).round());
+        assert_eq!(max, (strip_row(&app) - w).round());
         assert_eq!(value, 0.0);
         // Past the thumb: a strip's width along, then two, and the
         // strip says what it shows from there.
@@ -5349,7 +5533,7 @@ mod tests {
         assert_eq!(strip_bar(&app).unwrap().2, w.round());
         crate::testing::click(&app, past, y);
         assert_eq!(strip_bar(&app).unwrap().2, (2.0 * w).round());
-        let first = ((2.0 * w - 12.0) / 186.0).floor() as i32;
+        let first = cells::strip_layout(&app).shown(2.0 * w, w).unwrap().0;
         assert_eq!(reports.borrow().last().map(|r| r.0), Some(first));
         // Before it: back a width, and no further than the start.
         crate::testing::click(&app, at.x + 6.0, y);
@@ -5374,7 +5558,7 @@ mod tests {
         app.on_frame_clicked(move |row, _, _| c.borrow_mut().push(row));
         let (at, size, _, _) = strip_bar(&app).unwrap();
         let w = size.width;
-        let max = strip_row(40) - w;
+        let max = strip_row(&app) - w;
         // Taken 10 px into the thumb and moved 150 px along: the thumb
         // follows the pointer, and the strip comes to where the grid's
         // arithmetic puts it.
@@ -5429,7 +5613,7 @@ mod tests {
             .collect();
         cells::set_rows(&app, more);
         let (_, size, value, max) = strip_bar(&app).expect("a bar for forty");
-        assert_eq!(max, (strip_row(40) - size.width).round());
+        assert_eq!(max, (strip_row(&app) - size.width).round());
         assert_eq!(value, 0.0);
         // With the bar there the frame's last row is still the frame's,
         // and a press in the band below it is the bar's.
@@ -5456,7 +5640,7 @@ mod tests {
         // The thumb is where the arithmetic puts it on the narrower
         // strip: a press on its far end takes it, and one just past
         // pages.
-        let (w, max) = (size.width, strip_row(40) - size.width);
+        let (w, max) = (size.width, strip_row(&app) - size.width);
         let end = at.x + grid::bar_offset(w, max, 0.0) + grid::bar_length(w, max);
         crate::testing::click(&app, end - 2.0, at.y + 6.0);
         assert_eq!(strip_bar(&app).unwrap().2, 0.0);

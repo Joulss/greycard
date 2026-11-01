@@ -885,7 +885,7 @@ mod tests {
         let (at, size) = testing::labeled(&app, "Frame title");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "Dusk");
-        let (x, y) = testing::strip_cell(1);
+        let (x, y) = testing::strip_cell(&app, 1);
         testing::click(&app, x, y);
         settle();
         assert_eq!(state.borrow().current, Some(1), "the click chose it");
@@ -925,7 +925,7 @@ mod tests {
         let (at, size) = testing::labeled(&app, "Frame title");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         type_text(&app, "Dusk");
-        let (x, y) = testing::strip_cell(2);
+        let (x, y) = testing::strip_cell(&app, 2);
         let position = slint::LogicalPosition::new(x, y);
         let button = PointerEventButton::Right;
         for event in [

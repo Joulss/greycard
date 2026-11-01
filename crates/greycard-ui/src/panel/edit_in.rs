@@ -610,7 +610,7 @@ mod tests {
     /// the strip's first frame.
     fn menu_items(app: &App, label: &str) -> usize {
         use i_slint_backend_testing::ElementHandle;
-        let position = slint::LogicalPosition::new(strip_cell(0).0, strip_cell(0).1);
+        let position = slint::LogicalPosition::new(strip_cell(app, 0).0, strip_cell(app, 0).1);
         for event in [
             WindowEvent::PointerMoved { position },
             WindowEvent::PointerPressed {

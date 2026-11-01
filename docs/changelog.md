@@ -35,6 +35,10 @@ design note behind it.
   with Space or Shift held pans the picture ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
 - Ctrl+E exports the selection with the last settings into the last
   folder, no sheet; the sheet the first time ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- The filmstrip's cells take their pictures' shapes, a portrait narrow
+  and a landscape wide, with a small gap between: about twice as many
+  frames on screen, and the strip a little shorter
+  ([§518](https://github.com/jessolmstead/greycard/blob/master/docs/notes/518-the-strips-cells-sized-to-their-pictures.md)).
 
 ### Color
 

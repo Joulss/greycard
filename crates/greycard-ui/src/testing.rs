@@ -71,6 +71,7 @@ pub(crate) fn window(count: usize) -> App {
     app.on_grid_columns(grid::columns);
     app.on_grid_slack(grid::slack);
     crate::panel::browser::grid_layout(&app);
+    crate::panel::browser::strip_layout(&app);
     app.on_grid_tiles_top(grid::tiles_top);
     app.on_grid_common_pitch(grid::common_pitch);
     app.on_lightbox_cell(crate::lightbox::cell);
@@ -261,11 +262,25 @@ pub(crate) fn buttons(app: &App, label: &str) -> Vec<(slint::LogicalPosition, sl
     found
 }
 
-/// Where row `i` of the strip is, in a 1500 by 950 window: the strip
-/// is the window's foot, 148 high, its cells 178 wide and 186 apart
-/// after a pad of 12.
-pub(crate) fn strip_cell(i: usize) -> (f32, f32) {
-    (12.0 + i as f32 * 186.0 + 89.0, 950.0 - 148.0 + 60.0)
+/// The middle of row `i`'s picture in the strip, in logical pixels
+/// from the window's top left: its cell where the strip's layout puts
+/// it, less the strip's scroll, in the window's foot.
+pub(crate) fn strip_cell(app: &App, i: usize) -> (f32, f32) {
+    let (left, width) = crate::cells::strip_layout(app)
+        .place(i as i32)
+        .expect("a row the strip has");
+    let height = app
+        .window()
+        .size()
+        .to_logical(app.window().scale_factor())
+        .height;
+    (
+        left + width / 2.0 - app.get_strip_scroll(),
+        height - app.get_strip_h()
+            + crate::strip::PAD
+            + crate::strip::RING
+            + crate::strip::PHOTO / 2.0,
+    )
 }
 
 /// Type `text` a key at a time into whatever has the focus.

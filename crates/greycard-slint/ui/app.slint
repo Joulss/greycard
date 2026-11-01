@@ -12,7 +12,7 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys } from "controls.slint";
-import { GridHead, GridPlace, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -253,11 +253,38 @@ export component App inherits Window {
     /// The most stars a badge draws, set from `meta::STARS` so this
     /// file and that module cannot drift apart.
     in property <int> meta-stars: 5;
-    // The strip's geometry, shared by its layout and its scrolling.
-    property <length> strip-item: 178px;
-    property <length> strip-pitch: root.strip-item + Theme.space-2;
-    property <length> strip-pad: Theme.space-3;
+    // The strip's geometry, shared by its layout and its scrolling,
+    // set from the Rust side's own constants (`strip.rs`) so the cells
+    // drawn here and the arithmetic there cannot drift apart: the
+    // pictures' height, the ring around each, and the pad at the ends
+    // and above the cells.
+    in property <length> strip-photo: 91px;
+    in property <length> strip-ring: 2px;
+    in property <length> strip-pad: 12px;
     property <length> strip-foot: max(root.strip-pad, ScrollBars.band - 2px);
+    /// A cell's height: the picture in its ring, and under it the
+    /// name's line, 13 px for its 11 px text, a `space-1` either side.
+    property <length> strip-cell-h: root.strip-ring + root.strip-photo + Theme.space-1 + 13px + Theme.space-1;
+    /// The strip's cells, each its picture's shape: where a row's cell
+    /// is along the row, how long the row is, the rows a scroll shows,
+    /// and the scroll that shows a row, asked of the arithmetic in
+    /// `strip.rs`. `grid-shape` comes with each question so a binding
+    /// asks again when a shape comes in.
+    pure callback strip-place(int, int) -> StripPlace;
+    pure callback strip-length(int) -> length;
+    pure callback strip-shown(length, length, int) -> StripSpan;
+    pure callback strip-reveal-to(length, length, int, int) -> length;
+    /// How far the strip is scrolled along, and its width: what Rust
+    /// holds still when shapes come in.
+    out property <length> strip-scroll: -strip.content-x;
+    out property <length> strip-view: strip.width;
+    /// The strip scrolled to `to` along the row, held to its range,
+    /// and what it shows said: the scroll Rust works out to keep the
+    /// view still under shapes that come in after the layout.
+    public function strip-hold(to: length) {
+        strip.content-x = min(0px, max(strip.width - strip.content-width, -to));
+        root.strip-report();
+    }
     /// The frames the strip shows now, first and last, so their
     /// pictures are made before the rest of the folder's.
     callback strip-range(int, int);
@@ -276,16 +303,7 @@ export component App inherits Window {
         // With nothing chosen the strip stays where it is, and still
         // says what it shows: its cells are made from what it says.
         if (root.selected >= 0) {
-            // The frame's edges in the content's coordinates, and the
-            // left edge of what is on screen.
-            let left = root.strip-pad + root.selected * root.strip-pitch;
-            let right = left + root.strip-item;
-            let x = -strip.content-x;
-            let wanted = left - root.strip-pad < x
-                ? left - root.strip-pad
-                : (right + root.strip-pad > x + strip.width
-                    ? right + root.strip-pad - strip.width
-                    : x);
+            let wanted = root.strip-reveal-to(-strip.content-x, strip.width, root.selected, root.grid-shape);
             strip.content-x = min(0px, max(strip.width - strip.content-width, -wanted));
         }
         root.strip-report();
@@ -303,10 +321,8 @@ export component App inherits Window {
     /// Rust side drops a repeat of the range it last acted on.
     function strip-report() {
         if (root.thumbs.length == 0 || strip.width <= 0px || root.grid-open) { return; }
-        let x = -strip.content-x - root.strip-pad;
-        root.strip-range(
-            max(0, floor(x / root.strip-pitch)),
-            min(root.thumbs.length - 1, ceil((x + strip.width) / root.strip-pitch)));
+        let span = root.strip-shown(-strip.content-x, strip.width, root.grid-shape);
+        root.strip-range(span.first, span.last);
     }
 
     // The grid: the whole folder at once, over the window, in place
@@ -2350,7 +2366,7 @@ export component App inherits Window {
     property <length> right-w: root.right-hidden ? 0px : 320px;
     // The strip's foot grows with the scroll bar's size, so a wider
     // thumb still keeps off the frames.
-    property <length> strip-h: root.strip-hidden ? 0px : 148px + root.strip-foot - root.strip-pad;
+    out property <length> strip-h: root.strip-hidden ? 0px : root.strip-pad + root.strip-cell-h + root.strip-foot;
     pure function all-hidden() -> bool {
         return root.left-hidden && root.right-hidden && root.strip-hidden;
     }
@@ -3962,9 +3978,13 @@ export component App inherits Window {
             ctrl-click-menu: root.ctrl-click-menu;
             menu-at: root.grid-open ? -1 : root.menu-at;
             meta-stars: root.meta-stars;
-            strip-item: root.strip-item;
-            strip-pitch: root.strip-pitch;
+            shape: root.grid-shape;
+            strip-photo: root.strip-photo;
+            strip-ring: root.strip-ring;
             strip-pad: root.strip-pad;
+            cell-h: root.strip-cell-h;
+            strip-place(r, s) => { return root.strip-place(r, s); }
+            strip-length(s) => { return root.strip-length(s); }
             strip-foot: root.strip-foot;
             strip-relay => { root.strip-relay(); }
             strip-report => { root.strip-report(); }

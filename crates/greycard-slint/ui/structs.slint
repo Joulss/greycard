@@ -163,6 +163,20 @@ export struct GridPlace {
     pic: length,
 }
 
+/// Where a frame's cell sits along the strip: its left edge from the
+/// row's start, and its width, its picture's shape at the row's height.
+export struct StripPlace {
+    x: length,
+    width: length,
+}
+
+/// The rows a scroll of the strip shows any of, first and last; -1 for
+/// none.
+export struct StripSpan {
+    first: int,
+    last: int,
+}
+
 /// A box drawn for an object, on the view, logical pixels.
 export struct MaskBox {
     x: float,
