@@ -1041,9 +1041,6 @@ clears or a tester asks for it.
       not in a second window (discussion 51, 2026-10-28)
 - [ ] The download progress shown where it cannot be missed while a
       dialog has the window greyed out (discussion 51, 2026-10-28)
-- [ ] Ctrl+E exports the selection with the last settings into the
-      last folder, no sheet, as darktable does; the sheet the first
-      time, before any export has set them (pixls, 2026-10-28)
 - [ ] A lighter canvas and a white one, for the light theme
       (issue 53, 2026-10-29)
 - [ ] A fill from the near surround only, so a logo on a red button
@@ -1077,10 +1074,6 @@ clears or a tester asks for it.
       do not share a left edge; a mask's row deletes with a bin and a
       shape's with an x: one edge, one glyph (discussion 51,
       2026-10-29)
-- [ ] A new mask's name field takes the focus, so it can be named at
-      once (discussion 51, 2026-10-30)
-- [ ] A section opened out of sight under One section open at a time
-      scrolls into view (discussion 59, 2026-10-30)
 - [ ] Luminance, hue, and chroma ranges in one mask shape with a curve
       for each, and chroma as a range rather than a floor, as ART's
       parametric mask; today it is a Luminance and a Color shape under
@@ -1089,9 +1082,6 @@ clears or a tester asks for it.
       than the middle (issue 56, 2026-10-30)
 - [ ] Sync from the open frame onto the selection by a middle-click
       on it, as DaVinci does (issue 56, 2026-10-30)
-- [ ] A pan while a tool is in hand: Space or Shift held with a
-      drag moves the picture without putting the heal brush down,
-      for dust at 100 to 300 percent (reddit, 2026-10-31)
 - [ ] Dust and scratches on a film scan found and healed in one go,
       each spot listed so a wrong one can be removed or redrawn; the
       camera-scanning workflow alongside digital raws (reddit,

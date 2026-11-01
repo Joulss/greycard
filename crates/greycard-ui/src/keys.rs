@@ -306,6 +306,7 @@ pub(crate) const TABLE: &[Group] = &[
             act("open", &["Ctrl+O"], "Open a folder"),
             act("import", &["Ctrl+Shift+I"], "Import from a card"),
             act("export", &["Ctrl+Shift+E"], "Export"),
+            act("export-again", &["Ctrl+E"], "Export with the last settings"),
             act("settings", &["Ctrl+,"], "Settings"),
             act("keys", &["?"], "The keys sheet"),
             line(

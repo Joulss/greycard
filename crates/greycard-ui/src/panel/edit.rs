@@ -1158,6 +1158,86 @@ mod tests {
         assert!(app.get_collapsed_grain() && app.get_collapsed_metadata());
     }
 
+    /// One section open at a time: a section opened by its header,
+    /// with an open one above it folding, is brought into the panel's
+    /// view, its header first, rather than carried up out of sight.
+    #[test]
+    fn a_section_opened_under_one_at_a_time_comes_into_view() {
+        use crate::testing::{click, labeled, settle};
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(3);
+        // Short, so the panel scrolls.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 640.0));
+        for (_, _, set) in FOLDS {
+            set(&app, true);
+        }
+        app.set_one_section(true);
+        settle(&app);
+        app.set_collapsed_light(false);
+        settle(&app);
+        let view = || {
+            let v = ElementHandle::find_by_element_id(&app, "App::panel-view")
+                .next()
+                .expect("the panel's view");
+            (
+                v.absolute_position().y,
+                v.absolute_position().y + v.size().height,
+            )
+        };
+        // DETAIL's header in the view, under the open LIGHT.
+        let (at, size) = labeled(&app, "DETAIL");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        for _ in 0..6 {
+            settle(&app);
+        }
+        assert!(!app.get_collapsed_detail() && app.get_collapsed_light());
+        let header = ElementHandle::find_by_accessible_label(&app, "DETAIL")
+            .next()
+            .expect("DETAIL's header in the view, the only part the panel builds");
+        let (top, bottom) = view();
+        let y = header.absolute_position().y;
+        assert!(
+            y >= top && y + header.size().height <= bottom,
+            "DETAIL's header at {y}, the view {top}..{bottom}"
+        );
+    }
+
+    /// The wheel during an opening's follow wins: the section is let
+    /// go of, not pulled back into view against it.
+    #[test]
+    fn the_wheel_lets_go_of_a_section_being_brought_into_view() {
+        use crate::testing::{click, labeled, settle};
+        use slint::platform::WindowEvent;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 640.0));
+        for (_, _, set) in FOLDS {
+            set(&app, true);
+        }
+        app.set_one_section(true);
+        settle(&app);
+        app.set_collapsed_light(false);
+        settle(&app);
+        let (at, size) = labeled(&app, "DETAIL");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        // A frame of the folds, then the wheel up to the top.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        for _ in 0..20 {
+            app.window().dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(at.x + 40.0, at.y),
+                delta_x: 0.0,
+                delta_y: 120.0,
+            });
+        }
+        assert_eq!(app.get_panel_scroll(), 0.0, "the wheel took it to the top");
+        for _ in 0..6 {
+            settle(&app);
+        }
+        assert_eq!(app.get_panel_scroll(), 0.0, "and it stays there");
+    }
+
     /// The DEMOSAIC menu lists the open raw's mosaic's methods and
     /// selects what its develop runs; read back untouched it keeps the
     /// stored choice; a pick through the window's callback is stored,

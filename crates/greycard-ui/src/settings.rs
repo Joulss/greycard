@@ -33,6 +33,11 @@ pub struct Settings {
     /// preset that names a subfolder never asks, and one that asks
     /// opens where the last export went. Empty for none.
     pub export_last_folder: String,
+    /// Whether an export has gone out from the sheet, in this run or
+    /// an earlier one: Ctrl+E then sends the selection as the sheet
+    /// stands, with no sheet, and before it opens the sheet. Written
+    /// as the first export starts.
+    pub exported: bool,
     pub scope: String,
     /// Which curve the CURVES section shows: "Parametric" or "Point".
     pub curve_mode: String,
@@ -551,6 +556,7 @@ impl Default for Settings {
             export_presets: Vec::new(),
             export_preset: String::new(),
             export_last_folder: String::new(),
+            exported: false,
             scope: crate::scope::Scope::default().name().into(),
             curve_mode: "Point".into(),
             warn_shadows: false,
@@ -819,6 +825,7 @@ mod tests {
             lenses_declined: true,
             rawtherapee_answered: vec!["/home/x/Pictures/rt".into()],
             export_last_folder: "/home/x/Pictures/out".into(),
+            exported: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             start_folder: "~/Pictures/start".into(),

@@ -187,6 +187,9 @@ frames as ← and → do.
 **Ctrl+wheel** over the grid changes the tile size as **+** and **−**
 do.
 
+With a repair or a mask's shape in hand, **Space** or **Shift** held
+with a drag moves the picture; a tap of **Space** still zooms.
+
 ### Rating and sorting
 
 | Key | Does |
@@ -228,6 +231,7 @@ do.
 | Ctrl+O | Open a folder |
 | Ctrl+Shift+I | Import from a card |
 | Ctrl+Shift+E | Export |
+| Ctrl+E | Export with the last settings |
 | Ctrl+, | Settings |
 | ? | The keys sheet |
 | Esc | Close a sheet, put a tool down, leave the crop, let go of a set, or go back to one frame |

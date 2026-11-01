@@ -146,6 +146,15 @@ export component Viewport inherits Rectangle {
     /// a click on the picture.
     pure callback menu-shown() -> bool;
     in property <bool> ctrl-click-menu;
+    /// Space or Shift held over a tool that paints or places on the
+    /// picture: a drag pans instead, and the cursor is the hand.
+    /// Shift is read off the press too, for a key held since before
+    /// the window had the keys.
+    in property <bool> hand;
+    /// Set when such a drag panned, for Space's release: a tap still
+    /// zooms, a hold that panned does not.
+    in-out property <bool> hand-panned;
+    property <bool> hand-tool: !root.placeholder && (root.placing != "" || root.retouch-mode != "");
     // The engine's texture, bound by App's `texture` through this
     // component's id as it was bound to the Image before.
     in property <image> source <=> view.source;
@@ -213,7 +222,12 @@ export component Viewport inherits Rectangle {
         // where a drag pans nothing. Latched, so a drag that starts on
         // the picture and leaves it still pans.
         property <bool> canvas-down;
-        mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
+        // Whether the press was the hand's (`hand`): the tool stays
+        // up, and the drag pans.
+        property <bool> hand-down;
+        mouse-cursor: self.hand-down ? MouseCursor.grabbing
+            : root.hand && root.hand-tool && !self.pressed ? MouseCursor.grab
+            : root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
             : root.crop-mode ? MouseCursor.crosshair
             : self.body-moving ? MouseCursor.move
@@ -267,7 +281,10 @@ export component Viewport inherits Rectangle {
                 // was picked to keep it from a plain click.
                 self.picked-down = false;
                 self.placed-down = false;
+                self.hand-down = (root.hand || e.modifiers.shift) && root.hand-tool
+                    && e.button == PointerEventButton.left;
                 if (root.placeholder) {
+                } else if (self.hand-down) {
                 } else if (root.picking != "") {
                     self.picked-down = true;
                     if (e.button == PointerEventButton.left) {
@@ -292,6 +309,8 @@ export component Viewport inherits Rectangle {
                     // The release of a press that closed a menu.
                 } else if (self.menu-down) {
                     self.menu-down = false;
+                } else if (self.hand-down) {
+                    // The hand's: neither a stroke nor a click's zoom.
                 } else if (self.body-moving) {
                     root.mask-dropped();
                 } else if (self.picked-down) {
@@ -317,6 +336,7 @@ export component Viewport inherits Rectangle {
                 self.held = false;
                 self.body-down = false;
                 self.body-moving = false;
+                self.hand-down = false;
             } else if (e.kind == PointerEventKind.cancel) {
                 // The window let go of the gesture rather than this
                 // press ending it (focus lost, the platform taking
@@ -339,6 +359,7 @@ export component Viewport inherits Rectangle {
                 self.dragged = false;
                 self.crop-drawing = false;
                 self.canvas-down = false;
+                self.hand-down = false;
             }
         }
         moved => {
@@ -346,7 +367,12 @@ export component Viewport inherits Rectangle {
                 if (abs(self.mouse-x - self.down-x) > 4px || abs(self.mouse-y - self.down-y) > 4px) {
                     self.dragged = true;
                 }
-                if (root.picking != "") {
+                if (self.hand-down) {
+                    if (self.dragged && !self.canvas-down) {
+                        root.pan(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
+                        root.hand-panned = true;
+                    }
+                } else if (root.picking != "") {
                     root.pick-dragged(self.mouse-x, self.mouse-y);
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-dragged(self.mouse-x, self.mouse-y);
@@ -455,7 +481,7 @@ export component Viewport inherits Rectangle {
     }
     // The brush under the pointer: its radius, and where
     // its feather begins.
-    if root.placing == "Brush" && ta.has-hover && !root.placeholder: Rectangle {
+    if root.placing == "Brush" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down: Rectangle {
         for s in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Path {
             width: 100%;
             height: 100%;
@@ -616,7 +642,7 @@ export component Viewport inherits Rectangle {
         }
     }
     // The repair tool under the pointer: its radius and feather.
-    if root.retouch-mode != "" && ta.has-hover && !root.placeholder: Rectangle {
+    if root.retouch-mode != "" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down: Rectangle {
         for s in [1.0, 1.0 - root.patch-feather]: Path {
             width: 100%;
             height: 100%;

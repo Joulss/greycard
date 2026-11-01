@@ -5,6 +5,17 @@ design note behind it.
 
 ## 0.10.0
 
+### The window
+
+- A new mask's name field takes the keys, so it can be named at once
+  ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- Under One section open at a time, a section opened out of sight
+  scrolls into view ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- With the heal brush, the fill, or a mask's shape in hand, a drag
+  with Space or Shift held pans the picture ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- Ctrl+E exports the selection with the last settings into the last
+  folder, no sheet; the sheet the first time ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+
 ### Color
 
 - A phone's DNG opens without its dark corners: the gain maps and the

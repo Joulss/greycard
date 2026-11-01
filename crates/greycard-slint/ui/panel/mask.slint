@@ -232,6 +232,9 @@ export component AdjustmentsSection inherits Section {
     callback component-changed(int);
     callback renamed();
     callback view-changed();
+    // Set by New mask: the new mask's name takes the keys, so a name
+    // can be typed at once. Let go once taken.
+    in-out property <bool> name-wanted: false;
 
     title: "MASK";
     owner: root.adjustment-names[root.target];
@@ -239,6 +242,19 @@ export component AdjustmentsSection inherits Section {
     collapsed <=> root.collapsed-mask;
     if root.target > 0: VerticalLayout {
         spacing: Theme.space-2;
+        // A turn later, not in the press: the target's change closes
+        // whatever field was open and hands the keys back, which would
+        // take them from the name again. The placeholder's name is
+        // selected so typing replaces it.
+        Timer {
+            interval: 1ms;
+            running: root.name-wanted;
+            triggered => {
+                root.name-wanted = false;
+                name-field.focus();
+                name-field.select-all();
+            }
+        }
         Rectangle {
             border-radius: Theme.radius-md;
             background: Theme.base;
@@ -247,7 +263,7 @@ export component AdjustmentsSection inherits Section {
             VerticalLayout {
                 padding: Theme.space-2;
                 spacing: Theme.space-2;
-                LineEdit {
+                name-field := LineEdit {
                     text <=> root.adjustment-name;
                     placeholder-text: "Name";
                     accessible-label: "Mask name";

@@ -247,6 +247,30 @@ pub(crate) fn remember_export_last_folder(st: &mut State, app: &App, folder: &Pa
     settings.save_to(path);
 }
 
+/// Whether an export has gone out from the sheet, here or in an
+/// earlier run: what Ctrl+E asks before it sends the selection as the
+/// sheet stands rather than open it. Never from a snapshot or a batch
+/// run, which have no file (`Window::settings_file`).
+pub(crate) fn exported_before(st: &State) -> bool {
+    st.window
+        .settings_file
+        .as_deref()
+        .is_some_and(|path| settings::Settings::load_from(path).exported)
+}
+
+/// An export from the sheet under way: written at once, as the last
+/// folder is, so a run that ends badly still has it.
+fn remember_exported(st: &State) {
+    let Some(path) = &st.window.settings_file else {
+        return;
+    };
+    let mut settings = settings::Settings::load_from(path);
+    if !settings.exported {
+        settings.exported = true;
+        settings.save_to(path);
+    }
+}
+
 /// One picture from the thumbnails' pool, or word that none could be
 /// made, put on its file's row.
 pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
@@ -1918,6 +1942,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             );
         });
     }
+    // Ctrl+E's question: the sheet's choices sent before, or the
+    // sheet first.
+    {
+        let state = state.clone();
+        app.on_export_remembered(move || state.try_borrow().is_ok_and(|st| exported_before(&st)));
+    }
     // Export the current file under the panel's edit, beside it.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
@@ -2064,29 +2094,31 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
         return;
     }
     let on_exists = sheet.on_exists();
-    match sheet.subfolder() {
+    let sub = match sheet.subfolder() {
         Err(e) => {
             app.set_status(format!("not exported: {e}").into());
             app.set_export_open(true);
             return;
         }
-        // The editor names every file, so the sheet's policy holds
-        // for each, the frame on screen as much as a set.
-        Ok(Some(sub)) => {
-            let mut st = state.borrow_mut();
-            start_or_ask(
-                &mut st,
-                app,
-                frames,
-                None,
-                Some(sub),
-                settings,
-                on_exists,
-                preset,
-            );
-            return;
-        }
-        Ok(None) => {}
+        Ok(sub) => sub,
+    };
+    // Choices that hold: Ctrl+E may send them again with no sheet.
+    remember_exported(&state.borrow());
+    // The editor names every file, so the sheet's policy holds for
+    // each, the frame on screen as much as a set.
+    if let Some(sub) = sub {
+        let mut st = state.borrow_mut();
+        start_or_ask(
+            &mut st,
+            app,
+            frames,
+            None,
+            Some(sub),
+            settings,
+            on_exists,
+            preset,
+        );
+        return;
     }
     // Into the folder the Folder row shows, with no dialog, once it
     // is known to take files: one that is gone or will not take them
@@ -2448,6 +2480,75 @@ mod tests {
         })
         .save(path)
         .unwrap();
+    }
+
+    /// Ctrl+E: before any export from the sheet, the sheet, as
+    /// Ctrl+Shift+E opens it; once one has gone out, here or in an
+    /// earlier run, the selection goes out as the sheet stands, into
+    /// its folder, with no sheet and no dialog.
+    #[test]
+    fn ctrl_e_sends_the_selection_again_once_an_export_has_set_the_sheet() {
+        use slint::platform::{Key, WindowEvent};
+        let app = crate::testing::window(1);
+        let dir = crate::testing::scratch_dir("export-again");
+        let source = dir.join("shoot").join("frame.png");
+        picture(&source);
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let file = dir.join("greycard").join("settings.json");
+        settings::Settings::default().save_to(&file);
+        let (state, _worker) = crate::testing::state_for(&app, vec![source.clone()]);
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.work.export_last_folder = Some(out.clone());
+            st.window.settings_file = Some(file.clone());
+        }
+        app.set_selected(0);
+        let ctrl_e = || {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Control.into(),
+            });
+            crate::testing::press(&app, "e");
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Control.into(),
+            });
+        };
+        let written = |name: &str| {
+            let file = out.join(name);
+            let start = Instant::now();
+            while !file.exists() {
+                assert!(start.elapsed() < Duration::from_secs(60), "{name} written");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+
+        ctrl_e();
+        assert!(app.get_export_open(), "the sheet, before any export");
+        assert!(state.borrow().work.exporting.is_none());
+        // The sheet's Export sends one, and says so in the file.
+        app.set_export_open(false);
+        app.invoke_export();
+        assert!(settings::Settings::load_from(&file).exported);
+        written("frame.jpg");
+        state.borrow_mut().work.exporting = None;
+        app.set_export_running(false);
+        slint::platform::update_timers_and_animations();
+
+        ASKED.with(|a| a.borrow_mut().take());
+        ctrl_e();
+        assert!(!app.get_export_open(), "no sheet");
+        assert!(ASKED.with(|a| a.borrow().is_none()), "no dialog");
+        let set = state
+            .borrow()
+            .work
+            .exporting
+            .clone()
+            .expect("the selection, at once");
+        assert_eq!(set.folder.as_deref(), Some(out.as_path()));
+        written("frame-1.jpg");
+        state.borrow_mut().work.exporting = None;
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// Export writes into the folder the row shows, with no dialog: the

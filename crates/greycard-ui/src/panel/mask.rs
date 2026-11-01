@@ -3031,6 +3031,40 @@ mod tests {
         assert_eq!(app.get_panel_scroll(), 0.0, "the sections are at their top");
     }
 
+    /// New mask hands the new mask's name the keys, its placeholder
+    /// selected: a name typed at once replaces it, and none of its
+    /// letters reaches the window's keys. Enter gives them back. A
+    /// second mask, made with the section already up, does the same.
+    #[test]
+    fn a_new_masks_name_takes_the_keys() {
+        use crate::testing::{labeled, press, settle, type_text};
+        use slint::platform::Key;
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.set_collapsed_mask(true);
+        for (mask, name) in [(1, "Sky"), (2, "Face")] {
+            let (at, size) = labeled(&app, "New mask");
+            click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            settle(&app);
+            assert_eq!(app.get_target(), mask);
+            assert!(!app.get_collapsed_mask(), "the name's section opens");
+            type_text(&app, name);
+            assert_eq!(app.get_adjustment_name(), name);
+            assert_eq!(
+                app.get_adjustment_names().row_data(mask as usize).unwrap(),
+                name
+            );
+            assert!(!app.get_proofing(), "S went to the name, not to the proof");
+            press(&app, Key::Return);
+            settle(&app);
+        }
+        press(&app, "g");
+        assert!(app.get_grid_open(), "Enter gave the keys back");
+    }
+
     #[test]
     fn new_mask_is_there_with_nothing_chosen_and_no_shape_button_yet() {
         let app = window(1);

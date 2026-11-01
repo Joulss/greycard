@@ -14,7 +14,9 @@ what you chose.
 - The dot before a mask switches it on and off.
 - The bin on the chosen row deletes that mask.
 - **New mask** adds an empty mask named "Mask 1", "Mask 2" and so on,
-  and takes the sections back to their top. A frame can hold up to 16.
+  and takes the sections back to their top. Its name field has the
+  keys, the name selected, so you can type a name at once; **Enter**
+  or a click elsewhere ends the naming. A frame can hold up to 16.
 
 The list stays put while the sections scroll under it, so **Global**
 or another mask is one click away from any slider. It shows up to six

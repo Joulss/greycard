@@ -1040,6 +1040,7 @@ export component App inherits Window {
         root.panel-scroll = 0px;
         root.new-mask();
     }
+    property <bool> mask-name-wanted: false;
     // Each tab starts at its top, however it was reached: the scroll is
     // one for all four, and Develop scrolled to its foot left a shorter
     // tab showing only the empty space below its sections.
@@ -1789,6 +1790,9 @@ export component App inherits Window {
     callback undo();
     callback redo();
     callback export();
+    /// Whether an export has gone out from the sheet, here or in an
+    /// earlier run: Ctrl+E then sends the selection with no sheet.
+    callback export-remembered() -> bool;
     /// A set is being exported, a frame at a time; Stop (or Escape)
     /// finishes the frame in hand and stops.
     in property <bool> export-running: false;
@@ -2354,14 +2358,38 @@ export component App inherits Window {
         if (!root.keys-open && !root.sheet-open()) { keys.focus(); }
     }
 
+    // The hand over a tool in hand (`Viewport.hand`): Space held, or
+    // Shift, as the window's keys last saw them; and whether Space's
+    // hold has panned, for its release.
+    property <bool> hand-key: false;
+    property <bool> shift-held: false;
+    property <bool> hand-panned: false;
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
     keys := FocusScope {
         focus-lost(reason) => {
             if (reason == FocusReason.popup-activation) { root.menu-up = true; }
+            // A key let go of elsewhere is never heard here.
+            root.hand-key = false;
+            root.shift-held = false;
         }
         focus-gained(reason) => { root.menu-up = false; }
+        key-released(e) => {
+            root.shift-held = e.modifiers.shift;
+            let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
+                e.modifiers.alt, e.modifiers.meta);
+            if (chord == "Space" && root.hand-key) {
+                root.hand-key = false;
+                // A tap, not a hold that panned: the zoom, as ever.
+                if (!root.hand-panned) { root.zoom-key(1); }
+                return accept;
+            }
+            return reject;
+        }
         key-pressed(e) => {
+            // Not a key a focused slider passed on: its release stays
+            // with the slider and would never let go of the hand.
+            if (keys.has-focus) { root.shift-held = e.modifiers.shift; }
             // A key takes the hover text down, as it does a tooltip: a
             // row or a panel the key removes never hears the pointer go.
             root.tip-text = "";
@@ -2671,6 +2699,13 @@ export component App inherits Window {
                 root.export-asked();
                 return accept;
             }
+            // darktable's Ctrl+E: the selection sent as the sheet last
+            // sent one, into its folder, with no sheet; before any
+            // export has set the sheet, the sheet.
+            if (chord == "Ctrl+E") {
+                if (root.can-export() && root.export-remembered()) { root.export(); } else { root.export-asked(); }
+                return accept;
+            }
             // Ctrl+, is where a desktop application keeps its
             // settings; nothing else here binds a comma.
             if (chord == "Ctrl+," && !root.sheet-open()) {
@@ -2759,6 +2794,19 @@ export component App inherits Window {
             // field with the focus has the key first and selects its
             // own text.
             if (chord == "Ctrl+A") { root.select-all(); return accept; }
+            // With a tool that paints or places in hand, Space held is
+            // the hand, so a drag pans rather than paints; its zoom
+            // waits for the release, and a hold that panned has none.
+            // Passed on from a focused slider it zooms at once, as the
+            // release comes back to the slider, not here.
+            if (chord == "Space" && !root.grid-open && keys.has-focus
+                && (root.placing != "" || root.retouch-mode != "") && !root.placeholder) {
+                if (!e.repeat) {
+                    root.hand-key = true;
+                    root.hand-panned = false;
+                }
+                return accept;
+            }
             if (chord == "Space" && !root.grid-open) { root.zoom-key(1); return accept; }
             if (chord == "Z" && !root.grid-open) { root.zoom-key(3); return accept; }
             if (chord == "F" && !root.grid-open) { root.mat-key(); return accept; }
@@ -2851,6 +2899,8 @@ export component App inherits Window {
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
                 hovered(a, b, c) => { root.view-hovered(a, b, c); }
+                hand: root.hand-key || root.shift-held;
+                hand-panned <=> root.hand-panned;
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;
                 // The badge and the key's word: either Cull's.
@@ -3050,7 +3100,17 @@ export component App inherits Window {
                         collapsed-adjustments <=> root.collapsed-adjustments;
                         target-changed(a) => { root.target-changed(a); }
                         adjustment-toggled(a) => { root.adjustment-toggled(a); }
-                        new-mask => { root.mask-new(); }
+                        // The button's new mask is named at once: its
+                        // section opens and its name takes the keys. M's
+                        // is not, as its shape is in hand for a drag.
+                        new-mask => {
+                            let before = root.adjustment-names.length;
+                            root.mask-new();
+                            if (root.adjustment-names.length > before) {
+                                root.collapsed-mask = false;
+                                root.mask-name-wanted = true;
+                            }
+                        }
                         delete-adjustment => { root.delete-adjustment(); }
                     }
                 }
@@ -3084,6 +3144,32 @@ export component App inherits Window {
                                 root.panel-scroll - (bottom - self.visible-height + Theme.space-2));
                         }
                         self.held-scroll = root.panel-scroll;
+                    }
+                    // A section opened by its header under One section
+                    // open at a time: the whole of it in view if it
+                    // fits, else its header at the top.
+                    // Moved since the last reveal, by the wheel: the
+                    // section is let go of rather than fought for.
+                    property <int> fold-reveal: Folds.reveal;
+                    property <length> revealed-scroll;
+                    changed fold-reveal => {
+                        if (root.sheet-open()) { return; }
+                        if (Folds.reveal-first) {
+                            Folds.reveal-first = false;
+                        } else if (root.panel-scroll != self.revealed-scroll) {
+                            Folds.let-go += 1;
+                            return;
+                        }
+                        let top = Folds.reveal-y - self.absolute-position.y;
+                        let bottom = top + Folds.reveal-height;
+                        let foot = self.visible-height - Theme.space-2;
+                        let by = top < Theme.space-2 ? top - Theme.space-2
+                            : bottom > foot ? min(bottom - foot, top - Theme.space-2) : 0px;
+                        if (by != 0px) {
+                            root.panel-scroll = clamp(root.panel-scroll - by,
+                                min(0px, self.visible-height - self.content-height), 0px);
+                        }
+                        self.revealed-scroll = root.panel-scroll;
                     }
                     // Under a tall scope in a short window the pinned
                     // list, down to its one row, can still want more
@@ -3194,6 +3280,7 @@ export component App inherits Window {
                             collapsed-mask <=> root.collapsed-mask;
                             placing <=> root.placing;
                             adjustment-name <=> root.adjustment-name;
+                            name-wanted <=> root.mask-name-wanted;
                             component-names <=> root.component-names;
                             component-on <=> root.component-on;
                             shape-invert <=> root.shape-invert;

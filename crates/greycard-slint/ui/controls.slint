@@ -116,6 +116,18 @@ export global Folds {
     in-out property <int> count: 0;
     in-out property <int> opener: 0;
     in-out property <int> opened: 0;
+    // A section opened by its header, for the panel to bring into
+    // view as the others fold: counted up at each of its moves, and
+    // where it is in the window.
+    in-out property <int> reveal: 0;
+    in-out property <length> reveal-y;
+    in-out property <length> reveal-height;
+    // Whether this reveal is the opening's first (the panel clears it
+    // as it reads it), and a count the
+    // panel puts up when the wheel moved it since the last: the
+    // section is let go of rather than pulled back from the wheel.
+    in-out property <bool> reveal-first;
+    in-out property <int> let-go: 0;
 }
 
 // A section: a header of icon, title and chevron over a rule, and
@@ -172,6 +184,29 @@ export component Section inherits VerticalLayout {
             && Folds.opener != root.fold-number) {
             root.collapsed = true;
         }
+    }
+    // Opened by its header while the others fold: an open section
+    // above it folding carries it up, out of sight at the top, and its
+    // own body opens past the foot. So it is followed while both
+    // animations run, and the panel scrolls it into view as it moves.
+    property <bool> chased: false;
+    property <length> chased-y: root.chased ? root.absolute-position.y : 0px;
+    property <length> chased-height: root.chased ? root.height : 0px;
+    changed chased-y => { root.show-opened(); }
+    changed chased-height => { root.show-opened(); }
+    property <int> let-go: Folds.let-go;
+    changed let-go => { root.chased = false; }
+    function show-opened() {
+        if (!root.chased) { return; }
+        Folds.reveal-y = root.absolute-position.y;
+        Folds.reveal-height = root.height;
+        Folds.reveal += 1;
+    }
+    // Past the folds' 120 ms, with room for a slow frame.
+    Timer {
+        interval: 400ms;
+        running: root.chased;
+        triggered => { root.chased = false; }
     }
     callback switched();
     spacing: 6px;
@@ -241,12 +276,20 @@ export component Section inherits VerticalLayout {
                 // A focused slider elsewhere in the panel keeps the
                 // keys, and the panel keeps it in view as this
                 // section opens or folds; one in this section lets
-                // go, since the fold takes it out of view.
+                // go, since the fold takes it out of view, as does
+                // one anywhere in the panel when this one opens under
+                // One section open at a time, which folds all others.
                 clicked => {
-                    if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys()) {
+                    let folds-the-rest = root.collapsed && root.one-of-panel && Folds.one-open;
+                    if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
                         Typing.close-all();
                     }
                     root.collapsed = !root.collapsed;
+                    if (!root.collapsed && root.one-of-panel && Folds.one-open) {
+                        root.chased = true;
+                        Folds.reveal-first = true;
+                        root.show-opened();
+                    }
                 }
             }
         }

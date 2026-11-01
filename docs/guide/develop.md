@@ -21,7 +21,11 @@ pan and zoom straight away.
 - The **Fit** button at the panel's foot fits the picture; its chevron,
   or a right-click on it, offers Fit, 25%, 33%, 50%, 100%, 200%, and
   400%; under them, **Full screen** (**F11**).
-- **Drag** to move the picture when you are zoomed in.
+- **Drag** to move the picture when you are zoomed in. With a tool in
+  hand that draws on the picture (a repair, or a mask's shape waiting
+  for its drag), hold **Space** or **Shift** and drag: the pointer is
+  a hand, the picture moves, and nothing is drawn. A tap of **Space**
+  still zooms.
 - A **mouse wheel** zooms a step in or out about the pointer with each
   click. A tilted wheel moves the picture sideways.
 - A **two-finger scroll** on a touchpad moves the picture, in the

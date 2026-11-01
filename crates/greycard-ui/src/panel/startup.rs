@@ -2238,6 +2238,7 @@ fn merged(
     settings.sidecars_in_folder = kept.sidecars_in_folder;
     settings.jpegs_apart = kept.jpegs_apart;
     settings.one_section = kept.one_section;
+    settings.exported = kept.exported;
     settings.cull_move_on = kept.cull_move_on;
     settings.loupe_cull = kept.loupe_cull;
     settings.cull_developed = kept.cull_developed;
@@ -2329,6 +2330,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         export_preset: chosen_preset(app).unwrap_or_default(),
         // Kept by the caller: written when a chooser answers.
         export_last_folder: String::new(),
+        // Written as the first export starts; the caller keeps the file's.
+        exported: false,
         scope: app.get_scope().into(),
         curve_mode: app.get_curve_mode().into(),
         warn_shadows: app.get_warn_shadows(),

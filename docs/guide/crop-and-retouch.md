@@ -139,7 +139,9 @@ after.
 
 While a tool is in hand, the mouse wheel changes the size, one step a
 click; a touchpad scroll changes it by as many steps as the same
-distance on a wheel.
+distance on a wheel. To move the picture without putting the tool
+down, as when working over dust at 200%, hold **Space** or **Shift**
+and drag.
 
 For **Heal** and **Clone**, greycard chooses where to copy from. To
 change it, choose the repair in the list with the tool in hand. Two

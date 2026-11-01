@@ -2616,6 +2616,116 @@ mod tests {
         )
     }
 
+    /// The hand over a tool in hand: with the heal brush, or a mask's
+    /// shape waiting for its drag, Shift held makes a drag on the
+    /// picture pan it and lay down nothing, and the tool is still in
+    /// hand after. Space held does the same, its zoom kept for a tap.
+    #[test]
+    fn shift_or_space_held_over_a_tool_pans_rather_than_paints() {
+        use crate::testing::{drag, press};
+        use slint::platform::{Key, WindowEvent};
+        let (app, state, _worker) = hover_frame(1.0);
+        state.borrow_mut().develop.zoom = 1.0;
+        let key = |text: slint::SharedString, down: bool| {
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        let shift = |down: bool| key(Key::Shift.into(), down);
+        let space = |down: bool| key(" ".into(), down);
+        let patches = || state.borrow().develop.edit.retouch.patches.len();
+        let center = || state.borrow().develop.center;
+        let path = [(600.0, 400.0), (620.0, 400.0), (680.0, 420.0)];
+
+        app.invoke_retouch_toggled("Heal".into());
+        let before = center();
+        shift(true);
+        drag(&app, &path);
+        shift(false);
+        assert_eq!(patches(), 0, "no stroke under the hand");
+        assert_ne!(center(), before, "the drag panned");
+        assert_eq!(app.get_retouch_mode(), "Heal", "the brush is still in hand");
+        // Let go of, the brush paints again, and pans nothing.
+        let before = center();
+        drag(&app, &path);
+        assert_eq!(patches(), 1, "the stroke");
+        assert_eq!(center(), before);
+
+        // Space held: a pan, and no zoom at its release.
+        let before = center();
+        space(true);
+        drag(&app, &path);
+        space(false);
+        assert_eq!(patches(), 1);
+        assert_ne!(center(), before);
+        assert_eq!(
+            state.borrow().develop.zoom,
+            1.0,
+            "a hold that panned does not zoom"
+        );
+        // A tap still zooms.
+        space(true);
+        space(false);
+        assert_eq!(state.borrow().develop.zoom, 0.0, "a tap goes to Fit");
+        app.invoke_retouch_toggled("Heal".into());
+        assert_eq!(app.get_retouch_mode(), "");
+
+        // A Linear in hand from M, waiting for the drag that places it.
+        state.borrow_mut().develop.zoom = 1.0;
+        press(&app, "m");
+        assert_eq!(app.get_placing(), "Linear");
+        let before = center();
+        shift(true);
+        drag(&app, &path);
+        shift(false);
+        assert_ne!(center(), before);
+        assert_eq!(app.get_placing(), "Linear", "still in hand");
+        assert!(
+            state.borrow().develop.edit.adjustments[0]
+                .mask
+                .components
+                .is_empty(),
+            "nothing placed"
+        );
+    }
+
+    /// A focused repair slider passes Space and Shift on to the
+    /// window's keys, while their releases stay with the slider: such
+    /// a key never takes up the hand. Space zooms at once, as it always
+    /// has from a slider, and the next drag paints.
+    #[test]
+    fn a_key_a_slider_passes_on_never_leaves_the_hand_up() {
+        use crate::testing::{click, drag, labeled, press};
+        use slint::platform::{Key, WindowEvent};
+        let (app, state, _worker) = hover_frame(1.0);
+        state.borrow_mut().develop.zoom = 1.0;
+        app.invoke_retouch_toggled("Heal".into());
+        app.set_panel_tab("Retouch".into());
+        let (at, size) = labeled(&app, "Size");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_ne!(
+            app.global::<crate::SliderKeys>().get_holder(),
+            0,
+            "the slider has the keys"
+        );
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Shift.into(),
+        });
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Shift.into(),
+        });
+        press(&app, " ");
+        assert_eq!(state.borrow().develop.zoom, 0.0, "the tap zoomed at once");
+        drag(&app, &[(600.0, 400.0), (620.0, 400.0), (680.0, 420.0)]);
+        assert_eq!(
+            state.borrow().develop.edit.retouch.patches.len(),
+            1,
+            "the drag painted"
+        );
+    }
+
     /// The view onto the frame as the scopes' analysis picture covers
     /// it, pure geometry: the middle at the fit is the frame's middle,
     /// the grey around the picture is on none of it, and at 1:1 an

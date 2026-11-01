@@ -16,6 +16,14 @@ Export is not available while culling. With two or more frames
 selected, the sheet's title says **Export 3 frames**, and each frame is
 written under its own edit.
 
+### Export again, with no sheet
+
+**Ctrl+E** exports the selected frames with the sheet's choices as they
+stand, into the **Folder** row's folder (or **Subfolder**), at once:
+the sheet does not open. The first time, before any export has gone
+out from the sheet, **Ctrl+E** opens the sheet instead, as
+**Ctrl+Shift+E** does.
+
 Enter presses **Export** unless a field or a control has the focus.
 Esc presses **Cancel**, or first cancels a preset name or a queue
 clear in hand.

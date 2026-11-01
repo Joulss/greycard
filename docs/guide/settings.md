@@ -65,7 +65,8 @@ The Develop, Crop, Masks, Retouch, and Cull tabs each fold their own,
 but a section on both Develop and Masks (Light, Color, Curves, Mixer,
 Grading, Tint, and Detail) is folded or open on both at once. The left
 pane's sections are not touched. Turning it on folds nothing until the
-next section opens.
+next section opens. A section you open by its title is scrolled into
+view as the others fold: all of it if it fits, else from its title.
 
 ## Library
 
