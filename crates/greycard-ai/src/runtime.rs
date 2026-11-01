@@ -1317,8 +1317,9 @@ fn try_open(
 /// as it did before the table. The options are set once and copied for
 /// each attempt, and each attempt registers its provider afresh; a
 /// failure setting the options or registering the provider is not
-/// retried, and a provider that fails the graph itself fails both
-/// builds and is recorded as failing once.
+/// retried, and a provider that registers but fails when the session
+/// is made (Core ML and CUDA make theirs then) or fails the graph
+/// itself fails both builds and is recorded as failing once.
 fn build_session(
     path: &Path,
     level: GraphOptimizationLevel,

@@ -31,8 +31,8 @@ The bands are §481's: deep shadows under 0.002 linear, shadows to
 every frame's pixels. In the shadows, mids and highlights the figures
 are §481's at ISO 1600 within a few thousandths of a stop, and in the
 deep shadows, the measure's floor, lower: the fp16 networks do not
-part from fp32 as the noise rises. The difference is again a lift, every band brighter by
-about 0.001 stops on average, too small to see.
+part from fp32 as the noise rises. The difference is again a lift,
+every band brighter by about 0.001 stops on average, too small to see.
 
 Best's denoise of a 45 MP frame took about 10 s with the fp32 file and
 4.1 to 4.6 s with the fp16, 2.2 to 2.4 times quicker, which is §481's
@@ -40,19 +40,20 @@ ratio at Best.
 
 ## A first compile
 
-A Core ML compile is kept by the system under the model's contents,
-so the fp16 Best was given a Mul ahead of the network by a constant a
+A Core ML compile is kept by the system under the model's contents, so
+the fp16 Best was given a Mul ahead of the network by a constant a
 hair under one (0.99999, not one, which ONNX Runtime would drop as a
 no-op before Core ML saw it), to make a program no Core ML compile had
 seen. Opened as the editor opens a denoiser on Core ML, every compute
 unit and its fixed tile, its first session took 0.68 s and a second
-0.25 s, and the two develops are the same to the bit. A second file,
-made the same way with another constant, after the review asked
-whether the work was only put off to the first run: its first session
-0.63 s, the CR3's whole develop 4.46 s, against 4.21 s for its second
-and 4.14 s for the unchanged fp16 file. So the first compile is short
-at every compute unit; §477's 112 s was most likely the probe's CPU and
-Neural Engine session, which the editor does not ask for.
+0.25 s, and its first and second develops are the same to the bit. A
+second file, made the same way with another constant, after the review
+asked whether the work was only put off to the first run: its first
+session 0.63 s, the whole develop of an R6 II CR3 4.46 s, against 4.21
+s for its second and 4.14 s for the unchanged fp16 file. So the first
+compile is short at every compute unit; §477's 112 s was most likely
+the probe's CPU and Neural Engine session, which the editor does not
+ask for.
 
 ## What it leaves
 
