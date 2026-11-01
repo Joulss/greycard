@@ -794,9 +794,19 @@ fn corrections(
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
     let id = &facts.identity;
-    let profile = db
-        .and_then(|db| db.profile_for(&id.make, &id.model, &id.shot, facts.is_raw()))
-        .map(|p| p.correction(w, h, &id.shot, greycard_lens::Wanted::ALL));
+    let identity = (
+        id.make.as_str(),
+        id.model.as_str(),
+        &id.shot,
+        facts.is_raw(),
+    );
+    // A picture was turned by its tag at decode, which is not known
+    // here: its turns since are what the lens sees.
+    let orientation = facts
+        .orientation()
+        .or_else(|| quarters(facts.turn))
+        .unwrap_or_default();
+    let profile = crate::lens::profile_correction((w, h), orientation, identity, &edit.lens, db);
     edit.lens.corrections(profile)
 }
 

@@ -397,6 +397,8 @@ pub enum Outcome {
         profile: Option<Box<CameraProfile>>,
         /// What the lens database made of it.
         lens: LensReport,
+        /// The lenses a picker offers for it.
+        lens_options: Vec<crate::lens::LensOption>,
         kind: SourceKind,
         /// What the file says the frame was shot at, for the panel.
         shot: ShotSummary,

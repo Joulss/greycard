@@ -418,6 +418,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             frame,
             profile,
             lens,
+            lens_options,
             kind,
             shot,
             taken,
@@ -536,7 +537,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     );
                 }
             }
-            show_lens(&lens, app);
+            show_lens(&lens, &lens_options, &st.develop.edit.lens.chosen, app);
+            st.develop.lens_options = lens_options;
             // No database on the machine: the first time a picture
             // is up, the download is offered without being asked for.
             if matches!(lens, LensReport::NoDatabase) {

@@ -1016,6 +1016,7 @@ impl State {
                 quiet: Default::default(),
                 store: None,
                 lens: LensReport::NoDatabase,
+                lens_options: Vec::new(),
                 profiles: Vec::new(),
                 camera: (String::new(), String::new()),
                 other_names: Vec::new(),

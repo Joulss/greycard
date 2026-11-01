@@ -34,6 +34,10 @@ design note behind it.
 
 ### Color
 
+- LENS offers a Lens picker: the database's lenses for the body when
+  the file names none, and Adobe lens profiles (.lcp) placed beside
+  the camera profiles
+  ([§497](https://github.com/jessolmstead/greycard/blob/master/docs/notes/497-a-lens-picked-by-hand-and-adobe-lens-profiles.md)).
 - A phone's DNG opens without its dark corners: the gain maps and the
   forward matrices in the file are applied
   ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md)).

@@ -5,6 +5,11 @@
 //! calibrations interpolated to the focal length, aperture and
 //! distance the file records.
 //!
+//! Adobe's lens profiles (`.lcp`), which the user may keep beside
+//! their camera profiles, are read by [`lcp`] into the same
+//! [`LensCorrection`]; a lens may also be picked by hand from the
+//! database's lenses for the body ([`Database::lenses_for`]).
+//!
 //! The engine never sees the database: `greycard-core` has the
 //! models, this crate has the data and the matching, and a consumer
 //! (the editor, the CLI) joins them.
@@ -12,17 +17,19 @@
 use std::path::PathBuf;
 
 pub mod db;
+pub mod lcp;
 pub mod matching;
 pub mod store;
 
 pub use db::{Camera, Database, Lens};
+pub use lcp::Lcp;
 pub use store::{Progress, Store};
 
 use db::{DistortionModel, Lens as DbLens};
 use greycard_core::develop::lens::{
     ChromaticAberration, Distortion, LensCorrection, Scale, Vignetting,
 };
-use greycard_core::raw::{RawFrame, Shot};
+use greycard_core::raw::{Orientation, RawFrame, Shot};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -42,7 +49,7 @@ pub enum Error {
 
 /// The diagonal of a full frame, millimeters: what a crop factor is
 /// against.
-const FULL_FRAME_DIAGONAL: f32 = 43.266_6;
+pub(crate) const FULL_FRAME_DIAGONAL: f32 = 43.266_6;
 
 /// A lens found for a file, with the body when that was found too.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -158,6 +165,75 @@ impl Database {
     }
 }
 
+/// Which lens a correction is wanted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick<'a> {
+    /// What the file names, matched in the database.
+    FromFile,
+    /// A lens of the database's, by its name.
+    Named(&'a str),
+    /// An Adobe lens profile, by its path.
+    Adobe(&'a std::path::Path),
+}
+
+/// The profile's correction for a picture `width` by `height` of the
+/// whole sensor of a body of `make` and `model`, at `shot`, a raw or
+/// not, for the lens `pick` names, turned as the picture stands
+/// (`orientation`, the sensor's way up and the turns since): none when
+/// there is no profile to be had.
+///
+/// An Adobe profile wants no database. It is used at the body's sensor
+/// size, which the database knows when it has the body; otherwise only
+/// a profile made on this body is used, at its own. One made on
+/// another body, for a body the database does not know, would be read
+/// at the wrong scale, and gives nothing, with a word in the log.
+pub fn picked_correction(
+    db: Option<&Database>,
+    (make, model, shot, raw): (&str, &str, &Shot, bool),
+    pick: Pick,
+    (width, height): (usize, usize),
+    orientation: Orientation,
+) -> Option<LensCorrection> {
+    let c = match pick {
+        Pick::FromFile => db?
+            .profile_for(make, model, shot, raw)
+            .map(|p| p.correction(width, height, shot, Wanted::ALL)),
+        Pick::Named(name) => {
+            let db = db?;
+            let camera = db.camera(make, model);
+            let Some(lens) = db.lens_named(camera, name) else {
+                lcp::warn_once(format!(
+                    "lens {name}: not in the database for {make} {model}"
+                ));
+                return None;
+            };
+            let p = Profile {
+                lens,
+                camera,
+                from_body: false,
+            };
+            Some(p.correction(width, height, shot, Wanted::ALL))
+        }
+        Pick::Adobe(path) => {
+            let p = lcp::load(path)?;
+            let crop = db
+                .and_then(|db| db.camera(make, model))
+                .map(|c| c.crop_factor)
+                .or_else(|| p.made_on(make, model).then_some(p.crop_factor));
+            let Some(crop) = crop else {
+                lcp::warn_once(format!(
+                    "lens profile {}: made on {}, and the size of {make} {model}'s sensor is not known; not used",
+                    path.display(),
+                    p.model.as_deref().unwrap_or("a body it does not name")
+                ));
+                return None;
+            };
+            Some(p.correction(width, height, crop, shot, Wanted::ALL))
+        }
+    };
+    c.map(|c| c.oriented(orientation))
+}
+
 impl Profile<'_> {
     pub fn name(&self) -> &str {
         self.lens.name()
@@ -268,7 +344,7 @@ impl Profile<'_> {
 /// The focus distance taken when the file records none, meters: far
 /// enough that the vignetting is the lens's at infinity, near enough
 /// that a calibration at ten meters is nearer than one at a thousand.
-const DEFAULT_DISTANCE: f32 = 10.0;
+pub(crate) const DEFAULT_DISTANCE: f32 = 10.0;
 
 /// The distortion model at a focal length: the calibration there, or
 /// the two about it blended when they are of one model, or the nearer
@@ -392,7 +468,7 @@ fn vignetting_at(
 /// The indices of the two values about `x` in a sorted list: the same
 /// index twice when `x` is at or beyond an end, or on a value. None
 /// for an empty list.
-fn bracket(values: impl Iterator<Item = f32>, x: f32) -> Option<(usize, usize)> {
+pub(crate) fn bracket(values: impl Iterator<Item = f32>, x: f32) -> Option<(usize, usize)> {
     let values: Vec<f32> = values.collect();
     let n = values.len();
     if n == 0 {
@@ -840,6 +916,40 @@ mod tests {
             Some("E995 & compatibles, with WC-E63")
         );
         assert!(fixed(&db, "Nikon", "E995", None, true).is_none());
+    }
+
+    #[test]
+    fn a_body_offers_the_lenses_its_mounts_take_and_finds_one_by_name() {
+        let db = db();
+        let r7 = db.camera("Canon", "EOS R7").unwrap();
+        let names: Vec<&str> = db.lenses_for(r7).iter().map(|l| l.name()).collect();
+        // RF and the mounts RF takes, no fisheye, no other system's.
+        assert!(names.contains(&"Canon RF 50mm F1.8 STM"), "{names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.contains("Fish-eye") || n.contains("Sigma 28mm"))
+        );
+        let mut sorted = names.clone();
+        sorted.sort_by_key(|n| n.to_lowercase());
+        assert_eq!(names, sorted);
+        let l = db.lens_named(Some(r7), "Canon RF 50mm F1.8 STM").unwrap();
+        // Picked by hand, it corrects as a found one does.
+        let p = Profile {
+            lens: l,
+            camera: Some(r7),
+            from_body: false,
+        };
+        let f = frame("EOS R7", "RF50mm F1.8 STM", 50.0, 2.5);
+        assert_eq!(p, db.profile(&f).unwrap());
+        // Off the body's mounts it is not offered, and not found.
+        assert!(
+            db.lens_named(Some(r7), "Sigma 28mm F1.4 DG HSM | A")
+                .is_none()
+        );
+        assert!(db.lens_named(None, "Sigma 28mm F1.4 DG HSM | A").is_some());
+        assert!(db.lens_named(None, "Canon RF 50mm F1.8 STM").is_some());
+        assert!(db.lens_named(Some(r7), "No such lens").is_none());
     }
 
     #[test]

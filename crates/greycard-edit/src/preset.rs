@@ -173,7 +173,7 @@ impl Section {
             Section::Grading => onto.grading = from.grading,
             Section::Tint => onto.tint = from.tint,
             Section::Look => onto.look_lut = from.look_lut.clone(),
-            Section::Lens => onto.lens = from.lens,
+            Section::Lens => onto.lens = from.lens.clone(),
             Section::Vignette => onto.vignette = from.vignette,
             Section::Grain => onto.grain = from.grain,
             Section::Demosaic => onto.demosaic = from.demosaic,
@@ -271,7 +271,7 @@ pub enum Part {
     GradingMidtones,
     GradingHighlights,
     GradingBalance,
-    /// The profile's switch and its distortion.
+    /// The profile's switch, the lens it is of, and its distortion.
     LensProfile,
     /// The profile's vignetting.
     LensVignetting,
@@ -557,6 +557,7 @@ impl Part {
             GradingBalance => o.grading.balance = f.grading.balance,
             LensProfile => {
                 o.lens.profile = f.lens.profile;
+                o.lens.chosen = f.lens.chosen.clone();
                 o.lens.distortion = f.lens.distortion;
             }
             LensVignetting => o.lens.vignetting = f.lens.vignetting,
@@ -1289,6 +1290,23 @@ mod tests {
         let d = std::env::temp_dir().join(format!("greycard-preset-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    /// A lens picked by hand goes with the profile's part and with the
+    /// whole section, as the profile's switch does.
+    #[test]
+    fn a_picked_lens_travels_with_the_profile() {
+        let mut from = Edit::default();
+        from.lens.chosen = crate::LensChoice::Lcp("a.lcp".into());
+        let mut onto = Edit::default();
+        Part::LensProfile.copy(&from, &mut onto);
+        assert_eq!(onto.lens.chosen, from.lens.chosen);
+        let mut onto = Edit::default();
+        Section::Lens.copy(&from, &mut onto);
+        assert_eq!(onto.lens.chosen, from.lens.chosen);
+        let mut onto = Edit::default();
+        Part::LensVignetting.copy(&from, &mut onto);
+        assert!(onto.lens.chosen.is_from_file());
     }
 
     /// Every shipped preset reads, says what it carries, and changes

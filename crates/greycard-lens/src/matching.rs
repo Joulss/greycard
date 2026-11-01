@@ -192,6 +192,52 @@ impl Database {
 }
 
 impl Database {
+    /// The lenses a body takes, to be picked from by hand: the ones on
+    /// its mount or a mount it takes that draw straight lines, one a
+    /// name (the entry calibrated nearest the body's sensor size),
+    /// sorted by name.
+    pub fn lenses_for(&self, camera: &Camera) -> Vec<&Lens> {
+        let mounts = self.mounts_taken(&camera.mount);
+        let mut out: Vec<&Lens> = Vec::new();
+        for l in self.lenses.iter().filter(|l| {
+            l.kind == LensType::Rectilinear && l.mounts.iter().any(|m| mounts.contains(&m.as_str()))
+        }) {
+            match out.iter_mut().find(|o| o.name() == l.name()) {
+                Some(o) => {
+                    if nearer(l, o, camera.crop_factor) {
+                        *o = l;
+                    }
+                }
+                None => out.push(l),
+            }
+        }
+        out.sort_by_key(|l| l.name().to_lowercase());
+        out
+    }
+
+    /// The lens of this name, as [`Database::lenses_for`] gives it for
+    /// `camera`: none when it is not among them, as the picker does not
+    /// offer it. For a body the database does not know, the first
+    /// straight-line entry of the name.
+    pub fn lens_named(&self, camera: Option<&Camera>, name: &str) -> Option<&Lens> {
+        match camera {
+            Some(c) => self.lenses_for(c).into_iter().find(|l| l.name() == name),
+            None => self
+                .lenses
+                .iter()
+                .find(|l| l.kind == LensType::Rectilinear && l.name() == name),
+        }
+    }
+}
+
+/// Whether `a` was calibrated nearer the sensor size `crop` than `b`,
+/// by ratio.
+fn nearer(a: &Lens, b: &Lens, crop: f32) -> bool {
+    let off = |l: &Lens| (l.crop_factor.max(0.01) / crop.max(0.01)).ln().abs();
+    off(a) < off(b)
+}
+
+impl Database {
     /// The fixed lens of a body whose file names no lens: a lens on
     /// the body's own mount when that mount is a compact's (see
     /// [`Database::is_fixed_mount`]), drawing straight lines, and

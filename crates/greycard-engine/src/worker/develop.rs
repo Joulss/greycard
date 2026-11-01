@@ -680,7 +680,7 @@ pub(super) fn lens_step(
     if corrects {
         let mut gpu = gpu;
         let mut on_gpu = false;
-        for c in lens_corrections(image.width, image.height, input, edit, lenses) {
+        for c in lens_corrections(image.width, image.height, input, b.turn, edit, lenses) {
             // A correction that moves nothing is a multiply a pixel,
             // quicker on the CPU than the frame's trip to the device
             // and back, and the export can then keep the base.

@@ -1,0 +1,291 @@
+//! The lens profile an edit develops with: the one the database finds
+//! for what the file names, or the one picked by hand, a lens of the
+//! database's for the body or an Adobe profile in the profile
+//! directory; and the list a picker offers.
+
+use std::path::Path;
+
+use greycard_core::develop::lens::LensCorrection;
+use greycard_core::raw::{Orientation, Shot};
+use greycard_edit::LensChoice;
+use greycard_lens::{Database, Pick, lcp};
+
+/// What a file is, for its lens: the body's make and model, its shot,
+/// and whether it is a raw.
+pub type Identity<'a> = (&'a str, &'a str, &'a Shot, bool);
+
+/// A lens the picker offers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LensOption {
+    pub choice: LensChoice,
+    /// The lens's name.
+    pub label: String,
+}
+
+/// The profile's correction for a picture `width` by `height` of the
+/// frame, standing at `orientation` from the sensor, for the lens
+/// `lens` chooses; none when it wants no profile or there is none to
+/// be had.
+pub fn profile_correction(
+    size: (usize, usize),
+    orientation: Orientation,
+    identity: Identity,
+    lens: &greycard_edit::Lens,
+    db: Option<&Database>,
+) -> Option<LensCorrection> {
+    profile_correction_in(
+        size,
+        orientation,
+        identity,
+        lens,
+        db,
+        greycard_edit_io::profiles::store_dir().as_deref(),
+    )
+}
+
+/// What an export says it left out of the lens: a lens picked by hand
+/// that this machine has not got for this body (an Adobe profile not
+/// in the profile directory, or made on another body the database
+/// does not know; a lens of the database's not offered for the body,
+/// or no database). None for the file's own lens, found or not, as
+/// before there was a choice.
+pub fn left_out(
+    identity: Identity,
+    lens: &greycard_edit::Lens,
+    db: Option<&Database>,
+) -> Option<String> {
+    left_out_in(
+        identity,
+        lens,
+        db,
+        greycard_edit_io::profiles::store_dir().as_deref(),
+    )
+}
+
+/// [`left_out`] with the profile directory named.
+pub fn left_out_in(
+    identity: Identity,
+    lens: &greycard_edit::Lens,
+    db: Option<&Database>,
+    profiles: Option<&Path>,
+) -> Option<String> {
+    let name = match &lens.chosen {
+        LensChoice::FromFile => return None,
+        LensChoice::Database(name) | LensChoice::Lcp(name) => name,
+    };
+    let none =
+        profile_correction_in((3, 2), Orientation::Normal, identity, lens, db, profiles).is_none();
+    (lens.wants_profile() && none)
+        .then(|| format!("the lens {name}: no profile for it here; written without one"))
+}
+
+/// [`profile_correction`] with the profile directory named.
+pub fn profile_correction_in(
+    (width, height): (usize, usize),
+    orientation: Orientation,
+    (make, model, shot, raw): Identity,
+    lens: &greycard_edit::Lens,
+    db: Option<&Database>,
+    profiles: Option<&Path>,
+) -> Option<LensCorrection> {
+    if !lens.wants_profile() {
+        return None;
+    }
+    let path;
+    let pick = match &lens.chosen {
+        LensChoice::FromFile => Pick::FromFile,
+        LensChoice::Database(name) => Pick::Named(name),
+        LensChoice::Lcp(file) => {
+            path = lcp::path_in(profiles?, file)?;
+            Pick::Adobe(&path)
+        }
+    };
+    greycard_lens::picked_correction(
+        db,
+        (make, model, shot, raw),
+        pick,
+        (width, height),
+        orientation,
+    )
+}
+
+/// What the picker offers for a file: the database's lenses for its
+/// body, then the Adobe profiles in the profile directory, one a lens
+/// name.
+pub fn options(db: Option<&Database>, identity: Identity) -> Vec<LensOption> {
+    options_in(
+        db,
+        identity,
+        greycard_edit_io::profiles::store_dir().as_deref(),
+    )
+}
+
+/// [`options`] with the profile directory named.
+///
+/// Two Adobe profiles of one lens (one made on raws and one on the
+/// camera's JPEGs, or one made on this body and one on another) are
+/// one row: the one made on the kind of picture this is, then the one
+/// made on this body, then the first by file name.
+pub fn options_in(
+    db: Option<&Database>,
+    (make, model, _, raw): Identity,
+    profiles: Option<&Path>,
+) -> Vec<LensOption> {
+    let mut out: Vec<LensOption> = db
+        .and_then(|db| db.camera(make, model).map(|c| db.lenses_for(c)))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|l| LensOption {
+            choice: LensChoice::Database(l.name().to_string()),
+            label: l.name().to_string(),
+        })
+        .collect();
+    // A profile made on another body is read at this body's sensor
+    // size, which only the database knows: without it, only this
+    // body's own are offered.
+    let sized = db.and_then(|db| db.camera(make, model)).is_some();
+    let made_here = |l: &lcp::Listed| lcp::load(&l.path).is_some_and(|p| p.made_on(make, model));
+    let rank = |l: &lcp::Listed| (l.raw != raw, !made_here(l));
+    let mut adobe: Vec<lcp::Listed> = Vec::new();
+    let listed = profiles.map(lcp::list_in).unwrap_or_default();
+    for l in listed.into_iter().filter(|l| sized || made_here(l)) {
+        match adobe.iter_mut().find(|o| o.lens == l.lens) {
+            Some(o) => {
+                if rank(&l) < rank(o) {
+                    *o = l;
+                }
+            }
+            None => adobe.push(l),
+        }
+    }
+    adobe.sort_by_key(|l| l.lens.to_lowercase());
+    out.extend(adobe.into_iter().map(|l| LensOption {
+        choice: LensChoice::Lcp(l.file),
+        label: l.lens,
+    }));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LCP: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:stCamera="http://ns.adobe.com/photoshop/1.0/camera-profile"
+   xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">
+  <rdf:Description rdf:about="">
+   <photoshop:CameraProfiles><rdf:Seq>
+    <rdf:li><rdf:Description stCamera:LensPrettyName="Hand 35mm"
+      stCamera:Model="MODEL" stCamera:CameraRawProfile="RAW"
+      stCamera:FocalLength="35" stCamera:ApertureValue="4">
+     <stCamera:PerspectiveModel><rdf:Description stCamera:FocalLengthX="1"
+       stCamera:RadialDistortParam1="-0.1"/></stCamera:PerspectiveModel>
+    </rdf:Description></rdf:li>
+   </rdf:Seq></photoshop:CameraProfiles>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+
+    fn lcp(model: &str, raw: bool) -> String {
+        LCP.replace("MODEL", model)
+            .replace("RAW", if raw { "True" } else { "False" })
+    }
+
+    #[test]
+    fn the_picker_offers_one_adobe_row_a_lens_and_the_choice_corrects() {
+        let dir = crate::testing::scratch_dir("lens-options");
+        std::fs::write(dir.join("a.lcp"), lcp("Other Body", false)).unwrap();
+        std::fs::write(dir.join("b.lcp"), lcp("Other Body", true)).unwrap();
+        std::fs::write(dir.join("c.lcp"), lcp("Canon EOS R6", true)).unwrap();
+        let shot = Shot {
+            focal_length: Some(35.0),
+            ..Default::default()
+        };
+        let id = ("Canon", "EOS R6", &shot, true);
+        let options = options_in(None, id, Some(&dir));
+        // One row for the lens: the raw profile made on this body.
+        assert_eq!(
+            options,
+            [LensOption {
+                choice: LensChoice::Lcp("c.lcp".into()),
+                label: "Hand 35mm".into(),
+            }]
+        );
+        // A rendered picture takes the one made on JPEGs, once the
+        // database knows the body's size; until then only this body's
+        // own are offered.
+        let jpeg = ("Canon", "EOS R6", &shot, false);
+        let own = options_in(None, jpeg, Some(&dir));
+        assert_eq!(own[0].choice, LensChoice::Lcp("c.lcp".into()));
+        let mut db = Database::default();
+        db.read_xml(
+            r#"<lensdatabase version="2"><camera><maker>Canon</maker>
+            <model>Canon EOS R6</model><mount>Canon RF</mount>
+            <cropfactor>1</cropfactor></camera></lensdatabase>"#,
+        )
+        .unwrap();
+        let sized = options_in(Some(&db), jpeg, Some(&dir));
+        assert_eq!(sized[0].choice, LensChoice::Lcp("a.lcp".into()));
+
+        let picked = greycard_edit::Lens {
+            chosen: LensChoice::Lcp("c.lcp".into()),
+            ..Default::default()
+        };
+        let c = profile_correction_in(
+            (600, 400),
+            Orientation::Normal,
+            id,
+            &picked,
+            None,
+            Some(&dir),
+        )
+        .unwrap();
+        assert!(c.distortion.is_some() && c.vignetting.is_none());
+        // From the file, with no database: nothing, as before.
+        let plain = greycard_edit::Lens::default();
+        assert!(
+            profile_correction_in(
+                (600, 400),
+                Orientation::Normal,
+                id,
+                &plain,
+                None,
+                Some(&dir)
+            )
+            .is_none()
+        );
+        // The profile switched off, or the file gone: nothing.
+        let off = greycard_edit::Lens {
+            profile: false,
+            ..picked.clone()
+        };
+        assert!(
+            profile_correction_in((600, 400), Orientation::Normal, id, &off, None, Some(&dir))
+                .is_none()
+        );
+        let gone = greycard_edit::Lens {
+            chosen: LensChoice::Lcp("gone.lcp".into()),
+            ..Default::default()
+        };
+        assert!(
+            profile_correction_in((600, 400), Orientation::Normal, id, &gone, None, Some(&dir))
+                .is_none()
+        );
+        // An export says so of the missing one, and of no other.
+        let said = left_out_in(id, &gone, None, Some(&dir)).unwrap();
+        assert!(said.contains("gone.lcp"), "{said}");
+        assert!(left_out_in(id, &picked, None, Some(&dir)).is_none());
+        assert!(left_out_in(id, &plain, None, Some(&dir)).is_none());
+        assert!(left_out_in(id, &off, None, Some(&dir)).is_none());
+        // Made on another body, for a body no database knows: not used.
+        let other = ("Canon", "EOS R5", &shot, true);
+        std::fs::remove_file(dir.join("c.lcp")).unwrap();
+        let b = greycard_edit::Lens {
+            chosen: LensChoice::Lcp("b.lcp".into()),
+            ..Default::default()
+        };
+        assert!(left_out_in(other, &b, None, Some(&dir)).is_some());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

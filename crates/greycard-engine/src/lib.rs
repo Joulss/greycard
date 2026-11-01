@@ -17,6 +17,7 @@ pub mod ai;
 pub mod camera;
 pub mod edited_pictures;
 pub mod finish;
+pub mod lens;
 pub mod made;
 pub mod naming;
 pub mod previews;

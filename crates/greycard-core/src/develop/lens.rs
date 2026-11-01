@@ -37,6 +37,7 @@
 use rayon::prelude::*;
 
 use crate::image::WorkingImage;
+use crate::raw::Orientation;
 
 /// A distortion model: the distorted radius (where the light landed)
 /// for an undistorted one (where it should have), radii in half
@@ -231,6 +232,35 @@ pub struct LensStats {
 }
 
 impl LensCorrection {
+    /// This correction for the picture the calibration's sensor made,
+    /// turned or flipped by `orientation` before the correction runs.
+    /// Every model here is radial about the center, and so the same
+    /// whichever way up, but for the tangential terms of Adobe's
+    /// model: their vector `(k5, k4)` is turned with the picture.
+    /// `2 (t·p) p + |p|² t` keeps its form under any turn or flip of
+    /// both `p` and `t`, so turning `t` is the whole of it.
+    pub fn oriented(mut self, orientation: Orientation) -> Self {
+        if let Some(Distortion::Acm { k, .. }) = &mut self.distortion {
+            // The picture's centered position for a sensor position:
+            // the inverse (the transpose) of `develop::orient`'s
+            // source for an output pixel.
+            let (x, y) = (k[4], k[3]);
+            let (x, y) = match orientation {
+                Orientation::Normal => (x, y),
+                Orientation::FlipHorizontal => (-x, y),
+                Orientation::Rotate180 => (-x, -y),
+                Orientation::FlipVertical => (x, -y),
+                Orientation::Transpose => (y, x),
+                Orientation::Rotate90 => (-y, x),
+                Orientation::Transverse => (-y, -x),
+                Orientation::Rotate270 => (y, -x),
+            };
+            k[4] = x;
+            k[3] = y;
+        }
+        self
+    }
+
     /// Where the vignetting calibration ends on this picture, as a
     /// fraction of the way from its center to its corner, when that is
     /// short of the corner: the calibration was made on a smaller
@@ -465,6 +495,60 @@ pub fn sample_cubic(image: &WorkingImage, channel: usize, x: f32, y: f32) -> f32
 
 #[cfg(test)]
 mod tests {
+
+    /// A correction turned with its picture moves each point of the
+    /// turned picture where the unturned one moves the same point of
+    /// the sensor, for every turn and flip `develop::orient` makes.
+    #[test]
+    fn a_turned_picture_is_corrected_as_its_sensor_was() {
+        let c = LensCorrection {
+            distortion: Some(Distortion::Acm {
+                k: [-0.05, 0.01, 0.0, 0.004, -0.006],
+                focal_scale: 0.7,
+            }),
+            ..Default::default()
+        };
+        let (w, h) = (60.0f32, 40.0f32);
+        // A sensor position for each centered position of the turned
+        // picture: `develop::orient`'s source, about the centers.
+        let source = |o: Orientation, (x, y): (f32, f32)| match o {
+            Orientation::Normal => (x, y),
+            Orientation::FlipHorizontal => (-x, y),
+            Orientation::Rotate180 => (-x, -y),
+            Orientation::FlipVertical => (x, -y),
+            Orientation::Transpose => (y, x),
+            Orientation::Rotate90 => (y, -x),
+            Orientation::Transverse => (-y, -x),
+            Orientation::Rotate270 => (-y, x),
+        };
+        for o in [
+            Orientation::Normal,
+            Orientation::FlipHorizontal,
+            Orientation::Rotate180,
+            Orientation::FlipVertical,
+            Orientation::Transpose,
+            Orientation::Rotate90,
+            Orientation::Transverse,
+            Orientation::Rotate270,
+        ] {
+            let swaps = source(o, (1.0, 0.0)).0 == 0.0;
+            let (ow, oh) = if swaps { (h, w) } else { (w, h) };
+            let turned = c.oriented(o);
+            for &(x, y) in &[(3.0f32, 7.0f32), (55.0, 2.0), (0.0, 0.0), (20.0, 38.0)] {
+                let (x, y) = (x.min(ow), y.min(oh));
+                let got = turned.source_of(1, x, y, ow, oh, 1.0);
+                let got = source(o, (got.0 - ow / 2.0, got.1 - oh / 2.0));
+                let s = source(o, (x - ow / 2.0, y - oh / 2.0));
+                let want = c.source_of(1, s.0 + w / 2.0, s.1 + h / 2.0, w, h, 1.0);
+                let want = (want.0 - w / 2.0, want.1 - h / 2.0);
+                assert!(
+                    (got.0 - want.0).abs() < 1e-3 && (got.1 - want.1).abs() < 1e-3,
+                    "{o:?} at ({x}, {y}): {got:?} against {want:?}"
+                );
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

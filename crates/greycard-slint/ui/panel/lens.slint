@@ -1,6 +1,7 @@
-// The LENS section: the profile the database found, the manual
-// corrections and the defringe.
+// The LENS section: the lens picked or the profile the database
+// found, the manual corrections, and the defringe.
 
+import { ComboBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { Section, EditSlider, Steps, Toggle, PanelButton } from "../controls.slint";
 
@@ -13,6 +14,10 @@ export component LensSection inherits Section {
     in property <string> lens-profile;
     in property <bool> lens-available;
     in property <bool> lens-database;
+    in property <[string]> lens-choice-labels;
+    in property <[string]> lens-choice-keys;
+    in-out property <string> lens-choice;
+    in-out property <int> lens-choice-index;
     in-out property <bool> lens-profile-on;
     in-out property <bool> lens-distortion;
     in-out property <bool> lens-ca;
@@ -40,6 +45,20 @@ export component LensSection inherits Section {
     switchable: true;
     on <=> root.lens-enabled;
     switched => { root.develop-changed(); }
+    // Which lens: the file's, or one picked by
+    // hand for a file that names none.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        Text { text: "Lens"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        ComboBox {
+            model: root.lens-choice-labels;
+            current-index <=> root.lens-choice-index;
+            selected(v) => {
+                root.lens-choice = root.lens-choice-keys[self.current-index];
+                root.develop-changed();
+            }
+        }
+    }
     Text {
         text: root.lens-profile;
         color: root.lens-available ? Theme.text : Theme.text-secondary;

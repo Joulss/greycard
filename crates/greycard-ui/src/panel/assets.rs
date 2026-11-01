@@ -576,11 +576,52 @@ pub(crate) fn show_import_report(app: &App, report: Report) {
     }
 }
 
-/// What the LENS panel says of the open file: the profile found, or
-/// why there is none.
-pub(crate) fn show_lens(report: &LensReport, app: &App) {
-    app.set_lens_available(matches!(report, LensReport::Found { .. }));
+/// The picker's first row: the lens the file names, or none.
+pub(crate) const FROM_THE_FILE: &str = "From the file";
+
+/// What the LENS panel says of the open file: the picker, with the
+/// lens the edit chose; and under it the profile found for what the
+/// file names, or why there is none, or the lens picked.
+///
+/// A lens the edit picked that is not among `options` (a preset or a
+/// sidecar from another body or another machine) is still listed, by
+/// its name, and chosen, so the panel says what the edit says; its
+/// name is shown greyed, as a profile not found is.
+pub(crate) fn show_lens(
+    report: &LensReport,
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    app: &App,
+) {
+    use greycard_edit::LensChoice;
+    let mut keys = vec![slint::SharedString::new()];
+    let mut labels = vec![slint::SharedString::from(FROM_THE_FILE)];
+    for o in options {
+        keys.push(o.choice.key().into());
+        labels.push(o.label.as_str().into());
+    }
+    let key = chosen.key();
+    let listed = keys.iter().position(|k| k.as_str() == key);
+    let index = listed.unwrap_or_else(|| {
+        keys.push(key.as_str().into());
+        labels.push(match chosen {
+            LensChoice::Database(name) | LensChoice::Lcp(name) => name.as_str().into(),
+            LensChoice::FromFile => FROM_THE_FILE.into(),
+        });
+        keys.len() - 1
+    });
+    let label = labels[index].clone();
+    app.set_lens_choice_keys(ModelRc::new(VecModel::from(keys)));
+    app.set_lens_choice_labels(ModelRc::new(VecModel::from(labels)));
+    app.set_lens_choice(key.into());
+    app.set_lens_choice_index(index as i32);
     app.set_lens_database(!matches!(report, LensReport::NoDatabase));
+    if !chosen.is_from_file() {
+        app.set_lens_available(listed.is_some());
+        app.set_lens_profile(label);
+        return;
+    }
+    app.set_lens_available(matches!(report, LensReport::Found { .. }));
     app.set_lens_profile(
         match report {
             LensReport::NoDatabase => "no lens profiles on this machine".to_string(),
@@ -2117,6 +2158,59 @@ mod tests {
         state.borrow_mut().window.batch = true;
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(!app.get_fetch_open());
+    }
+
+    /// The LENS picker: "From the file" first and chosen by default,
+    /// with the report under it as before; a lens picked is chosen and
+    /// named; one picked that this body or machine has not got is
+    /// still listed, greyed; and the panel reads the choice back.
+    #[test]
+    fn the_lens_picker_lists_the_options_and_keeps_the_choice() {
+        use greycard_edit::LensChoice;
+        use greycard_engine::lens::LensOption;
+        let app = crate::testing::window(1);
+        let options = vec![
+            LensOption {
+                choice: LensChoice::Database("Canon RF 50mm F1.8 STM".into()),
+                label: "Canon RF 50mm F1.8 STM".into(),
+            },
+            LensOption {
+                choice: LensChoice::Lcp("hand.lcp".into()),
+                label: "Hand 35mm".into(),
+            },
+        ];
+        let found = LensReport::Found {
+            lens: "Canon RF 50mm F1.8 STM".into(),
+            camera: true,
+            smaller_sensor: false,
+        };
+        let strings = |m: ModelRc<slint::SharedString>| -> Vec<String> {
+            m.iter().map(|s| s.to_string()).collect()
+        };
+        show_lens(&found, &options, &LensChoice::FromFile, &app);
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [FROM_THE_FILE, "Canon RF 50mm F1.8 STM", "Hand 35mm"]
+        );
+        assert_eq!(app.get_lens_choice_index(), 0);
+        assert_eq!(app.get_lens_profile(), "Canon RF 50mm F1.8 STM");
+        assert!(app.get_lens_available());
+
+        let picked = LensChoice::Lcp("hand.lcp".into());
+        show_lens(&LensReport::NoLensName, &options, &picked, &app);
+        assert_eq!(app.get_lens_choice_index(), 2);
+        assert_eq!(app.get_lens_profile(), "Hand 35mm");
+        assert!(app.get_lens_available());
+        let edit = read_edit(&app, &greycard_edit::Edit::default(), None);
+        assert_eq!(edit.lens.chosen, picked);
+
+        let away = LensChoice::Database("Nikon Z 50mm f/1.8 S".into());
+        show_lens(&LensReport::NoLensName, &options, &away, &app);
+        let labels = strings(app.get_lens_choice_labels());
+        assert_eq!(labels.len(), 4);
+        assert_eq!(labels[3], "Nikon Z 50mm f/1.8 S");
+        assert_eq!(app.get_lens_choice_index(), 3);
+        assert!(!app.get_lens_available());
     }
 
     /// The CAMERA PROFILE rows for `profiles` on an EOS 850D, also

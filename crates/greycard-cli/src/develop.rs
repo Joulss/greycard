@@ -189,6 +189,12 @@ pub(crate) struct DevelopArgs {
     /// --fetch`): distortion, chromatic aberration and vignetting
     #[arg(long)]
     lens: bool,
+    /// The lens to correct for, picked by hand for a file that names
+    /// none or names the wrong one: a lens of the database's by its
+    /// name, or an Adobe lens profile, a FILE.lcp in the profile
+    /// directory or a path to one. Implies --lens
+    #[arg(long, value_name = "NAME|FILE.lcp")]
+    lens_pick: Option<String>,
     /// A distortion set by hand, poly3's k1 (negative for a
     /// picture that bows out), on top of the profile's
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
@@ -270,6 +276,7 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         hybrid_from,
         ai_denoise,
         lens,
+        lens_pick,
         lens_distortion,
         lens_ca_red,
         lens_ca_blue,
@@ -389,14 +396,17 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
         anyhow::bail!("--ai-denoise: {why}");
     }
     let detail = detail_edit.options();
-    let lens = greycard_edit_lens(
-        lens,
+    let mut lens = greycard_edit_lens(
+        lens || lens_pick.is_some(),
         lens_distortion,
         (lens_ca_red, lens_ca_blue),
         lens_scale,
         (defringe, defringe_radius, defringe_threshold),
         defringe_all_hues,
     );
+    if let Some(value) = &lens_pick {
+        lens.chosen = picked_lens(value);
+    }
     run_develop(
         &file,
         &outputs,
@@ -600,6 +610,17 @@ fn lens_database(lens: &greycard_edit::Lens) -> Result<Option<greycard_lens::Dat
     if !lens.wants_profile() {
         return Ok(None);
     }
+    // An Adobe profile picked by hand wants no database; one there
+    // gives it the body's sensor size.
+    if let greycard_edit::LensChoice::Lcp(file) = &lens.chosen {
+        let path = lcp_path(file)?;
+        greycard_lens::Lcp::read(&path)
+            .with_context(|| format!("reading {} as a lens profile", path.display()))?;
+        return Ok(greycard_lens::Store::user()
+            .ok()
+            .and_then(|s| s.load())
+            .map(|(db, _)| db));
+    }
     let store = greycard_lens::Store::user().context("finding the lens database")?;
     let (db, from) = store.load().with_context(|| {
         format!(
@@ -616,13 +637,42 @@ fn lens_database(lens: &greycard_edit::Lens) -> Result<Option<greycard_lens::Dat
     Ok(Some(db))
 }
 
+/// `--lens-pick`'s value as the edit holds a lens picked by hand: an
+/// Adobe profile by its file (`.lcp`), else a lens of the database's
+/// by its name.
+fn picked_lens(value: &str) -> greycard_edit::LensChoice {
+    if value.to_lowercase().ends_with(".lcp") {
+        greycard_edit::LensChoice::Lcp(value.to_string())
+    } else {
+        greycard_edit::LensChoice::Database(value.to_string())
+    }
+}
+
+/// Where an Adobe profile named on the command line is: a path as it
+/// is, a bare file name in the profile directory.
+fn lcp_path(file: &str) -> Result<PathBuf> {
+    if file.contains(['/', '\\']) {
+        return Ok(PathBuf::from(file));
+    }
+    let dir = greycard_edit_io::profiles::store_dir()
+        .context("finding the profile directory for the lens profile")?;
+    greycard_lens::lcp::path_in(&dir, file)
+        .with_context(|| format!("{file:?} is not a lens profile's name"))
+}
+
+/// The lens's corrections on the developed picture, standing at
+/// `orientation` from the sensor: the profile through
+/// `greycard_lens::picked_correction`, as the editor's engine has it,
+/// then the edit's own.
 fn correct_lens(
     image: &mut WorkingImage,
     (make, model, shot, raw): (&str, &str, &greycard_core::raw::Shot, bool),
+    orientation: Orientation,
     lens: &greycard_edit::Lens,
     db: Option<&greycard_lens::Database>,
 ) -> Result<()> {
-    let profile = db.and_then(|db| {
+    // What the database makes of the file, for the log.
+    let _ = db.filter(|_| lens.chosen.is_from_file()).and_then(|db| {
         let l = db.lookup_shot(make, model, shot, raw);
         match (l.lens, l.camera) {
             (Some(lens), camera) => {
@@ -670,8 +720,38 @@ fn correct_lens(
             }
         }
     });
-    let correction =
-        profile.map(|p| p.correction(image.width, image.height, shot, greycard_lens::Wanted::ALL));
+    let path;
+    let pick = match &lens.chosen {
+        greycard_edit::LensChoice::FromFile => greycard_lens::Pick::FromFile,
+        greycard_edit::LensChoice::Database(name) => greycard_lens::Pick::Named(name),
+        greycard_edit::LensChoice::Lcp(file) => {
+            path = lcp_path(file)?;
+            greycard_lens::Pick::Adobe(&path)
+        }
+    };
+    let correction = lens
+        .wants_profile()
+        .then(|| {
+            greycard_lens::picked_correction(
+                db,
+                (make, model, shot, raw),
+                pick,
+                (image.width, image.height),
+                orientation,
+            )
+        })
+        .flatten();
+    if let (
+        greycard_edit::LensChoice::Database(name) | greycard_edit::LensChoice::Lcp(name),
+        true,
+    ) = (&lens.chosen, lens.wants_profile())
+    {
+        anyhow::ensure!(
+            correction.is_some(),
+            "--lens-pick {name}: no profile for it here for {make} {model}"
+        );
+        tracing::info!("lens profile picked by hand: {name}");
+    }
     for c in lens.corrections(correction) {
         let start = std::time::Instant::now();
         let (corrected, stats) = greycard_core::develop::lens::correct(image, &c);
@@ -735,6 +815,7 @@ fn correct_lens(
 fn correct_and_sharpen(
     image: &mut WorkingImage,
     identity: (&str, &str, &greycard_core::raw::Shot, bool),
+    orientation: Orientation,
     lens: &greycard_edit::Lens,
     db: Option<&greycard_lens::Database>,
     detail: Option<LocalContrastOptions>,
@@ -744,7 +825,7 @@ fn correct_and_sharpen(
     measured_radius: Option<f32>,
     clip_level: f32,
 ) -> Result<Option<sharpen::SharpenStats>> {
-    correct_lens(image, identity, lens, db)?;
+    correct_lens(image, identity, orientation, lens, db)?;
     // Before the sharpen, as the worker has it: the sharpen's blend
     // mask reads the picture's local contrast, and should read it
     // with the detail put in.
@@ -958,6 +1039,8 @@ fn run_develop(
     let sharpened = correct_and_sharpen(
         &mut developed.image,
         (&frame.make, &frame.model, &frame.shot, true),
+        // The develop stands the picture as its tag says.
+        frame.orientation,
         lens,
         db.as_ref(),
         detail,
@@ -1198,6 +1281,8 @@ fn run_develop_picture(
     let stats = correct_and_sharpen(
         &mut p.image,
         (&p.make, &p.model, &p.shot, false),
+        // Turned by its tag at decode, which is not kept.
+        Orientation::Normal,
         lens,
         db.as_ref(),
         detail,
@@ -1397,6 +1482,104 @@ mod tests {
     use greycard_core::develop::lens;
     use greycard_core::raw::Shot;
 
+    /// A profile written by hand: one sample, with tangential terms,
+    /// so a turned frame tells a turned correction from one that is
+    /// not.
+    const HAND_LCP: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:stCamera="http://ns.adobe.com/photoshop/1.0/camera-profile"
+   xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">
+  <rdf:Description rdf:about="">
+   <photoshop:CameraProfiles><rdf:Seq>
+    <rdf:li><rdf:Description stCamera:LensPrettyName="Hand 35mm"
+      stCamera:Make="Testmaker" stCamera:Model="Testmaker One"
+      stCamera:ImageWidth="90" stCamera:ImageLength="60"
+      stCamera:FocalLength="35" stCamera:ApertureValue="4">
+     <stCamera:PerspectiveModel><rdf:Description stCamera:FocalLengthX="0.8"
+       stCamera:RadialDistortParam1="-0.2"
+       stCamera:TangentialDistortParam1="0.01"
+       stCamera:TangentialDistortParam2="-0.02"/></stCamera:PerspectiveModel>
+    </rdf:Description></rdf:li>
+   </rdf:Seq></photoshop:CameraProfiles>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+
+    /// `--lens-pick` takes an Adobe profile by its file and anything
+    /// else as the database's name, and implies `--lens`; the picked
+    /// profile corrects a turned frame as the editor's engine does,
+    /// through the one `picked_correction`, and one not to be had is
+    /// an error, not a picture without it.
+    #[test]
+    fn a_picked_lens_corrects_as_the_engine_does() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: DevelopArgs,
+        }
+        let cli = Cli::try_parse_from(["greycard", "a.NEF", "--lens-pick", "x.LCP"]).unwrap();
+        assert_eq!(
+            picked_lens(cli.args.lens_pick.as_deref().unwrap()),
+            greycard_edit::LensChoice::Lcp("x.LCP".into())
+        );
+        assert_eq!(
+            picked_lens("Canon RF 50mm F1.8 STM"),
+            greycard_edit::LensChoice::Database("Canon RF 50mm F1.8 STM".into())
+        );
+
+        let dir = std::env::temp_dir().join(format!("greycard-cli-lcp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hand.lcp");
+        std::fs::write(&path, HAND_LCP).unwrap();
+        let lens = greycard_edit::Lens {
+            chosen: greycard_edit::LensChoice::Lcp(path.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        let shot = Shot {
+            focal_length: Some(35.0),
+            ..Default::default()
+        };
+        let id = ("Testmaker", "Testmaker One", &shot, true);
+        // A portrait frame of a landscape sensor.
+        let source = test_frame(60, 90);
+        let mut got = source.clone();
+        correct_lens(&mut got, id, Orientation::Rotate90, &lens, None).unwrap();
+        let c = greycard_lens::picked_correction(
+            None,
+            id,
+            greycard_lens::Pick::Adobe(&path),
+            (60, 90),
+            Orientation::Rotate90,
+        )
+        .unwrap();
+        let unturned = greycard_lens::picked_correction(
+            None,
+            id,
+            greycard_lens::Pick::Adobe(&path),
+            (60, 90),
+            Orientation::Normal,
+        )
+        .unwrap();
+        assert_ne!(c, unturned, "the tangential terms turn with the frame");
+        let mut want = source.clone();
+        for c in lens.corrections(Some(c)) {
+            want = lens::correct(&want, &c).0;
+        }
+        assert_eq!(got.data, want.data);
+        assert!(max_diff(&got, &source) > 1e-3, "the profile moved nothing");
+
+        let away = greycard_edit::Lens {
+            chosen: greycard_edit::LensChoice::Lcp(
+                dir.join("gone.lcp").to_string_lossy().into_owned(),
+            ),
+            ..Default::default()
+        };
+        let mut untouched = source.clone();
+        assert!(correct_lens(&mut untouched, id, Orientation::Normal, &away, None).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A frame with hard edges for the sharpen to bite on and a ramp
     /// under them, so a resample has something to move and a sharpen
     /// something to do.
@@ -1457,6 +1640,7 @@ mod tests {
         let stats = correct_and_sharpen(
             &mut got,
             ("Greycard", "Test", &shot, true),
+            Orientation::Normal,
             &edit,
             // No profile is asked for, so no database is wanted.
             None,
@@ -1522,6 +1706,7 @@ mod tests {
         correct_and_sharpen(
             &mut got,
             ("Greycard", "Test", &shot, true),
+            Orientation::Normal,
             &edit,
             None,
             None,
@@ -1569,6 +1754,7 @@ mod tests {
         correct_and_sharpen(
             &mut got,
             ("Greycard", "Test", &shot, true),
+            Orientation::Normal,
             &edit,
             None,
             None,

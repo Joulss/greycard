@@ -1504,6 +1504,13 @@ export component App inherits Window {
     in property <string> source-note;
     in property <bool> lens-available: false;
     in property <bool> lens-database: false;
+    // The lens picker: "From the file" first, then the database's
+    // lenses for the body and the Adobe profiles; the edit's choice
+    // as its key, and its row.
+    in property <[string]> lens-choice-labels: ["From the file"];
+    in property <[string]> lens-choice-keys: [""];
+    in-out property <string> lens-choice: "";
+    in-out property <int> lens-choice-index: 0;
     in-out property <bool> lens-profile-on: true;
     in-out property <bool> lens-distortion: true;
     in-out property <bool> lens-ca: true;
@@ -3633,6 +3640,10 @@ export component App inherits Window {
                             lens-profile: root.lens-profile;
                             lens-available: root.lens-available;
                             lens-database: root.lens-database;
+                            lens-choice-labels: root.lens-choice-labels;
+                            lens-choice-keys: root.lens-choice-keys;
+                            lens-choice <=> root.lens-choice;
+                            lens-choice-index <=> root.lens-choice-index;
                             lens-profile-on <=> root.lens-profile-on;
                             lens-distortion <=> root.lens-distortion;
                             lens-ca <=> root.lens-ca;

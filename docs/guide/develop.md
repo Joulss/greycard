@@ -364,13 +364,16 @@ denoiser.
 
 ## Lens
 
-Corrects what the lens does to the picture. The line at the top names
-the lens profile that was found, or says why none was:
+Corrects what the lens does to the picture. **Lens**, at the top,
+picks whose profile corrects it. **From the file**, the default, is the
+lens the file names. The line under it names the profile found, or
+says why none was:
 
 - "no lens profiles on this machine": click **Get lens profiles**.
-- "the file names no lens": for example a manual lens. Use the manual
-  sliders below.
-- "no profile for" a lens: the database does not know it.
+- "the file names no lens": for example a manual or adapted lens. Pick
+  it under **Lens**, or use the manual sliders below.
+- "no profile for" a lens: the database does not know it. Pick it, or
+  one like it, under **Lens**.
 
 A compact's file often names no lens, or names it only as a focal
 range, but its lens is part of the body: greycard finds it from the
@@ -380,6 +383,37 @@ length. A raw gets the entry made from CHDK's DNGs where there is
 one, and a JPEG never does, since the camera has corrected it
 already. Past that it takes the plain body over a converter, and none
 rather than a guess.
+
+### Picking a lens
+
+**Lens** lists the database's lenses that fit the body's mount, then
+the Adobe lens profiles (`.lcp`) in the profile folder, by the lens
+name inside each. The profile folder is the one that holds your DCP
+camera profiles (see [Camera profile](#camera-profile)). greycard
+reads an LCP's distortion, vignetting, and chromatic aberration,
+matched to the shot's focal length, aperture, and focus distance.
+
+Where to get LCPs:
+
+- **Adobe's own**, free with the DNG Converter or Lightroom, under the
+  same license as their camera profiles, so copy yours by hand: on
+  Windows from `C:\ProgramData\Adobe\CameraRaw\LensProfiles\1.0`, on
+  a Mac from
+  `/Library/Application Support/Adobe/CameraRaw/LensProfiles/1.0`.
+  They sit in one folder per maker; copy the `.lcp` files themselves, as
+  greycard reads only the profile folder's own files.
+- **Your own**, made with Adobe Lens Profile Creator for a lens no
+  database has.
+
+An LCP made on another body is used when the lens database knows
+yours, which gives your sensor's size; otherwise only one made on your
+body is used.
+
+The lens picked is kept in the edit, and goes with copy and paste and
+with presets, as the **Profile** switch does. A lens that is not
+there for this body (one picked for another mount, or a profile not on
+this machine) is still shown by its name, greyed, and corrects
+nothing. An export without it says so.
 
 ### From the profile
 

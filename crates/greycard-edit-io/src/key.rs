@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 
-use greycard_edit::Edit;
 use greycard_edit::camera::{EXTENSION, ProfileChoice};
 use greycard_edit::key::{
     DEVELOP_RECIPE, LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, Read, SKY_PIPELINE,
 };
 use greycard_edit::look::LutChoice;
+use greycard_edit::{Edit, LensChoice};
 
 /// The key of the picture `edit` makes, with the look and the profile
 /// read from the user's directories: see `Edit::develop_key_with`.
@@ -59,6 +59,16 @@ fn files_read(edit: &Edit, looks: Option<&Path>, profiles: Option<&Path>) -> Vec
     }
     if let (ProfileChoice::Named(name), Some(dir)) = (&edit.camera.profile, profiles) {
         files.push(dir.join(format!("{name}.{EXTENSION}")));
+    }
+    // An Adobe lens profile picked by hand, beside the camera
+    // profiles: read by its file name, so only a plain name counts.
+    if let (LensChoice::Lcp(file), Some(dir)) = (&edit.lens.chosen, profiles)
+        && edit.lens.enabled
+        && edit.lens.profile
+        && !file.contains(['/', '\\'])
+        && !file.contains("..")
+    {
+        files.push(dir.join(file));
     }
     files
 }
@@ -216,6 +226,17 @@ mod tests {
         let with = develop_key_in(&edit, Some(&looks), Some(&profiles), None);
         assert_ne!(with, without);
         std::fs::write(profiles.join("Body.dcp"), b"two").unwrap();
+        let body = develop_key_in(&edit, Some(&looks), Some(&profiles), None);
+        assert_ne!(body, with);
+
+        // A lens profile picked by hand, likewise.
+        edit.lens.chosen = LensChoice::Lcp("Lens.lcp".into());
+        let without = develop_key_in(&edit, Some(&looks), Some(&profiles), None);
+        assert_ne!(without, body, "the choice is in the edit");
+        std::fs::write(profiles.join("Lens.lcp"), b"one").unwrap();
+        let with = develop_key_in(&edit, Some(&looks), Some(&profiles), None);
+        assert_ne!(with, without);
+        std::fs::write(profiles.join("Lens.lcp"), b"three").unwrap();
         assert_ne!(
             develop_key_in(&edit, Some(&looks), Some(&profiles), None),
             with

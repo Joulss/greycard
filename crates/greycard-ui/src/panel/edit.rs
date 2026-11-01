@@ -614,6 +614,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     edit.lens = greycard_edit::Lens {
         enabled: app.get_lens_enabled(),
         profile: app.get_lens_profile_on(),
+        chosen: greycard_edit::LensChoice::from_key(app.get_lens_choice().as_str()),
         distortion: app.get_lens_distortion(),
         chromatic_aberration: app.get_lens_ca(),
         vignetting: app.get_lens_vignetting(),
@@ -767,6 +768,12 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_curve_image(draw_curve(app, st.develop.bins.as_deref()));
     app.set_lens_enabled(edit.lens.enabled);
     app.set_lens_profile_on(edit.lens.profile);
+    crate::panel::assets::show_lens(
+        &st.develop.lens,
+        &st.develop.lens_options,
+        &edit.lens.chosen,
+        app,
+    );
     app.set_lens_distortion(edit.lens.distortion);
     app.set_lens_ca(edit.lens.chromatic_aberration);
     app.set_lens_vignetting(edit.lens.vignetting);
@@ -1056,7 +1063,18 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             crate::panel::cull::leave_developed(&mut st, &app);
+            let picked = st.develop.edit.lens.chosen.clone();
             st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
+            // Another lens picked: the line under the picker names it.
+            if st.develop.edit.lens.chosen != picked {
+                let d = &st.develop;
+                crate::panel::assets::show_lens(
+                    &d.lens,
+                    &d.lens_options,
+                    &d.edit.lens.chosen,
+                    &app,
+                );
+            }
             app.window().request_redraw();
             schedule_save(&mut st, app.as_weak());
             let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());

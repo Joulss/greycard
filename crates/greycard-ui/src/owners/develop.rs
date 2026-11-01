@@ -209,6 +209,8 @@ pub(crate) struct Develop {
     pub(crate) store: Option<greycard_ai::Store>,
     /// What the lens database made of the open file.
     pub(crate) lens: LensReport,
+    /// The lenses the LENS picker offers for it.
+    pub(crate) lens_options: Vec<greycard_engine::lens::LensOption>,
     /// The camera profiles the profile directory holds, and the open
     /// file's camera, for the panel's list and its warning.
     pub(crate) profiles: Vec<greycard_edit::camera::Entry>,

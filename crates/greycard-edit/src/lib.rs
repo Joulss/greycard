@@ -59,7 +59,7 @@ pub use geometry::Geometry;
 pub use grading::Grading;
 pub use grain::Grain;
 pub use history::{describe, describe_step};
-pub use lens::Lens;
+pub use lens::{Lens, LensChoice};
 pub use look::LookLut;
 pub use mask::Mask;
 pub use meta::Meta;

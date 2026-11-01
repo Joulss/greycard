@@ -3,19 +3,68 @@
 //! of the profile's, how much of the corrected picture to show, and the
 //! defringe that follows them. The profile itself is not
 //! the edit's: it is looked up from the file each time, so an edit
-//! moves between machines and database versions.
+//! moves between machines and database versions. What the edit may
+//! hold is a lens picked by hand ([`LensChoice`]), by the database's
+//! name for it or by the file name of an Adobe profile in the profile
+//! directory, for a file that names none or names the wrong one.
 
 use greycard_core::develop::defringe::{self, DefringeOptions, HueWindow};
 use greycard_core::develop::lens::{ChromaticAberration, Distortion, LensCorrection, Scale};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Which lens the profile is of.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LensChoice {
+    /// What the file names, matched in the database; or nothing.
+    #[default]
+    FromFile,
+    /// A lens in the database, by its name there.
+    Database(String),
+    /// An Adobe lens profile in the profile directory, by its file
+    /// name with the extension.
+    Lcp(String),
+}
+
+impl LensChoice {
+    pub fn is_from_file(&self) -> bool {
+        matches!(self, LensChoice::FromFile)
+    }
+
+    /// The choice as one string, for a panel's list: empty for
+    /// [`LensChoice::FromFile`].
+    pub fn key(&self) -> String {
+        match self {
+            LensChoice::FromFile => String::new(),
+            LensChoice::Database(name) => format!("database:{name}"),
+            LensChoice::Lcp(file) => format!("lcp:{file}"),
+        }
+    }
+
+    /// The choice from [`LensChoice::key`]: anything else is
+    /// [`LensChoice::FromFile`].
+    pub fn from_key(key: &str) -> Self {
+        match key.split_once(':') {
+            Some(("database", name)) if !name.is_empty() => LensChoice::Database(name.into()),
+            Some(("lcp", file)) if !file.is_empty() => LensChoice::Lcp(file.into()),
+            _ => LensChoice::FromFile,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Lens {
     /// The section's switch: off, nothing is corrected.
     pub enabled: bool,
     /// The profile's corrections, where a profile is found.
     pub profile: bool,
+    /// Which lens's profile: the file's unless one is picked. Not
+    /// written while it is the file's, so a sidecar from before the
+    /// choice existed writes back as it was, and keeps its develop
+    /// key.
+    #[serde(skip_serializing_if = "LensChoice::is_from_file")]
+    pub chosen: LensChoice,
     pub distortion: bool,
     pub chromatic_aberration: bool,
     pub vignetting: bool,
@@ -59,6 +108,7 @@ impl Default for Lens {
         Self {
             enabled: true,
             profile: true,
+            chosen: LensChoice::FromFile,
             distortion: true,
             chromatic_aberration: true,
             vignetting: true,
@@ -96,10 +146,13 @@ impl Lens {
     }
 
     /// Whether the edit moves or shades a pixel at all, given whether
-    /// a profile is there to draw on. The defringe is not part of this
-    /// answer: it is a second pass over the corrected picture, and a
-    /// consumer asks [`Lens::defringe`] for it.
+    /// a lens database is there to draw a profile from. An Adobe
+    /// profile picked by hand needs none, so it counts as a profile
+    /// either way. The defringe is not part of this answer: it is a
+    /// second pass over the corrected picture, and a consumer asks
+    /// [`Lens::defringe`] for it.
     pub fn is_identity(&self, has_profile: bool) -> bool {
+        let has_profile = has_profile || matches!(self.chosen, LensChoice::Lcp(_));
         !self.enabled
             || (self.manual == 0.0
                 && self.manual_ca().is_none()
@@ -237,7 +290,7 @@ mod tests {
         // Vignetting off: the profile without it.
         let no_vig = Lens {
             vignetting: false,
-            ..lens
+            ..lens.clone()
         };
         assert!(no_vig.corrections(Some(profile))[0].vignetting.is_none());
         // Everything off but a manual distortion: one correction, the
@@ -247,7 +300,7 @@ mod tests {
             manual: -0.1,
             auto_scale: false,
             scale: 1.1,
-            ..lens
+            ..lens.clone()
         };
         let c = manual.corrections(Some(profile));
         assert_eq!(c.len(), 1);
@@ -258,7 +311,7 @@ mod tests {
         // the profile's shown whole, the manual one scaled.
         let both = Lens {
             manual: -0.1,
-            ..lens
+            ..lens.clone()
         };
         let c = both.corrections(Some(profile));
         assert_eq!(c.len(), 2);
@@ -283,7 +336,7 @@ mod tests {
             defringe: true,
             defringe_radius: 3.0,
             defringe_threshold: 20.0,
-            ..lens
+            ..lens.clone()
         };
         let o = on.defringe().unwrap();
         assert_eq!(o.radius, 3.0);
@@ -297,7 +350,7 @@ mod tests {
             defringe_purple_center: 290.0,
             defringe_purple_width: 40.0,
             defringe_purple_amount: 0.5,
-            ..on
+            ..on.clone()
         };
         let o = narrowed.defringe().unwrap();
         assert_eq!(
@@ -315,14 +368,14 @@ mod tests {
         // untouched frame.
         let shut = Lens {
             defringe_purple_amount: 0.0,
-            ..narrowed
+            ..narrowed.clone()
         };
         assert!(!shut.defringe().unwrap().acts());
         // The section off takes it with everything else.
         assert!(
             Lens {
                 enabled: false,
-                ..on
+                ..on.clone()
             }
             .defringe()
             .is_none()
@@ -367,6 +420,45 @@ mod tests {
         assert!(text.contains("defringe_purple_center"));
     }
 
+    /// A lens picked by hand is written and read back; the file's own
+    /// is not written at all, so an old sidecar is unchanged.
+    #[test]
+    fn a_picked_lens_is_kept_and_the_files_own_is_not_written() {
+        let plain = serde_json::to_string(&Lens::default()).unwrap();
+        assert!(!plain.contains("chosen"), "{plain}");
+        assert_eq!(
+            serde_json::from_str::<Lens>(&plain).unwrap(),
+            Lens::default()
+        );
+        for chosen in [
+            LensChoice::Database("Canon RF 50mm F1.8 STM".into()),
+            LensChoice::Lcp("My 35mm.lcp".into()),
+        ] {
+            let lens = Lens {
+                chosen: chosen.clone(),
+                ..Lens::default()
+            };
+            let text = serde_json::to_string(&lens).unwrap();
+            assert_eq!(serde_json::from_str::<Lens>(&text).unwrap(), lens);
+            assert_eq!(LensChoice::from_key(&chosen.key()), chosen);
+        }
+        assert_eq!(LensChoice::FromFile.key(), "");
+        // An Adobe profile needs no database to correct.
+        let adobe = Lens {
+            chosen: LensChoice::Lcp("a.lcp".into()),
+            ..Lens::default()
+        };
+        assert!(Lens::default().is_identity(false) && !adobe.is_identity(false));
+        for key in ["", "database:", "nonsense", "lcp:"] {
+            assert_eq!(LensChoice::from_key(key), LensChoice::FromFile);
+        }
+        // A name with a colon in it keeps it.
+        assert_eq!(
+            LensChoice::from_key("database:Lens: Mark II"),
+            LensChoice::Database("Lens: Mark II".into())
+        );
+    }
+
     #[test]
     fn a_manual_aberration_folds_into_the_profiles_or_stands_alone() {
         let by_hand = Lens {
@@ -400,7 +492,7 @@ mod tests {
         // The profile's aberration switched off: the manual one alone.
         let off = Lens {
             chromatic_aberration: false,
-            ..by_hand
+            ..by_hand.clone()
         };
         assert_eq!(
             off.corrections(Some(profile))[0].chromatic_aberration,
@@ -415,7 +507,7 @@ mod tests {
         };
         let c = Lens {
             manual: -0.1,
-            ..by_hand
+            ..by_hand.clone()
         }
         .corrections(Some(with_distortion));
         assert_eq!(c.len(), 2);

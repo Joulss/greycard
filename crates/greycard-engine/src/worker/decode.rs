@@ -129,47 +129,65 @@ pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -
     }
 }
 
-/// The edit's lens corrections for a picture `width` by `height`: the
-/// profile's from the database, the manual one, in the order the edit
-/// gives them. None when there is nothing to do.
+/// The edit's lens corrections for a picture `width` by `height`, the
+/// frame at `turn` quarter turns: the profile's from the database or
+/// the one picked, the manual one, in the order the edit gives them.
+/// None when there is nothing to do.
 pub(super) fn lens_corrections(
     width: usize,
     height: usize,
     input: &Input,
+    turn: u8,
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
     let (make, model, shot) = input.identity();
-    lens_corrections_of(width, height, (make, model, shot, input.is_raw()), edit, db)
+    let orientation = match input {
+        Input::Raw(f) => f.orientation.turned(i32::from(turn)),
+        Input::Picture { .. } => quarters(turn).unwrap_or_default(),
+    };
+    lens_corrections_of(
+        (width, height),
+        orientation,
+        (make, model, shot, input.is_raw()),
+        edit,
+        db,
+    )
 }
 
 /// [`lens_corrections`] for a frame named by its body, its shot, and
-/// whether it is a raw.
+/// whether it is a raw, standing at `orientation` from the sensor.
 fn lens_corrections_of(
-    width: usize,
-    height: usize,
+    size: (usize, usize),
+    orientation: greycard_core::raw::Orientation,
     (make, model, shot, raw): (&str, &str, &Shot, bool),
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
-    let profile = db
-        .and_then(|db| db.profile_for(make, model, shot, raw))
-        .map(|p| p.correction(width, height, shot, greycard_lens::Wanted::ALL));
+    let profile = crate::lens::profile_correction(
+        size,
+        orientation,
+        (make, model, shot, raw),
+        &edit.lens,
+        db,
+    );
     edit.lens.corrections(profile)
 }
 
 /// The developed picture with the edit's lens corrections, on the
 /// CPU, for a frame named by its body, its shot, and whether it is a
-/// raw: the reduced develop's, which has no `Input`. The picture
-/// itself when there is nothing to do.
+/// raw, standing at `orientation` from the sensor: the reduced
+/// develop's, which has no `Input`. The picture itself when there is
+/// nothing to do.
 pub fn correct_lens_of(
     image: WorkingImage,
+    orientation: greycard_core::raw::Orientation,
     identity: (&str, &str, &Shot, bool),
     edit: &Edit,
     db: Option<&greycard_lens::Database>,
 ) -> WorkingImage {
     let mut image = image;
-    for c in lens_corrections_of(image.width, image.height, identity, edit, db) {
+    for c in lens_corrections_of((image.width, image.height), orientation, identity, edit, db) {
         image = greycard_core::develop::lens::correct(&image, &c).0;
     }
     image

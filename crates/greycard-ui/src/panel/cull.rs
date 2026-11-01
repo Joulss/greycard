@@ -3648,6 +3648,7 @@ mod tests {
             frame: None,
             profile: None,
             lens: crate::worker::LensReport::NoDatabase,
+            lens_options: Vec::new(),
             kind,
             shot: Default::default(),
             taken: None,

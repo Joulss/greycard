@@ -705,6 +705,13 @@ pub(super) fn run(
                             frame,
                             profile,
                             lens: lens_report(lenses.as_deref(), &opened),
+                            lens_options: {
+                                let (make, model, shot) = opened.identity();
+                                crate::lens::options(
+                                    lenses.as_deref(),
+                                    (make, model, shot, opened.is_raw()),
+                                )
+                            },
                             kind,
                             shot: {
                                 let (make, model, shot) = opened.identity();

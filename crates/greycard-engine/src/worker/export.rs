@@ -29,7 +29,9 @@ pub(super) fn open_picture(
         && l.edit.same_develop(edit)
         && !l.on_gpu
     {
-        return Ok((l.image.clone(), l.left_out.clone()));
+        let mut left_out = l.left_out.clone();
+        left_out.extend(input.and_then(|f| lens_left_out(f, edit, lenses)));
+        return Ok((l.image.clone(), left_out));
     }
     let Some(f) = input else {
         return Err("no file is open".into());
@@ -41,11 +43,24 @@ pub(super) fn open_picture(
             *last = base
                 .as_ref()
                 .map(|b| Last::made(edit.clone(), b, image.clone(), &outcome));
-            Ok((image, left_out_of(&outcome, base.as_ref())))
+            let mut left_out = left_out_of(&outcome, base.as_ref());
+            left_out.extend(lens_left_out(f, edit, lenses));
+            Ok((image, left_out))
         }
         (Outcome::Failed { message, .. }, None) => Err(message),
         _ => Err("the develop made no picture".into()),
     }
+}
+
+/// The lens picked by hand that the export goes without, when it does
+/// ([`crate::lens::left_out`]).
+fn lens_left_out(
+    input: &Input,
+    edit: &Edit,
+    lenses: Option<&greycard_lens::Database>,
+) -> Option<String> {
+    let (make, model, shot) = input.identity();
+    crate::lens::left_out((make, model, shot, input.is_raw()), &edit.lens, lenses)
 }
 
 /// A set frame's edit with its learned-denoiser blend seeded from the
@@ -75,7 +90,8 @@ pub(super) fn export_other(
     let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
     let edit = seeded(&frame.edit, frame.seed_blend, Some(&input));
     ai.forget(Some(frame.source.clone()));
-    let (rendered, left_out) = walk_export(
+    let lens_words = lens_left_out(&input, &edit, lenses);
+    let (rendered, mut left_out) = walk_export(
         input,
         &edit,
         frame.turn % 4,
@@ -83,6 +99,7 @@ pub(super) fn export_other(
         lenses,
         settings,
     )?;
+    left_out.extend(lens_words);
     write_rendered(
         &rendered,
         &edit,

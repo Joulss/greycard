@@ -684,6 +684,7 @@ mod tests {
                 frame: None,
                 profile: None,
                 lens: crate::worker::LensReport::NoDatabase,
+                lens_options: Vec::new(),
                 kind: crate::worker::SourceKind::Picture {
                     space: "sRGB".into(),
                     bits: 8,
