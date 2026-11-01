@@ -23,7 +23,14 @@ own pass over a folder adds its whole report rather than a field at a
 time, so a rename it completes is said too, and the file moves it
 dropped before are not. Not done: a member moved outside every root,
 and the two halves meet only on one connection, which the watcher's
-passes share.
+passes share. CI on macOS and Windows then found the halves matched
+each gone folder as the walk met it, so a folder gone in the same
+pass could be taken for another's new name when the listing came in
+path order; a pass's gone folders now drop their own waiting halves
+before any is matched, in path order, a tie drops the halves it
+weighed, and more than half of each side's files is needed. The
+halves keep paths rather than key bytes, since a key's bytes are the
+path's wide encoding on Windows.
 
 **The one-folder listings.** `rows_in_canonical`, `count_in_canonical`,
 and `burst_rows` gathered the raws' companion keys from the whole
