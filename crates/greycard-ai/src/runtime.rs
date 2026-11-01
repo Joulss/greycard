@@ -42,7 +42,7 @@ use std::path::Path;
 use std::sync::{OnceLock, RwLock};
 
 use ort::session::Session;
-use ort::session::builder::GraphOptimizationLevel;
+use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 
 mod dylib;
 mod record;
@@ -1236,10 +1236,11 @@ fn try_open(
 /// ("not found from the table user provided"). So when the build with
 /// the table fails, it is made once more without it, from the files as
 /// ONNX Runtime reads them, and a model the table does not suit opens
-/// as it did before the table. The builder's own steps (the provider,
-/// the options) run once, before the table, and a failure there is
-/// not retried; a provider that fails the graph itself fails both
-/// builds and is recorded as failing once.
+/// as it did before the table. The options are set once and copied for
+/// each attempt, and each attempt registers its provider afresh; a
+/// failure setting the options is not retried, and a provider that
+/// fails the graph itself fails both builds and is recorded as
+/// failing once.
 fn build_session(
     path: &Path,
     level: GraphOptimizationLevel,
@@ -1247,19 +1248,30 @@ fn build_session(
     fixed: &[(&str, i64)],
     weights: &ExternalWeights,
 ) -> ort::Result<Session> {
-    let mut builder = Session::builder()?.with_optimization_level(level)?;
+    let mut options = Session::builder()?.with_optimization_level(level)?;
     if provider == Provider::CoreMl {
-        builder = builder.with_disabled_optimizers(CORE_ML_UNFUSED)?;
+        options = options.with_disabled_optimizers(CORE_ML_UNFUSED)?;
         for &(name, size) in fixed {
-            builder = builder.with_dimension_override(name, size)?;
+            options = options.with_dimension_override(name, size)?;
         }
     }
-    if let Some(ep) = provider.dispatch(path, fixed) {
-        builder = builder.with_execution_providers([ep])?;
-    }
+    // The provider is registered on each attempt's own copy, never on
+    // the options both copy: a copy of the options shares the provider
+    // factory registered on them, and ONNX Runtime's WebGPU factory
+    // takes its hold on the process's WebGPU context once, when it is
+    // made, but lets go once for every session made from it, so two
+    // sessions from one registration let the context go once too often
+    // and the next session on it crashes.
+    let attempt = |builder: SessionBuilder, table: &[(&str, &[u8])]| {
+        let builder = match provider.dispatch(path, fixed) {
+            Some(ep) => builder.with_execution_providers([ep])?,
+            None => builder,
+        };
+        with_table(builder, table, path)
+    };
     let table = weights.files();
     if !table.is_empty() {
-        match with_table(builder.clone(), &table, path) {
+        match attempt(options.clone(), &table) {
             Ok(session) => return Ok(session),
             Err(e) => log::info!(
                 "{}: the session with its weights in memory failed ({}); built again from the files",
@@ -1268,13 +1280,13 @@ fn build_session(
             ),
         }
     }
-    builder.commit_from_file(path)
+    attempt(options, &[])
 }
 
 /// The session `builder` makes with `table`'s files handed over in
-/// memory.
+/// memory, or from the files alone when `table` is empty.
 fn with_table(
-    mut builder: ort::session::builder::SessionBuilder,
+    mut builder: SessionBuilder,
     table: &[(&str, &[u8])],
     path: &Path,
 ) -> ort::Result<Session> {
@@ -1576,6 +1588,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An `ExternalWeights` holding one file of `values`, from an
+    /// anonymous map rather than a file beside the model, so that what
+    /// a session built with it answers shows whether it read the table.
+    fn table_of(name: &str, values: &[f32]) -> ExternalWeights {
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let mut map = memmap2::MmapMut::map_anon(bytes.len()).unwrap();
+        map.copy_from_slice(&bytes);
+        ExternalWeights {
+            files: vec![(name.to_string(), map.make_read_only().unwrap())],
+        }
+    }
+
+    /// The fixtures' model run on `[1, 2, 3, 4]`.
+    fn add(session: &mut Session) -> Vec<f32> {
+        let x = ort::value::Tensor::from_array(([1usize, 4], vec![1.0f32, 2.0, 3.0, 4.0])).unwrap();
+        let outputs = session.run(ort::inputs!["x" => x]).unwrap();
+        outputs["y"].try_extract_tensor::<f32>().unwrap().1.to_vec()
+    }
+
+    /// A build with the table that fails on WebGPU, and the fallback
+    /// after it, leave ONNX Runtime's WebGPU context whole: the session
+    /// the fallback made runs, and a session made, run and dropped
+    /// beside it does not take the context down under it. With one
+    /// provider registration shared by both builds the fallback's
+    /// session crashed the process on its first run. Where the
+    /// `webgpu` feature is built and WebGPU opens the fixture at all.
+    #[cfg(feature = "webgpu")]
+    #[test]
+    fn a_fallback_on_webgpu_leaves_the_context_whole() {
+        if let Err(why) = init() {
+            absent_in_test(why);
+            return;
+        }
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/external");
+        let unoffered = fixtures.join("unoffered").join("add.onnx");
+        let named = fixtures.join("named").join("add.onnx");
+        let none = ExternalWeights::default();
+        let Ok(mut first) = build_session(
+            &named,
+            GraphOptimizationLevel::Level1,
+            Provider::WebGpu,
+            &[],
+            &none,
+        ) else {
+            eprintln!("skipped: WebGPU does not open the fixture here");
+            return;
+        };
+        assert_eq!(add(&mut first), [11.0, 22.0, 33.0, 44.0]);
+        // The table names a file the graph does not: refused, then
+        // built again from the files.
+        let mut fallback = build_session(
+            &unoffered,
+            GraphOptimizationLevel::Level1,
+            Provider::WebGpu,
+            &[],
+            &table_of("other.onnx_data", &[0.0; 4]),
+        )
+        .unwrap();
+        assert_eq!(add(&mut fallback), [11.0, 22.0, 33.0, 44.0]);
+        drop(first);
+        assert_eq!(add(&mut fallback), [11.0, 22.0, 33.0, 44.0]);
+        let mut later = build_session(
+            &named,
+            GraphOptimizationLevel::Level1,
+            Provider::WebGpu,
+            &[],
+            &none,
+        )
+        .unwrap();
+        assert_eq!(add(&mut later), [11.0, 22.0, 33.0, 44.0]);
+        drop(fallback);
+        assert_eq!(add(&mut later), [11.0, 22.0, 33.0, 44.0]);
+    }
+
     /// A model whose weights are in a file it names beside it builds
     /// from the table and answers right; one naming a file the table
     /// does not hold (`add.weights.bin`, with an unrelated
@@ -1612,23 +1698,18 @@ mod tests {
             let (_, y) = outputs["y"].try_extract_tensor::<f32>().unwrap();
             assert_eq!(y, &[11.0, 22.0, 33.0, 44.0], "{case}");
         }
-        // The table is what the first was built from, not the files: a
-        // table holding other weights gives their sum, not the file's.
+        // `build_session` takes the table when it suits, not the files:
+        // a table holding other weights than the file's gives their sum.
         let model = fixtures.join("named").join("add.onnx");
-        let other: Vec<u8> = [100.0f32, 200.0, 300.0, 400.0]
-            .iter()
-            .flat_map(|v| v.to_le_bytes())
-            .collect();
-        let mut session = with_table(
-            Session::builder().unwrap(),
-            &[("add.onnx_data", &other)],
+        let mut session = build_session(
             &model,
+            GraphOptimizationLevel::Level1,
+            Provider::Cpu,
+            &[],
+            &table_of("add.onnx_data", &[100.0, 200.0, 300.0, 400.0]),
         )
         .unwrap();
-        let x = ort::value::Tensor::from_array(([1usize, 4], vec![1.0f32, 2.0, 3.0, 4.0])).unwrap();
-        let outputs = session.run(ort::inputs!["x" => x]).unwrap();
-        let (_, y) = outputs["y"].try_extract_tensor::<f32>().unwrap();
-        assert_eq!(y, &[101.0, 202.0, 303.0, 404.0]);
+        assert_eq!(add(&mut session), [101.0, 202.0, 303.0, 404.0]);
         // And the fallback is what opened the second: with the table
         // alone, ONNX Runtime refuses it rather than read its file.
         let model = fixtures.join("unoffered").join("add.onnx");

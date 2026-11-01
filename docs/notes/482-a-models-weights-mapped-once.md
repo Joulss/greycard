@@ -52,8 +52,11 @@ provided"). So the files are mapped all or none, and a build with the
 table that fails, for that or any reason, is made once more without
 it, from the files as ONNX Runtime reads them; a model whose weights
 are named otherwise (`model.onnx.data`, a subfolder) opens as it did.
-The builder's own steps run once, before the table, and only the
-build with the table is retried, from a clone made before it.
+The session's options (the optimization level, Core ML's disabled
+fusion and fixed shapes) are set once; the build with the table runs
+on a copy of them and the fallback on the original, and each attempt
+registers the provider on its own, because a provider registered once
+and shared by two builds crashes WebGPU (the third review, below).
 The CPU is kept off the table: there ONNX Runtime uses its own maps of
 the files as the weights themselves, file pages the system can drop,
 where a table's bytes are copied onto the heap, 5.5 GB for the UNet.
@@ -80,7 +83,13 @@ model with external weights, goes through the same path.
   as a table holding other weights shows by changing its answer; one
   naming `add.weights.bin` beside an unrelated `other.onnx_data`,
   which the table alone fails with ONNX Runtime's own "not found from
-  the table", and which the fallback opens. Both answer right.
+  the table", and which the fallback opens. Both answer right. A
+  third, with the `webgpu` feature, makes the WebGPU build with the
+  table fail and checks the fallback opens and answers on WebGPU.
+- After the third review's fix, the remove bench again: Fast's loads
+  1.74 s, the 25-step UNet's 1.41 s, the answers the same PNG to the
+  bit as before it. The first run after that rebuild loaded in 7.0 s,
+  a third slow first run.
 - Twice, the first run of the Fast removal after a rebuild took 10.5
   and 10.6 s to load against 1.8 to 2.0 s for every other run. A
   build that printed whether the table was offered and whether the
@@ -128,3 +137,12 @@ found the test could not tell the table's build from the fallback's,
 which would have hidden a lost speedup, and the retry repeating
 failures the table had no part in; the table's effect on the answer,
 and the clone, are the fixes.
+
+A third review found that clone crashed WebGPU. `SessionBuilder`'s
+clone copies the options but shares the providers already registered
+on them, and ONNX Runtime's WebGPU factory counts its sessions on the
+one registration: a failed build with the table and a fallback from
+the original released the shared device context twice, and the
+process died. Registering the provider on each attempt's own copy is
+the fix. The WebGPU test above dies with SIGSEGV on the clone of
+`d9e4c92` and passes on the fix.
