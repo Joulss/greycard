@@ -1000,11 +1000,11 @@ mod tests {
 
     #[test]
     fn the_strips_bar_is_the_same_arithmetic_along_its_width() {
-        // A strip 1500 wide over forty landscapes, 141 wide with 4
-        // between and 12 of padding at each end: the row is 5820, so
-        // 4320 to scroll.
+        // A strip 1500 wide over forty landscapes, 141 wide with 8
+        // between and 12 of padding at each end: the row is 5976, so
+        // 4476 to scroll.
         let (w, row) = (1500.0, crate::strip::Layout::new(40, |_| 0.0).length());
-        assert_eq!(row, 5820.0);
+        assert_eq!(row, 5976.0);
         let max = row - w;
         let track = w - 2.0 * BAR_INSET;
         let len = bar_length(w, max);

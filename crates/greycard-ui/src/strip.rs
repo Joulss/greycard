@@ -13,8 +13,9 @@ use crate::grid::UNKNOWN_ASPECT;
 /// The padding at the strip's ends and above its cells, logical
 /// pixels: the theme's `space-3`.
 pub const PAD: f32 = 12.0;
-/// The gap between two cells: the theme's `space-1`.
-pub const GAP: f32 = 4.0;
+/// The gap between two cells: the theme's `space-2`, room to breathe
+/// between pictures that have no padding of their own.
+pub const GAP: f32 = 8.0;
 /// How far a picture is inset from its cell's edges: the selection
 /// ring's width, so the ring and the hover's ground hug the picture.
 pub const RING: f32 = 2.0;
@@ -184,12 +185,12 @@ mod tests {
         let shapes = [LANDSCAPE, PORTRAIT, 1.0, 0.0];
         let l = Layout::new(shapes.len(), |i| shapes[i]);
         assert_eq!(l.place(0), Some((12.0, 141.0)));
-        assert_eq!(l.place(1), Some((12.0 + 141.0 + 4.0, 65.0)));
-        assert_eq!(l.place(2), Some((157.0 + 65.0 + 4.0, 95.0)));
-        assert_eq!(l.place(3), Some((226.0 + 95.0 + 4.0, 141.0)));
+        assert_eq!(l.place(1), Some((12.0 + 141.0 + 8.0, 65.0)));
+        assert_eq!(l.place(2), Some((161.0 + 65.0 + 8.0, 95.0)));
+        assert_eq!(l.place(3), Some((234.0 + 95.0 + 8.0, 141.0)));
         assert_eq!(l.place(4), None);
         assert_eq!(l.place(-1), None);
-        assert_eq!(l.length(), 325.0 + 141.0 + 12.0);
+        assert_eq!(l.length(), 337.0 + 141.0 + 12.0);
         // Empty: the pads alone.
         let empty = Layout::new(0, |_| 0.0);
         assert_eq!(empty.length(), 24.0);
@@ -199,16 +200,17 @@ mod tests {
 
     #[test]
     fn a_scroll_shows_the_cells_it_touches() {
-        // Portraits, 65 wide at a pitch of 69 from 12.
+        // Portraits, 65 wide at a pitch of 73 from 12.
         let l = Layout::new(100, |_| PORTRAIT);
-        assert_eq!(l.shown(0.0, 1500.0), Some((0, 21)));
+        assert_eq!(l.shown(0.0, 1500.0), Some((0, 20)));
         // The left edge in the gap after row 1: row 2 is the first.
-        assert_eq!(l.shown(12.0 + 69.0 + 66.0, 300.0).unwrap().0, 2);
+        assert_eq!(l.shown(12.0 + 73.0 + 66.0, 300.0).unwrap().0, 2);
         // On row 1's last pixel: still row 1.
-        assert_eq!(l.shown(12.0 + 69.0 + 64.5, 300.0).unwrap().0, 1);
+        assert_eq!(l.shown(12.0 + 73.0 + 64.5, 300.0).unwrap().0, 1);
         // A right edge on a cell's left edge does not show that cell.
-        assert_eq!(l.shown(0.0, 12.0 + 69.0 * 3.0).unwrap().1, 2);
-        assert_eq!(l.shown(0.0, 12.0 + 69.0 * 3.0 + 1.0).unwrap().1, 3);
+        let left_of_3 = l.place(3).unwrap().0;
+        assert_eq!(l.shown(0.0, left_of_3).unwrap().1, 2);
+        assert_eq!(l.shown(0.0, left_of_3 + 1.0).unwrap().1, 3);
         // Past the end: the last.
         assert_eq!(l.shown(1e6, 1500.0), Some((99, 99)));
     }

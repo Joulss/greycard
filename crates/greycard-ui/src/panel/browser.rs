@@ -4464,10 +4464,10 @@ mod tests {
     #[test]
     fn five_thousand_frames_make_cells_for_the_screen_alone() {
         let (app, state, _files) = five_thousand();
-        // The strip, 1500 wide over square pictures, 95 a cell and 4
-        // between: fifteen and a part on screen, and cells for a part
+        // The strip, 1500 wide over square pictures, 95 a cell and 8
+        // between: fourteen and a part on screen, and cells for a part
         // more and the margin either side.
-        assert_eq!(cells_on_screen(&app, "Filmstrip::cell"), 16);
+        assert_eq!(cells_on_screen(&app, "Filmstrip::cell"), 15);
         let strip = app.get_strip_cells().row_count();
         assert!(strip <= 17 + 2 * cells::STRIP_MARGIN, "{strip}");
         assert_eq!(app.get_cells_made() as usize, strip, "the grid is closed");
