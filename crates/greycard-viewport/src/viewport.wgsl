@@ -128,7 +128,8 @@ struct Params {
     // The frame's own range, its median and top in scene stops over
     // mid grey, in xy (`Guide::range`): where the highlights ramp sits,
     // as `highlights_span` in `finish.rs` places it. A typical frame's
-    // when there is no plane.
+    // when there is no plane. In z a merge's headroom, the stops it
+    // keeps over display white (`Kept` in `finish.rs`); none otherwise.
     frame_range: vec4<f32>,
     // The target pixel this view's top left corner sits at: nonzero
     // for a view drawn into a part of the target, the compare view's
@@ -553,7 +554,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // The frame's range at the picture's own exposure and contrast,
     // not this pixel's, as `finish_pixel_with` has it.
     let span = highlights_span(p.frame_range.xy, p.exposure, p.contrast);
-    let shaped = shape(c, look, g, has_guide, span);
+    let kept = kept_of(p.frame_range.xy, p.exposure, p.contrast, p.frame_range.z);
+    let shaped = shape(c, look, g, has_guide, span, kept);
     // 1: a picture already rendered for a display, which takes the
     // shape and a clip at white, not a second curve.
     // 2: AgX.
@@ -980,6 +982,42 @@ fn highlights_weight(g: f32, span: vec2<f32>) -> f32 {
     return HIGHLIGHTS_PEAK * smoothstep(HIGHLIGHTS_RISE.x, HIGHLIGHTS_RISE.y, u)
         * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.x, HIGHLIGHTS_EASE.y, u));
 }
+// A merge's kept range as the highlights' negative travel pulls it,
+// as `Kept` in `finish.rs`: the frame's median and top at the
+// picture's exposure and contrast, the pull's knee (the span's least
+// under display white), and what the full travel takes off the top.
+// No excess: no pull.
+const HIGHLIGHTS_TRAVEL: f32 = 2.0;
+const KEPT_KNEE: f32 = 0.5;
+
+fn kept_of(range: vec2<f32>, exposure: f32, contrast: f32, headroom: f32) -> vec4<f32> {
+    if (headroom <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let k = max(contrast, MIN_CONTRAST);
+    let top = k * (range.y + exposure);
+    let median = k * (range.x + exposure);
+    let excess = min(top - p.white.y, k * headroom);
+    if (excess <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(median, top, p.white.y - HIGHLIGHTS_SPAN.x, excess);
+}
+
+// The pull's soft knee, as `Kept::pull`.
+fn kept_ramp(u: f32) -> f32 {
+    return u - KEPT_KNEE * (1.0 - exp(-u / KEPT_KNEE));
+}
+
+// A region reading `g` with `share` of the pull on it.
+fn kept_pull(kept: vec4<f32>, g: f32, share: f32) -> f32 {
+    let u = g - kept.z;
+    if (u <= 0.0) {
+        return g;
+    }
+    return g - share * kept.w * kept_ramp(u) / kept_ramp(kept.y - kept.z);
+}
+
 // How far the blended whites may go either way, as `WHITES_RANGE` in
 // `finish.rs`: the exponent has a pole at display white and the sliders
 // of a picture and its masks add, so the value arriving here is not
@@ -1019,11 +1057,22 @@ fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
 // the two never turn the curve back; then the white point, pivoted at
 // the foot of the frame's span; then the
 // black point with scene white held.
-fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>) -> vec3<f32> {
+fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>, kept: vec4<f32>) -> vec3<f32> {
     let c = MID_GREY * pow(max(x, vec3<f32>(0.0)) / MID_GREY, vec3<f32>(look.contrast));
     let l = select(log2(max(dot(LUMA, c), 1e-6) / MID_GREY), g, has_guide);
     let lifted = l + look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l));
-    let shifted = lifted + look.highlights * highlights_weight(lifted, span);
+    // A merge's kept range pulled under display white first, the ramp
+    // then on its span as pulled; the whites' pivot stays on `span`.
+    var read = lifted;
+    var ramp_span = span;
+    if (kept.w > 0.0 && look.highlights < 0.0) {
+        let share = clamp(-look.highlights / HIGHLIGHTS_TRAVEL, 0.0, 1.0);
+        read = kept_pull(kept, lifted, share);
+        let top = kept_pull(kept, kept.y, share);
+        let width = clamp(top - kept_pull(kept, kept.x, share), HIGHLIGHTS_SPAN.x, HIGHLIGHTS_SPAN.y);
+        ramp_span = vec2<f32>(top - width, width);
+    }
+    let shifted = read + look.highlights * highlights_weight(read, ramp_span);
     let pivot = clamp(span.x, WHITES_PIVOT.x, WHITES_PIVOT.y);
     return black_point(white_point(c * exp2(shifted - l), look.whites, pivot), look.blacks);
 }

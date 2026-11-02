@@ -1341,6 +1341,104 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
     }
 }
 
+/// A merge's pull on its kept range on the GPU is the CPU's: the
+/// highlights along its negative travel and past it, at three
+/// exposures, the guide plane read, on a frame whose top is over
+/// display white once the headroom's exposure is on it.
+#[test]
+fn a_merges_pull_on_the_gpu_is_the_cpus() {
+    use greycard_render::finish::{Baseline, Kept, finish_with, guide_plane};
+    let Some((device, queue)) = device("the merge's pull check") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let seen = WorkingImage {
+        width: w,
+        height: h,
+        data: image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect(),
+    };
+    let mut guide = guide_plane(&seen);
+    for v in &mut guide.data {
+        *v = half::f16::from_f32(*v).to_f32();
+    }
+    let source = Source::Scene(Baseline::DEFAULT.with_headroom(2.5));
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    renderer.set_guide(&guide);
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let mut edit = greycard_edit::Edit::default();
+    edit.light.tone.shadows = 0.5;
+    edit.light.tone.whites = -0.5;
+    let iw = w as f32;
+    let mut pulled = 0;
+    for exposure in [-1.0f32, 0.0, 1.0] {
+        for highlights in [-2.0f32, -1.0, -0.4, 0.0, 1.0] {
+            edit.light.exposure = exposure;
+            edit.light.tone.highlights = highlights;
+            let global = Baked::global(&edit, source);
+            let white = greycard_render::finish::White::of(source, &edit.light);
+            let kept = Kept::of(
+                guide.range,
+                source.baseline(&edit.light) + exposure,
+                1.0,
+                source.headroom(),
+                white.stops,
+            );
+            if kept.is_some() && highlights < 0.0 {
+                pulled += 1;
+            }
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                source,
+                ..View::with_look(&edit)
+            };
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            let cpu = finish_with(
+                &seen,
+                None,
+                &global,
+                &[],
+                |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+                |_, _| (0.0, None),
+                Some((&guide, iw)),
+                None,
+                None,
+                &to_out,
+                |v: f32| v,
+            );
+            let mut worst = (0.0f32, 0, 0);
+            for y in 0..h {
+                for x in 0..w {
+                    let gpu = shown.get_pixel(x as u32, y as u32);
+                    for k in 0..3 {
+                        let d = (cpu[(y * w + x) * 3 + k] - f32::from(gpu[k]) / 255.0).abs();
+                        if d > worst.0 {
+                            worst = (d, x, y);
+                        }
+                    }
+                }
+            }
+            eprintln!(
+                "exposure {exposure}, highlights {highlights}, pulled {}: {worst:?}",
+                kept.is_some()
+            );
+            assert!(
+                worst.0 < 1.5 / 255.0,
+                "exposure {exposure}, highlights {highlights}: {worst:?}"
+            );
+        }
+    }
+    assert!(pulled >= 6, "the pull acted in {pulled} cases");
+}
+
 fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, what: &str) {
     let Some((device, queue)) = device(&format!("{what}'s check")) else {
         return;
@@ -1484,6 +1582,7 @@ fn a_display_curves_gap_before_the_point_curves() {
                             &global.curves,
                             Source::SCENE,
                             curve,
+                            greycard_render::finish::FRAME_TYPICAL,
                         )
                         .encoded;
                         let gpu = shown.get_pixel(x as u32, y as u32);

@@ -540,3 +540,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§525. The tripod HDR merge](notes/525-the-tripod-hdr-merge.md) (2026-11-01)
 - [§526. greycard-ui imports by name](notes/526-greycard-ui-imports-by-name.md) (2026-11-01)
 - [§527. A strip cell no narrower than its name](notes/527-a-strip-cell-no-narrower-than-its-name.md) (2026-11-01)
+- [§528. Highlights reaches what a merge keeps](notes/528-highlights-reaches-what-a-merge-keeps.md) (2026-11-01)

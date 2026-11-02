@@ -556,9 +556,11 @@ brackets and the panorama to shoot for testing are in
 - [ ] Phase 1's leftovers (§525): the CA fitted once on the reference
       and applied to every frame (`correct_ca` exposing its fit; a
       merged file is linear, so CA cannot be corrected later);
-      Highlights' span following a merge's kept range (the exposure
-      reaches it, the slider barely); a noise model with the merge's
-      steps in it for its readers; the Deflate write on more threads;
+      Auto reading a merge's headroom (it reads the frame about three
+      stops dark and leaves the kept range clipped); the Highlights
+      pull's aim at display white measured on a real bracket (§528);
+      a noise model with the merge's steps in it for its readers; the
+      Deflate write on more threads;
       the per-frame learned denoiser offered in the action and the
       command line; the camera-match sampler refusing a merged file
       as a pair; the measurement on a real tripod bracket

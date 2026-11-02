@@ -827,6 +827,7 @@ pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Pi
         &edit.curves.bake_with(&edit.grading),
         drawn_kind(st),
         edit.display_curve,
+        st.develop.drawn_guide.frame_range(),
     )
 }
 

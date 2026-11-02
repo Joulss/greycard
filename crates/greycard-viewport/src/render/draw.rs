@@ -83,7 +83,8 @@ struct Params {
     /// The frame's own range, its median and top in scene stops over
     /// mid grey (`Guide::range`), in x and y: where the highlights ramp
     /// sits (`finish::highlights_span`). A typical frame's when there
-    /// is no plane, as the CPU has it.
+    /// is no plane, as the CPU has it. In z a merge's headroom
+    /// (`finish::Kept`).
     frame_range: [f32; 4],
     /// The target pixel this view's top left corner sits at, for a
     /// view drawn into part of the target (the compare view's tiles);
@@ -302,7 +303,12 @@ impl Renderer {
                 [t[0], t[1], 0.0, 0.0]
             },
             guide: self.guide_cover,
-            frame_range: self.frame_range,
+            frame_range: [
+                self.frame_range[0],
+                self.frame_range[1],
+                v.source.headroom(),
+                0.0,
+            ],
             tile: [ox as f32, oy as f32, 0.0, 0.0],
             look: self.look.params,
             look_min: self.look.min,

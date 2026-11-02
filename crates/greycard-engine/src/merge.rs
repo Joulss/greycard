@@ -1140,6 +1140,39 @@ mod tests {
         image
     }
 
+    /// `file` exported under `edit`, its encoded values from 0 to 1.
+    fn exported(file: &Path, edit: &Edit) -> Vec<f32> {
+        let mut developed =
+            crate::worker::FrameDevelop::develop(file, edit, None).expect("it develops");
+        let rendered = developed.finish(edit, &greycard_render::export::Settings::default());
+        assert_eq!((rendered.width, rendered.height), (W as u32, H as u32));
+        match rendered.pixels {
+            greycard_render::export::Pixels::Eight(p) => {
+                p.iter().map(|v| f32::from(*v) / 255.0).collect()
+            }
+            greycard_render::export::Pixels::Sixteen(p) => {
+                p.iter().map(|v| f32::from(*v) / 65535.0).collect()
+            }
+        }
+    }
+
+    /// The mean encoded luminance of an export's columns from `from`
+    /// to `to` of its width, its top and bottom rows left out: the
+    /// scene is a ramp across the frame, so a band of columns is a
+    /// band of brightness.
+    fn shown(px: &[f32], from: f32, to: f32) -> f64 {
+        let (x0, x1) = ((from * W as f32) as usize, (to * W as f32) as usize);
+        let (mut sum, mut n) = (0.0, 0.0);
+        for y in 8..H - 8 {
+            for x in x0..x1 {
+                let i = (y * W + x) * 3;
+                sum += f64::from(0.2627 * px[i] + 0.678 * px[i + 1] + 0.0593 * px[i + 2]);
+                n += 1.0;
+            }
+        }
+        sum / n
+    }
+
     /// The develop's pin: the merged bracket and its reference frame,
     /// each developed as a file opens, agree in the midtones and the
     /// highlights the reference held; where the reference clipped, the
@@ -1194,34 +1227,8 @@ mod tests {
         // And through the finish, as an export makes the file: the
         // merge's export against the reference's, each under the edit
         // a merge starts from, at the reference's exposure.
-        let exported = |file: &Path, edit: &Edit| -> Vec<f32> {
-            let mut developed =
-                crate::worker::FrameDevelop::develop(file, edit, None).expect("it develops");
-            let rendered = developed.finish(edit, &greycard_render::export::Settings::default());
-            assert_eq!((rendered.width, rendered.height), (W as u32, H as u32));
-            match rendered.pixels {
-                greycard_render::export::Pixels::Eight(p) => {
-                    p.iter().map(|v| f32::from(*v) / 255.0).collect()
-                }
-                greycard_render::export::Pixels::Sixteen(p) => {
-                    p.iter().map(|v| f32::from(*v) / 65535.0).collect()
-                }
-            }
-        };
         let edit = edit_for_merge(&Edit::default());
         let (re, me) = (exported(&files[1], &edit), exported(&report.out, &edit));
-        let shown = |px: &[f32], from: f32, to: f32| -> f64 {
-            let (x0, x1) = ((from * W as f32) as usize, (to * W as f32) as usize);
-            let (mut sum, mut n) = (0.0, 0.0);
-            for y in 8..H - 8 {
-                for x in x0..x1 {
-                    let i = (y * W + x) * 3;
-                    sum += f64::from(luma(&px[i..i + 3]));
-                    n += 1.0;
-                }
-            }
-            sum / n
-        };
         // The midtones and the highlights the reference held within 2%,
         // the brightest of them (display 200 to 250) as well: the
         // merge's display white is its body's, as the reference's is.
@@ -1241,6 +1248,77 @@ mod tests {
         let rise = |px: &[f32]| shown(px, 0.9, 0.95) - shown(px, 0.8, 0.85);
         assert!(rise(&re) < 0.01, "the reference: {}", rise(&re));
         assert!(rise(&me) > 0.03, "the merge: {}", rise(&me));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Highlights at -100 brings back what the merge kept over its
+    /// reference's clip, as the exposure does: the bands over the clip
+    /// climb under white, the brightest of them where a clip at display
+    /// white lands at -100 on a frame with no headroom. The reference,
+    /// which kept nothing, is flat there as it was.
+    #[test]
+    fn highlights_brings_back_what_the_merge_kept() {
+        use greycard_render::finish::{Baked, Source, White, finish_pixel_with, guide_plane};
+        let (dir, files) = bracket("highlights", [0; 3]);
+        let report = merged(&files, &Options::default());
+        let mut edit = edit_for_merge(&Edit::default());
+        edit.light.tone.highlights = -2.0;
+        let (re, me) = (exported(&files[1], &edit), exported(&report.out, &edit));
+        let bands: Vec<f64> = (0..5)
+            .map(|k| {
+                let from = 0.75 + 0.05 * k as f32;
+                shown(&me, from, from + 0.05)
+            })
+            .collect();
+        eprintln!("the merge at -100, 0.75 to 1.0: {bands:?}");
+        let rise = |px: &[f32]| shown(px, 0.9, 0.95) - shown(px, 0.8, 0.85);
+        assert!(rise(&re) < 0.01, "the reference: {}", rise(&re));
+        assert!(rise(&me) > 0.03, "the merge: {}", rise(&me));
+        assert!(
+            bands.windows(2).all(|b| b[1] > b[0] + 0.01),
+            "the kept range climbs: {bands:?}"
+        );
+
+        // Where a clip at display white lands at -100 on a frame with
+        // no headroom: a flat region there, the frame's top, its median
+        // where the merge's reads.
+        let frame = greycard_core::decode::decode_path(&report.out).unwrap();
+        let headroom = greycard_edit::baseline::headroom(&frame);
+        let body = greycard_edit::baseline::for_frame(&frame);
+        assert!(headroom > 2.0, "{headroom}");
+        let mut scene = developed(&report.out);
+        let brightened = (body + headroom).exp2();
+        scene.data.iter_mut().for_each(|v| *v /= brightened);
+        let [median, _] = guide_plane(&scene).range;
+        let white = White::of(Source::SCENE, &edit.light).stops;
+        let at_white = white - body;
+        let px = [0.18 * at_white.exp2(); 3];
+        let clip = finish_pixel_with(
+            px,
+            &Baked::global(&edit, Source::SCENE),
+            &[],
+            0.0,
+            None,
+            None,
+            Some((at_white, [median + headroom, at_white])),
+            None,
+            None,
+            &greycard_render::export::Space::Srgb.matrix(),
+        );
+        let clip = f64::from(0.2627 * clip[0] + 0.678 * clip[1] + 0.0593 * clip[2]);
+        eprintln!("a clip at white at -100: {clip}");
+        assert!(clip < 0.99, "{clip}");
+        // The pull brings the frame's top region to display white
+        // exactly (the finish's own test holds it to 1e-5), and a flat
+        // region there lands on `clip`. The bands here are not flat:
+        // the scene's texture (30% fine, patches of 0.7 to 1.3) sits
+        // over the region's geometric mean that the plane reads, and
+        // in the shoulder that lifts a band's mean by about 0.02 (the
+        // last column reads 0.986 where a flat region at its reading
+        // gives 0.961). So within 0.03, and under white.
+        let top = bands[4];
+        assert!((top - clip).abs() < 0.03, "{top} against {clip}");
+        assert!(top < 0.99, "{top}");
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

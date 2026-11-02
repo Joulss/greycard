@@ -138,6 +138,10 @@ design note behind it.
 
 ### Fixes
 
+- The curve and mixer droppers read a picked pixel by the frame's own
+  range, as the picture is drawn, so a point lands where Highlights
+  or Whites put it rather than a little off
+  ([§528](https://github.com/jessolmstead/greycard/blob/master/docs/notes/528-highlights-reaches-what-a-merge-keeps.md)).
 - A phone's DNG (a Pixel's, say) opens at the white balance the camera
   recorded. Its matrix and its as-shot white used to disagree by up to
   a few hundred kelvin

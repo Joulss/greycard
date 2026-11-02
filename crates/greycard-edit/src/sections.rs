@@ -165,7 +165,9 @@ pub struct Tone {
     /// frame's own range: a ramp over the span from the frame's median
     /// to its top, held to 1.6 to 3.5 stops and hung from the top
     /// (`highlights_span` in `finish.rs`). Read from the region the
-    /// pixel sits in and not from the pixel: the tone equalizer. The
+    /// pixel sits in and not from the pixel: the tone equalizer. On a
+    /// merge, its negative travel first pulls what the frame keeps
+    /// over display white under it (`Kept` in `finish.rs`). The
     /// slider runs ±2.
     pub highlights: f32,
     /// Stops of shift under mid grey, full three and a half stops

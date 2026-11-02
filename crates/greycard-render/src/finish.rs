@@ -114,6 +114,14 @@ impl Baseline {
         }
     }
 
+    /// This baseline with a merge's `headroom` stops beside it.
+    pub fn with_headroom(self, headroom: f32) -> Baseline {
+        Baseline {
+            headroom: hundredths(headroom),
+            ..self
+        }
+    }
+
     /// The body's stops.
     pub fn stops(self) -> f32 {
         f32::from(self.body) / 100.0
@@ -167,6 +175,15 @@ impl Source {
 
     pub fn is_scene(self) -> bool {
         matches!(self, Source::Scene(_))
+    }
+
+    /// A merge's headroom, in stops: what the frame keeps over the
+    /// display white ([`Baseline::headroom`]); nothing for any other.
+    pub fn headroom(self) -> f32 {
+        match self {
+            Source::Scene(b) => b.headroom(),
+            Source::Display => 0.0,
+        }
     }
 
     /// The display curve, per channel or AgX as `how` says,
@@ -493,6 +510,17 @@ impl Guide {
         }
     }
 
+    /// The frame's range as the render places the highlights by it:
+    /// this plane's, or [`FRAME_TYPICAL`] for a plane not made yet,
+    /// which the render drops.
+    pub fn frame_range(&self) -> [f32; 2] {
+        if self.data.is_empty() {
+            FRAME_TYPICAL
+        } else {
+            self.range
+        }
+    }
+
     /// The guide at a continuous source position, bilinear, the edges
     /// clamped, as the shader's `guide_at` reads it by texel, so the
     /// two read one plane: a source position of `scale * (i + 0.5)` is
@@ -715,13 +743,18 @@ pub fn finish_pixel_with(
     // this pixel's, so a mask that brightens a region moves it up the
     // highlights ramp.
     let g = guide.map(|(g, _)| t.contrast * (g + exposure));
-    let span = highlights_span(
-        guide.map_or(FRAME_TYPICAL, |(_, range)| range),
-        global.source.baseline(&global.light) + global.light.exposure,
+    let range = guide.map_or(FRAME_TYPICAL, |(_, range)| range);
+    let picture_exposure = global.source.baseline(&global.light) + global.light.exposure;
+    let span = highlights_span(range, picture_exposure, global.light.tone.contrast);
+    let kept = Kept::of(
+        range,
+        picture_exposure,
         global.light.tone.contrast,
+        global.source.headroom(),
+        white.stops,
     );
     c = global.source.curve_at(
-        shape_at(c, &t, g, span, white.stops),
+        shape_at(c, &t, g, span, kept, white.stops),
         global.display_curve,
         &white,
     );
@@ -845,7 +878,10 @@ fn rail_weights(to_out: &[[f32; 3]; 3]) -> [f32; 3] {
 /// Its Oklab hue after the exposure, where the mixer sees it;
 /// its encoded values after the tone curve, where the point curves
 /// do; and its Oklab lightness after them, where the color curves
-/// do. The same stages as `finish_pixel_with`, without the locals.
+/// do. The same stages as `finish_pixel_with`, without the locals,
+/// the highlights placed by the frame's `range`
+/// ([`Guide::frame_range`]) as the render places them, a merge's
+/// pull with them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Picked {
     /// Degrees, as `Mixer::at` takes it.
@@ -867,6 +903,7 @@ pub fn pick(
     curves: &CurveLut,
     source: Source,
     display_curve: DisplayCurve,
+    range: [f32; 2],
 ) -> Picked {
     // Each section as it acts, as `finish_pixel_with` takes it: a
     // switch off is nothing to do, whatever its sliders still say.
@@ -881,13 +918,20 @@ pub fn pick(
         c = mix_with(c, &mixer, &color, &bw, &tint, None);
     }
     let span = highlights_span(
-        FRAME_TYPICAL,
+        range,
         source.baseline(light) + light.exposure,
         light.tone.contrast,
     );
     let white = White::of(source, light);
+    let kept = Kept::of(
+        range,
+        source.baseline(light) + light.exposure,
+        light.tone.contrast,
+        source.headroom(),
+        white.stops,
+    );
     c = source.curve_at(
-        shape_at(c, &light.tone, None, span, white.stops),
+        shape_at(c, &light.tone, None, span, kept, white.stops),
         display_curve,
         &white,
     );
@@ -1212,8 +1256,126 @@ pub fn highlights_span(range: [f32; 2], exposure: f32, contrast: f32) -> [f32; 2
     let contrast = contrast.max(MIN_CONTRAST);
     let top = contrast * (range[1] + exposure);
     let median = contrast * (range[0] + exposure);
+    span_of(median, top)
+}
+
+/// The span of a frame whose median and top read `median` and `top`:
+/// hung from the top, the width held to [`HIGHLIGHTS_SPAN`].
+#[inline]
+fn span_of(median: f32, top: f32) -> [f32; 2] {
     let width = (top - median).clamp(HIGHLIGHTS_SPAN.0, HIGHLIGHTS_SPAN.1);
     [top - width, width]
+}
+
+/// The highlights slider's limit: its negative travel's end, where a
+/// merge's kept range is pulled under display white in full.
+const HIGHLIGHTS_TRAVEL: f32 = 2.0;
+
+/// The soft knee of the pull on a merge's kept range, in stops: the
+/// pull's slope rises from nothing at its foot to most of its full
+/// value over about this much ([`Kept::pull`]).
+const KEPT_KNEE: f32 = 0.5;
+
+/// What a frame with headroom keeps over display white, as the
+/// highlights slider's negative travel reaches it: a merge's
+/// ([`Baseline::headroom`]). The highlights ramp alone takes about
+/// 0.6 stops off a frame's top at -100, enough for a frame whose top
+/// is its clip at display white and not for one whose top is three
+/// stops over it. So on such a frame the negative travel first pulls
+/// the top down, `share` of the way from where it reads to display
+/// white, and the ramp then acts as on a frame with its top there: at
+/// -100 the brightest region the frame keeps lands where the clip of
+/// a frame with no headroom does.
+///
+/// The pull is a compression of the region readings in stops, from
+/// a knee [`HIGHLIGHTS_SPAN`]'s least under display white, so what
+/// reads further under white than that never moves: the median too,
+/// unless it sits within 1.6 stops of white, and a median there is
+/// pulled down with the rest. Over the knee it takes `share` of the
+/// excess times `ramp(g - knee) / ramp(top - knee)`, where `ramp(u)` is
+/// `u - KEPT_KNEE * (1 - e^(-u / KEPT_KNEE))`: a soft knee whose slope
+/// rises from nothing to one, so the pulled reading's slope runs from
+/// one at the knee down to `1 - share * excess / ramp(top - knee)`.
+/// With the top `excess` over white that is never under
+/// `1.1 / (excess + 1.1)`, over a fifth for a merge of four stops,
+/// and a top further over (an excess held to the headroom) only
+/// raises it.
+/// Its slope never reaches zero, so it never turns the curve back,
+/// and the highlights ramp after it, on a span of at least the least,
+/// cannot either. In region readings, so what is inside a region keeps
+/// its contrast and only the regions are brought together, as the
+/// highlights ramp's own shift is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Kept {
+    /// The frame's median and top as a region reads them: stops over
+    /// mid grey at the picture's exposure and contrast.
+    median: f32,
+    top: f32,
+    /// Where the pull starts: [`HIGHLIGHTS_SPAN`]'s least under
+    /// display white.
+    knee: f32,
+    /// What the full travel takes off the top: how far it reads over
+    /// display white, at most the headroom at the picture's contrast.
+    excess: f32,
+}
+
+impl Kept {
+    /// A frame's kept range for its `range` ([`Guide::range`]) at the
+    /// picture's `exposure` and `contrast`, as [`highlights_span`]
+    /// places it, `headroom` stops of it kept over a display white
+    /// `white_stops` over mid grey. Nothing for a frame with no
+    /// headroom, or one whose top the exposure has already brought
+    /// under display white.
+    pub fn of(
+        range: [f32; 2],
+        exposure: f32,
+        contrast: f32,
+        headroom: f32,
+        white_stops: f32,
+    ) -> Option<Kept> {
+        if headroom <= 0.0 {
+            return None;
+        }
+        let contrast = contrast.max(MIN_CONTRAST);
+        let top = contrast * (range[1] + exposure);
+        let median = contrast * (range[0] + exposure);
+        let excess = (top - white_stops).min(contrast * headroom);
+        if excess <= 0.0 {
+            return None;
+        }
+        let knee = white_stops - HIGHLIGHTS_SPAN.0;
+        Some(Kept {
+            median,
+            top,
+            knee,
+            excess,
+        })
+    }
+
+    /// The share of the pull a blended highlights asks for: its
+    /// negative travel, held to the slider's.
+    #[inline]
+    fn share(highlights: f32) -> f32 {
+        (-highlights / HIGHLIGHTS_TRAVEL).clamp(0.0, 1.0)
+    }
+
+    /// A region reading `g` with `share` of the pull on it.
+    #[inline]
+    fn pull(&self, g: f32, share: f32) -> f32 {
+        let u = g - self.knee;
+        if u <= 0.0 {
+            return g;
+        }
+        let ramp = |u: f32| u - KEPT_KNEE * (1.0 - (-u / KEPT_KNEE).exp());
+        g - share * self.excess * ramp(u) / ramp(self.top - self.knee)
+    }
+
+    /// The highlights span with `share` of the pull on the frame's
+    /// median and top.
+    #[inline]
+    fn span(&self, share: f32) -> [f32; 2] {
+        span_of(self.pull(self.median, share), self.pull(self.top, share))
+    }
 }
 
 /// How much of the highlights slider a region takes, by where it sits
@@ -1361,7 +1523,7 @@ fn white_point(c: [f32; 3], whites: f32, pivot: f32, white_stops: f32) -> [f32; 
 #[inline]
 #[cfg(test)]
 fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>, span: [f32; 2]) -> [f32; 3] {
-    shape_at(c, t, guide, span, DISPLAY_WHITE_STOPS)
+    shape_at(c, t, guide, span, None, DISPLAY_WHITE_STOPS)
 }
 
 /// [`shape`] with its white point aiming at a display white
@@ -1372,6 +1534,7 @@ fn shape_at(
     t: &greycard_edit::Tone,
     guide: Option<f32>,
     span: [f32; 2],
+    kept: Option<Kept>,
     white_stops: f32,
 ) -> [f32; 3] {
     let c = c.map(|v| MID_GREY * (v.max(0.0) / MID_GREY).powf(t.contrast));
@@ -1380,7 +1543,17 @@ fn shape_at(
         (y.max(1e-6) / MID_GREY).log2()
     });
     let lifted = g + t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g));
-    let shifted = lifted + t.highlights * highlights_weight(lifted, span);
+    // A frame with headroom: the negative travel pulls its kept range
+    // under display white first, the ramp then on its span as pulled.
+    // The whites keeps its pivot on the span as the frame has it.
+    let (read, ramp_span) = match kept {
+        Some(k) if t.highlights < 0.0 => {
+            let share = Kept::share(t.highlights);
+            (k.pull(lifted, share), k.span(share))
+        }
+        _ => (lifted, span),
+    };
+    let shifted = read + t.highlights * highlights_weight(read, ramp_span);
     let gain = 2f32.powf(shifted - g);
     black_point(
         white_point(
@@ -2179,6 +2352,7 @@ mod tests {
                 &e.curves.bake_with(&e.grading),
                 Source::SCENE,
                 DisplayCurve::Channels,
+                FRAME_TYPICAL,
             )
             .encoded
         };
@@ -2363,6 +2537,7 @@ mod tests {
                     &global.curves,
                     Source::SCENE,
                     curve,
+                    FRAME_TYPICAL,
                 );
                 let q = pick(
                     *px,
@@ -2374,6 +2549,7 @@ mod tests {
                     &global.curves,
                     Source::raw(make, model),
                     curve,
+                    FRAME_TYPICAL,
                 );
                 assert_eq!(p, q);
             }
@@ -2385,6 +2561,7 @@ mod tests {
                 &edit.light.tone,
                 None,
                 typical(),
+                None,
                 white.stops,
             )
             .map(|x| tone_at(x, white.stops, white.white, white.gain).to_bits());
@@ -2431,6 +2608,7 @@ mod tests {
                 &plain.curves,
                 Source::Display,
                 DisplayCurve::Channels,
+                FRAME_TYPICAL,
             );
             for k in 0..3 {
                 assert!(
@@ -2687,7 +2865,7 @@ mod tests {
                     let mut last = -1.0;
                     for i in 0..=1400 {
                         let stops = -8.0 + i as f32 * 0.01;
-                        let v = shape_at(grey_at(stops), &tone, None, span, white)[1];
+                        let v = shape_at(grey_at(stops), &tone, None, span, None, white)[1];
                         assert!(
                             v >= last,
                             "{tone:?} at {span:?}, white {white}, turns back at {stops} stops"
@@ -2736,6 +2914,195 @@ mod tests {
         // Over the top it holds what the ease leaves.
         let past = highlights_weight(foot + 2.0 * width, t);
         assert!((past - HIGHLIGHTS_PEAK * (1.0 - HIGHLIGHTS_EASE_DEPTH)).abs() < 1e-6);
+    }
+
+    /// A flat region of a merge with `headroom` stops kept, at
+    /// `reading` stops over mid grey as the finish reads it, under
+    /// `highlights`: its encoded luminance, the frame's median reading
+    /// `median` and its top `top`.
+    fn region_of(headroom: f32, reading: f32, median: f32, top: f32, highlights: f32) -> f32 {
+        let source = Source::Scene(Baseline::DEFAULT.with_headroom(headroom));
+        let mut edit = Edit::default();
+        edit.light.tone.highlights = highlights;
+        let global = Baked::global(&edit, source);
+        let exposure = source.baseline(&edit.light);
+        let scene = |r: f32| r - exposure;
+        let px = grey_at(scene(reading));
+        let m = crate::export::Space::Srgb.matrix();
+        let out = finish_pixel_with(
+            px,
+            &global,
+            &[],
+            0.0,
+            None,
+            None,
+            Some((scene(reading), [scene(median), scene(top)])),
+            None,
+            None,
+            &m,
+        );
+        LUMA[0] * out[0] + LUMA[1] * out[1] + LUMA[2] * out[2]
+    }
+
+    #[test]
+    fn highlights_brings_a_merges_kept_range_under_white() {
+        let white = DISPLAY_WHITE_STOPS;
+        for headroom in [0.5, 1.5, 2.92, 4.0, 6.0] {
+            for median in [-3.0, -0.5, 0.5, 2.0] {
+                let top = white + headroom;
+                // At -100 the merge's top lands where the clip of a frame
+                // with no headroom does: the frame's top at display
+                // white, its median where the merge's is.
+                let merged = region_of(headroom, top, median, top, -2.0);
+                let plain = region_of(0.0, white, median, white, -2.0);
+                assert!(
+                    (merged - plain).abs() < 1e-5,
+                    "{headroom} stops, median {median}: {merged} against {plain}"
+                );
+                assert!(plain < 0.99, "under white: {plain}");
+                // And what sits at the pull's knee or under it is
+                // where it is on that frame: the two spans are one.
+                let knee = white - HIGHLIGHTS_SPAN.0;
+                for under in [0.0, 0.5, 2.0] {
+                    let at = knee - under;
+                    let (a, b) = (
+                        region_of(headroom, at, median, top, -2.0),
+                        region_of(0.0, at, median, white, -2.0),
+                    );
+                    assert!((a - b).abs() < 1e-5, "{headroom} at {at}: {a} against {b}");
+                }
+                // The travel brings the top down a little at every step,
+                // none of it a jump.
+                let mut last = region_of(headroom, top, median, top, 0.0);
+                for k in 1..=40 {
+                    let h = -2.0 * k as f32 / 40.0;
+                    let now = region_of(headroom, top, median, top, h);
+                    assert!(now <= last + 1e-6, "{headroom} at {h}: {now} over {last}");
+                    assert!(last - now < 0.02, "{headroom} at {h}: {last} to {now}");
+                    last = now;
+                }
+                // The positive travel is the ramp's alone.
+                let range = [median, top];
+                let span = highlights_span(range, 0.0, 1.0);
+                let kept = Kept::of(range, 0.0, 1.0, headroom, white);
+                assert!(kept.is_some());
+                let up = Tone {
+                    highlights: 1.0,
+                    ..Tone::default()
+                };
+                for at in [median, white, top] {
+                    assert_eq!(
+                        shape_at(grey_at(at), &up, Some(at), span, kept, white),
+                        shape_at(grey_at(at), &up, Some(at), span, None, white)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_without_headroom_takes_no_pull() {
+        assert_eq!(
+            Kept::of(FRAME_TYPICAL, 0.8, 1.0, 0.0, DISPLAY_WHITE_STOPS),
+            None
+        );
+        assert_eq!(Source::SCENE.headroom(), 0.0);
+        assert_eq!(Source::Display.headroom(), 0.0);
+        // A merge whose top the exposure has brought under white has
+        // nothing to pull.
+        assert_eq!(
+            Kept::of([-2.0, 1.0], 0.8, 1.0, 3.0, DISPLAY_WHITE_STOPS),
+            None
+        );
+        // Over it, at most the headroom at the picture's contrast.
+        let k = Kept::of([-2.0, 3.0], 3.8, 1.2, 3.0, DISPLAY_WHITE_STOPS).unwrap();
+        assert!((k.excess - 3.6).abs() < 1e-5, "{k:?}");
+    }
+
+    #[test]
+    fn the_pull_never_turns_the_curve_back() {
+        // Shape on the pixel's own luminance, the path that can fold,
+        // at the corners of shadows and whites and along the negative
+        // travel, on merges from half a stop to six over white, with
+        // their medians from deep under grey to over it, at three
+        // contrasts.
+        for headroom in [0.5, 2.0, 4.0, 6.0] {
+            for median in [-4.0, -1.0, 1.0, 2.5] {
+                for contrast in [0.6, 1.0, 1.4] {
+                    let top = DISPLAY_WHITE_STOPS / contrast + headroom;
+                    let range = [median, top];
+                    let span = highlights_span(range, 0.0, contrast);
+                    let kept = Kept::of(range, 0.0, contrast, headroom, DISPLAY_WHITE_STOPS);
+                    for corner in 0..4u32 {
+                        let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
+                        for h in [-2.0, -1.3, -0.6] {
+                            let tone = Tone {
+                                contrast,
+                                highlights: h,
+                                shadows: 2.0 * sign(0),
+                                whites: 2.0 * sign(1),
+                                ..Tone::default()
+                            };
+                            let mut last = -1.0;
+                            for i in 0..=1800 {
+                                let stops = -8.0 + i as f32 * 0.01;
+                                let v = shape_at(
+                                    grey_at(stops),
+                                    &tone,
+                                    None,
+                                    span,
+                                    kept,
+                                    DISPLAY_WHITE_STOPS,
+                                )[1];
+                                assert!(
+                                    v >= last,
+                                    "{tone:?}, {headroom} kept, median {median}: turns back at {stops}"
+                                );
+                                last = v;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_dropper_reads_a_merges_pull_as_the_render_does() {
+        let headroom = 2.92;
+        let (median, top) = (-3.0, DISPLAY_WHITE_STOPS + headroom);
+        let source = Source::Scene(Baseline::DEFAULT.with_headroom(headroom));
+        let mut edit = Edit::default();
+        edit.light.tone.highlights = -2.0;
+        let global = Baked::global(&edit, source);
+        let exposure = source.baseline(&edit.light);
+        let range = [median - exposure, top - exposure];
+        let picked = |reading: f32, range: [f32; 2]| {
+            pick(
+                grey_at(reading - exposure),
+                &global.light,
+                &global.mixer,
+                &global.color,
+                &global.bw,
+                &global.tint,
+                &global.curves,
+                source,
+                edit.display_curve,
+                range,
+            )
+            .luma
+        };
+        for reading in [0.0, DISPLAY_WHITE_STOPS - 1.0, DISPLAY_WHITE_STOPS, top] {
+            let shown = region_of(headroom, reading, median, top, -2.0);
+            let read = picked(reading, range);
+            assert!(
+                (read - shown).abs() < 1e-4,
+                "{reading}: {read} against {shown}"
+            );
+        }
+        // A typical frame's range would read the top unpulled.
+        assert!(picked(top, FRAME_TYPICAL) > region_of(headroom, top, median, top, -2.0) + 0.01);
+        assert_eq!(Guide::NONE.frame_range(), FRAME_TYPICAL);
     }
 
     #[test]
@@ -3471,6 +3838,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         // The baseline is in the pick as it is in the render.
         let expect = encode(tone(
@@ -3499,6 +3867,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         let (band, w) = nearest_band(red.hue);
         assert!(band == 0 && w > 0.5, "{red:?} {band} {w}");
@@ -3516,6 +3885,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
         assert!(red2.encoded[0] > red.encoded[0], "{red:?} {red2:?}");
@@ -3531,6 +3901,7 @@ mod tests {
             &curves,
             Source::Display,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         for (k, v) in [0.1f32, 0.2, 0.3].iter().enumerate() {
             assert!((raw.encoded[k] - encode(*v)).abs() < 1e-5, "{raw:?}");
@@ -3552,6 +3923,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         // Every section's sliders wound right up, every switch off:
         // the dropper reads what it read with none of them set.
@@ -3577,6 +3949,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         let bare = pick(
             px,
@@ -3594,6 +3967,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         assert_eq!(held, bare);
         // And that is the all-default answer to the last f32 place
@@ -3623,6 +3997,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         assert!(moved.encoded[0] != plain.encoded[0], "{moved:?} {plain:?}");
         let mono = pick(
@@ -3635,6 +4010,7 @@ mod tests {
             &curves,
             Source::SCENE,
             DisplayCurve::Channels,
+            FRAME_TYPICAL,
         );
         assert!((mono.encoded[0] - mono.encoded[2]).abs() < 1e-4, "{mono:?}");
     }

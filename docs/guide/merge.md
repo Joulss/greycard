@@ -16,7 +16,9 @@ and the highlights of the darkest.
   frames.
 - It opens looking as the middle exposure did, with that frame's edit
   (its exposure left at zero), and the highlights the middle frame
-  lost are there to bring down with the exposure.
+  lost are there to bring down with **Highlights** or the exposure.
+  **Highlights** at −100 brings the brightest of them just under
+  white.
 - The frames should not move between shots. A frame that moved a
   little is put back in place, and the log says so.
 - Asking for a second merge while one runs starts it when the first is
