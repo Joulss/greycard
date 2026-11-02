@@ -108,6 +108,9 @@ export component FrameMenu inherits Rectangle {
     callback stack-compare();
     /// Stack bursts, over the folders listed rather than the frame.
     callback stack-bursts();
+    /// Merge to HDR, over the selection: offered with more than one
+    /// frame chosen.
+    callback merge-hdr();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -205,6 +208,10 @@ export component FrameMenu inherits Rectangle {
             if !root.queue: MenuItem {
                 title: "Stack bursts";
                 activated => { root.stack-bursts(); }
+            }
+            if !root.queue && root.count > 1: MenuItem {
+                title: "Merge to HDR";
+                activated => { root.merge-hdr(); }
             }
             if root.can-stack || root.stack > 0 || !root.queue: MenuSeparator { }
             MenuItem {

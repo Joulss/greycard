@@ -8,7 +8,8 @@
 //! Over the export's develop of a frame not open, the camera match's
 //! runner (`camera_match`) and the measurements of it and of the
 //! Lightroom import (`match_compare`, `measure_baseline`,
-//! `measure_crop`, `measure_lightroom`, and `fit_lightroom`).
+//! `measure_crop`, `measure_lightroom`, and `fit_lightroom`). The
+//! tripod HDR merge walks its frames through the same list (`merge`).
 //!
 //! It stands between the render crate and the window, and depends on
 //! core, edit, edit-io, render, gpu, ai, lens, match, and the library
@@ -32,6 +33,7 @@ pub mod match_compare;
 pub mod measure_baseline;
 pub mod measure_crop;
 pub mod measure_lightroom;
+pub mod merge;
 pub mod naming;
 pub mod preset_fit;
 pub mod previews;

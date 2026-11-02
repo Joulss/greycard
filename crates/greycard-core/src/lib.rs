@@ -28,8 +28,9 @@
 //! on the other for; and [`register`], which fits the transform that
 //! puts one frame on top of another, what every stack — a handheld
 //! bracket, a focus stack, a panorama's refinement — needs before it
-//! can merge anything; and [`stack`], which merges a focus stack into
-//! the frame that is sharp everywhere.
+//! can merge anything; [`stack`], which merges a focus stack into
+//! the frame that is sharp everywhere; and [`merge`], which merges a
+//! tripod bracket into one frame of the whole range.
 //!
 //! What this crate deliberately does not contain: any tone mapping, display
 //! transform, edit schema or UI concern. Those belong to consumers.
@@ -45,6 +46,7 @@ pub mod guided;
 pub mod horizon;
 pub mod image;
 pub mod lut;
+pub mod merge;
 pub mod opcodes;
 pub mod output;
 pub mod picture;

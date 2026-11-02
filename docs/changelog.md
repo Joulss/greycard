@@ -120,6 +120,15 @@ design note behind it.
   holding it
   ([§472](https://github.com/jessolmstead/greycard/blob/master/docs/notes/472-the-library-over-a-network.md)).
 
+### Merge
+
+- **Merge to HDR** on the frame menu merges a tripod bracket into one
+  compact float DNG beside its first frame: the shadows of the
+  brightest frame and the highlights of the darkest, looking as the
+  middle frame did and with its edit. `greycard merge hdr` does the
+  same from the command line
+  ([§525](https://github.com/jessolmstead/greycard/blob/master/docs/notes/525-the-tripod-hdr-merge.md)).
+
 ### Mac
 
 - The learned denoise runs 1.4 to 2.5 times as fast on Apple silicon:

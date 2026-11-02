@@ -108,6 +108,8 @@ greycard-library = { path = "../greycard-library", features = ["fixtures"] }
 # The count of synced writes, for the tests that a file goes through
 # the shared write.
 greycard-edit = { path = "../greycard-edit", features = ["testing"] }
+# The made-up brackets Merge to HDR's tests write.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 # A second connection that holds the library's write lock, for the
 # test of a locked index. The library's own, so nothing new in the tree.
 rusqlite.workspace = true

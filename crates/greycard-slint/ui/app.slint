@@ -224,6 +224,8 @@ export component App inherits Window {
     callback stack-compare();
     /// Stack bursts: each burst of the folders listed made a stack.
     callback stack-bursts();
+    /// Merge to HDR: the frames chosen merged into one linear DNG.
+    callback merge-hdr();
     /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
     /// copies the frame on screen.
     callback menu-copy();
@@ -5178,6 +5180,7 @@ export component App inherits Window {
         stack-remove => { root.stack-remove(); root.menu-done(); }
         stack-compare => { root.stack-compare(); root.menu-done(); }
         stack-bursts => { root.stack-bursts(); root.menu-done(); }
+        merge-hdr => { root.merge-hdr(); root.menu-done(); }
     }
 
     // Recently opened: one list for the window, opened below the

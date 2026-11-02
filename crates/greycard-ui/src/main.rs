@@ -865,6 +865,8 @@ impl State {
                 export_presets: Vec::new(),
                 export_last_folder: None,
                 edit_in: Default::default(),
+                merge_relist: false,
+                merge_edits: HashMap::new(),
                 sync: sync::Sync::default(),
                 saves: Default::default(),
             },

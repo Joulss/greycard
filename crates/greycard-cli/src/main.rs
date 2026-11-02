@@ -16,6 +16,7 @@ mod info;
 mod lenses;
 mod library;
 mod log;
+mod merge;
 mod models;
 mod presets;
 mod rawtherapee;
@@ -194,6 +195,12 @@ enum Command {
               value_parser = common::on_exists_named)]
         on_exists: OnExists,
     },
+    /// Merge frames into one: a tripod bracket into a frame of its
+    /// whole range (`hdr`)
+    Merge {
+        #[command(subcommand)]
+        kind: merge::MergeKind,
+    },
     /// Develop a RAW: linear DNG for other editors, or linear Rec.2020 here
     Develop(develop::DevelopArgs),
     /// Export frames as the editor does, each under its own edit, with
@@ -233,8 +240,9 @@ fn run() -> Result<u8> {
         }
     }));
     let ran = match cli.command {
-        // The one with an exit code of its own.
+        // The two with an exit code of their own.
         Command::Export(args) => return export::export(args),
+        Command::Merge { kind } => return merge::run(kind),
         Command::Library { db, action } => library::library(db, action),
         Command::Info { file } => {
             if greycard_core::picture::is_picture_path(&file) {

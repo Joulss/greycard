@@ -50,6 +50,8 @@ dunce = { workspace = true, optional = true }
 
 [dev-dependencies]
 dunce.workspace = true
+# The made-up brackets the merge's tests write.
+greycard-core = { path = "../greycard-core", features = ["testing"] }
 # For a device of our own in the worker's GPU fallback tests.
 pollster.workspace = true
 greycard-render = { path = "../greycard-render", features = ["testing"] }

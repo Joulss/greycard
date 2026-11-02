@@ -49,6 +49,13 @@ pub(crate) struct Work {
     /// Edit in: the app chosen, the frame on its way to it, and the
     /// files handed to it and watched.
     pub(crate) edit_in: crate::panel::edit_in::EditIn,
+    /// A file Merge to HDR wrote was given to the indexer: the list is
+    /// read again once its row is in.
+    pub(crate) merge_relist: bool,
+    /// A merged file's edit, by its path, in a session that writes no
+    /// sidecars: held in memory, as an edit made there is, and given
+    /// to the file's sidecar once the file is listed and read.
+    pub(crate) merge_edits: HashMap<PathBuf, greycard_edit::Edit>,
     /// The writes behind the saves to the archives' copies (§233):
     /// see [`sync`].
     pub(crate) sync: sync::Sync,

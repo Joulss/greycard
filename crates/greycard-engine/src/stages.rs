@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use greycard_core::color::Profile;
+use greycard_core::color::WhitePoint;
 use greycard_core::develop::ca::{self, CaOptions};
 use greycard_core::develop::defringe::DefringeOptions;
 use greycard_core::develop::dehaze::DehazeOptions;
@@ -23,7 +24,7 @@ use greycard_core::develop::lens::LensCorrection;
 use greycard_core::develop::local_contrast::LocalContrastOptions;
 use greycard_core::develop::reduced;
 use greycard_core::develop::sharpen::SharpenOptions;
-use greycard_core::develop::{DemosaicMethod, DevelopSettings};
+use greycard_core::develop::{DemosaicMethod, DevelopSettings, HighlightMode};
 use greycard_core::opcodes::Warp;
 use greycard_core::raw::{CfaPattern, Orientation, RawFrame, SensorLayout, Shot};
 use greycard_edit::geometry::Geometry;
@@ -55,6 +56,27 @@ pub enum Purpose {
     /// refusal of a learned tier and of a picture's file, which it
     /// leaves to the open, stays with its caller.
     Prefetch,
+    /// A frame of a merge, as the merge reads it: camera RGB in its
+    /// sensor units, all on the CPU, nothing clipped after the gains,
+    /// ending at the demosaic.
+    MergeInput(MergeInput),
+}
+
+/// What a merge asks of one frame's walk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergeInput {
+    /// The reference frame's white as camera-space gains, which every
+    /// other frame takes; none for the reference, at its own as-shot
+    /// white. The merge divides the gains back out, so only the
+    /// demosaic and the reconstruction see them.
+    pub white: Option<[f64; 3]>,
+    /// Whether the highlights are reconstructed, on the darkest frame
+    /// alone: where every frame clipped, its reconstruction is the
+    /// merge's. Every other frame's clipped samples are dropped.
+    pub reconstruct: bool,
+    /// The learned denoiser in the demosaic's place, when the merge
+    /// asks for it.
+    pub denoiser: Option<&'static greycard_ai::Model>,
 }
 
 impl Purpose {
@@ -90,6 +112,9 @@ pub enum InputKind {
         /// The warps a DNG corrects its lens with, and where the crop
         /// sits in their image; none for every other raw.
         warp: Option<Box<WarpOptions>>,
+        /// A merge of ours: its noise is no one frame's, so the
+        /// denoisers stand down on it.
+        merged: bool,
     },
     /// A picture is turned by its tag at decode, so its size is the
     /// size it stands at.
@@ -122,6 +147,7 @@ impl Facts {
                         area,
                     })
                 }),
+                merged: frame.dng.merged.is_some(),
             },
             identity: Identity {
                 make: frame.make.clone(),
@@ -256,6 +282,9 @@ pub struct PrepareOptions {
     /// Whether the frame's noise is measured: the learned denoiser
     /// asks for it whatever the settings say.
     pub measure_noise: bool,
+    /// Whether the samples are clipped at the ceiling after the gains:
+    /// every develop but a merge's frames.
+    pub clip: bool,
 }
 
 impl PartialEq for PrepareOptions {
@@ -288,6 +317,7 @@ impl PartialEq for PrepareOptions {
             && *hot_pixels == b.hot_pixels
             && *orientation == b.orientation
             && self.measure_noise == other.measure_noise
+            && self.clip == other.clip
     }
 }
 
@@ -577,7 +607,8 @@ impl Steps {
             match step {
                 Step::Op(Stage::Prepare(p)) => out.op(Stage::Prepare(Box::new(PrepareOptions {
                     settings: p.settings.clone(),
-                    measure_noise: false,
+                    measure_noise: p.measure_noise && !p.clip,
+                    clip: p.clip,
                 }))),
                 Step::Op(Stage::Learned(_)) => {
                     let Some(Stage::Prepare(p)) = self.ops().next() else {
@@ -619,6 +650,12 @@ pub fn needs(edit: &Edit, purpose: &Purpose) -> Needs {
             .tier()
             .map(|t| greycard_ai::denoiser(t).expect("the edit's tiers are the registry's")),
         Purpose::Reduced | Purpose::ModelsSee => None,
+        Purpose::MergeInput(m) => {
+            return Needs {
+                denoiser: m.denoiser,
+                ..Needs::default()
+            };
+        }
     };
     let look = match &edit.look_lut.lut {
         greycard_edit::look::LutChoice::Named(name) if edit.look_lut.strength > 0.0 => {
@@ -666,6 +703,9 @@ pub fn stages(
     facts: &Facts,
     lenses: Option<&greycard_lens::Database>,
 ) -> Steps {
+    if let Purpose::MergeInput(merge) = purpose {
+        return merge_input(edit, merge, facts);
+    }
     let reduced = purpose.is_reduced();
     let bin = if reduced {
         facts.bin_under(&edit.geometry)
@@ -675,7 +715,12 @@ pub fn stages(
     let mut s = Steps::default();
     let settings = edit.settings(&greycard_edit_io::Stores::user());
     match &facts.input {
-        InputKind::Raw { pattern, warp, .. } => {
+        InputKind::Raw {
+            pattern,
+            warp,
+            merged,
+            ..
+        } => {
             let tier = edit
                 .noise
                 .tier()
@@ -693,9 +738,20 @@ pub fn stages(
                     );
                     None
                 }
+                Some(_) if pattern.is_none() => {
+                    s.skip(
+                        LEARNED_DENOISER,
+                        Skip::Unavailable(
+                            "the learned denoiser needs a mosaic, and this file has none",
+                        ),
+                    );
+                    None
+                }
                 tier => tier,
             };
-            let denoise = settings.denoise.filter(|_| learned.is_none());
+            // A merge's noise is the weighted mean of several frames', not
+            // one frame's: the profiled denoise's model is a frame's.
+            let denoise = settings.denoise.filter(|_| learned.is_none() && !*merged);
             if reduced && denoise.is_some() {
                 s.skip("the denoise", Skip::Reduced);
             }
@@ -708,6 +764,7 @@ pub fn stages(
                     ..settings.clone()
                 },
                 measure_noise: learned.is_some(),
+                clip: true,
             })));
             // A file whose warps correct each color has corrected its
             // lateral aberration itself, as Adobe's reader takes it: the
@@ -765,6 +822,7 @@ pub fn stages(
             Purpose::Viewport | Purpose::Prefetch => Masks::OnAsk,
             Purpose::Export(_) => Masks::Make,
             Purpose::Reduced | Purpose::ModelsSee => Masks::CacheOnly,
+            Purpose::MergeInput(_) => unreachable!("a merge's frame ends at the demosaic"),
         }));
     }
     s.keep(Keep::Base);
@@ -819,6 +877,60 @@ pub fn stages(
             fit: Fit::Exact(BIG),
         },
     }));
+    s
+}
+
+/// A merge's frame: the prepare with nothing clipped after the gains,
+/// the noise measured for the weights, the highlights reconstructed
+/// only where asked; the CA; the demosaic, or the learned denoiser in
+/// its place; a DNG's own warps. No lens, no turn: the merge is in the
+/// camera's geometry, and its file carries the lens to the develop.
+fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
+    let mut s = Steps::default();
+    let InputKind::Raw { pattern, warp, .. } = &facts.input else {
+        return s;
+    };
+    let settings = edit.settings(&greycard_edit_io::Stores::user());
+    s.op(Stage::Prepare(Box::new(PrepareOptions {
+        settings: DevelopSettings {
+            white_point: merge
+                .white
+                .map_or(WhitePoint::AsShot, WhitePoint::Coefficients),
+            highlights: if merge.reconstruct {
+                HighlightMode::InpaintOpposed
+            } else {
+                HighlightMode::Clip
+            },
+            chromatic_aberration: None,
+            denoise: None,
+            orientation: None,
+            ..settings.clone()
+        },
+        measure_noise: true,
+        clip: false,
+    })));
+    s.op_if(
+        settings
+            .chromatic_aberration
+            .filter(|_| pattern.as_ref().is_some_and(ca::corrects))
+            .filter(|_| !facts.file_corrects().chromatic_aberration)
+            .map(Stage::Ca),
+    );
+    let bayer = pattern
+        .as_ref()
+        .is_some_and(greycard_core::develop::rcd::is_bayer);
+    match merge.denoiser {
+        Some(model) if bayer => s.op(Stage::Learned(model)),
+        Some(_) => s.skip(
+            LEARNED_DENOISER,
+            Skip::Unavailable("the learned denoiser needs a 2x2 Bayer mosaic"),
+        ),
+        None => {}
+    }
+    if !matches!(s.ops().last(), Some(Stage::Learned(_))) {
+        s.op(Stage::Demosaic(settings.demosaic, settings.dual_contrast));
+    }
+    s.op_if(warp.clone().map(Stage::Warp));
     s
 }
 
@@ -951,6 +1063,7 @@ mod tests {
                 crop: (6000, 4000),
                 tag: Orientation::Normal,
                 warp: None,
+                merged: false,
             },
             identity: identity(),
             turn,
@@ -964,6 +1077,7 @@ mod tests {
                 crop: (7728, 5152),
                 tag: Orientation::Normal,
                 warp: None,
+                merged: false,
             },
             ..raw(0)
         }
@@ -1331,6 +1445,104 @@ mod tests {
         ));
         assert!(!x.reduced_recipe());
         assert!(!stages(&edit, &export(), &xtrans(), None).reduced_recipe());
+    }
+
+    /// A merge's frame: the prepare with nothing clipped and its noise
+    /// measured, the CA, the demosaic, and nothing after; the reference's
+    /// white taken; the darkest frame's highlights reconstructed; the
+    /// learned denoiser in the demosaic's place when asked, on a Bayer
+    /// mosaic alone.
+    #[test]
+    fn a_merges_frame_ends_at_the_demosaic_with_nothing_clipped() {
+        let merge = |white, reconstruct, denoiser| {
+            Purpose::MergeInput(MergeInput {
+                white,
+                reconstruct,
+                denoiser,
+            })
+        };
+        let edit = everything();
+        let frame = stages(
+            &edit,
+            &merge(Some([2.0, 1.0, 1.5]), false, None),
+            &raw(0),
+            None,
+        );
+        assert_eq!(names(&frame), ["prepare", "CA", "demosaic"]);
+        let Some(Stage::Prepare(p)) = frame.ops().next() else {
+            panic!("a raw's list begins at its prepare");
+        };
+        assert!(!p.clip && p.measure_noise);
+        assert_eq!(p.settings.highlights, HighlightMode::Clip);
+        assert_eq!(
+            p.settings.white_point,
+            WhitePoint::Coefficients([2.0, 1.0, 1.5])
+        );
+        assert!(p.settings.denoise.is_none());
+        // On the CPU, a device lent or not.
+        let purpose = merge(None, false, None);
+        assert!(
+            crate::walk::plan(&frame, &purpose, true)
+                .iter()
+                .all(|p| *p == crate::walk::Place::Cpu)
+        );
+        let darkest = stages(&edit, &merge(None, true, None), &raw(0), None);
+        let Some(Stage::Prepare(p)) = darkest.ops().next() else {
+            panic!("a raw's list begins at its prepare");
+        };
+        assert_eq!(p.settings.highlights, HighlightMode::InpaintOpposed);
+        assert_eq!(p.settings.white_point, WhitePoint::AsShot);
+
+        let model = greycard_ai::denoiser("balanced").unwrap();
+        let learned = stages(&edit, &merge(None, false, Some(model)), &raw(0), None);
+        assert_eq!(names(&learned), ["prepare", "CA", "learned denoiser"]);
+        assert_eq!(
+            needs(&edit, &merge(None, false, Some(model)))
+                .denoiser
+                .map(|m| m.id),
+            Some(model.id)
+        );
+        let x = stages(&edit, &merge(None, false, Some(model)), &xtrans(), None);
+        assert_eq!(names(&x), ["prepare", "CA", "demosaic"]);
+        assert!(matches!(
+            x.skipped[..],
+            [(LEARNED_DENOISER, Skip::Unavailable(_))]
+        ));
+    }
+
+    /// A linear file has no mosaic for the learned denoiser; a merge of
+    /// ours takes no profiled denoise either.
+    #[test]
+    fn a_linear_file_takes_no_learned_denoiser_and_a_merge_no_denoise() {
+        let linear = |merged| Facts {
+            input: InputKind::Raw {
+                pattern: None,
+                crop: (6000, 4000),
+                tag: Orientation::Normal,
+                warp: None,
+                merged,
+            },
+            ..raw(0)
+        };
+        let mut learned = everything();
+        learned.noise.learned = greycard_edit::Learned::Best;
+        let s = stages(&learned, &Purpose::Viewport, &linear(false), None);
+        assert!(!s.ops().any(|o| matches!(o, Stage::Learned(_))));
+        assert!(matches!(
+            s.skipped[..],
+            [(LEARNED_DENOISER, Skip::Unavailable(_))]
+        ));
+        let mut profiled = everything();
+        profiled.noise.enabled = true;
+        profiled.noise.profiled = true;
+        profiled.noise.learned = greycard_edit::Learned::Off;
+        let denoises = |f: &Facts| {
+            stages(&profiled, &Purpose::Viewport, f, None)
+                .ops()
+                .any(|o| matches!(o, Stage::Denoise(_)))
+        };
+        assert!(denoises(&linear(false)));
+        assert!(!denoises(&linear(true)));
     }
 
     #[test]

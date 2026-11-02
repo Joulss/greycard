@@ -553,13 +553,15 @@ written as a float DNG with its headroom and a noise profile. The
 brackets and the panorama to shoot for testing are in
 `docs/test-frames.md`.
 
-- [ ] Phase 1, the tripod bracket (§523): the `MergeInput` purpose,
-      exposure from EXIF refined on the frames, inverse-variance
-      weights, clipped samples dropped and what every frame clipped
-      reconstructed, the half-float Deflate DNG through the rawler pin
-      (dnglab/dnglab#896), the `NoiseProfile`, the develop pinned to
-      the reference frame's, `greycard merge hdr`, and the "Merge to
-      HDR..." action over the selection, stacked with its sources
+- [ ] Phase 1's leftovers (§525): the CA fitted once on the reference
+      and applied to every frame (`correct_ca` exposing its fit; a
+      merged file is linear, so CA cannot be corrected later);
+      Highlights' span following a merge's kept range (the exposure
+      reaches it, the slider barely); a noise model with the merge's
+      steps in it for its readers; the Deflate write on more threads;
+      the per-frame learned denoiser offered in the action and the
+      command line; the camera-match sampler refusing a merged file
+      as a pair; the measurement on a real tripod bracket
 - [ ] Phase 2, the panorama (§523): the lens correction composed into
       the one warp, features and RANSAC, a homography model in
       `register.rs`, the cylinder past 90 degrees, the seam finder for

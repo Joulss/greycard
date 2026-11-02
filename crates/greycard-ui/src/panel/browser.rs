@@ -1930,6 +1930,7 @@ pub(crate) fn open_loaded(
     // of its own: the grid's zoom does not carry its appetite for large
     // pictures over to it.
     st.files = files.clone();
+    crate::panel::merge::held(&mut st);
     crate::versions::list(&mut st);
     st.views.thumb_want = worker::THUMB_WIDTH;
     st.views.grid_shown = None;

@@ -75,16 +75,28 @@ impl Default for Source {
 }
 
 /// A body's baseline ([`greycard_edit::baseline`]) in hundredths of a
-/// stop, so that a source compares as a whole number does.
+/// stop, so that a source compares as a whole number does, and a
+/// merge's headroom ([`greycard_edit::baseline::headroom`]) beside it:
+/// an exposure the slider's zero stands for, which the display white
+/// does not follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Baseline(i16);
+pub struct Baseline {
+    body: i16,
+    headroom: i16,
+}
 
 impl Baseline {
     /// A body not in the table's: [`BASELINE_EXPOSURE`].
-    pub const DEFAULT: Baseline = Baseline(80);
+    pub const DEFAULT: Baseline = Baseline {
+        body: 80,
+        headroom: 0,
+    };
 
     pub fn of_stops(stops: f32) -> Baseline {
-        Baseline((stops * 100.0).round() as i16)
+        Baseline {
+            body: hundredths(stops),
+            headroom: 0,
+        }
     }
 
     /// The baseline of a raw from this make and model.
@@ -94,14 +106,27 @@ impl Baseline {
 
     /// The baseline of a decoded raw
     /// ([`greycard_edit::baseline::for_frame`]): its body's for now, and
-    /// where a DNG's own tag will join it.
+    /// where a DNG's own tag will join it; and a merge's headroom.
     pub fn of_frame(frame: &greycard_core::RawFrame) -> Baseline {
-        Baseline::of_stops(greycard_edit::baseline::for_frame(frame))
+        Baseline {
+            body: hundredths(greycard_edit::baseline::for_frame(frame)),
+            headroom: hundredths(greycard_edit::baseline::headroom(frame)),
+        }
     }
 
+    /// The body's stops.
     pub fn stops(self) -> f32 {
-        f32::from(self.0) / 100.0
+        f32::from(self.body) / 100.0
     }
+
+    /// A merge's headroom, in stops; nothing for any other file.
+    pub fn headroom(self) -> f32 {
+        f32::from(self.headroom) / 100.0
+    }
+}
+
+fn hundredths(stops: f32) -> i16 {
+    (stops * 100.0).round() as i16
 }
 
 impl Source {
@@ -121,8 +146,19 @@ impl Source {
 
     /// Stops the exposure slider's zero stands for under `light` (the
     /// picture's): the zero an older edit was made against where it
-    /// keeps one, else the body's; nothing for a picture.
+    /// keeps one, else the body's, and a merge's headroom on top;
+    /// nothing for a picture.
     pub fn baseline(self, light: &Light) -> f32 {
+        match self {
+            Source::Scene(b) => self.white_baseline(light) + b.headroom(),
+            Source::Display => 0.0,
+        }
+    }
+
+    /// The baseline the display white follows: [`Source::baseline`]
+    /// without a merge's headroom, so a merge renders as its reference
+    /// frame did.
+    fn white_baseline(self, light: &Light) -> f32 {
         match self {
             Source::Scene(b) => light.baseline.unwrap_or(b.stops()),
             Source::Display => 0.0,
@@ -1489,7 +1525,7 @@ impl White {
     /// and whose white point aims where it always has.
     pub fn of(source: Source, light: &Light) -> White {
         match source {
-            Source::Scene(_) => White::at(source.baseline(light)),
+            Source::Scene(_) => White::at(source.white_baseline(light)),
             Source::Display => White::default_white(),
         }
     }

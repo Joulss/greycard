@@ -25,7 +25,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 
 | Crate | Owns | Depends on |
 |---|---|---|
-| `greycard-core` | Decode (rawler behind `decode::Decoder`), every develop op's CPU reference, color, DCP profiles, the linear DNG writer, EXIF, and registration and stacking | none |
+| `greycard-core` | Decode (rawler behind `decode::Decoder`), every develop op's CPU reference, color, DCP profiles, the linear DNG writer, EXIF, registration and stacking, and the HDR merge | none |
 | `greycard-edit` | The edit schema in physical units, its sections, migrations, the sidecar and its history, versions, sync, and the `Loader` trait for profiles and looks | core |
 | `greycard-edit-io` | Other tools' files read into the edit (Lightroom, RawTherapee, XMP), preset import, the profile and look stores (`Stores`), and a frame's sidecar as an open reads it (`on_disk`) | core, edit |
 | `greycard-lens` | The lensfun database and Adobe's `.lcp` files, fetched and matched to a frame | core |
@@ -38,7 +38,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 | `greycard-engine` | The stage list and the walk, the worker and its jobs, the reduced develop, the thumbnail pool, the previews, the edit's pictures, the models' side, the export queue, sheet, and headless run, the settings subset, and the camera match's runner and the measurement runners over the export's develop | core, edit, edit-io, lens, gpu, render, ai, match, library |
 | `greycard-slint` | The `.slint` files compiled to Rust, a crate of its own so a change to the editor's code does not recompile them | none |
 | `greycard-ui` | The editor: the window, its `State`, the panels and sheets; a library target of its windowless modules beside the `greycard-ui` binary | core, edit, edit-io, lens, gpu, render, ai, library, match, engine, viewport, slint |
-| `greycard-cli` | The `greycard` binary: `develop`, `export`, `library`, `models`, `lenses`, and the rest | core, edit, edit-io, lens, ai, library, engine |
+| `greycard-cli` | The `greycard` binary: `develop`, `export`, `merge`, `library`, `models`, `lenses`, and the rest | core, edit, edit-io, lens, ai, library, engine |
 | `greycard-bench` | The demosaic benchmark and the denoiser's training data | core, ai |
 | `ort-dylib` | A build tool: makes the ONNX Runtime shared library `scripts/ort-dylib.sh` installs | none |
 | `greycard-fuzz` | The fuzz targets over every reader of outside text, a workspace of its own (`fuzz/`) | core, edit, edit-io, library |
@@ -106,7 +106,7 @@ runners' flags into their options (`runners.rs`).
 Every develop of an edit is one list of steps,
 `greycard_engine::stages::stages`, derived from the edit, the frame's
 facts, and the `Purpose` (the viewport, an export, the reduced
-picture, what the models see, a prefetch). `greycard_engine::walk::walk`
+picture, what the models see, a prefetch, a merge's frame). `greycard_engine::walk::walk`
 runs it. `walk::plan` places a step on the device only for the
 viewport and the prefetch with a device lent, and only for a stage
 whose `Stage::device` says it has a device version, and the
@@ -168,7 +168,12 @@ exactly 2048 on the long edge; its `Steps::skipped` names the learned
 denoiser, the profiled denoise, and the capture sharpen, when the
 edit asks for them, with `Skip::Reduced`. `Purpose::ModelsSee` is
 that list without the retouch, the guide tap, and the planes tap,
-ending after the dehaze. `Purpose::Prefetch` ends at `Base` (§454, §488). A
+ending after the dehaze. `Purpose::Prefetch` ends at `Base` (§454, §488).
+`Purpose::MergeInput` is a merge's frame: the prepare with nothing
+clipped after the gains, the CA, the demosaic (or the learned
+denoiser), and a DNG's warps, ending at camera RGB, all on the CPU (the engine's
+`merge.rs`, which `greycard merge hdr` and the window's Merge to HDR
+run). A
 camera thumbnail is not a develop: it is the file's embedded preview,
 or a picture file itself (`worker/thumbs.rs`).
 

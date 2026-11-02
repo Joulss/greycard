@@ -1,0 +1,1564 @@
+//! The tripod HDR merge: a bracket's frames walked one at a time to
+//! camera RGB through the stage list (`Purpose::MergeInput`), merged
+//! by the core's `merge` as they come, and written as a linear DNG
+//! beside the first source.
+//!
+//! The reference (the middle exposure, unless asked) is walked first
+//! and stays; every other frame is walked, checked for movement,
+//! measured against the reference for its exposure, added to the sums,
+//! and let go. The darkest frame comes last, walked with its highlights
+//! reconstructed, so that where every frame clipped its value stands.
+//! What is held at once is the reference, one frame, and the sums,
+//! whatever the count.
+//!
+//! The command line's `greycard merge hdr` and the window's Merge to
+//! HDR both run [`hdr`]; neither has a merge of its own.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+use anyhow::{Context, Result, bail};
+use greycard_core::decode::RawMetadata;
+use greycard_core::dng::{LinearDngOptions, Merged, write_merged_dng};
+use greycard_core::merge::{self, Accumulator, Frame, Measured, Noise};
+use greycard_core::output::OnExists;
+use greycard_core::raw::{RawFrame, Samples, Shot};
+use greycard_core::register::{self, Edge, Model};
+use greycard_core::{CameraImage, WhiteBalance};
+use greycard_edit::Edit;
+
+use crate::stages::{MergeInput, Purpose, Stage, stages};
+use crate::walk::{Buf, Input, Kept, Models, NoHold, plan, walk};
+
+/// What goes after the first frame's name.
+pub const SUFFIX: &str = "-HDR";
+
+/// What a merge is asked.
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// The frame the others are put on, by its place among the frames;
+    /// none for the middle exposure.
+    pub reference: Option<usize>,
+    /// Where the file goes; none for beside the first frame, named
+    /// after it ([`default_output`]).
+    pub out: Option<PathBuf>,
+    /// What to do when that file is there already.
+    pub on_exists: OnExists,
+    /// The learned denoiser in each frame's demosaic's place; none for
+    /// a bracket unless asked.
+    pub denoiser: Option<&'static greycard_ai::Model>,
+    /// The sensor's noise in the reference's units, in place of what
+    /// the frames' pairs measure: for a measurement whose noise is
+    /// known.
+    pub noise: Option<Noise>,
+}
+
+/// Where a merge is, for a caller to say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// The `index`th frame of `of` (from 1) is being read.
+    Frame { index: usize, of: usize },
+    /// The file is being written.
+    Writing,
+}
+
+/// What a merge says as it goes.
+pub trait Progress {
+    fn step(&self, step: Step);
+}
+
+impl<F: Fn(Step)> Progress for F {
+    fn step(&self, step: Step) {
+        self(step)
+    }
+}
+
+/// What became of one frame.
+#[derive(Debug, Clone)]
+pub struct FrameReport {
+    /// The frame's name.
+    pub name: String,
+    /// Its exposure relative to the reference's by EXIF; none when
+    /// either frame's EXIF has no shutter.
+    pub exif: Option<f64>,
+    /// As measured from the pixels; none for the reference, or when
+    /// too few pixels held well in both.
+    pub measured: Option<Measured>,
+    /// The exposure the merge used.
+    pub exposure: f64,
+    /// How far it had moved from the reference, at the farthest
+    /// corner, in pixels; none for the reference or a fit that did not
+    /// hold.
+    pub moved: Option<f64>,
+    /// Whether it was resampled onto the reference.
+    pub resampled: bool,
+    /// Its noise as the weights read it.
+    pub noise: Noise,
+}
+
+/// What a merge did.
+#[derive(Debug, Clone)]
+pub struct Report {
+    pub out: PathBuf,
+    pub reference: usize,
+    pub frames: Vec<FrameReport>,
+    pub width: usize,
+    pub height: usize,
+    /// Pixels every frame clipped, taken from the darkest frame.
+    pub all_clipped: usize,
+    /// The stops above the reference's clip the file holds.
+    pub headroom_stops: f32,
+    pub noise_profile: [f64; 2],
+    /// Whether the frames were denoised.
+    pub denoised: bool,
+    /// The seconds each part took, in order.
+    pub seconds: Vec<(&'static str, f64)>,
+    /// What the merge went without or did that a tripod bracket should
+    /// not need, each in words: a frame resampled, an exposure not
+    /// measured, a denoiser not had.
+    pub warnings: Vec<String>,
+}
+
+/// `<first frame>-HDR.dng`, beside the first frame.
+pub fn default_output(first: &Path) -> PathBuf {
+    let stem = first
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "merge".into());
+    let name = format!("{stem}{SUFFIX}.dng");
+    match first.parent() {
+        Some(dir) => dir.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
+/// What a frame's head says: its body and its shot.
+#[derive(Debug, Clone)]
+pub struct Head {
+    pub make: String,
+    pub model: String,
+    pub shot: Shot,
+}
+
+/// The frames of a merge: files on disk, or made up for a measurement.
+/// Each is read when the merge comes to it, and let go after.
+pub trait Sources {
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// The frame's name, for a report and the file's tag.
+    fn name(&self, i: usize) -> String;
+    /// Its body and shot, without its samples.
+    fn head(&self, i: usize) -> Result<Head>;
+    /// The frame and its metadata.
+    fn load(&self, i: usize) -> Result<(RawFrame, RawMetadata)>;
+    /// Its file, when it is one: a merge is never written over it.
+    fn path(&self, _i: usize) -> Option<PathBuf> {
+        None
+    }
+}
+
+/// What the frames' heads say: each one's EXIF exposure, the
+/// reference (the frame asked, or the middle exposure), and each one's
+/// ISO over the reference's (1 where either is not known).
+struct Heads {
+    exif: Vec<Option<f64>>,
+    reference: usize,
+    iso: Vec<f64>,
+}
+
+/// The frames' [`Heads`]. Frames of two bodies, and a frame asked for
+/// that is not there, are refused.
+fn heads(sources: &dyn Sources, asked: Option<usize>) -> Result<Heads> {
+    let of = sources.len();
+    let heads = (0..of)
+        .map(|i| sources.head(i))
+        .collect::<Result<Vec<_>>>()?;
+    let body = |h: &Head| (h.make.clone(), h.model.clone());
+    if heads.iter().any(|h| body(h) != body(&heads[0])) {
+        bail!("a merge wants frames of one body");
+    }
+    let exif: Vec<Option<f64>> = heads
+        .iter()
+        .map(|h| merge::exif_exposure(&h.shot))
+        .collect();
+    let reference = match asked {
+        Some(r) if r < of => r,
+        Some(r) => bail!(
+            "there is no frame {r}: the frames count from 0 to {}",
+            of.saturating_sub(1)
+        ),
+        None => merge::middle(&exif),
+    };
+    let iso = heads
+        .iter()
+        .map(|h| match (h.shot.iso, heads[reference].shot.iso) {
+            (Some(a), Some(b)) if a > 0 && b > 0 => f64::from(a) / f64::from(b),
+            _ => 1.0,
+        })
+        .collect();
+    Ok(Heads {
+        exif,
+        reference,
+        iso,
+    })
+}
+
+/// The frame of `files` a merge puts the others on, as [`hdr`] picks
+/// it: for a caller that wants the reference's edit before the merge.
+pub fn reference_of(files: &[PathBuf], asked: Option<usize>) -> Result<usize> {
+    if files.len() < 2 {
+        bail!("a merge wants two frames or more; got {}", files.len());
+    }
+    Ok(heads(&Files(files), asked)?.reference)
+}
+
+/// The edit a merge's file starts with: the reference frame's, less
+/// its exposure (the file opens at the reference's already, and a
+/// reference pulled down to save its highlights would pull the
+/// merge's headroom down with it) and less the learned denoiser, which
+/// a file with no mosaic cannot run.
+pub fn edit_for_merge(reference: &Edit) -> Edit {
+    let mut edit = reference.clone();
+    edit.light.exposure = 0.0;
+    edit.noise.learned = greycard_edit::Learned::Off;
+    edit
+}
+
+/// Raw files on disk.
+pub struct Files<'a>(pub &'a [PathBuf]);
+
+impl Sources for Files<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn name(&self, i: usize) -> String {
+        name_of(&self.0[i])
+    }
+
+    fn head(&self, i: usize) -> Result<Head> {
+        let file = &self.0[i];
+        if greycard_core::picture::is_picture_path(file) {
+            bail!(
+                "{} is not a raw file: a bracket is merged before white balance and the \
+                 matrix, and a developed picture is past both",
+                file.display()
+            );
+        }
+        let p = greycard_core::decode::probe_path(file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        Ok(Head {
+            make: p.make,
+            model: p.model,
+            shot: Shot {
+                exposure_time: p.exposure_time.map(|t| t as f32),
+                iso: p.iso,
+                f_number: p.fnumber.map(|n| n as f32),
+                ..Default::default()
+            },
+        })
+    }
+
+    fn load(&self, i: usize) -> Result<(RawFrame, RawMetadata)> {
+        let file = &self.0[i];
+        greycard_core::decode::decode_path_with_metadata(file)
+            .with_context(|| format!("decoding {}", file.display()))
+    }
+
+    fn path(&self, i: usize) -> Option<PathBuf> {
+        Some(self.0[i].clone())
+    }
+}
+
+/// A frame as the merge reads it: camera RGB in its sensor units, its
+/// clip mask, its noise.
+struct Walked {
+    rgb: Vec<f32>,
+    mask: Vec<bool>,
+    width: usize,
+    height: usize,
+    noise: Noise,
+    gains: [f32; 3],
+    white_balance: WhiteBalance,
+    denoised: bool,
+    stood_in: Option<String>,
+}
+
+/// `file` walked under `merge`: decoded, prepared with nothing clipped,
+/// demosaiced, its gains divided back out. The frame is handed back
+/// without its samples, for its tags.
+fn walk_frame(
+    sources: &dyn Sources,
+    i: usize,
+    edit: &Edit,
+    merge: MergeInput,
+    models: &mut dyn Models,
+) -> Result<(Walked, RawFrame, RawMetadata)> {
+    let name = sources.name(i);
+    let (frame, metadata) = sources.load(i)?;
+    let frame = Arc::new(frame);
+    let input = Input::Raw(frame.clone());
+    let purpose = Purpose::MergeInput(merge);
+    let steps = stages(edit, &purpose, &input.facts(0), None);
+    let places = plan(&steps, &purpose, false);
+    let mut kept = Kept::new();
+    let walked = walk(
+        &steps, &places, &input, &mut kept, models, &mut None, &NoHold,
+    )
+    .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+    drop(input);
+    drop(kept);
+    let learned = steps.ops().any(|s| matches!(s, Stage::Learned(_)));
+    let stood_in = walked.meta.stood_in.as_ref().map(|w| format!("{w:?}"));
+    let (prepared, rgb, plain) = match walked.buf {
+        Buf::Camera { prepared, rgb } => (prepared, rgb, None),
+        Buf::CameraPair {
+            prepared,
+            network,
+            plain,
+        } => (prepared, network, Some(plain)),
+        _ => bail!("{name}: the walk did not end at camera RGB"),
+    };
+    let gains = prepared.gains;
+    let unbalanced = |mut v: Vec<f32>| {
+        use rayon::prelude::*;
+        v.par_chunks_mut(3).for_each(|p| {
+            for c in 0..3 {
+                p[c] /= gains[c];
+            }
+        });
+        v
+    };
+    let rgb = unbalanced(rgb);
+    // What clipped is read off the plain demosaic when a denoiser gave
+    // the picture: a network smooths a saturated edge.
+    let mask = match plain {
+        Some(plain) => merge::clip_mask(&unbalanced(plain), prepared.width, prepared.height),
+        None => merge::clip_mask(&rgb, prepared.width, prepared.height),
+    };
+    let noise = prepared
+        .noise
+        .map_or(Noise::ASSUMED, |e| Noise::of_model(&e.model));
+    let out = Walked {
+        rgb,
+        mask,
+        width: prepared.width,
+        height: prepared.height,
+        noise,
+        gains,
+        white_balance: prepared.white_balance,
+        denoised: learned && stood_in.is_none(),
+        stood_in,
+    };
+    drop(prepared);
+    // The tags are read from the frame; its samples are let go.
+    let mut frame = Arc::try_unwrap(frame).unwrap_or_else(|f| (*f).clone());
+    frame.samples = Samples::U16(Vec::new());
+    Ok((out, frame, metadata))
+}
+
+/// Merge the tripod bracket `files` under `edit`'s demosaic and CA, and
+/// write it as a linear DNG, beside the first frame unless `options`
+/// says where. Each frame's progress is said to `progress`; `models`
+/// runs the learned denoiser when `options` asks.
+pub fn hdr(
+    files: &[PathBuf],
+    edit: &Edit,
+    options: &Options,
+    models: &mut dyn Models,
+    progress: &dyn Progress,
+) -> Result<Report> {
+    let first = files.first().map(|f| default_output(f)).unwrap_or_default();
+    hdr_of(&Files(files), &first, edit, options, models, progress)
+}
+
+/// [`hdr`] over any [`Sources`], written to `options.out` or else
+/// `default_out`.
+pub fn hdr_of(
+    sources: &dyn Sources,
+    default_out: &Path,
+    edit: &Edit,
+    options: &Options,
+    models: &mut dyn Models,
+    progress: &dyn Progress,
+) -> Result<Report> {
+    let started = Instant::now();
+    let mut seconds = Vec::new();
+    let of = sources.len();
+    if of < 2 {
+        bail!("a merge wants two frames or more; got {of}");
+    }
+    let Heads {
+        exif,
+        reference,
+        iso,
+    } = heads(sources, options.reference)?;
+    let relative: Vec<Option<f64>> = exif
+        .iter()
+        .map(|e| Some(e.as_ref()? / exif[reference]?))
+        .collect();
+    // The darkest by EXIF: a frame with none is taken as the
+    // reference's exposure until it is measured.
+    let darkest = (0..of)
+        .min_by(|&a, &b| {
+            relative[a]
+                .unwrap_or(1.0)
+                .total_cmp(&relative[b].unwrap_or(1.0))
+                .then(a.cmp(&b))
+        })
+        .expect("two frames or more");
+    let out = match &options.out {
+        Some(p) => p.clone(),
+        None => default_out.to_path_buf(),
+    };
+    // Whatever is asked of a name that is there, a frame is never
+    // written over: it is read after the name is settled.
+    if let Some(k) = (0..of).find(|&k| sources.path(k).is_some_and(|p| same_file(&p, &out))) {
+        bail!(
+            "{} is one of the frames: a merge is never written over its frames",
+            sources.name(k)
+        );
+    }
+    let resolved = options.on_exists.resolve(&out);
+    let Some(out) = resolved.path().map(Path::to_path_buf) else {
+        bail!(
+            "{} is there already, and nothing was written",
+            out.display()
+        );
+    };
+    // A merge killed before its rename left its part file: gone now,
+    // before this one writes its own.
+    let stale = part_of(&out);
+    if stale.exists() {
+        match std::fs::remove_file(&stale) {
+            Ok(()) => log::info!(
+                "merge: {} left by a merge cut short, removed",
+                stale.display()
+            ),
+            Err(e) => log::warn!("merge: {}: {e}", stale.display()),
+        }
+    }
+    let mut warnings = Vec::new();
+    let mut reports: Vec<Option<FrameReport>> = vec![None; of];
+
+    // The reference, walked first and held.
+    progress.step(Step::Frame { index: 1, of });
+    let t = Instant::now();
+    let (r, ref_frame, ref_meta) = walk_frame(
+        sources,
+        reference,
+        edit,
+        MergeInput {
+            white: None,
+            reconstruct: reference == darkest,
+            denoiser: options.denoiser,
+        },
+        models,
+    )?;
+    seconds.push(("reference", t.elapsed().as_secs_f64()));
+    if let Some(why) = &r.stood_in {
+        warnings.push(format!("the learned denoiser stood down: {why}"));
+    }
+    let (w, h) = (r.width, r.height);
+    let white = r.gains.map(f64::from);
+    let mut denoised = r.denoised;
+    let ref_rgb = r.rgb;
+    let ref_mask = r.mask;
+    // The sensor's noise, in the reference's units: what the frames'
+    // pairs say, the reference's own estimate until they have said it.
+    // A frame's noise is this at its ISO.
+    let mut pairs = merge::PairNoise::default();
+    let model = |pairs: &merge::PairNoise| options.noise.or_else(|| pairs.fit()).unwrap_or(r.noise);
+    let mut acc = Accumulator::new(w, h);
+    // The reference goes in once the pairs have said what they can: just
+    // before the darkest frame, which fills what every frame clipped.
+    let mut reference_in = false;
+    let add_reference = |acc: &mut Accumulator, noise: Noise| {
+        acc.add(&Frame {
+            rgb: &ref_rgb,
+            mask: &ref_mask,
+            exposure: 1.0,
+            noise,
+        });
+    };
+
+    // The rest, the darkest last.
+    let mut order: Vec<usize> = (0..of).filter(|&k| k != reference).collect();
+    order.sort_by_key(|&k| k == darkest);
+    let mut exposures = vec![1.0f64; of];
+    let mut all_clipped = 0;
+    for (n, &k) in order.iter().enumerate() {
+        progress.step(Step::Frame { index: n + 2, of });
+        let t = Instant::now();
+        let (mut f, _, _) = walk_frame(
+            sources,
+            k,
+            edit,
+            MergeInput {
+                white: Some(white),
+                reconstruct: k == darkest,
+                denoiser: options.denoiser,
+            },
+            models,
+        )?;
+        if (f.width, f.height) != (w, h) {
+            bail!(
+                "{} is {}x{} and the reference {w}x{h}: a merge wants frames of one size",
+                sources.name(k),
+                f.width,
+                f.height
+            );
+        }
+        if let Some(why) = &f.stood_in {
+            warnings.push(format!("the learned denoiser stood down: {why}"));
+        }
+        denoised |= f.denoised;
+        let walked_s = t.elapsed().as_secs_f64();
+
+        // The exposure first, on the frame as it stands: a tripod's
+        // frames have not moved enough to bias a median.
+        let t = Instant::now();
+        let measure = |f: &Walked| merge::refine_exposure(&ref_rgb, &ref_mask, &f.rgb, &f.mask);
+        let mut measured = measure(&f);
+        let rough = measured.map(|m| m.ratio).or(relative[k]).unwrap_or(1.0);
+        let measure_s = t.elapsed().as_secs_f64();
+
+        // A tripod's frames should not move; a fit says whether they did.
+        let t = Instant::now();
+        let (moved, resampled) = check_moved(&ref_rgb, &mut f, rough, w, h, &sources.name(k));
+        if resampled {
+            measured = measure(&f);
+            warnings.push(format!(
+                "{} had moved {:.2} px and was resampled onto the reference",
+                sources.name(k),
+                moved.unwrap_or(0.0)
+            ));
+        }
+        let fit_s = t.elapsed().as_secs_f64();
+
+        let t = Instant::now();
+        let exposure = match (measured, relative[k]) {
+            (Some(m), _) => m.ratio,
+            (None, Some(e)) => {
+                warnings.push(format!(
+                    "{}: too little held well in both frames to measure its exposure; \
+                     its EXIF's taken",
+                    sources.name(k)
+                ));
+                e
+            }
+            (None, None) => bail!(
+                "{}: its exposure is in neither its EXIF nor its pixels",
+                sources.name(k)
+            ),
+        };
+        exposures[k] = exposure;
+        // A resampled frame's noise is smoothed by the resampling and
+        // says nothing true of the sensor's.
+        if !resampled {
+            pairs.add(&ref_rgb, &ref_mask, &f.rgb, &f.mask, exposure, iso[k]);
+        }
+        let sensor = model(&pairs);
+        if k == darkest {
+            add_reference(&mut acc, sensor);
+            reference_in = true;
+        }
+        let noise = sensor.at_iso(iso[k] as f32);
+        let frame = Frame {
+            rgb: &f.rgb,
+            mask: &f.mask,
+            exposure,
+            noise,
+        };
+        acc.add(&frame);
+        if k == darkest {
+            all_clipped = acc.fill_clipped(&frame);
+        }
+        seconds.push(("frame", walked_s));
+        seconds.push(("fit", fit_s));
+        seconds.push(("merge", t.elapsed().as_secs_f64() + measure_s));
+        reports[k] = Some(FrameReport {
+            name: sources.name(k),
+            exif: relative[k],
+            measured,
+            exposure,
+            moved,
+            resampled,
+            noise,
+        });
+    }
+    let sensor = model(&pairs);
+    if !reference_in {
+        add_reference(&mut acc, sensor);
+    }
+    if darkest == reference {
+        all_clipped = acc.fill_clipped(&Frame {
+            rgb: &ref_rgb,
+            mask: &ref_mask,
+            exposure: 1.0,
+            noise: sensor,
+        });
+    }
+    reports[reference] = Some(FrameReport {
+        name: sources.name(reference),
+        exif: Some(1.0),
+        measured: None,
+        exposure: 1.0,
+        moved: None,
+        resampled: false,
+        noise: sensor,
+    });
+    drop(ref_rgb);
+    drop(ref_mask);
+    let image = acc.finish();
+
+    progress.step(Step::Writing);
+    let t = Instant::now();
+    let headroom = merge::headroom(&image, r.gains);
+    // The file's noise, as the sensor's model has each frame's.
+    let frames: Vec<(f64, Noise)> = (0..of)
+        .map(|k| (exposures[k], sensor.at_iso(iso[k] as f32)))
+        .collect();
+    let profile = merge::noise_profile(&frames, headroom);
+    let tag = merge::Tag {
+        kind: "hdr".into(),
+        frames: (0..of).map(|i| sources.name(i)).collect(),
+        reference,
+        denoised,
+        headroom_stops: headroom.log2(),
+    };
+    let preview = merge::preview(&image, &r.white_balance, 1024)?;
+    let software = concat!("greycard ", env!("CARGO_PKG_VERSION"));
+    let dng = LinearDngOptions {
+        metadata: Some(&ref_meta),
+        preview: Some(&preview),
+        software: Some(software),
+        headroom: Some(headroom),
+        ..Default::default()
+    };
+    // Written under a hidden name beside the file and renamed at the
+    // end: a merge cut short (a failure, the window quit, the process
+    // killed) leaves no half file under the name, and never touches a
+    // file of that name that was there.
+    let part = part_of(&out);
+    let written = (|| -> Result<()> {
+        let file = std::fs::File::create(&part)?;
+        let mut writer = std::io::BufWriter::new(file);
+        write_merged_dng(
+            &mut writer,
+            &ref_frame,
+            &image,
+            r.gains,
+            &dng,
+            &Merged {
+                noise_profile: profile,
+                tag: &tag,
+            },
+        )?;
+        use std::io::Write as _;
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        drop(writer);
+        std::fs::rename(&part, &out)?;
+        Ok(())
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&part);
+        return Err(e.context(format!("writing {}", out.display())));
+    }
+    seconds.push(("write", t.elapsed().as_secs_f64()));
+    seconds.push(("total", started.elapsed().as_secs_f64()));
+    Ok(Report {
+        out,
+        reference,
+        frames: reports.into_iter().flatten().collect(),
+        width: w,
+        height: h,
+        all_clipped,
+        headroom_stops: headroom.log2(),
+        noise_profile: profile,
+        denoised,
+        seconds,
+        warnings,
+    })
+}
+
+/// The hidden name a merge to `out` is written under until its rename.
+fn part_of(out: &Path) -> PathBuf {
+    out.with_file_name(format!(
+        ".{}.part",
+        out.file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default()
+    ))
+}
+
+/// Whether `a` and `b` name one file: by their canonical paths, the
+/// folder's alone for a file not there yet.
+fn same_file(a: &Path, b: &Path) -> bool {
+    let canon = |p: &Path| {
+        std::fs::canonicalize(p).ok().or_else(|| {
+            let dir = p.parent().filter(|d| !d.as_os_str().is_empty())?;
+            Some(std::fs::canonicalize(dir).ok()?.join(p.file_name()?))
+        })
+    };
+    match (canon(a), canon(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Whether frame `f` moved off the reference, and if it did, `f`
+/// resampled onto it: a translation fit on the band both hold, taken
+/// only past a tenth of a pixel, and believed only where the picture
+/// has structure every way and the move fits clearly better than none.
+/// A still frame of a flat horizon otherwise reads motion along it from
+/// its noise. How far it moved, none for a fit not believed, and
+/// whether it was resampled.
+fn check_moved(
+    reference: &[f32],
+    f: &mut Walked,
+    e: f64,
+    w: usize,
+    h: usize,
+    name: &str,
+) -> (Option<f64>, bool) {
+    let (a, b) = merge::fit_planes(reference, &f.rgb, e);
+    // Judged against the identity rather than by the fit's residual
+    // alone: a still frame is the alternative here, and a bracket's
+    // dark frame is noisy enough to sit over a stack's threshold
+    // with the move found to a hundredth of a pixel.
+    let fit = match register::fit(
+        &a,
+        &b,
+        w,
+        h,
+        &register::Options {
+            model: Model::Translation,
+            ..Default::default()
+        },
+    ) {
+        Ok(fit) => fit,
+        Err(e) => {
+            log::info!("merge: {name}: no fit ({e}); taken as unmoved");
+            return (None, false);
+        }
+    };
+    let by = fit
+        .transform
+        .corner_distance(&register::Transform::IDENTITY, w, h);
+    if by <= merge::MOVED {
+        return (Some(by), false);
+    }
+    let condition = merge::condition(&a, w, h);
+    let back = register::warp_plane(&b, w, h, w, h, &fit.transform, Edge::Fill(f32::NAN));
+    let (before, after) = (merge::residual(&a, &b), merge::residual(&a, &back));
+    if condition < merge::MIN_CONDITION || after > merge::BETTER * before {
+        log::info!(
+            "merge: {name}: a move of {by:.2} px not believed (structure {condition:.3}, \
+             residual {after:.4} against {before:.4} unmoved, fit {:.3}); taken as unmoved",
+            fit.residual
+        );
+        return (None, false);
+    }
+    let image = CameraImage {
+        width: w,
+        height: h,
+        data: std::mem::take(&mut f.rgb),
+    };
+    f.rgb = register::warp_camera_image(&image, &fit.transform, Edge::Fill(f32::NAN)).data;
+    f.mask = merge::clip_mask(&f.rgb, w, h);
+    (Some(by), true)
+}
+
+/// A file's name, for a report.
+fn name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use greycard_core::image::WorkingImage;
+    use greycard_core::merge::testing::{
+        checker, mosaic_of, scene, two_patches, write_dng, write_dng_at,
+    };
+    use greycard_core::raw::Orientation;
+
+    const W: usize = 256;
+    const H: usize = 160;
+
+    /// A bracket of three made-up frames in a scratch folder: the true
+    /// exposures x0.25, x1, x4 of the scene (a ramp from -12 stops to
+    /// +4 over the middle frame's clip), EXIF saying 1/400, 1/100, and
+    /// 1/25 while the shutters missed (x0.263 and x3.8 against the
+    /// middle). `dx` moves a frame's scene.
+    fn bracket(what: &str, dx: [usize; 3]) -> (PathBuf, Vec<PathBuf>) {
+        bracket_of(what, 17, &|x, y, c, k| scene(x + dx[k], y, c, W, H))
+    }
+
+    /// A scratch folder for test `what`.
+    fn scratch(what: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("greycard-merge-{what}-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// The bracket of [`bracket`] of the scene `light` makes of frame
+    /// `k` at a pixel and channel, its noise drawn from `seed`.
+    fn bracket_of(
+        what: &str,
+        seed: u64,
+        light: &dyn Fn(usize, usize, usize, usize) -> f32,
+    ) -> (PathBuf, Vec<PathBuf>) {
+        let dir = scratch(what);
+        let gains = [1.0 / 3.8, 1.0, 3.8];
+        let shutters = [(1, 400), (1, 100), (1, 25)];
+        let files = (0..3)
+            .map(|k| {
+                let path = dir.join(format!("IMG_{k}.dng"));
+                let samples = mosaic_of(
+                    W,
+                    H,
+                    gains[k],
+                    Noise::ASSUMED,
+                    seed + k as u64,
+                    |x, y, c| light(x, y, c, k),
+                );
+                write_dng(&path, samples, W, H, shutters[k], "Bracket");
+                path
+            })
+            .collect();
+        (dir, files)
+    }
+
+    fn merged(files: &[PathBuf], options: &Options) -> Report {
+        let steps = std::cell::RefCell::new(Vec::new());
+        let report = hdr(
+            files,
+            &Edit::default(),
+            options,
+            &mut crate::walk::NoModels,
+            &|s: Step| steps.borrow_mut().push(s),
+        )
+        .unwrap();
+        assert_eq!(
+            steps.into_inner(),
+            [
+                Step::Frame { index: 1, of: 3 },
+                Step::Frame { index: 2, of: 3 },
+                Step::Frame { index: 3, of: 3 },
+                Step::Writing
+            ]
+        );
+        report
+    }
+
+    /// The file lands beside the first frame as `<stem>-HDR.dng`, a
+    /// number after it when the name is taken; it is a float linear
+    /// DNG of the reference's body and lens, its exposures measured
+    /// past the EXIF's marks, and says what it was merged from.
+    #[test]
+    fn a_bracket_is_merged_beside_its_first_frame() {
+        let (dir, files) = bracket("tags", [0; 3]);
+        // A part file a killed merge left is taken away; nothing else is.
+        let stale = dir.join(".IMG_0-HDR.dng.part");
+        std::fs::write(&stale, b"cut short").unwrap();
+        let report = merged(&files, &Options::default());
+        assert!(!stale.exists());
+        assert_eq!(report.out, dir.join("IMG_0-HDR.dng"));
+        assert_eq!(report.reference, 1);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let by_name = |n: &str| report.frames.iter().find(|f| f.name == n).unwrap();
+        let dark = by_name("IMG_0.dng");
+        assert_eq!(dark.exif, Some(0.25));
+        let m = dark.measured.unwrap().ratio;
+        assert!((m - 1.0 / 3.8).abs() < 0.002, "{m}");
+        let bright = by_name("IMG_2.dng");
+        assert!((bright.exposure - 3.8).abs() < 0.03, "{}", bright.exposure);
+        assert!(!dark.resampled && !bright.resampled);
+
+        let back = greycard_core::decode::decode_path(&report.out).unwrap();
+        assert_eq!(
+            (back.make.as_str(), back.model.as_str()),
+            ("Synthetic", "Bracket")
+        );
+        assert_eq!(back.shot.lens_model.as_deref(), Some("Synthetic 35mm"));
+        assert_eq!(back.shot.exposure_time, Some(0.01));
+        assert!(matches!(back.samples, Samples::F32(_)));
+        let tag = back.dng.merged.clone().expect("our tag");
+        assert_eq!(tag.kind, "hdr");
+        assert_eq!(tag.frames, ["IMG_0.dng", "IMG_1.dng", "IMG_2.dng"]);
+        assert_eq!((tag.reference, tag.denoised), (1, false));
+        // About two stops over the middle frame's clip, past which the
+        // darkest frame clipped too.
+        assert!(
+            (1.5..3.0).contains(&tag.headroom_stops),
+            "{}",
+            tag.headroom_stops
+        );
+        assert_eq!(back.dng.baseline_exposure, Some(tag.headroom_stops));
+        assert!(back.dng.noise_profile.is_some_and(|n| n.a[0] > 0.0));
+        assert!(report.all_clipped > 0);
+
+        // Again: beside it, numbered.
+        let again = merged(&files, &Options::default());
+        assert_eq!(again.out, dir.join("IMG_0-HDR-1.dng"));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A frame knocked two pixels between shots is fitted, resampled,
+    /// and said; one that stayed is left as it is.
+    #[test]
+    fn a_frame_that_moved_is_resampled_and_said() {
+        let (dir, files) = bracket("moved", [0, 0, 2]);
+        let report = merged(&files, &Options::default());
+        let bright = &report.frames[2];
+        assert!(bright.resampled, "{:?}", bright.moved);
+        assert!((bright.moved.unwrap() - 2.0).abs() < 0.3);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(report.warnings[0].contains("IMG_2.dng had moved"));
+        assert!(!report.frames[0].resampled);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Frames of two bodies, one frame, and a frame number past the
+    /// end are refused before anything is read.
+    #[test]
+    fn what_is_no_bracket_is_refused() {
+        let (dir, files) = bracket("refused", [0; 3]);
+        let other = dir.join("other.dng");
+        write_dng(
+            &other,
+            mosaic_of(W, H, 1.0, Noise::ASSUMED, 3, |x, y, c| scene(x, y, c, W, H)),
+            W,
+            H,
+            (1, 100),
+            "Another",
+        );
+        let run = |files: &[PathBuf], options: &Options| {
+            hdr(
+                files,
+                &Edit::default(),
+                options,
+                &mut crate::walk::NoModels,
+                &|_: Step| {},
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+        };
+        let mixed = [files[0].clone(), other];
+        assert_eq!(
+            run(&mixed, &Options::default()),
+            "a merge wants frames of one body"
+        );
+        assert!(run(&files[..1], &Options::default()).starts_with("a merge wants two frames"));
+        let past = Options {
+            reference: Some(3),
+            ..Default::default()
+        };
+        assert!(run(&files, &past).starts_with("there is no frame 3"));
+        // Never over a frame, whatever is asked of a name that is there,
+        // and by whatever path it is named.
+        for on_exists in [OnExists::Overwrite, OnExists::Increment, OnExists::Skip] {
+            let over = Options {
+                out: Some(dir.join(".").join("IMG_1.dng")),
+                on_exists,
+                ..Default::default()
+            };
+            assert_eq!(
+                run(&files, &over),
+                "IMG_1.dng is one of the frames: a merge is never written over its frames"
+            );
+        }
+        assert!(!dir.join("IMG_0-HDR.dng").exists());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A still bracket of two flat patches with one edge between them,
+    /// the structure all one way: whatever a fit reads along the edge
+    /// is not believed, and nothing is resampled. A checker's structure
+    /// runs every way: still, it stays; knocked two pixels, it is put
+    /// back.
+    #[test]
+    fn a_fit_on_structure_one_way_is_not_believed() {
+        for (what, light) in [
+            (
+                "patches",
+                &(|x, _y, c, _k| two_patches(x, 0, c, W))
+                    as &dyn Fn(usize, usize, usize, usize) -> f32,
+            ),
+            ("checker", &|x, y, c, _k| checker(x, y, c, 0)),
+        ] {
+            let (dir, files) = bracket_of(what, 31, light);
+            let report = merged(&files, &Options::default());
+            assert!(report.warnings.is_empty(), "{what}: {:?}", report.warnings);
+            assert!(report.frames.iter().all(|f| !f.resampled), "{what}");
+            greycard_core::testing::remove_dir_retry(&dir);
+        }
+        let (dir, files) = bracket_of("checker-knocked", 31, &|x, y, c, k| {
+            checker(x, y, c, if k == 2 { 2 } else { 0 })
+        });
+        let report = merged(&files, &Options::default());
+        assert!(report.frames[2].resampled, "{:?}", report.frames[2].moved);
+        assert!(!report.frames[0].resampled);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The profile the file carries predicts its noise: two merges of
+    /// one scene, their noise drawn apart, differ by twice the file's
+    /// variance, which the profile says within a factor of two at a
+    /// shadow and a midtone level, and within four a stop over the
+    /// bright frame's clip.
+    #[test]
+    fn the_noise_profile_predicts_the_files_noise() {
+        let read = |seed: u64, what: &str| {
+            let (dir, files) = bracket_of(what, seed, &|x, y, c, _| scene(x, y, c, W, H));
+            let report = merged(&files, &Options::default());
+            let back = greycard_core::decode::decode_path(&report.out).unwrap();
+            let h = report.headroom_stops.exp2();
+            let green: Vec<f32> = back.samples.to_f32().chunks(3).map(|p| p[1] * h).collect();
+            greycard_core::testing::remove_dir_retry(&dir);
+            (green, report.noise_profile, h)
+        };
+        let (a, [s, o], h) = read(101, "profile-a");
+        let (b, _, _) = read(501, "profile-b");
+        // The scene's light by column: a band of columns is a level.
+        // Under the bright frame's clip within 2x; a stop over it, where
+        // the merge's variance has stepped up, within 4x (a line split
+        // across the step can do no better than half of it either way).
+        for (stops, within) in [(-9.0f32, 2.0), (-4.0, 2.0), (-1.0, 4.0)] {
+            let mut d = Vec::new();
+            let mut level = 0.0f64;
+            for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+                let m = (x + y) / 2.0;
+                if (m.log2() - stops).abs() < 0.5 && (8..H - 8).contains(&(i / W)) {
+                    d.push(f64::from(x - y));
+                    level += f64::from(m);
+                }
+            }
+            assert!(d.len() > 300, "{stops}: {}", d.len());
+            let n = d.len() as f64;
+            let mean = d.iter().sum::<f64>() / n;
+            let measured = d.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n / 2.0;
+            let y = level / n / f64::from(h);
+            let said = (s * y + o) * f64::from(h * h);
+            let ratio = said / measured;
+            assert!(
+                (1.0 / within..within).contains(&ratio),
+                "at {stops} stops: the profile says {said:.3e}, the file has {measured:.3e}"
+            );
+        }
+    }
+
+    /// A bracket made with the ISO (one shutter, ISO 100, 400, 1600):
+    /// each frame's noise is the reference's at its ISO, the shot term
+    /// with the gain and the read term with its square, and the
+    /// exposures are measured as for a shutter bracket.
+    #[test]
+    fn a_bracket_by_iso_takes_each_frames_noise_at_its_iso() {
+        let dir = scratch("iso");
+        let isos = [100u16, 400, 1600];
+        let files: Vec<PathBuf> = (0..3)
+            .map(|k| {
+                let r = f32::from(isos[k]) / 400.0;
+                let path = dir.join(format!("ISO_{k}.dng"));
+                let samples = mosaic_of(
+                    W,
+                    H,
+                    r * [1.05, 1.0, 0.97][k],
+                    Noise::ASSUMED.at_iso(r),
+                    61 + k as u64,
+                    |x, y, c| scene(x, y, c, W, H),
+                );
+                write_dng_at(&path, samples, W, H, (1, 100), isos[k], "Bracket");
+                path
+            })
+            .collect();
+        let report = merged(&files, &Options::default());
+        assert_eq!(report.reference, 1);
+        let [dark, reference, bright] = [0, 1, 2].map(|k| report.frames[k].clone());
+        assert!(
+            (dark.exposure - 0.25 * 1.05).abs() < 0.005,
+            "{}",
+            dark.exposure
+        );
+        assert!(
+            (bright.exposure - 4.0 * 0.97).abs() < 0.05,
+            "{}",
+            bright.exposure
+        );
+        let shot = |f: &FrameReport| f.noise.shot / reference.noise.shot;
+        let read = |f: &FrameReport| f.noise.read / reference.noise.read;
+        // The darkest frame goes in under the model the reference does;
+        // the bright one, first in, under the model its own pair gave.
+        assert!((shot(&dark) - 0.25).abs() < 1e-5 && (read(&dark) - 0.0625).abs() < 1e-5);
+        assert!((2.0..8.0).contains(&shot(&bright)), "{:?}", bright.noise);
+        assert!((8.0..32.0).contains(&read(&bright)), "{:?}", bright.noise);
+        // The sensor's model, from the pairs, near the one the frames
+        // were made with.
+        let got = reference.noise.shot / Noise::ASSUMED.shot;
+        assert!((0.5..2.0).contains(&got), "{:?}", reference.noise);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// `file` developed as the viewport's walk develops it under the
+    /// default edit, on the CPU, brightened by its baseline: what the
+    /// finish starts from.
+    fn developed(file: &Path) -> WorkingImage {
+        let frame = greycard_core::decode::decode_path(file).unwrap();
+        let baseline = (greycard_edit::baseline::for_frame(&frame)
+            + greycard_edit::baseline::headroom(&frame))
+        .exp2();
+        assert_eq!(frame.orientation, Orientation::Normal);
+        let input = Input::Raw(Arc::new(frame));
+        let edit = Edit::default();
+        let steps = stages(&edit, &Purpose::Viewport, &input.facts(0), None);
+        let places = plan(&steps, &Purpose::Viewport, false);
+        let walked = walk(
+            &steps,
+            &places,
+            &input,
+            &mut Kept::new(),
+            &mut crate::walk::NoModels,
+            &mut None,
+            &NoHold,
+        )
+        .unwrap();
+        let Buf::Working(image) = walked.buf else {
+            panic!("the walk ends in the working space");
+        };
+        let mut image = (*image).clone();
+        image.data.iter_mut().for_each(|v| *v *= baseline);
+        image
+    }
+
+    /// The develop's pin: the merged bracket and its reference frame,
+    /// each developed as a file opens, agree in the midtones and the
+    /// highlights the reference held; where the reference clipped, the
+    /// merge keeps the scene, stops brighter than the reference's clip,
+    /// rather than coming out as a flat frame pulled down to fit.
+    #[test]
+    fn the_merge_develops_as_its_reference_did_with_its_highlights_kept() {
+        let (dir, files) = bracket("develop", [0; 3]);
+        let report = merged(&files, &Options::default());
+        let reference = developed(&files[1]);
+        let merge = developed(&report.out);
+        assert_eq!(
+            (reference.width, reference.height),
+            (merge.width, merge.height)
+        );
+        let luma = |p: &[f32]| 0.2627 * p[0] + 0.678 * p[1] + 0.0593 * p[2];
+        // Bands of columns: the scene is a ramp across the frame, -12
+        // stops at the left to +4 over the middle frame's clip at the
+        // right, so a column band is a band of brightness.
+        let band = |img: &WorkingImage, from: f32, to: f32| -> f64 {
+            let (x0, x1) = ((from * W as f32) as usize, (to * W as f32) as usize);
+            let mut sum = 0.0;
+            let mut n = 0.0;
+            for y in 8..H - 8 {
+                for x in x0..x1 {
+                    let i = (y * img.width + x) * 3;
+                    sum += f64::from(luma(&img.data[i..i + 3]));
+                    n += 1.0;
+                }
+            }
+            sum / n
+        };
+        // Midtones (-6 to -2 stops) and the highlights the reference
+        // held (-2 to -0.5): within 2%.
+        for (from, to) in [(0.375, 0.625), (0.625, 0.72)] {
+            let (r, m) = (band(&reference, from, to), band(&merge, from, to));
+            assert!((m / r - 1.0).abs() < 0.02, "{from}..{to}: {m} against {r}");
+        }
+        // Two to four stops over the reference's clip: the reference is
+        // flat there, the merge climbs on.
+        let (r, m) = (band(&reference, 0.9, 1.0), band(&merge, 0.9, 1.0));
+        let r_below = band(&reference, 0.8, 0.85);
+        assert!(
+            (r / r_below) < 1.5,
+            "the reference clipped: {r} and {r_below}"
+        );
+        assert!(
+            m > 3.0 * r,
+            "the merge holds the highlights: {m} against {r}"
+        );
+
+        // And through the finish, as an export makes the file: the
+        // merge's export against the reference's, each under the edit
+        // a merge starts from, at the reference's exposure.
+        let exported = |file: &Path, edit: &Edit| -> Vec<f32> {
+            let mut developed =
+                crate::worker::FrameDevelop::develop(file, edit, None).expect("it develops");
+            let rendered = developed.finish(edit, &greycard_render::export::Settings::default());
+            assert_eq!((rendered.width, rendered.height), (W as u32, H as u32));
+            match rendered.pixels {
+                greycard_render::export::Pixels::Eight(p) => {
+                    p.iter().map(|v| f32::from(*v) / 255.0).collect()
+                }
+                greycard_render::export::Pixels::Sixteen(p) => {
+                    p.iter().map(|v| f32::from(*v) / 65535.0).collect()
+                }
+            }
+        };
+        let edit = edit_for_merge(&Edit::default());
+        let (re, me) = (exported(&files[1], &edit), exported(&report.out, &edit));
+        let shown = |px: &[f32], from: f32, to: f32| -> f64 {
+            let (x0, x1) = ((from * W as f32) as usize, (to * W as f32) as usize);
+            let (mut sum, mut n) = (0.0, 0.0);
+            for y in 8..H - 8 {
+                for x in x0..x1 {
+                    let i = (y * W + x) * 3;
+                    sum += f64::from(luma(&px[i..i + 3]));
+                    n += 1.0;
+                }
+            }
+            sum / n
+        };
+        // The midtones and the highlights the reference held within 2%,
+        // the brightest of them (display 200 to 250) as well: the
+        // merge's display white is its body's, as the reference's is.
+        for (from, to) in [(0.375, 0.625), (0.625, 0.72), (0.69, 0.75)] {
+            let (r, m) = (shown(&re, from, to), shown(&me, from, to));
+            assert!(
+                (m / r - 1.0).abs() < 0.02,
+                "exported, {from}..{to}: {m} against {r}"
+            );
+        }
+        // The range over the reference's clip is there to bring down:
+        // two stops under, the reference's export is flat there and the
+        // merge's climbs.
+        let mut down = edit.clone();
+        down.light.exposure = -2.0;
+        let (re, me) = (exported(&files[1], &down), exported(&report.out, &down));
+        let rise = |px: &[f32]| shown(px, 0.9, 0.95) - shown(px, 0.8, 0.85);
+        assert!(rise(&re) < 0.01, "the reference: {}", rise(&re));
+        assert!(rise(&me) > 0.03, "the merge: {}", rise(&me));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The measurement set: a bracket made from one real raw (named by
+    /// `GREYCARD_MERGE_RAW`), its photosites scaled and clipped as a
+    /// sensor would with shot and read noise added, EXIF told the
+    /// nominal steps while the true ones miss them, merged as the file
+    /// is and read back; the error against the source before the noise,
+    /// by band of brightness, for the reference alone and for the
+    /// merge, and the peak resident memory after the merge. Three
+    /// frames, or five with `GREYCARD_MERGE_FRAMES=5`. The file goes to
+    /// `GREYCARD_MERGE_OUT`.
+    #[test]
+    #[ignore]
+    fn measure_a_synthetic_bracket() {
+        let Ok(raw) = std::env::var("GREYCARD_MERGE_RAW") else {
+            return;
+        };
+        let out_dir = PathBuf::from(std::env::var("GREYCARD_MERGE_OUT").unwrap());
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let five = std::env::var("GREYCARD_MERGE_FRAMES").as_deref() == Ok("5");
+        let (truth_gain, nominal): (Vec<f32>, Vec<f64>) = if five {
+            (
+                vec![1.0 / 3.8, 1.0, 3.8, 15.5, 60.0],
+                vec![0.25, 1.0, 4.0, 16.0, 64.0],
+            )
+        } else {
+            (vec![1.0, 3.8, 15.5], vec![1.0, 4.0, 16.0])
+        };
+        let reference = truth_gain.len() / 2;
+        // `GREYCARD_MERGE_DEMOSAIC=bilinear` as the prototype had it;
+        // the edit's default otherwise.
+        let mut edit = Edit::default();
+        if std::env::var("GREYCARD_MERGE_DEMOSAIC").as_deref() == Ok("bilinear") {
+            edit.demosaic = greycard_edit::Demosaic::Bilinear;
+        }
+        let edit = &edit;
+        let (src, meta) = greycard_core::decode::decode_path_with_metadata(&raw).unwrap();
+        let synthetic = Synthetic {
+            src: &src,
+            meta: &meta,
+            gains: &truth_gain,
+            nominal: &nominal,
+        };
+        let out = out_dir.join(if five { "hdr-5.dng" } else { "hdr-3.dng" });
+        let _ = std::fs::remove_file(&out);
+        let started = Instant::now();
+        let report = hdr_of(
+            &synthetic,
+            &out,
+            edit,
+            &Options {
+                out: Some(out.clone()),
+                // `GREYCARD_MERGE_NOISE=assumed`: the weights on the
+                // noise the frames were made with, as the prototype's.
+                noise: (std::env::var("GREYCARD_MERGE_NOISE").as_deref() == Ok("assumed"))
+                    .then_some(Noise::ASSUMED),
+                ..Default::default()
+            },
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap();
+        let took = started.elapsed().as_secs_f64();
+        let peak = peak_gb();
+        println!(
+            "frames {}, {}x{}",
+            truth_gain.len(),
+            report.width,
+            report.height
+        );
+        println!("merge {took:.2} s, peak resident {peak:.2} GB after it");
+        for (name, s) in &report.seconds {
+            println!("  {name:<10} {s:.2} s");
+        }
+        for f in &report.frames {
+            println!(
+                "  {}: EXIF {:?}, measured {:?}, used {:.4}, moved {:?}, noise {:?}",
+                f.name,
+                f.exif,
+                f.measured.map(|m| m.ratio),
+                f.exposure,
+                f.moved,
+                f.noise
+            );
+        }
+        println!(
+            "  all clipped {} px; headroom {:.2} stops; profile {:?}; warnings {:?}",
+            report.all_clipped, report.headroom_stops, report.noise_profile, report.warnings
+        );
+        println!(
+            "  file {:.0} MB",
+            std::fs::metadata(&out).unwrap().len() as f64 / 1e6
+        );
+
+        // The truth: the source walked as the merge walks a frame,
+        // before any noise was added, on the reference's scale.
+        let gains_of_file = report_gains(&out);
+        let white = |_: usize| MergeInput {
+            white: Some(gains_of_file),
+            reconstruct: false,
+            denoiser: None,
+        };
+        let source = One(&src, &meta);
+        let (truth, _, _) =
+            walk_frame(&source, 0, edit, white(0), &mut crate::walk::NoModels).unwrap();
+        let keep: Vec<bool> = truth.mask.iter().map(|m| !m).collect();
+        let g = truth_gain[reference];
+        let truth_rgb: Vec<f32> = truth.rgb.iter().map(|v| v * g).collect();
+        let (refr, _, _) = walk_frame(
+            &synthetic,
+            reference,
+            edit,
+            white(reference),
+            &mut crate::walk::NoModels,
+        )
+        .unwrap();
+        let keep_ref: Vec<bool> = keep.iter().zip(&refr.mask).map(|(k, c)| *k && !c).collect();
+        let back = greycard_core::decode::decode_path(&out).unwrap();
+        let headroom = report.headroom_stops.exp2();
+        let merged: Vec<f32> = back
+            .samples
+            .to_f32()
+            .into_iter()
+            .map(|v| v * headroom)
+            .collect();
+        let gains = truth.gains;
+        let e_ref = band_errors(&refr.rgb, &truth_rgb, &keep_ref, gains);
+        let e_on_ref = band_errors(&merged, &truth_rgb, &keep_ref, gains);
+        let e_merge = band_errors(&merged, &truth_rgb, &keep, gains);
+        println!("\n| band | reference alone (px) | merge on the same px | merge (px) |");
+        println!("|---|---|---|---|");
+        for i in 0..e_ref.len() {
+            let f = |x: f64| {
+                if x.is_finite() {
+                    format!("{x:.5}")
+                } else {
+                    "-".into()
+                }
+            };
+            println!(
+                "| {} | {} ({}) | {} | {} ({}) |",
+                e_ref[i].0,
+                f(e_ref[i].1),
+                e_ref[i].2,
+                f(e_on_ref[i].1),
+                f(e_merge[i].1),
+                e_merge[i].2
+            );
+        }
+    }
+
+    /// The white the merged file says, as gains.
+    fn report_gains(out: &Path) -> [f64; 3] {
+        greycard_core::decode::decode_path(out)
+            .unwrap()
+            .as_shot_coefficients
+            .unwrap()
+    }
+
+    /// The process's peak resident set, from /proc.
+    fn peak_gb() -> f64 {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap_or_default()
+            .lines()
+            .find(|l| l.starts_with("VmHWM:"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|k| k.parse::<f64>().ok())
+            .map_or(0.0, |kb| kb / 1024.0 / 1024.0)
+    }
+
+    /// One frame held, as a source.
+    struct One<'a>(&'a RawFrame, &'a RawMetadata);
+
+    impl Sources for One<'_> {
+        fn len(&self) -> usize {
+            1
+        }
+        fn name(&self, _: usize) -> String {
+            "source".into()
+        }
+        fn head(&self, _: usize) -> Result<Head> {
+            Ok(Head {
+                make: self.0.make.clone(),
+                model: self.0.model.clone(),
+                shot: self.0.shot.clone(),
+            })
+        }
+        fn load(&self, _: usize) -> Result<(RawFrame, RawMetadata)> {
+            Ok((self.0.clone(), self.1.clone()))
+        }
+    }
+
+    /// A bracket made from one raw, a frame at a time.
+    struct Synthetic<'a> {
+        src: &'a RawFrame,
+        meta: &'a RawMetadata,
+        gains: &'a [f32],
+        nominal: &'a [f64],
+    }
+
+    impl Sources for Synthetic<'_> {
+        fn len(&self) -> usize {
+            self.gains.len()
+        }
+        fn name(&self, i: usize) -> String {
+            format!("frame{i}")
+        }
+        fn head(&self, i: usize) -> Result<Head> {
+            let mut shot = self.src.shot.clone();
+            shot.exposure_time = shot.exposure_time.map(|t| t * self.nominal[i] as f32);
+            Ok(Head {
+                make: self.src.make.clone(),
+                model: self.src.model.clone(),
+                shot,
+            })
+        }
+        fn load(&self, i: usize) -> Result<(RawFrame, RawMetadata)> {
+            Ok((
+                bracket_frame(self.src, self.gains[i], 17 + i as u64),
+                self.meta.clone(),
+            ))
+        }
+    }
+
+    /// A frame of the made-up bracket: every photosite above black
+    /// times `gain`, shot and read noise added as `Noise::ASSUMED`
+    /// has them, clipped at the white as the sensor would.
+    fn bracket_frame(src: &RawFrame, gain: f32, seed: u64) -> RawFrame {
+        use rayon::prelude::*;
+        let Samples::U16(samples) = &src.samples else {
+            panic!("the bracket is made from 16-bit samples");
+        };
+        let (w, cpp) = (src.width, src.channels);
+        let (black, white) = (&src.levels.black, &src.levels.white);
+        let noise = Noise::ASSUMED;
+        let out: Vec<u16> = samples
+            .par_chunks(w * cpp)
+            .enumerate()
+            .flat_map_iter(|(y, row)| {
+                let mut s = seed ^ (y as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                let mut rnd = move || {
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    (s >> 11) as f64 / (1u64 << 53) as f64
+                };
+                row.chunks(cpp)
+                    .enumerate()
+                    .flat_map(|(x, px)| {
+                        px.iter()
+                            .enumerate()
+                            .map(|(ch, v)| {
+                                let (b, wl) = (black.at(y, x, ch), white.at(y, x, ch));
+                                let n = (f32::from(*v) - b) / (wl - b);
+                                let (u1, u2) = (rnd().max(1e-12), rnd());
+                                let g = ((-2.0 * u1.ln()).sqrt()
+                                    * (std::f64::consts::TAU * u2).cos())
+                                    as f32;
+                                let sig = n * gain;
+                                let n2 = (sig + g * noise.variance(sig).sqrt()).min(1.0);
+                                (b + n2 * (wl - b)).round().clamp(0.0, 65535.0) as u16
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut f = src.clone();
+        f.samples = Samples::U16(out);
+        f
+    }
+
+    /// Relative RMS error of `got` against `truth` (camera RGB on the
+    /// reference's scale) in bands of the truth's brightest balanced
+    /// channel, in stops under the reference's clip, over the pixels
+    /// `keep` allows.
+    fn band_errors(
+        got: &[f32],
+        truth: &[f32],
+        keep: &[bool],
+        gains: [f32; 3],
+    ) -> Vec<(String, f64, usize)> {
+        use rayon::prelude::*;
+        let bands = [
+            (-14.0, -10.0),
+            (-10.0, -6.0),
+            (-6.0, -2.0),
+            (-2.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 4.0),
+        ];
+        bands
+            .iter()
+            .map(|&(lo, hi): &(f32, f32)| {
+                let (lo_v, hi_v) = (lo.exp2(), hi.exp2());
+                let (se, st, n) = (0..keep.len())
+                    .into_par_iter()
+                    .filter(|&i| keep[i])
+                    .filter_map(|i| {
+                        let t = &truth[i * 3..i * 3 + 3];
+                        let g = &got[i * 3..i * 3 + 3];
+                        let b = (0..3).map(|c| t[c] * gains[c]).fold(0.0f32, f32::max);
+                        if b < lo_v || b >= hi_v || !g[0].is_finite() {
+                            return None;
+                        }
+                        let e: f64 =
+                            (0..3).map(|c| f64::from(g[c] - t[c]).powi(2)).sum::<f64>() / 3.0;
+                        Some((e, f64::from(merge::luma(t)), 1usize))
+                    })
+                    .reduce(|| (0.0, 0.0, 0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
+                let rel = if n > 0 {
+                    (se / n as f64).sqrt() / (st / n as f64)
+                } else {
+                    f64::NAN
+                };
+                (format!("{lo:+.0}..{hi:+.0} stops"), rel, n)
+            })
+            .collect()
+    }
+}

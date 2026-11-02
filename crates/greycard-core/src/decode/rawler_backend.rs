@@ -827,11 +827,40 @@ fn dng_tags(decoder: &dyn ::rawler::decoders::Decoder) -> DngTags {
         list(DngTag::OpcodeList3),
     );
     let read = crate::opcodes::corrections(one.as_deref(), two.as_deref(), three.as_deref());
+    // `NoiseProfile`: pairs of doubles, a pair a plane or one for all;
+    // the first pair is taken for every channel. A pair that is not a
+    // variance (negative, or not a number) is no profile.
+    let noise_profile = raw
+        .as_ref()
+        .and_then(|ifd| ifd.get_entry(DngTag::NoiseProfile))
+        .and_then(|e| {
+            let at = |i: usize| match &e.value {
+                ::rawler::formats::tiff::Value::Double(v) => v.get(i).copied(),
+                v => v.get_f32(i).ok().flatten().map(f64::from),
+            };
+            let (s, o) = (at(0)?, at(1)?);
+            (s.is_finite() && o.is_finite() && s >= 0.0 && o >= 0.0).then_some(
+                crate::develop::noise::NoiseModel {
+                    a: [s as f32; 3],
+                    b: [o as f32; 3],
+                },
+            )
+        });
+    let merged = root
+        .as_ref()
+        .and_then(|ifd| ifd.get_entry(DngTag::DNGPrivateData))
+        .and_then(|e| match &e.value {
+            ::rawler::formats::tiff::Value::Byte(b)
+            | ::rawler::formats::tiff::Value::Undefined(b) => crate::merge::Tag::parse(b),
+            _ => None,
+        });
     DngTags {
         baseline_exposure,
         mosaic: read.mosaic,
         warps: read.warps,
         opcode_area: None,
+        noise_profile,
+        merged,
     }
 }
 

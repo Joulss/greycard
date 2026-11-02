@@ -122,6 +122,7 @@ Editing:
 - [Presets, history and several frames](guide/presets-and-history.md):
   presets, snapshots, the history, versions of a frame, sync and paste
 - [Fitting your camera's look](guide/camera-match.md)
+- [Merge to HDR](guide/merge.md): a tripod bracket into one frame
 
 Finishing and reference:
 

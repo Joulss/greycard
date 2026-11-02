@@ -465,6 +465,7 @@ pub(crate) fn healed(state: &Rc<Shared>, app: &App, found: crate::stacks::Found<
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     crate::panel::bursts::install(app, state, worker);
+    crate::panel::merge::install(app, state, worker);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_stack_make(move || {

@@ -22,7 +22,7 @@ use ::rawler::dng::{
 use ::rawler::formats::tiff::{Rational, SRational};
 use ::rawler::imgop::xyz::Illuminant;
 use ::rawler::pixarray::PixU16;
-use ::rawler::rawimage::{BlackLevel, RawPhotometricInterpretation, WhiteLevel};
+use ::rawler::rawimage::{BlackLevel, RawImageData, RawPhotometricInterpretation, WhiteLevel};
 use ::rawler::tags::{DngTag, ExifTag, TiffCommonTag};
 use rawcolor::CalibrationIlluminant;
 
@@ -86,8 +86,7 @@ pub fn write_linear_dng<W: Write + Seek>(
     if !headroom.is_finite() || headroom < 1.0 {
         return Err(Error::Unsupported(format!("headroom {headroom}")));
     }
-    let calibrations = calibration_pair(&frame.calibrations);
-    if calibrations.is_empty() {
+    if calibration_pair(&frame.calibrations).is_empty() {
         return Err(Error::NoCalibration);
     }
 
@@ -96,7 +95,119 @@ pub fn write_linear_dng<W: Write + Seek>(
         Compression::Lossless => DngCompression::Lossless,
         Compression::Uncompressed => DngCompression::Uncompressed,
     };
+    write_container(
+        out,
+        frame,
+        &raw,
+        compression,
+        &CompressionParams::default(),
+        gains,
+        headroom,
+        options,
+        None,
+    )
+}
 
+/// What a merge's file carries beyond a linear DNG's tags.
+#[derive(Debug, Clone, Copy)]
+pub struct Merged<'a> {
+    /// `NoiseProfile`'s pair, `(S, O)`, in the stored levels.
+    pub noise_profile: [f64; 2],
+    /// What was merged, in our `DNGPrivateData`.
+    pub tag: &'a crate::merge::Tag,
+}
+
+/// The samples of a merge as they are stored: half floats with the
+/// floating-point predictor and Deflate (DNG 1.4), about a third of
+/// 32-bit floats uncompressed. A half keeps 11 bits of precision down
+/// to 2^-14 of white and fades below; the merge's noise is coarser
+/// than either well before then.
+const MERGED_SAMPLES: (DngCompression, u8) = (DngCompression::Deflate, 16);
+
+/// Write a merge as a linear DNG with float samples: `image` (camera
+/// RGB on the reference's scale) stored divided by `options.headroom`,
+/// white at 1, `BaselineExposure` saying the stops, and a
+/// `NoiseProfile` and our tag beside the linear DNG's own. A float
+/// keeps the deep shadows a 16-bit file would round away once the
+/// headroom is several stops.
+pub fn write_merged_dng<W: Write + Seek>(
+    out: W,
+    frame: &RawFrame,
+    image: &CameraImage,
+    gains: [f32; 3],
+    options: &LinearDngOptions<'_>,
+    merged: &Merged<'_>,
+) -> Result<()> {
+    if gains.iter().any(|g| !g.is_finite() || *g <= 0.0) {
+        return Err(Error::Unsupported(format!("white balance gains {gains:?}")));
+    }
+    let headroom = options.headroom.unwrap_or(1.0);
+    if !headroom.is_finite() || headroom < 1.0 {
+        return Err(Error::Unsupported(format!("headroom {headroom}")));
+    }
+    if calibration_pair(&frame.calibrations).is_empty() {
+        return Err(Error::NoCalibration);
+    }
+    let (compression, bits) = MERGED_SAMPLES;
+    // No 16-bit samples made only to be replaced.
+    let mut raw = raw_image_for(
+        frame,
+        &CameraImage::from_data(0, 0, Vec::new())?,
+        gains,
+        1.0,
+    );
+    raw.width = image.width;
+    raw.height = image.height;
+    raw.data = RawImageData::Float(
+        image
+            .data
+            .iter()
+            .map(|v| {
+                if v.is_finite() {
+                    (v / headroom).max(0.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect(),
+    );
+    raw.bps = 32;
+    raw.whitelevel = WhiteLevel::new(vec![1; CameraImage::CHANNELS]);
+    write_container(
+        out,
+        frame,
+        &raw,
+        compression,
+        &CompressionParams {
+            deflate_float_bits: bits,
+            ..CompressionParams::default()
+        },
+        gains,
+        headroom,
+        options,
+        Some(merged),
+    )
+}
+
+/// The container around `raw`: the preview, the base tags, the
+/// metadata, the orientation, the white, the baseline, the color
+/// matrices, and a merge's own tags.
+#[allow(clippy::too_many_arguments)]
+fn write_container<W: Write + Seek>(
+    out: W,
+    frame: &RawFrame,
+    raw: &RawImage,
+    compression: DngCompression,
+    params: &CompressionParams,
+    gains: [f32; 3],
+    headroom: f32,
+    options: &LinearDngOptions<'_>,
+    merged: Option<&Merged<'_>>,
+) -> Result<()> {
+    let calibrations = calibration_pair(&frame.calibrations);
+    if calibrations.is_empty() {
+        return Err(Error::NoCalibration);
+    }
     let mut dng = DngWriter::new(out, DNG_VERSION_V1_4).map_err(encode)?;
 
     // With a thumbnail on the root IFD the image goes in a sub-IFD, which
@@ -107,13 +218,17 @@ pub fn write_linear_dng<W: Write + Seek>(
         dng.subframe_on_root(0)
     };
     main.raw_image(
-        &raw,
+        raw,
         CropMode::None,
         compression,
         DngPhotometricConversion::Original,
-        &CompressionParams::default(),
+        params,
     )
     .map_err(encode)?;
+    if let Some(m) = merged {
+        main.ifd_mut()
+            .add_tag(DngTag::NoiseProfile, m.noise_profile.as_slice());
+    }
     main.finalize().map_err(encode)?;
 
     if let Some(preview) = options.preview {
@@ -124,7 +239,7 @@ pub fn write_linear_dng<W: Write + Seek>(
         dng.thumbnail(&preview).map_err(encode)?;
     }
 
-    dng.load_base_tags(&raw).map_err(encode)?;
+    dng.load_base_tags(raw).map_err(encode)?;
     if let Some(metadata) = options.metadata {
         dng.load_metadata(metadata).map_err(encode)?;
         // rawler copies these even when the source left them blank.
@@ -145,6 +260,9 @@ pub fn write_linear_dng<W: Write + Seek>(
             .unwrap_or(concat!("greycard ", env!("CARGO_PKG_VERSION"))),
     );
     root.add_tag(DngTag::AsShotNeutral, neutral(gains).as_slice());
+    if let Some(m) = merged {
+        root.add_tag(DngTag::DNGPrivateData, m.tag.to_bytes().as_slice());
+    }
     // The headroom's stops, and the source's own tag carried on top
     // when it had one: a phone's DNG written out linear keeps its word.
     let carried = frame.dng.baseline_exposure;
@@ -468,6 +586,82 @@ mod tests {
         .unwrap();
         let back = RawlerDecoder.decode_bytes(&buf.into_inner()).unwrap();
         assert_eq!(back.calibrations[0].forward_matrix, None);
+    }
+
+    /// `v` (not negative, under 65504) rounded to a half float, ties
+    /// to even, and back.
+    fn to_half(v: f32) -> f32 {
+        if v < 2f32.powi(-14) {
+            // A subnormal half: a whole number of 2^-24.
+            return (v * 2f32.powi(24)).round_ties_even() / 2f32.powi(24);
+        }
+        let bits = v.to_bits();
+        let odd = (bits >> 13) & 1;
+        f32::from_bits((bits + 0xfff + odd) & !0x1fff)
+    }
+
+    /// A merge's file: half-float samples that read back exactly, the
+    /// headroom's stops, the `NoiseProfile` and our tag, the body, and
+    /// the source's lens kept.
+    #[test]
+    fn a_merged_file_carries_its_samples_and_tags() {
+        let frame = flat_frame();
+        let data: Vec<f32> = (0..48).map(|i| i as f32 * 0.137 + 1e-6).collect();
+        let image = CameraImage::from_data(4, 4, data.clone()).unwrap();
+        let headroom = 8.0;
+        let tag = crate::merge::Tag {
+            kind: "hdr".into(),
+            frames: vec!["a.dng".into(), "b.dng".into()],
+            reference: 1,
+            denoised: false,
+            headroom_stops: 3.0,
+        };
+        let metadata = RawMetadata {
+            exif: ::rawler::exif::Exif {
+                lens_model: Some("Test 50mm".into()),
+                ..Default::default()
+            },
+            make: "Test".into(),
+            model: "Cam".into(),
+            ..Default::default()
+        };
+        let options = LinearDngOptions {
+            headroom: Some(headroom),
+            metadata: Some(&metadata),
+            ..Default::default()
+        };
+        let mut buf = Cursor::new(Vec::new());
+        write_merged_dng(
+            &mut buf,
+            &frame,
+            &image,
+            [2.0, 1.0, 4.0],
+            &options,
+            &Merged {
+                noise_profile: [3e-6, 2e-9],
+                tag: &tag,
+            },
+        )
+        .unwrap();
+        let bytes = buf.into_inner();
+        let back = RawlerDecoder.decode_bytes(&bytes).unwrap();
+        assert_eq!(back.layout, SensorLayout::Linear);
+        assert_eq!((back.make.as_str(), back.model.as_str()), ("Test", "Cam"));
+        assert_eq!(back.levels.white.values, vec![1.0; 3]);
+        let stored = back.samples.to_f32();
+        // Exact to a half: what was stored, rounded once to 16 bits.
+        for (got, want) in stored.iter().zip(&data) {
+            let half = to_half(want / headroom);
+            assert_eq!(*got, half, "{want}");
+        }
+        assert_eq!(back.dng.baseline_exposure, Some(3.0));
+        let noise = back.dng.noise_profile.expect("a noise profile");
+        assert!((noise.a[0] - 3e-6).abs() < 1e-12 && (noise.b[2] - 2e-9).abs() < 1e-15);
+        assert_eq!(back.dng.merged.as_ref(), Some(&tag));
+        assert_eq!(back.shot.lens_model.as_deref(), Some("Test 50mm"));
+        // A linear DNG of ours that is no merge says neither.
+        let plain = round_trip(Compression::Uncompressed);
+        assert_eq!((plain.dng.noise_profile, plain.dng.merged), (None, None));
     }
 
     #[test]

@@ -1084,6 +1084,8 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
     // A read that was out when a look it names was renamed: it takes the
     // new name, the open frame's too, before the panel is opened on it.
     crate::panel::look_rename::caught_up(st, file);
+    // A merged file's edit held in memory, sidecars being off.
+    crate::panel::merge::held(st);
     let iso = st.from_row[file].iso;
     st.from_row[file] = FromRow { iso, ..from_row };
     // The versions the read found against the cells the row made: a

@@ -89,9 +89,21 @@ pub fn for_make_model(make: &str, model: &str) -> f32 {
 /// The baseline of a decoded raw: its body's ([`for_make_model`]) for
 /// now, whatever its DNG carries. The seam where the file's tag will
 /// join it, by the rule in the module's doc, once its neutral is
-/// measured.
+/// measured. When the file's BaselineExposure is honored here, a
+/// merge's is the reference frame's carried over, and its
+/// [`headroom`] must not be added on top of it a second time.
 pub fn for_frame(frame: &greycard_core::RawFrame) -> f32 {
     for_make_model(&frame.make, &frame.model)
+}
+
+/// The stops a merge of ours stored its samples under the reference
+/// frame's scale, as its own tag says; nothing for any other file. An
+/// exposure on top of the baseline, so the merge opens at the
+/// reference's brightness, and not part of the baseline: the display
+/// white follows the body's alone, and the merge renders as its
+/// reference did with the range over it left for the Highlights.
+pub fn headroom(frame: &greycard_core::RawFrame) -> f32 {
+    frame.dng.merged.as_ref().map_or(0.0, |m| m.headroom_stops)
 }
 
 #[cfg(test)]
@@ -144,5 +156,15 @@ mod tests {
         assert_eq!(for_frame(&frame), BODIES[0].1);
         frame.dng.baseline_exposure = Some(0.9);
         assert_eq!(for_frame(&frame), BODIES[0].1);
+        // A merge of ours says the stops it stored its samples under,
+        // apart from the baseline.
+        assert_eq!(headroom(&frame), 0.0);
+        frame.dng.merged = Some(greycard_core::merge::Tag {
+            kind: "hdr".into(),
+            headroom_stops: 2.5,
+            ..Default::default()
+        });
+        assert_eq!(for_frame(&frame), BODIES[0].1);
+        assert_eq!(headroom(&frame), 2.5);
     }
 }

@@ -525,6 +525,13 @@ pub struct DngTags {
     /// measured in, in sensor samples: the DNG's `ActiveArea`, or the
     /// whole frame when `None`.
     pub opcode_area: Option<Rect>,
+    /// `NoiseProfile`'s first pair, as the noise model of every
+    /// channel in the file's normalized levels: what a linear file
+    /// with no mosaic to measure says of its own noise.
+    pub noise_profile: Option<crate::develop::noise::NoiseModel>,
+    /// What a merge of ours says of itself, from our `DNGPrivateData`;
+    /// none for every other file.
+    pub merged: Option<crate::merge::Tag>,
 }
 
 impl DngTags {

@@ -1487,8 +1487,12 @@ fn cpu_op(
                 unreachable!("a prepare is a raw's")
             };
             st.settings = options.settings.clone();
-            let prepared = prepare_with(frame, &options.settings, options.measure_noise, None)
-                .map_err(failed)?;
+            let prepared = if options.clip {
+                prepare_with(frame, &options.settings, options.measure_noise, None)
+            } else {
+                core_develop::prepare_unclipped(frame, &options.settings, options.measure_noise)
+            }
+            .map_err(failed)?;
             st.meta.white = Some(prepared.white_balance);
             st.meta.radius = prepared.sharpen_radius;
             st.meta.profile = options

@@ -164,6 +164,7 @@ mod tests {
                 crop: (6000, 4000),
                 tag: Orientation::Normal,
                 warp: None,
+                merged: false,
             },
             identity: Identity {
                 make: "Canon".into(),

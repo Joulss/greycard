@@ -524,6 +524,29 @@ pub fn prepare_with(
     measure_noise: bool,
     ca: Option<CaCorrector<'_>>,
 ) -> Result<Prepared> {
+    prepare_inner(frame, settings, measure_noise, ca, true)
+}
+
+/// [`prepare`] with nothing clipped after the gains: what a merge
+/// reads, where a channel the sensor saturated must still read its
+/// own clip after the gains are divided back out, and a red photosite
+/// at half its range under a gain of two is not cut to the green's.
+/// The ceiling is the largest gain, the most any channel can reach.
+pub fn prepare_unclipped(
+    frame: &RawFrame,
+    settings: &DevelopSettings,
+    measure_noise: bool,
+) -> Result<Prepared> {
+    prepare_inner(frame, settings, measure_noise, None, false)
+}
+
+fn prepare_inner(
+    frame: &RawFrame,
+    settings: &DevelopSettings,
+    measure_noise: bool,
+    ca: Option<CaCorrector<'_>>,
+    clip: bool,
+) -> Result<Prepared> {
     let settings = &resolve_settings(frame, settings);
     // At the door, before the levels are normalized and the frame is
     // copied: preparing a 101 MP mosaic this build cannot demosaic
@@ -591,7 +614,11 @@ pub fn prepare_with(
         stats = Some(s);
         ceiling = gains.iter().copied().fold(1.0, f32::max);
     }
-    clip_highlights(&mut samples, ceiling);
+    if clip {
+        clip_highlights(&mut samples, ceiling);
+    } else {
+        ceiling = gains.iter().copied().fold(1.0, f32::max);
+    }
 
     let mut ca_stats = None;
     // A DNG whose warps correct each color has corrected its lateral
@@ -925,6 +952,20 @@ fn balanced_samples(
             Some(pattern)
         }
         SensorLayout::Linear => {
+            // A linear file has no mosaic to measure. A merge of ours is
+            // taken at its `NoiseProfile`, which it measured from its
+            // frames; another maker's (a phone's, a denoised DNG's) says
+            // something of its own pipeline and is left alone.
+            if estimate_noise
+                && frame.dng.merged.is_some()
+                && let Some(model) = frame.dng.noise_profile
+            {
+                noise = Some(noise::NoiseEstimate {
+                    model,
+                    blocks: [0; 3],
+                    bins: [0; 3],
+                });
+            }
             apply_gains_rgb(&mut samples, gains);
             None
         }
