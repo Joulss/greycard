@@ -138,8 +138,8 @@ enum Command {
         reference: PathBuf,
         /// The frame whose transform onto the reference is wanted
         moving: PathBuf,
-        /// What to fit: translation, similarity (shift, rotation and
-        /// one scale) or affine
+        /// What to fit: translation, similarity (shift, rotation, and
+        /// one scale), affine, or homography (a turn of the camera)
         #[arg(long, default_value = "similarity")]
         model: Model,
         /// Stop at this pyramid level rather than at full resolution:
@@ -196,7 +196,8 @@ enum Command {
         on_exists: OnExists,
     },
     /// Merge frames into one: a tripod bracket into a frame of its
-    /// whole range (`hdr`)
+    /// whole range (`hdr`), or a panorama's frames into one wide
+    /// picture (`pano`)
     Merge {
         #[command(subcommand)]
         kind: merge::MergeKind,

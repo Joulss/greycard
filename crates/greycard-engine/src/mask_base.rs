@@ -165,6 +165,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged: false,
+                lens_corrected: false,
             },
             identity: Identity {
                 make: "Canon".into(),

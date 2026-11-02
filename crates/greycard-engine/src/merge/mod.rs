@@ -12,7 +12,10 @@
 //! reference, its CA fit, one frame, and the sums, whatever the count.
 //!
 //! The command line's `greycard merge hdr` and the window's Merge to
-//! HDR both run [`hdr`]; neither has a merge of its own.
+//! HDR both run [`hdr`]; neither has a merge of its own. The panorama
+//! is [`pano`]'s.
+
+pub mod pano;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -75,6 +78,10 @@ pub enum CaFits {
 pub enum Step {
     /// The `index`th frame of `of` (from 1) is being read.
     Frame { index: usize, of: usize },
+    /// A panorama's frames are being placed on its canvas.
+    Placing,
+    /// A panorama's `index`th frame of `of` is being blended in.
+    Blending { index: usize, of: usize },
     /// The file is being written.
     Writing,
 }
@@ -318,8 +325,8 @@ fn walk_frame(
     size: Option<(usize, usize)>,
     models: &mut dyn Models,
 ) -> Result<(Walked, RawFrame, RawMetadata)> {
-    let name = sources.name(i);
     let (frame, metadata) = sources.load(i)?;
+    let name = sources.name(i);
     if let Some((w, h)) = size
         && (frame.width, frame.height) != (w, h)
     {
@@ -329,6 +336,18 @@ fn walk_frame(
             frame.height
         );
     }
+    walk_loaded(&name, frame, metadata, edit, merge, models)
+}
+
+/// [`walk_frame`] of a frame already read.
+fn walk_loaded(
+    name: &str,
+    frame: RawFrame,
+    metadata: RawMetadata,
+    edit: &Edit,
+    merge: MergeInput,
+    models: &mut dyn Models,
+) -> Result<(Walked, RawFrame, RawMetadata)> {
     let frame = Arc::new(frame);
     let input = Input::Raw(frame.clone());
     let purpose = Purpose::MergeInput(merge);
@@ -460,18 +479,7 @@ pub fn hdr_of(
             out.display()
         );
     };
-    // A merge killed before its rename left its part file: gone now,
-    // before this one writes its own.
-    let stale = part_of(&out);
-    if stale.exists() {
-        match std::fs::remove_file(&stale) {
-            Ok(()) => log::info!(
-                "merge: {} left by a merge cut short, removed",
-                stale.display()
-            ),
-            Err(e) => log::warn!("merge: {}: {e}", stale.display()),
-        }
-    }
+    let reserved = Reserved::new(&out)?;
     let mut warnings = Vec::new();
     let mut reports: Vec<Option<FrameReport>> = vec![None; of];
 
@@ -491,6 +499,7 @@ pub fn hdr_of(
                 CaFits::PerFrame => MergeCa::Own,
                 CaFits::Off => MergeCa::Off,
             },
+            lens: Vec::new(),
         },
         None,
         models,
@@ -547,6 +556,7 @@ pub fn hdr_of(
                 reconstruct: k == darkest,
                 denoiser: options.denoiser,
                 ca: ca.clone(),
+                lens: Vec::new(),
             },
             size,
             models,
@@ -679,6 +689,7 @@ pub fn hdr_of(
         reference,
         denoised,
         headroom_stops: headroom.log2(),
+        lens_corrected: false,
     };
     let preview = merge::preview(&image, &r.white_balance, 1024)?;
     let software = concat!("greycard ", env!("CARGO_PKG_VERSION"));
@@ -689,11 +700,11 @@ pub fn hdr_of(
         headroom: Some(headroom),
         ..Default::default()
     };
-    // Written under a hidden name beside the file and renamed at the
-    // end: a merge cut short (a failure, the window quit, the process
-    // killed) leaves no half file under the name, and never touches a
-    // file of that name that was there.
-    let part = part_of(&out);
+    // Written in the reserved folder and renamed at the end: a merge
+    // cut short (a failure, the window quit, the process killed) leaves
+    // no half file under the name, and never touches a file of that
+    // name that was there.
+    let part = reserved.part();
     let written = (|| -> Result<()> {
         let file = std::fs::File::create(&part)?;
         let mut writer = std::io::BufWriter::new(file);
@@ -716,9 +727,9 @@ pub fn hdr_of(
         Ok(())
     })();
     if let Err(e) = written {
-        let _ = std::fs::remove_file(&part);
         return Err(e.context(format!("writing {}", out.display())));
     }
+    drop(reserved);
     seconds.push(("write", t.elapsed().as_secs_f64()));
     seconds.push(("total", started.elapsed().as_secs_f64()));
     Ok(Report {
@@ -736,14 +747,114 @@ pub fn hdr_of(
     })
 }
 
-/// The hidden name a merge to `out` is written under until its rename.
-fn part_of(out: &Path) -> PathBuf {
-    out.with_file_name(format!(
-        ".{}.part",
-        out.file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default()
-    ))
+/// The name `out` held for one merge: a hidden folder beside it,
+/// `.<name>.merging`, and an exclusive lock on the file `lock` in it,
+/// held for the merge's whole life. A second merge to the same name
+/// finds the lock held and is refused, rather than writing over the
+/// first's. A folder whose lock is free was left by a merge cut short
+/// (killed, or the window quit): its files are cleared and the folder
+/// taken over. It holds the file until its rename and a panorama's
+/// spilled frames, and is removed with all in it however the merge
+/// ends, the lock let go first, since Windows removes no open file.
+struct Reserved {
+    dir: PathBuf,
+    lock: Option<std::fs::File>,
+}
+
+/// The lock's file in a reserved folder.
+const LOCK: &str = "lock";
+
+impl Reserved {
+    fn new(out: &Path) -> Result<Self> {
+        let dir = out.with_file_name(format!(
+            ".{}.merging",
+            out.file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default()
+        ));
+        let writing =
+            |e: std::io::Error| anyhow::Error::new(e).context(format!("writing {}", out.display()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(writing(e)),
+        }
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(LOCK))
+            .map_err(writing)?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => bail!(
+                "{} is being written by another merge; if none is running, remove {}",
+                out.display(),
+                dir.display()
+            ),
+            Err(std::fs::TryLockError::Error(e)) => return Err(writing(e)),
+        }
+        let reserved = Self {
+            dir,
+            lock: Some(lock),
+        };
+        if reserved.clear() {
+            log::info!(
+                "merge: cleared {}, left by a merge cut short",
+                reserved.dir.display()
+            );
+        }
+        Ok(reserved)
+    }
+
+    /// Everything in the folder but the lock removed; whether there
+    /// was anything.
+    fn clear(&self) -> bool {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return false;
+        };
+        let mut any = false;
+        for entry in entries.flatten() {
+            if entry.file_name() == LOCK {
+                continue;
+            }
+            any = true;
+            let path = entry.path();
+            let _ = if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+        }
+        any
+    }
+
+    /// Where the file is written until its rename.
+    fn part(&self) -> PathBuf {
+        self.dir.join("merged.part")
+    }
+
+    /// Where a file of the merge's own goes, `name` in the folder.
+    fn join(&self, name: &str) -> PathBuf {
+        self.dir.join(name)
+    }
+}
+
+impl Drop for Reserved {
+    fn drop(&mut self) {
+        self.clear();
+        // The lock's file goes while it is held where the system allows
+        // it (not Windows), so no merge starting now finds it free and
+        // takes over a folder about to go; then it is let go, closed,
+        // and removed where it could not be before.
+        let lock = self.dir.join(LOCK);
+        let _ = std::fs::remove_file(&lock);
+        drop(self.lock.take());
+        let _ = std::fs::remove_file(&lock);
+        // Only an empty folder: a merge that took it over meanwhile
+        // keeps its own.
+        let _ = std::fs::remove_dir(&self.dir);
+    }
 }
 
 /// Whether `a` and `b` name one file: by their canonical paths, the
@@ -822,6 +933,82 @@ fn check_moved(
     f.rgb = register::warp_camera_image(&image, &fit.transform, Edge::Fill(f32::NAN)).data;
     f.mask = merge::clip_mask(&f.rgb, w, h);
     (Some(by), true)
+}
+
+/// The models a merge runs from the command line or the window's merge
+/// thread: the learned denoiser alone, from the user's model store.
+pub struct DenoiseModels {
+    ai: crate::ai::Ai,
+}
+
+impl DenoiseModels {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            ai: crate::ai::Ai::new(),
+        }
+    }
+}
+
+fn no_learned(
+    e: crate::ai::NoDenoiser,
+    model: &'static greycard_ai::Model,
+) -> crate::walk::NoLearned {
+    match e {
+        crate::ai::NoDenoiser::Missing => crate::walk::NoLearned::Missing(model),
+        crate::ai::NoDenoiser::Failed(why) => crate::walk::NoLearned::Failed(why),
+    }
+}
+
+impl Models for DenoiseModels {
+    fn can_denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+    ) -> std::result::Result<(), crate::walk::NoLearned> {
+        self.ai
+            .denoiser_there(model)
+            .map_err(|e| no_learned(e, model))
+    }
+
+    fn denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+        frame: &RawFrame,
+        prepared: &greycard_core::develop::Prepared,
+    ) -> std::result::Result<Vec<f32>, crate::walk::NoLearned> {
+        let denoiser = self.ai.denoiser(model).map_err(|e| no_learned(e, model))?;
+        let (rgb, report) = crate::worker::network(frame, prepared, model, denoiser, None)
+            .map_err(|e| crate::walk::NoLearned::Failed(e.to_string()))?;
+        log::info!("merge: the learned denoiser: {report:?}");
+        Ok(rgb)
+    }
+
+    fn fill(
+        &mut self,
+        _: &greycard_edit::retouch::Patch,
+        _: &greycard_core::develop::retouch::Region,
+        _: &greycard_core::image::WorkingImage,
+    ) -> Option<Vec<f32>> {
+        None
+    }
+
+    fn could_fill_more(
+        &mut self,
+        _: &greycard_edit::retouch::Retouch,
+        _: &greycard_core::image::WorkingImage,
+    ) -> bool {
+        false
+    }
+
+    fn rasters(
+        &mut self,
+        _: crate::stages::Masks,
+        _: &Arc<greycard_core::image::WorkingImage>,
+        _: Option<crate::walk::Patched<'_>>,
+        _: &crate::walk::Meta,
+    ) -> crate::walk::Rasters {
+        crate::walk::Rasters::new()
+    }
 }
 
 /// A file's name, for a report.
@@ -917,11 +1104,43 @@ mod tests {
     #[test]
     fn a_bracket_is_merged_beside_its_first_frame() {
         let (dir, files) = bracket("tags", [0; 3]);
-        // A part file a killed merge left is taken away; nothing else is.
-        let stale = dir.join(".IMG_0-HDR.dng.part");
-        std::fs::write(&stale, b"cut short").unwrap();
+        // A merge running to the name holds its folder's lock: refused,
+        // naming the folder.
+        let held = dir.join(".IMG_0-HDR.dng.merging");
+        std::fs::create_dir(&held).unwrap();
+        let lock = std::fs::File::create(held.join("lock")).unwrap();
+        lock.lock().unwrap();
+        let refused = hdr(
+            &files,
+            &Edit::default(),
+            &Options::default(),
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            refused,
+            format!(
+                "{} is being written by another merge; if none is running, remove {}",
+                dir.join("IMG_0-HDR.dng").display(),
+                held.display()
+            )
+        );
+        assert!(!dir.join("IMG_0-HDR.dng").exists());
+        // One cut short let its lock go with its process: what it left
+        // is cleared, the merge runs, and nothing hidden is left.
+        drop(lock);
+        std::fs::write(held.join("merged.part"), b"cut short").unwrap();
         let report = merged(&files, &Options::default());
-        assert!(!stale.exists());
+        let hidden: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with('.'))
+            .collect();
+        assert!(hidden.is_empty(), "{hidden:?}");
         assert_eq!(report.out, dir.join("IMG_0-HDR.dng"));
         assert_eq!(report.reference, 1);
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
@@ -1506,6 +1725,7 @@ mod tests {
             reconstruct: false,
             denoiser: None,
             ca,
+            lens: Vec::new(),
         };
         let own = || match ca {
             CaFits::Off => MergeCa::Off,

@@ -1,4 +1,5 @@
-//! The HDR merge of a tripod bracket, in camera space.
+//! Merges in camera space: the HDR merge of a tripod bracket here, the
+//! panorama's steps in the submodules.
 //!
 //! Each frame comes in as demosaiced camera RGB in its own sensor
 //! units (nothing clipped after the demosaic, no gains on it), so a
@@ -21,7 +22,16 @@
 //! sample ([`headroom`]); [`noise_profile`] says its noise as a DNG
 //! `NoiseProfile`, and [`Tag`] what it was merged from.
 //!
+//! A panorama's own steps are in the submodules: [`features`] for where
+//! two frames meet, [`pano`] for where each lands on the canvas,
+//! [`seam`] for where they hand over, and [`blend`] for the bands.
+//!
 //! Nothing here is ported from another project.
+
+pub mod blend;
+pub mod features;
+pub mod pano;
+pub mod seam;
 
 use rayon::prelude::*;
 
@@ -680,7 +690,7 @@ pub fn noise_profile(frames: &[(f64, Noise)], headroom: f32) -> [f64; 2] {
 /// `DNGPrivateData`: our name, then a line a fact.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Tag {
-    /// The kind of merge: `hdr`.
+    /// The kind of merge: `hdr` or `pano`.
     pub kind: String,
     /// The frames' file names, in the order given.
     pub frames: Vec<String>,
@@ -693,6 +703,10 @@ pub struct Tag {
     /// by: the develop brightens by as much, so the file opens at the
     /// reference's exposure.
     pub headroom_stops: f32,
+    /// Whether the frames' lens was corrected in the merge (a
+    /// panorama's is): the develop's lens profile stands down on such
+    /// a file, which is in no one frame's geometry.
+    pub lens_corrected: bool,
 }
 
 /// The maker's name `DNGPrivateData` starts with, as the specification
@@ -709,6 +723,9 @@ impl Tag {
             u8::from(self.denoised),
             self.headroom_stops
         );
+        if self.lens_corrected {
+            text.push_str("lens=corrected\n");
+        }
         for f in &self.frames {
             // A name is one line: a line break in it would end the fact.
             text.push_str(&format!("frame={}\n", f.replace(['\n', '\r'], " ")));
@@ -737,6 +754,7 @@ impl Tag {
                         .ok()
                         .filter(|v| v.is_finite() && (0.0..=32.0).contains(v))?;
                 }
+                "lens" => tag.lens_corrected = value == "corrected",
                 "frame" => tag.frames.push(value.to_string()),
                 _ => {}
             }
@@ -965,6 +983,7 @@ pub mod testing {
             reference: 0,
             denoised: false,
             headroom_stops: 1.0,
+            lens_corrected: false,
         };
         let file = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
         crate::dng::write_merged_dng(
@@ -994,6 +1013,68 @@ pub mod testing {
         iso: u16,
         model: &str,
     ) {
+        write_dng_shot(path, samples, width, height, shutter, iso, model, None);
+    }
+
+    /// The light all round a camera at pixel `(x, y)` and channel `c`
+    /// of a frame `width` by `height` turned `yaw` radians about its
+    /// vertical, its focal length `focal` pixels: value noise on the
+    /// sphere of directions, a cell about a hundredth of a radian, and
+    /// a gentle gradient, nothing near the clip. Frames of it are a
+    /// panorama a camera turned exactly about its lens.
+    #[allow(clippy::too_many_arguments)]
+    pub fn turned(
+        x: usize,
+        y: usize,
+        c: usize,
+        width: usize,
+        height: usize,
+        focal: f64,
+        yaw: f64,
+    ) -> f32 {
+        let rx = (x as f64 + 0.5 - width as f64 / 2.0) / focal;
+        let ry = (y as f64 + 0.5 - height as f64 / 2.0) / focal;
+        let (s, co) = yaw.sin_cos();
+        let (dx, dz) = (co * rx + s, -s * rx + co);
+        let azimuth = dx.atan2(dz);
+        let elevation = ry.atan2(dx.hypot(dz));
+        let hash = |i: i64, j: i64, o: u64| {
+            let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+                ^ o.wrapping_mul(0x1656_67B1_9E37_79F9);
+            h ^= h >> 29;
+            h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 32;
+            (h >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let noise = |u: f64, v: f64, o: u64| {
+            let (i, j) = (u.floor(), v.floor());
+            let ease = |t: f64| t * t * (3.0 - 2.0 * t);
+            let (a, b) = (ease(u - i), ease(v - j));
+            let (i, j) = (i as i64, j as i64);
+            let top = hash(i, j, o) * (1.0 - a) + hash(i + 1, j, o) * a;
+            let bottom = hash(i, j + 1, o) * (1.0 - a) + hash(i + 1, j + 1, o) * a;
+            top * (1.0 - b) + bottom * b
+        };
+        let fine = noise(azimuth * 100.0, elevation * 100.0, 1);
+        let coarse = noise(azimuth * 12.0, elevation * 12.0, 2);
+        let tint = [0.55, 1.0, 0.7][c];
+        ((0.05 + 0.25 * fine + 0.2 * coarse) * tint) as f32
+    }
+
+    /// [`write_dng_at`] with the focal length in millimeters the EXIF
+    /// says, if any.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_dng_shot(
+        path: &Path,
+        samples: Vec<u16>,
+        width: usize,
+        height: usize,
+        shutter: (u32, u32),
+        iso: u16,
+        model: &str,
+        focal: Option<u32>,
+    ) {
         let cfa = CFA::new("RGGB");
         let mut camera = Camera::new();
         camera.make = "Synthetic".into();
@@ -1018,6 +1099,7 @@ pub mod testing {
                 iso_speed_ratings: Some(iso),
                 date_time_original: Some("2026:11:01 12:00:00".into()),
                 lens_model: Some("Synthetic 35mm".into()),
+                focal_length: focal.map(|f| Rational::new(f, 1)),
                 ..Exif::default()
             },
             make: "Synthetic".into(),
@@ -1370,8 +1452,16 @@ mod tests {
             reference: 1,
             denoised: true,
             headroom_stops: 2.5,
+            lens_corrected: false,
         };
         let back = Tag::parse(&tag.to_bytes()).unwrap();
+        assert!(!back.lens_corrected);
+        let pano = Tag {
+            kind: "pano".into(),
+            lens_corrected: true,
+            ..back.clone()
+        };
+        assert_eq!(Tag::parse(&pano.to_bytes()), Some(pano));
         assert_eq!(back.frames, ["a.CR3", "b c.CR3"]);
         assert_eq!((back.reference, back.denoised), (1, true));
         assert_eq!(back.headroom_stops, 2.5);

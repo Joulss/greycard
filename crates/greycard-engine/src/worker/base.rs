@@ -423,7 +423,7 @@ fn bayer_only(frame: &RawFrame) -> anyhow::Result<()> {
 
 /// The network's camera RGB of `prepared`: from the disk cache when
 /// it is there, else run and put there.
-pub(super) fn network(
+pub(crate) fn network(
     frame: &RawFrame,
     prepared: &Prepared,
     model: &'static greycard_ai::Model,

@@ -217,6 +217,9 @@ pub(super) fn walk_for_export(
         Skip::Unavailable(why) if *name == LEARNED_DENOISER => Some(*why),
         _ => None,
     });
+    for (name, why) in super::develop::stood_down(&steps) {
+        tracing::info!("{name} stood down: {why}");
+    }
     let learned = match (&walked.meta.stood_in, unavailable) {
         (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
         (Some(NoLearned::Failed(why)), _) => LearnedReport::Failed(why.clone()),

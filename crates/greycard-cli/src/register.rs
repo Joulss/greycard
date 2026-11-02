@@ -68,6 +68,31 @@ pub(crate) fn register(
         ..Options::default()
     };
     let started = std::time::Instant::now();
+    if model == Model::Homography {
+        let fit =
+            register::fit_homography_from(&a, &b, w, h, &options, &register::Homography::IDENTITY)?;
+        let took = started.elapsed();
+        println!("reference     {} ({w}x{h})", reference.display());
+        println!("moving        {}", moving.display());
+        println!(
+            "pyramid       {} levels, {model}, {} iterations in {:.0} ms",
+            fit.levels,
+            fit.iterations,
+            took.as_secs_f64() * 1000.0
+        );
+        for r in fit.transform.m.chunks(3) {
+            println!(
+                "transform     [{:>12.7} {:>12.7} {:>12.7}]",
+                r[0], r[1], r[2]
+            );
+        }
+        println!(
+            "residual      {:.4} over {:.1}% of the frame",
+            fit.residual,
+            fit.overlap * 100.0
+        );
+        return Ok(());
+    }
     let fit = register::fit(&a, &b, w, h, &options)?;
     let took = started.elapsed();
 

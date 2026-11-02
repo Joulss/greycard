@@ -1711,13 +1711,30 @@ fn cpu_op(
             st.meta.bin = *bin;
             st.buf = Buf::Working(Arc::new(greycard_render::reduce::reduce(&image, *bin)));
         }
-        Stage::Lens(corrections) => {
-            let mut image = owned(working(&mut st.buf));
-            for c in corrections {
-                image = greycard_core::develop::lens::correct(&image, c).0;
+        Stage::Lens(corrections) => match &mut st.buf {
+            // In camera space, before the move into the working space:
+            // a merge's frame. The corrections are linear in the
+            // samples and carry no colorimetry, so they run on camera
+            // RGB as they run on the working picture.
+            Buf::Camera { prepared, rgb } => {
+                lens_in_camera(rgb, prepared.width, prepared.height, corrections);
             }
-            st.buf = Buf::Working(Arc::new(image));
-        }
+            Buf::CameraPair {
+                prepared,
+                network,
+                plain,
+            } => {
+                lens_in_camera(network, prepared.width, prepared.height, corrections);
+                lens_in_camera(plain, prepared.width, prepared.height, corrections);
+            }
+            _ => {
+                let mut image = owned(working(&mut st.buf));
+                for c in corrections {
+                    image = greycard_core::develop::lens::correct(&image, c).0;
+                }
+                st.buf = Buf::Working(Arc::new(image));
+            }
+        },
         Stage::Defringe(options) => {
             let mut image = owned(working(&mut st.buf));
             greycard_core::develop::defringe::defringe(&mut image, options);
@@ -1770,6 +1787,24 @@ fn cpu_op(
         Stage::Finish(_) => unreachable!("the finish is the caller's"),
     }
     Ok(())
+}
+
+/// `corrections` made of camera RGB `rgb`, `width` by `height`, in
+/// place.
+fn lens_in_camera(
+    rgb: &mut Vec<f32>,
+    width: usize,
+    height: usize,
+    corrections: &[greycard_core::develop::lens::LensCorrection],
+) {
+    for c in corrections {
+        let image = WorkingImage {
+            width,
+            height,
+            data: std::mem::take(rgb),
+        };
+        *rgb = greycard_core::develop::lens::correct(&image, c).0.data;
+    }
 }
 
 /// A run of stages on the device, from `i` to `end`: the CA and the

@@ -542,3 +542,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§527. A strip cell no narrower than its name](notes/527-a-strip-cell-no-narrower-than-its-name.md) (2026-11-01)
 - [§528. Highlights reaches what a merge keeps](notes/528-highlights-reaches-what-a-merge-keeps.md) (2026-11-01)
 - [§529. The merge's CA fitted once](notes/529-the-merges-ca-fitted-once.md) (2026-11-01)
+- [§530. The panorama](notes/530-the-panorama.md) (2026-11-01)

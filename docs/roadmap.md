@@ -569,13 +569,11 @@ brackets and the panorama to shoot for testing are in
       merge's steps in it for its readers; the Deflate write on more
       threads; the per-frame learned denoiser offered in the action
       and the command line; the measurement on a real tripod bracket
-- [ ] Phase 2, the panorama (§523): the lens correction composed into
-      the one warp, features and RANSAC, a homography model in
-      `register.rs`, the cylinder past 90 degrees, the seam finder for
-      parallax, the multi-band blend accumulated frame by frame, the
-      crop, the merged-file tag the lens stage reads; the per-frame
-      learned denoise on by default. Open: a canvas cap or strips, and
-      the uncropped output
+- [ ] Phase 2's leftovers (§530): a merge in strips so the 100 MP cap
+      can go (a 20-frame handheld set is refused only after its walk);
+      a sphere; the uncropped canvas; the learned denoise on by default
+      once the store offers the tier; the lock check against a merge
+      started in the same microseconds
 - [ ] Phase 3, the handheld bracket (§523): the similarity fit, a
       better resampling kernel in `stack.rs` and `register.rs` (the
       Engine pool's warps item, pulled forward), and reference-frame

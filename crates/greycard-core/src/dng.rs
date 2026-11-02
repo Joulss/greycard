@@ -615,6 +615,7 @@ mod tests {
             reference: 1,
             denoised: false,
             headroom_stops: 3.0,
+            lens_corrected: true,
         };
         let metadata = RawMetadata {
             exif: ::rawler::exif::Exif {

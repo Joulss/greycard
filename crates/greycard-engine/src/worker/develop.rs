@@ -228,6 +228,9 @@ pub(super) fn develop_job(
         &walked,
         std::mem::replace(&mut models.learned, LearnedReport::Off),
     );
+    for (name, why) in stood_down(&steps) {
+        tracing::debug!("{name} stood down: {why}");
+    }
     let fills = std::mem::take(&mut models.fills);
     let mut stages: Stages = walked
         .seconds
@@ -290,6 +293,19 @@ pub(super) fn develop_job(
     h.developed_as = Some((edit.clone(), turn));
     h.left_out = left_out_of(&outcome, Some(h));
     (outcome, picture)
+}
+
+/// What of the edit the frame could not take, by name and why, other
+/// than the learned denoiser, which [`learned_report`] says: a
+/// panorama's lens profile, standing down on a canvas no one frame's
+/// profile fits. For the log.
+pub(super) fn stood_down(
+    steps: &crate::stages::Steps,
+) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    steps.skipped.iter().filter_map(|(name, why)| match why {
+        Skip::Unavailable(why) if *name != LEARNED_DENOISER => Some((*name, *why)),
+        _ => None,
+    })
 }
 
 /// What the learned denoiser did for a walk of `edit`'s `steps`, as
@@ -477,6 +493,31 @@ fn developed_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the frame could not take is read for the log: a panorama's
+    /// lens profile, not the learned denoiser (its own report says it)
+    /// nor what a purpose leaves out.
+    #[test]
+    fn what_stood_down_is_read_for_the_log() {
+        let steps = crate::stages::Steps {
+            steps: Vec::new(),
+            skipped: vec![
+                (LEARNED_DENOISER, Skip::Unavailable("no version for it")),
+                (
+                    "the lens profile",
+                    Skip::Unavailable("a panorama's lens was corrected when it was merged"),
+                ),
+                ("the retouch", Skip::ModelsSee),
+            ],
+        };
+        assert_eq!(
+            stood_down(&steps).collect::<Vec<_>>(),
+            [(
+                "the lens profile",
+                "a panorama's lens was corrected when it was merged"
+            )]
+        );
+    }
 
     /// A fresh base's line names each of its stages with its seconds,
     /// the prepare after the CA, between the parts it had before; a

@@ -959,7 +959,7 @@ fn laplacian_pyramid(base: Vec<f32>, sizes: &[(usize, usize)], channels: usize) 
 /// separably, the taps clamped at the border. The kernel is the
 /// registration pyramid's; this one carries any number of interleaved
 /// channels.
-fn reduce(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<f32> {
+pub(crate) fn reduce(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<f32> {
     const TAPS: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
     let ow = width.div_ceil(2);
     let oh = height.div_ceil(2);
@@ -996,7 +996,7 @@ fn reduce(src: &[f32], width: usize, height: usize, channels: usize) -> Vec<f32>
 /// The matching expansion: samples doubled and filled in with the same
 /// binomial, to exactly the parent's size, so that a level minus the
 /// expansion of the one above it and back again is itself.
-fn expand(
+pub(crate) fn expand(
     src: &[f32],
     width: usize,
     height: usize,

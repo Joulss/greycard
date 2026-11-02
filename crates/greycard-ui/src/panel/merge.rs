@@ -1,7 +1,8 @@
-//! Merge to HDR, in the frame menu beside Stack bursts: the frames
-//! chosen, a tripod bracket, merged by the engine's merge (the one
-//! `greycard merge hdr` runs) into a linear DNG beside the first of
-//! them, `<first>-HDR.dng`.
+//! Merge to HDR and Merge to Panorama, in the frame menu beside Stack
+//! bursts: the frames chosen, a tripod bracket or a panorama's frames,
+//! merged by the engine's merge (the one `greycard merge hdr` or
+//! `greycard merge pano` runs) into a linear DNG beside the first of
+//! them, `<first>-HDR.dng` or `<first>-pano.dng`.
 //!
 //! The merge reads every frame whole, seconds a frame, so it runs on a
 //! thread of its own, saying each frame as it comes in the status line;
@@ -19,7 +20,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use greycard_edit::{Edit, Line, Placement, Sidecar};
-use greycard_engine::merge::{self, Options, Step};
+use greycard_engine::merge::{self, Options, Step, pano};
 use greycard_library::collections::Reference;
 use slint::ComponentHandle;
 
@@ -54,10 +55,18 @@ fn with_queue<R>(f: impl FnOnce(&mut Queue) -> R) -> R {
     QUEUE.with(|q| f(&mut q.borrow_mut()))
 }
 
+/// Which merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Hdr,
+    Pano,
+}
+
 /// One merge asked: the files in the list's order, their edits (the
 /// reference's is the merged file's start), their references for the
 /// stack, and where a sidecar goes.
 struct Job {
+    kind: Kind,
     files: Vec<PathBuf>,
     /// Each frame's edit as the window holds it, where the window has
     /// read its sidecar; none for one read from disk on the thread.
@@ -83,8 +92,9 @@ struct Made {
     edit: Option<Edit>,
 }
 
-/// The frame menu's Merge to HDR: the frames chosen, each file once.
-pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker) {
+/// The frame menu's Merge to HDR or Merge to Panorama: the frames
+/// chosen, each file once.
+pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker, kind: Kind) {
     let mut cells: Vec<usize> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for c in chosen_frames(st) {
@@ -137,6 +147,7 @@ pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker) {
         })
         .flatten();
     let job = Job {
+        kind,
         files,
         edits,
         stack,
@@ -167,7 +178,10 @@ impl Job {
     fn run(self, said: &dyn Fn(String)) -> Done {
         let frames = self.files.len();
         let made = (|| -> anyhow::Result<Made> {
-            let reference = merge::reference_of(&self.files, None)?;
+            let reference = match self.kind {
+                Kind::Hdr => merge::reference_of(&self.files, None)?,
+                Kind::Pano => pano::reference_of(self.files.len(), None)?,
+            };
             let edit = &self.edits[reference].clone().unwrap_or_else(|| {
                 greycard_edit_io::on_disk::load_sidecar_said(
                     &self.files[reference],
@@ -180,47 +194,92 @@ impl Job {
             let progress = |step: Step| {
                 said(match step {
                     Step::Frame { index, of } => format!("merging frame {index} of {of}"),
+                    Step::Placing => "merging: placing the frames".to_string(),
+                    Step::Blending { index, of } => {
+                        format!("merging: blending frame {index} of {of}")
+                    }
                     Step::Writing => "merging: writing the file".to_string(),
                 })
             };
-            let report = merge::hdr(
-                &self.files,
-                edit,
-                &Options::default(),
-                &mut greycard_engine::walk::NoModels,
-                &progress,
-            )?;
-            for w in &report.warnings {
+            let (out, headroom_stops, seconds, warnings, merged_edit) = match self.kind {
+                Kind::Hdr => {
+                    let r = merge::hdr(
+                        &self.files,
+                        edit,
+                        &Options::default(),
+                        &mut greycard_engine::walk::NoModels,
+                        &progress,
+                    )?;
+                    (
+                        r.out,
+                        r.headroom_stops,
+                        r.seconds,
+                        r.warnings,
+                        merge::edit_for_merge(edit),
+                    )
+                }
+                Kind::Pano => {
+                    // The learned denoiser on each frame, when the
+                    // reference's edit has it.
+                    let denoiser = edit.noise.tier().and_then(greycard_ai::denoiser);
+                    let options = pano::Options {
+                        denoiser,
+                        ..pano::Options::default()
+                    };
+                    let r = match denoiser {
+                        Some(_) => pano::pano(
+                            &self.files,
+                            edit,
+                            &options,
+                            &mut merge::DenoiseModels::new(),
+                            &progress,
+                        )?,
+                        None => pano::pano(
+                            &self.files,
+                            edit,
+                            &options,
+                            &mut greycard_engine::walk::NoModels,
+                            &progress,
+                        )?,
+                    };
+                    (
+                        r.out,
+                        r.headroom_stops,
+                        r.seconds,
+                        r.warnings,
+                        pano::edit_for_pano(edit),
+                    )
+                }
+            };
+            for w in &warnings {
                 tracing::warn!("merge: {w}");
             }
             tracing::info!(
-                "merge: {} written from {frames} frames, {:.2} stops of headroom, in {:.1} s",
-                report.out.display(),
-                report.headroom_stops,
-                report
-                    .seconds
+                "merge: {} written from {frames} frames, {headroom_stops:.2} stops of headroom, \
+                 in {:.1} s",
+                out.display(),
+                seconds
                     .iter()
                     .find(|(n, _)| *n == "total")
                     .map_or(0.0, |(_, s)| *s)
             );
-            let merged_edit = merge::edit_for_merge(edit);
             let kept = if self.write_sidecars {
                 let mut sidecar = Sidecar {
                     line: Line::of(merged_edit),
                     ..Sidecar::default()
                 };
-                if let Err(e) = sidecar.save_in(&report.out, self.placement) {
-                    tracing::warn!("merge: {}: the edit not written: {e}", report.out.display());
+                if let Err(e) = sidecar.save_in(&out, self.placement) {
+                    tracing::warn!("merge: {}: the edit not written: {e}", out.display());
                 }
                 None
             } else {
                 Some(merged_edit)
             };
-            let hash = greycard_library::hash_file(&report.out)
-                .map_err(|e| tracing::warn!("merge: {}: {e}", report.out.display()))
+            let hash = greycard_library::hash_file(&out)
+                .map_err(|e| tracing::warn!("merge: {}: {e}", out.display()))
                 .ok();
             Ok(Made {
-                out: report.out,
+                out,
                 hash,
                 edit: kept,
             })
@@ -380,16 +439,23 @@ pub(crate) fn indexed(state: &Rc<Shared>, app: &App) {
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
-    app.on_merge_hdr(move || {
-        let Some(app) = app_weak.upgrade() else {
-            return;
+    for kind in [Kind::Hdr, Kind::Pano] {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app_weak.clone());
+        let asked = move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            ask(&mut state.borrow_mut(), &app, &worker, kind);
+            #[cfg(test)]
+            for done in LANDED.with(|l| std::mem::take(&mut *l.borrow_mut())) {
+                land(&state, &app, &worker, done);
+            }
         };
-        ask(&mut state.borrow_mut(), &app, &worker);
-        #[cfg(test)]
-        for done in LANDED.with(|l| std::mem::take(&mut *l.borrow_mut())) {
-            land(&state, &app, &worker, done);
+        match kind {
+            Kind::Hdr => app.on_merge_hdr(asked),
+            Kind::Pano => app.on_merge_pano(asked),
         }
-    });
+    }
 }
 
 #[cfg(test)]
@@ -576,6 +642,100 @@ mod tests {
         );
         drop(st);
 
+        drop(writer);
+        drop(app);
+        drop(worker);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Two frames of a camera turned about its lens, the second chosen
+    /// first and the reference edited: Merge to Panorama names the file
+    /// after the first in the list, stacks it on top of its sources,
+    /// and gives it the reference's edit less the exposure and the crop.
+    #[test]
+    fn a_panorama_is_merged_named_stacked_and_given_its_reference_edit() {
+        use greycard_core::merge::testing::{mosaic_of, turned, write_dng_shot};
+        let dir = crate::testing::scratch_dir("merge-pano");
+        let root = dir.join("photos");
+        let shoot = root.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let (w, h) = (960, 640);
+        let files: Vec<PathBuf> = [-0.2, 0.2]
+            .iter()
+            .enumerate()
+            .map(|(k, &yaw)| {
+                let p = shoot.join(format!("IMG_{k}.dng"));
+                let samples = mosaic_of(w, h, 1.0, Noise::ASSUMED, 70 + k as u64, |x, y, c| {
+                    turned(x, y, c, w, h, 800.0, yaw)
+                });
+                write_dng_shot(&p, samples, w, h, (1, 100), 100, "Pano", Some(30));
+                p
+            })
+            .collect();
+        // The reference of two is the first.
+        let mut edited = Edit::default();
+        edited.light.exposure = 0.7;
+        edited.demosaic = greycard_edit::Demosaic::Bilinear;
+        edited.geometry.angle = 2.0;
+        Sidecar {
+            line: Line::of(edited),
+            ..Sidecar::default()
+        }
+        .save(&files[0])
+        .unwrap();
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1400.0, 900.0));
+        app.set_grid_open(true);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.library.roots.add(&root).unwrap();
+            let collections = dir.join(crate::collections::DIR);
+            st.views.collections.dir = Some(collections.clone());
+            st.views.stacks =
+                crate::stacks::Store::load(greycard_library::stacks::dir_in(&collections));
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_sent(&state, &app, &worker);
+        assert_eq!(app.get_thumbs().row_count(), 2);
+        let cell = |i: usize| {
+            let st = state.borrow();
+            let f = st.file_by_path(&files[i]).unwrap();
+            st.own_cell(f).unwrap()
+        };
+        let row = |c: usize| crate::panel::browser::row_of(&state.borrow(), c).unwrap() as i32;
+        app.invoke_select(row(cell(0)));
+        state.borrow_mut().views.picked = vec![cell(0), cell(1)];
+        app.invoke_merge_pano();
+        let out = shoot.join("IMG_0-pano.dng");
+        assert_eq!(app.get_status(), "merged 2 frames into IMG_0-pano.dng");
+        assert!(out.is_file());
+        let sidecar = Sidecar::load(&out).unwrap().expect("a sidecar beside it");
+        assert_eq!(sidecar.current.light.exposure, 0.0);
+        assert_eq!(sidecar.current.demosaic, greycard_edit::Demosaic::Bilinear);
+        assert_eq!(sidecar.current.geometry, Default::default());
+        let stacks = state.borrow().views.stacks.list.clone();
+        assert_eq!(stacks.len(), 1);
+        let names: Vec<String> = stacks[0]
+            .refs
+            .iter()
+            .map(|r| {
+                Path::new(&r.hint)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(names, ["IMG_0-pano.dng", "IMG_0.dng", "IMG_1.dng"]);
+        assert_eq!(app.get_thumbs().row_count(), 1);
         drop(writer);
         drop(app);
         drop(worker);

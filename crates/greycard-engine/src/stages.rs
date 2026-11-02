@@ -79,6 +79,11 @@ pub struct MergeInput {
     pub denoiser: Option<&'static greycard_ai::Model>,
     /// Where the frame's CA fit comes from.
     pub ca: MergeCa,
+    /// The lens's corrections run on the frame in camera space, after
+    /// the demosaic: a panorama's vignetting, whose distortion the
+    /// merge composes into its one warp. None for a bracket, whose
+    /// file keeps its lens for the develop.
+    pub lens: Vec<LensCorrection>,
 }
 
 /// Where a merge's frame takes its CA fit from. Frames that differ in
@@ -144,6 +149,10 @@ pub enum InputKind {
         /// A merge of ours: its noise is no one frame's, so the
         /// denoisers stand down on it.
         merged: bool,
+        /// A merge whose lens was corrected in the merge (a
+        /// panorama): it is in no one frame's geometry, and the lens
+        /// profile stands down on it.
+        lens_corrected: bool,
     },
     /// A picture is turned by its tag at decode, so its size is the
     /// size it stands at.
@@ -177,6 +186,7 @@ impl Facts {
                     })
                 }),
                 merged: frame.dng.merged.is_some(),
+                lens_corrected: frame.dng.merged.as_ref().is_some_and(|m| m.lens_corrected),
             },
             identity: Identity {
                 make: frame.make.clone(),
@@ -839,8 +849,25 @@ pub fn stages(
         }
     }
     let (w, h) = facts.binned(bin);
-    // A file that corrects its own lens has the last word on it.
-    let lens = edit.lens.over_file(facts.file_corrects());
+    // A file that corrects its own lens has the last word on it; a
+    // panorama's lens was corrected in its merge, and no one frame's
+    // profile fits its canvas.
+    let mut lens = edit.lens.over_file(facts.file_corrects());
+    if matches!(
+        facts.input,
+        InputKind::Raw {
+            lens_corrected: true,
+            ..
+        }
+    ) && lens.enabled
+        && lens.wants_profile()
+    {
+        lens.profile = false;
+        s.skip(
+            "the lens profile",
+            Skip::Unavailable("a panorama's lens was corrected when it was merged"),
+        );
+    }
     if !lens.is_identity(lenses.is_some()) {
         s.op(Stage::Lens(corrections(w, h, facts, &lens, lenses)));
     }
@@ -971,6 +998,9 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
         s.op(Stage::Demosaic(settings.demosaic, settings.dual_contrast));
     }
     s.op_if(warp.clone().map(Stage::Warp));
+    if !merge.lens.is_empty() {
+        s.op(Stage::Lens(merge.lens.clone()));
+    }
     s
 }
 
@@ -1104,6 +1134,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged: false,
+                lens_corrected: false,
             },
             identity: identity(),
             turn,
@@ -1118,6 +1149,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged: false,
+                lens_corrected: false,
             },
             ..raw(0)
         }
@@ -1429,6 +1461,42 @@ mod tests {
             s.ops()
                 .any(|o| matches!(o, Stage::Lens(c) if c[0].distortion.is_some()))
         );
+
+        // A panorama's lens was corrected when it was merged: no
+        // profile, the file's own or one picked, and it is said; a
+        // correction set by hand still runs.
+        let pano = |mut f: Facts| {
+            if let InputKind::Raw { lens_corrected, .. } = &mut f.input {
+                *lens_corrected = true;
+            }
+            f
+        };
+        for edit in [&edit, &picked] {
+            let s = stages(
+                edit,
+                &Purpose::Viewport,
+                &pano(with_shot(raw(0))),
+                Some(&db),
+            );
+            assert!(!s.ops().any(|o| matches!(o, Stage::Lens(_))), "{s:?}");
+            assert!(
+                s.skipped
+                    .iter()
+                    .any(|(what, _)| *what == "the lens profile")
+            );
+        }
+        let mut by_hand = Edit::default();
+        by_hand.lens.manual = -0.05;
+        let s = stages(
+            &by_hand,
+            &Purpose::Viewport,
+            &pano(with_shot(raw(0))),
+            Some(&db),
+        );
+        assert!(s.ops().any(|o| matches!(
+            o,
+            Stage::Lens(c) if c.len() == 1 && c[0].vignetting.is_none()
+        )));
     }
 
     #[test]
@@ -1500,6 +1568,7 @@ mod tests {
                 reconstruct,
                 denoiser,
                 ca: MergeCa::Own,
+                lens: Vec::new(),
             })
         };
         let edit = everything();
@@ -1549,6 +1618,29 @@ mod tests {
             x.skipped[..],
             [(LEARNED_DENOISER, Skip::Unavailable(_))]
         ));
+
+        // A panorama's frame: the lens's vignetting in camera space,
+        // after the demosaic, before anything leaves camera RGB.
+        let vignetting = LensCorrection {
+            vignetting: Some(greycard_core::develop::lens::Vignetting {
+                k: [-0.4, 0.0, 0.0],
+            }),
+            ..Default::default()
+        };
+        let pano = stages(
+            &edit,
+            &Purpose::MergeInput(MergeInput {
+                white: None,
+                reconstruct: true,
+                denoiser: None,
+                ca: MergeCa::Own,
+                lens: vec![vignetting],
+            }),
+            &raw(0),
+            None,
+        );
+        assert_eq!(names(&pano), ["prepare", "CA", "demosaic", "lens"]);
+        assert!(!pano.ops().any(|o| matches!(o, Stage::IntoWorking { .. })));
     }
 
     /// A merge's frame fits its CA and hands the fit back (the
@@ -1563,6 +1655,7 @@ mod tests {
                 reconstruct: false,
                 denoiser: None,
                 ca,
+                lens: Vec::new(),
             });
             let s = stages(&edit, &purpose, &raw(0), None);
             s.ops().nth(1).cloned()
@@ -1587,6 +1680,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged,
+                lens_corrected: false,
             },
             ..raw(0)
         };

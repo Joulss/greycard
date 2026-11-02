@@ -47,6 +47,7 @@ use self::{
     thumbs::{cached_thumbnail_noting, thumb_lookup},
 };
 
+pub(crate) use self::base::network;
 #[cfg(any(test, feature = "testing"))]
 pub use self::prefetch::{behind_prefetch, claim};
 pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};

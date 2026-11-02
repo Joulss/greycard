@@ -229,6 +229,238 @@ impl Transform {
     }
 }
 
+/// A 2-D projective transform, row-major: `[a, b, c, d, e, f, g, h, i]`
+/// takes `(x, y)` to `((a x + b y + c) / w, (d x + e y + f) / w)` with
+/// `w = g x + h y + i`. Coordinates as [`Transform`]'s.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Homography {
+    pub m: [f64; 9],
+}
+
+impl Default for Homography {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+impl From<Transform> for Homography {
+    fn from(t: Transform) -> Self {
+        let m = t.m;
+        Self {
+            m: [m[0], m[1], m[2], m[3], m[4], m[5], 0.0, 0.0, 1.0],
+        }
+    }
+}
+
+impl Homography {
+    pub const IDENTITY: Self = Self {
+        m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    };
+
+    #[inline]
+    pub fn apply(&self, x: f64, y: f64) -> (f64, f64) {
+        let m = &self.m;
+        let w = m[6] * x + m[7] * y + m[8];
+        (
+            (m[0] * x + m[1] * y + m[2]) / w,
+            (m[3] * x + m[4] * y + m[5]) / w,
+        )
+    }
+
+    /// The denominator at `(x, y)`: positive where the point is in front
+    /// of the plane the transform sees it through.
+    #[inline]
+    pub fn depth(&self, x: f64, y: f64) -> f64 {
+        self.m[6] * x + self.m[7] * y + self.m[8]
+    }
+
+    /// `self` after `inner`: the transform that applies `inner` first.
+    pub fn compose(&self, inner: &Homography) -> Homography {
+        let (a, b) = (&self.m, &inner.m);
+        let mut m = [0.0; 9];
+        for r in 0..3 {
+            for c in 0..3 {
+                m[r * 3 + c] = (0..3).map(|k| a[r * 3 + k] * b[k * 3 + c]).sum();
+            }
+        }
+        Homography { m }.normalized()
+    }
+
+    /// The same transform scaled so its last entry is one, when it is
+    /// not near zero.
+    pub fn normalized(self) -> Homography {
+        let s = self.m[8];
+        if s.abs() > 1e-12 && s.is_finite() {
+            Homography {
+                m: self.m.map(|v| v / s),
+            }
+        } else {
+            self
+        }
+    }
+
+    pub fn determinant(&self) -> f64 {
+        let [a, b, c, d, e, f, g, h, i] = self.m;
+        a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    }
+
+    /// `None` when singular.
+    pub fn inverse(&self) -> Option<Homography> {
+        let det = self.determinant();
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        let [a, b, c, d, e, f, g, h, i] = self.m;
+        let r = [
+            e * i - f * h,
+            c * h - b * i,
+            b * f - c * e,
+            f * g - d * i,
+            a * i - c * g,
+            c * d - a * f,
+            d * h - e * g,
+            b * g - a * h,
+            a * e - b * d,
+        ];
+        Some(
+            Homography {
+                m: r.map(|v| v / det),
+            }
+            .normalized(),
+        )
+    }
+
+    /// The same geometric transform in coordinates scaled by `factor`.
+    pub fn at_scale(&self, factor: f64) -> Homography {
+        let mut m = self.m;
+        m[2] *= factor;
+        m[5] *= factor;
+        m[6] /= factor;
+        m[7] /= factor;
+        Homography { m }
+    }
+
+    /// The same transform in coordinates shifted by `by`: what a
+    /// transform between pixel indices is between pixel centers at
+    /// halves, for `by` one half.
+    pub fn shifted(&self, by: f64) -> Homography {
+        let to = Homography {
+            m: [1.0, 0.0, by, 0.0, 1.0, by, 0.0, 0.0, 1.0],
+        };
+        let from = Homography {
+            m: [1.0, 0.0, -by, 0.0, 1.0, -by, 0.0, 0.0, 1.0],
+        };
+        to.compose(self).compose(&from)
+    }
+
+    /// The largest distance this transform and `other` put between the
+    /// same point, over the corners of a `width`×`height` frame.
+    pub fn corner_distance(&self, other: &Homography, width: usize, height: usize) -> f64 {
+        let (w, h) = ((width.max(1) - 1) as f64, (height.max(1) - 1) as f64);
+        [[0.0, 0.0], [w, 0.0], [0.0, h], [w, h]]
+            .iter()
+            .map(|p| {
+                let (ax, ay) = self.apply(p[0], p[1]);
+                let (bx, by) = other.apply(p[0], p[1]);
+                (ax - bx).hypot(ay - by)
+            })
+            .fold(0.0, f64::max)
+    }
+}
+
+/// What the fit needs of a transform, an affine's or a homography's.
+trait Warp: Copy + Send + Sync {
+    fn compose(&self, inner: &Self) -> Self;
+    fn inverse(&self) -> Option<Self>;
+    fn at_scale(&self, factor: f64) -> Self;
+    fn corner_distance(&self, other: &Self, width: usize, height: usize) -> f64;
+    /// The scaling and shift into a level's normalized coordinates.
+    fn normalizer(scale: f64, cx: f64, cy: f64) -> Self;
+    /// The incremental warp a parameter step stands for.
+    fn increment(model: Model, dp: &[f64; 8]) -> Self;
+    /// `f(i, x, y)` for the `n` pixels of row `y` from column `x0`, at
+    /// each one's warped place.
+    fn row(&self, y: f64, x0: usize, n: usize, f: impl FnMut(usize, f64, f64));
+}
+
+impl Warp for Transform {
+    fn compose(&self, inner: &Self) -> Self {
+        Transform::compose(self, inner)
+    }
+    fn inverse(&self) -> Option<Self> {
+        Transform::inverse(self)
+    }
+    fn at_scale(&self, factor: f64) -> Self {
+        Transform::at_scale(self, factor)
+    }
+    fn corner_distance(&self, other: &Self, width: usize, height: usize) -> f64 {
+        Transform::corner_distance(self, other, width, height)
+    }
+    fn normalizer(scale: f64, cx: f64, cy: f64) -> Self {
+        Transform {
+            m: [scale, 0.0, cx, 0.0, scale, cy],
+        }
+    }
+    fn increment(model: Model, dp: &[f64; 8]) -> Self {
+        increment(model, dp)
+    }
+    #[inline]
+    fn row(&self, y: f64, x0: usize, n: usize, mut f: impl FnMut(usize, f64, f64)) {
+        // Stepped along the row rather than applied at each pixel.
+        let (mut u, mut v) = self.apply(x0 as f64, y);
+        for i in 0..n {
+            f(i, u, v);
+            u += self.m[0];
+            v += self.m[3];
+        }
+    }
+}
+
+impl Warp for Homography {
+    fn compose(&self, inner: &Self) -> Self {
+        Homography::compose(self, inner)
+    }
+    fn inverse(&self) -> Option<Self> {
+        Homography::inverse(self)
+    }
+    fn at_scale(&self, factor: f64) -> Self {
+        Homography::at_scale(self, factor)
+    }
+    fn corner_distance(&self, other: &Self, width: usize, height: usize) -> f64 {
+        Homography::corner_distance(self, other, width, height)
+    }
+    fn normalizer(scale: f64, cx: f64, cy: f64) -> Self {
+        Homography {
+            m: [scale, 0.0, cx, 0.0, scale, cy, 0.0, 0.0, 1.0],
+        }
+    }
+    fn increment(model: Model, dp: &[f64; 8]) -> Self {
+        match model {
+            Model::Homography => Homography {
+                m: [
+                    1.0 + dp[0],
+                    dp[2],
+                    dp[4],
+                    dp[1],
+                    1.0 + dp[3],
+                    dp[5],
+                    dp[6],
+                    dp[7],
+                    1.0,
+                ],
+            },
+            other => increment(other, dp).into(),
+        }
+    }
+    #[inline]
+    fn row(&self, y: f64, x0: usize, n: usize, mut f: impl FnMut(usize, f64, f64)) {
+        for i in 0..n {
+            let (u, v) = self.apply((x0 + i) as f64, y);
+            f(i, u, v);
+        }
+    }
+}
+
 /// Which transform is fitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Model {
@@ -240,6 +472,11 @@ pub enum Model {
     /// Six parameters: shift, rotation, two scales and a shear. What a
     /// distant scene's small viewpoint change looks like.
     Affine,
+    /// Eight: the affine's six and the two of a perspective, a plane
+    /// seen from another direction. What a camera turned about its lens
+    /// does to a frame, and the keystone an affine cannot take out.
+    /// Fitted by [`fit_homography_from`] onto a [`Homography`].
+    Homography,
 }
 
 impl Model {
@@ -248,6 +485,7 @@ impl Model {
             Model::Translation => 2,
             Model::Similarity => 4,
             Model::Affine => 6,
+            Model::Homography => 8,
         }
     }
 
@@ -256,6 +494,7 @@ impl Model {
             Model::Translation => "translation",
             Model::Similarity => "similarity",
             Model::Affine => "affine",
+            Model::Homography => "homography",
         }
     }
 }
@@ -274,8 +513,9 @@ impl std::str::FromStr for Model {
             "translation" => Ok(Model::Translation),
             "similarity" => Ok(Model::Similarity),
             "affine" => Ok(Model::Affine),
+            "homography" => Ok(Model::Homography),
             other => Err(format!(
-                "want translation, similarity or affine, not {other}"
+                "want translation, similarity, affine, or homography, not {other}"
             )),
         }
     }
@@ -340,10 +580,10 @@ impl Default for Options {
 
 /// What a fit came to.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Fit {
+pub struct Fit<T = Transform> {
     /// Reference coordinates to moving coordinates: the moving frame
     /// sampled at `transform.apply(x, y)` is the reference's `(x, y)`.
-    pub transform: Transform,
+    pub transform: T,
     /// Root-mean-square difference over the overlap, in the normalized
     /// log units the fit runs on: 0 for an exact match, about 1.4 for
     /// frames with nothing in common.
@@ -393,7 +633,7 @@ pub struct Fit {
 /// two with a decade of room either side.
 pub const ALIGNED_RESIDUAL: f32 = 0.05;
 
-impl Fit {
+impl<T> Fit<T> {
     /// Whether to use this transform.
     ///
     /// The one thing a caller has to check: the residual is under
@@ -467,6 +707,37 @@ pub fn fit_from(
     options: &Options,
     initial: &Transform,
 ) -> Result<Fit> {
+    if options.model == Model::Homography {
+        return Err(Error::Unsupported(
+            "a homography is fitted by fit_homography_from".to_string(),
+        ));
+    }
+    fit_warp(reference, moving, width, height, options, initial)
+}
+
+/// [`fit_from`] onto a [`Homography`], for frames a turn of the camera
+/// put a keystone between: a panorama's neighbors, started from what
+/// their features said. `options.model` may be any; the homography's
+/// eight parameters are fitted only under [`Model::Homography`].
+pub fn fit_homography_from(
+    reference: &[f32],
+    moving: &[f32],
+    width: usize,
+    height: usize,
+    options: &Options,
+    initial: &Homography,
+) -> Result<Fit<Homography>> {
+    fit_warp(reference, moving, width, height, options, initial)
+}
+
+fn fit_warp<W: Warp + std::fmt::Debug>(
+    reference: &[f32],
+    moving: &[f32],
+    width: usize,
+    height: usize,
+    options: &Options,
+    initial: &W,
+) -> Result<Fit<W>> {
     if reference.len() != width * height || moving.len() != width * height {
         return Err(Error::Unsupported(format!(
             "registration wants two {width}x{height} planes, got {} and {}",
@@ -481,8 +752,7 @@ pub fn fit_from(
     }
     if initial.inverse().is_none() {
         return Err(Error::NoFit(format!(
-            "the transform to start from is singular: {:?}",
-            initial.m
+            "the transform to start from is singular: {initial:?}"
         )));
     }
 
@@ -784,8 +1054,8 @@ fn standardized(src: &Plane, mean: f64, deviation: f64) -> Plane {
 }
 
 /// One pyramid level's worth of iteration.
-struct LevelResult {
-    transform: Transform,
+struct LevelResult<W> {
+    transform: W,
     iterations: usize,
     converged: bool,
 }
@@ -803,11 +1073,11 @@ struct LevelResult {
 #[derive(Clone, Copy)]
 struct Accumulated {
     /// The Hessian's upper triangle, packed by rows.
-    hessian: [f64; 21],
+    hessian: [f64; PACKED],
     /// The steepest-descent parameter updates.
-    b: [f64; 6],
+    b: [f64; MOST],
     /// The steepest-descent images' own sums.
-    sd_sum: [f64; 6],
+    sd_sum: [f64; MOST],
     error_sum: f64,
     sse: f64,
     count: u64,
@@ -815,9 +1085,9 @@ struct Accumulated {
 
 impl Accumulated {
     const ZERO: Self = Self {
-        hessian: [0.0; 21],
-        b: [0.0; 6],
-        sd_sum: [0.0; 6],
+        hessian: [0.0; PACKED],
+        b: [0.0; MOST],
+        sd_sum: [0.0; MOST],
         error_sum: 0.0,
         sse: 0.0,
         count: 0,
@@ -844,7 +1114,7 @@ impl Accumulated {
     /// Matrix code: the indices are the mathematics, and the packed
     /// triangle's `k` walks with them.
     #[allow(clippy::needless_range_loop)]
-    fn system(&self, n: usize) -> ([f64; 21], [f64; 6], f64) {
+    fn system(&self, n: usize) -> ([f64; PACKED], [f64; MOST], f64) {
         let count = self.count.max(1) as f64;
         let mut hessian = self.hessian;
         let mut b = self.b;
@@ -860,6 +1130,11 @@ impl Accumulated {
         (hessian, b, variance.max(0.0))
     }
 }
+
+/// The most parameters a model has: the homography's.
+const MOST: usize = 8;
+/// The packed upper triangle of a Hessian of that many.
+const PACKED: usize = MOST * (MOST + 1) / 2;
 
 /// What a fit scored: the error and how much of the frame it was over.
 struct Score {
@@ -894,7 +1169,7 @@ fn sample(plane: &Plane, x: f64, y: f64) -> Option<f32> {
 /// that every column is of the same order and the Hessian stays
 /// conditioned.
 #[inline]
-fn steepest_descent(model: Model, gx: f64, gy: f64, x: f64, y: f64, sd: &mut [f64; 6]) {
+fn steepest_descent(model: Model, gx: f64, gy: f64, x: f64, y: f64, sd: &mut [f64; MOST]) {
     match model {
         Model::Translation => {
             sd[0] = gx;
@@ -914,12 +1189,24 @@ fn steepest_descent(model: Model, gx: f64, gy: f64, x: f64, y: f64, sd: &mut [f6
             sd[4] = gx;
             sd[5] = gy;
         }
+        Model::Homography => {
+            sd[0] = gx * x;
+            sd[1] = gy * x;
+            sd[2] = gx * y;
+            sd[3] = gy * y;
+            sd[4] = gx;
+            sd[5] = gy;
+            let r = gx * x + gy * y;
+            sd[6] = -x * r;
+            sd[7] = -y * r;
+        }
     }
 }
 
 /// The incremental warp a parameter step stands for, in the centered
-/// and scaled coordinates the Jacobian was taken in.
-fn increment(model: Model, dp: &[f64; 6]) -> Transform {
+/// and scaled coordinates the Jacobian was taken in. A homography's
+/// step is [`Homography`]'s own; here it is taken as its affine part.
+fn increment(model: Model, dp: &[f64; MOST]) -> Transform {
     match model {
         Model::Translation => Transform {
             m: [1.0, 0.0, dp[0], 0.0, 1.0, dp[1]],
@@ -927,7 +1214,7 @@ fn increment(model: Model, dp: &[f64; 6]) -> Transform {
         Model::Similarity => Transform {
             m: [1.0 + dp[0], -dp[1], dp[2], dp[1], 1.0 + dp[0], dp[3]],
         },
-        Model::Affine => Transform {
+        Model::Affine | Model::Homography => Transform {
             m: [1.0 + dp[0], dp[2], dp[4], dp[1], 1.0 + dp[3], dp[5]],
         },
     }
@@ -955,7 +1242,7 @@ fn increment(model: Model, dp: &[f64; 6]) -> Transform {
 /// them here, and with the allocation in play it wandered past a
 /// second. The template's neighbors are in cache already, because the
 /// pass reads the template anyway; a plane six times its size is not.
-fn accumulate(template: &Plane, moving: &Plane, t: &Transform, model: Model) -> Accumulated {
+fn accumulate<W: Warp>(template: &Plane, moving: &Plane, t: &W, model: Model) -> Accumulated {
     let (w, h) = (template.width, template.height);
     let (cx, cy) = center(template);
     let scale = norm_scale(template);
@@ -969,10 +1256,10 @@ fn accumulate(template: &Plane, moving: &Plane, t: &Transform, model: Model) -> 
         .into_par_iter()
         .map(|y| {
             let mut acc = Accumulated::ZERO;
-            let (mut u, mut v) = t.apply(1.0, y as f64);
-            let mut sd = [0.0f64; 6];
+            let mut sd = [0.0f64; MOST];
             let yn = (y as f64 - cy) / scale;
-            for x in 1..w - 1 {
+            t.row(y as f64, 1, w - 2, |at, u, v| {
+                let x = at + 1;
                 if let Some(warped) = sample(moving, u, v) {
                     let row = y * w + x;
                     let e = (warped - template.data[row]) as f64;
@@ -994,9 +1281,7 @@ fn accumulate(template: &Plane, moving: &Plane, t: &Transform, model: Model) -> 
                     acc.sse += e * e;
                     acc.count += 1;
                 }
-                u += t.m[0];
-                v += t.m[3];
-            }
+            });
             acc
         })
         .collect();
@@ -1010,25 +1295,22 @@ fn accumulate(template: &Plane, moving: &Plane, t: &Transform, model: Model) -> 
 }
 
 /// The error alone, without the Hessian: what a fit is judged by.
-fn score(template: &Plane, moving: &Plane, t: &Transform) -> Score {
+fn score<W: Warp>(template: &Plane, moving: &Plane, t: &W) -> Score {
     let (w, h) = (template.width, template.height);
     let rows: Vec<(f64, f64, u64)> = (1..h - 1)
         .into_par_iter()
         .map(|y| {
-            let (mut u, mut v) = t.apply(1.0, y as f64);
             let mut sse = 0.0;
             let mut error_sum = 0.0;
             let mut count = 0;
-            for x in 1..w - 1 {
+            t.row(y as f64, 1, w - 2, |i, u, v| {
                 if let Some(warped) = sample(moving, u, v) {
-                    let e = (warped - template.data[y * w + x]) as f64;
+                    let e = (warped - template.data[y * w + i + 1]) as f64;
                     error_sum += e;
                     sse += e * e;
                     count += 1;
                 }
-                u += t.m[0];
-                v += t.m[3];
-            }
+            });
             (sse, error_sum, count)
         })
         .collect();
@@ -1059,12 +1341,15 @@ fn norm_scale(plane: &Plane) -> f64 {
 /// Gauss-Newton on one level, inverse-compositionally: the step is
 /// found in the template's frame and composed onto the running
 /// transform as its inverse.
-fn run_level(template: &Plane, moving: &Plane, start: Transform, options: &Options) -> LevelResult {
+fn run_level<W: Warp>(
+    template: &Plane,
+    moving: &Plane,
+    start: W,
+    options: &Options,
+) -> LevelResult<W> {
     let (cx, cy) = center(template);
     let scale = norm_scale(template);
-    let from_normalized = Transform {
-        m: [scale, 0.0, cx, 0.0, scale, cy],
-    };
+    let from_normalized = W::normalizer(scale, cx, cy);
     let to_normalized = from_normalized
         .inverse()
         .expect("the centering map is invertible");
@@ -1106,7 +1391,7 @@ fn run_level(template: &Plane, moving: &Plane, start: Transform, options: &Optio
             converged = true;
             break;
         };
-        let step = increment(options.model, &dp);
+        let step = W::increment(options.model, &dp);
         let Some(back) = from_normalized
             .compose(&step)
             .compose(&to_normalized)
@@ -1140,8 +1425,8 @@ fn run_level(template: &Plane, moving: &Plane, start: Transform, options: &Optio
 // Matrix code: the indices are the mathematics, and naming them away
 // would only hide it.
 #[allow(clippy::needless_range_loop)]
-fn solve(packed: &[f64; 21], b: &[f64; 6], n: usize) -> Option<[f64; 6]> {
-    let mut h = [[0.0f64; 6]; 6];
+fn solve(packed: &[f64; PACKED], b: &[f64; MOST], n: usize) -> Option<[f64; MOST]> {
+    let mut h = [[0.0f64; MOST]; MOST];
     let mut k = 0;
     let mut largest = 0.0f64;
     for i in 0..n {
@@ -1156,7 +1441,7 @@ fn solve(packed: &[f64; 21], b: &[f64; 6], n: usize) -> Option<[f64; 6]> {
         return None;
     }
     // Cholesky, in place in the lower triangle.
-    let mut l = [[0.0f64; 6]; 6];
+    let mut l = [[0.0f64; MOST]; MOST];
     for i in 0..n {
         for j in 0..=i {
             let mut sum = h[i][j];
@@ -1173,7 +1458,7 @@ fn solve(packed: &[f64; 21], b: &[f64; 6], n: usize) -> Option<[f64; 6]> {
             }
         }
     }
-    let mut y = [0.0f64; 6];
+    let mut y = [0.0f64; MOST];
     for i in 0..n {
         let mut sum = b[i];
         for p in 0..i {
@@ -1181,7 +1466,7 @@ fn solve(packed: &[f64; 21], b: &[f64; 6], n: usize) -> Option<[f64; 6]> {
         }
         y[i] = sum / l[i][i];
     }
-    let mut x = [0.0f64; 6];
+    let mut x = [0.0f64; MOST];
     for i in (0..n).rev() {
         let mut sum = y[i];
         for p in i + 1..n {
@@ -1486,6 +1771,71 @@ mod tests {
             .inverse()
             .is_none()
         );
+    }
+
+    /// A keystone (a turn of the camera about the lens, seen on a
+    /// plane) with a shift: the homography fit takes it out to a few
+    /// hundredths of a pixel from the features' rough start; the affine
+    /// fit, from the same start, cannot.
+    #[test]
+    fn a_homography_takes_out_a_keystone() {
+        let (w, h) = (512usize, 384usize);
+        let about = middle(w, h);
+        let keystone = Homography {
+            m: [1.0, 0.01, 0.0, -0.004, 1.0, 0.0, 1.2e-4, -6e-5, 1.0],
+        };
+        let truth = Homography::from(Transform::translation(about[0] + 6.5, about[1] - 3.25))
+            .compose(&keystone)
+            .compose(&Homography::from(Transform::translation(
+                -about[0], -about[1],
+            )));
+        let r = reference(w, h);
+        let back = truth.inverse().unwrap();
+        let m = plane_of(w, h, |x, y| {
+            let (u, v) = back.apply(x, y);
+            texture(u, v)
+        });
+        // What features would start from: a pixel out at the corners.
+        let start = Homography::from(Transform::translation(7.2, -2.6))
+            .compose(&truth.compose(&Homography::from(Transform::translation(-7.0, 3.0))));
+        let homography = Options {
+            model: Model::Homography,
+            max_levels: 3,
+            ..Options::default()
+        };
+        let got = fit_homography_from(&r, &m, w, h, &homography, &start).expect("a fit");
+        let e = truth.corner_distance(&got.transform, w, h);
+        assert!(e < 0.05, "{e} px, residual {}", got.residual);
+        assert!(got.residual < 0.01, "residual {}", got.residual);
+
+        // The affine, from the shift: half a pixel and more off at a
+        // corner, however it is fitted.
+        let affine = Options {
+            model: Model::Affine,
+            ..Options::default()
+        };
+        let got =
+            fit_from(&r, &m, w, h, &affine, &Transform::translation(6.5, -3.25)).expect("a fit");
+        let e = truth.corner_distance(&Homography::from(got.transform), w, h);
+        assert!(e > 0.5, "{e} px");
+        // And the affine entry point refuses the homography's model.
+        assert!(fit(&r, &m, w, h, &homography).is_err());
+    }
+
+    #[test]
+    fn the_homography_composes_inverts_and_scales() {
+        let a = Homography {
+            m: [1.1, 0.05, 3.0, -0.02, 0.95, -4.0, 1e-4, 2e-4, 1.0],
+        };
+        let round = a.compose(&a.inverse().unwrap());
+        assert!(round.corner_distance(&Homography::IDENTITY, 100, 100) < 1e-9);
+        let (x, y) = (30.0, 17.0);
+        let (ax, ay) = a.apply(x, y);
+        let (hx, hy) = a.at_scale(0.5).apply(x / 2.0, y / 2.0);
+        assert!((hx - ax / 2.0).abs() < 1e-9 && (hy - ay / 2.0).abs() < 1e-9);
+        // Between pixel centers at halves and indices.
+        let (sx, sy) = a.shifted(-0.5).apply(x - 0.5, y - 0.5);
+        assert!((sx - (ax - 0.5)).abs() < 1e-9 && (sy - (ay - 0.5)).abs() < 1e-9);
     }
 
     #[test]

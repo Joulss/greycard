@@ -91,6 +91,40 @@ impl Distortion {
         }
     }
 
+    /// [`Distortion::distorted`] in f64: for an inverse that must
+    /// settle finer than an f32 holds at a full frame's coordinates
+    /// (one step at 6000 is half a thousandth of a pixel).
+    pub fn distorted_f64(&self, x: f64, y: f64) -> (f64, f64) {
+        let r2 = x * x + y * y;
+        let f = |v: f32| f64::from(v);
+        match *self {
+            Distortion::Poly3 { k1 } => {
+                let g = 1.0 - f(k1) + f(k1) * r2;
+                (x * g, y * g)
+            }
+            Distortion::Poly5 { k1, k2 } => {
+                let g = 1.0 + f(k1) * r2 + f(k2) * r2 * r2;
+                (x * g, y * g)
+            }
+            Distortion::Ptlens { a, b, c } => {
+                let (a, b, c) = (f(a), f(b), f(c));
+                let r = r2.sqrt();
+                let g = a * r2 * r + b * r2 + c * r + 1.0 - a - b - c;
+                (x * g, y * g)
+            }
+            Distortion::Acm { k, focal_scale } => {
+                let (k, s) = (k.map(f), f(focal_scale));
+                let (xf, yf) = (x * s, y * s);
+                let r2 = xf * xf + yf * yf;
+                let radial = 1.0 + k[0] * r2 + k[1] * r2 * r2 + k[2] * r2 * r2 * r2;
+                let tangent = 2.0 * (k[3] * yf + k[4] * xf);
+                let xd = xf * radial + xf * tangent + k[4] * r2;
+                let yd = yf * radial + yf * tangent + k[3] * r2;
+                (xd / s, yd / s)
+            }
+        }
+    }
+
     /// Whether the model moves nothing.
     pub fn is_identity(&self) -> bool {
         match *self {
@@ -310,6 +344,21 @@ impl LensCorrection {
         (cx + u / k * half, cy + v / k * half)
     }
 
+    /// [`LensCorrection::source_of`] for the green, in f64: the
+    /// distortion alone, since the lateral aberration leaves the green
+    /// where it is.
+    #[inline]
+    pub fn green_source_of_f64(&self, x: f64, y: f64, w: f64, h: f64, scale: f64) -> (f64, f64) {
+        let half = w.min(h) / 2.0;
+        let (cx, cy) = (w / 2.0, h / 2.0);
+        let k = f64::from(self.radius_scale);
+        let (mut u, mut v) = ((x - cx) / half / scale * k, (y - cy) / half / scale * k);
+        if let Some(d) = &self.distortion {
+            (u, v) = d.distorted_f64(u, v);
+        }
+        (cx + u / k * half, cy + v / k * half)
+    }
+
     /// The vignetting gain at a source position.
     #[inline]
     pub fn gain_at(&self, x: f32, y: f32, w: f32, h: f32) -> f32 {
@@ -495,6 +544,44 @@ pub fn sample_cubic(image: &WorkingImage, channel: usize, x: f32, y: f32) -> f32
 
 #[cfg(test)]
 mod tests {
+    /// The green's source in f64 is the f32 one's, to what an f32
+    /// holds, for every model, the CA aside.
+    #[test]
+    fn the_green_in_f64_is_the_green_in_f32() {
+        let models = [
+            Distortion::Poly3 { k1: -0.03 },
+            Distortion::Poly5 {
+                k1: 0.02,
+                k2: -0.004,
+            },
+            Distortion::Ptlens {
+                a: 0.002,
+                b: -0.009,
+                c: 0.014,
+            },
+            Distortion::Acm {
+                k: [-0.1, 0.02, 0.0, 0.001, -0.002],
+                focal_scale: 0.7,
+            },
+        ];
+        for d in models {
+            let c = LensCorrection {
+                distortion: Some(d),
+                chromatic_aberration: Some(ChromaticAberration {
+                    red: [1.001, 0.0, 0.0],
+                    blue: [0.999, 0.0, 0.0],
+                }),
+                radius_scale: 1.1,
+                ..Default::default()
+            };
+            for &(x, y) in &[(0.0, 0.0), (3000.0, 2000.0), (5999.0, 17.0), (40.0, 3990.0)] {
+                let a = c.source_of(1, x as f32, y as f32, 6000.0, 4000.0, 1.0);
+                let b = c.green_source_of_f64(x, y, 6000.0, 4000.0, 1.0);
+                let e = (f64::from(a.0) - b.0).hypot(f64::from(a.1) - b.1);
+                assert!(e < 3e-3, "{d:?} at {x}, {y}: {a:?} against {b:?}");
+            }
+        }
+    }
 
     /// A correction turned with its picture moves each point of the
     /// turned picture where the unturned one moves the same point of
