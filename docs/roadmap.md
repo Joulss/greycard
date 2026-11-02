@@ -15,6 +15,13 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] A brush added to a Luminance or Color mask with its own row on
+      Subtract or Erase paints nothing, since those act on the brush's
+      own paint and a new brush has none; the tester read it as the
+      brush failing until a restart put the row back to Add
+      (discussion 59, 2026-11-02). A first Subtract or Erase stroke on
+      a fresh brush in a mask with shapes should cut the brush out of
+      the mask; the guide says what the row does
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
       them in 1.5 to 2.6 s from a warm cache. The window says
@@ -1051,6 +1058,12 @@ clears or a tester asks for it.
 - [ ] A Midtones slider in Light between Highlights and Shadows, so
       the middle lifts without the curve (discussion 59, 2026-11-01);
       weighed before and left out as unneeded, not settled
+- [ ] The FOLDERS section's fold kept per view, open in the Library
+      and closed in the Loupe if that is how it was left (discussion
+      59, 2026-11-02)
+- [ ] Reset an edit from the Library: the grid's selection back to
+      Original, one history step a frame; the Loupe has it as the
+      history's bottom row (discussion 59, 2026-11-02)
 
 ## Blocked
 
