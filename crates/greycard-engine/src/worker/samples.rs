@@ -1796,8 +1796,11 @@ fn an_export_s_sky_is_the_viewport_s() {
     let elsewhere = cold_dir.join("models");
     std::fs::create_dir_all(&elsewhere).unwrap();
     for entry in std::fs::read_dir(&models).unwrap().flatten() {
+        let there = elsewhere.join(entry.file_name());
         #[cfg(unix)]
-        std::os::unix::fs::symlink(entry.path(), elsewhere.join(entry.file_name())).unwrap();
+        std::os::unix::fs::symlink(entry.path(), there).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(entry.path(), there).unwrap();
     }
     let mut cold = Ai::for_test_on_disk(greycard_ai::Store::at(&elsewhere));
     cold.forget(Some(sample.clone()));
