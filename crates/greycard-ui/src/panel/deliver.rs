@@ -1,4 +1,15 @@
-use crate::export_name;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use greycard_edit::mask::Shape;
+use greycard_edit::retouch::Method as RetouchMethod;
+use greycard_edit::{Edit, WhiteBalance};
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::panel::assets::{
     another_lens_frame, offer_lenses_once, offer_model, show_lens_opened, show_looks, show_profiles,
 };
@@ -11,12 +22,13 @@ use crate::panel::edit::{current_turn, read_edit, take_sources};
 use crate::panel::history::show_history;
 use crate::panel::startup::remember_last_file;
 use crate::panel::viewport::picking_hint;
-use crate::queue;
-use crate::settings;
 use crate::sheet::{self, ExportPreset, Sheet};
-use crate::worker::DetailRan;
-use crate::*;
-use std::time::{Duration, Instant};
+use crate::worker::{
+    DetailRan, Developed, Job, LearnedReport, LensReport, Outcome, SourceKind, WhiteBase, Worker,
+};
+use crate::{
+    App, STATE, Shared, State, WORKER, chooser, export, export_name, finish, grid, queue, settings,
+};
 
 /// A develop the worker sent, waiting for the frame that puts it on
 /// the GPU.
@@ -2393,6 +2405,8 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
 
 #[cfg(test)]
 mod tests {
+    use slint::Model;
+
     use super::*;
 
     /// The pool's making on the status line: said over an empty line

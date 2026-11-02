@@ -2,6 +2,8 @@
 //! raw marked on the raw's tile and named under its name, and the
 //! setting that lists it apart.
 
+use slint::Model;
+
 use super::*;
 
 /// Each row's name and whether its tile carries the pair's mark.

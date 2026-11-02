@@ -9,9 +9,15 @@
 //! Ctrl+Shift+E's export sheet. Only Reveal is new, and it is one
 //! command per platform, chosen when the editor is compiled.
 
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_edit::meta::{self, Change, Flag, Label, Meta};
+use slint::ComponentHandle;
+
 use crate::panel::browser::{chosen_frames, file_name, meta_on_selection};
-use crate::*;
-use greycard_edit::meta::{Change, Flag, Label};
+use crate::worker::Worker;
+use crate::{App, Shared, selection};
 
 /// What a menu item asks for, as a culling key would: a rating of
 /// `value` stars, the flag whose code is `value`, the label whose
@@ -289,8 +295,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
     use crate::testing::{folder, state_for, strip_cell, window};
+    use greycard_edit::Edit;
     use slint::platform::{PointerEventButton, WindowEvent};
 
     #[test]

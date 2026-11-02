@@ -38,17 +38,19 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use greycard_edit::look::{self, Entry};
 use greycard_edit::{Placement, Sidecar};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::{refresh_presets, show_looks};
 use crate::panel::browser::show_badges_of_file;
 use crate::panel::history::show_history;
 use crate::panel::look_remove::{files_of, list_in, store};
-use crate::*;
+use crate::{App, Shared, State};
 
 /// The sheet's question while it is up.
 #[derive(Debug, Clone)]
@@ -1452,10 +1454,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
     use crate::testing::{LOOK_STORE as STORE, click, press, state_for, type_text, window};
     use greycard_edit::look::{LookLut, LutChoice};
     use greycard_edit::{DisplayCurve, Edit, Preset, Section};
+    use slint::Model;
     use slint::platform::Key;
 
     thread_local! {

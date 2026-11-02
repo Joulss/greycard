@@ -22,13 +22,18 @@
 //! it exactly as its row does. With the switch on there are none, since
 //! the list already holds everything under the folder.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
-use std::path::Component;
+use std::path::{Component, Path, PathBuf};
+use std::rc::Rc;
 use std::time::Instant;
 
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
 use crate::roots::View;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, FolderRow, FolderTile, Shared, State};
 
 /// A folder of the tree: where it is, what it is called, how deep
 /// under the root (the root itself is 0), the frames directly in it

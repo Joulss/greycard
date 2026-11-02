@@ -1,6 +1,31 @@
 //! The open frame, its develop and the tools on it: [`Develop`].
 
-use crate::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use greycard_core::CameraProfile;
+use greycard_core::color::Matrix3;
+use greycard_core::raw::RawFrame;
+use greycard_edit::brush::Raster;
+use greycard_edit::geometry::{Crop, Guiding};
+use greycard_edit::mask::Shape;
+use greycard_edit::preset::Entry;
+use greycard_edit::retouch::{Method as RetouchMethod, Patch};
+use greycard_edit::{Edit, preset};
+use slint::VecModel;
+
+use crate::ai::Key;
+use crate::panel::color::WhiteKey;
+use crate::panel::deliver::Landed;
+use crate::panel::mask::{MaskDrag, Placing};
+use crate::panel::retouch::PatchShape;
+use crate::panel::viewport::Picking;
+use crate::render::Renderer;
+use crate::worker::{LensReport, WhiteBase};
+use crate::{MaskBox, MaskPick, PersonBox, Pt, ai, display, export, finish, panel, scope};
 
 /// The develop side: the open frame and its edit, the develop out and
 /// the picture on the GPU, the viewport and its zoom, the tools in hand

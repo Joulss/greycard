@@ -1,7 +1,20 @@
 //! The roots pane: the rows and their counts, and a root added, taken
 //! out or named.
 
-use super::*;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_library::Roots;
+use greycard_library::roots::Added;
+#[cfg(not(test))]
+use slint::ComponentHandle;
+use slint::Model;
+
+#[cfg(test)]
+use super::tests;
+use super::{ROOT_WAIT, View, open_view, refresh_view, restart_poll, watch};
+use crate::worker::Worker;
+use crate::{App, RootChip, Shared, State};
 
 /// Each root's count, as the index holds it now.
 pub(crate) fn recount(st: &mut State) {

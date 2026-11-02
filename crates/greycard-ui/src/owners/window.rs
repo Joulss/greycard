@@ -1,6 +1,8 @@
 //! The app handle, the settings file and the session's policies: [`Window`].
 
-use crate::*;
+use std::path::PathBuf;
+
+use crate::App;
 
 /// The window itself and what this session may do to the user's files:
 /// the Slint app handle, the settings file, whether sidecars are

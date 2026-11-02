@@ -12,15 +12,21 @@
 //! session that writes no sidecars holds the merged file's edit in
 //! memory, as it holds an edit made there, until the window is closed.
 
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::rc::Rc;
 
 use greycard_edit::{Edit, Line, Placement, Sidecar};
 use greycard_engine::merge::{self, Options, Step};
 use greycard_library::collections::Reference;
+use slint::ComponentHandle;
 
 use crate::panel::browser::chosen_frames;
 use crate::panel::collections::frames_of;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State};
 
 /// The merges asked and not yet run, and whether one is running.
 /// Shared by the window's thread and the merge's own; a test's are its
@@ -388,6 +394,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::roots::{View, land_sent, open_view};
     use crate::testing::{state_for, window};

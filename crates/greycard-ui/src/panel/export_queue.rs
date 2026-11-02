@@ -9,11 +9,17 @@
 //! entries run in order, one set after the other; each frame done with
 //! leaves its entry, and an entry with no frames left leaves the queue.
 
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::export_queue::{self, Entry, QueuedFrame};
 use crate::panel::browser::chosen_frames;
 use crate::panel::deliver::{SetFrames, preset_in_use, pressed_frames, read_sheet};
-use crate::queue;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, QueueRow, STATE, Shared, State, queue};
 
 /// An entry of the queue on its way through the worker, while the
 /// queue runs.
@@ -851,7 +857,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use greycard_edit::Edit;
+    use slint::Model;
+
     use super::*;
+    use crate::export;
     use crate::sheet::{ExportPreset, Sheet};
     use crate::worker::Outcome;
 

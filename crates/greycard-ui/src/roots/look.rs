@@ -1,6 +1,22 @@
 //! The read off the window's thread, and sending it there.
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::time::Instant;
+
+use greycard_library::RowMeta;
+#[cfg(not(test))]
+use slint::ComponentHandle;
+
+#[cfg(not(test))]
+use super::land;
+#[cfg(test)]
+use super::tests;
+use super::{
+    Found, Look, OnScreen, Purpose, ROOT_WAIT, Select, Source, answer_of, offline_of, rows_listed,
+};
+use crate::{App, files, rows};
 
 impl Look {
     /// The read, on a thread that is not the window's: the roots and

@@ -38,15 +38,18 @@
 //! it opens a library of its own in its own directory, and the state
 //! it builds has none.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use greycard_library::{Change, FacetCount, Library, Report};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::filter::{self, Facet};
-use crate::*;
+use crate::{App, FacetChip, FacetRow, Shared, State};
 
 /// How often a long pass tells the window how far it has got, so a
 /// facet fills in and a frame the filter does not want goes, while
@@ -2512,8 +2515,12 @@ mod busy_tests {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
+    use greycard_edit::{Sidecar, meta};
     use greycard_library::fixture::{A7, R5, R6, write_frame, write_mosaic_dng};
+    use slint::Model;
 
     /// The window's folder pass says what the library found in it, a
     /// folder's rename among it: the second half of a rename whose

@@ -7,10 +7,17 @@
 //! records it. Nothing else records a folder, so a way to open one
 //! added later is in the list without being told.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
 use crate::files::tilde;
 use crate::panel::browser::open_folder;
 use crate::settings::{self, push_recent};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, RecentFolder, Shared, State};
 
 /// What the window knows of the folders: the one open, if the list is
 /// a single folder's, and the ones opened, most recent first.

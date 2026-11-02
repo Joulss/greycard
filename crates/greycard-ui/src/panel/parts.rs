@@ -9,14 +9,19 @@
 //! there at all asks too, with no guess, saying it was made for someone
 //! else. A click there picks the person for this picture's copy alone.
 
-use greycard_edit::mask::{PARTS, PartKind, Person, Route};
+use std::path::PathBuf;
+use std::rc::Rc;
 
-use crate::ai::{Ask, Asking, Candidate};
+use greycard_edit::mask::{Component, Mode, PARTS, PartKind, Person, Route, Shape};
+use slint::ComponentHandle;
+
+use crate::ai::{Ask, Asking, Candidate, Key};
 use crate::panel::assets::offer_model;
 use crate::panel::edit::{read_edit, show_edit};
 use crate::panel::mask::{Step, name_first_shape, step};
 use crate::panel::viewport::{source_to_view, view_to_source};
-use crate::*;
+use crate::worker::Job;
+use crate::{App, PersonBox, Shared, State, WORKER};
 
 /// What the placing state is called while a person is to be picked.
 pub(crate) const PICKING: &str = "Part";
@@ -490,8 +495,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use greycard_edit::brush::Raster;
+    use greycard_edit::mask::Mask;
+
     use super::*;
     use crate::testing::{folder, state_for, window};
+    use crate::worker::{Outcome, Worker};
 
     /// Two people side by side, faces only, each known by a signature
     /// of their own.

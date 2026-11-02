@@ -1,7 +1,14 @@
 //! The roots' looks: whether each root answers, one look a root at
 //! most.
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+use std::time::Duration;
+
+#[cfg(test)]
+use super::tests;
+use super::{Checks, ROOT_WAIT, online};
 
 /// The editor's looks at the roots.
 static CHECKS: LazyLock<Checks> = LazyLock::new(|| Checks::new(online));

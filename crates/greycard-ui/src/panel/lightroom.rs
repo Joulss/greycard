@@ -19,14 +19,17 @@
 //! it has come under the buttons and can be canceled, which stops its
 //! thread; a write cannot.
 
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use greycard_library::lightroom_catalog::{self as lrcat, Progress, Report};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::files::tilde;
-use crate::*;
+use crate::{App, LightroomRoot, ReportLine, STATE, Shared, State, WORKER, chooser};
 
 /// What the sheet says when the run writes no sidecars: the report is
 /// shown, and Write stays off.
@@ -759,6 +762,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 mod tests {
     use super::*;
     use greycard_library::lightroom_catalog::Options;
+    use slint::Model;
 
     /// A catalog of two frames under one root, the files a folder of
     /// the root's name beside it, written as Lightroom keeps one; one

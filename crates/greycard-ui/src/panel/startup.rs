@@ -1,3 +1,14 @@
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use greycard_edit::mask::Shape;
+use greycard_edit::{Demosaic, Edit, Learned, meta, preset};
+use slint::wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
 use crate::filter::SavedBar;
 use crate::panel::assets::show_presets;
 use crate::panel::browser::{
@@ -15,7 +26,13 @@ use crate::panel::viewport::{
     schedule_snapshot, settle_source_size, show_crop_on_view, show_hover, show_source_shape,
     source_to_view, sync_display, write_screenshot, zoom_label,
 };
-use crate::*;
+use crate::render::{Renderer, View};
+use crate::worker::{Job, WhiteBase, Worker};
+use crate::{
+    App, Cli, MaskBox, MaskPick, Pt, STATE, Shared, State, WORKER, chooser, cull, display, export,
+    files, filter, finder, finish, grid, install_callbacks, instance, log, render, report, scope,
+    settings, sheet, worker,
+};
 // What the import also lays at its landing, off the window, in the
 // library.
 pub(crate) use crate::preset_fit::preset_at_start;
@@ -2685,6 +2702,7 @@ mod tests {
     use super::*;
     use crate::sheet::{ExportPreset, Sheet};
     use greycard_core::image::WorkingImage;
+    use greycard_edit::{Preset, Sidecar};
     use greycard_engine::headless::batch_settings;
 
     fn remembered_with_presets(dir: &Path) -> settings::Settings {

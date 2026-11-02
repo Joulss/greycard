@@ -6,11 +6,20 @@
 //! what it holds and the copy all run on their own threads and post
 //! back, so a slow or sleeping mount holds up nothing but itself.
 
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use greycard_edit::preset;
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::files::tilde;
 use crate::import::{self, Job, Options, Report, Scan};
 use crate::naming::Fields;
 use crate::panel::browser::open_folder;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, STATE, Shared, State, WORKER, chooser, settings};
 
 /// The sheet's side of the state.
 #[derive(Default)]
@@ -953,6 +962,10 @@ pub(crate) fn exit_code(report: &Report) -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use greycard_edit::preset::{Entry, Section};
+    use greycard_edit::{Edit, Preset};
+    use slint::Model;
+
     use super::*;
     use crate::naming::Day;
 

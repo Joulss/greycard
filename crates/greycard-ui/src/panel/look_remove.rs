@@ -14,12 +14,14 @@
 //! rendered without it, as one naming a look from another machine is.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use greycard_edit::look::{self, Entry};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::delete::{self, Deleted, Doomed, How, Offer, TRASH_SUPPORTED};
 use crate::panel::assets::show_looks;
-use crate::*;
+use crate::{App, Shared, State};
 
 /// The sheet's question while it is up.
 #[derive(Debug, Clone)]
@@ -578,8 +580,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
     use crate::testing::{LOOK_STORE, click, press, state_for, window};
+    use slint::Model;
     use slint::platform::Key;
 
     thread_local! {

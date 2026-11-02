@@ -19,10 +19,17 @@
 //! the newer save is the one on disk. A move or a delete of frames, and
 //! the quit, wait for the batches out ([`finish`]).
 
-use crate::*;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
+
+use greycard_edit::Sidecar;
+use greycard_edit::meta::Meta;
+use greycard_edit_io::xmp;
+
+use crate::State;
 
 /// The batches out and the files they still hold.
 #[derive(Default)]
@@ -490,10 +497,14 @@ pub(crate) fn out(st: &State) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::path::Path;
+    use std::rc::Rc;
+
     use super::*;
     use crate::panel::edit::write_sidecar;
     use crate::testing::{state_for, window};
-    use greycard_edit::Placement;
+    use crate::{App, Shared};
+    use greycard_edit::{Edit, Placement};
 
     thread_local! {
         /// A batch sent is left out until the test lands it

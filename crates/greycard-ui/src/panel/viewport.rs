@@ -1,3 +1,12 @@
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_core::color::{WhitePoint, resolve_white_balance};
+use greycard_core::develop::defringe;
+use greycard_edit::curve::Channel;
+use greycard_edit::geometry::Geometry;
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
 use crate::panel::color::{preview_white, show_mixer_band, store_mixer_band, white_profile};
 use crate::panel::crop::read_geometry;
 use crate::panel::cull::{control_over_frame, leave_cull};
@@ -7,7 +16,12 @@ use crate::panel::curve::{
 };
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::{FILE, SYSTEM, monitor_note, monitor_settings};
-use crate::*;
+use crate::render::Renderer;
+use crate::worker::{Developed, WhiteBase, Worker};
+use crate::{
+    App, STATE, ScopeMark, Shared, State, chooser, cull, display, export, finish, gpu, owners,
+    placeholder, scope, zoom,
+};
 
 /// The size of the source the viewport draws the open frame's edit
 /// on, and the quarter turns clockwise it reads the picture on the
@@ -2317,7 +2331,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use greycard_core::raw::{Orientation, RawFrame};
+    use greycard_edit::{Edit, WhiteBalance};
 
     use crate::testing::{click, window};
 
@@ -3597,7 +3614,7 @@ mod tests {
     /// A daylight frame open with one mask, "Lamp", chosen on the Masks
     /// tab: the frame's As shot white as a temperature and tint.
     fn a_lamp_mask(app: &App, state: &Rc<Shared>) -> greycard_core::TempTint {
-        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        use greycard_core::color::profile_from_frame;
         app.invoke_select(0);
         let frame = daylight_frame();
         let profile = profile_from_frame(&frame).unwrap();

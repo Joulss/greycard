@@ -19,11 +19,18 @@
 //! not its sidecar's. Delete takes the chosen tiles out of their
 //! entries, never their files.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
 use crate::export_queue::{self, Entry, QueuedFrame};
 use crate::roots::View;
 use crate::versions::Key;
-use crate::*;
-use std::collections::HashMap;
+use crate::worker::Worker;
+use crate::{App, GridHead, Shared, State};
 
 /// Where a queued frame is now: its entry, its place there, and its id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -648,8 +655,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
-    use crate::export_queue::Entry;
     use crate::sheet::Sheet;
     use greycard_edit::{Edit, Sidecar};
 

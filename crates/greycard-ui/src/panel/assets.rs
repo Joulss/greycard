@@ -1,8 +1,15 @@
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_edit::{Edit, Preset, preset};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
 use crate::panel::browser::file_name;
 use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::edit::{develop_soon, read_edit, schedule_save};
 use crate::panel::sync;
-use crate::*;
+use crate::worker::{Job, LensReport, Worker};
+use crate::{App, Fetch, LookRow, STATE, Shared, State, chooser, settings};
 
 /// Whether to offer the lens profiles unprompted: only with no
 /// database on the machine, never after a Not now, and once a launch.
@@ -1584,6 +1591,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use greycard_edit::preset::Section;
+
     use super::*;
 
     #[test]

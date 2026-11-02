@@ -19,14 +19,16 @@
 //! preview no longer fits (`drawn`).
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use greycard_core::lut::Look;
-use greycard_edit::DisplayCurve;
 use greycard_edit::look::{LookLut, LutChoice};
+use greycard_edit::{DisplayCurve, Edit};
+use slint::ComponentHandle;
 
-use crate::*;
+use crate::{App, STATE, Shared, State};
 
 /// How long the pointer rests on a row before its look is shown, and
 /// off the list before the kept one is back.

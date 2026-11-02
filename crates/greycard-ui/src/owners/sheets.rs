@@ -1,6 +1,10 @@
 //! The sheets without a struct of their own: [`Sheets`].
 
-use crate::*;
+use std::path::PathBuf;
+
+use greycard_edit::Edit;
+
+use crate::{Fetch, carry, clipboard, panel};
 
 /// The sheets that have no struct of their own: deleting frames and
 /// versions, removing and renaming a look, the model and lens offers,

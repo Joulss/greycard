@@ -1,6 +1,10 @@
 //! The exports, their queue and the archive copies' writes: [`Work`].
 
-use crate::*;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::{export_queue, queue, sheet, sync};
 
 /// The work out on other threads that the window follows: the exports,
 /// their queue and the settings they keep, and the writes to the

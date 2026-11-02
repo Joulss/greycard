@@ -15,11 +15,13 @@
 //! ran, so a launch within the day asks nothing and a launch offline
 //! still knows of a release found before.
 
+use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use slint::ComponentHandle;
 
-use crate::*;
+use crate::{App, Shared, settings};
 
 /// The one address asked.
 pub const LATEST: &str = "https://api.github.com/repos/jessolmstead/greycard/releases/latest";

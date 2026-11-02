@@ -21,16 +21,21 @@
 //! while, or a while after its last save was taken, and every file is
 //! let go with the window.
 
-use std::sync::Mutex;
+#[cfg(test)]
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use greycard_library::collections::Reference;
+use slint::ComponentHandle;
 
 use crate::edit_in::{self as how, Platform, Stamp};
 use crate::export::{Format, OnExists};
-use crate::queue;
 use crate::sheet::Sheet;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State, chooser, queue};
 
 /// How often a watched file is looked at.
 const WATCH_EVERY: Duration = Duration::from_secs(1);
@@ -584,7 +589,9 @@ mod tests {
     use crate::roots::{View, land_sent, open_view};
     use crate::testing::{folder, state_for, strip_cell, window};
     use crate::worker::Outcome;
+    use greycard_edit::Edit;
     use greycard_library::fixture::{A7, R5, R6, write_frame};
+    use slint::Model;
     use slint::platform::{PointerEventButton, WindowEvent};
 
     /// An app named `name` made in `dir`, and chosen.

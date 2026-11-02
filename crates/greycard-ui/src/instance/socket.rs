@@ -2,11 +2,18 @@
 //! the user's alone, else in the cache folder, readable and writable by
 //! the user only, and each side's peer checked to be the same user.
 
-use super::*;
+use std::io;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use super::{
+    ANSWER_WAIT, Address, Claim, Claimed, Instance, Launch, READ_WAIT, Served, hand, serve_one,
+};
 
 pub(super) fn user(key: &str) -> Option<Address> {
     socket_path(
@@ -31,7 +38,7 @@ pub(super) fn at(socket: PathBuf) -> Address {
 /// nobody else (as the base directory spec asks of it, and a desktop
 /// that sets it to something shared does not keep), else in the cache
 /// folder's `greycard`. `key` is the configuration folder's
-/// ([`config_key`]).
+/// ([`config_key`](super::config_key)).
 pub fn socket_path(
     runtime: Option<PathBuf>,
     cache: Option<PathBuf>,

@@ -1,4 +1,11 @@
-use crate::*;
+use std::path::Path;
+use std::rc::Rc;
+
+use greycard_edit::curve::{self, Channel, Parametric, Point};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
+
+use crate::worker::Worker;
+use crate::{App, Shared, finish};
 
 pub(crate) fn current_channel(app: &App) -> Channel {
     Channel::from_name(app.get_curve_channel().as_str()).unwrap_or(Channel::Rgb)

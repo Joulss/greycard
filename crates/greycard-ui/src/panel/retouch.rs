@@ -1,9 +1,15 @@
+use std::rc::Rc;
+
+use greycard_edit::Edit;
+use greycard_edit::retouch::{FillChoice, Method as RetouchMethod, Patch};
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::ai::FillHaves;
 use crate::panel::assets::offer_model;
 use crate::panel::edit::develop_soon;
 use crate::panel::viewport::{ViewMap, source_to_view, view_to_source};
-use crate::*;
-use greycard_edit::retouch::FillChoice;
+use crate::worker::Worker;
+use crate::{App, Shared, State, outline};
 
 /// What the status line says while a repair tool is in hand.
 pub(crate) const RETOUCH_HINT: &str =
@@ -417,9 +423,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use crate::ai::Engine;
     use crate::testing::{press, retouch_state, window};
-    use crate::*;
+    use crate::{App, Shared};
+    use greycard_edit::retouch::{Method as RetouchMethod, Patch};
+    use slint::Model;
     use slint::platform::Key;
 
     thread_local! {

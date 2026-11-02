@@ -818,7 +818,6 @@ pub(crate) fn folder_of(st: &State, file: usize) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     fn cell(file: usize, version: Option<&str>) -> Cell {
         Cell {

@@ -11,17 +11,21 @@
 //! window goes on (`archive::supervise`, §215's pattern). What lands is
 //! numbered, so a later ask overtakes an earlier one.
 
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use greycard_library::{Change, Pairing, Roots};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::archive::{self, Ask, Beat, Direction, Frames, Heard, Plan, Report};
 
 pub(crate) mod rejects;
 use crate::panel::browser::{chosen_frames, file_name};
 use crate::roots::{ROOT_WAIT, View};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State};
 
 /// The window's side of the archives.
 #[derive(Default)]
@@ -1813,6 +1817,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::cell::RefCell;
+
     use super::*;
 
     type Sent = Box<dyn FnOnce(&Rc<Shared>, &App, &Rc<Worker>)>;
@@ -1922,8 +1928,10 @@ pub(crate) mod tests {
         );
     }
 
+    use crate::RootChip;
     use crate::testing::{state_for, window};
     use greycard_library::fixture::{A7, R5, R6, write_frame};
+    use slint::Model;
 
     fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

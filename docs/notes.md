@@ -538,3 +538,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§523. Merges: brackets and panoramas into a linear DNG](notes/523-merges-brackets-and-panoramas-into-a-linear-dng.md) (2026-11-01)
 - [§524. rawler at the fork's float-deflate-pin](notes/524-rawler-at-the-forks-float-deflate-pin.md) (2026-11-01)
 - [§525. The tripod HDR merge](notes/525-the-tripod-hdr-merge.md) (2026-11-01)
+- [§526. greycard-ui imports by name](notes/526-greycard-ui-imports-by-name.md) (2026-11-01)

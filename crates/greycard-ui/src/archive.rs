@@ -1380,7 +1380,6 @@ mod tests {
     use super::*;
     use greycard_edit::Placement;
     use greycard_library::fixture::{A7, R5, R6, write_frame};
-    use std::sync::Arc;
 
     pub fn scratch(what: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

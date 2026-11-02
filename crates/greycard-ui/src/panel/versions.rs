@@ -5,10 +5,17 @@
 //! usual save, and puts the cells in step with it (`versions::settle`):
 //! a version is a cell of its own right after its file's.
 
+use std::path::Path;
+use std::rc::Rc;
+
+use greycard_edit::Edit;
+use slint::{ComponentHandle, Model};
+
 use crate::panel::browser::{file_name, open_row, row_of, show_badges, show_thumb, thumb_turns};
 use crate::panel::edit::{read_edit, save_edit, write_file};
 use crate::versions::Key;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State};
 
 /// The cell the menu's items act on: the cell right-clicked, from the
 /// menu, else the cell on screen.
@@ -611,9 +618,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
     use super::*;
     use crate::testing::{folder, state_for, window};
-    use slint::Model;
+    use greycard_edit::Sidecar;
 
     /// A version named `name` of file `file`, made in its sidecar as the
     /// edit crate makes one, and the cells put in step: its id.

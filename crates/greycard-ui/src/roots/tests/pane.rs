@@ -1,5 +1,7 @@
 //! Tests of the roots pane: its rows, its menus and the keys over it.
 
+use slint::Model;
+
 use super::*;
 
 /// The pane's roots, with the grid up: a row a root with its count

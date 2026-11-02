@@ -1,6 +1,10 @@
 //! The library views' part of the window's state: [`Views`].
 
-use crate::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use crate::{collections, filter, library, panel, roots, rows, sort, stacks, tree, versions};
 
 /// The library views: what the browser lists and in what order, the
 /// filter and the index behind it, the roots, collections, stacks and

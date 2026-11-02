@@ -1,7 +1,20 @@
 //! The watcher on the roots: the launch pass and the watcher built off
 //! the window's thread, the network mounts and the timer over them.
 
-use super::*;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use greycard_library::Roots;
+#[cfg(not(test))]
+use slint::ComponentHandle;
+
+#[cfg(not(test))]
+use super::show;
+#[cfg(test)]
+use super::tests;
+use super::{ROOT_WAIT, answer_of, offline_of};
+use crate::{App, State};
 
 /// Whether a root is there to be read: a drive unplugged takes its
 /// mount point with it, or leaves it empty and unreadable.

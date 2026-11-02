@@ -1,7 +1,19 @@
 //! An open list kept up with the disk: the passes said, the frame on
 //! screen followed, the pictures owed asked for, and the list merged.
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Instant;
+
+use greycard_edit::Sidecar;
+use greycard_library::RowMeta;
+
+use super::{Brought, OnScreen, PASSES_KEPT, View, recount, refresh_view, show};
+use crate::panel::browser::rebuild_browser;
+use crate::rows::Held;
+use crate::worker::Worker;
+use crate::{App, Shared, State, rows};
 
 /// A pass has finished under `path`: what the window knew of the
 /// folders under it is forgotten, to be looked at again by the next

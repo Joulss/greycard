@@ -6,12 +6,18 @@
 //! Picking one makes that shape as the Sky button makes a sky. When
 //! nothing passes, nothing opens and the status line says so.
 
+use std::path::PathBuf;
+use std::rc::Rc;
+
 use greycard_ai::landscape::Offer;
+use greycard_edit::mask::{Component, Mode, Shape};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::offer_model;
 use crate::panel::edit::{read_edit, show_edit};
 use crate::panel::mask::{Step, name_first_shape, step};
-use crate::*;
+use crate::worker::Job;
+use crate::{App, Shared, State, WORKER};
 
 /// The mask the button was pressed on, by id, and the mode a shape
 /// picked from its menu joins by.
@@ -249,8 +255,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 mod tests {
     use super::*;
     use crate::testing::{folder, state_for, window};
+    use crate::worker::{Outcome, Worker};
     use greycard_ai::landscape::Group;
     use greycard_ai::landscape::Kind;
+    use greycard_edit::mask::Mask;
+    use slint::Model;
 
     /// A window on the Masks tab with one empty mask chosen.
     fn masks() -> (App, Rc<Shared>, Rc<Worker>) {

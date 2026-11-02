@@ -9,9 +9,13 @@
 //! Nothing is sent from here: the browser shows the form, and the
 //! tester reads it, adds to it and submits it or does not.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use crate::*;
+use anyhow::{Context, Result};
+use slint::ComponentHandle;
+
+use crate::{App, Shared, gpu, log};
 
 /// The fields of the form this fills, by id, in the form's order.
 pub struct Report {

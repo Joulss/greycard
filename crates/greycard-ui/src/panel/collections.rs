@@ -23,14 +23,18 @@
 //! when every frame of it is in already.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use greycard_library::Rehash;
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::collections::{Collection, Frame, Pair, Smart, full_name};
 use crate::filter::{Saved, SavedBar};
 use crate::panel::browser::chosen_frames;
 use crate::roots::View;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, CollectionChip, Shared, State};
 
 /// The collections as the window shows them, beside the store's: the
 /// sidebar's rows and the frame menu's names, one model each for the

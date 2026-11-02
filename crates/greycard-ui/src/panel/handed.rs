@@ -5,8 +5,15 @@
 //! in on a Mac, so one that comes before the window can develop waits
 //! there as the Finder's do.
 
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use slint::ComponentHandle;
+
 use crate::panel::browser::{open_folder, open_paths};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, instance};
 
 thread_local! {
     /// The editor serving, until the window's last moment.

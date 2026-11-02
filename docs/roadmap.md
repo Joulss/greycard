@@ -603,8 +603,6 @@ touches.
 
 - [ ] The editor's `--export` flag dropped, one release after §514
       made it an alias of `greycard export`
-- [ ] Explicit imports in place of greycard-ui's crate-root glob
-      imports, 49 `use crate::*` left after the runners' move (§521)
 
 ---
 

@@ -1,10 +1,25 @@
+use std::collections::HashMap;
+use std::path::Path;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use greycard_edit::brush::{Op, Raster, Stroke};
+use greycard_edit::mask::{Component, MIN_RADIUS, Mask, Mode, Pick, Shape};
+use greycard_edit::retouch::{Method as RetouchMethod, Patch};
+use greycard_edit::{Adjustment, Edit, Look};
+use greycard_render::refine::MaskPicture;
+use slint::{ComponentHandle, ModelRc, VecModel};
+
+use crate::ai::{Key, prompted};
+use crate::finish::{Local, MAX_LOCALS, RasterRef};
 use crate::panel::assets::offer_model;
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{develop_soon, read_edit, show_edit, show_names};
 use crate::panel::retouch::show_patches;
 use crate::panel::viewport::{source_to_view, view_on_picture, view_to_source};
-use crate::*;
-use greycard_render::refine::MaskPicture;
+use crate::worker::{Job, Worker};
+use crate::{App, Shared, State, WORKER};
+
 // What to do for a learned shape wanted, decided in the engine so an
 // export with no window picks the same file.
 pub(crate) use greycard_engine::ai::{Step, edge_offer, step};
@@ -1690,8 +1705,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 mod tests {
     use super::*;
 
+    use crate::Pt;
     use crate::testing::{click, count_labeled, window};
+    use crate::worker::Outcome;
     use std::cell::Cell;
+
+    use slint::Model;
 
     /// A look slider moved with the overlay showing turns it off, every
     /// time; a shape control (feather, invert, Refine edge, the toggle

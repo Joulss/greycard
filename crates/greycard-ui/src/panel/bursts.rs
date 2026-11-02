@@ -11,13 +11,19 @@
 //! on the window's thread, where the stacks are made from the list as
 //! it is then.
 
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use greycard_library::collections::{Reference, hint_of};
+use slint::ComponentHandle;
 
 use crate::stacks::{folder_of, hint_of_file, listed};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State};
 
 /// The threads a folder's previews are read on: a preview is a JPEG
 /// decode, and four make a card of raws a few seconds' work while

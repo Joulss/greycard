@@ -6,10 +6,12 @@
 //! overlapped, and a read, a write or a connect that outlasts its time
 //! is canceled.
 
-use super::*;
+use std::io::{self, Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
     BOOL, ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_BUSY,
     ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
@@ -37,6 +39,10 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION, WaitForSingleObject,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
+
+use super::{
+    ANSWER_WAIT, Address, Claim, Claimed, Instance, Launch, READ_WAIT, Served, hand, serve_one,
+};
 
 pub(super) fn user(key: &str) -> Option<Address> {
     let mut session = 0u32;

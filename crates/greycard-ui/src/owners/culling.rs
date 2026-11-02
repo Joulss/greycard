@@ -1,6 +1,11 @@
 //! Culling, the lightbox and the camera's pictures: [`Culling`].
 
-use crate::*;
+use std::rc::Rc;
+
+use slint::VecModel;
+
+use crate::panel::cull::Cull;
+use crate::{CompareTile, cull, lightbox, placeholder, tags};
 
 /// Culling mode and the lightbox, and the camera's pictures they and
 /// the develop view stand in with: held, waited for and decoded ahead.

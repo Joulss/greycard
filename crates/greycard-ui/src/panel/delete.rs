@@ -5,12 +5,18 @@
 //! done takes the frames out of the list, their rows out of the index
 //! and their pictures out of the cache.
 
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use slint::ComponentHandle;
+
 use crate::delete::{self, Deleted, How, Offer, Plan, TRASH_SUPPORTED};
 use crate::panel::browser::{chosen_frames, file_name};
 use crate::panel::cull::{drop_files, shoot_rejects_dir};
 use crate::panel::edit::{read_edit, save_edit};
 use crate::roots::View;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State, cull};
 
 /// What the sheet was opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -734,9 +740,11 @@ pub(crate) mod tests {
     use super::*;
     use crate::library::{Indexer, Told};
     use crate::testing::{press, state_for, window};
+    use greycard_edit::{Sidecar, meta};
     use greycard_library::Library;
     use greycard_library::fixture::{A7, R5, R6, write_frame};
     use slint::platform::Key;
+    use std::cell::RefCell;
     use std::time::Duration;
 
     thread_local! {

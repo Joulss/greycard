@@ -25,11 +25,12 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use greycard_edit::meta::{self, Change};
-use slint::{Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::browser::{chosen_frames, chosen_keys, meta_on_keys, meta_on_selection};
 use crate::versions::Key;
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, KeywordChip, Shared, State};
 
 /// How many completions the Keywords field offers at once.
 pub(crate) const OFFERED: usize = 8;

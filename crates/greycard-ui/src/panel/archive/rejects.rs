@@ -15,11 +15,22 @@
 //! queue only ever moves.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use greycard_library::Change;
+use slint::{ComponentHandle, ModelRc, VecModel};
+
+use super::{Running, frames_word, look_at, send, some_names, start_timer};
+use crate::archive::Heard;
 use crate::archive::rejects::{self as core, Deletes, Entry, Item, Look, Moves};
 use crate::delete::{self, How, Offer, TRASH_SUPPORTED};
-
-use super::*;
+use crate::panel::browser::file_name;
+use crate::roots::{ROOT_WAIT, View};
+use crate::worker::Worker;
+use crate::{App, Shared, State, archive};
 
 /// The window's side of Remove rejects.
 #[derive(Default)]
@@ -970,11 +981,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::super::tests::{ASIDE_NEXT, SENT, land_sent};
     use super::*;
     use crate::testing::{press, state_for, window};
     use greycard_edit::{Placement, SIDECAR_FOLDER, Sidecar};
     use greycard_library::fixture::{A7, R5, R6, write_frame};
+    use slint::Model;
     use slint::platform::Key;
 
     fn scratch(what: &str) -> PathBuf {

@@ -100,7 +100,7 @@ pub(crate) use greycard_viewport::lost::lost;
 
 /// Set the window's device-lost callback, once its device is made.
 /// `cpu_ops` is whether this run was started with `--cpu-ops`;
-/// `tell_worker` is [`crate::Worker::gpu_lost_teller`]'s.
+/// `tell_worker` is [`crate::worker::Worker::gpu_lost_teller`]'s.
 pub(crate) fn install(
     device: &wgpu::Device,
     cpu_ops: bool,

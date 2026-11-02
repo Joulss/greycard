@@ -1,5 +1,11 @@
+use std::rc::Rc;
+
+use greycard_edit::geometry::{Aspect, Crop, Geometry, Guide, Handle, MAX_ANGLE, MAX_TILT};
+use slint::ComponentHandle;
+
 use crate::panel::viewport::{effective_zoom, view_to_plane, view_to_source};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State, placeholder, settings};
 
 /// Put a geometry on the panel.
 pub(crate) fn show_geometry(geometry: &Geometry, app: &App) {

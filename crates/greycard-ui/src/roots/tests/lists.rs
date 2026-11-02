@@ -1,7 +1,12 @@
 //! Tests of a list kept up with the disk: merges, the frame on screen
 //! followed, the passes and the offline roots.
 
+use clap::Parser;
+use slint::Model;
+
 use super::*;
+use crate::panel::browser::rebuild_browser;
+use crate::{Cli, filter};
 
 /// A list merged keeps what each frame that stays already has, by
 /// its path: the sidecar as edited in memory, the picture made,

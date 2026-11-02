@@ -73,54 +73,28 @@ pub(crate) use greycard_engine::{
     ai, edited_pictures, previews, queue, sheet, thumbpool, version_key, worker,
 };
 
-pub(crate) use std::cell::RefCell;
-pub(crate) use std::collections::HashMap;
-pub(crate) use std::path::{Path, PathBuf};
-pub(crate) use std::rc::Rc;
-pub(crate) use std::sync::Arc;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
 
-pub(crate) use anyhow::{Context, Result};
-pub(crate) use clap::Parser;
-pub(crate) use slint::wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu};
-pub(crate) use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use anyhow::Result;
+use clap::Parser;
+use slint::wgpu_30::wgpu;
+use slint::{ComponentHandle, VecModel};
 
-pub(crate) use greycard_core::CameraProfile;
-pub(crate) use greycard_core::color::{Matrix3, WhitePoint, resolve_white_balance};
-pub(crate) use greycard_core::develop::defringe;
+use greycard_edit::geometry::Guiding;
+use greycard_edit::{Edit, Sidecar};
+
+// Named by these paths in the crop tests.
 #[cfg(test)]
-pub(crate) use greycard_core::raw::Orientation;
-pub(crate) use greycard_core::raw::RawFrame;
-pub(crate) use greycard_edit::brush::{Op, Raster, Stroke};
-pub(crate) use greycard_edit::curve::{self, Channel, Parametric, Point};
-pub(crate) use greycard_edit::geometry::{
-    Aspect, Crop, Geometry, Guide, Guiding, Handle, MAX_ANGLE, MAX_TILT,
-};
-pub(crate) use greycard_edit::grading::{Grading, Range, Wheel};
-pub(crate) use greycard_edit::mask::{Component, MIN_RADIUS, Mask, Mode, Pick, Shape};
-pub(crate) use greycard_edit::meta::{self, Meta};
-pub(crate) use greycard_edit::mixer::BANDS;
-pub(crate) use greycard_edit::preset::{self, Entry, Section};
-pub(crate) use greycard_edit::retouch::{Method as RetouchMethod, Patch};
-pub(crate) use greycard_edit::{
-    Adjustment, Color, Curves, Demosaic, Edit, Grain, Learned, Light, Look, Mixer, Preset, Sidecar,
-    Tint, Vignette, WhiteBalance,
-};
-pub(crate) use greycard_edit_io::xmp;
+pub(crate) use greycard_edit::geometry::{Aspect, Crop, Geometry};
 
-use crate::panel::color::WhiteKey;
-use crate::panel::cull::{Cull, deliver_preview};
-use crate::panel::deliver::Landed;
-use crate::panel::mask::{MaskDrag, Placing};
-use crate::panel::retouch::PatchShape;
-use crate::panel::viewport::Picking;
-pub(crate) use ai::{Key, prompted};
-pub(crate) use finish::{Local, MAX_LOCALS, RasterRef};
+use crate::panel::cull::deliver_preview;
 use panel::startup::main;
-pub(crate) use render::{Renderer, View};
 pub(crate) use shared::Shared;
-pub(crate) use worker::{
-    Developed, Job, LearnedReport, LensReport, Outcome, SourceKind, WhiteBase, Worker,
-};
+use worker::{LensReport, Worker};
 // The window and its panels, compiled from `.slint` in greycard-slint.
 pub(crate) use greycard_slint::*;
 

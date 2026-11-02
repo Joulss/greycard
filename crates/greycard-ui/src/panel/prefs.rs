@@ -2,7 +2,16 @@
 //! are the installation's rather than a picture's, and the move that
 //! puts an open folder's sidecars where the place says.
 
-use crate::*;
+#[cfg(test)]
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_edit::Sidecar;
+use slint::ComponentHandle;
+
+use crate::worker::Worker;
+use crate::{App, Shared, State, chooser, grid, settings};
 
 /// The sheet's words for the two places, in the order its row shows
 /// them.
@@ -971,7 +980,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SortMenu;
     use greycard_edit::Placement;
+    use slint::Model;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

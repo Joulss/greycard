@@ -1,6 +1,9 @@
 //! Tests of the reads: folders locked or reached through links, views
 //! read from the rows, and folder opens.
 
+use greycard_edit::meta::Meta;
+use slint::Model;
+
 use super::*;
 
 /// The review's round trip: a folder under a root locked, and the

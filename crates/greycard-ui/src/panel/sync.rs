@@ -31,7 +31,18 @@
 //! same sheet over the whole selection, the frame copied from left
 //! out, through the same [`lay_over_targets`].
 
-use crate::carry;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use greycard_core::TempTint;
+use greycard_core::raw::Mosaic;
+use greycard_edit::camera::{self, ProfileChoice};
+use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
+use greycard_edit::preset::{Choice, Part, Section};
+use greycard_edit::{Edit, Preset, WhiteBalance};
+use slint::{ComponentHandle, ModelRc};
+
 use crate::clipboard::Clipboard;
 use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
@@ -40,15 +51,12 @@ use crate::panel::cull::leave_cull;
 use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
 use crate::panel::history::{show_history, take_current, take_current_with};
 use crate::settings::SyncShift;
-use crate::*;
-use greycard_core::TempTint;
-use greycard_core::raw::Mosaic;
-use greycard_edit::camera::{self, ProfileChoice};
+use crate::worker::Worker;
+use crate::{App, Shared, State, carry, selection};
+
 // The fit of a preset's profile to a frame, which the import also
 // asks, off the window, in the library.
 pub(crate) use crate::preset_fit::{preset_fitted, probed_body, profile_fits};
-use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
-use greycard_edit::preset::{Choice, Part};
 
 /// The frames a sync goes onto: the set, less the frame it comes
 /// from.
@@ -1795,9 +1803,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::filter;
+    use crate::finish::MAX_LOCALS;
     use crate::panel::browser::open_row;
     use crate::testing::{click, folder, press, state_for, strip_cell, window};
+    use greycard_edit::mask::{Component, Mask, Shape};
+    use greycard_edit::preset::Entry;
+    use greycard_edit::{Learned, Sidecar, preset};
+    use slint::Model;
     use slint::platform::{Key, WindowEvent};
 
     /// The sheet's headings as its rows read: each section's title

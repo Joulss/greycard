@@ -16,13 +16,17 @@
 //! of its frames shown.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
+use std::rc::Rc;
 
 use greycard_library::collections::Reference;
+use slint::ComponentHandle;
 
 use crate::panel::browser::{chosen_frames, open_row, row_of};
 use crate::panel::collections::frames_of;
 use crate::stacks::{Listed, listed, stack_of};
-use crate::*;
+use crate::worker::Worker;
+use crate::{App, Shared, State};
 
 /// Most frames side by side; a stack of more compares its first four.
 const COMPARE_MOST: usize = 4;
@@ -552,6 +556,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::roots::{View, land_sent, open_view};
     use crate::testing::{press, state_for, window};

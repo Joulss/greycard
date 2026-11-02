@@ -19,17 +19,20 @@
 //! anywhere but the signature a pick stores already.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 
+use greycard_edit::Edit;
 use greycard_edit::history::person_label;
-use greycard_edit::mask::Person;
+use greycard_edit::mask::{Person, Shape};
 use greycard_edit::preset::Preset;
+use slint::ComponentHandle;
 
 use crate::ai::{PersonOn, Picked};
 use crate::panel::browser::{show_badges, show_thumb, thumb_turns};
 use crate::panel::edit::{read_edit, show_edit};
 use crate::versions::Key as Frame;
-use crate::worker::PersonJob;
-use crate::*;
+use crate::worker::{Job, PersonJob, Worker};
+use crate::{App, Shared, State};
 
 /// What the window keeps of it, on the develop's state.
 #[derive(Debug, Default)]
@@ -552,11 +555,16 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
     use super::*;
     use crate::ai::{Ask, Asking, Candidate};
     use crate::panel::viewport::source_to_view;
     use crate::testing::{folder, state_for, window};
-    use greycard_edit::mask::{Route, Signature};
+    use crate::worker::Outcome;
+    use greycard_edit::brush::Raster;
+    use greycard_edit::mask::{Component, Mask, Route, Signature};
     use greycard_edit::preset::Section;
 
     /// The woman a lips mask was made for on the first frame.

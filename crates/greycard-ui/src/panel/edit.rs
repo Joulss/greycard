@@ -1,3 +1,15 @@
+use std::rc::Rc;
+
+use greycard_edit::curve::Channel;
+use greycard_edit::grading::Range;
+use greycard_edit::mask::Shape;
+use greycard_edit::{
+    Color, Curves, Demosaic, Edit, Grain, Learned, Light, LocalWhite, Look, Mixer, Vignette,
+    WhiteBalance,
+};
+use greycard_edit_io::xmp;
+use slint::{ComponentHandle, ModelRc, VecModel};
+
 use crate::panel::assets::{show_looks, show_profiles};
 use crate::panel::browser::{camera_tag, file_name};
 use crate::panel::color::{
@@ -15,8 +27,8 @@ use crate::panel::mask::{
     component_invert, component_names, component_on, heading_name, show_component,
 };
 use crate::panel::retouch::show_patches;
-use crate::*;
-use greycard_edit::LocalWhite;
+use crate::worker::{Job, Worker};
+use crate::{App, STATE, Shared, State, WORKER};
 
 /// The edit the worker should develop right now. Normally the edit
 /// itself; but a tool in hand may need the picture to show something
@@ -1122,6 +1134,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
+    use slint::Model;
+
     use super::*;
     use crate::testing::window;
 

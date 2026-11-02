@@ -6,7 +6,10 @@ use super::*;
 // import on Windows.
 use super::{kept_up::*, pane::*, view::*, watcher::*};
 use crate::testing::{state_for, window};
+use crate::{State, rows};
+use greycard_edit::{Sidecar, meta};
 use greycard_library::fixture::{A7, R5, R6, write_frame};
+use std::cell::RefCell;
 use std::time::Duration;
 
 mod lists;

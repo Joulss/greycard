@@ -34,11 +34,14 @@
 //! dry run asked for later winning over one that answers late.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use greycard_library::rawtherapee::{self as rt, Progress, Report, Voice};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::files::tilde;
-use crate::*;
+use crate::{App, ReportLine, STATE, Shared, State, settings};
 
 /// The sheet's side of the state, and the offer's.
 #[derive(Default)]
@@ -574,7 +577,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
 
 #[cfg(test)]
 mod tests {
+    use slint::Model;
+
     use super::*;
+    use crate::WORKER;
 
     /// A profile of RawTherapee's shape: the meta, an exposure, a white
     /// balance, and a tool with no place here.

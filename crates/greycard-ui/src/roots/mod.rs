@@ -51,16 +51,16 @@
 //! root is its path everywhere, and naming it moves nothing.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use greycard_library::roots::Added;
 use greycard_library::{Roots, RowMeta};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::panel::browser::{open_loaded, rebuild_browser};
-use crate::rows::{self, Held};
-use crate::*;
+use crate::rows::Held;
 
 mod checks;
 mod kept_up;
@@ -93,6 +93,8 @@ pub(crate) use self::{
     },
     watcher::{poll_every, restart_poll, start},
 };
+use crate::worker::Worker;
+use crate::{App, RootChip, Shared, chooser};
 
 /// What the browser lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

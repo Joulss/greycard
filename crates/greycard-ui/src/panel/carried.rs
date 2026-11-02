@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use greycard_library::carry::{self, Item, Parsed};
 
-use crate::*;
+use crate::{App, Shared, State};
 
 /// What a join of carried copies changed.
 #[derive(Debug, Default, PartialEq, Eq)]

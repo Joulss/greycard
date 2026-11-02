@@ -1,7 +1,12 @@
 //! Tests of picks and culling while reads are out, and of the keys
 //! pressed meanwhile.
 
+use greycard_edit::meta::Meta;
+use slint::Model;
+
 use super::*;
+use crate::filter;
+use crate::panel::browser::rebuild_browser;
 
 /// A slider moved over a pick whose sidecar is still being read is
 /// refused and said: the stand-in takes nothing, so the read's

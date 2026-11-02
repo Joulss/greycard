@@ -1,7 +1,24 @@
 //! Opening a view or a folder: the roots it lists, its read sent off
 //! the window's thread, and the bar while the read is out.
 
-use super::*;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
+use slint::ComponentHandle;
+
+use super::{
+    LOADING_SHOWN_AFTER, LOADING_STALLED, LOADING_TICK, LOADING_WAITING_AFTER, Library, Listing,
+    Look, Progress, Purpose, READ_GIVES_UP, Select, Source, View, count_listed, one_root_named,
+    rows_listed, send_off, show,
+};
+use crate::panel::browser::open_loaded;
+use crate::worker::Worker;
+use crate::{App, Shared, State, settings};
+
 pub(crate) use greycard_library::grouped;
 
 /// The roots a view lists, as the roots file has them. Which of them
