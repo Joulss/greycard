@@ -1126,9 +1126,9 @@ release when the wait clears.
       registered; fixed in slint-ui/slint#13507 on 2026-09-19. Waits
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
-      after 0.8.0 carrying dnglab/dnglab#840 (§13j), #851 and #855,
-      all on its main since 2026-10-17; the pin is the fork's Nikon HE
-      branch rebased on that main, which carries the three
+      carrying dnglab/dnglab#896 (the Deflate float writer) and #835
+      (Nikon HE); the pin is the fork's float-deflate-pin, upstream
+      main plus those (§524)
 - [ ] rawler's DNG decoder reads the image data on a dummy read, so a
       DNG's `Stance` costs a decode; report and fix upstream, then
       drop the tag reader in `dng_mosaic` (§322)

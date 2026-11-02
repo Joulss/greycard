@@ -353,6 +353,7 @@ pub(super) fn aberrated_frame(width: usize, height: usize) -> RawFrame {
         levels: Levels {
             black: LevelPattern::uniform(100.0, 1),
             white: LevelPattern::uniform(1100.0, 1),
+            black_deltas: None,
         },
         as_shot_coefficients: Some([2.0, 1.0, 4.0]),
         calibrations: vec![Calibration {

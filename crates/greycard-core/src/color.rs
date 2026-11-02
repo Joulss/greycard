@@ -191,6 +191,20 @@ pub fn resolve_white_balance(
     Ok(wb)
 }
 
+/// The camera-space gains (RGB, green 1) of a white given as a
+/// chromaticity, through the profile's matrices interpolated at that
+/// white: a DNG's `AsShotWhiteXY` turned into the gains
+/// [`WhitePoint::AsShot`] reads back as the same white.
+pub fn coefficients_of_white(profile: &CameraProfile, x: f64, y: f64) -> Result<[f64; 3]> {
+    let wb = WhiteBalance::from_scene_white(
+        profile,
+        rawcolor::Chromaticity { x, y },
+        &WORKING_SPACE,
+        CAT,
+    )?;
+    Ok(wb.coefficients.0)
+}
+
 /// A temperature and tint resolved through a profile alone: what
 /// [`resolve_white_balance`] does for [`WhitePoint::TempTint`], which
 /// needs nothing of the frame.
@@ -958,6 +972,7 @@ pub(crate) mod tests {
             levels: crate::raw::Levels {
                 black: crate::raw::LevelPattern::uniform(0.0, 1),
                 white: crate::raw::LevelPattern::uniform(1.0, 1),
+                black_deltas: None,
             },
             as_shot_coefficients: Some([1.0, 1.0, 1.0]),
             calibrations,

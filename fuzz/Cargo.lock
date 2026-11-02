@@ -254,6 +254,15 @@ checksum = "8b1e3a325bc115f096c8b77bbf027a7c2592230e70be2d985be950d3d5e60ebe"
 
 [[package]]
 name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
@@ -462,7 +471,7 @@ name = "greycard-edit"
 version = "0.9.1"
 dependencies = [
  "blake3",
- "dirs",
+ "dirs 7.0.0",
  "gethostname",
  "greycard-core",
  "libc",
@@ -478,7 +487,7 @@ name = "greycard-edit-io"
 version = "0.9.1"
 dependencies = [
  "blake3",
- "dirs",
+ "dirs 7.0.0",
  "greycard-core",
  "greycard-edit",
  "log",
@@ -505,7 +514,7 @@ version = "0.9.1"
 dependencies = [
  "anyhow",
  "blake3",
- "dirs",
+ "dirs 7.0.0",
  "dunce",
  "flate2",
  "greycard-core",
@@ -923,6 +932,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1270,20 +1289,23 @@ checksum = "1839c82df8c23135a69c027587efada55602a7311af4b5849313062f831630ca"
 [[package]]
 name = "rawler"
 version = "0.8.0"
-source = "git+https://github.com/jessolmstead/dnglab?rev=1766caabda721bb58d4b129918bf051907920b3c#1766caabda721bb58d4b129918bf051907920b3c"
+source = "git+https://github.com/jessolmstead/dnglab?rev=4e6f0f0156800a0cf9425c45dde0e4a51712e2e3#4e6f0f0156800a0cf9425c45dde0e4a51712e2e3"
 dependencies = [
  "backtrace",
  "bitstream-io",
  "byteorder",
  "chrono",
+ "dirs 6.0.0",
  "enumn",
  "glob",
+ "half",
  "hex",
  "image",
  "itertools",
  "jxl-oxide",
  "lazy_static",
  "libflate",
+ "libloading",
  "log",
  "md5",
  "memmap2",
@@ -1294,6 +1316,7 @@ dependencies = [
  "rustc_version",
  "serde",
  "serde_arrays",
+ "serde_json",
  "thiserror",
  "toml",
  "uuid",

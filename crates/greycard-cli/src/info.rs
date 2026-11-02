@@ -34,6 +34,15 @@ pub(crate) fn info(file: &std::path::Path) -> Result<()> {
         "white         {}x{}x{} {:?}",
         w.width, w.height, w.cpp, w.values
     );
+    if let Some(d) = &frame.levels.black_deltas {
+        println!(
+            "black deltas  {} columns, {} rows, from ({}, {})",
+            d.columns.len(),
+            d.rows.len(),
+            d.area.x,
+            d.area.y
+        );
+    }
     let check = frame.white_check();
     println!(
         "brightest     {:.0}; {} of {} samples above the declared white ({:.3}%)",

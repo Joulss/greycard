@@ -536,3 +536,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§521. The camera match and the runners, into the engine](notes/521-the-camera-match-and-the-runners-into-the-engine.md) (2026-11-01)
 - [§522. The learned masks kept by their base](notes/522-the-learned-masks-kept-by-their-base.md) (2026-11-01)
 - [§523. Merges: brackets and panoramas into a linear DNG](notes/523-merges-brackets-and-panoramas-into-a-linear-dng.md) (2026-11-01)
+- [§524. rawler at the fork's float-deflate-pin](notes/524-rawler-at-the-forks-float-deflate-pin.md) (2026-11-01)

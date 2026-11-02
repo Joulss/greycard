@@ -129,6 +129,10 @@ design note behind it.
 
 ### Fixes
 
+- A phone's DNG (a Pixel's, say) opens at the white balance the camera
+  recorded. Its matrix and its as-shot white used to disagree by up to
+  a few hundred kelvin
+  ([§524](https://github.com/jessolmstead/greycard/blob/master/docs/notes/524-rawler-at-the-forks-float-deflate-pin.md)).
 - A Sky, Subject, or other learned mask is made again after a white
   balance, lens, or noise change, so it no longer keeps the outline
   from before a distortion correction, in the viewport or an export

@@ -115,7 +115,9 @@ pub fn write_mosaic_dng_for(path: &Path, pattern: &str, make: &str, model: &str)
     use rawler::cfa::{CFA, PlaneColor};
     use rawler::decoders::Camera;
     use rawler::dng::writer::DngWriter;
-    use rawler::dng::{CropMode, DNG_VERSION_V1_4, DngCompression, DngPhotometricConversion};
+    use rawler::dng::{
+        CompressionParams, CropMode, DNG_VERSION_V1_4, DngCompression, DngPhotometricConversion,
+    };
     use rawler::pixarray::PixU16;
     use rawler::rawimage::{BlackLevel, CFAConfig, RawPhotometricInterpretation, WhiteLevel};
 
@@ -146,7 +148,7 @@ pub fn write_mosaic_dng_for(path: &Path, pattern: &str, make: &str, model: &str)
         CropMode::None,
         DngCompression::Uncompressed,
         DngPhotometricConversion::Original,
-        1,
+        &CompressionParams::default(),
     )
     .unwrap();
     main.finalize().unwrap();

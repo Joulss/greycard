@@ -18,8 +18,8 @@ pub use ::rawler::decoders::RawMetadata;
 use super::Decoder;
 use crate::error::{Error, Result};
 use crate::raw::{
-    Calibration, CfaColor, CfaPattern, DngTags, LevelPattern, Levels, Mosaic, Orientation,
-    RawFrame, Rect, Samples, SensorLayout, Shot,
+    BlackDeltas, Calibration, CfaColor, CfaPattern, DngTags, LevelPattern, Levels, Mosaic,
+    Orientation, RawFrame, Rect, Samples, SensorLayout, Shot,
 };
 
 /// rawler's `Unsupported` prints all four of its fields whether or not
@@ -730,6 +730,9 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     }
     let forward = forward_matrices(decoder.as_ref());
     with_forward_matrices(&mut frame.calibrations, &forward);
+    if let Some(gains) = white_xy_gains(decoder.as_ref(), &frame.calibrations) {
+        frame.as_shot_coefficients = Some(gains);
+    }
     if let Some(stops) = frame.dng.baseline_exposure {
         log::info!("BaselineExposure {stops:.2} EV carried, not applied");
     }
@@ -873,6 +876,33 @@ fn forward_matrices(decoder: &dyn ::rawler::decoders::Decoder) -> Vec<(u16, Vec<
     .collect()
 }
 
+/// The as-shot gains of a DNG that gives its white as `AsShotWhiteXY`
+/// and no `AsShotNeutral`, through the engine's own profile of
+/// `calibrations`, interpolated at that white as the specification asks.
+/// rawler's gains for such a file come from one illuminant's matrix
+/// alone, so the engine's two would read them back as another white,
+/// some hundred kelvin off. `None` for every other file, or when the
+/// profile will not make the white.
+fn white_xy_gains(
+    decoder: &dyn ::rawler::decoders::Decoder,
+    calibrations: &[Calibration],
+) -> Option<[f64; 3]> {
+    use ::rawler::decoders::WellKnownIFD;
+    use ::rawler::tags::DngTag;
+    // The white is a root tag rawler's virtual DNG root does not copy.
+    let root = decoder.ifd(WellKnownIFD::Root).ok().flatten()?;
+    if root.get_entry(DngTag::AsShotNeutral).is_some() {
+        return None;
+    }
+    let xy = root.get_entry(DngTag::AsShotWhiteXY)?;
+    let x = xy.value.get_f32(0).ok().flatten()?;
+    let y = xy.value.get_f32(1).ok().flatten()?;
+    let profile = crate::color::profile_from_calibrations(calibrations).ok()?;
+    crate::color::coefficients_of_white(&profile, f64::from(x), f64::from(y))
+        .ok()
+        .filter(|g| g.iter().all(|v| v.is_finite() && *v > 0.0))
+}
+
 /// Put each forward matrix on the calibration of its illuminant; one
 /// whose illuminant no calibration has is dropped, as a forward matrix
 /// means nothing without the color matrix it pairs with.
@@ -957,8 +987,10 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
 
     let black = {
         let bl = &image.blacklevel;
-        LevelPattern::new(bl.width, bl.height, bl.cpp, bl.as_vec())?
+        let values = bl.levels.iter().map(|l| l.as_f32()).collect();
+        LevelPattern::new(bl.width, bl.height, bl.cpp, values)?
     };
+    let black_deltas = black_deltas(&image);
     let white = white_pattern(&image.whitelevel.0, image.cpp)?;
 
     let as_shot_coefficients = as_shot(image.wb_coeffs);
@@ -1005,7 +1037,11 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
         channels: cpp,
         layout,
         samples,
-        levels: Levels { black, white },
+        levels: Levels {
+            black,
+            white,
+            black_deltas,
+        },
         as_shot_coefficients,
         calibrations,
         crop,
@@ -1017,22 +1053,119 @@ pub fn frame_from_rawler(image: RawImage) -> Result<RawFrame> {
     Ok(frame)
 }
 
-/// The image's color matrices as the engine's calibrations, by
-/// illuminant.
+/// A DNG's column and row differences of the black level, counted from
+/// its active area (the whole frame without one); `None` when it has
+/// neither.
+fn black_deltas(image: &RawImage) -> Option<BlackDeltas> {
+    let bl = &image.blacklevel;
+    if bl.delta_h.is_empty() && bl.delta_v.is_empty() {
+        return None;
+    }
+    let area = image.active_area.map_or(
+        Rect {
+            x: 0,
+            y: 0,
+            width: image.width,
+            height: image.height,
+        },
+        |r| Rect {
+            x: r.p.x,
+            y: r.p.y,
+            width: r.d.w,
+            height: r.d.h,
+        },
+    );
+    let floats = |v: &[::rawler::formats::tiff::SRational]| v.iter().map(|d| d.as_f32()).collect();
+    Some(BlackDeltas {
+        area,
+        columns: floats(&bl.delta_h),
+        rows: floats(&bl.delta_v),
+    })
+}
+
+/// The color matrices of the image's primary camera profile (a DNG's
+/// own, or the decoder's table's for every other raw) as the engine's
+/// calibrations, one per illuminant, the first slot's kept where two
+/// share one. The first two slots only (no table entry has more): a
+/// third illuminant is a triangle of interpolation the engine's pair
+/// does not make. A slot whose illuminant tag is missing is read as
+/// D65, as rawler read it before its camera profiles; the
+/// specification's unknown would leave such a file with no calibration
+/// the engine can use.
+///
+/// Each matrix is the DNG specification's XYZ to camera, `AnalogBalance
+/// x CameraCalibration x ColorMatrix`, the calibration taken when its
+/// signature matches the profile's: the matrix the file's as-shot
+/// neutral is measured against. The forward matrices are left as the
+/// file has them, which is exact while the calibration is diagonal, as
+/// it is on every file seen.
 fn calibrations_of(image: &RawImage) -> Vec<Calibration> {
-    let mut calibrations: Vec<Calibration> = image
-        .color_matrix
-        .iter()
-        .map(|(illuminant, matrix)| Calibration {
-            illuminant: *illuminant as u16,
-            color_matrix: matrix.clone(),
+    use ::rawler::imgop::xyz::Illuminant;
+    let Some(profile) = image.primary_camera_profile() else {
+        return Vec::new();
+    };
+    let mut calibrations: Vec<Calibration> = Vec::new();
+    for slot in profile.slots().filter(|&slot| slot < 2) {
+        let Some(calibration) = profile.calibration_slot(slot, Some(&image.camera_calibration))
+        else {
+            continue;
+        };
+        let illuminant = u16::from(profile.calibration_illuminant[slot].unwrap_or(Illuminant::D65));
+        if calibrations.iter().any(|c| c.illuminant == illuminant) {
+            continue;
+        }
+        calibrations.push(Calibration {
+            illuminant,
+            color_matrix: xyz_to_camera(
+                calibration.color_matrix,
+                calibration.camera_calibration.map(Vec::as_slice),
+                image.analog_balance.as_deref(),
+            ),
             // rawler leaves ForwardMatrix as a tag; a DNG's are put on
             // by `with_forward_matrices`.
             forward_matrix: None,
-        })
-        .collect();
+        });
+    }
     calibrations.sort_by_key(|c| c.illuminant);
     calibrations
+}
+
+/// `analog_balance x camera_calibration x color_matrix` for a color
+/// matrix of one row per camera plane and three columns; a calibration
+/// or a balance not of the matrix's planes is left out, with a warning.
+fn xyz_to_camera(
+    color_matrix: &[f32],
+    camera_calibration: Option<&[f32]>,
+    analog_balance: Option<&[f32]>,
+) -> Vec<f32> {
+    let planes = color_matrix.len() / 3;
+    let mut m = color_matrix.to_vec();
+    if let Some(cc) = camera_calibration {
+        if cc.len() == planes * planes && color_matrix.len() == planes * 3 {
+            m = (0..planes)
+                .flat_map(|i| (0..3).map(move |j| (i, j)))
+                .map(|(i, j)| (0..planes).map(|k| cc[i * planes + k] * m[k * 3 + j]).sum())
+                .collect();
+        } else {
+            log::warn!(
+                "CameraCalibration of {} values for {planes} planes left out",
+                cc.len()
+            );
+        }
+    }
+    if let Some(ab) = analog_balance {
+        if ab.len() == planes && color_matrix.len() == planes * 3 {
+            for (row, gain) in m.as_chunks_mut::<3>().0.iter_mut().zip(ab) {
+                row.iter_mut().for_each(|v| *v *= gain);
+            }
+        } else {
+            log::warn!(
+                "AnalogBalance of {} values for {planes} planes left out",
+                ab.len()
+            );
+        }
+    }
+    m
 }
 
 fn cfa_pattern(cfa: &CFA) -> Result<CfaPattern> {
@@ -1542,6 +1675,256 @@ mod tests {
             let e = e.expect_err("the fixture does not decode").to_string();
             assert!(e.contains("gave up"), "{e}");
         }
+    }
+
+    /// A 12x10 RGGB mosaic of rawler's, to be written as a DNG by
+    /// [`written_dng`].
+    fn a_mosaic(black: ::rawler::rawimage::BlackLevel) -> RawImage {
+        use ::rawler::cfa::PlaneColor;
+        use ::rawler::decoders::Camera;
+        use ::rawler::pixarray::PixU16;
+        use ::rawler::rawimage::{CFAConfig, WhiteLevel};
+
+        let (w, h) = (12usize, 10usize);
+        let data: Vec<u16> = (0..w * h).map(|i| 600 + (i as u16 * 37) % 900).collect();
+        let cfa = CFA::new("RGGB");
+        let mut camera = Camera::new();
+        camera.make = "Test".into();
+        camera.model = "Mosaic".into();
+        camera.clean_make = camera.make.clone();
+        camera.clean_model = camera.model.clone();
+        camera.cfa = cfa.clone();
+        RawImage::new(
+            camera,
+            PixU16::new_with(data, w, h),
+            1,
+            [1.0, 1.0, 1.0, f32::NAN],
+            RawPhotometricInterpretation::Cfa(CFAConfig::new(&cfa, &PlaneColor::default())),
+            Some(black),
+            Some(WhiteLevel::new(vec![4000])),
+            false,
+        )
+    }
+
+    /// `raw` written as an uncompressed DNG through rawler's writer,
+    /// `root` given the root directory last.
+    fn dng_bytes(
+        raw: &RawImage,
+        root: impl FnOnce(&mut ::rawler::formats::tiff::writer::DirectoryWriter),
+    ) -> Vec<u8> {
+        use ::rawler::dng::writer::DngWriter;
+        use ::rawler::dng::{
+            CompressionParams, CropMode, DNG_VERSION_V1_4, DngCompression, DngPhotometricConversion,
+        };
+        let mut file = std::io::Cursor::new(Vec::new());
+        let mut dng = DngWriter::new(&mut file, DNG_VERSION_V1_4).unwrap();
+        let mut main = dng.subframe_on_root(0);
+        main.raw_image(
+            raw,
+            CropMode::ActiveArea,
+            DngCompression::Uncompressed,
+            DngPhotometricConversion::Original,
+            &CompressionParams::default(),
+        )
+        .unwrap();
+        main.finalize().unwrap();
+        dng.load_base_tags(raw).unwrap();
+        root(dng.root_ifd_mut());
+        dng.close().unwrap();
+        file.into_inner()
+    }
+
+    /// [`dng_bytes`] decoded back by rawler.
+    fn written_dng(
+        raw: &RawImage,
+        root: impl FnOnce(&mut ::rawler::formats::tiff::writer::DirectoryWriter),
+    ) -> RawImage {
+        let bytes = dng_bytes(raw, root);
+        let source = RawSource::new_from_slice(&bytes);
+        let decoder = ::rawler::get_decoder(&source).unwrap();
+        decoder
+            .raw_image(&source, &RawDecodeParams::default(), false)
+            .unwrap()
+    }
+
+    /// A mosaic DNG's `BlackLevelDeltaH` and `BlackLevelDeltaV` come
+    /// through as the frame's differences, counted from its active
+    /// area, and its black pattern stays as rawler gives it.
+    #[test]
+    fn a_dngs_black_deltas_are_read_from_its_active_area() {
+        use ::rawler::formats::tiff::SRational;
+        use ::rawler::imgop::{Dim2, Point};
+        use ::rawler::rawimage::BlackLevel;
+
+        let columns: Vec<i32> = vec![2, -4, 6, 0, 8, -2, 4, 10];
+        let rows: Vec<i32> = vec![-6, 12, 0, 4, 2, -8];
+        let halves = |v: &[i32]| v.iter().map(|&d| SRational::new(d, 2)).collect::<Vec<_>>();
+        let black = BlackLevel::new(&[100u16, 104, 108, 112], 2, 2, 1)
+            .with_deltas(halves(&columns), halves(&rows));
+        let mut raw = a_mosaic(black);
+        raw.active_area = Some(::rawler::imgop::Rect::new(
+            Point::new(2, 2),
+            Dim2::new(8, 6),
+        ));
+        let frame = frame_from_rawler(written_dng(&raw, |_| {})).unwrap();
+        let half = |v: &[i32]| v.iter().map(|&d| d as f32 / 2.0).collect::<Vec<_>>();
+        assert_eq!(
+            frame.levels.black_deltas,
+            Some(BlackDeltas {
+                area: Rect {
+                    x: 2,
+                    y: 2,
+                    width: 8,
+                    height: 6
+                },
+                columns: half(&columns),
+                rows: half(&rows),
+            })
+        );
+        assert_eq!(frame.levels.black.values, vec![100.0, 104.0, 108.0, 112.0]);
+        // Row 3 and column 4: the pattern's 108, the area's second row
+        // (+6) and third column (+3).
+        assert_eq!(frame.levels.black_at(3, 4, 0), 108.0 + 6.0 + 3.0);
+        // Above the area its column's goes on and no row's, as rawler
+        // adds them; above and left of it, neither.
+        assert_eq!(frame.levels.black_at(1, 4, 0), 108.0 + 3.0);
+        assert_eq!(frame.levels.black_at(1, 1, 0), 112.0);
+    }
+
+    /// A DNG's `CameraCalibration` and `AnalogBalance` go into its
+    /// color matrix, as the specification builds XYZ to camera, so the
+    /// as-shot white a phone gives as `AsShotWhiteXY` reads back as that
+    /// white: the same temperature and tint with a calibration as
+    /// without one.
+    #[test]
+    fn a_dngs_camera_calibration_goes_into_its_matrix() {
+        use ::rawler::camera_profile::CameraProfile;
+        use ::rawler::formats::tiff::Rational;
+        use ::rawler::imgop::xyz::Illuminant;
+        use ::rawler::rawimage::BlackLevel;
+        use ::rawler::tags::DngTag;
+
+        let cm = vec![
+            0.7107, -0.0861, -0.1265, -0.5989, 1.571, -0.0016, -0.2112, 0.4405, 0.4113,
+        ];
+        let decoded = |calibrate: bool| {
+            let mut raw = a_mosaic(BlackLevel::new(&[100u16], 1, 1, 1));
+            let mut profile = CameraProfile::default();
+            profile.calibration_illuminant[0] = Some(Illuminant::D65);
+            profile.color_matrix[0] = Some(cm.clone());
+            raw.camera_profiles = vec![profile];
+            if calibrate {
+                raw.camera_calibration.matrices[0] =
+                    Some(vec![1.0251, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.9713]);
+                raw.analog_balance = Some(vec![1.05, 1.0, 0.98]);
+            }
+            frame_from_rawler(written_dng(&raw, |root| {
+                root.remove_tag(DngTag::AsShotNeutral);
+                root.add_tag(
+                    DngTag::AsShotWhiteXY,
+                    [
+                        Rational::new(360849, 1_000_000),
+                        Rational::new(378146, 1_000_000),
+                    ],
+                );
+            }))
+            .unwrap()
+        };
+        let plain = decoded(false);
+        let calibrated = decoded(true);
+        assert_eq!(plain.calibrations[0].color_matrix, cm);
+        let want: Vec<f32> = cm
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip([1.0251 * 1.05, 1.0, 0.9713 * 0.98])
+            .flat_map(|(row, g)| row.iter().map(move |v| v * g))
+            .collect();
+        for (got, want) in calibrated.calibrations[0].color_matrix.iter().zip(&want) {
+            assert!((got - want).abs() < 1e-5, "{got} != {want}");
+        }
+        let temp_tint = |frame: &RawFrame| {
+            let profile = crate::color::profile_from_frame(frame).unwrap();
+            crate::color::as_shot_temp_tint(frame, &profile).unwrap()
+        };
+        let file = rawcolor::cct::chromaticity_to_temp_tint(rawcolor::Chromaticity {
+            x: 0.360849,
+            y: 0.378146,
+        })
+        .unwrap();
+        assert_ne!(plain.as_shot_coefficients, calibrated.as_shot_coefficients);
+        for got in [temp_tint(&plain), temp_tint(&calibrated)] {
+            assert!((got.cct - file.cct).abs() < 1.0, "{got:?} != {file:?}");
+            assert!((got.duv - file.duv).abs() < 1e-4, "{got:?} != {file:?}");
+        }
+    }
+
+    /// A DNG with a white for each of two illuminants reads its
+    /// `AsShotWhiteXY` back as that white through both, where rawler's
+    /// gains, made with one illuminant's matrix, read back hundreds of
+    /// kelvin off; [`white_path`]'s gains are the frame's.
+    #[test]
+    fn a_dngs_white_xy_reads_back_through_both_its_matrices() {
+        use ::rawler::camera_profile::CameraProfile;
+        use ::rawler::formats::tiff::Rational;
+        use ::rawler::imgop::xyz::Illuminant;
+        use ::rawler::rawimage::BlackLevel;
+        use ::rawler::tags::DngTag;
+
+        let mut raw = a_mosaic(BlackLevel::new(&[100u16], 1, 1, 1));
+        raw.camera_profiles = vec![CameraProfile {
+            calibration_illuminant: [Some(Illuminant::A), Some(Illuminant::D65), None],
+            color_matrix: [
+                Some(vec![
+                    1.0426, -0.4594, -0.0588, -0.3576, 1.2977, 0.0571, -0.03, 0.1922, 0.6598,
+                ]),
+                Some(vec![
+                    0.7107, -0.0861, -0.1265, -0.5989, 1.571, -0.0016, -0.2112, 0.4405, 0.4113,
+                ]),
+                None,
+            ],
+            ..Default::default()
+        }];
+        let white_xy = |root: &mut ::rawler::formats::tiff::writer::DirectoryWriter| {
+            root.remove_tag(DngTag::AsShotNeutral);
+            root.add_tag(
+                DngTag::AsShotWhiteXY,
+                [
+                    Rational::new(360849, 1_000_000),
+                    Rational::new(378146, 1_000_000),
+                ],
+            );
+        };
+        let rawlers = as_shot(written_dng(&raw, white_xy).wb_coeffs).unwrap();
+        let dir = std::env::temp_dir().join(format!("greycard-white-xy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("white.dng");
+        std::fs::write(&path, dng_bytes(&raw, white_xy)).unwrap();
+        let frame = RawlerDecoder.decode_path(&path);
+        let white = white_path(&path);
+        crate::testing::remove_dir_retry(&dir);
+        let (frame, white) = (frame.unwrap(), white.unwrap());
+        assert_eq!(white.as_shot_coefficients, frame.as_shot_coefficients);
+
+        let file = rawcolor::cct::chromaticity_to_temp_tint(rawcolor::Chromaticity {
+            x: 0.360849,
+            y: 0.378146,
+        })
+        .unwrap();
+        let profile = crate::color::profile_from_frame(&frame).unwrap();
+        let got = crate::color::as_shot_temp_tint(&frame, &profile).unwrap();
+        assert!((got.cct - file.cct).abs() < 1.0, "{got:?} != {file:?}");
+        assert!((got.duv - file.duv).abs() < 1e-4, "{got:?} != {file:?}");
+        let theirs = crate::color::temp_tint_of_gains(&profile, rawlers).unwrap();
+        assert!((theirs.cct - file.cct).abs() > 50.0, "{theirs:?}");
+    }
+
+    /// A raw without differences has none, and its black is the
+    /// pattern's alone.
+    #[test]
+    fn a_dng_without_black_deltas_has_none() {
+        let frame = RawlerDecoder.decode_bytes(&a_dng()).unwrap();
+        assert_eq!(frame.levels.black_deltas, None);
     }
 
     /// A linear DNG of our own writing: a raw rawler reads, which no
@@ -2561,7 +2944,8 @@ fn white_unguarded(path: &Path) -> Result<CameraWhite> {
     let mut calibrations = calibrations_of(&image);
     with_forward_matrices(&mut calibrations, &forward_matrices(decoder.as_ref()));
     Ok(CameraWhite {
-        as_shot_coefficients: as_shot(image.wb_coeffs),
+        as_shot_coefficients: white_xy_gains(decoder.as_ref(), &calibrations)
+            .or(as_shot(image.wb_coeffs)),
         calibrations,
     })
 }

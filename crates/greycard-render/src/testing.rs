@@ -33,6 +33,7 @@ pub fn white_shift() -> greycard_edit::WhiteShift {
         levels: Levels {
             black: LevelPattern::uniform(0.0, 1),
             white: LevelPattern::uniform(1.0, 1),
+            black_deltas: None,
         },
         as_shot_coefficients: Some([2.0, 1.0, 1.6]),
         calibrations: vec![

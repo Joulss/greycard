@@ -42,7 +42,9 @@ use crate::color::{self, WhitePoint};
 use crate::error::{Error, Result};
 use crate::image::{CameraImage, WorkingImage};
 use crate::opcodes::{BadPixels, MosaicOp, OpcodeList};
-use crate::raw::{CfaPattern, Mosaic, Orientation, RawFrame, Rect, Samples, SensorLayout};
+use crate::raw::{
+    BlackDeltas, CfaPattern, Mosaic, Orientation, RawFrame, Rect, Samples, SensorLayout,
+};
 
 /// What to develop a frame with.
 ///
@@ -1067,7 +1069,16 @@ fn fix_bad_pixels(
 /// Subtract black, divide by the range to white, clamp to 0..1.
 ///
 /// Works on the full frame so level patterns index by sensor position.
+/// Each pattern position's range runs from its own black to white. A
+/// DNG's column and row differences go on the black of each sample, and
+/// the range then runs from the highest black that position reaches over
+/// the active area. The DNG specification and rawler scale a whole plane
+/// by its one highest black; we keep a scale per pattern position, the
+/// rule without differences carried over to them.
 pub fn normalize_levels(frame: &RawFrame) -> Vec<f32> {
+    if let Some(deltas) = &frame.levels.black_deltas {
+        return normalize_with_deltas(frame, deltas);
+    }
     let cpp = frame.channels;
     let width = frame.width;
     let black = &frame.levels.black;
@@ -1082,6 +1093,37 @@ pub fn normalize_levels(frame: &RawFrame) -> Vec<f32> {
                         let b = black.at(y, x, ch);
                         let range = (white.at(y, x, ch) - b).max(f32::EPSILON);
                         *s = ((*s - b) / range).clamp(0.0, 1.0);
+                    }
+                }
+            })
+        });
+    out
+}
+
+/// [`normalize_levels`] for a frame whose black has column and row
+/// differences.
+fn normalize_with_deltas(frame: &RawFrame, deltas: &BlackDeltas) -> Vec<f32> {
+    let cpp = frame.channels;
+    let width = frame.width;
+    let black = &frame.levels.black;
+    let white = &frame.levels.white;
+    let columns: Vec<f32> = (0..width).map(|x| deltas.column(x)).collect();
+    let column_ceilings = deltas.column_ceilings(black.width);
+    let row_ceilings = deltas.row_ceilings(black.height);
+    let mut out = frame.samples.to_f32();
+    out.par_chunks_mut(width * cpp)
+        .enumerate()
+        .for_each(|(y, row)| {
+            own_row(row, |row| {
+                let row_delta = deltas.row(y);
+                let row_ceiling = row_ceilings[y % black.height];
+                for (x, px) in row.chunks_exact_mut(cpp).enumerate() {
+                    let delta = columns[x] + row_delta;
+                    let ceiling = column_ceilings[x % black.width] + row_ceiling;
+                    for (ch, s) in px.iter_mut().enumerate() {
+                        let b = black.at(y, x, ch);
+                        let range = (white.at(y, x, ch) - b - ceiling).max(f32::EPSILON);
+                        *s = ((*s - b - delta) / range).clamp(0.0, 1.0);
                     }
                 }
             })
@@ -1349,6 +1391,7 @@ pub(crate) mod tests {
             levels: Levels {
                 black: LevelPattern::uniform(100.0, 1),
                 white: LevelPattern::uniform(1100.0, 1),
+                black_deltas: None,
             },
             as_shot_coefficients: Some([2.0, 1.0, 4.0]),
             calibrations: vec![Calibration {
@@ -1384,6 +1427,127 @@ pub(crate) mod tests {
             "blue with its own black {}",
             n[5]
         );
+    }
+
+    /// A frame of 9x7 samples counting up, with a 2x2 black pattern and
+    /// differences along an active area that starts at (1, 2).
+    fn delta_frame() -> RawFrame {
+        let (width, height) = (9, 7);
+        let mut frame = flat_frame();
+        frame.width = width;
+        frame.height = height;
+        frame.samples = Samples::U16((0..width * height).map(|i| 400 + 7 * i as u16).collect());
+        frame.levels.black = LevelPattern::new(2, 2, 1, vec![100.0, 110.0, 120.0, 130.0]).unwrap();
+        frame.levels.black_deltas = Some(BlackDeltas {
+            area: Rect {
+                x: 1,
+                y: 2,
+                width: 7,
+                height: 4,
+            },
+            columns: vec![1.5, -2.0, 3.0, 0.5, -1.0, 4.0, 2.5],
+            rows: vec![-3.0, 6.0, 0.0, 2.0],
+        });
+        frame
+    }
+
+    #[test]
+    fn black_deltas_go_on_each_sample_and_the_range_starts_at_their_highest() {
+        let frame = delta_frame();
+        let n = normalize_levels(&frame);
+        let deltas = frame.levels.black_deltas.as_ref().unwrap();
+        let Samples::U16(raw) = &frame.samples else {
+            unreachable!()
+        };
+        // Per sample, written out: the black is the pattern's plus the
+        // column's and the row's difference (zero outside the area); the
+        // range runs from the highest black that pattern position takes
+        // anywhere in the area.
+        for y in 0..frame.height {
+            for x in 0..frame.width {
+                let column = if (1..8).contains(&x) {
+                    deltas.columns[x - 1]
+                } else {
+                    0.0
+                };
+                let row = if (2..6).contains(&y) {
+                    deltas.rows[y - 2]
+                } else {
+                    0.0
+                };
+                let pattern = frame.levels.black.at(y, x, 0);
+                let highest_column = (1..8)
+                    .filter(|c| c % 2 == x % 2)
+                    .map(|c| deltas.columns[c - 1])
+                    .fold(f32::MIN, f32::max);
+                let highest_row = (2..6)
+                    .filter(|r| r % 2 == y % 2)
+                    .map(|r| deltas.rows[r - 2])
+                    .fold(f32::MIN, f32::max);
+                let black = pattern + column + row;
+                assert_eq!(frame.levels.black_at(y, x, 0), black);
+                let range = 1100.0 - pattern - highest_column - highest_row;
+                let want = ((f32::from(raw[y * frame.width + x]) - black) / range).clamp(0.0, 1.0);
+                let got = n[y * frame.width + x];
+                assert!(close(got, want), "({x}, {y}): {got} != {want}");
+            }
+        }
+    }
+
+    #[test]
+    fn zero_black_deltas_normalize_as_none() {
+        let mut frame = delta_frame();
+        let none = {
+            let mut f = frame.clone();
+            f.levels.black_deltas = None;
+            normalize_levels(&f)
+        };
+        let d = frame.levels.black_deltas.as_mut().unwrap();
+        d.columns
+            .iter_mut()
+            .chain(d.rows.iter_mut())
+            .for_each(|v| *v = 0.0);
+        assert_eq!(normalize_levels(&frame), none);
+    }
+
+    /// With a black of one value, the highest black of each position is
+    /// the plane's, so the scale is the DNG specification's exactly:
+    /// rawler's own mapping is the reference.
+    #[test]
+    fn black_deltas_map_as_rawler_maps_them_under_one_black() {
+        use ::rawler::formats::tiff::SRational;
+        use ::rawler::imgop::{Dim2, Point};
+        use ::rawler::rawimage::{BlackLevel, WhiteLevel};
+        let mut frame = delta_frame();
+        frame.levels.black = LevelPattern::uniform(100.0, 1);
+        let deltas = frame.levels.black_deltas.clone().unwrap();
+        let rationals = |v: &[f32]| {
+            v.iter()
+                .map(|d| SRational::new((d * 2.0) as i32, 2))
+                .collect::<Vec<_>>()
+        };
+        let black = BlackLevel::new(&[100u16], 1, 1, 1)
+            .with_deltas(rationals(&deltas.columns), rationals(&deltas.rows));
+        let area = ::rawler::imgop::Rect::new(
+            Point::new(deltas.area.x, deltas.area.y),
+            Dim2::new(deltas.area.width, deltas.area.height),
+        );
+        let Samples::U16(raw) = &frame.samples else {
+            unreachable!()
+        };
+        let pixels = ::rawler::pixarray::PixU16::new_with(raw.clone(), frame.width, frame.height);
+        let want = ::rawler::imgop::blacklevel::rescale(
+            &pixels,
+            &black,
+            &WhiteLevel::new(vec![1100]),
+            area,
+            None,
+        )
+        .unwrap();
+        let got = normalize_levels(&frame);
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert!(close(*g, w.min(1.0)), "sample {i}: {g} != {w}");
+        }
     }
 
     #[test]
@@ -1867,6 +2031,7 @@ pub(crate) mod tests {
             levels: Levels {
                 black: LevelPattern::uniform(0.0, 1),
                 white: LevelPattern::uniform(16383.0, 1),
+                black_deltas: None,
             },
             crop: None,
             ..flat_frame()

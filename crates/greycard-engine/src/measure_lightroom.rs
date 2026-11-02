@@ -1814,6 +1814,7 @@ mod tests {
             levels: Levels {
                 black: LevelPattern::uniform(0.0, 1),
                 white: LevelPattern::uniform(65535.0, 1),
+                black_deltas: None,
             },
             as_shot_coefficients: Some([2.0, 1.0, 1.6]),
             calibrations: vec![Calibration {

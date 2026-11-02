@@ -3940,6 +3940,7 @@ mod tests {
             levels: Levels {
                 black: LevelPattern::uniform(0.0, 3),
                 white: LevelPattern::uniform(65535.0, 3),
+                black_deltas: None,
             },
             as_shot_coefficients: Some(gains.map(f64::from)),
             calibrations: vec![Calibration {

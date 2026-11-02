@@ -53,6 +53,7 @@ pub(crate) fn lenses(
                 levels: greycard_core::raw::Levels {
                     black: greycard_core::raw::LevelPattern::uniform(0.0, 1),
                     white: greycard_core::raw::LevelPattern::uniform(1.0, 1),
+                    black_deltas: None,
                 },
                 as_shot_coefficients: None,
                 calibrations: Vec::new(),

@@ -16,7 +16,9 @@ use std::io::{Seek, Write};
 use ::rawler::RawImage;
 use ::rawler::decoders::Camera;
 use ::rawler::dng::writer::DngWriter;
-use ::rawler::dng::{CropMode, DNG_VERSION_V1_4, DngCompression, DngPhotometricConversion};
+use ::rawler::dng::{
+    CompressionParams, CropMode, DNG_VERSION_V1_4, DngCompression, DngPhotometricConversion,
+};
 use ::rawler::formats::tiff::{Rational, SRational};
 use ::rawler::imgop::xyz::Illuminant;
 use ::rawler::pixarray::PixU16;
@@ -109,7 +111,7 @@ pub fn write_linear_dng<W: Write + Seek>(
         CropMode::None,
         compression,
         DngPhotometricConversion::Original,
-        1,
+        &CompressionParams::default(),
     )
     .map_err(encode)?;
     main.finalize().map_err(encode)?;
@@ -154,15 +156,24 @@ pub fn write_linear_dng<W: Write + Seek>(
     for (slot, calibration) in calibrations.iter().enumerate() {
         let slot = slot + 1;
         let illuminant = Illuminant::try_from(calibration.illuminant).map_err(Error::Encode)?;
-        dng.color_matrix(slot, illuminant, srationals(&calibration.color_matrix));
+        let (illuminant_tag, matrix_tag, forward_tag) = if slot == 1 {
+            (
+                DngTag::CalibrationIlluminant1,
+                DngTag::ColorMatrix1,
+                DngTag::ForwardMatrix1,
+            )
+        } else {
+            (
+                DngTag::CalibrationIlluminant2,
+                DngTag::ColorMatrix2,
+                DngTag::ForwardMatrix2,
+            )
+        };
+        let root = dng.root_ifd_mut();
+        root.add_tag(illuminant_tag, u16::from(illuminant));
+        root.add_tag(matrix_tag, srationals(&calibration.color_matrix).as_slice());
         if let Some(forward) = &calibration.forward_matrix {
-            let tag = if slot == 1 {
-                DngTag::ForwardMatrix1
-            } else {
-                DngTag::ForwardMatrix2
-            };
-            dng.root_ifd_mut()
-                .add_tag(tag, srationals(forward).as_slice());
+            root.add_tag(forward_tag, srationals(forward).as_slice());
         }
     }
 

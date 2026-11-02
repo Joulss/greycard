@@ -251,6 +251,82 @@ impl LevelPattern {
 pub struct Levels {
     pub black: LevelPattern,
     pub white: LevelPattern,
+    /// What a DNG adds to `black` along the columns and rows of its
+    /// active area; `None` for every other raw, and for a DNG with no
+    /// such tags.
+    pub black_deltas: Option<BlackDeltas>,
+}
+
+impl Levels {
+    /// The black of a sample: the pattern's, plus its column's and its
+    /// row's difference when the frame has them.
+    #[inline]
+    pub fn black_at(&self, row: usize, col: usize, channel: usize) -> f32 {
+        let pattern = self.black.at(row, col, channel);
+        match &self.black_deltas {
+            Some(d) => pattern + d.column(col) + d.row(row),
+            None => pattern,
+        }
+    }
+}
+
+/// A DNG's `BlackLevelDeltaH` and `BlackLevelDeltaV`: a difference for
+/// each column and each row of `area`, added to the black pattern's
+/// value of every sample in that column or row. A column or row outside
+/// `area` has none. Only DNGs carry them; no camera's own format has a
+/// word for them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlackDeltas {
+    /// The DNG's active area, which the differences are counted from;
+    /// the whole frame when the file names none.
+    pub area: Rect,
+    /// One per column of `area`, or none.
+    pub columns: Vec<f32>,
+    /// One per row of `area`, or none.
+    pub rows: Vec<f32>,
+}
+
+impl BlackDeltas {
+    /// The difference of sensor column `col`.
+    #[inline]
+    pub fn column(&self, col: usize) -> f32 {
+        col.checked_sub(self.area.x)
+            .and_then(|i| self.columns.get(i))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// The difference of sensor row `row`.
+    #[inline]
+    pub fn row(&self, row: usize) -> f32 {
+        row.checked_sub(self.area.y)
+            .and_then(|i| self.rows.get(i))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// The largest difference of the columns at each position of a
+    /// pattern `width` wide, by sensor column modulo `width`; zero at a
+    /// position no column of the area reaches.
+    pub fn column_ceilings(&self, width: usize) -> Vec<f32> {
+        ceilings(&self.columns, self.area.x, width)
+    }
+
+    /// [`BlackDeltas::column_ceilings`] for the rows.
+    pub fn row_ceilings(&self, height: usize) -> Vec<f32> {
+        ceilings(&self.rows, self.area.y, height)
+    }
+}
+
+/// The largest of `deltas`, which start at sensor position `start`, at
+/// each position modulo `period`.
+fn ceilings(deltas: &[f32], start: usize, period: usize) -> Vec<f32> {
+    let mut max: Vec<Option<f32>> = vec![None; period.max(1)];
+    for (i, &d) in deltas.iter().enumerate() {
+        let m = &mut max[(start + i) % period.max(1)];
+        *m = Some(m.map_or(d, |m| m.max(d)));
+    }
+    max.into_iter().map(|m| m.unwrap_or(0.0)).collect()
 }
 
 /// One illuminant's color calibration, as the file carries it.
@@ -940,6 +1016,7 @@ mod tests {
             levels: Levels {
                 black: LevelPattern::uniform(100.0, 1),
                 white: LevelPattern::uniform(1000.0, 1),
+                black_deltas: None,
             },
             as_shot_coefficients: None,
             calibrations: Vec::new(),
