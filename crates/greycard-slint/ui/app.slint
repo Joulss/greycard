@@ -264,9 +264,11 @@ export component App inherits Window {
     in property <length> strip-ring: 2px;
     in property <length> strip-pad: 12px;
     property <length> strip-foot: max(root.strip-pad, ScrollBars.band - 2px);
-    /// A cell's height: the picture in its ring, and under it the
-    /// name's line, 13 px for its 11 px text, a `space-1` either side.
-    property <length> strip-cell-h: root.strip-ring + root.strip-photo + Theme.space-1 + 13px + Theme.space-1;
+    /// A cell's height: the picture in its ring with the `space-1` for
+    /// a color label's band, and under the ring, 2 px clear of it, the
+    /// name's line, 13 px for its 11 px text and a `space-1` under it
+    /// for the descenders.
+    property <length> strip-cell-h: 2 * root.strip-ring + root.strip-photo + Theme.space-1 + 2px + 13px + Theme.space-1;
     /// The strip's cells, each its picture's shape: where a row's cell
     /// is along the row, how long the row is, the rows a scroll shows,
     /// and the scroll that shows a row, asked of the arithmetic in

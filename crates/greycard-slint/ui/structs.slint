@@ -164,10 +164,15 @@ export struct GridPlace {
 }
 
 /// Where a frame's cell sits along the strip: its left edge from the
-/// row's start, and its width, its picture's shape at the row's height.
+/// row's start, and its width, its picture's shape at the row's height
+/// or the floor that shows its name whole; and its picture in it, how
+/// far the ring sits in from the cell's left edge and the picture's
+/// width inside the ring.
 export struct StripPlace {
     x: length,
     width: length,
+    inset: length,
+    photo: length,
 }
 
 /// The rows a scroll of the strip shows any of, first and last; -1 for

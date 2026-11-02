@@ -1349,8 +1349,18 @@ pub(crate) fn strip_layout(app: &App) {
     let weak = app.as_weak();
     app.on_strip_place(move |row, _| {
         weak.upgrade()
-            .and_then(|app| cells::strip_layout(&app).place(row))
-            .map_or_else(StripPlace::default, |(x, width)| StripPlace { x, width })
+            .and_then(|app| {
+                let layout = cells::strip_layout(&app);
+                let (x, width) = layout.place(row)?;
+                let (inset, photo) = layout.photo(row)?;
+                Some(StripPlace {
+                    x,
+                    width,
+                    inset,
+                    photo,
+                })
+            })
+            .unwrap_or_default()
     });
     let weak = app.as_weak();
     app.on_strip_length(move |_| {
@@ -4401,8 +4411,9 @@ mod tests {
         for row in was_last + 1..=last {
             assert!(cells::has_cell(&app, row as usize), "row {row} has no cell");
         }
-        // The cells drawn are the layout's: a portrait's picture 61
-        // wide, a landscape's 137, each in its ring.
+        // The cells drawn are the layout's: a portrait's the floor's 96
+        // wide around its picture's 61, a landscape's its picture's 137
+        // in its ring.
         let drawn: Vec<(f32, f32)> = ElementHandle::find_by_element_id(&app, "Filmstrip::cell")
             .map(|e| (e.absolute_position().x, e.size().width))
             .collect();
@@ -4457,6 +4468,94 @@ mod tests {
         );
     }
 
+    /// A portrait's cell is the floor's width, wide enough for its
+    /// twelve-character name, with the picture and its ring centered in
+    /// it; a landscape's cell is its picture's, the ring at its edges.
+    /// Either way the name sits under the ring, outside it.
+    #[test]
+    fn a_portraits_cell_shows_its_name_whole_and_a_landscapes_is_its_picture() {
+        use crate::panel::deliver::deliver;
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(10);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        // Two cameras' names, the twelve characters the floor is for.
+        let names = ["4Z4A2978.CR3", "DSCF0438.RAF"];
+        cells::set_rows(
+            &app,
+            (0..10)
+                .map(|i| Thumb {
+                    name: names.get(i).map_or("IMG_0000.CR3", |n| n).into(),
+                    image: slint::Image::default(),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let files = crate::testing::folder(10);
+        let (_state, _worker) = crate::testing::state_for(&app, files.clone());
+        press(&app, Key::Shift);
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(vec![
+                portrait_for(&files, 0),
+                picture_shaped(&files, 1, 3, 2),
+            ])),
+        );
+        for _ in 0..10 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+            slint::platform::update_timers_and_animations();
+        }
+        press(&app, Key::Shift);
+        assert_eq!(app.get_strip_scroll(), 0.0);
+        let layout = cells::strip_layout(&app);
+        let (p_left, p_width) = layout.place(0).unwrap();
+        let (l_left, l_width) = layout.place(1).unwrap();
+        assert_eq!(p_width, strip::FLOOR);
+        assert_eq!(
+            l_width,
+            137.0 + 2.0 * strip::RING,
+            "the landscape as before"
+        );
+        // The ring around each picture: the portrait's in the middle of
+        // its cell, the landscape's the cell's own.
+        let (p_inset, p_photo) = layout.photo(0).unwrap();
+        assert!(p_inset > 0.0);
+        let frames: Vec<_> = ElementHandle::find_by_element_id(&app, "Filmstrip::frame")
+            .map(|e| (e.absolute_position().x, e.size().width, e))
+            .collect();
+        let frame = |x: f32, w: f32| {
+            frames
+                .iter()
+                .find(|f| (f.0, f.1) == (x, w))
+                .map(|f| f.2.clone())
+                .unwrap_or_else(|| panic!("no ring at {x} {w} wide"))
+        };
+        let rings = [
+            frame(p_left + p_inset, p_photo + 2.0 * strip::RING),
+            frame(l_left, l_width),
+        ];
+        // Each ring holds the picture and the band's room under it,
+        // the theme's `space-1`, and ends above the name.
+        let band = app.global::<crate::Theme>().get_space_1();
+        for ring in &rings {
+            assert_eq!(ring.size().height, strip::PHOTO + band + 2.0 * strip::RING);
+        }
+        let ring_foot = rings[0].absolute_position().y + rings[0].size().height;
+        // Each name's box is its cell's width, a portrait's the floor,
+        // which these names fit in the theme's face (see `strip::FLOOR`):
+        // no longer cut to the picture's width, and under the ring.
+        for (name, left, width) in [(names[0], p_left, p_width), (names[1], l_left, l_width)] {
+            let text = ElementHandle::find_by_accessible_label(&app, name)
+                .find(|e| e.absolute_position().x == left)
+                .unwrap_or_else(|| panic!("{name} under its cell"));
+            assert_eq!(text.size().width, width);
+            assert!(
+                text.absolute_position().y >= ring_foot,
+                "{name} in the ring"
+            );
+        }
+    }
+
     /// The strip and the grid make cells for the rows on screen and a
     /// margin, however long the list: five thousand frames are a strip
     /// of a screen's width and a grid of seven rows, and no more rows
@@ -4464,8 +4563,8 @@ mod tests {
     #[test]
     fn five_thousand_frames_make_cells_for_the_screen_alone() {
         let (app, state, _files) = five_thousand();
-        // The strip, 1500 wide over square pictures, 95 a cell and 8
-        // between: fourteen and a part on screen, and cells for a part
+        // The strip, 1500 wide over square pictures, the floor's 96 a
+        // cell and 8 between: fourteen and a part on screen, and cells for a part
         // more and the margin either side.
         assert_eq!(cells_on_screen(&app, "Filmstrip::cell"), 15);
         let strip = app.get_strip_cells().row_count();

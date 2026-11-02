@@ -1,8 +1,9 @@
 //! The filmstrip's arithmetic: each frame's cell its picture's shape
-//! at the row's height, the cells side by side with a gap between and
-//! the pad at either end; where a cell is, what a scroll shows, the
-//! scroll that shows a frame, and the scroll that keeps the view still
-//! when shapes come in after the layout.
+//! at the row's height, never narrower than its name, the cells side
+//! by side with a gap between and the pad at either end; where a cell
+//! is, what a scroll shows, the scroll that shows a frame, and the
+//! scroll that keeps the view still when shapes come in after the
+//! layout.
 //!
 //! The window draws the cells where this puts them, asked through its
 //! `strip-place` and the rest, so the numbers are tested here rather
@@ -27,28 +28,42 @@ pub const PHOTO: f32 = 91.0;
 /// take the strip.
 pub const NARROWEST: f32 = 0.5;
 pub const WIDEST: f32 = 3.0;
+/// The narrowest a cell is, so a camera's twelve-character name shows
+/// whole under a portrait: "4Z4A2978.CR3" and "DSCF0438.RAF" are 74 px
+/// wide in the theme's 11 px Noto Sans, "_DSC0001.ARW" 78; 80 leaves
+/// room for a wider system face, and the floor leaves the theme's
+/// `space-2` of slack either side of that (the name has no padding of
+/// its own). A picture narrower sits centered in its cell.
+pub const FLOOR: f32 = 96.0;
 
-/// A cell's width for a picture of `aspect`, height over width as the
-/// grid's shapes are (zero or less for not known, which is laid out as
-/// most cameras' 3:2 on its side): the picture's width at the row's
-/// height, held to [`NARROWEST`] and [`WIDEST`], in whole pixels, and
-/// the ring either side.
-pub fn cell_width(aspect: f32) -> f32 {
+/// A picture's width for `aspect`, height over width as the grid's
+/// shapes are (zero or less for not known, which is laid out as most
+/// cameras' 3:2 on its side): its width at the row's height, held to
+/// [`NARROWEST`] and [`WIDEST`], in whole pixels.
+pub fn photo_width(aspect: f32) -> f32 {
     let aspect = if aspect.is_finite() && aspect > 0.0 {
         aspect
     } else {
         UNKNOWN_ASPECT
     };
     let wide = (1.0 / aspect).clamp(NARROWEST, WIDEST);
-    (PHOTO * wide).round() + 2.0 * RING
+    (PHOTO * wide).round()
+}
+
+/// A cell's width for a picture of `aspect`: the picture's
+/// [`photo_width`] and the ring either side, or [`FLOOR`] when that is
+/// wider.
+pub fn cell_width(aspect: f32) -> f32 {
+    (photo_width(aspect) + 2.0 * RING).max(FLOOR)
 }
 
 /// The cells of a strip: each one's left edge along the row, from the
-/// row's start, and its width.
+/// row's start, its width, and its picture's.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Layout {
     lefts: Vec<f32>,
     widths: Vec<f32>,
+    photos: Vec<f32>,
 }
 
 impl Layout {
@@ -56,14 +71,21 @@ impl Layout {
     pub fn new(count: usize, aspect: impl Fn(usize) -> f32) -> Self {
         let mut lefts = Vec::with_capacity(count);
         let mut widths = Vec::with_capacity(count);
+        let mut photos = Vec::with_capacity(count);
         let mut x = PAD;
         for i in 0..count {
-            let w = cell_width(aspect(i));
+            let a = aspect(i);
+            let w = cell_width(a);
             lefts.push(x);
             widths.push(w);
+            photos.push(photo_width(a));
             x += w + GAP;
         }
-        Layout { lefts, widths }
+        Layout {
+            lefts,
+            widths,
+            photos,
+        }
     }
 
     /// How many cells.
@@ -75,6 +97,16 @@ impl Layout {
     pub fn place(&self, row: i32) -> Option<(f32, f32)> {
         let r = usize::try_from(row).ok()?;
         Some((*self.lefts.get(r)?, self.widths[r]))
+    }
+
+    /// Row `row`'s picture in its cell: how far its ring sits in from
+    /// the cell's left edge, none when the picture fills the cell, else
+    /// half what the floor leaves, in whole pixels so the ring stays
+    /// sharp; and the picture's width inside the ring.
+    pub fn photo(&self, row: i32) -> Option<(f32, f32)> {
+        let r = usize::try_from(row).ok()?;
+        let (w, p) = (*self.widths.get(r)?, self.photos[r]);
+        Some((((w - p - 2.0 * RING) / 2.0).floor(), p))
     }
 
     /// The row's length: the last cell's right edge and the pad.
@@ -167,17 +199,36 @@ mod tests {
     #[test]
     fn a_cell_takes_its_pictures_shape_at_the_rows_height() {
         // 3:2 on its side: 91 high is 136.5 wide, 137 in whole pixels,
-        // and the ring either side.
+        // and the ring either side, wider than the floor.
+        assert_eq!(photo_width(LANDSCAPE), 137.0);
         assert_eq!(cell_width(LANDSCAPE), 137.0 + 4.0);
-        // On its end: 61.
-        assert_eq!(cell_width(PORTRAIT), 61.0 + 4.0);
-        assert_eq!(cell_width(1.0), 91.0 + 4.0);
+        // On its end, 61, and a square, 91: the floor.
+        assert_eq!(photo_width(PORTRAIT), 61.0);
+        assert_eq!(cell_width(PORTRAIT), FLOOR);
+        assert_eq!(photo_width(1.0), 91.0);
+        assert_eq!(cell_width(1.0), FLOOR);
         // Not known yet: laid out as the landscape.
         assert_eq!(cell_width(0.0), cell_width(LANDSCAPE));
         assert_eq!(cell_width(f32::NAN), cell_width(LANDSCAPE));
-        // A panorama and a sliver are held.
+        // A panorama and a sliver are held, the sliver in the floor.
         assert_eq!(cell_width(0.1), 273.0 + 4.0);
-        assert_eq!(cell_width(10.0), 46.0 + 4.0);
+        assert_eq!(photo_width(10.0), 46.0);
+        assert_eq!(cell_width(10.0), FLOOR);
+    }
+
+    #[test]
+    fn a_picture_narrower_than_the_floor_sits_centered_in_its_cell() {
+        let shapes = [PORTRAIT, LANDSCAPE, 1.0, 10.0];
+        let l = Layout::new(shapes.len(), |i| shapes[i]);
+        // 61 and the ring in 96: 15.5 a side, 15 in whole pixels.
+        assert_eq!(l.photo(0), Some((15.0, 61.0)));
+        // A landscape fills its cell.
+        assert_eq!(l.photo(1), Some((0.0, 137.0)));
+        // A square's ring is 95 of the 96.
+        assert_eq!(l.photo(2), Some((0.0, 91.0)));
+        assert_eq!(l.photo(3), Some((23.0, 46.0)));
+        assert_eq!(l.photo(4), None);
+        assert_eq!(l.photo(-1), None);
     }
 
     #[test]
@@ -185,12 +236,12 @@ mod tests {
         let shapes = [LANDSCAPE, PORTRAIT, 1.0, 0.0];
         let l = Layout::new(shapes.len(), |i| shapes[i]);
         assert_eq!(l.place(0), Some((12.0, 141.0)));
-        assert_eq!(l.place(1), Some((12.0 + 141.0 + 8.0, 65.0)));
-        assert_eq!(l.place(2), Some((161.0 + 65.0 + 8.0, 95.0)));
-        assert_eq!(l.place(3), Some((234.0 + 95.0 + 8.0, 141.0)));
+        assert_eq!(l.place(1), Some((12.0 + 141.0 + 8.0, 96.0)));
+        assert_eq!(l.place(2), Some((161.0 + 96.0 + 8.0, 96.0)));
+        assert_eq!(l.place(3), Some((265.0 + 96.0 + 8.0, 141.0)));
         assert_eq!(l.place(4), None);
         assert_eq!(l.place(-1), None);
-        assert_eq!(l.length(), 337.0 + 141.0 + 12.0);
+        assert_eq!(l.length(), 369.0 + 141.0 + 12.0);
         // Empty: the pads alone.
         let empty = Layout::new(0, |_| 0.0);
         assert_eq!(empty.length(), 24.0);
@@ -200,13 +251,13 @@ mod tests {
 
     #[test]
     fn a_scroll_shows_the_cells_it_touches() {
-        // Portraits, 65 wide at a pitch of 73 from 12.
+        // Portraits, the floor's 96 wide at a pitch of 104 from 12.
         let l = Layout::new(100, |_| PORTRAIT);
-        assert_eq!(l.shown(0.0, 1500.0), Some((0, 20)));
+        assert_eq!(l.shown(0.0, 1500.0), Some((0, 14)));
         // The left edge in the gap after row 1: row 2 is the first.
-        assert_eq!(l.shown(12.0 + 73.0 + 66.0, 300.0).unwrap().0, 2);
+        assert_eq!(l.shown(12.0 + 104.0 + 97.0, 300.0).unwrap().0, 2);
         // On row 1's last pixel: still row 1.
-        assert_eq!(l.shown(12.0 + 73.0 + 64.5, 300.0).unwrap().0, 1);
+        assert_eq!(l.shown(12.0 + 104.0 + 95.5, 300.0).unwrap().0, 1);
         // A right edge on a cell's left edge does not show that cell.
         let left_of_3 = l.place(3).unwrap().0;
         assert_eq!(l.shown(0.0, left_of_3).unwrap().1, 2);
@@ -226,15 +277,16 @@ mod tests {
         };
         let l = Layout::new(40, shapes);
         let view = 1000.0;
-        // Row 8 runs past the right edge of the view at the start.
-        let (left, width) = l.place(8).unwrap();
+        // Row 7 runs past the right edge of the view at the start.
+        let (left, width) = l.place(7).unwrap();
         assert!(left < view && left + width > view);
-        let to = l.reveal(0.0, view, 8);
+        let to = l.reveal(0.0, view, 7);
         assert_eq!(to, left + width + PAD - view);
         // Shown, it stays where it is.
-        assert_eq!(l.reveal(to, view, 8), to);
+        assert_eq!(l.reveal(to, view, 7), to);
         // Off the left: brought in with the pad before it.
-        assert_eq!(l.reveal(to, view, 1), l.place(1).unwrap().0 - PAD);
+        assert!(l.place(0).unwrap().0 < to);
+        assert_eq!(l.reveal(to, view, 0), l.place(0).unwrap().0 - PAD);
         // The last frame: the strip's end.
         assert_eq!(l.reveal(0.0, view, 39), l.max_scroll(view));
         assert_eq!(l.reveal(0.0, view, 0), 0.0);
