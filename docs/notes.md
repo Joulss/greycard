@@ -543,3 +543,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§528. Highlights reaches what a merge keeps](notes/528-highlights-reaches-what-a-merge-keeps.md) (2026-11-01)
 - [§529. The merge's CA fitted once](notes/529-the-merges-ca-fitted-once.md) (2026-11-01)
 - [§530. The panorama](notes/530-the-panorama.md) (2026-11-01)
+- [§531. A first Subtract or Erase stroke cuts a new brush out](notes/531-a-first-subtract-or-erase-stroke-cuts-a-new-brush-out.md) (2026-11-02)

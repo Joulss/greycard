@@ -144,6 +144,11 @@ design note behind it.
 
 ### Fixes
 
+- A first Subtract or Erase stroke with a new brush, in a mask that
+  already has shapes, cuts the brush out of the mask; it used to do
+  nothing, or empty the whole mask when the shape was added as
+  Intersect
+  ([§531](https://github.com/jessolmstead/greycard/blob/master/docs/notes/531-a-first-subtract-or-erase-stroke-cuts-a-new-brush-out.md)).
 - The curve and mixer droppers read a picked pixel by the frame's own
   range, as the picture is drawn, so a point lands where Highlights
   or Whites put it rather than a little off

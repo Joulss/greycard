@@ -135,6 +135,12 @@ Click **Brush** and paint. While a brush is chosen, the button reads
 | **Flow** | how much each stroke lays down |
 | **Add**, **Subtract**, **Erase** | paint, take paint away by the flow, or clear paint completely under the brush |
 
+**Add**, **Subtract**, and **Erase** act on the brush's own paint. To
+take a brush out of the mask, choose **Subtract** in **Add a shape**; a
+first **Subtract** or **Erase** stroke on a new brush in a mask with
+shapes does that for you, and the row goes back to **Add** so the next
+strokes cut too.
+
 With the brush in hand, **Shift+[** and **Shift+]** take the feather
 down or up a tenth, and **Ctrl+[** and **Ctrl+]** the flow.
 

@@ -1324,6 +1324,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 app.window().request_redraw();
                 return;
             }
+            let mut mode = placing.mode;
             let shape = match &placing.kind {
                 Shape::Linear { .. } => Shape::Linear {
                     from: [at.0, at.1],
@@ -1335,9 +1336,34 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     angle: 0.0,
                     feather: *feather,
                 },
-                Shape::Brush { .. } => Shape::Brush {
-                    strokes: vec![stroke_from(&app, at)],
-                },
+                Shape::Brush { .. } => {
+                    let mut stroke = stroke_from(&app, at);
+                    // A new brush has no paint for Subtract or Erase to
+                    // take away; in a mask with live shapes, its first
+                    // such stroke means cut the brush out of them:
+                    // paint it as Add (an Erase full and hard-edged, as
+                    // Erase is), make this brush a Subtract shape, and
+                    // put the row back on Add so later strokes keep
+                    // cutting. The tool's own mode stays as chosen.
+                    let has_shapes = st
+                        .develop
+                        .edit
+                        .adjustments
+                        .get(placing.index)
+                        .is_some_and(|a| a.mask.live().next().is_some());
+                    if has_shapes && stroke.op != Op::Add {
+                        if stroke.op == Op::Erase {
+                            stroke.flow = 1.0;
+                            stroke.feather = 0.0;
+                        }
+                        stroke.op = Op::Add;
+                        mode = Mode::Subtract;
+                        app.set_brush_op(Op::Add.name().into());
+                    }
+                    Shape::Brush {
+                        strokes: vec![stroke],
+                    }
+                }
                 Shape::Object { .. } => Shape::Object {
                     picks: vec![Pick {
                         pos: [at.0, at.1],
@@ -1356,7 +1382,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let component = Component {
                 shape,
-                mode: placing.mode,
+                mode,
                 invert: false,
                 enabled: true,
             };
@@ -3811,5 +3837,142 @@ mod tests {
             assert_eq!(app.get_picking(), "");
             assert_eq!(app.get_status(), keep, "the dropper");
         }
+    }
+
+    /// A first Subtract or Erase stroke on a new brush in a mask with
+    /// shapes cuts the brush out of them, under any shape mode, and
+    /// still does after the edit is saved and read back; an Erase cuts
+    /// the whole radius whatever the flow and feather. The brush row is
+    /// back on Add for the next stroke, and the tool's shape mode is
+    /// left as chosen, so after an undo the next brush is an Add again.
+    /// A brush that is the mask's first shape keeps its stroke as it was.
+    #[test]
+    fn a_first_subtract_or_erase_stroke_cuts_a_new_brush_out() {
+        use greycard_edit::mask::Sample;
+        let bright = Some(Sample {
+            lightness: 0.9,
+            a: 0.0,
+            b: 0.0,
+        });
+        let aspect = 2000.0 / 3000.0;
+        // A window on a frame, its mask holding a Luminance range when
+        // `first`.
+        let open = |first: bool| {
+            let app = window(1);
+            let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+            app.invoke_select(0);
+            {
+                let mut st = state.borrow_mut();
+                st.develop.source_size = (3000, 2000);
+                st.develop.center = (1500.0, 1000.0);
+            }
+            app.set_panel_tab("Masks".into());
+            app.invoke_new_mask();
+            if first {
+                app.invoke_add_shape("Luminance".into(), "Add".into());
+            }
+            (app, state, worker)
+        };
+        let stroke = |app: &App, mode: &str, op: &str| {
+            app.set_shape_mode(mode.into());
+            app.set_brush_op(op.into());
+            app.invoke_add_shape("Brush".into(), mode.into());
+            app.invoke_place_pressed(300.0, 300.0, false);
+            app.invoke_place_dragged(310.0, 305.0);
+            app.invoke_place_dragged(330.0, 315.0);
+            app.invoke_place_released();
+        };
+        let edit_of = |app: &App, state: &Rc<Shared>| {
+            let st = &*state.borrow();
+            read_edit(app, &st.develop.edit, st.develop.target)
+        };
+        let last_brush = |edit: &Edit| {
+            let c = edit.adjustments[0].mask.components.last().expect("a shape");
+            let Shape::Brush { strokes } = &c.shape else {
+                panic!("no brush landed");
+            };
+            (c.mode, strokes[0].clone())
+        };
+        // The mask's weight at `p` for a bright sample, with the last
+        // shape and without it, painted and read back.
+        let weights = |edit: &Edit, p: [f32; 2]| {
+            let json = serde_json::to_string(edit).unwrap();
+            let back: Edit = serde_json::from_str(&json).unwrap();
+            [edit.clone(), back].map(|edit| {
+                let (mut rasters, mut learned) = (HashMap::new(), HashMap::new());
+                let (locals, _) = bake_locals(&edit, &mut rasters, &mut learned, aspect, None);
+                let mut without = locals[0].clone();
+                without.mask.components.pop();
+                (
+                    locals[0].weight_sampled(p[0], p[1], bright),
+                    without.weight_sampled(p[0], p[1], bright),
+                )
+            })
+        };
+        for op in ["Erase", "Subtract"] {
+            for mode in ["Add", "Subtract", "Intersect"] {
+                let (app, state, _worker) = open(true);
+                stroke(&app, mode, op);
+                let edit = edit_of(&app, &state);
+                let (shape_mode, first) = last_brush(&edit);
+                for (w, without) in weights(&edit, first.points[0]) {
+                    assert!(without > 0.9, "{op} {mode}: {without}");
+                    assert!(w < 0.01, "{op} {mode}: {w}");
+                }
+                assert_eq!((shape_mode, first.op), (Mode::Subtract, Op::Add));
+                assert_eq!(app.get_brush_op(), "Add", "{op} {mode}: the row");
+            }
+        }
+        // An Erase at a low flow and a soft feather still clears the
+        // radius: at its center and near its edge, behind the stroke.
+        let (app, state, _worker) = open(true);
+        app.set_brush_flow(0.3);
+        app.set_brush_feather(0.5);
+        stroke(&app, "Add", "Erase");
+        let edit = edit_of(&app, &state);
+        let (_, first) = last_brush(&edit);
+        let [x, y] = first.points[0];
+        for p in [[x, y], [x - 0.85 * first.radius, y]] {
+            for (w, without) in weights(&edit, p) {
+                assert!(without > 0.9, "{p:?}: {without}");
+                assert!(w < 0.01, "{p:?}: {w}");
+            }
+        }
+        assert_eq!((first.flow, first.feather), (1.0, 0.0));
+        // A Subtract keeps the row's flow: that is what Subtract means.
+        let (app, state, _worker) = open(true);
+        app.set_brush_flow(0.3);
+        stroke(&app, "Add", "Subtract");
+        let (_, first) = last_brush(&edit_of(&app, &state));
+        assert!((first.flow - 0.3).abs() < 1e-6, "{}", first.flow);
+        // After an undo, the next stroke with both rows on Add is an Add.
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ));
+            slint::platform::update_timers_and_animations();
+        };
+        let (app, state, _worker) = open(true);
+        settle();
+        stroke(&app, "Add", "Erase");
+        settle();
+        app.invoke_undo();
+        assert_eq!(
+            edit_of(&app, &state).adjustments[0].mask.components.len(),
+            1
+        );
+        app.set_brush_op("Add".into());
+        app.set_shape_mode("Add".into());
+        app.invoke_place_pressed(300.0, 300.0, false);
+        app.invoke_place_released();
+        let edit = edit_of(&app, &state);
+        assert_eq!(edit.adjustments[0].mask.components.len(), 2);
+        assert_eq!(last_brush(&edit).0, Mode::Add, "+ Brush");
+        // The mask's first shape: nothing to cut from.
+        let (app, state, _worker) = open(false);
+        stroke(&app, "Add", "Erase");
+        let (shape_mode, first) = last_brush(&edit_of(&app, &state));
+        assert_eq!((shape_mode, first.op), (Mode::Add, Op::Erase));
+        assert_eq!(app.get_brush_op(), "Erase");
     }
 }
