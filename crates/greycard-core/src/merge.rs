@@ -952,6 +952,38 @@ pub mod testing {
         write_dng_at(path, samples, width, height, shutter, 100, model);
     }
 
+    /// A merge's file at `out`, made of the frame [`write_dng`] wrote
+    /// at `frame`: a flat picture of its size, a stop of headroom, and
+    /// our tag.
+    pub fn write_merged(frame: &Path, out: &Path) {
+        let raw = crate::decode::decode_path(frame).unwrap();
+        let (w, h) = (raw.width, raw.height);
+        let image = crate::CameraImage::from_data(w, h, vec![0.25; w * h * 3]).unwrap();
+        let tag = super::Tag {
+            kind: "hdr".into(),
+            frames: vec!["frame".into()],
+            reference: 0,
+            denoised: false,
+            headroom_stops: 1.0,
+        };
+        let file = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
+        crate::dng::write_merged_dng(
+            file,
+            &raw,
+            &image,
+            [2.0, 1.0, 1.5],
+            &crate::dng::LinearDngOptions {
+                headroom: Some(2.0),
+                ..Default::default()
+            },
+            &crate::dng::Merged {
+                noise_profile: [1e-5, 1e-8],
+                tag: &tag,
+            },
+        )
+        .unwrap();
+    }
+
     /// [`write_dng`] at `iso`.
     pub fn write_dng_at(
         path: &Path,

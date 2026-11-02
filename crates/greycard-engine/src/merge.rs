@@ -4,12 +4,12 @@
 //! beside the first source.
 //!
 //! The reference (the middle exposure, unless asked) is walked first
-//! and stays; every other frame is walked, checked for movement,
-//! measured against the reference for its exposure, added to the sums,
-//! and let go. The darkest frame comes last, walked with its highlights
-//! reconstructed, so that where every frame clipped its value stands.
-//! What is held at once is the reference, one frame, and the sums,
-//! whatever the count.
+//! and stays, and its CA fit corrects every frame; every other frame
+//! is walked, checked for movement, measured against the reference
+//! for its exposure, added to the sums, and let go. The darkest frame
+//! comes last, walked with its highlights reconstructed, so that where
+//! every frame clipped its value stands. What is held at once is the
+//! reference, its CA fit, one frame, and the sums, whatever the count.
 //!
 //! The command line's `greycard merge hdr` and the window's Merge to
 //! HDR both run [`hdr`]; neither has a merge of its own.
@@ -20,6 +20,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use greycard_core::decode::RawMetadata;
+use greycard_core::develop::ca::CaFit;
 use greycard_core::dng::{LinearDngOptions, Merged, write_merged_dng};
 use greycard_core::merge::{self, Accumulator, Frame, Measured, Noise};
 use greycard_core::output::OnExists;
@@ -28,7 +29,7 @@ use greycard_core::register::{self, Edge, Model};
 use greycard_core::{CameraImage, WhiteBalance};
 use greycard_edit::Edit;
 
-use crate::stages::{MergeInput, Purpose, Stage, stages};
+use crate::stages::{CaFitRef, MergeCa, MergeInput, Purpose, Stage, stages};
 use crate::walk::{Buf, Input, Kept, Models, NoHold, plan, walk};
 
 /// What goes after the first frame's name.
@@ -52,6 +53,21 @@ pub struct Options {
     /// the frames' pairs measure: for a measurement whose noise is
     /// known.
     pub noise: Option<Noise>,
+    /// How the frames' CA is fitted.
+    pub ca: CaFits,
+}
+
+/// How a merge fits its frames' lateral CA.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CaFits {
+    /// Once, on the reference, and applied to every frame.
+    #[default]
+    Once,
+    /// Each frame its own: for a measurement of what the one fit is
+    /// worth.
+    PerFrame,
+    /// Not at all: the same measurement's baseline.
+    Off,
 }
 
 /// Where a merge is, for a caller to say.
@@ -285,20 +301,34 @@ struct Walked {
     white_balance: WhiteBalance,
     denoised: bool,
     stood_in: Option<String>,
+    /// The CA's fit, when the frame was asked to hand it back.
+    ca_fit: Option<Arc<CaFit>>,
 }
 
 /// `file` walked under `merge`: decoded, prepared with nothing clipped,
 /// demosaiced, its gains divided back out. The frame is handed back
-/// without its samples, for its tags.
+/// without its samples, for its tags. A frame not of `size`, the
+/// reference's, is refused before the walk, whose CA fit would refuse
+/// it in its own words.
 fn walk_frame(
     sources: &dyn Sources,
     i: usize,
     edit: &Edit,
     merge: MergeInput,
+    size: Option<(usize, usize)>,
     models: &mut dyn Models,
 ) -> Result<(Walked, RawFrame, RawMetadata)> {
     let name = sources.name(i);
     let (frame, metadata) = sources.load(i)?;
+    if let Some((w, h)) = size
+        && (frame.width, frame.height) != (w, h)
+    {
+        bail!(
+            "{name} is {}x{} and the reference {w}x{h}: a merge wants frames of one size",
+            frame.width,
+            frame.height
+        );
+    }
     let frame = Arc::new(frame);
     let input = Input::Raw(frame.clone());
     let purpose = Purpose::MergeInput(merge);
@@ -352,6 +382,7 @@ fn walk_frame(
         white_balance: prepared.white_balance,
         denoised: learned && stood_in.is_none(),
         stood_in,
+        ca_fit: walked.ca_fit,
     };
     drop(prepared);
     // The tags are read from the frame; its samples are let go.
@@ -455,7 +486,13 @@ pub fn hdr_of(
             white: None,
             reconstruct: reference == darkest,
             denoiser: options.denoiser,
+            ca: match options.ca {
+                CaFits::Once => MergeCa::Make,
+                CaFits::PerFrame => MergeCa::Own,
+                CaFits::Off => MergeCa::Off,
+            },
         },
+        None,
         models,
     )?;
     seconds.push(("reference", t.elapsed().as_secs_f64()));
@@ -463,10 +500,18 @@ pub fn hdr_of(
         warnings.push(format!("the learned denoiser stood down: {why}"));
     }
     let (w, h) = (r.width, r.height);
+    let size = Some((ref_frame.width, ref_frame.height));
     let white = r.gains.map(f64::from);
     let mut denoised = r.denoised;
     let ref_rgb = r.rgb;
     let ref_mask = r.mask;
+    // Every other frame takes the reference's CA fit; where the
+    // reference made none, as the reference was asked.
+    let ca = match (r.ca_fit, options.ca) {
+        (Some(fit), _) => MergeCa::Take(CaFitRef(fit)),
+        (None, CaFits::Off) => MergeCa::Off,
+        (None, _) => MergeCa::Own,
+    };
     // The sensor's noise, in the reference's units: what the frames'
     // pairs say, the reference's own estimate until they have said it.
     // A frame's noise is this at its ISO.
@@ -501,12 +546,17 @@ pub fn hdr_of(
                 white: Some(white),
                 reconstruct: k == darkest,
                 denoiser: options.denoiser,
+                ca: ca.clone(),
             },
+            size,
             models,
         )?;
+        // Frames of one size prepare to one size, unless their crops
+        // differ.
         if (f.width, f.height) != (w, h) {
             bail!(
-                "{} is {}x{} and the reference {w}x{h}: a merge wants frames of one size",
+                "{} prepares to {}x{} and the reference to {w}x{h}: a merge wants frames \
+                 of one size",
                 sources.name(k),
                 f.width,
                 f.height
@@ -959,6 +1009,28 @@ mod tests {
             run(&mixed, &Options::default()),
             "a merge wants frames of one body"
         );
+        // A frame of another size says so, not what the CA fit made on
+        // the reference would say of it.
+        let small = dir.join("small.dng");
+        write_dng(
+            &small,
+            mosaic_of(W / 2, H / 2, 1.0, Noise::ASSUMED, 4, |x, y, c| {
+                scene(x, y, c, W / 2, H / 2)
+            }),
+            W / 2,
+            H / 2,
+            (1, 25),
+            "Bracket",
+        );
+        let sizes = [files[0].clone(), files[1].clone(), small];
+        assert_eq!(
+            run(&sizes, &Options::default()),
+            format!(
+                "small.dng is {}x{} and the reference {W}x{H}: a merge wants frames of one size",
+                W / 2,
+                H / 2
+            )
+        );
         assert!(run(&files[..1], &Options::default()).starts_with("a merge wants two frames"));
         let past = Options {
             reference: Some(3),
@@ -1356,6 +1428,14 @@ mod tests {
             edit.demosaic = greycard_edit::Demosaic::Bilinear;
         }
         let edit = &edit;
+        // `GREYCARD_MERGE_CA=frame` for each frame's own CA fit, `off`
+        // for none; the reference's once otherwise.
+        let ca = match std::env::var("GREYCARD_MERGE_CA").as_deref() {
+            Ok("frame") => CaFits::PerFrame,
+            Ok("off") => CaFits::Off,
+            _ => CaFits::Once,
+        };
+        println!("CA {ca:?}");
         let (src, meta) = greycard_core::decode::decode_path_with_metadata(&raw).unwrap();
         let synthetic = Synthetic {
             src: &src,
@@ -1376,6 +1456,7 @@ mod tests {
                 // noise the frames were made with, as the prototype's.
                 noise: (std::env::var("GREYCARD_MERGE_NOISE").as_deref() == Ok("assumed"))
                     .then_some(Noise::ASSUMED),
+                ca,
                 ..Default::default()
             },
             &mut crate::walk::NoModels,
@@ -1415,27 +1496,59 @@ mod tests {
         );
 
         // The truth: the source walked as the merge walks a frame,
-        // before any noise was added, on the reference's scale.
+        // before any noise was added, on the reference's scale. Its CA
+        // is its own fit, or none when the merge had none; beside it,
+        // the truth by the reference's fit, which the merge applies
+        // when it fits once.
         let gains_of_file = report_gains(&out);
-        let white = |_: usize| MergeInput {
+        let white = |ca| MergeInput {
             white: Some(gains_of_file),
             reconstruct: false,
             denoiser: None,
+            ca,
         };
-        let source = One(&src, &meta);
-        let (truth, _, _) =
-            walk_frame(&source, 0, edit, white(0), &mut crate::walk::NoModels).unwrap();
-        let keep: Vec<bool> = truth.mask.iter().map(|m| !m).collect();
-        let g = truth_gain[reference];
-        let truth_rgb: Vec<f32> = truth.rgb.iter().map(|v| v * g).collect();
+        let own = || match ca {
+            CaFits::Off => MergeCa::Off,
+            _ => MergeCa::Own,
+        };
         let (refr, _, _) = walk_frame(
             &synthetic,
             reference,
             edit,
-            white(reference),
+            white(if ca == CaFits::Off {
+                MergeCa::Off
+            } else {
+                MergeCa::Make
+            }),
+            None,
             &mut crate::walk::NoModels,
         )
         .unwrap();
+        let source = One(&src, &meta);
+        let (truth, _, _) = walk_frame(
+            &source,
+            0,
+            edit,
+            white(own()),
+            None,
+            &mut crate::walk::NoModels,
+        )
+        .unwrap();
+        let taken = refr.ca_fit.clone().map(|fit| {
+            let (t, _, _) = walk_frame(
+                &source,
+                0,
+                edit,
+                white(MergeCa::Take(CaFitRef(fit))),
+                None,
+                &mut crate::walk::NoModels,
+            )
+            .unwrap();
+            t
+        });
+        let keep: Vec<bool> = truth.mask.iter().map(|m| !m).collect();
+        let g = truth_gain[reference];
+        let truth_rgb: Vec<f32> = truth.rgb.iter().map(|v| v * g).collect();
         let keep_ref: Vec<bool> = keep.iter().zip(&refr.mask).map(|(k, c)| *k && !c).collect();
         let back = greycard_core::decode::decode_path(&out).unwrap();
         let headroom = report.headroom_stops.exp2();
@@ -1449,8 +1562,15 @@ mod tests {
         let e_ref = band_errors(&refr.rgb, &truth_rgb, &keep_ref, gains);
         let e_on_ref = band_errors(&merged, &truth_rgb, &keep_ref, gains);
         let e_merge = band_errors(&merged, &truth_rgb, &keep, gains);
-        println!("\n| band | reference alone (px) | merge on the same px | merge (px) |");
-        println!("|---|---|---|---|");
+        let e_taken = taken.map(|t| {
+            let t: Vec<f32> = t.rgb.iter().map(|v| v * g).collect();
+            band_errors(&merged, &t, &keep, gains)
+        });
+        println!(
+            "\n| band | reference alone (px) | merge on the same px | merge (px) | \
+             merge against the truth by the reference's fit |"
+        );
+        println!("|---|---|---|---|---|");
         for i in 0..e_ref.len() {
             let f = |x: f64| {
                 if x.is_finite() {
@@ -1460,13 +1580,14 @@ mod tests {
                 }
             };
             println!(
-                "| {} | {} ({}) | {} | {} ({}) |",
+                "| {} | {} ({}) | {} | {} ({}) | {} |",
                 e_ref[i].0,
                 f(e_ref[i].1),
                 e_ref[i].2,
                 f(e_on_ref[i].1),
                 f(e_merge[i].1),
-                e_merge[i].2
+                e_merge[i].2,
+                e_taken.as_ref().map_or("-".into(), |e| f(e[i].1))
             );
         }
     }

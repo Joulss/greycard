@@ -293,6 +293,31 @@ pub(crate) fn read_stream(mut file: impl Read + Seek) -> Result<Option<CameraSty
     Ok(None)
 }
 
+/// A merge's tag from a DNG's IFD0, read as the style is, with no
+/// decode: `None` for a file that is not TIFF-based, or whose
+/// `DNGPrivateData` is missing or another maker's. A damaged file's
+/// error says "merge tag", not the style reader's "maker note", so
+/// the log tells this read from the style read that follows it.
+pub(crate) fn merge_tag_stream(file: impl Read + Seek) -> Result<Option<crate::merge::Tag>> {
+    read_merge_tag(file).map_err(|e| match e {
+        Error::Decode(m) => Error::Decode(m.replacen("maker note: ", "merge tag: ", 1)),
+        e => e,
+    })
+}
+
+fn read_merge_tag(file: impl Read + Seek) -> Result<Option<crate::merge::Tag>> {
+    let mut tiff = Tiff::new(file)?;
+    let head = tiff.read_at(0, 2.min(tiff.len))?;
+    if head != b"II" && head != b"MM" {
+        return Ok(None);
+    }
+    let (ifd0, _) = tiff_ifd0(&mut tiff)?;
+    Ok(find(&ifd0, TAG_DNG_PRIVATE_DATA)
+        .filter(|f| matches!(f.typ, 1 | 7))
+        .and_then(|f| tiff.bytes(&f))
+        .and_then(|b| crate::merge::Tag::parse(&b)))
+}
+
 fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
     let mut filled = 0;
     while filled < buf.len() {
@@ -355,6 +380,7 @@ const TAG_MAKE: u16 = 0x010f;
 const TAG_EXIF_IFD: u16 = 0x8769;
 const TAG_MAKER_NOTE: u16 = 0x927c;
 const TAG_DNG_VERSION: u16 = 0xc612;
+const TAG_DNG_PRIVATE_DATA: u16 = 0xc634;
 
 /// More entries than any maker's IFD holds: an IFD that says more is
 /// damaged, not read.
@@ -1891,6 +1917,18 @@ mod tests {
         assert!(tiff_ifd0(&mut t).is_err());
         let mut t = Tiff::new(Cursor::new(b"II*")).unwrap();
         assert!(tiff_ifd0(&mut t).is_err());
+    }
+
+    /// A damaged DNG's merge-tag read says so, apart from the style
+    /// read's "maker note".
+    #[test]
+    fn a_damaged_merge_tag_read_says_merge_tag() {
+        let mut bytes = b"II*\0".to_vec();
+        bytes.extend_from_slice(&1000u32.to_le_bytes());
+        let Err(Error::Decode(message)) = merge_tag_stream(Cursor::new(bytes)) else {
+            panic!("an IFD past the end is an error");
+        };
+        assert!(message.starts_with("merge tag: "), "{message}");
     }
 
     #[test]

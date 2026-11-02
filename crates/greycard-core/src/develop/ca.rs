@@ -128,7 +128,8 @@ pub fn corrects(pattern: &CfaPattern) -> bool {
 
 /// Correct lateral CA in a white-balanced Bayer or X-Trans mosaic.
 /// Returns the corrected mosaic (green untouched) and what was
-/// measured. An X-Trans mosaic goes to [`super::ca_xtrans`].
+/// measured. An X-Trans mosaic goes to [`super::ca_xtrans`]. It is
+/// [`fit_ca`] with the fit let go.
 pub fn correct_ca(
     samples: &[f32],
     width: usize,
@@ -136,9 +137,123 @@ pub fn correct_ca(
     pattern: &CfaPattern,
     options: &CaOptions,
 ) -> Result<(Vec<f32>, CaStats)> {
-    if pattern.is_xtrans() {
-        return super::ca_xtrans::correct_ca(samples, width, height, pattern, options);
+    fit_ca(samples, width, height, pattern, options).map(|(out, fit)| (out, fit.stats))
+}
+
+/// A correction as one frame fitted it, for another frame of the same
+/// size and pattern: each pass's polynomial, and the color-shift
+/// avoidance's blurred factors. Frames of one scene that differ in
+/// noise and exposure (a bracket) fit corrections that differ; one fit
+/// applied to all of them corrects them alike.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaFit {
+    width: usize,
+    height: usize,
+    pattern: CfaPattern,
+    /// The passes that corrected, in order: each pass's fit is made on
+    /// the last pass's output, and applied so.
+    pub(super) passes: Vec<Fit>,
+    /// Red's then blue's factors, at the avoidance's own grid (2x2
+    /// cells on Bayer, 3x3 on X-Trans), blurred; none when the
+    /// avoidance did not run.
+    pub(super) factors: Option<[Vec<f32>; 2]>,
+    /// What the fit's frame measured.
+    pub stats: CaStats,
+}
+
+impl CaFit {
+    pub(super) fn new(width: usize, height: usize, pattern: &CfaPattern) -> Self {
+        Self {
+            width,
+            height,
+            pattern: pattern.clone(),
+            passes: Vec::new(),
+            factors: None,
+            stats: CaStats::default(),
+        }
     }
+}
+
+/// [`correct_ca`], with the fit that made the correction:
+/// [`apply_ca`] with it on the same mosaic gives the same mosaic, to
+/// the bit.
+pub fn fit_ca(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    options: &CaOptions,
+) -> Result<(Vec<f32>, CaFit)> {
+    if pattern.is_xtrans() {
+        return super::ca_xtrans::fit_ca(samples, width, height, pattern, options);
+    }
+    check(samples, width, height, pattern)?;
+    let mut current = samples.to_vec();
+    let mut fit = CaFit::new(width, height, pattern);
+    if width < MIN_SIDE || height < MIN_SIDE {
+        return Ok((current, fit));
+    }
+    for it in 0..options.iterations.max(1) {
+        let (next, pass, made) = one_pass(&current, width, height, pattern)?;
+        let stats = &mut fit.stats;
+        if it == 0 {
+            stats.max_shift = pass.max_shift;
+        }
+        stats.corrected = pass.corrected;
+        stats.blocks = pass.blocks;
+        stats.order = pass.order;
+        let Some(made) = made else {
+            break;
+        };
+        fit.passes.push(made);
+        current = next;
+    }
+    if options.avoid_color_shift && fit.stats.corrected {
+        let factors = color_shift_factors(samples, &current, width, height, pattern);
+        apply_color_shift(&mut current, &factors, width, pattern);
+        fit.factors = Some(factors);
+    }
+    Ok((current, fit))
+}
+
+/// The correction `fit` holds, made on another frame, applied to this
+/// one: each pass's resample in turn, then the other frame's
+/// color-shift factors. The mosaic must be the fit's size and pattern.
+pub fn apply_ca(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    fit: &CaFit,
+) -> Result<Vec<f32>> {
+    if (width, height) != (fit.width, fit.height) || *pattern != fit.pattern {
+        return Err(Error::Unsupported(format!(
+            "a CA fit made on a {}x{} {} mosaic applied to a {width}x{height} {pattern} one",
+            fit.width, fit.height, fit.pattern
+        )));
+    }
+    if pattern.is_xtrans() {
+        return super::ca_xtrans::apply_ca(samples, width, height, pattern, fit);
+    }
+    check(samples, width, height, pattern)?;
+    let mut current = samples.to_vec();
+    for pass in &fit.passes {
+        let image = Image {
+            samples: &current,
+            width,
+            height,
+            pattern,
+        };
+        current = resample(&image, pass, false).0;
+    }
+    if let Some(factors) = &fit.factors {
+        apply_color_shift(&mut current, factors, width, pattern);
+    }
+    Ok(current)
+}
+
+/// A Bayer mosaic of `width` by `height`, or the reason it is not one.
+fn check(samples: &[f32], width: usize, height: usize, pattern: &CfaPattern) -> Result<()> {
     if !is_bayer(pattern) {
         return Err(Error::Unsupported(format!(
             "CA correction needs a 2x2 Bayer or an X-Trans pattern, got {pattern}"
@@ -150,28 +265,7 @@ pub fn correct_ca(
             samples.len()
         )));
     }
-    let mut current = samples.to_vec();
-    let mut stats = CaStats::default();
-    if width < MIN_SIDE || height < MIN_SIDE {
-        return Ok((current, stats));
-    }
-    for it in 0..options.iterations.max(1) {
-        let (next, pass) = one_pass(&current, width, height, pattern)?;
-        if it == 0 {
-            stats.max_shift = pass.max_shift;
-        }
-        stats.corrected = pass.corrected;
-        stats.blocks = pass.blocks;
-        stats.order = pass.order;
-        if !pass.corrected {
-            break;
-        }
-        current = next;
-    }
-    if options.avoid_color_shift && stats.corrected {
-        avoid_color_shift(samples, &mut current, width, height, pattern);
-    }
-    Ok((current, stats))
+    Ok(())
 }
 
 struct Image<'a> {
@@ -1197,13 +1291,13 @@ fn coefficients_of(
         .collect())
 }
 
-/// Measure, fit and correct once.
+/// Measure, fit and correct once; the fit, when one was made.
 fn one_pass(
     samples: &[f32],
     width: usize,
     height: usize,
     pattern: &CfaPattern,
-) -> Result<(Vec<f32>, PassStats)> {
+) -> Result<(Vec<f32>, PassStats, Option<Fit>)> {
     let image = Image {
         samples,
         width,
@@ -1240,6 +1334,7 @@ fn one_pass(
                     blocks: no.blocks(),
                     ..Default::default()
                 },
+                None,
             ));
         }
     };
@@ -1253,6 +1348,7 @@ fn one_pass(
             order: polyord,
             max_shift,
         },
+        Some(fit),
     ))
 }
 
@@ -1346,6 +1442,19 @@ pub fn avoid_color_shift(
     height: usize,
     pattern: &CfaPattern,
 ) {
+    let factors = color_shift_factors(original, corrected, width, height, pattern);
+    apply_color_shift(corrected, &factors, width, pattern);
+}
+
+/// [`avoid_color_shift`]'s factors, red's then blue's, a 2x2 cell
+/// each, blurred.
+fn color_shift_factors(
+    original: &[f32],
+    corrected: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+) -> [Vec<f32>; 2] {
     let (hw, hh) = (width.div_ceil(2), height.div_ceil(2));
     let mut factor = [vec![1.0f32; hw * hh], vec![1.0f32; hw * hh]];
     // A factor row covers two mosaic rows; rows in parallel.
@@ -1368,6 +1477,17 @@ pub fn avoid_color_shift(
     for f in factor.iter_mut() {
         gaussian_blur_approx(f, hw, hh, SHIFT_BLUR_SIGMA);
     }
+    factor
+}
+
+/// [`avoid_color_shift`]'s factors multiplied into `corrected`.
+fn apply_color_shift(
+    corrected: &mut [f32],
+    factor: &[Vec<f32>; 2],
+    width: usize,
+    pattern: &CfaPattern,
+) {
+    let hw = width.div_ceil(2);
     corrected
         .par_chunks_mut(width)
         .enumerate()
@@ -1801,5 +1921,94 @@ pub(crate) mod tests {
             correct_ca(&small, 100, 100, &CfaPattern::rggb(), &CaOptions::default()).unwrap();
         assert_eq!(out, small);
         assert!(!stats.corrected);
+    }
+
+    /// A fit applied to the frame it was made on is that frame's
+    /// correction, to the bit; applied to the frame at half its
+    /// exposure, it corrects that; applied to a frame of another size
+    /// or pattern, it is refused.
+    #[test]
+    fn a_fit_applied_is_the_correction() {
+        let (w, h) = (400, 320);
+        let (clean, shifted) = aberrated(w, h, 0.005, -0.004);
+        let p = CfaPattern::rggb();
+        let (out, fit) = fit_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
+        assert!(fit.stats.corrected && fit.passes.len() == 2 && fit.factors.is_some());
+        let (plain, stats) = correct_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
+        assert_eq!(stats, fit.stats);
+        let applied = apply_ca(&shifted, w, h, &p, &fit).unwrap();
+        for (a, b) in [(&out, &plain), (&applied, &plain)] {
+            assert!(a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()));
+        }
+        let half: Vec<f32> = shifted.iter().map(|v| v * 0.5).collect();
+        let half_clean: Vec<f32> = clean.iter().map(|v| v * 0.5).collect();
+        let at_half = apply_ca(&half, w, h, &p, &fit).unwrap();
+        for color in [CfaColor::Red, CfaColor::Blue] {
+            let before = rms_error(&half_clean, &half, w, h, &p, color);
+            let after = rms_error(&half_clean, &at_half, w, h, &p, color);
+            assert!(after < 0.5 * before, "{color:?}: {after} of {before}");
+        }
+        assert!(apply_ca(&shifted[..w * (h - 2)], w, h - 2, &p, &fit).is_err());
+        assert!(apply_ca(&shifted, w, h, &p.shifted(1, 1), &fit).is_err());
+    }
+
+    /// With `GREYCARD_SAMPLES` a folder of raws: each one's correction
+    /// made by its fit applied, to the bit, and hashed for a check
+    /// of the correction against another build.
+    #[test]
+    #[ignore]
+    fn a_fit_applied_is_the_correction_on_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_SAMPLES") else {
+            return;
+        };
+        let mut paths: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        paths.sort();
+        for path in paths {
+            let Ok(frame) = crate::decode::decode_path(&path) else {
+                continue;
+            };
+            let settings = crate::develop::DevelopSettings {
+                chromatic_aberration: None,
+                ..Default::default()
+            };
+            let Ok(p) = crate::develop::prepare(&frame, &settings, false) else {
+                continue;
+            };
+            let Some(pattern) = p.pattern.clone().filter(corrects) else {
+                continue;
+            };
+            let (out, stats) = correct_ca(
+                &p.samples,
+                p.width,
+                p.height,
+                &pattern,
+                &CaOptions::default(),
+            )
+            .unwrap();
+            let mut h = 0xcbf29ce484222325u64;
+            for v in &out {
+                h = (h ^ u64::from(v.to_bits())).wrapping_mul(0x100000001b3);
+            }
+            println!("{} {h:016x} {stats:?}", path.display());
+            let (_, fit) = fit_ca(
+                &p.samples,
+                p.width,
+                p.height,
+                &pattern,
+                &CaOptions::default(),
+            )
+            .unwrap();
+            let applied = apply_ca(&p.samples, p.width, p.height, &pattern, &fit).unwrap();
+            assert!(
+                applied
+                    .iter()
+                    .zip(&out)
+                    .all(|(a, b)| a.to_bits() == b.to_bits())
+            );
+        }
     }
 }

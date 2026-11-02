@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use greycard_core::color::Profile;
 use greycard_core::color::WhitePoint;
-use greycard_core::develop::ca::{self, CaOptions};
+use greycard_core::develop::ca::{self, CaFit, CaOptions};
 use greycard_core::develop::defringe::DefringeOptions;
 use greycard_core::develop::dehaze::DehazeOptions;
 use greycard_core::develop::denoise::DenoiseOptions;
@@ -77,6 +77,35 @@ pub struct MergeInput {
     /// The learned denoiser in the demosaic's place, when the merge
     /// asks for it.
     pub denoiser: Option<&'static greycard_ai::Model>,
+    /// Where the frame's CA fit comes from.
+    pub ca: MergeCa,
+}
+
+/// Where a merge's frame takes its CA fit from. Frames that differ in
+/// exposure and noise fit corrections that differ, and a merge of
+/// them shows the difference: one fit, made on the reference, applied
+/// to every frame corrects them alike.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MergeCa {
+    /// The frame's own, as any develop fits it.
+    Own,
+    /// The frame's own, handed back on the walk's result for the
+    /// others: the reference's.
+    Make,
+    /// Another frame's, applied.
+    Take(CaFitRef),
+    /// None: for a measurement of the others.
+    Off,
+}
+
+/// A CA fit compared by pointer.
+#[derive(Debug, Clone)]
+pub struct CaFitRef(pub Arc<CaFit>);
+
+impl PartialEq for CaFitRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 impl Purpose {
@@ -345,6 +374,11 @@ pub enum Stage {
     Prepare(Box<PrepareOptions>),
     /// The lateral chromatic aberration, on the mosaic.
     Ca(CaOptions),
+    /// The CA, its fit handed back on the walk's result for another
+    /// frame to take.
+    CaFit(CaOptions),
+    /// The CA by a fit another frame made.
+    CaApply(CaFitRef),
     /// Mosaic to camera RGB.
     Demosaic(DemosaicMethod, DualContrast),
     /// Mosaic to camera RGB at a bin's fraction, in place of the
@@ -419,7 +453,7 @@ impl Stage {
     pub fn name(&self) -> &'static str {
         match self {
             Stage::Prepare(_) => "prepare",
-            Stage::Ca(_) => "CA",
+            Stage::Ca(_) | Stage::CaFit(_) | Stage::CaApply(_) => "CA",
             Stage::Demosaic(..) => "demosaic",
             Stage::Bin(_) => "bin",
             Stage::Learned(_) => "learned denoiser",
@@ -882,9 +916,10 @@ pub fn stages(
 
 /// A merge's frame: the prepare with nothing clipped after the gains,
 /// the noise measured for the weights, the highlights reconstructed
-/// only where asked; the CA; the demosaic, or the learned denoiser in
-/// its place; a DNG's own warps. No lens, no turn: the merge is in the
-/// camera's geometry, and its file carries the lens to the develop.
+/// only where asked; the CA, by its own fit or the one the merge
+/// hands it; the demosaic, or the learned denoiser in its place; a
+/// DNG's own warps. No lens, no turn: the merge is in the camera's
+/// geometry, and its file carries the lens to the develop.
 fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
     let mut s = Steps::default();
     let InputKind::Raw { pattern, warp, .. } = &facts.input else {
@@ -914,7 +949,12 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
             .chromatic_aberration
             .filter(|_| pattern.as_ref().is_some_and(ca::corrects))
             .filter(|_| !facts.file_corrects().chromatic_aberration)
-            .map(Stage::Ca),
+            .and_then(|options| match &merge.ca {
+                MergeCa::Own => Some(Stage::Ca(options)),
+                MergeCa::Make => Some(Stage::CaFit(options)),
+                MergeCa::Take(fit) => Some(Stage::CaApply(fit.clone())),
+                MergeCa::Off => None,
+            }),
     );
     let bayer = pattern
         .as_ref()
@@ -1459,6 +1499,7 @@ mod tests {
                 white,
                 reconstruct,
                 denoiser,
+                ca: MergeCa::Own,
             })
         };
         let edit = everything();
@@ -1508,6 +1549,31 @@ mod tests {
             x.skipped[..],
             [(LEARNED_DENOISER, Skip::Unavailable(_))]
         ));
+    }
+
+    /// A merge's frame fits its CA and hands the fit back (the
+    /// reference), takes another frame's, fits its own, or has none,
+    /// as the merge asks.
+    #[test]
+    fn a_merges_frame_takes_its_ca_fit_as_asked() {
+        let edit = everything();
+        let ca_of = |ca| {
+            let purpose = Purpose::MergeInput(MergeInput {
+                white: None,
+                reconstruct: false,
+                denoiser: None,
+                ca,
+            });
+            let s = stages(&edit, &purpose, &raw(0), None);
+            s.ops().nth(1).cloned()
+        };
+        let (_, made) =
+            ca::fit_ca(&[0.0; 16], 4, 4, &CfaPattern::rggb(), &CaOptions::default()).unwrap();
+        let fit = CaFitRef(Arc::new(made));
+        assert!(matches!(ca_of(MergeCa::Own), Some(Stage::Ca(_))));
+        assert!(matches!(ca_of(MergeCa::Make), Some(Stage::CaFit(_))));
+        assert_eq!(ca_of(MergeCa::Take(fit.clone())), Some(Stage::CaApply(fit)));
+        assert!(matches!(ca_of(MergeCa::Off), Some(Stage::Demosaic(..))));
     }
 
     /// A linear file has no mosaic for the learned denoiser; a merge of

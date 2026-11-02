@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use greycard_core::output::OnExists;
-use greycard_engine::merge::{self, Options, Step};
+use greycard_engine::merge::{self, CaFits, Options, Step};
 
 use crate::common;
 
@@ -68,6 +68,7 @@ fn hdr(args: HdrArgs) -> Result<u8> {
         on_exists: args.on_exists,
         denoiser: None,
         noise: None,
+        ca: CaFits::Once,
     };
     let progress = |step: Step| match step {
         Step::Frame { index, of } => eprintln!("reading frame {index} of {of}"),

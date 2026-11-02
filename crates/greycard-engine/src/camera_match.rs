@@ -220,12 +220,45 @@ pub(crate) enum Surveyed {
         exif: Box<greycard_library::Exif>,
         fixed: bool,
     },
-    /// No style to group by, or a file that would not read.
+    /// No style to group by, a merge of ours, or a file that would
+    /// not read.
     NoStyle,
 }
 
-/// One raw's maker's tags and EXIF, the EXIF from the file's two ends.
+/// Whether `path` is a merge of ours, which the match never takes as
+/// a pair: its brightness is no camera's, and its preview is our
+/// rendering. Only a DNG is read, and only its first IFD; a merge
+/// found is said in the log.
+fn is_merge(path: &Path) -> bool {
+    if !path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("dng"))
+    {
+        return false;
+    }
+    match greycard_core::decode::merge_tag_path(path) {
+        Ok(Some(_)) => {
+            tracing::info!(
+                "{}: a merge, never a pair for the camera match",
+                path.display()
+            );
+            true
+        }
+        Ok(None) => false,
+        Err(e) => {
+            tracing::warn!("{}: {e}", path.display());
+            false
+        }
+    }
+}
+
+/// One raw's maker's tags and EXIF, the EXIF from the file's two ends;
+/// a merge of ours refused before either and counted with the raws of
+/// no style, as the index counts it (a DNG's style is always bare).
 fn read_raw(path: &Path) -> Surveyed {
+    if is_merge(path) {
+        return Surveyed::NoStyle;
+    }
     let style = match greycard_core::decode::CameraStyle::read(path) {
         Ok(Some(style)) => style,
         Ok(None) => return Surveyed::NoStyle,
@@ -1883,6 +1916,26 @@ mod tests {
         let mut heard = heard.into_inner().unwrap();
         heard.sort();
         assert_eq!(heard, [(1, 2), (2, 2)]);
+    }
+
+    /// A merge of ours is refused where the files are surveyed and
+    /// counted with the raws of no style; a camera's DNG beside it is
+    /// read as before.
+    #[test]
+    fn the_survey_refuses_a_merge() {
+        use greycard_core::merge::testing::{write_dng, write_merged};
+        let dir = crate::testing::scratch_dir("match-merge");
+        let frame = dir.join("IMG_0.dng");
+        write_dng(&frame, vec![1000; 64 * 48], 64, 48, (1, 100), "Bracket");
+        let merged = dir.join("IMG_0-HDR.dng");
+        write_merged(&frame, &merged);
+        assert!(is_merge(&merged) && !is_merge(&frame));
+        assert_eq!(read_raw(&merged), Surveyed::NoStyle);
+        assert_eq!(read_raw(&frame), Surveyed::NoStyle);
+        let survey = survey_files(&[frame, merged], &|_, _| {}, &AtomicBool::new(false));
+        assert!(survey.groups.is_empty());
+        assert_eq!(survey.no_style, 2);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

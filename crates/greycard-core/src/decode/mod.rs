@@ -100,6 +100,13 @@ pub fn index_read_path(path: impl AsRef<Path>) -> Result<rawler_backend::IndexRe
     rawler_backend::index_read_path(path.as_ref())
 }
 
+/// The tag a merge of ours carries, read from the file's first IFD
+/// with no decode; `None` for any other file. For a caller that must
+/// tell a merge from a camera's frame before it reads further.
+pub fn merge_tag_path(path: impl AsRef<Path>) -> Result<Option<crate::merge::Tag>> {
+    style::merge_tag_stream(std::io::BufReader::new(std::fs::File::open(path.as_ref())?))
+}
+
 /// A raw's kind of mosaic alone, without a sample decoded and without a
 /// memory map; `Ok(None)` for a raw that is not a mosaic.
 pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>> {
@@ -277,6 +284,28 @@ mod tests {
         assert!(crate::picture::is_picture_path(Path::new(
             "/share/day/.x.jpg"
         )));
+    }
+
+    /// A merge of ours is told by its tag with no decode; a camera's
+    /// frame and a file that is no TIFF have none.
+    #[test]
+    fn a_merge_is_told_by_its_tag() {
+        use crate::merge::testing::{write_dng, write_merged};
+        let dir = std::env::temp_dir().join(format!("greycard-merge-tag-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let frame = dir.join("IMG_0.dng");
+        write_dng(&frame, vec![1000; 64 * 48], 64, 48, (1, 100), "Bracket");
+        let merged = dir.join("IMG_0-HDR.dng");
+        write_merged(&frame, &merged);
+        let text = dir.join("notes.txt");
+        std::fs::write(&text, "not a raw").unwrap();
+        let tag = super::merge_tag_path(&merged)
+            .unwrap()
+            .expect("a merge's tag");
+        assert_eq!((tag.kind.as_str(), tag.headroom_stops), ("hdr", 1.0));
+        assert_eq!(super::merge_tag_path(&frame).unwrap(), None);
+        assert_eq!(super::merge_tag_path(&text).unwrap(), None);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// With `GREYCARD_SAMPLES` a directory of raws: each file's preview,

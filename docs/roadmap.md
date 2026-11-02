@@ -553,17 +553,15 @@ written as a float DNG with its headroom and a noise profile. The
 brackets and the panorama to shoot for testing are in
 `docs/test-frames.md`.
 
-- [ ] Phase 1's leftovers (§525): the CA fitted once on the reference
-      and applied to every frame (`correct_ca` exposing its fit; a
-      merged file is linear, so CA cannot be corrected later);
-      Auto reading a merge's headroom (it reads the frame about three
-      stops dark and leaves the kept range clipped); the Highlights
-      pull's aim at display white measured on a real bracket (§528);
-      a noise model with the merge's steps in it for its readers; the
-      Deflate write on more threads;
-      the per-frame learned denoiser offered in the action and the
-      command line; the camera-match sampler refusing a merged file
-      as a pair; the measurement on a real tripod bracket
+- [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
+      the most voting tiles rather than the reference, measured on a
+      real bracket with a clipped sky (§529); Auto reading a merge's
+      headroom (it reads the frame about three stops dark and leaves
+      the kept range clipped); the Highlights pull's aim at display
+      white measured on a real bracket (§528); a noise model with the
+      merge's steps in it for its readers; the Deflate write on more
+      threads; the per-frame learned denoiser offered in the action
+      and the command line; the measurement on a real tripod bracket
 - [ ] Phase 2, the panorama (§523): the lens correction composed into
       the one warp, features and RANSAC, a homography model in
       `register.rs`, the cylinder past 90 degrees, the seam finder for

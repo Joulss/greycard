@@ -1191,6 +1191,37 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A folder holding a merge of ours counts it the same whether it
+    /// is surveyed from the index or from the files: with the raws of
+    /// no style, beside the camera's frame it was made from.
+    #[test]
+    fn a_merge_is_counted_alike_from_the_index_and_the_files() {
+        use greycard_core::merge::testing::{write_dng, write_merged};
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-match-merge-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let frame = shoot.join("IMG_0.dng");
+        write_dng(&frame, vec![1000; 64 * 48], 64, 48, (1, 100), "Bracket");
+        let merged = shoot.join("IMG_0-HDR.dng");
+        write_merged(&frame, &merged);
+        let db = dir.join("library.sqlite");
+        let mut lib = greycard_library::Library::open(&db).unwrap();
+        lib.index_folder(&shoot, &mut |_| {}).unwrap();
+        let indexed = from_index(&db, &shoot).expect("the folder is indexed whole");
+        let read = fit::survey_files(&[frame, merged], &|_, _| {}, &AtomicBool::new(false));
+        assert_eq!((indexed.groups.len(), indexed.no_style), (0, 2));
+        assert_eq!((read.groups.len(), read.no_style), (0, 2));
+        drop(lib);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// Opened for a refit, the sheet runs over the look's group and
     /// says so and under which curve; a look nothing here makes leaves
     /// the sheet with nothing to run, Fit off, and the line says why.

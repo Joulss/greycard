@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use greycard_core::develop::ca::{self, CaStats};
+use greycard_core::develop::ca::{self, CaFit, CaStats};
 use greycard_core::develop::dehaze::{self, DehazeStats};
 use greycard_core::develop::denoise;
 use greycard_core::develop::local_contrast::{LocalContrastStats, local_contrast};
@@ -928,6 +928,8 @@ pub struct Walked {
     /// paint where it acted.
     pub sharpen_mask: Option<Vec<f32>>,
     pub ca: Option<CaStats>,
+    /// The CA's fit, when the list asked for it to be handed back.
+    pub ca_fit: Option<Arc<CaFit>>,
     pub detail: Option<LocalContrastStats>,
     pub dehaze: Option<DehazeStats>,
     pub sharpen: Option<SharpenStats>,
@@ -1231,6 +1233,7 @@ fn attempt(
         rasters: Rasters::new(),
         sharpen_mask: None,
         ca: ran.ca,
+        ca_fit: None,
         detail: ran.detail,
         dehaze: ran.dehaze,
         sharpen: None,
@@ -1534,6 +1537,40 @@ fn cpu_op(
             prepared.samples = samples;
             prepared.chromatic_aberration = Some(stats);
             walked.ca = Some(stats);
+        }
+        Stage::CaFit(options) => {
+            let Buf::Mosaic(prepared) = &mut st.buf else {
+                unreachable!("the CA is the mosaic's")
+            };
+            let pattern = prepared.pattern.as_ref().expect("a CA is a mosaic's");
+            let (samples, fit) = ca::fit_ca(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                pattern,
+                options,
+            )
+            .map_err(failed)?;
+            prepared.samples = samples;
+            prepared.chromatic_aberration = Some(fit.stats);
+            walked.ca = Some(fit.stats);
+            walked.ca_fit = Some(Arc::new(fit));
+        }
+        Stage::CaApply(fit) => {
+            let Buf::Mosaic(prepared) = &mut st.buf else {
+                unreachable!("the CA is the mosaic's")
+            };
+            let pattern = prepared.pattern.as_ref().expect("a CA is a mosaic's");
+            prepared.samples = ca::apply_ca(
+                &prepared.samples,
+                prepared.width,
+                prepared.height,
+                pattern,
+                &fit.0,
+            )
+            .map_err(failed)?;
+            prepared.chromatic_aberration = Some(fit.0.stats);
+            walked.ca = Some(fit.0.stats);
         }
         Stage::Demosaic(..) => {
             let Buf::Mosaic(prepared) = take(&mut st.buf) else {

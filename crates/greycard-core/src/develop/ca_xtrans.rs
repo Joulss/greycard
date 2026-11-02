@@ -80,7 +80,7 @@
 use rayon::prelude::*;
 
 use super::ca::{
-    CaOptions, CaStats, EPS, Fit, MIN_SIDE, SHIFT_BLUR_SIGMA, SHIFT_LIMIT, STEP, fit_votes,
+    CaFit, CaOptions, CaStats, EPS, Fit, MIN_SIDE, SHIFT_BLUR_SIGMA, SHIFT_LIMIT, STEP, fit_votes,
     gaussian_blur_approx, measure_votes, origins, shift_factor,
 };
 use super::sites::{Phases, Tap, interpolation, planar_weights_kernel};
@@ -97,6 +97,89 @@ pub fn correct_ca(
     pattern: &CfaPattern,
     options: &CaOptions,
 ) -> Result<(Vec<f32>, CaStats)> {
+    fit_ca(samples, width, height, pattern, options).map(|(out, fit)| (out, fit.stats))
+}
+
+/// [`correct_ca`], with the fit that made the correction, as
+/// [`super::ca::fit_ca`] has it for Bayer.
+pub fn fit_ca(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    options: &CaOptions,
+) -> Result<(Vec<f32>, CaFit)> {
+    check(samples, width, height, pattern)?;
+    let mut current = samples.to_vec();
+    let mut fit = CaFit::new(width, height, pattern);
+    if width < MIN_SIDE || height < MIN_SIDE {
+        return Ok((current, fit));
+    }
+    let table = interpolation(pattern);
+    let colors = Colors::of(pattern);
+    let bayer = CfaPattern::rggb();
+    let (down, across) = (origins(height).len(), origins(width).len());
+    for it in 0..options.iterations.max(1) {
+        let (green, standin) = planes(&current, width, height, pattern, &table);
+        let votes = measure_votes(&standin, width, height, &bayer)?;
+        drop(standin);
+        let stats = &mut fit.stats;
+        let made = match fit_votes(&votes, down, across) {
+            Ok(made) => made,
+            Err(no) => {
+                stats.corrected = false;
+                stats.blocks = no.blocks();
+                stats.order = 0;
+                break;
+            }
+        };
+        if it == 0 {
+            stats.max_shift = made.max_shift;
+        }
+        stats.corrected = true;
+        stats.blocks = made.blocks;
+        stats.order = made.order;
+        current = resample(&current, &green, width, height, &colors, &made);
+        fit.passes.push(made);
+    }
+    if options.avoid_color_shift && fit.stats.corrected {
+        let factors = color_shift_factors(samples, &current, width, height, pattern);
+        apply_color_shift(&mut current, &factors, width, pattern);
+        fit.factors = Some(factors);
+    }
+    Ok((current, fit))
+}
+
+/// [`super::ca::apply_ca`] on an X-Trans mosaic: each pass's resample,
+/// on the green this mosaic has at that pass, then the fit's
+/// color-shift factors.
+pub fn apply_ca(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    fit: &CaFit,
+) -> Result<Vec<f32>> {
+    check(samples, width, height, pattern)?;
+    let mut current = samples.to_vec();
+    if fit.passes.is_empty() {
+        return Ok(current);
+    }
+    let table = interpolation(pattern);
+    let colors = Colors::of(pattern);
+    for pass in &fit.passes {
+        let green = green_plane(&current, width, height, pattern, &table);
+        current = resample(&current, &green, width, height, &colors, pass);
+    }
+    if let Some(factors) = &fit.factors {
+        apply_color_shift(&mut current, factors, width, pattern);
+    }
+    Ok(current)
+}
+
+/// An X-Trans mosaic of `width` by `height`, or the reason it is not
+/// one.
+fn check(samples: &[f32], width: usize, height: usize, pattern: &CfaPattern) -> Result<()> {
     if !pattern.is_xtrans() {
         return Err(Error::Unsupported(format!(
             "X-Trans CA correction needs an X-Trans pattern, got {pattern}"
@@ -108,40 +191,7 @@ pub fn correct_ca(
             samples.len()
         )));
     }
-    let mut current = samples.to_vec();
-    let mut stats = CaStats::default();
-    if width < MIN_SIDE || height < MIN_SIDE {
-        return Ok((current, stats));
-    }
-    let table = interpolation(pattern);
-    let colors = Colors::of(pattern);
-    let bayer = CfaPattern::rggb();
-    let (down, across) = (origins(height).len(), origins(width).len());
-    for it in 0..options.iterations.max(1) {
-        let (green, standin) = planes(&current, width, height, pattern, &table);
-        let votes = measure_votes(&standin, width, height, &bayer)?;
-        drop(standin);
-        let fit = match fit_votes(&votes, down, across) {
-            Ok(fit) => fit,
-            Err(no) => {
-                stats.corrected = false;
-                stats.blocks = no.blocks();
-                stats.order = 0;
-                break;
-            }
-        };
-        if it == 0 {
-            stats.max_shift = fit.max_shift;
-        }
-        stats.corrected = true;
-        stats.blocks = fit.blocks;
-        stats.order = fit.order;
-        current = resample(&current, &green, width, height, &colors, &fit);
-    }
-    if options.avoid_color_shift && stats.corrected {
-        avoid_color_shift(samples, &mut current, width, height, pattern);
-    }
-    Ok((current, stats))
+    Ok(())
 }
 
 /// The pattern's colors as RGB indices, read with the period of six
@@ -195,16 +245,7 @@ fn planes(
     table: &Phases<[Vec<Tap>; 3]>,
 ) -> (Vec<f32>, Vec<f32>) {
     let size = (width, height);
-    let mut green = vec![0.0f32; width * height];
-    green
-        .par_chunks_mut(width)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let taps = table.row(y).iter().cycle();
-            for (x, (g, taps)) in row.iter_mut().zip(taps).enumerate() {
-                *g = estimate(samples, size, pattern, &taps[1], (y, x), 1);
-            }
-        });
+    let green = green_plane(samples, width, height, pattern, table);
     let bayer = CfaPattern::rggb();
     let mut standin = vec![0.0f32; width * height];
     standin
@@ -222,6 +263,28 @@ fn planes(
             }
         });
     (green, standin)
+}
+
+/// Green at every site.
+fn green_plane(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    table: &Phases<[Vec<Tap>; 3]>,
+) -> Vec<f32> {
+    let size = (width, height);
+    let mut green = vec![0.0f32; width * height];
+    green
+        .par_chunks_mut(width)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let taps = table.row(y).iter().cycle();
+            for (x, (g, taps)) in row.iter_mut().zip(taps).enumerate() {
+                *g = estimate(samples, size, pattern, &taps[1], (y, x), 1);
+            }
+        });
+    green
 }
 
 /// Green at a point between sites, bilinear on the green plane, the
@@ -537,6 +600,19 @@ pub fn avoid_color_shift(
     height: usize,
     pattern: &CfaPattern,
 ) {
+    let factors = color_shift_factors(original, corrected, width, height, pattern);
+    apply_color_shift(corrected, &factors, width, pattern);
+}
+
+/// [`avoid_color_shift`]'s factors, red's then blue's, a 3x3 cell
+/// each, blurred.
+fn color_shift_factors(
+    original: &[f32],
+    corrected: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+) -> [Vec<f32>; 2] {
     let colors = Colors::of(pattern);
     let (cw, ch) = (width.div_ceil(3), height.div_ceil(3));
     let mut factor = [vec![1.0f32; cw * ch], vec![1.0f32; cw * ch]];
@@ -571,6 +647,18 @@ pub fn avoid_color_shift(
     for f in factor.iter_mut() {
         gaussian_blur_approx(f, cw, ch, SHIFT_BLUR_SIGMA * 2.0 / 3.0);
     }
+    factor
+}
+
+/// [`avoid_color_shift`]'s factors multiplied into `corrected`.
+fn apply_color_shift(
+    corrected: &mut [f32],
+    factor: &[Vec<f32>; 2],
+    width: usize,
+    pattern: &CfaPattern,
+) {
+    let colors = Colors::of(pattern);
+    let cw = width.div_ceil(3);
     corrected
         .par_chunks_mut(width)
         .enumerate()
@@ -859,6 +947,34 @@ mod tests {
             });
             assert_eq!(digest, 0xe656_0455_a985_3fe1, "digest {digest:#018x}");
         }
+    }
+
+    /// A fit applied to the X-Trans frame it was made on is that
+    /// frame's correction, to the bit; applied to the frame at half
+    /// its exposure, it corrects that; applied to another phase of
+    /// the pattern, it is refused.
+    #[test]
+    fn a_fit_applied_is_the_correction() {
+        let (w, h) = (400, 320);
+        let p = CfaPattern::xtrans().shifted(2, 1);
+        let (clean, shifted) = aberrated(w, h, &p, 0.005, -0.004);
+        let ca = crate::develop::ca::apply_ca;
+        let (out, fit) = fit_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
+        assert!(fit.stats.corrected && !fit.passes.is_empty() && fit.factors.is_some());
+        let (plain, _) = correct_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
+        let applied = ca(&shifted, w, h, &p, &fit).unwrap();
+        for (a, b) in [(&out, &plain), (&applied, &plain)] {
+            assert!(a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()));
+        }
+        let half: Vec<f32> = shifted.iter().map(|v| v * 0.5).collect();
+        let half_clean: Vec<f32> = clean.iter().map(|v| v * 0.5).collect();
+        let at_half = ca(&half, w, h, &p, &fit).unwrap();
+        for color in [CfaColor::Red, CfaColor::Blue] {
+            let before = rms_error(&half_clean, &half, w, h, &p, color);
+            let after = rms_error(&half_clean, &at_half, w, h, &p, color);
+            assert!(after < 0.4 * before, "{color:?}: {after} of {before}");
+        }
+        assert!(ca(&shifted, w, h, &CfaPattern::xtrans(), &fit).is_err());
     }
 
     /// The stand-in Bayer mosaic of a plane is the plane: every
