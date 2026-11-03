@@ -1857,14 +1857,17 @@ export component App inherits Window {
     in property <string> display-note;
     callback display-changed();
     callback choose-display-file();
-    // The viewport's surround: black, or one of three greys, painted
+    // The viewport's surround: black, three greys, or white, painted
     // by the Rectangle behind the picture and by the shader outside
     // the frame alike (`canvas-colors`); the index into both.
     in-out property <int> canvas-choice: 0;
-    property <[color]> canvas-colors: [#0f0f0f, #262626, #2e2e2e, #444444];
-    /// The same four by name, as the settings file and the Settings
+    out property <[color]> canvas-colors: [#0f0f0f, #262626, #2e2e2e, #444444, #ffffff];
+    /// The same five by name, as the settings file and the Settings
     /// sheet's row spell them (`render::CANVAS_NAMES`).
-    out property <[string]> canvas-names: ["Black", "Dark grey", "Mid grey", "Light grey"];
+    out property <[string]> canvas-names: ["Black", "Dark grey", "Mid grey", "Light grey", "White"];
+    /// A light surround, white: the plates and strokes over the
+    /// viewport take a denser scrim, so they read on it as on black.
+    property <bool> canvas-light: root.canvas-colors[root.canvas-choice].to-hsv().value > 0.5;
     callback canvas-changed();
     /// A develop is on its way.
     in property <bool> busy;
@@ -3097,6 +3100,7 @@ export component App inherits Window {
                 placeholder-status: root.preparing ? "" : root.placeholder-status;
                 canvas-choice <=> root.canvas-choice;
                 canvas-colors: root.canvas-colors;
+                canvas-light: root.canvas-light;
                 busy: root.busy || root.export-running || root.import-running;
                 retouch-mode <=> root.retouch-mode;
                 patch-size <=> root.patch-size;
@@ -4032,6 +4036,7 @@ export component App inherits Window {
         width: 16px;
         height: 40px;
         quiet: root.all-hidden();
+        light-ground: root.canvas-light;
         label: "Right panel";
         words: root.right-hidden ? "Show panel" : "Hide panel";
         icon: root.right-hidden ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-right.svg");
@@ -4043,6 +4048,7 @@ export component App inherits Window {
         width: 40px;
         height: 16px;
         quiet: root.all-hidden();
+        light-ground: root.canvas-light;
         label: "Strip";
         words: root.strip-hidden ? "Show strip" : "Hide strip";
         icon: root.strip-hidden ? @image-url("icons/chevron-up.svg") : @image-url("icons/chevron-down.svg");
@@ -4066,6 +4072,7 @@ export component App inherits Window {
             - (root.cull-mode ? 56px + 40px + Theme.space-2 : 24px + Theme.space-3 + Theme.space-4);
         fraction: root.loading-fraction;
         line: root.loading-line;
+        light-ground: root.canvas-light;
     }
 
     // The grid, over the window: the folder as a contact sheet, in
@@ -4613,6 +4620,7 @@ export component App inherits Window {
         width: 16px;
         height: 40px;
         quiet: root.all-hidden() && !root.grid-open;
+        light-ground: root.canvas-light && !root.grid-open;
         label: "Left panel";
         words: root.left-hidden ? "Show panel" : "Hide panel";
         icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");

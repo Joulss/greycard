@@ -7,6 +7,66 @@ import { SliderKeys } from "../controls.slint";
 import { Pt, MaskBox, MaskPick, PersonBox, CompareTile } from "../structs.slint";
 import { CropHandle, ThumbBadges, PanelButton, TipArea } from "../controls.slint";
 
+// The dark copy under a light stroke over the viewport: wider, so it
+// edges the stroke where the stroke runs over the white canvas, and
+// over a white sky too. The dropper's icon carries one the same way.
+global Halo {
+    out property <color> ink: #00000080;
+    out property <length> width: 3px;
+}
+
+// An ellipse's outline, in the view's own pixels, turned by `angle`
+// degrees about its center: the brush's ring and the repair's are
+// circles of it, the radial shape's edge an ellipse. `halo` draws the
+// dark copy under it.
+component Ring inherits Rectangle {
+    in property <float> cx;
+    in property <float> cy;
+    in property <float> rx;
+    in property <float> ry;
+    in property <float> angle;
+    in property <color> stroke;
+    in property <bool> halo;
+    property <float> ca: cos(root.angle * 1deg);
+    property <float> sa: sin(root.angle * 1deg);
+    for under in root.halo ? [true, false] : [false]: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        stroke: under ? Halo.ink : root.stroke;
+        stroke-width: under ? Halo.width : 1px;
+        MoveTo { x: root.cx + root.rx * root.ca; y: root.cy + root.rx * root.sa; }
+        ArcTo { x: root.cx - root.rx * root.ca; y: root.cy - root.rx * root.sa; radius-x: root.rx; radius-y: root.ry; x-rotation: root.angle; large-arc: false; sweep: true; }
+        ArcTo { x: root.cx + root.rx * root.ca; y: root.cy + root.rx * root.sa; radius-x: root.rx; radius-y: root.ry; x-rotation: root.angle; large-arc: false; sweep: true; }
+    }
+}
+
+// A straight rule from one point to another, in view pixels, with the
+// same dark copy under it when `halo`.
+component Rule inherits Rectangle {
+    in property <float> x0;
+    in property <float> y0;
+    in property <float> x1;
+    in property <float> y1;
+    in property <color> stroke;
+    in property <bool> halo;
+    for under in root.halo ? [true, false] : [false]: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        stroke: under ? Halo.ink : root.stroke;
+        stroke-width: under ? Halo.width : 1px;
+        MoveTo { x: root.x0; y: root.y0; }
+        LineTo { x: root.x1; y: root.y1; }
+    }
+}
+
 export component Viewport inherits Rectangle {
     /// A name is being typed in a panel's text box: the pointer
     /// crossing the picture leaves the keys where they are.
@@ -131,6 +191,11 @@ export component Viewport inherits Rectangle {
     in property <bool> plate-hidden: false;
     in-out property <int> canvas-choice;
     in property <[color]> canvas-colors;
+    /// A light surround (white): the plates and badges, which often
+    /// sit on it rather than on the picture, take a denser scrim, so
+    /// their words read on it as they do on black.
+    in property <bool> canvas-light;
+    property <color> plate-ground: root.canvas-light ? Theme.over-plate-dense : #00000099;
     in property <bool> busy;
     in-out property <string> retouch-mode;
     in-out property <float> patch-size;
@@ -489,21 +554,13 @@ export component Viewport inherits Rectangle {
     // The brush under the pointer: its radius, and where
     // its feather begins.
     if root.placing == "Brush" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down: Rectangle {
-        for s in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: self.width / 1px;
-            viewbox-height: self.height / 1px;
+        for s[k] in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Ring {
             stroke: s == 1.0 ? (root.brush-op == "Erase" ? #ff6060cc : root.brush-op == "Subtract" ? #ffb860cc : #ffffffcc) : #ffffff50;
-            stroke-width: 1px;
-            property <float> cx: ta.mouse-x / 1px;
-            property <float> cy: ta.mouse-y / 1px;
-            property <float> r: max(root.brush-size * root.brush-scale * s, 0.5);
-            MoveTo { x: cx + r; y: cy; }
-            ArcTo { x: cx - r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
-            ArcTo { x: cx + r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
+            halo: k == 0;
+            cx: ta.mouse-x / 1px;
+            cy: ta.mouse-y / 1px;
+            rx: max(root.brush-size * root.brush-scale * s, 0.5);
+            ry: self.rx;
         }
     }
     // The word for the camera's JPEG standing in for a
@@ -516,7 +573,7 @@ export component Viewport inherits Rectangle {
         width: placeholder-word.width + 2 * Theme.space-3;
         height: 24px;
         border-radius: Theme.radius-sm;
-        background: #00000099;
+        background: root.plate-ground;
         placeholder-word := Text {
             text: "camera preview";
             color: Theme.over-text;
@@ -533,6 +590,7 @@ export component Viewport inherits Rectangle {
         x: parent.width - self.width - Theme.space-3;
         y: Theme.space-3;
         glyph: 16px;
+        light-ground: root.canvas-light;
         rating: root.frame-rating;
         flag: root.frame-flag;
         label: root.frame-label;
@@ -546,6 +604,7 @@ export component Viewport inherits Rectangle {
         x: parent.width - self.width - Theme.space-3;
         y: Theme.space-3;
         glyph: 16px;
+        light-ground: root.canvas-light;
         rating: root.frame-rating;
         flag: root.frame-flag;
         label: root.frame-label;
@@ -570,7 +629,7 @@ export component Viewport inherits Rectangle {
         width: proof-word.preferred-width + 2 * Theme.space-2;
         height: 20px;
         border-radius: Theme.radius-sm;
-        background: #00000099;
+        background: root.plate-ground;
         accessible-role: button;
         accessible-label: root.proof-badge;
         proof-word := Text {
@@ -601,7 +660,7 @@ export component Viewport inherits Rectangle {
             width: tile-name.width + 2 * Theme.space-2;
             height: 20px;
             border-radius: Theme.radius-sm;
-            background: #00000099;
+            background: root.plate-ground;
             tile-name := Text {
                 text: t.name;
                 color: t.on ? Theme.over-text : Theme.over-text-secondary;
@@ -613,6 +672,7 @@ export component Viewport inherits Rectangle {
             x: parent.width - self.width - Theme.space-2;
             y: Theme.space-2;
             glyph: 14px;
+            light-ground: root.canvas-light;
             rating: t.rating;
             flag: t.flag;
             label: t.label;
@@ -631,7 +691,7 @@ export component Viewport inherits Rectangle {
         width: notice-word.width + 2 * Theme.space-4;
         height: 40px;
         border-radius: Theme.radius-md;
-        background: #000000b0;
+        background: root.canvas-light ? Theme.over-plate-dense : #000000b0;
         opacity: root.notice-on ? 1 : 0;
         animate opacity { duration: 250ms; easing: ease-out; }
         notice-word := Text {
@@ -693,21 +753,13 @@ export component Viewport inherits Rectangle {
     }
     // The repair tool under the pointer: its radius and feather.
     if root.retouch-mode != "" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down: Rectangle {
-        for s in [1.0, 1.0 - root.patch-feather]: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: self.width / 1px;
-            viewbox-height: self.height / 1px;
+        for s[k] in [1.0, 1.0 - root.patch-feather]: Ring {
             stroke: s == 1.0 ? #7fd0ffcc : #7fd0ff50;
-            stroke-width: 1px;
-            property <float> cx: ta.mouse-x / 1px;
-            property <float> cy: ta.mouse-y / 1px;
-            property <float> r: max(root.patch-size * root.brush-scale * s, 0.5);
-            MoveTo { x: cx + r; y: cy; }
-            ArcTo { x: cx - r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
-            ArcTo { x: cx + r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
+            halo: k == 0;
+            cx: ta.mouse-x / 1px;
+            cy: ta.mouse-y / 1px;
+            rx: max(root.patch-size * root.brush-scale * s, 0.5);
+            ry: self.rx;
         }
     }
     // The chosen patch's shape while the Retouch tab shows:
@@ -864,6 +916,8 @@ export component Viewport inherits Rectangle {
                 x: 5px; y: 5px; width: 10px; height: 10px;
                 background: #ffffff;
                 border-radius: 2px;
+                border-width: 1px;
+                border-color: #00000080;
             }
             grabbed(i) => {
                 root.crop-grabbed(i, self.alt, self.absolute-position.x + self.mouse-x,
@@ -875,40 +929,26 @@ export component Viewport inherits Rectangle {
     }
     // The chosen mask shape: its outline and its handles.
     if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.placeholder: Rectangle {
-        for h[i] in root.mask-handles: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: self.width / 1px;
-            viewbox-height: self.height / 1px;
+        for h[i] in root.mask-handles: Rule {
             stroke: i == 0 ? #ffffff60 : #ffffffcc;
-            stroke-width: 1px;
+            halo: i != 0;
             property <float> dx: cos(root.mask-angle * 1deg) * 4000;
             property <float> dy: sin(root.mask-angle * 1deg) * 4000;
-            MoveTo { x: h.x - dx; y: h.y - dy; }
-            LineTo { x: h.x + dx; y: h.y + dy; }
+            x0: h.x - self.dx;
+            y0: h.y - self.dy;
+            x1: h.x + self.dx;
+            y1: h.y + self.dy;
         }
     }
     if root.mask-kind == "Radial" && root.mask-handles.length == 5 && !root.placeholder: Rectangle {
-        for s in [1.0, root.mask-feather-scale]: Path {
-            width: 100%;
-            height: 100%;
-            viewbox-x: 0;
-            viewbox-y: 0;
-            viewbox-width: self.width / 1px;
-            viewbox-height: self.height / 1px;
+        for s[k] in [1.0, root.mask-feather-scale]: Ring {
             stroke: s == 1.0 ? #ffffffcc : #ffffff50;
-            stroke-width: 1px;
-            property <float> cx: root.mask-handles[0].x;
-            property <float> cy: root.mask-handles[0].y;
-            property <float> rx: max(root.mask-rx * s, 0.5);
-            property <float> ry: max(root.mask-ry * s, 0.5);
-            property <float> ca: cos(root.mask-angle * 1deg);
-            property <float> sa: sin(root.mask-angle * 1deg);
-            MoveTo { x: cx + rx * ca; y: cy + rx * sa; }
-            ArcTo { x: cx - rx * ca; y: cy - rx * sa; radius-x: rx; radius-y: ry; x-rotation: root.mask-angle; large-arc: false; sweep: true; }
-            ArcTo { x: cx + rx * ca; y: cy + rx * sa; radius-x: rx; radius-y: ry; x-rotation: root.mask-angle; large-arc: false; sweep: true; }
+            halo: k == 0;
+            cx: root.mask-handles[0].x;
+            cy: root.mask-handles[0].y;
+            rx: max(root.mask-rx * s, 0.5);
+            ry: max(root.mask-ry * s, 0.5);
+            angle: root.mask-angle;
         }
     }
     // An object's boxes, and its picks: a dot, green for
@@ -1116,7 +1156,7 @@ export component Viewport inherits Rectangle {
             width: hint.width + 2 * Theme.space-3;
             height: 24px;
             border-radius: Theme.radius-md;
-            background: #00000099;
+            background: root.plate-ground;
             hint := Text {
                 text: root.guide-kept.length == 2
                     ? "Now the second line"
@@ -1139,7 +1179,7 @@ export component Viewport inherits Rectangle {
             + (root.sync-note != "" ? sync-text.width + Theme.space-3 : 0);
         height: 24px;
         border-radius: Theme.radius-md;
-        background: #00000099;
+        background: root.plate-ground;
         property <float> phase: 0;
         Timer {
             interval: 16ms;

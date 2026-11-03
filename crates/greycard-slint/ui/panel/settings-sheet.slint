@@ -740,7 +740,8 @@ export component SettingsSheet inherits Rectangle {
                                     accessible-role: list;
                                     accessible-value: self.current;
                                     selected(c) => {
-                                        root.canvas-choice = c == root.canvas-names[3] ? 3
+                                        root.canvas-choice = c == root.canvas-names[4] ? 4
+                                            : c == root.canvas-names[3] ? 3
                                             : c == root.canvas-names[2] ? 2
                                             : c == root.canvas-names[1] ? 1
                                             : 0;

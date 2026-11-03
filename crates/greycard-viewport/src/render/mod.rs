@@ -32,15 +32,17 @@ use self::{
 
 pub use self::sample::{SAMPLE_SIZES, sample_reach, sample_size, texel_of};
 
-/// The canvas's four levels, by name, index matching `app.slint`'s
+/// The canvas's five levels, by name, index matching `app.slint`'s
 /// `canvas-colors` swatches and the shader's `canvas` uniform:
-/// black, then three greys, the third about 18% grey as displayed.
-pub const CANVAS_NAMES: [&str; 4] = ["Black", "Dark grey", "Mid grey", "Light grey"];
+/// black, three greys, the third about 18% grey as displayed, and
+/// white.
+pub const CANVAS_NAMES: [&str; 5] = ["Black", "Dark grey", "Mid grey", "Light grey", "White"];
 
-/// The same four levels' encoded sRGB fractions: the hex `app.slint`
+/// The same five levels' encoded sRGB fractions: the hex `app.slint`
 /// paints the Rectangle behind the viewport with (#0f0f0f, #262626,
-/// #2e2e2e, #444444), so the shader's margin agrees with it exactly.
-const CANVAS_LEVELS: [f32; 4] = [15.0 / 255.0, 38.0 / 255.0, 46.0 / 255.0, 68.0 / 255.0];
+/// #2e2e2e, #444444, #ffffff), so the shader's margin agrees with it
+/// exactly.
+const CANVAS_LEVELS: [f32; 5] = [15.0 / 255.0, 38.0 / 255.0, 46.0 / 255.0, 68.0 / 255.0, 1.0];
 
 fn canvas_index(choice: i32) -> usize {
     (choice.max(0) as usize).min(CANVAS_LEVELS.len() - 1)
@@ -58,7 +60,7 @@ pub fn canvas_name(choice: i32) -> &'static str {
 }
 
 /// A name from the settings file back to its choice, the first
-/// (black) when it names none of the four.
+/// (black) when it names none of the five.
 pub fn canvas_choice(name: &str) -> i32 {
     CANVAS_NAMES.iter().position(|n| *n == name).unwrap_or(0) as i32
 }

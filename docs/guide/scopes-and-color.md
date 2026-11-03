@@ -111,8 +111,9 @@ then look too saturated. Pick the monitor's ICC profile with **File**
 (Windows keeps them in `C:\Windows\System32\spool\drivers\color`),
 or one of the named spaces if the monitor is set to it.
 
-**Canvas** sets the color around the picture: black or one of three
-greys. **F** gives the fitted picture a mat of it on every side.
+**Canvas** sets the color around the picture: black, one of three
+greys, or white. **F** gives the fitted picture a mat of it on every
+side.
 
 The monitor choice is remembered. It changes only what you see; an
 export is never affected.

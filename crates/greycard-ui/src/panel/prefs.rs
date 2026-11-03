@@ -1726,6 +1726,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             crate::render::CANVAS_NAMES
         );
+        // The swatches paint what the shader paints outside the frame.
+        let colors = app.get_canvas_colors();
+        assert_eq!(colors.row_count(), crate::render::CANVAS_NAMES.len());
+        for (i, c) in colors.iter().enumerate() {
+            let want = crate::render::canvas_rgb(i as i32).map(|v| (v * 255.0).round() as u8);
+            assert_eq!([c.red(), c.green(), c.blue()], want, "canvas {i}");
+        }
         let kept = || crate::panel::startup::remember(&app);
         // The sheet's rows, read back from the settings kept.
         open_editing(&app);

@@ -183,8 +183,8 @@ watched and need no rescan.
 ### Canvas
 
 The surround behind the picture, **Black**, **Dark grey**, **Mid
-grey**, or **Light grey**: the same choice as the swatches beside
-**Canvas** in the Develop tab's **MONITOR** section.
+grey**, **Light grey**, or **White**: the same choice as the swatches
+beside **Canvas** in the Develop tab's **MONITOR** section.
 
 ### Monitor
 

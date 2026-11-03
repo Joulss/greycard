@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- The canvas behind the picture can be White, beside Black and the
+  three greys
+  ([§534](https://github.com/jessolmstead/greycard/blob/master/docs/notes/534-a-white-canvas.md)).
 - The frame menu's Edit in... hands the frame to the app chosen on
   Settings as a 16-bit TIFF beside the raw, and the app's save comes
   back stacked with the raw

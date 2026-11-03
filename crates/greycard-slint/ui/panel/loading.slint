@@ -13,6 +13,8 @@ export component LoadingCard inherits Rectangle {
     /// The dark plate under the bar and its words; off where the card
     /// sits in a sheet that has its own ground.
     in property <bool> plate: true;
+    /// The plate over a light surround: denser, so the words read.
+    in property <bool> light-ground: false;
     in property <color> words-color: root.plate ? Theme.over-text-secondary : Theme.text-secondary;
     in property <length> words-size: Theme.font-xs;
     in property <TextHorizontalAlignment> words-align: center;
@@ -29,7 +31,7 @@ export component LoadingCard inherits Rectangle {
     border-radius: Theme.radius-md;
     // The status plate's ground: the frames under it stay visible,
     // the words readable over any of them.
-    background: root.plate ? #000000b3 : transparent;
+    background: !root.plate ? transparent : root.light-ground ? Theme.over-plate-dense : #000000b3;
     track := Rectangle {
         // A fraction below nothing says there is nothing to count: the
         // words stand and the bar's place is kept.

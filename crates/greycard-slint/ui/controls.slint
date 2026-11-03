@@ -1323,10 +1323,13 @@ export component Swatches inherits Rectangle {
         spacing: Theme.space-1;
         for color[i] in root.colors: Rectangle {
             property <bool> on: i == root.current;
+            // A pale swatch (the white canvas) under a ring of the
+            // text's color would show none on a dark theme.
+            property <bool> pale: color.to-hsv().value > 0.5 && color.to-hsv().saturation < 0.2;
             border-radius: self.height / 2;
             background: color;
             border-width: on ? 2px : 0;
-            border-color: Theme.text;
+            border-color: self.pale ? Theme.over-plate-dense : Theme.text;
             opacity: !root.enabled ? 0.3 : (on || t.has-hover) ? 1 : 0.55;
             animate opacity { duration: Theme.quick; }
             t := TouchArea {
@@ -1430,6 +1433,8 @@ export component ThumbBadges inherits Rectangle {
     in property <int> label;
     in property <int> stars: 5;
     in property <length> glyph: 9px;
+    /// Over a light surround rather than a picture: a denser scrim.
+    in property <bool> light-ground: false;
     property <bool> said: root.rating > 0 || root.flag > 0 || root.label > 0;
     visible: root.said;
     // What it shows, in words: "3 stars, pick, red".
@@ -1446,8 +1451,9 @@ export component ThumbBadges inherits Rectangle {
     height: root.glyph + 6px;
     border-radius: Theme.radius-sm;
     // Its own scrim: a badge must read over a white sky and a black
-    // shadow alike, and what is behind it is the picture.
-    background: #00000099;
+    // shadow alike, and what is behind it is the picture, or the
+    // canvas, denser where that is white.
+    background: root.light-ground ? Theme.over-plate-dense : #00000099;
     badges := HorizontalLayout {
         padding-left: root.glyph / 3;
         padding-right: root.glyph / 3;
@@ -1619,6 +1625,9 @@ export component EdgeArrow inherits Rectangle {
     in property <bool> quiet: false;
     in property <string> words;
     in property <string> label;
+    /// Over a light surround: a denser plate, the same at rest and
+    /// under the pointer, where the chevron's brightening says it.
+    in property <bool> light-ground: false;
     callback clicked();
     accessible-role: button;
     accessible-label: root.label;
@@ -1631,7 +1640,7 @@ export component EdgeArrow inherits Rectangle {
     Rectangle {
         opacity: root.quiet && !touch.has-hover ? 0 : 1;
         border-radius: Theme.radius-sm;
-        background: touch.has-hover ? #000000c0 : #00000080;
+        background: root.light-ground ? Theme.over-plate-dense : touch.has-hover ? #000000c0 : #00000080;
         Image {
             width: 14px;
             height: 14px;

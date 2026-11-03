@@ -59,7 +59,7 @@ pub struct Settings {
     pub display_profile: String,
     pub display_monitor: String,
     /// The viewport's surround, by the name `render::canvas_name`
-    /// gives it: "Black", or one of three greys.
+    /// gives it: "Black", one of three greys, or "White".
     pub canvas_color: String,
     /// Whether the fitted picture has a mat, a band of the canvas
     /// around it. Off by default.
@@ -862,6 +862,26 @@ mod tests {
             }
         );
         assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// White, the fifth canvas, is kept by its name and read back as
+    /// the fifth choice, which the shader paints white.
+    #[test]
+    fn a_white_canvas_round_trips() {
+        let dir = crate::testing::scratch_dir("settings-white");
+        let file = dir.join("settings.json");
+        let mine = Settings {
+            canvas_color: "White".into(),
+            ..Settings::default()
+        };
+        mine.save_to(&file);
+        let read = Settings::load_from(&file);
+        assert_eq!(read, mine);
+        let choice = crate::render::canvas_choice(&read.canvas_color);
+        assert_eq!(choice, 4);
+        assert_eq!(crate::render::canvas_name(choice), "White");
+        assert_eq!(crate::render::canvas_rgb(choice), [1.0; 3]);
         crate::testing::remove_dir_retry(&dir);
     }
 

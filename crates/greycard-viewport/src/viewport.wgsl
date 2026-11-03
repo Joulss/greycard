@@ -351,8 +351,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let r = r0 / max(1.0 + dot(p.persp.xy, r0), 1e-4);
     let at = p.image * 0.5 + vec2<f32>(dot(p.turn0, r), dot(p.turn1, r));
     if (at.x < 0.0 || at.y < 0.0 || at.x >= p.image.x || at.y >= p.image.y) {
-        // Nothing of the source is here, so nothing of a mask either.
-        return vec4<f32>(0.03, 0.03, 0.03, select(1.0, 0.0, p.range.w > 0.5));
+        // Nothing of the source is here, so nothing of a mask either:
+        // the canvas, as outside the frame (the turned source's
+        // corners, which crop mode shows).
+        return vec4<f32>(p.canvas.rgb, select(1.0, 0.0, p.range.w > 0.5));
     }
     // The picture, and in its alpha the sharpen's blend mask. The
     // texture is read where it holds this source position; everything
