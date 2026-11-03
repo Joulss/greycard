@@ -510,6 +510,7 @@ impl Library {
                 .filter_map(|(k, r)| Some((name_of(k)?, r.hash.clone())))
                 .collect()
         };
+        let takes = self.lightroom;
         let mut report = index_paths(
             self.conn_mut(),
             &dir,
@@ -519,6 +520,7 @@ impl Library {
             progress,
             stop,
             far,
+            takes,
         )?;
         // One half of a rename: this folder gone with its files, or
         // files come live in it.
@@ -795,6 +797,7 @@ impl Library {
         } else {
             Vec::new()
         };
+        let takes = self.lightroom;
         index_paths(
             self.conn_mut(),
             &folder,
@@ -804,6 +807,7 @@ impl Library {
             &mut |_| {},
             &|| false,
             None,
+            takes,
         )
     }
 }
@@ -939,13 +943,19 @@ fn move_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::remove_file(from)
 }
 
+/// Folded into the hash of a frame with an XMP beside it by a pass that
+/// takes Lightroom's develops: a row that holds it has had the XMP
+/// looked at for one, and a row from a pass that did not look (one
+/// that takes nothing, or a build before the take) is read again once.
+const LOOKED: &[u8] = b"an XMP looked at for a Lightroom develop";
+
 /// A sidecar is small and is read whole: its hash is what says
 /// whether it changed, since a save that changes one digit of a
 /// rating changes neither its length nor, within one timestamp
 /// tick, its mtime. The XMP beside the frame is read the same way
 /// and folded into the hash, so a rating given in another tool is
 /// seen by the next pass as a save here is.
-fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
+fn sidecar_of(raw: &Path, looks: bool) -> Option<SidecarNow> {
     disk_call();
     let path = Sidecar::find(raw);
     let xmp = greycard_edit_io::xmp::path_of(raw);
@@ -965,9 +975,13 @@ fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
         .unwrap_or(0);
     // A frame with a `.gcd` alone hashes as it always did; the XMP,
     // when there is one, goes in after it with its length, so that a
-    // byte moved from one file to the other is a change too.
+    // byte moved from one file to the other is a change too. An XMP
+    // a pass that takes looked at is marked so.
     let mut hasher = blake3::Hasher::new();
     hasher.update(json.as_deref().unwrap_or_default());
+    if looks && xmp_bytes.is_some() {
+        hasher.update(LOOKED);
+    }
     if let Some(x) = &xmp_bytes {
         hasher.update(&(x.len() as u64).to_le_bytes());
         hasher.update(x);
@@ -1118,7 +1132,7 @@ struct Ahead {
     summary: Summary,
 }
 
-fn read_ahead(path: &Path, hint: Option<Hint>) -> Ahead {
+fn read_ahead(path: &Path, hint: Option<Hint>, looks: bool) -> Ahead {
     #[cfg(test)]
     tests::held_read(path);
     let stat = std::fs::metadata(path)
@@ -1151,7 +1165,7 @@ fn read_ahead(path: &Path, hint: Option<Hint>) -> Ahead {
             ahead.hash = Some(hash);
         }
     }
-    ahead.sidecar = sidecar_of(path);
+    ahead.sidecar = sidecar_of(path, looks);
     ahead.summary = summary_of(ahead.sidecar.as_ref(), path);
     ahead
 }
@@ -1180,7 +1194,9 @@ fn index_paths(
     progress: &mut dyn FnMut(Progress<'_>),
     stop: &dyn Fn() -> bool,
     far: Option<&Far>,
+    takes: Option<Placement>,
 ) -> Result<Report> {
+    let looks = takes.is_some();
     let mut report = Report::default();
     let total = files.len();
     let folder_bytes = path_bytes(folder);
@@ -1203,7 +1219,7 @@ fn index_paths(
             .map(|p| (p.clone(), existing.get(&path_bytes(p)).map(Hint::of)))
             .collect();
         let read: Arc<dyn Fn((PathBuf, Option<Hint>)) -> Ahead + Send + Sync> =
-            Arc::new(|(path, hint)| read_ahead(&path, hint));
+            Arc::new(move |(path, hint)| read_ahead(&path, hint, looks));
         f.many(items, read)
     });
     let mut since = Instant::now();
@@ -1353,8 +1369,8 @@ fn index_paths(
         let (sidecar, summary) = match early.take().filter(|_| !carried) {
             Some(a) => (a.sidecar, a.summary),
             None => {
-                let read = |p: &Path| {
-                    let sidecar = sidecar_of(p);
+                let read = move |p: &Path| {
+                    let sidecar = sidecar_of(p, looks);
                     let summary = summary_of(sidecar.as_ref(), p);
                     (sidecar, summary)
                 };
@@ -1372,6 +1388,43 @@ fn index_paths(
                     None => read(path),
                 }
             }
+        };
+        // A raw with no edit of ours (no `.gcd`, or one with meta alone)
+        // and a Lightroom develop beside it: taken as an open takes it,
+        // and written, after any carry above, so the row says what an
+        // open will find and the next pass finds an edit and takes
+        // nothing. An XMP the row has looked at already
+        // (its hash, [`LOOKED`]) is not looked at again until it
+        // changes.
+        let looked_at = match &plan {
+            Plan::Same(row, ..) => row.same_sidecar(sidecar.as_ref()),
+            _ => false,
+        };
+        let (sidecar, summary) = if let Some(placement) = takes
+            && !looked_at
+            && !summary.edited
+            && summary.versions.is_empty()
+        {
+            let take = move |p: &Path| {
+                disk_call();
+                if !greycard_edit_io::lightroom::beside::waits(p) {
+                    return None;
+                }
+                greycard_edit_io::on_disk::load_sidecar_said(p, Some(placement));
+                let sidecar = sidecar_of(p, true);
+                let summary = summary_of(sidecar.as_ref(), p);
+                Some((sidecar, summary))
+            };
+            let taken = match far {
+                Some(f) => {
+                    let p = path.clone();
+                    f.one(move || take(&p)).ok().flatten()
+                }
+                None => take(path),
+            };
+            taken.unwrap_or((sidecar, summary))
+        } else {
+            (sidecar, summary)
         };
         looked.push(Looked {
             path,
@@ -2997,6 +3050,7 @@ pub(crate) mod tests {
                 &mut quiet(),
                 &|| false,
                 far.as_ref(),
+                None,
             )
             .unwrap();
             let took = started.elapsed();
@@ -3017,6 +3071,7 @@ pub(crate) mod tests {
                 &mut quiet(),
                 &|| false,
                 far.as_ref(),
+                None,
             )
             .unwrap();
             let again = again.elapsed();
@@ -6962,6 +7017,95 @@ pub(crate) mod tests {
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
         assert_eq!(report.meta_refreshed, 0, "{report:?}");
         drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw with a Lightroom develop in the XMP beside it and nothing
+    /// of ours is taken by the pass as an open takes it: a `.gcd` with
+    /// one state, "Imported from Lightroom", which the row reads as an
+    /// edit. A pass again, or over a fresh index, takes nothing twice;
+    /// an edit of ours is left alone.
+    #[test]
+    fn a_pass_takes_a_lightroom_develop_beside_a_raw_once() {
+        use greycard_edit_io::xmp;
+        // Written by hand: a stop brighter, three stars, one keyword path.
+        const PACKET: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:lr="http://ns.adobe.com/lightroom/1.0/"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   xmp:Rating="3" crs:Exposure2012="+1.00" crs:HasSettings="True">
+   <lr:hierarchicalSubject><rdf:Bag><rdf:li>Places|Skye</rdf:li></rdf:Bag></lr:hierarchicalSubject>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+        let dir = scratch("lightroom-xmp");
+        let (taken, ours, rated, bare) = (
+            dir.join("taken.CR3"),
+            dir.join("ours.CR3"),
+            dir.join("rated.CR3"),
+            dir.join("bare.CR3"),
+        );
+        for p in [&taken, &ours, &rated, &bare] {
+            std::fs::write(p, b"not a raw").unwrap();
+        }
+        for p in [&taken, &ours, &rated] {
+            std::fs::write(xmp::short_path(p), PACKET).unwrap();
+        }
+        // Rated here, nothing developed: takes the develop.
+        let mut one = Sidecar::default();
+        one.meta.rating = 1;
+        one.save(&rated).unwrap();
+        let mut s = Sidecar::default();
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = -0.5;
+        assert!(s.record(edit));
+        s.save(&ours).unwrap();
+
+        let steps = |p: &Path| Sidecar::load(p).unwrap().map(|s| s.line.history.len());
+        // A library not told where sidecars go takes nothing, and does
+        // not count the XMPs looked at: told, its next pass takes.
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(steps(&taken), None);
+        assert_eq!(steps(&rated), Some(0));
+        assert!(!lib.by_path(&taken).unwrap().unwrap().edited);
+        lib.set_lightroom_takes(Some(greycard_edit::Placement::Beside));
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(steps(&taken), Some(1));
+        assert_eq!(steps(&rated), Some(1));
+        assert!(lib.by_path(&taken).unwrap().unwrap().edited);
+        drop(lib);
+        for _ in 0..2 {
+            let mut lib = Library::open_in_memory().unwrap();
+            lib.set_lightroom_takes(Some(greycard_edit::Placement::Beside));
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            let e = lib.by_path(&taken).unwrap().unwrap();
+            assert_eq!((e.meta.rating, e.edited), (3, true));
+            assert_eq!(e.meta.keywords, ["Places/Skye"]);
+            assert!(e.sidecar.is_some(), "the .gcd the pass wrote");
+            assert_eq!(steps(&taken), Some(1));
+            let s = Sidecar::load(&taken).unwrap().unwrap();
+            assert_eq!(
+                s.line.current_label.as_deref(),
+                Some("Imported from Lightroom")
+            );
+            assert!((s.line.current.light.exposure - 1.0).abs() < 1e-6);
+            let s = Sidecar::load(&ours).unwrap().unwrap();
+            assert_eq!(
+                (s.line.history.len(), s.line.current.light.exposure),
+                (1, -0.5)
+            );
+            assert_eq!(steps(&bare), None, "nothing beside it, nothing written");
+            // Its `.gcd` never took this XMP's word, so the XMP's
+            // rating wins, as an open's adoption has it.
+            let e = lib.by_path(&rated).unwrap().unwrap();
+            assert_eq!((e.meta.rating, e.edited), (3, true));
+            assert_eq!(steps(&rated), Some(1));
+        }
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

@@ -61,6 +61,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
 use greycard_edit::{Edit, Placement, Sidecar};
 use greycard_edit_io::lightroom::{self, Value};
+use greycard_edit_io::on_disk::starting_of;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use greycard_edit_io::lightroom::crop::Crop;
@@ -811,6 +812,10 @@ fn import_on(
     // The sidecars there already, a frame's own image standing for
     // its file.
     let mut kept: HashMap<i64, bool> = HashMap::new();
+    // Those that are Lightroom's alone, by the save they were looked at
+    // in: replaced by the first image written to the file, and only
+    // while no write of this run has saved over them.
+    let mut lightroom_alone: HashMap<i64, u64> = HashMap::new();
     for image in catalog.images.iter().filter(|i| i.master.is_none()) {
         stopped()?;
         looked += 1;
@@ -827,6 +832,9 @@ fn import_on(
             Ok(Some(s)) if has_content(&s) => {
                 report.already += 1;
                 kept.insert(image.file, true);
+            }
+            Ok(Some(s)) if lightroom_only(&s) => {
+                lightroom_alone.insert(image.file, s.saved);
             }
             Ok(_) => {}
             Err(e) => {
@@ -947,6 +955,7 @@ fn import_on(
                 image,
                 copies: copies_of.get(&image.id).map_or(&[], Vec::as_slice),
                 held: kept.get(&image.file).copied().unwrap_or(false),
+                lightroom: lightroom_alone.get(&image.file).copied(),
             })
         })
         .collect();
@@ -1131,9 +1140,31 @@ fn import_on(
     Ok(report)
 }
 
-/// Whether a sidecar holds anything an import would write over.
+/// Whether a sidecar holds anything an import would write over: one
+/// that is Lightroom's alone ([`lightroom_only`]) holds nothing.
 fn has_content(s: &Sidecar) -> bool {
-    !s.history.is_empty() || !s.versions.is_empty() || !s.meta.is_empty()
+    (!s.history.is_empty() || !s.versions.is_empty() || !s.meta.is_empty()) && !lightroom_only(s)
+}
+
+/// Whether a sidecar's edit is Lightroom's and nothing since: its
+/// history the one state "Imported from Lightroom" over where it
+/// started (an XMP beside the frame taken, or an import before this
+/// one), with no step after it, and no snapshot, version, or export.
+/// Judged on the history and the state alone: the meta is judged field
+/// by field when the import replaces it ([`greycard_edit::meta::Laid`]).
+/// An import replaces such a sidecar without being forced: an XMP
+/// Lightroom wrote long ago is as likely as not older than the catalog.
+pub(crate) fn lightroom_only(s: &Sidecar) -> bool {
+    let label = greycard_edit::history::import_label("Lightroom");
+    let line = &s.line;
+    s.versions.is_empty()
+        && line.snapshots.is_empty()
+        && line.history.len() == 1
+        && line.history[0].label.is_none()
+        && line.history[0].exports.is_empty()
+        && line.current_label.as_deref() == Some(label.as_str())
+        && line.current_exports.is_empty()
+        && line.last_export.is_none()
 }
 
 /// A virtual copy's name as its version takes it.
@@ -1157,14 +1188,6 @@ pub(crate) fn starting_edit(raw: &Path) -> (Edit, Option<String>) {
         return (Edit::for_picture(), None);
     }
     starting_of(greycard_core::decode::probe_ends_path(raw).ok().as_ref())
-}
-
-/// A raw's starting edit and its body from its probe.
-fn starting_of(probe: Option<&greycard_core::decode::Probe>) -> (Edit, Option<String>) {
-    let mut edit = Edit::default();
-    edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(probe.and_then(|p| p.iso));
-    let camera = probe.map(|p| greycard_core::raw::camera_name(&p.make, &p.model));
-    (edit, camera)
 }
 
 /// What an import wants of a frame's file, from one read of it: the
@@ -1250,16 +1273,7 @@ fn crop_in(settings: &str) -> Option<(Crop, bool)> {
     Crop::of(&words).map(|c| (c, constrained))
 }
 
-/// What became of an image's crop.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Cropped {
-    /// The settings hold none.
-    None,
-    /// Carried, and whether drawn in to stay on the turned picture.
-    Carried { drawn_in: bool },
-    /// Not carried, and why.
-    Not(String),
-}
+pub use greycard_edit_io::lightroom::crop::{Cropped, Turned};
 
 /// The catalog's crop laid onto `edit`'s geometry, for the file that
 /// stands as `stance` says (none when it would not say), its frame
@@ -1273,57 +1287,17 @@ pub fn crop_onto(
     shape: &Shape,
     turn: u8,
 ) -> Cropped {
-    let unread = || Cropped::Not("its crop does not read".into());
-    if Crop::unreadable(&crate::lightroom_exports::words(settings)) {
-        return unread();
-    }
-    let Some((crop, constrained)) = crop_in(settings) else {
-        return Cropped::None;
-    };
-    let no_size = || Cropped::Not("its file says no size".into());
-    let Some(stance) = stance else {
-        return no_size();
-    };
-    let Some((w, h)) = stance.size else {
-        return no_size();
-    };
-    let frame = lightroom::crop::Frame {
-        size: (f64::from(w), f64::from(h)),
-        catalog: shape.size,
-        tag: stance.orientation,
-        turn,
-        lightroom: shape
+    lightroom::crop::crop_onto(
+        edit,
+        stance,
+        &crate::lightroom_exports::words(settings),
+        shape.size,
+        shape
             .orientation
             .as_deref()
             .and_then(lightroom::crop::orientation_of),
-    };
-    match lightroom::crop::place(&crop, constrained, &frame) {
-        Ok(placed) => {
-            edit.geometry = placed.applied(&edit.geometry);
-            Cropped::Carried {
-                drawn_in: placed.drawn_in,
-            }
-        }
-        Err(lightroom::crop::NotPlaced::Mirrored) => {
-            Cropped::Not("Lightroom's orientation mirrors the frame".into())
-        }
-        Err(lightroom::crop::NotPlaced::NoSize) => no_size(),
-        Err(lightroom::crop::NotPlaced::Unreadable) => unread(),
-    }
-}
-
-/// What Lightroom's orientation of an image did to its edit.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Turned {
-    /// It stands as the frame does here, or the catalog does not say.
-    Same,
-    /// Turned in Lightroom: the edit's quarter turns take the turn.
-    Turned,
-    /// Mirrored in Lightroom where the frame is not, or the other way:
-    /// a Flip, which no quarter turn carries.
-    Mirrored,
-    /// A code this import does not read, as the catalog spells it.
-    Unread(String),
+        turn,
+    )
 }
 
 /// Lightroom's orientation of the image laid onto `edit`'s quarter
@@ -1342,21 +1316,7 @@ pub fn turn_onto(
     let Some(lightroom) = lightroom::crop::orientation_of(code) else {
         return Turned::Unread(code.to_string());
     };
-    let Some(stance) = stance else {
-        return Turned::Same;
-    };
-    let shown = stance.orientation.turned(i32::from(turn % 4));
-    match lightroom::crop::turns_for(shown, lightroom) {
-        Ok(turns) => {
-            edit.geometry.turns = turns;
-            if turns == 0 {
-                Turned::Same
-            } else {
-                Turned::Turned
-            }
-        }
-        Err(_) => Turned::Mirrored,
-    }
+    lightroom::crop::turn_onto(edit, stance, lightroom, turn)
 }
 
 /// The catalog's develop settings for `image` laid over `base`, its crop
@@ -1502,6 +1462,9 @@ struct Frame<'a> {
     image: &'a Image,
     copies: &'a [&'a Image],
     held: bool,
+    /// The sidecar was Lightroom's alone when looked at
+    /// ([`lightroom_only`]), at this save count.
+    lightroom: Option<u64>,
 }
 
 /// What became of a frame.
@@ -1606,6 +1569,7 @@ fn write_one(frame: &Frame<'_>, options: &Options) -> Wrote {
         frame.image,
         frame.copies,
         options.sidecars_in_folder,
+        frame.lightroom,
         &mut counted,
     );
     Wrote::Frame(wrote, Box::new(counted))
@@ -1619,9 +1583,15 @@ fn write_frame(
     image: &Image,
     copies: &[&Image],
     in_folder: bool,
+    lightroom_alone: Option<u64>,
     written: &mut Written,
 ) -> Result<FrameWritten, String> {
     let found = Sidecar::load(raw).map_err(|e| e.to_string())?;
+    // Lightroom's alone as looked at, and not saved since by an image
+    // before this one on the same file.
+    let lightroom = found
+        .as_ref()
+        .is_some_and(|f| Some(f.saved) == lightroom_alone && lightroom_only(f));
     let FrameRead {
         starting,
         camera,
@@ -1664,15 +1634,27 @@ fn write_frame(
         _ => None,
     };
     written.time_shifted += usize::from(from_catalog.is_some());
-    let mut meta = Meta {
+    let catalog_meta = Meta {
         time_shift: sidecar.meta.time_shift,
         ..image.meta.clone()
+    };
+    // Lightroom's alone: the catalog's meta only where the frame's is
+    // Lightroom's (laid by an import and not changed since) or says
+    // nothing; every other field is ours and kept. Otherwise the
+    // catalog's whole, and what it laid recorded for the next import.
+    let (mut meta, laid) = if lightroom {
+        sidecar.lightroom.over(&sidecar.meta, &catalog_meta)
+    } else {
+        let laid = greycard_edit::meta::Laid::between(&sidecar.meta, &catalog_meta)
+            .then(&sidecar.lightroom);
+        (catalog_meta, laid)
     };
     if let Some(by) = from_catalog {
         meta.set_time_shift(by);
     }
-    if sidecar.meta != meta {
+    if sidecar.meta != meta || sidecar.lightroom != laid {
         sidecar.meta = meta;
+        sidecar.lightroom = laid;
         changed = true;
     }
     let label = greycard_edit::history::import_label("Lightroom");
@@ -1693,11 +1675,24 @@ fn write_frame(
             Turned::Unread(code) => *written.orientations_unread.entry(code).or_default() += 1,
         }
     };
-    let (edit, cropped, turned) =
-        developed(image, &sidecar.current, stance, camera.as_deref(), turn);
-    tally(cropped, turned);
-    if let Some(edit) = edit {
-        changed |= sidecar.record_as(edit, Some(label.clone()));
+    if lightroom {
+        // Lightroom's alone: replaced, from where the frame starts.
+        let before = sidecar.line.clone();
+        sidecar.line = greycard_edit::Line::of(starting.clone());
+        let (edit, cropped, turned) = developed(image, &starting, stance, camera.as_deref(), turn);
+        tally(cropped, turned);
+        if let Some(edit) = edit {
+            sidecar.record_as(edit, Some(label.clone()));
+        }
+        sidecar.line.fill_ids();
+        changed |= sidecar.line != before;
+    } else {
+        let (edit, cropped, turned) =
+            developed(image, &sidecar.current, stance, camera.as_deref(), turn);
+        tally(cropped, turned);
+        if let Some(edit) = edit {
+            changed |= sidecar.record_as(edit, Some(label.clone()));
+        }
     }
     let mut made = Vec::new();
     // A version of the copy's name there already is the copy, as a
@@ -4120,6 +4115,144 @@ pub(crate) mod tests {
         let again = Sidecar::load(&first).unwrap().unwrap();
         assert_eq!(again.versions.len(), 1);
         assert_eq!(again.history.len(), a.history.len());
+        greycard_core::testing::remove_dir_retry(&s.dir);
+    }
+
+    /// A sidecar whose edit is Lightroom's alone (an XMP beside the
+    /// frame taken on its first read, no step since) has its develop
+    /// replaced by the catalog's without force, and its meta field by
+    /// field: what the take laid from the XMP, and what says nothing,
+    /// take the catalog's; every other field (ours, however old its
+    /// stamp, or none) is kept. A step after the take holds the frame
+    /// back.
+    #[test]
+    fn a_sidecar_that_is_lightroom_s_alone_is_replaced_without_force() {
+        use greycard_edit::sync::Stamp;
+        const XMP: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   xmp:Rating="2" crs:Exposure2012="-2.00"/>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+        let at = |n: u64| Stamp {
+            at: 1_800_000_000 + n,
+            host: "here".into(),
+        };
+        // The XMP beside the frame and its `.gcd` as `before` left it,
+        // taken as an open's take does, from the file on disk.
+        let taken_over = |raw: &Path, before: Option<&Sidecar>| {
+            std::fs::write(greycard_edit_io::xmp::short_path(raw), XMP).unwrap();
+            let mut s = before.cloned().unwrap_or_default();
+            assert!(
+                greycard_edit_io::lightroom::beside::take(raw, &mut s).is_some(),
+                "{}",
+                raw.display()
+            );
+            assert!((s.current.light.exposure + 2.0).abs() < 1e-6);
+            s.save_in_stamped(raw, Placement::Beside, &at(60)).unwrap();
+            Sidecar::load(raw).unwrap().unwrap()
+        };
+        let first_of = |what: &str| {
+            let s = setup(what);
+            let first = s.here.join("2026/harbor/IMG_0001.CR3");
+            (s, first)
+        };
+        let imported = |s: &Setup, first: &Path| {
+            let report = import(&s.catalog, &writing(s)).unwrap();
+            assert_eq!(report.already, 0, "{report}");
+            let a = Sidecar::load(first).unwrap().unwrap();
+            assert_eq!(a.history.len(), 1, "replaced, not stacked");
+            assert_eq!(a.current_label.as_deref(), Some("Imported from Lightroom"));
+            assert!(a.current.light.exposure > -2.0, "the catalog's develop");
+            assert_eq!(a.versions.len(), 1);
+            a
+        };
+
+        // No meta of ours: the XMP's rating was laid, and the catalog's
+        // takes its place.
+        let (s, first) = first_of("lightroom-only");
+        assert!(lightroom_only(&taken_over(&first, None)));
+        assert_eq!(imported(&s, &first).meta.rating, 4);
+        greycard_core::testing::remove_dir_retry(&s.dir);
+
+        // Ours, stamped in a save of its own before the take: kept, and
+        // a field ours leaves empty takes the catalog's.
+        let (s, first) = first_of("lightroom-over-ours");
+        let mut ours = Sidecar::default();
+        ours.meta.rating = 1;
+        ours.meta.set_keywords(vec!["Mine".into()]);
+        ours.meta.set_title("My own title");
+        ours.save_in_stamped(&first, Placement::Beside, &at(0))
+            .unwrap();
+        let ours = Sidecar::load(&first).unwrap().unwrap();
+        let taken = taken_over(&first, Some(&ours));
+        assert_eq!(taken.meta.rating, 1, "ours kept by the take");
+        let a = imported(&s, &first);
+        assert_eq!(
+            (a.meta.rating, &a.meta.keywords[..], a.meta.title.as_str()),
+            (1, &["Mine".to_string()][..], "My own title")
+        );
+        greycard_core::testing::remove_dir_retry(&s.dir);
+
+        // Ours from a build before the stamps: kept the same.
+        let (s, first) = first_of("lightroom-over-unstamped");
+        std::fs::write(
+            Sidecar::path_for(&first),
+            r#"{"meta": {"rating": 1, "title": "Old"}}"#,
+        )
+        .unwrap();
+        let old = Sidecar::load(&first).unwrap().unwrap();
+        taken_over(&first, Some(&old));
+        let a = imported(&s, &first);
+        assert_eq!((a.meta.rating, a.meta.title.as_str()), (1, "Old"));
+        greycard_core::testing::remove_dir_retry(&s.dir);
+
+        // The XMP's rating taken off here after the take: nothing said,
+        // so the catalog's, and the develop replaced all the same.
+        let (s, first) = first_of("lightroom-then-unrated");
+        let mut unrated = taken_over(&first, None);
+        unrated.meta.rating = 0;
+        unrated
+            .save_in_stamped(&first, Placement::Beside, &at(120))
+            .unwrap();
+        assert!(lightroom_only(&Sidecar::load(&first).unwrap().unwrap()));
+        assert_eq!(imported(&s, &first).meta.rating, 4);
+        greycard_core::testing::remove_dir_retry(&s.dir);
+
+        // Rated here after the take: the develop replaced, the rating
+        // ours.
+        let (s, first) = first_of("lightroom-then-rated");
+        let mut rated = taken_over(&first, None);
+        rated.meta.rating = 5;
+        rated
+            .save_in_stamped(&first, Placement::Beside, &at(120))
+            .unwrap();
+        assert_eq!(imported(&s, &first).meta.rating, 5);
+        greycard_core::testing::remove_dir_retry(&s.dir);
+
+        // A step of ours after it: held back.
+        let (s, first) = first_of("lightroom-then-ours");
+        let mut stepped = taken_over(&first, None);
+        let mut edit = stepped.current.clone();
+        edit.light.exposure = 0.3;
+        assert!(stepped.record(edit));
+        stepped
+            .save_in_stamped(&first, Placement::Beside, &at(120))
+            .unwrap();
+        assert!(!lightroom_only(&stepped));
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        assert_eq!(report.already, 1, "{report}");
+        assert_eq!(
+            Sidecar::load(&first)
+                .unwrap()
+                .unwrap()
+                .current
+                .light
+                .exposure,
+            0.3
+        );
         greycard_core::testing::remove_dir_retry(&s.dir);
     }
 

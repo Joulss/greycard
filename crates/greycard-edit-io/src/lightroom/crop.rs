@@ -30,7 +30,11 @@
 //! mirrored where the tag is not (Lightroom's Flip) has no quarter
 //! turn, and the crop is not carried.
 
+use std::collections::BTreeMap;
+
+use greycard_core::decode::Stance;
 use greycard_core::raw::Orientation;
+use greycard_edit::Edit;
 use greycard_edit::geometry::{self, Aspect, Geometry};
 
 /// Lightroom's crop: two opposite corners of the cropped rectangle, as
@@ -381,6 +385,110 @@ pub fn place(crop: &Crop, constrained: bool, frame: &Frame) -> Result<Placed, No
         portrait,
         drawn_in,
     })
+}
+
+/// What became of Lightroom's crop.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cropped {
+    /// The settings hold none.
+    None,
+    /// Carried, and whether drawn in to stay on the turned picture.
+    Carried { drawn_in: bool },
+    /// Not carried, and why.
+    Not(String),
+}
+
+/// The crop `words` (the settings' keys as written) hold laid onto
+/// `edit`'s geometry, for the file that stands as `stance` says (none
+/// when it would not say), its frame turned `turn` quarters over its
+/// tag: placed in the frame as the decoder reads its size and its tag,
+/// against `catalog`, Lightroom's size of the file when it keeps one,
+/// and `lightroom`, its orientation of the image when it says.
+pub fn crop_onto(
+    edit: &mut Edit,
+    stance: Option<&Stance>,
+    words: &BTreeMap<String, String>,
+    catalog: Option<(f64, f64)>,
+    lightroom: Option<Orientation>,
+    turn: u8,
+) -> Cropped {
+    let unread = || Cropped::Not("its crop does not read".into());
+    if Crop::unreadable(words) {
+        return unread();
+    }
+    let Some(crop) = Crop::of(words) else {
+        return Cropped::None;
+    };
+    let constrained = words
+        .get("CropConstrainAspectRatio")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    let no_size = || Cropped::Not("its file says no size".into());
+    let Some(stance) = stance else {
+        return no_size();
+    };
+    let Some((w, h)) = stance.size else {
+        return no_size();
+    };
+    let frame = Frame {
+        size: (f64::from(w), f64::from(h)),
+        catalog,
+        tag: stance.orientation,
+        turn,
+        lightroom,
+    };
+    match place(&crop, constrained, &frame) {
+        Ok(placed) => {
+            edit.geometry = placed.applied(&edit.geometry);
+            Cropped::Carried {
+                drawn_in: placed.drawn_in,
+            }
+        }
+        Err(NotPlaced::Mirrored) => {
+            Cropped::Not("Lightroom's orientation mirrors the frame".into())
+        }
+        Err(NotPlaced::NoSize) => no_size(),
+        Err(NotPlaced::Unreadable) => unread(),
+    }
+}
+
+/// What Lightroom's orientation of an image did to its edit.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Turned {
+    /// It stands as the frame does here, or Lightroom does not say.
+    Same,
+    /// Turned in Lightroom: the edit's quarter turns take the turn.
+    Turned,
+    /// Mirrored in Lightroom where the frame is not, or the other way:
+    /// a Flip, which no quarter turn carries.
+    Mirrored,
+    /// A code the import does not read, as the catalog spells it.
+    Unread(String),
+}
+
+/// Lightroom's orientation of the image, `lightroom`, laid onto
+/// `edit`'s quarter turns, for the file that stands as `stance` says
+/// (none when it would not say) turned `turn` quarters over its tag.
+pub fn turn_onto(
+    edit: &mut Edit,
+    stance: Option<&Stance>,
+    lightroom: Orientation,
+    turn: u8,
+) -> Turned {
+    let Some(stance) = stance else {
+        return Turned::Same;
+    };
+    let shown = stance.orientation.turned(i32::from(turn % 4));
+    match turns_for(shown, lightroom) {
+        Ok(turns) => {
+            edit.geometry.turns = turns;
+            if turns == 0 {
+                Turned::Same
+            } else {
+                Turned::Turned
+            }
+        }
+        Err(_) => Turned::Mirrored,
+    }
 }
 
 #[cfg(test)]

@@ -456,11 +456,6 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
-- [ ] A Lightroom XMP beside a raw read on import and on a first
-      open (issue 61): a Lightroom Cloud export carries its develop
-      settings there, not in a catalog; the catalog importer's mapper
-      makes the edit, with "Imported from Lightroom" as the history's
-      start, and the Import sheet counts what it read
 - [ ] The filter bar's last two chips: a "none" chip for frames with
       no value for a facet (decide it with a library of phone JPEGs in
       hand), and an error row in the index for a file whose hash fails

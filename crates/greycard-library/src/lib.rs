@@ -547,6 +547,9 @@ pub struct Library {
     /// its own ([`Library::set_jpegs_apart`]); off, a listing leaves
     /// the companions out ([`pairs`]).
     jpegs_apart: bool,
+    /// Where a pass writes the sidecar of a raw whose Lightroom develop
+    /// it takes ([`Library::set_lightroom_takes`]); none takes nothing.
+    lightroom: Option<greycard_edit::Placement>,
     /// Which folders a pass reads as a network mount's
     /// ([`Library::set_network`]); none, every folder is read as a
     /// local disk's.
@@ -1196,6 +1199,7 @@ impl Library {
                     path: path.to_path_buf(),
                     read_only: false,
                     jpegs_apart: false,
+                    lightroom: None,
                     renames: index::Renames::default(),
                     sets_seen: HashMap::new(),
                     network: None,
@@ -1303,6 +1307,7 @@ impl Library {
                     path,
                     read_only,
                     jpegs_apart: false,
+                    lightroom: None,
                     renames: index::Renames::default(),
                     sets_seen: HashMap::new(),
                     network: None,
@@ -1403,6 +1408,7 @@ impl Library {
             path,
             read_only,
             jpegs_apart: false,
+            lightroom: None,
             renames: index::Renames::default(),
             sets_seen: HashMap::new(),
             network: None,
@@ -1421,6 +1427,15 @@ impl Library {
     /// answer for the rows given either way.
     pub fn set_jpegs_apart(&mut self, apart: bool) {
         self.jpegs_apart = apart;
+    }
+
+    /// Take the Lightroom develop in the XMP beside a raw with nothing
+    /// of ours in a pass ([`greycard_edit_io::lightroom::beside`]), its
+    /// sidecar written where `placement` says, as the editor's setting
+    /// does; none, the default, takes nothing, so a pass writes nothing
+    /// beside the frames.
+    pub fn set_lightroom_takes(&mut self, placement: Option<greycard_edit::Placement>) {
+        self.lightroom = placement;
     }
 
     /// Tell the passes which folders are on a network mount, by

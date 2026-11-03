@@ -547,3 +547,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§532. The merge recipe and the re-merge](notes/532-the-merge-recipe-and-the-re-merge.md) (2026-11-02)
 - [§533. Help asks the desktop for its browser](notes/533-help-asks-the-desktop-for-its-browser.md) (2026-11-02)
 - [§534. A white canvas](notes/534-a-white-canvas.md) (2026-11-02)
+- [§535. A Lightroom XMP beside a raw, taken on its first open](notes/535-a-lightroom-xmp-beside-a-raw-taken-on-its-first-open.md) (2026-11-02)

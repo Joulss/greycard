@@ -793,7 +793,7 @@ enum Read {
 /// frame was listed) is no edit.
 fn read_key(frame: &Key, iso: Iso, key_of: impl Fn(&Edit) -> u64) -> Read {
     let path = frame.path.as_path();
-    let (sidecar, trouble) = greycard_edit_io::on_disk::load_sidecar_said(path, true);
+    let (sidecar, trouble) = greycard_edit_io::on_disk::read_sidecar_said(path);
     if trouble.is_some() {
         return Read::Unread;
     }

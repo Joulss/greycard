@@ -417,6 +417,8 @@ pub struct Report {
     /// profile was left off because it was made for another body.
     pub preset: usize,
     pub profile_left_off: usize,
+    /// Frames whose edit came from the Lightroom XMP beside them.
+    pub lightroom: usize,
     /// The stop was asked for before the last frame.
     pub canceled: bool,
     /// The file that stopped the import, and why.
@@ -488,6 +490,9 @@ impl Report {
         if self.already > 0 {
             s.push_str(&format!(", {} already there", self.already));
         }
+        if self.lightroom > 0 {
+            s.push_str(&format!(", {} with a Lightroom edit", self.lightroom));
+        }
         if self.renamed > 0 {
             s.push_str(&format!(
                 ", {} renamed with -1 (the name was another file's)",
@@ -533,7 +538,8 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
     let line = format!(
         "import: {} to {}: {} of {} imported ({} files, {} bytes in {:.2} s, {:.1} MB/s), \
          {} backed up{}, {} already there, {} renamed, {} companions not copied, \
-         {} given {}, profile left off {}, {} left on the card, {} folders unread{}{}",
+         {} given {}, profile left off {}, {} with a Lightroom edit, {} left on the card, \
+         {} folders unread{}{}",
         opts.source.display(),
         opts.destination.display(),
         report.frames,
@@ -555,6 +561,7 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
             .as_ref()
             .map_or_else(|| "no preset".to_string(), |p| format!("\"{}\"", p.name)),
         report.profile_left_off,
+        report.lightroom,
         scan.left.len(),
         report.unreadable,
         if report.canceled { "; stopped" } else { "" },
@@ -1631,6 +1638,19 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
     if !new {
         return Ok(());
     }
+    // A Lightroom develop in the XMP that came with it, taken before the
+    // preset, which goes over it.
+    if let Some(placement) = opts.placement {
+        let mut sidecar = greycard_edit::Sidecar::load(&frame)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if greycard_edit_io::lightroom::beside::take_and_save(&frame, &mut sidecar, placement)
+            .is_some_and(|t| t.saved)
+        {
+            report.lightroom += 1;
+        }
+    }
     if let (Some(preset), Some(placement)) = (&opts.preset, opts.placement) {
         let (preset, left_off) =
             crate::preset_fit::preset_fitted(preset, &opts.profiles, || body.clone());
@@ -2362,6 +2382,77 @@ mod tests {
         let r = go(&o);
         assert_eq!((r.frames, r.preset), (1, 0));
         assert!(greycard_edit::Sidecar::find(&root.join("none/IMG_0001.tif")).is_none());
+    }
+
+    /// A raw that comes with a Lightroom XMP holding a develop lands
+    /// with it as its first state, under the preset when one is laid,
+    /// and the report counts it; a raw without one is as it was, and a
+    /// frame already there is not taken again.
+    #[test]
+    fn a_lightroom_xmp_that_comes_with_a_raw_is_its_first_state() {
+        // Written by hand: a stop brighter and three stars.
+        const PACKET: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   xmp:Rating="3" crs:Exposure2012="+1.00" crs:HasSettings="True"/>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+        let root = dir("lightroom");
+        let card = root.join("card/DCIM");
+        write(&card.join("IMG_0001.CR3"), b"not a raw");
+        write(&card.join("IMG_0001.xmp"), PACKET.as_bytes());
+        write(&card.join("IMG_0002.CR3"), b"not a raw either");
+        let dest = root.join("to");
+        let mut o = options(&card, &dest);
+        o.name = "shoot-{name}".into();
+        let mut edit = greycard_edit::Edit::default();
+        edit.color.saturation = 0.2;
+        o.preset = Some(Preset::from_edit(
+            "Rich",
+            &edit,
+            &[greycard_edit::Section::Color],
+        ));
+        let r = go(&o);
+        assert_eq!((r.frames, r.lightroom, r.preset), (2, 1, 2), "{r:?}");
+        assert!(
+            r.line(&dest).contains(", 1 with a Lightroom edit"),
+            "{}",
+            r.line(&dest)
+        );
+        let load = |name: &str| {
+            greycard_edit::Sidecar::load(&dest.join(name))
+                .unwrap()
+                .unwrap()
+        };
+        let taken = load("shoot-IMG_0001.CR3");
+        let labels: Vec<_> = taken
+            .history
+            .iter()
+            .map(|s| s.label.clone())
+            .chain([taken.current_label.clone()])
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                None,
+                Some("Imported from Lightroom".into()),
+                Some("Preset: Rich".into())
+            ]
+        );
+        assert!((taken.current.light.exposure - 1.0).abs() < 1e-6);
+        assert_eq!(taken.current.color.saturation, 0.2);
+        assert_eq!(taken.meta.rating, 3);
+        let bare = load("shoot-IMG_0002.CR3");
+        assert_eq!(bare.history.len(), 1, "the preset alone");
+        assert_eq!(bare.current.light.exposure, 0.0);
+        // Again: both already there, nothing taken.
+        let again = go(&o);
+        assert_eq!((again.already, again.lightroom), (2, 0), "{again:?}");
+        assert!(!again.line(&dest).contains("Lightroom"));
+        assert_eq!(load("shoot-IMG_0001.CR3").history.len(), 2);
+        greycard_render::testing::remove_dir_retry(&root);
     }
 
     /// A preset's camera profile made for another body is

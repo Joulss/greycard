@@ -956,6 +956,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             let mut st = state.borrow_mut();
             match started {
                 Ok(indexer) => {
+                    indexer.set_lightroom_takes(st.window.sidecars());
                     st.views.index = Some(indexer);
                     crate::library::index_open_folder(&mut st, None);
                     // After the open folder's own pass is asked for,

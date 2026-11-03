@@ -10,7 +10,10 @@ library where it is, copying nothing: see
 To bring your shoots over from Lightroom Classic, ratings, edits,
 collections and all, see
 [A Lightroom Classic catalog](#a-lightroom-classic-catalog) at the end
-of this chapter. RawTherapee's `.pp3` profiles are offered when you
+of this chapter. Raws with Lightroom's XMP sidecars beside them (from
+Lightroom Classic's saved metadata, or Lightroom's export of originals
+with their settings) need no catalog: see [Lightroom edits in XMP
+sidecars](library.md#lightroom-edits-in-xmp-sidecars). RawTherapee's `.pp3` profiles are offered when you
 open a folder that holds them; see
 [Profiles from RawTherapee](library.md#profiles-from-rawtherapee).
 
@@ -58,7 +61,10 @@ The sheet remembers **To**, **Folders**, **Name**, **Preset** and
 - The camera's JPEG of a raw (`IMG_0001.JPG` beside `IMG_0001.CR3`)
   goes with the raw and takes the raw's new name. A JPEG with no raw
   beside it is a frame of its own.
-- An XMP goes with the frame it belongs to.
+- An XMP goes with the frame it belongs to. A Lightroom edit in it
+  becomes the frame's first step, under the preset if you chose one,
+  and the line at the end says how many frames came "with a Lightroom
+  edit".
 - Videos and other files greycard can't open stay on the card. The
   note under **From** counts them.
 

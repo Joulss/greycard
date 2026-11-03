@@ -1,14 +1,17 @@
 //! A frame's sidecar as an open reads it from disk: the `.gcd`, or the
 //! default when there is none or it will not read, what an `.xmp`
-//! beside the frame says that the sidecar has not taken yet, and a
-//! sidecar from an older build brought up to date from the frame's
-//! shape. Here, below the window, since the reduced develop, the masks,
-//! and the headless export read a sidecar as the window's open does.
+//! beside the frame says that the sidecar has not taken yet, a
+//! Lightroom develop in it taken and written when the reader knows
+//! where sidecars go and the frame has no edit of ours
+//! ([`crate::lightroom::beside`]), and a sidecar from an older build
+//! brought up to date from the frame's shape. Here, below the window,
+//! since the reduced develop, the masks, and the headless export read
+//! a sidecar as the window's open does.
 
 use std::path::Path;
 
 use greycard_edit::mask::Shape;
-use greycard_edit::{Edit, Line, Sidecar};
+use greycard_edit::{Edit, Line, Placement, Sidecar};
 
 use crate::xmp;
 
@@ -45,10 +48,28 @@ pub enum Trouble {
 /// so a frame whose row says it has a develop is not given the default
 /// in its place. Whether a line of it still waits for its ISO's blend
 /// is the line's to say (`rows::wants_seed`).
-pub fn load_sidecar_said(f: &Path, write_sidecars: bool) -> (Sidecar, Option<Trouble>) {
-    if !write_sidecars {
-        return (Sidecar::default(), None);
+///
+/// `sidecars` is where the editor's setting puts a sidecar, none with
+/// sidecars off, when nothing is read and the default stands in. A
+/// Lightroom develop beside a raw with no edit of ours is taken and the
+/// sidecar written there ([`crate::lightroom::beside`]).
+pub fn load_sidecar_said(f: &Path, sidecars: Option<Placement>) -> (Sidecar, Option<Trouble>) {
+    match sidecars {
+        Some(placement) => load(f, Some(placement)),
+        None => (Sidecar::default(), None),
     }
+}
+
+/// [`load_sidecar_said`] for a reader that does not know where
+/// sidecars go (the reduced develop, the masks, a record of an export):
+/// the sidecar as it is, nothing taken and nothing written.
+pub fn read_sidecar_said(f: &Path) -> (Sidecar, Option<Trouble>) {
+    load(f, None)
+}
+
+/// The sidecar read, and with `takes` a Lightroom develop beside it
+/// taken and written there.
+fn load(f: &Path, takes: Option<Placement>) -> (Sidecar, Option<Trouble>) {
     let mut trouble = None;
     // A picture that is not a raw starts from its own default.
     let fresh = || {
@@ -140,7 +161,33 @@ pub fn load_sidecar_said(f: &Path, write_sidecars: bool) -> (Sidecar, Option<Tro
             );
         }
     }
+    // A Lightroom develop in the XMP beside a raw with no edit of ours,
+    // taken as a catalog's is and written, so every reader after this
+    // one finds it. Never over a `.gcd` that will not read.
+    if !matches!(trouble, Some(Trouble::Unreadable(_)))
+        && let Some(placement) = takes
+    {
+        use crate::lightroom::beside;
+        beside::take_and_save(f, &mut sidecar, placement);
+        // Taken here, or by another reader while this one waited.
+        if trouble == Some(Trouble::Missing)
+            && !beside::no_edit_of_ours(&sidecar)
+            && Sidecar::find(f).is_some()
+        {
+            trouble = None;
+        }
+    }
     (sidecar, trouble)
+}
+
+/// A raw's starting edit, its learned blend at its ISO, and the body
+/// that shot it as the library names one, from its probe (none for a
+/// file that would not probe): what an import lays a develop over.
+pub fn starting_of(probe: Option<&greycard_core::decode::Probe>) -> (Edit, Option<String>) {
+    let mut edit = Edit::default();
+    edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(probe.and_then(|p| p.iso));
+    let camera = probe.map(|p| greycard_core::raw::camera_name(&p.make, &p.model));
+    (edit, camera)
 }
 
 /// Whether a raw's sidecar has nothing in it that a develop put

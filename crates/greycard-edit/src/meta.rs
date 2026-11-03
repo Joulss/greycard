@@ -186,6 +186,110 @@ pub struct Meta {
     pub time_shift: i64,
 }
 
+/// The meta a Lightroom import laid on a frame, field by field, at the
+/// values it laid: a field the frame still holds at that value is
+/// Lightroom's, and a later import may replace it; any other field (one
+/// the import did not lay, or one changed here since) is ours and is
+/// kept. Written in the sidecar as `lightroom`, left out when empty, and
+/// read loosely.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Laid {
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "loose")]
+    pub rating: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "loose")]
+    pub flag: Option<Flag>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "loose")]
+    pub label: Option<Label>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "loose")]
+    pub keywords: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "loose")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "loose")]
+    pub caption: Option<String>,
+}
+
+impl Laid {
+    /// Nothing laid.
+    pub fn is_empty(&self) -> bool {
+        *self == Laid::default()
+    }
+
+    /// The fields of `after` that differ from `before`, at their values
+    /// in `after`: what an import laid when it took `before` to `after`.
+    pub fn between(before: &Meta, after: &Meta) -> Laid {
+        fn moved<T: PartialEq + Clone>(a: &T, b: &T) -> Option<T> {
+            (a != b).then(|| b.clone())
+        }
+        Laid {
+            rating: moved(&before.rating, &after.rating),
+            flag: moved(&before.flag, &after.flag),
+            label: moved(&before.label, &after.label),
+            keywords: moved(&before.keywords, &after.keywords),
+            title: moved(&before.title, &after.title),
+            caption: moved(&before.caption, &after.caption),
+        }
+    }
+
+    /// What `self` laid, and where it laid nothing, what `earlier` did.
+    pub fn then(self, earlier: &Laid) -> Laid {
+        Laid {
+            rating: self.rating.or(earlier.rating),
+            flag: self.flag.or(earlier.flag),
+            label: self.label.or(earlier.label),
+            keywords: self.keywords.or_else(|| earlier.keywords.clone()),
+            title: self.title.or_else(|| earlier.title.clone()),
+            caption: self.caption.or_else(|| earlier.caption.clone()),
+        }
+    }
+
+    /// `theirs` laid over `ours` where the field is Lightroom's (laid,
+    /// and still at the value laid) or empty in `ours`, and `ours` kept
+    /// everywhere else; and what that laid, to record in its place.
+    /// The capture time's shift is `ours`, always.
+    pub fn over(&self, ours: &Meta, theirs: &Meta) -> (Meta, Laid) {
+        fn pick<T: PartialEq + Clone + Default>(
+            laid: &Option<T>,
+            ours: &T,
+            theirs: &T,
+        ) -> (T, Option<T>) {
+            let lightroom_s = laid.as_ref() == Some(ours) || *ours == T::default();
+            if lightroom_s && ours != theirs {
+                (theirs.clone(), Some(theirs.clone()))
+            } else if lightroom_s {
+                (ours.clone(), laid.clone())
+            } else {
+                (ours.clone(), None)
+            }
+        }
+        let (rating, r) = pick(&self.rating, &ours.rating, &theirs.rating);
+        let (flag, f) = pick(&self.flag, &ours.flag, &theirs.flag);
+        let (label, l) = pick(&self.label, &ours.label, &theirs.label);
+        let (keywords, k) = pick(&self.keywords, &ours.keywords, &theirs.keywords);
+        let (title, t) = pick(&self.title, &ours.title, &theirs.title);
+        let (caption, c) = pick(&self.caption, &ours.caption, &theirs.caption);
+        (
+            Meta {
+                rating,
+                flag,
+                label,
+                keywords,
+                title,
+                caption,
+                time_shift: ours.time_shift,
+            },
+            Laid {
+                rating: r,
+                flag: f,
+                label: l,
+                keywords: k,
+                title: t,
+                caption: c,
+            },
+        )
+    }
+}
+
 /// The most a capture time is shifted, either way: two hundred
 /// years, past any clock set wrong and short of a date no reader can
 /// write.

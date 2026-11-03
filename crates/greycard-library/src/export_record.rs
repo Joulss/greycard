@@ -6,7 +6,7 @@ use std::path::Path;
 
 use greycard_edit::{Edit, Exported, Placement, Sidecar};
 use greycard_edit_io::on_disk::{
-    Trouble, file_name, line_never_developed, load_sidecar_said, migrate_from_file,
+    Trouble, file_name, line_never_developed, migrate_from_file, read_sidecar_said,
 };
 use greycard_edit_io::xmp;
 
@@ -44,12 +44,12 @@ pub fn record_export_on_disk(
     placement: Placement,
     xmp: bool,
 ) -> bool {
-    // Read as an open reads it (`load_sidecar_said`): the `.gcd`, a
+    // Read as an open reads it (`read_sidecar_said`): the `.gcd`, a
     // picture's own default where there is none, and what an `.xmp`
     // beside the frame says that the sidecar has not taken yet. Read
     // without the `.xmp`, the write below would put the `.gcd`'s old
     // rating and turn over whatever another tool wrote there since.
-    let (mut sidecar, trouble) = load_sidecar_said(source, true);
+    let (mut sidecar, trouble) = read_sidecar_said(source);
     if let Some(Trouble::Unreadable(e)) = trouble {
         log::warn!("{}: sidecar: {e}; export not recorded", file_name(source));
         return false;

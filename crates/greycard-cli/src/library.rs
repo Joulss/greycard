@@ -172,6 +172,13 @@ pub(crate) fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> 
     }
     .with_context(|| format!("opening the library at {}", path.display()))?;
     lib.set_jpegs_apart(editor.jpegs_apart);
+    // A pass takes a Lightroom develop beside a raw as the window's
+    // does, the sidecar written where the editor's setting puts it.
+    lib.set_lightroom_takes(Some(if editor.sidecars_in_folder {
+        greycard_edit::Placement::Folder
+    } else {
+        greycard_edit::Placement::Beside
+    }));
     match action {
         LibraryAction::Index { dirs, tree, prune } => {
             if dirs.is_empty() && !prune {

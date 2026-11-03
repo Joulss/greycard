@@ -92,7 +92,7 @@ fn read_new(st: &State, next: &[PathBuf]) -> HashMap<PathBuf, Held> {
         .cloned()
         .collect();
     let none = vec![None; fresh.len()];
-    let held = rows::bring(&fresh, &none, st.window.write_sidecars, None);
+    let held = rows::bring(&fresh, &none, st.window.sidecars(), None);
     fresh.into_iter().zip(held).collect()
 }
 

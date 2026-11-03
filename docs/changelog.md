@@ -83,6 +83,12 @@ design note behind it.
 
 ### Library
 
+- Raws with Lightroom's XMP sidecars beside them now open with their
+  Lightroom edit as one "Imported from Lightroom" step, and with
+  Lightroom's rating, label, keywords, and title wherever you have set
+  none here; a frame edited here is left alone, and a card import
+  counts them (issue 61,
+  [§535](https://github.com/jessolmstead/greycard/blob/master/docs/notes/535-a-lightroom-xmp-beside-a-raw-taken-on-its-first-open.md)).
 - `greycard export IMG_0001.CR3 out.jpg` writes frames under their
   saved edits from the command line, with the export sheet and presets
   the editor keeps; several frames or a folder go into a folder

@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use greycard_library::{Change, FacetCount, Library, Report};
@@ -220,6 +220,9 @@ pub(crate) struct Indexer {
     folders_waiting: Arc<AtomicBool>,
     /// What the thread has in hand: see [`Busy`].
     busy: Arc<Busy>,
+    /// What the passes are told of the editor's sidecars: see
+    /// [`Indexer::set_lightroom_takes`].
+    lightroom: Arc<Mutex<Option<greycard_edit::Placement>>>,
     thread: std::thread::JoinHandle<()>,
 }
 
@@ -368,11 +371,13 @@ impl Indexer {
         let files_waiting = Arc::new(AtomicUsize::new(0));
         let folders_waiting = Arc::new(AtomicBool::new(false));
         let busy = Arc::new(Busy::default());
+        let lightroom = Arc::new(Mutex::new(None));
         let waits = Waits {
             wanted: wanted.clone(),
             files: files_waiting.clone(),
             folders: folders_waiting.clone(),
             busy: busy.clone(),
+            lightroom: lightroom.clone(),
         };
         let thread = std::thread::Builder::new()
             .name("greycard index".into())
@@ -383,6 +388,7 @@ impl Indexer {
             files_waiting,
             folders_waiting,
             busy,
+            lightroom,
             thread,
         })
     }
@@ -395,6 +401,13 @@ impl Indexer {
 
     fn ask(&self, ask: Ask) -> bool {
         send(&self.asks, &self.busy, ask)
+    }
+
+    /// Where the passes write the sidecar of a raw whose Lightroom
+    /// develop they take, as the editor's setting says; none (sidecars
+    /// off, and until it is set) takes nothing. From the next pass.
+    pub(crate) fn set_lightroom_takes(&self, placement: Option<greycard_edit::Placement>) {
+        *self.lightroom.lock().unwrap_or_else(|e| e.into_inner()) = placement;
     }
 
     pub(crate) fn folders(&self, dirs: Vec<PathBuf>, generation: u64) {
@@ -510,6 +523,15 @@ struct Waits {
     folders: Arc<AtomicBool>,
     /// What the thread has in hand, for the window.
     busy: Arc<Busy>,
+    /// Where a pass writes the sidecar of a raw whose Lightroom develop
+    /// it takes, as the editor's setting says; none takes nothing.
+    lightroom: Arc<Mutex<Option<greycard_edit::Placement>>>,
+}
+
+impl Waits {
+    fn lightroom(&self) -> Option<greycard_edit::Placement> {
+        *self.lightroom.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 /// The thread's body, a panic in it said to the window rather than
@@ -1142,6 +1164,7 @@ fn serve(
             told(Told::Moved(moved_through));
         }
         if !files.is_empty() {
+            lib.set_lightroom_takes(waits.lightroom());
             let mut rehashed = Vec::new();
             for f in &files {
                 match lib.index_file(f) {
@@ -1239,6 +1262,7 @@ fn serve(
             move |lib, word| -> Passed {
                 let job = job_on_lane;
                 let waits = waits_on_lane;
+                lib.set_lightroom_takes(waits.lightroom());
                 // In the background: anything the window asks for comes
                 // first, and this pass takes up again after it, from
                 // where it stopped (a tree's walk is kept for that).
@@ -1441,6 +1465,7 @@ fn window_pass_guarded(
         told,
         &leaving,
         move |lib, word| {
+            lib.set_lightroom_takes(waits_on_lane.lightroom());
             let beat = |_file: Option<&Path>| {
                 word(Word::Beat);
                 #[cfg(test)]
@@ -2544,6 +2569,7 @@ mod tests {
             wanted: Arc::new(AtomicU64::new(1)),
             files: Arc::new(AtomicUsize::new(0)),
             folders: Arc::new(AtomicBool::new(false)),
+            lightroom: Arc::new(Mutex::new(None)),
             busy: Arc::new(Busy::default()),
         };
         let pass = Pass {

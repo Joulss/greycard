@@ -802,6 +802,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.window.placement = placement_named(&app.get_sidecar_placement());
             let folder = st.window.placement == greycard_edit::Placement::Folder;
             keep(&st, |s| s.shared.sidecars_in_folder = folder);
+            if let Some(index) = &st.views.index {
+                index.set_lightroom_takes(st.window.sidecars());
+            }
             app.set_settings_note("".into());
             show_elsewhere(&st, &app);
         });

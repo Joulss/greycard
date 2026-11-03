@@ -115,11 +115,12 @@ pub(crate) fn seed_landed(st: &mut State, c: usize, blend: f32) -> bool {
 /// Each of `files` held: from its row where the index has one, else
 /// read from disk on the rayon pool. `read`, when given, is bumped for
 /// each sidecar read from disk, for the window's bar. The order is the
-/// list's.
+/// list's. `sidecars` is where the session writes them, none with
+/// sidecars off (`Window::sidecars`).
 pub(crate) fn bring(
     files: &[PathBuf],
     rows: &[Option<RowMeta>],
-    write_sidecars: bool,
+    sidecars: Option<greycard_edit::Placement>,
     read: Option<&AtomicUsize>,
 ) -> Vec<Held> {
     use rayon::prelude::*;
@@ -128,9 +129,9 @@ pub(crate) fn bring(
         .par_iter()
         .zip(rows.par_iter())
         .map(|(path, row)| match row {
-            Some(row) => from_row(path, row, write_sidecars),
+            Some(row) => from_row(path, row, sidecars.is_some()),
             None => {
-                let held = from_disk(path, write_sidecars);
+                let held = from_disk(path, sidecars);
                 if let Some(read) = read {
                     read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -539,7 +540,7 @@ pub(crate) fn request_in(
 /// A read a test's request asked for: the request's id, the list's
 /// generation, the paths to read, and whether sidecars are on.
 #[cfg(test)]
-type QueuedRead = (u64, u64, Vec<PathBuf>, bool);
+type QueuedRead = (u64, u64, Vec<PathBuf>, Option<greycard_edit::Placement>);
 
 #[cfg(test)]
 thread_local! {
@@ -554,7 +555,7 @@ thread_local! {
 /// (`Views::view_generation`): started under another list, it fills
 /// nothing. In a test, queued for `land_pending`.
 fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
-    let write = st.window.write_sidecars;
+    let write = st.window.sidecars();
     let generation = st.views.view_generation;
     bar_started(st, app, to_read.len());
     st.views.loads.in_flight.insert(id, to_read.clone());
@@ -937,7 +938,7 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
         app.set_status(why.into());
         return false;
     }
-    let held = from_disk(&st.files[file], st.window.write_sidecars);
+    let held = from_disk(&st.files[file], st.window.sidecars());
     take(st, app, file, held)
 }
 
@@ -945,7 +946,7 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
 /// the window held of it: another writer (the Lightroom import) wrote
 /// it. False when the read did not take.
 pub(crate) fn reread_file(st: &mut State, app: &App, file: usize) -> bool {
-    let held = from_disk(&st.files[file], st.window.write_sidecars);
+    let held = from_disk(&st.files[file], st.window.sidecars());
     take(st, app, file, held)
 }
 
@@ -993,7 +994,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
         0 => {}
         1 => {
             let file = to_read[0];
-            let held = from_disk(&st.files[file], st.window.write_sidecars);
+            let held = from_disk(&st.files[file], st.window.sidecars());
             if !take(st, app, file, held) {
                 failed.push(file);
             }
@@ -1002,7 +1003,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
             let started = std::time::Instant::now();
             let paths: Vec<PathBuf> = to_read.iter().map(|&f| st.files[f].clone()).collect();
             let rows = vec![None; n];
-            let held = bring(&paths, &rows, st.window.write_sidecars, None);
+            let held = bring(&paths, &rows, st.window.sidecars(), None);
             for (file, h) in to_read.into_iter().zip(held) {
                 if !take(st, app, file, h) {
                     failed.push(file);

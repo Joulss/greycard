@@ -462,6 +462,10 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     let mut joined = Sidecar {
         line: join_line(&newer.line, &older.line, host.as_deref(), seen),
         xmp: newer.xmp.clone().or(older.xmp.clone()),
+        // What a Lightroom import laid, the newer copy's first, field by
+        // field; a field is Lightroom's only while the joined meta still
+        // holds the value laid, so the older's record can only say less.
+        lightroom: newer.lightroom.clone().then(&older.lightroom),
         saved: newer.saved.max(older.saved),
         versions: join_versions(&newer.versions, &older.versions, host.as_deref(), seen),
         ..Sidecar::default()
@@ -2750,6 +2754,30 @@ mod tests {
             Sidecar::read(&Sidecar::path_for(&archive)).unwrap(),
         );
         assert_eq!(compare(&l, &r), Compared::Same);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// What a Lightroom import laid rides through a join, from either
+    /// copy, the newer's first where both say.
+    #[test]
+    fn a_join_keeps_what_lightroom_laid() {
+        let dir = scratch("laid");
+        let (mut a, mut b, local, archive) = backed_up(&dir);
+        a.record(exposed(2.0));
+        a.lightroom.rating = Some(2);
+        a.lightroom.title = Some("Desk".into());
+        save(&mut a, &local, 200, "desk");
+        b.record(exposed(-1.0));
+        b.lightroom.title = Some("Laptop".into());
+        save(&mut b, &archive, 300, "laptop");
+        for joined in [join(&a, &b), join(&b, &a)] {
+            assert_eq!(joined.lightroom.rating, Some(2), "the older's alone");
+            assert_eq!(
+                joined.lightroom.title.as_deref(),
+                Some("Laptop"),
+                "the newer's"
+            );
+        }
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

@@ -686,7 +686,7 @@ impl Reducer {
         let path = frame.path.as_path();
         let name = frame.said();
         let hash = greycard_library::hash_file(path).map_err(|e| Why::Failed(e.to_string()))?;
-        let (mut sidecar, trouble) = greycard_edit_io::on_disk::load_sidecar_said(path, true);
+        let (mut sidecar, trouble) = greycard_edit_io::on_disk::read_sidecar_said(path);
         if let Some(t) = trouble {
             return Err(Why::Failed(format!("its sidecar: {t:?}")));
         }

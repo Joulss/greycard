@@ -1765,7 +1765,10 @@ pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sid
 /// tests.
 #[cfg(test)]
 pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
-    let (sidecar, _) = load_sidecar_said(f, write_sidecars);
+    let (sidecar, _) = load_sidecar_said(
+        f,
+        write_sidecars.then_some(greycard_edit::Placement::Beside),
+    );
     let seed = write_sidecars
         && !greycard_core::picture::is_picture_path(f)
         && files::never_developed(&sidecar);
@@ -5389,7 +5392,8 @@ mod tests {
             let serial = t.elapsed().as_secs_f64();
             let t = std::time::Instant::now();
             let none = vec![None; files.len()];
-            let pool = crate::rows::bring(&files, &none, true, None);
+            let pool =
+                crate::rows::bring(&files, &none, Some(greycard_edit::Placement::Beside), None);
             let parallel = t.elapsed().as_secs_f64();
             assert_eq!(one.len(), pool.len());
             eprintln!(

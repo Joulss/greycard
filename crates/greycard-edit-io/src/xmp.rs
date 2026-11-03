@@ -100,8 +100,10 @@ const XMP: &str = "http://ns.adobe.com/xap/1.0/";
 const DC: &str = "http://purl.org/dc/elements/1.1/";
 const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 /// Lightroom's own, for the keyword paths it keeps beside the flat
-/// list. Nothing here is read from it; it is taken out when the flat
-/// list changes, so the two cannot disagree.
+/// list. The meta is read from the flat list; the paths are read for
+/// a Lightroom develop taken from the file
+/// ([`crate::lightroom::beside`]), and taken out when the flat list
+/// changes, so the two cannot disagree.
 const LR: &str = "http://ns.adobe.com/lightroom/1.0/";
 /// The TIFF namespace, for `tiff:Orientation`: the EXIF tag as XMP
 /// spells it, which is what Lightroom, Bridge and exiftool read.
@@ -304,6 +306,9 @@ pub struct Packet {
     /// [`Packet::turn_over`] takes the turn back out of it.
     orientation: Orientation,
     present: u16,
+    /// Lightroom's keyword paths (`lr:hierarchicalSubject`), slashed
+    /// as the meta keeps a path, when the packet has them.
+    paths: Option<Vec<String>>,
 }
 
 impl Packet {
@@ -323,6 +328,19 @@ impl Packet {
         self.has(Prop::Orientation)
             .then(|| self.orientation.turns_from(camera))
             .flatten()
+    }
+
+    /// What `tiff:Orientation` said, when it said anything: the
+    /// orientation the frame is shown at in the tool that wrote it.
+    pub fn orientation(&self) -> Option<Orientation> {
+        self.has(Prop::Orientation).then_some(self.orientation)
+    }
+
+    /// Lightroom's keywords with their whole paths
+    /// (`Places/Scotland/Skye`, as a catalog's come), when the packet
+    /// keeps them beside the flat list.
+    pub fn keyword_paths(&self) -> Option<&[String]> {
+        self.paths.as_deref()
     }
 
     fn mark(&mut self, prop: Prop) {
@@ -381,6 +399,16 @@ pub fn read(xml: &str) -> Result<Packet> {
         }
         for child in desc.children().filter(|n| n.is_element()) {
             let tag = child.tag_name();
+            if is_hierarchical(tag.namespace(), tag.name()) {
+                packet.paths = Some(
+                    items(&child)
+                        .iter()
+                        .map(|p| p.trim().replace('|', "/"))
+                        .filter(|p| !p.is_empty())
+                        .collect(),
+                );
+                continue;
+            }
             let Some(prop) = prop_of(tag.namespace(), tag.name()) else {
                 continue;
             };

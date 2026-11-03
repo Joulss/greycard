@@ -183,13 +183,14 @@ impl Job {
                 Kind::Pano => pano::reference_of(self.files.len(), None)?,
             };
             let edit = &self.edits[reference].clone().unwrap_or_else(|| {
-                greycard_edit_io::on_disk::load_sidecar_said(
-                    &self.files[reference],
-                    self.write_sidecars,
-                )
-                .0
-                .current
-                .clone()
+                if self.write_sidecars {
+                    greycard_edit_io::on_disk::read_sidecar_said(&self.files[reference])
+                        .0
+                        .current
+                        .clone()
+                } else {
+                    greycard_edit::Edit::default()
+                }
             });
             let progress = |step: Step| {
                 said(match step {

@@ -99,6 +99,14 @@ pub struct Sidecar {
         deserialize_with = "meta::loose"
     )]
     pub xmp: Option<xmp::Adopted>,
+    /// The meta a Lightroom import laid, at the values it laid: see
+    /// [`meta::Laid`]. Left out when empty, and read loosely.
+    #[serde(
+        default,
+        skip_serializing_if = "meta::Laid::is_empty",
+        deserialize_with = "meta::loose"
+    )]
+    pub lightroom: meta::Laid,
     /// How many times this sidecar, or the one it grew out of, has
     /// been written: [`Self::save`] and [`Self::save_in`] increment
     /// it before every write, by a saturating add so a field this
@@ -176,6 +184,7 @@ impl PartialEq for Sidecar {
             modified: _,
             turn,
             xmp,
+            lightroom,
             saved,
             revisions,
             absorbed,
@@ -186,6 +195,7 @@ impl PartialEq for Sidecar {
             && *meta_at == other.meta_at
             && *turn == other.turn
             && *xmp == other.xmp
+            && *lightroom == other.lightroom
             && *saved == other.saved
             && *revisions == other.revisions
             && *absorbed == other.absorbed

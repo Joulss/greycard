@@ -326,7 +326,7 @@ impl Look {
             .iter()
             .map(|f| rows.as_ref().and_then(|m| m.get(f).cloned()))
             .collect();
-        let from_disk = if self.write {
+        let from_disk = if self.sidecars.is_some() {
             rows::to_read(&fresh_rows)
         } else {
             0
@@ -337,7 +337,7 @@ impl Look {
         let held = rows::bring(
             &fresh,
             &fresh_rows,
-            self.write,
+            self.sidecars,
             self.progress.as_deref().map(|p| &p.read),
         );
         // The frame to open: the file last open matched to the list by

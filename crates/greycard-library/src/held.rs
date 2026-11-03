@@ -180,17 +180,20 @@ pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held {
     }
 }
 
-/// `path`'s sidecar read from disk, as a folder's open always read it.
-pub fn from_disk(path: &Path, write_sidecars: bool) -> Held {
-    if !write_sidecars {
+/// `path`'s sidecar read from disk, as a folder's open always read it,
+/// with `sidecars` where the editor's setting puts a sidecar (none with
+/// sidecars off, when nothing is read): a Lightroom develop beside a
+/// raw with no edit of ours is taken and written there.
+pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>) -> Held {
+    let Some(placement) = sidecars else {
         return from_nothing();
-    }
+    };
     #[cfg(any(test, feature = "fixtures"))]
     DISK_READS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(path.to_path_buf());
-    let (sidecar, trouble) = load_sidecar_said(path, true);
+    let (sidecar, trouble) = load_sidecar_said(path, Some(placement));
     Held {
         sidecar,
         from_row: FromRow::read(),

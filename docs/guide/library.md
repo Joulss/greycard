@@ -500,6 +500,28 @@ a standard `.xmp` beside each raw. An `.xmp` that is already there is
 read either way. Picks and rejects have no XMP field, so they stay in
 the `.gcd`.
 
+### Lightroom edits in XMP sidecars
+
+When a raw has a Lightroom XMP beside it (`IMG_0001.xmp`) with develop
+settings in it and no edit of greycard's, the first time greycard opens
+or indexes the frame it brings the edit across as one step in its
+history, "Imported from Lightroom", just as a
+[catalog import](import.md#a-lightroom-classic-catalog) does.
+Lightroom's rating, label, keywords (with their full path), and title
+fill whatever greycard has left empty; one you set here stays, unless
+the XMP has changed since greycard last read it, when the XMP's wins
+as it always has. It writes the frame's `.gcd` then, so it happens
+once. A frame with an edit of greycard's is left alone, and an XMP
+whose settings are where Lightroom starts a frame brings nothing.
+
+Lightroom Classic writes XMPs only when told to, so one beside a raw
+may be older than your catalog. Importing the catalog later replaces
+an edit brought from an XMP when you have not edited the frame since:
+the develop becomes the catalog's, and so does each rating, label,
+keyword list, or title that came from the XMP or is empty. One you
+set here stays. A frame you have edited is held back unless you force
+the import.
+
 ### Profiles from RawTherapee
 
 RawTherapee keeps each frame's edit in a `.pp3` beside it. When you

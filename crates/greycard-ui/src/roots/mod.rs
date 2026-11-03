@@ -426,7 +426,7 @@ pub(crate) struct Look {
     /// The paths in the window's list: a file not among them is new,
     /// and its sidecar is read.
     have: HashSet<PathBuf>,
-    write: bool,
+    sidecars: Option<greycard_edit::Placement>,
     /// The frame on screen and its row, to see whether it is still
     /// there, and where the index says it went if not.
     on_screen: Option<(PathBuf, Option<i64>)>,

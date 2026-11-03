@@ -19,6 +19,7 @@
 
 use std::collections::BTreeMap;
 
+pub mod beside;
 pub mod crop;
 
 use greycard_edit::curve::Point;
@@ -228,6 +229,37 @@ pub fn body_offset(camera: Option<&str>) -> f32 {
 /// Read a Lightroom preset or a picture's XMP sidecar. `fallback` is
 /// the name when the file gives none, usually its stem.
 pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
+    read_with(xml, fallback, &Scales::DEFAULT, 0.0)
+}
+
+/// [`read`] for a frame of `camera`'s (as the library names a body):
+/// the body's offset ([`body_offset`]) goes onto the Exposure slider,
+/// as a catalog's table is read ([`read_table_for`]).
+pub fn read_for(xml: &str, fallback: &str, camera: Option<&str>) -> Result<Imported> {
+    read_with(xml, fallback, &Scales::DEFAULT, body_offset(camera))
+}
+
+/// [`read`] under `scales` with `offset` stops added to the Exposure
+/// slider.
+pub fn read_with(xml: &str, fallback: &str, scales: &Scales, offset: f32) -> Result<Imported> {
+    let Settings { keys, curves, name } = settings_in(xml)?;
+    let name = name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| fallback.to_string());
+    Ok(map(name, &keys, &curves, scales, offset))
+}
+
+/// The `crs:` settings of an XMP as written: the keys with their
+/// values (a structure as its key alone), the point curves, and the
+/// preset's name when it has one.
+struct Settings {
+    keys: BTreeMap<String, String>,
+    curves: BTreeMap<String, Vec<Point>>,
+    name: Option<String>,
+}
+
+/// The settings an XMP holds; an error when it holds none.
+fn settings_in(xml: &str) -> Result<Settings> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| Error::Preset(e.to_string()))?;
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
     let mut curves: BTreeMap<String, Vec<Point>> = BTreeMap::new();
@@ -271,10 +303,7 @@ pub fn read(xml: &str, fallback: &str) -> Result<Imported> {
     if keys.is_empty() && curves.is_empty() {
         return Err(Error::Preset("no Camera Raw settings in the file".into()));
     }
-    let name = name
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| fallback.to_string());
-    Ok(map(name, &keys, &curves, &Scales::DEFAULT, 0.0))
+    Ok(Settings { keys, curves, name })
 }
 
 /// Read the develop settings a Lightroom catalog keeps for an image:

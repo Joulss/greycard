@@ -36,3 +36,11 @@ pub(crate) struct Window {
     /// that has only the state in hand.
     pub(crate) app: slint::Weak<App>,
 }
+
+impl Window {
+    /// Where a sidecar this session writes goes, none with sidecars
+    /// off: what a read that may take a Lightroom develop is told.
+    pub(crate) fn sidecars(&self) -> Option<greycard_edit::Placement> {
+        self.write_sidecars.then_some(self.placement)
+    }
+}
