@@ -152,6 +152,11 @@ design note behind it.
   the frame in the middle of the turn as its reference, whatever order
   the frames were shot in
   ([§537](https://github.com/jessolmstead/greycard/blob/master/docs/notes/537-the-recipe-kept-and-the-merge-made-again.md)).
+- A merged file whose frames are beside it shows **Denoise the frames
+  and merge again** in the Noise section: pick a tier in its row,
+  press it, and the merge is made again in place with each frame
+  denoised, its edit kept
+  ([§541](https://github.com/jessolmstead/greycard/blob/master/docs/notes/541-making-a-merge-again-from-the-noise-section.md)).
 
 ### Mac
 

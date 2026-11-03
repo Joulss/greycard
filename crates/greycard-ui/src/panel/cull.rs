@@ -73,6 +73,10 @@ pub(crate) struct Cull {
     pub(crate) turned: Option<std::time::Instant>,
     /// The status line as last set, so it is set only on a change.
     pub(crate) status: String,
+    /// A line said before the status line's own once the frame is drawn
+    /// again: a merge made again under the loupe, which a develop's
+    /// stash does not reach in culling.
+    pub(crate) said: Option<String>,
     /// A word the status line carries after its own while the compare
     /// set stands where it was put: Compare versions' count of the
     /// versions left out. Gone when the set moves or the view changes.
@@ -219,6 +223,7 @@ impl Cull {
             switched: None,
             turned: None,
             status: String::new(),
+            said: None,
             note: None,
             versions_of: None,
             stack_of: None,
@@ -1583,7 +1588,10 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
     // The status: what is on screen and how, or why not yet.
     if !holding {
         let status = cull_status(cull, c, st.develop.zoom, shown_now, &names);
-        if cull.status != status {
+        if shown_now && let Some(said) = cull.said.take() {
+            app.set_status(format!("{said}; {status}").into());
+            cull.status = status;
+        } else if cull.status != status {
             cull.status = status.clone();
             app.set_status(status.into());
         }

@@ -238,6 +238,42 @@ pub(crate) fn changed(st: &mut crate::State, c: usize) {
     crate::panel::browser::neighbors_moved(st);
 }
 
+/// File `file` was written again in place under the window (a merge
+/// made again): the pictures of each of its lines kept under its old
+/// content `hash` are taken out, since a file of the same head and
+/// length would take them for its own, and each cell holds its edit as
+/// before, its key read again, and asks for its picture again. The
+/// loupe's copies go whatever they show, the camera's too, since the
+/// file under them is another.
+pub(crate) fn rewritten(st: &mut crate::State, file: usize, hash: &str) {
+    let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
+        return;
+    };
+    let cells: Vec<(usize, Key)> = st
+        .cells_of_file(file)
+        .into_iter()
+        .filter_map(|c| Some((c, st.key_of(c)?)))
+        .collect();
+    // Every line let go before any is held again: one still held at a
+    // key keeps the pictures of that key from going.
+    for (_, frame) in &cells {
+        worker.edited().reset(frame, Some(hash));
+    }
+    for (c, frame) in &cells {
+        for cull in [st.culling.cull.as_mut(), st.culling.hold.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            let dropped = cull.cache.forget_file(*c);
+            cull.let_go(dropped);
+        }
+        worker
+            .edited()
+            .note(frame, held_edited(st, *c), iso_of(st, *c), None);
+        kept(st, &worker, frame);
+    }
+}
+
 /// Every edit cell `c`'s file holds, its own and its versions', and its
 /// quarter turns, as the window has read them from its sidecar: what an
 /// open of any of them would make a base under. None while the sidecar

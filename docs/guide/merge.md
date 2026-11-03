@@ -78,6 +78,15 @@ A merged file keeps its recipe: its frames' names with a check of
 each, the merge's options, and where every frame was placed. While the
 frames are beside it, unchanged, it can be made again from them.
 
+- In the window, open the merged file: in the Noise section the
+  learned denoiser's tiers give way to a row of their own over
+  **Denoise the frames and merge again**. The tiers start at the one
+  the merge ran, or off when none ran. Pick one and press the button;
+  the status line follows the merge as it runs, and the picture
+  reloads when it is done. The row is not there when a frame is
+  missing or changed, when the frames are not ones the learned
+  denoiser takes (X-Trans), or when sidecars are off, and it waits
+  while another merge runs.
 - `greycard merge again IMG_0001-pano.dng --denoise balanced` merges
   the frames again with the learned denoiser on each (`fast`,
   `balanced`, `best`, or `none`). The frames land where they did, to

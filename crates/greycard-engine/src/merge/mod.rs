@@ -891,31 +891,14 @@ pub enum Again {
 pub const NO_RECIPE: &str =
     "this merge was written before its recipe was kept; merge the frames again";
 
-/// The merged file `file` made again from the recipe its tag keeps,
-/// with `overrides`: its frames found beside it by name, each checked
-/// by its head's hash, and merged with the recipe's options and its
-/// geometry, which is not fitted again: a bracket's exposures and
-/// moves, a panorama's turns, lens, gains, canvas, and crop. So the
-/// frames land where they did, to the pixel. The new file is written
-/// as a merge's is, under the hidden folder that holds the name, and
-/// renamed over the old one at the end; nothing else of it changes.
-/// `edit` is what the frames are walked under (their demosaic and
-/// CA), as the merge's caller gave it.
-pub fn again(
-    file: &Path,
-    overrides: &Overrides,
-    edit: &Edit,
-    models: &mut dyn Models,
-    progress: &dyn Progress,
-) -> Result<Again> {
-    let tag = greycard_core::decode::merge_tag_path(file)
-        .with_context(|| format!("reading {}", file.display()))?
-        .with_context(|| {
-            format!(
-                "{} is not a merge of greycard's: it keeps no recipe",
-                file.display()
-            )
-        })?;
+/// The frames the merged file `file`, whose tag is `tag`, is made
+/// again from, and the recipe: each found beside it by its name and
+/// checked by its hash. What [`again`] refuses before it walks a frame
+/// is refused here, saying which: no recipe, one that does not read, a
+/// frame named with a path, a frame missing, and one changed since. A
+/// question of the frames' heads (and their whole files where two share
+/// a head); nothing is decoded.
+pub fn frames_of(file: &Path, tag: &merge::Tag) -> Result<(Recipe, Vec<PathBuf>)> {
     let name = name_of(file);
     let Some(recipe) = tag.recipe.clone() else {
         match &tag.unread {
@@ -971,6 +954,63 @@ pub fn again(
         }
         frames.push(path);
     }
+    Ok((recipe, frames))
+}
+
+/// Whether the learned denoiser takes every one of `frames`: each a
+/// 2x2 Bayer mosaic, read from its tags; else which does not.
+pub fn take_learned(frames: &[PathBuf]) -> Result<()> {
+    for frame in frames {
+        let mosaic = greycard_core::decode::mosaic_path(frame)
+            .with_context(|| format!("reading {}", frame.display()))?;
+        if mosaic != Some(greycard_core::raw::Mosaic::Bayer) {
+            bail!(
+                "the learned denoiser takes a 2x2 Bayer mosaic, and {} is {}",
+                name_of(frame),
+                match mosaic {
+                    Some(greycard_core::raw::Mosaic::XTrans) => "X-Trans",
+                    Some(_) => "another mosaic",
+                    None => "no mosaic",
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether the merged file `file`, whose tag is `tag`, can be made
+/// again with its frames denoised: [`frames_of`] finds them, and the
+/// learned denoiser takes them ([`take_learned`]).
+pub fn can_denoise_again(file: &Path, tag: &merge::Tag) -> bool {
+    frames_of(file, tag).is_ok_and(|(_, frames)| take_learned(&frames).is_ok())
+}
+
+/// The merged file `file` made again from the recipe its tag keeps,
+/// with `overrides`: its frames found beside it by name, each checked
+/// by its head's hash, and merged with the recipe's options and its
+/// geometry, which is not fitted again: a bracket's exposures and
+/// moves, a panorama's turns, lens, gains, canvas, and crop. So the
+/// frames land where they did, to the pixel. The new file is written
+/// as a merge's is, under the hidden folder that holds the name, and
+/// renamed over the old one at the end; nothing else of it changes.
+/// `edit` is what the frames are walked under (their demosaic and
+/// CA), as the merge's caller gave it.
+pub fn again(
+    file: &Path,
+    overrides: &Overrides,
+    edit: &Edit,
+    models: &mut dyn Models,
+    progress: &dyn Progress,
+) -> Result<Again> {
+    let tag = greycard_core::decode::merge_tag_path(file)
+        .with_context(|| format!("reading {}", file.display()))?
+        .with_context(|| {
+            format!(
+                "{} is not a merge of greycard's: it keeps no recipe",
+                file.display()
+            )
+        })?;
+    let (recipe, frames) = frames_of(file, &tag)?;
     let tier = match &overrides.denoise {
         Some(t) => t.clone(),
         None => recipe.denoise.clone(),
@@ -979,6 +1019,11 @@ pub fn again(
         Some(t) => {
             let model = greycard_ai::denoiser(&t)
                 .with_context(|| format!("there is no learned denoiser called {t}"))?;
+            // The walk would skip it on such a frame and write the
+            // file undenoised.
+            if let Err(e) = take_learned(&frames) {
+                bail!("{e:#}, and nothing was made again");
+            }
             // Refused before any frame is walked: a merge made without
             // the tier asked would take the place of one made with it.
             match models.can_denoise(model) {
@@ -1607,6 +1652,110 @@ mod tests {
         );
         assert!(steps.into_inner().is_empty());
         assert_eq!(std::fs::read(&report.out).unwrap(), before);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Frames the learned denoiser does not take (X-Trans here) are
+    /// refused a tier before any is walked, where the walk would skip
+    /// the denoiser and write the file undenoised; with no tier they
+    /// stand, and the window's check says the row has nothing to offer.
+    #[test]
+    fn a_tier_on_frames_it_cannot_take_is_refused() {
+        let dir = scratch("again-xtrans");
+        let names = ["DSCF0.dng", "DSCF1.dng", "DSCF2.dng"];
+        let frames: Vec<PathBuf> = names
+            .iter()
+            .map(|n| {
+                let p = dir.join(n);
+                greycard_library::fixture::write_mosaic_dng(
+                    &p,
+                    "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG",
+                );
+                p
+            })
+            .collect();
+        // The merged file's own body from a calibrated frame, which the
+        // fixture's are not; nothing reads its pixels.
+        let body = dir.join("body.dng");
+        write_dng(
+            &body,
+            mosaic_of(W, H, 1.0, Noise::ASSUMED, 5, |x, y, c| scene(x, y, c, W, H)),
+            W,
+            H,
+            (1, 100),
+            "Body",
+        );
+        let raw = greycard_core::decode::decode_path(&body).unwrap();
+        let (w, h) = (raw.width, raw.height);
+        let image = CameraImage::from_data(w, h, vec![0.25; w * h * 3]).unwrap();
+        let tag = merge::Tag {
+            kind: "hdr".into(),
+            frames: names.iter().map(|n| n.to_string()).collect(),
+            reference: 1,
+            headroom_stops: 1.0,
+            heads: frames
+                .iter()
+                .map(|f| Some(greycard_library::hash_file(f).unwrap()))
+                .collect(),
+            wholes: vec![None; 3],
+            recipe: Some(Recipe {
+                ca: "once".into(),
+                denoise: None,
+                noise: None,
+                geometry: Geometry::Bracket(vec![
+                    Registration {
+                        exposure: 1.0,
+                        shift: None,
+                    };
+                    3
+                ]),
+            }),
+            ..Default::default()
+        };
+        let out = dir.join("DSCF0-HDR.dng");
+        write_merged_dng(
+            std::io::BufWriter::new(std::fs::File::create(&out).unwrap()),
+            &raw,
+            &image,
+            [2.0, 1.0, 1.5],
+            &LinearDngOptions {
+                headroom: Some(2.0),
+                ..Default::default()
+            },
+            &Merged {
+                noise_profile: [1e-5, 1e-8],
+                tag: &tag,
+            },
+        )
+        .unwrap();
+        let read = greycard_core::decode::merge_tag_path(&out)
+            .unwrap()
+            .unwrap();
+        assert!(frames_of(&out, &read).is_ok());
+        assert!(!can_denoise_again(&out, &read));
+
+        let before = std::fs::read(&out).unwrap();
+        let steps = std::cell::RefCell::new(Vec::new());
+        let refused = again(
+            &out,
+            &Overrides {
+                denoise: Some(Some("balanced".into())),
+                ..Default::default()
+            },
+            &Edit::default(),
+            &mut crate::testing::PlainDenoiser,
+            &|s: Step| steps.borrow_mut().push(s),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            refused,
+            "the learned denoiser takes a 2x2 Bayer mosaic, and DSCF0.dng is X-Trans, and \
+             nothing was made again"
+        );
+        assert!(steps.into_inner().is_empty());
+        assert_eq!(std::fs::read(&out).unwrap(), before);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

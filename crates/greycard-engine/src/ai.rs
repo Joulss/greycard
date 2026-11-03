@@ -1449,6 +1449,9 @@ impl Ai {
         self.encodings.clear();
         self.people = None;
         self.parts_view = None;
+        // Its hash read again too: a file written again under its name
+        // (a merge made again) is another picture.
+        self.picture = None;
     }
 
     /// No Part is live on the open picture: the People model, its

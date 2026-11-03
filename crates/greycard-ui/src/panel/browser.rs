@@ -2387,6 +2387,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
 /// offline): the develop on the worker, or in culling its JPEG.
 pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     let row = row_of(st, i).map_or(-1, |r| r as i32);
+    crate::panel::merge::left(app);
     // A look previewed from the list was the last frame's.
     crate::panel::look_preview::end(st, app);
     let offline = !crate::rows::is_loaded(st, i);

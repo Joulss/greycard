@@ -553,3 +553,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§538. The FOLDERS fold kept per view](notes/538-the-folders-fold-kept-per-view.md) (2026-11-03)
 - [§539. Auto reads a merge's headroom](notes/539-auto-reads-a-merges-headroom.md) (2026-11-03)
 - [§540. A lints table and the layer rule as a test](notes/540-a-lints-table-and-the-layer-rule-as-a-test.md) (2026-11-03)
+- [§541. Making a merge again from the Noise section](notes/541-making-a-merge-again-from-the-noise-section.md) (2026-11-03)

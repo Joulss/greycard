@@ -340,6 +340,17 @@ impl Cache {
         self.previews.remove(&cell);
     }
 
+    /// Drop both of `cell`'s copies, the view-size one and the full one:
+    /// its file was written again, and the camera's picture with it.
+    /// The full copy let go, for its texture.
+    pub fn forget_file(&mut self, cell: usize) -> Dropped {
+        self.previews.remove(&cell);
+        self.full
+            .remove(&cell)
+            .map(|p| vec![(cell, p.id)])
+            .unwrap_or_default()
+    }
+
     /// Keep the screen-size previews `keep` says yes to, by cell.
     pub fn retain(&mut self, mut keep: impl FnMut(usize, &Preview) -> bool) {
         self.previews.retain(|&c, p| keep(c, p));

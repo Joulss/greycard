@@ -396,6 +396,14 @@ pub enum Outcome {
         /// What the fill model did.
         fills: FillReport,
     },
+    /// Whether the merge of ours just opened, one that keeps its recipe,
+    /// can be made again with its frames denoised
+    /// ([`crate::merge::can_denoise_again`]): said after its develop,
+    /// since it reads the frames.
+    MergeAgain {
+        path: PathBuf,
+        can: bool,
+    },
     /// The kind of mosaic of a raw being opened (`None`: it is not a
     /// mosaic), read beside its decode so the demosaic menu is the
     /// file's before its pixels are.

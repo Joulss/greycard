@@ -136,11 +136,21 @@ pub(crate) fn press(app: &App, key: impl Into<slint::SharedString>) {
 /// as `run` wires the real one: enough to drive any of the window's
 /// callbacks without a picture open or a file on disk.
 pub(crate) fn state_for(app: &App, files: Vec<std::path::PathBuf>) -> (Rc<Shared>, Rc<Worker>) {
+    let worker = Rc::new(Worker::new(|_| {}));
+    (state_with(app, files, worker.clone()), worker)
+}
+
+/// [`state_for`] with the caller's worker: one whose outcomes the test
+/// takes in itself.
+pub(crate) fn state_with(
+    app: &App,
+    files: Vec<std::path::PathBuf>,
+    worker: Rc<Worker>,
+) -> Rc<Shared> {
     let state = Rc::new(Shared::new(State::empty(files, app)));
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
-    let worker = Rc::new(Worker::new(|_| {}));
-    install_callbacks(app, state.clone(), worker.clone());
-    (state, worker)
+    install_callbacks(app, state.clone(), worker);
+    state
 }
 
 /// A file-less state and a no-op worker: enough to drive the retouch

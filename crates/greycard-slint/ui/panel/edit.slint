@@ -141,7 +141,19 @@ export component NoiseSection inherits Section {
     // Why the learned tiers rest (an X-Trans raw), or "" when they do
     // not; the profiled denoise is unaffected.
     in property <string> learned-unavailable;
+    // A merge of ours whose frames are beside it as merged, and that
+    // the learned denoiser takes: it can be made again from its recipe,
+    // the frames denoised at `again-tier`, the window's and not the
+    // edit's.
+    in property <bool> again-shown;
+    in-out property <string> again-tier;
+    // The row is up, and its picker stands in for the section's: on a
+    // merge the edit's tier steers no develop.
+    property <bool> again: root.again-shown && root.learned-unavailable == "";
+    // A merge is running: none other is asked from here.
+    in property <bool> merging;
     callback develop-changed();
+    callback merge-again();
 
     title: "NOISE";
     icon: @image-url("../icons/sparkles.svg");
@@ -154,7 +166,7 @@ export component NoiseSection inherits Section {
     // demosaic and the profiled denoise both. Where it rests, a tier
     // already set (a sync from a Bayer frame) can still be turned off,
     // and off and that tier are all it offers: no other is reachable.
-    Segmented {
+    if !root.again: Segmented {
         options: root.learned-unavailable == "" ? root.denoise-tiers
             : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
         enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
@@ -173,6 +185,21 @@ export component NoiseSection inherits Section {
         scale: 100;
         text: round(root.denoise-learned-strength * 100) + "%";
         changed(v) => { root.develop-changed(); }
+    }
+    // The learned tier on a merge acts on no develop of it: it is the
+    // file written again, so a row of its own.
+    if root.again: VerticalLayout {
+        spacing: 4px;
+        Segmented {
+            options: root.denoise-tiers;
+            enabled: root.unavailable == "" && !root.merging;
+            current <=> root.again-tier;
+        }
+        PanelButton {
+            text: "Denoise the frames and merge again";
+            enabled: root.unavailable == "" && !root.merging;
+            clicked => { root.merge-again(); }
+        }
     }
     Toggle {
         label: "Denoise";

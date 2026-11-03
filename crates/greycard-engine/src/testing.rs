@@ -82,6 +82,61 @@ pub fn linear_dng(path: &std::path::Path, width: usize, height: usize, make: &st
     .unwrap();
 }
 
+/// Models whose learned denoiser is there and whose network is the
+/// plain demosaic: a walk or a merge asked for a tier runs it with no
+/// model on the machine, and says it ran.
+pub struct PlainDenoiser;
+
+impl crate::walk::Models for PlainDenoiser {
+    fn can_denoise(
+        &mut self,
+        _: &'static greycard_ai::Model,
+    ) -> Result<(), crate::walk::NoLearned> {
+        Ok(())
+    }
+
+    fn denoise(
+        &mut self,
+        _: &'static greycard_ai::Model,
+        _: &greycard_core::raw::RawFrame,
+        prepared: &greycard_core::develop::Prepared,
+    ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+        greycard_core::develop::demosaic_prepared(
+            prepared,
+            &greycard_core::develop::DevelopSettings::default(),
+        )
+        .map(|(rgb, _, _)| rgb)
+        .map_err(|e| crate::walk::NoLearned::Failed(e.to_string()))
+    }
+
+    fn fill(
+        &mut self,
+        _: &greycard_edit::retouch::Patch,
+        _: &greycard_core::develop::retouch::Region,
+        _: &greycard_core::image::WorkingImage,
+    ) -> Option<Vec<f32>> {
+        None
+    }
+
+    fn could_fill_more(
+        &mut self,
+        _: &greycard_edit::retouch::Retouch,
+        _: &greycard_core::image::WorkingImage,
+    ) -> bool {
+        false
+    }
+
+    fn rasters(
+        &mut self,
+        _: crate::stages::Masks,
+        _: &std::sync::Arc<greycard_core::image::WorkingImage>,
+        _: Option<crate::walk::Patched<'_>>,
+        _: &crate::walk::Meta,
+    ) -> crate::walk::Rasters {
+        crate::walk::Rasters::new()
+    }
+}
+
 /// A worker with a cache of its own and a frame opened on it, for the
 /// tests of the edit's pictures, the engine's and the window's.
 pub mod edited {

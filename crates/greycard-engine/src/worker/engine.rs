@@ -724,6 +724,13 @@ pub(super) fn run(
                                 },
                             ),
                         };
+                        // A merge's recipe, asked after the develop.
+                        let recipe = match &opened {
+                            Input::Raw(f) => {
+                                f.dng.merged.clone().filter(|tag| tag.recipe.is_some())
+                            }
+                            Input::Picture { .. } => None,
+                        };
                         deliver(Outcome::Opened {
                             generation,
                             as_shot,
@@ -797,6 +804,14 @@ pub(super) fn run(
                         lock.lock().expect("worker queue").landed =
                             landed.map(|g| (g, opened_path.clone().unwrap_or_default()));
                         deliver(outcome);
+                        // After the picture: the frames' heads are read
+                        // (their whole files where two share a head).
+                        if let (Some(tag), Some(path)) = (&recipe, &opened_path) {
+                            deliver(Outcome::MergeAgain {
+                                path: path.clone(),
+                                can: crate::merge::can_denoise_again(path, tag),
+                            });
+                        }
                     }
                     Err(e) => {
                         landed = None;

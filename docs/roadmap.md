@@ -553,11 +553,9 @@ written as a float DNG with its headroom and a noise profile. The
 brackets and the panorama to shoot for testing are in
 `docs/test-frames.md`.
 
-- [ ] Next: the re-merge's row in the Noise section, §532's part 2
-      (§537 holds the recipe, `greycard merge again`, and the reference
-      by geometry): "Denoise the frames and merge again" with the tier,
-      on a merged file whose frames are present; the first merge of the
-      window's second pass written under the `.merging` folder
+- [ ] Next: the first merge of the window's second pass written under
+      the `.merging` folder; the re-merge's rename over an open file
+      tried on Windows (§541)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
       the most voting tiles rather than the reference, measured on a
       real bracket with a clipped sky (§529); the Highlights pull's aim

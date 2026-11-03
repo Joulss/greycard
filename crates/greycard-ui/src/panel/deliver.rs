@@ -834,6 +834,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.launch.awaiting_turn = false;
             }
         }
+        // By the file, not the generation: a slider moved during the
+        // open's develop has moved the generation on.
+        Outcome::MergeAgain { path, can } => {
+            let st = state.borrow();
+            if st.current.and_then(|c| st.path_at(c)) == Some(&path) {
+                crate::panel::merge::opened(&st, app, can);
+            }
+        }
         Outcome::Mosaic { path, mosaic } => {
             use crate::panel::browser::OpenMosaic;
             let known = mosaic.map_or(OpenMosaic::NotMosaic, OpenMosaic::Known);
