@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- FOLDERS keeps its fold in each view, so it can stay open in the
+  Library and folded in the Loupe (discussion 59)
+  ([§538](https://github.com/jessolmstead/greycard/blob/master/docs/notes/538-the-folders-fold-kept-per-view.md)).
 - The canvas behind the picture can be White, beside Black and the
   three greys
   ([§534](https://github.com/jessolmstead/greycard/blob/master/docs/notes/534-a-white-canvas.md)).

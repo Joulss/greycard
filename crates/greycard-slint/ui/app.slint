@@ -428,6 +428,20 @@ export component App inherits Window {
         // hears nothing of the pointer leaving: its hover text goes
         // here instead of staying over the window for good.
         root.tip-text = "";
+        // FOLDERS folds as it was last left in the view now on
+        // screen, and the view going away keeps the fold it had. The
+        // fold lands at once, as the sections around it appear.
+        if (root.grid-open != root.collapsed-folders-is-library) {
+            if (root.grid-open) {
+                root.collapsed-folders-loupe = root.collapsed-folders;
+                root.collapsed-folders = root.collapsed-folders-library;
+            } else {
+                root.collapsed-folders-library = root.collapsed-folders;
+                root.collapsed-folders = root.collapsed-folders-loupe;
+            }
+            root.collapsed-folders-is-library = root.grid-open;
+            root.folders-animated = false;
+        }
         if (root.grid-open) {
             // The sheet is back, by whatever way (a folder picked from
             // the pane in the lightbox's loupe, the window's own): the
@@ -882,7 +896,17 @@ export component App inherits Window {
     in property <bool> folder-tree-shown: false;
     in property <[FolderRow]> folder-tree: [];
     in-out property <bool> folder-tree-subfolders: false;
+    /// The FOLDERS section's fold, kept for each view: the section
+    /// folds as on screen, and the view off screen keeps its own for
+    /// when it comes back (see `changed grid-open`). Whose the
+    /// section's fold is, the Library's or the Loupe's, changes with
+    /// the swap rather than with `grid-open`, so it is right in the
+    /// moment between a switch and its handler.
     in-out property <bool> collapsed-folders: false;
+    in-out property <bool> collapsed-folders-library: false;
+    in-out property <bool> collapsed-folders-loupe: false;
+    out property <bool> collapsed-folders-is-library: false;
+    property <bool> folders-animated: true;
     in-out property <bool> collapsed-roots: false;
     callback folder-tree-picked(int);
     callback folder-tree-folded(int);
@@ -4424,10 +4448,11 @@ export component App inherits Window {
                     tip(t, x, y) => { root.tip-at(t, x, y); }
                 }
                 // The open root's folders, from the index.
-                if root.folder-tree-shown: FoldersSection {
+                if root.folder-tree-shown: folders-section := FoldersSection {
                     rows: root.folder-tree;
                     subfolders <=> root.folder-tree-subfolders;
                     collapsed-folders <=> root.collapsed-folders;
+                    animated <=> root.folders-animated;
                     picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
                     folded(p) => { root.folder-tree-folded(p); }
                     subfolders-changed => { root.folder-tree-subfolders-changed(); }

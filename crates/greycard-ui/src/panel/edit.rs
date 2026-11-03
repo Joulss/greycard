@@ -934,11 +934,8 @@ pub(crate) const FOLDS: &[Fold] = &[
         App::get_collapsed_collections,
         App::set_collapsed_collections,
     ),
-    (
-        "folders",
-        App::get_collapsed_folders,
-        App::set_collapsed_folders,
-    ),
+    ("folders-library", folders_library, set_folders_library),
+    ("folders-loupe", folders_loupe, set_folders_loupe),
     (
         "navigator",
         App::get_collapsed_navigator,
@@ -1052,19 +1049,57 @@ pub(crate) const FOLDS: &[Fold] = &[
     ),
 ];
 
-/// The Crop tab's one GEOMETRY section, before it became three.
-/// A settings file that folded it folds all three.
-pub(crate) const WAS_GEOMETRY: [&str; 3] = ["crop", "rotate", "perspective"];
+/// FOLDERS keeps a fold for each view: the section's own is the
+/// view's it was last swapped to (on screen once `changed grid-open`
+/// has run), and the other view's waits in its own property.
+fn folders_library(app: &App) -> bool {
+    if app.get_collapsed_folders_is_library() {
+        app.get_collapsed_folders()
+    } else {
+        app.get_collapsed_folders_library()
+    }
+}
+
+fn set_folders_library(app: &App, folded: bool) {
+    app.set_collapsed_folders_library(folded);
+    if app.get_collapsed_folders_is_library() {
+        app.set_collapsed_folders(folded);
+    }
+}
+
+fn folders_loupe(app: &App) -> bool {
+    if app.get_collapsed_folders_is_library() {
+        app.get_collapsed_folders_loupe()
+    } else {
+        app.get_collapsed_folders()
+    }
+}
+
+fn set_folders_loupe(app: &App, folded: bool) {
+    app.set_collapsed_folders_loupe(folded);
+    if !app.get_collapsed_folders_is_library() {
+        app.set_collapsed_folders(folded);
+    }
+}
+
+/// Sections that became several, by their old names: a settings file
+/// that folded one, and none of what it became, folds them all. The
+/// Crop tab's one GEOMETRY became three; FOLDERS's one fold became one
+/// for each view.
+pub(crate) const WAS: &[(&str, &[&str])] = &[
+    ("geometry", &["crop", "rotate", "perspective"]),
+    ("folders", &["folders-library", "folders-loupe"]),
+];
 
 /// Fold the sections the last run left folded.
 pub(crate) fn show_folds(app: &App, collapsed: &[String]) {
-    let legacy = collapsed.iter().any(|c| c == "geometry")
-        && !collapsed.iter().any(|c| WAS_GEOMETRY.contains(&c.as_str()));
+    let has = |name: &str| collapsed.iter().any(|c| c == name);
+    let legacy = |name: &str| {
+        WAS.iter()
+            .any(|(was, now)| now.contains(&name) && has(was) && !now.iter().any(|n| has(n)))
+    };
     for (name, _, set) in FOLDS {
-        set(
-            app,
-            collapsed.iter().any(|c| c == name) || (legacy && WAS_GEOMETRY.contains(name)),
-        );
+        set(app, has(name) || legacy(name));
     }
 }
 
@@ -1596,5 +1631,135 @@ mod tests {
         );
         sideways(-60.0);
         assert_eq!(exposure(), 0.0, "a swipe left is a down");
+    }
+
+    /// FOLDERS keeps a fold for each view: folded in the Library, it
+    /// is open in the Loupe as it was left there, and folded again
+    /// back in the Library. A click on the header moves the fold; a
+    /// view's fold lands at once.
+    #[test]
+    fn the_folders_section_keeps_a_fold_for_each_view() {
+        use crate::testing::{click, press, settle};
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        app.set_folder_tree_shown(true);
+        let height = || {
+            ElementHandle::find_by_element_id(&app, "App::folders-section")
+                .next()
+                .expect("FOLDERS in the left pane")
+                .size()
+                .height
+        };
+        // One frame of a fold's 120 ms, then the rest of it.
+        let frame = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            slint::platform::update_timers_and_animations();
+        };
+        let rest = || {
+            settle(&app);
+            settle(&app);
+        };
+        press(&app, "G");
+        settle(&app);
+        assert!(app.get_grid_open());
+        assert!(!app.get_collapsed_folders());
+        let header = ElementHandle::find_by_accessible_label(&app, "FOLDERS")
+            .next()
+            .expect("FOLDERS in the left pane");
+        let (at, size) = (header.absolute_position(), header.size());
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        frame();
+        let moving = height();
+        rest();
+        assert!(app.get_collapsed_folders(), "folded in the Library");
+        assert!(moving > height(), "a click's fold moves");
+
+        press(&app, "G");
+        frame();
+        let landed = height();
+        rest();
+        assert!(!app.get_grid_open());
+        assert!(!app.get_collapsed_folders(), "open in the Loupe");
+        assert_eq!(landed, height(), "a view's fold lands at once");
+        assert_eq!(
+            read_folds(&app)
+                .iter()
+                .filter(|f| f.starts_with("folders"))
+                .collect::<Vec<_>>(),
+            ["folders-library"]
+        );
+
+        press(&app, "G");
+        settle(&app);
+        assert!(app.get_grid_open());
+        assert!(app.get_collapsed_folders(), "folded again in the Library");
+    }
+
+    /// Both folds go to the settings and come back, whichever view is
+    /// on screen; a file from before them, with FOLDERS's one fold,
+    /// folds it in both views.
+    #[test]
+    fn the_folders_folds_round_trip_through_the_settings() {
+        use crate::testing::settle;
+        let folders = |app: &App| -> Vec<String> {
+            read_folds(app)
+                .into_iter()
+                .filter(|f| f.starts_with("folders"))
+                .collect()
+        };
+        let app = window(3);
+        for grid in [false, true] {
+            app.set_grid_open(grid);
+            settle(&app);
+            for (library, loupe) in [(true, false), (false, true), (true, true), (false, false)] {
+                let mut saved = Vec::new();
+                if library {
+                    saved.push("folders-library".to_string());
+                }
+                if loupe {
+                    saved.push("folders-loupe".to_string());
+                }
+                show_folds(&app, &saved);
+                assert_eq!(folders(&app), saved, "grid {grid}");
+                assert_eq!(
+                    app.get_collapsed_folders(),
+                    if grid { library } else { loupe }
+                );
+                // Through a switch and back, still the same.
+                app.set_grid_open(!grid);
+                settle(&app);
+                assert_eq!(
+                    app.get_collapsed_folders(),
+                    if grid { loupe } else { library }
+                );
+                assert_eq!(folders(&app), saved, "grid {grid}, switched");
+                app.set_grid_open(grid);
+                settle(&app);
+            }
+        }
+        show_folds(&app, &["folders".to_string()]);
+        assert_eq!(folders(&app), ["folders-library", "folders-loupe"]);
+        show_folds(&app, &[]);
+        assert!(folders(&app).is_empty());
+        show_folds(&app, &["geometry".into()]);
+        assert!(
+            app.get_collapsed_crop()
+                && app.get_collapsed_rotate()
+                && app.get_collapsed_perspective(),
+            "GEOMETRY's fold folds its three"
+        );
+
+        // Read between a switch and its handler, as the start's
+        // baseline is: each view's fold is still its own.
+        app.set_grid_open(false);
+        settle(&app);
+        show_folds(&app, &["folders-library".to_string()]);
+        app.set_grid_open(true);
+        assert_eq!(folders(&app), ["folders-library"]);
+        settle(&app);
+        assert!(app.get_collapsed_folders());
+        assert_eq!(folders(&app), ["folders-library"]);
     }
 }

@@ -162,6 +162,11 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // Whether a fold moves or lands at once: a click on the header
+    // moves it, and a fold the view brings, set false around it,
+    // lands as the sections around it appear.
+    in-out property <bool> animated: true;
+    property <duration> fold-time: root.animated ? 120ms : 0ms;
     // One of the panel's sections, which fold for each other under
     // `Folds`, while the panel is on screen; a pane's or a list's do
     // not. The grid covers the panel without unmaking it, and a pane's
@@ -227,7 +232,7 @@ export component Section inherits VerticalLayout {
                     height: Theme.icon;
                     y: (parent.height - self.height) / 2;
                     transform-rotation: root.collapsed ? -90deg : 0deg;
-                    animate transform-rotation { duration: 120ms; easing: ease-out; }
+                    animate transform-rotation { duration: root.fold-time; easing: ease-out; }
                 }
                 if root.icon.width > 0: Image {
                     source: root.icon;
@@ -284,6 +289,7 @@ export component Section inherits VerticalLayout {
                     if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
                         Typing.close-all();
                     }
+                    root.animated = true;
                     root.collapsed = !root.collapsed;
                     if (!root.collapsed && root.one-of-panel && Folds.one-open) {
                         root.chased = true;
@@ -309,12 +315,12 @@ export component Section inherits VerticalLayout {
     Rectangle {
         clip: true;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
-        animate full { duration: 120ms; easing: ease-out; }
+        animate full { duration: root.fold-time; easing: ease-out; }
         // For the sliders' focus walk alone: closed all the way, the
         // body is put far to the left, out of every column, so comma
         // and period pass a folded section's sliders over.
         property <float> shut: root.collapsed ? 1 : 0;
-        animate shut { duration: 120ms; }
+        animate shut { duration: root.fold-time; }
         preferred-height: self.full;
         max-height: self.full;
         min-height: self.full;

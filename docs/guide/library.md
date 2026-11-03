@@ -172,6 +172,8 @@ first line is the root's full path.
 
 When you are looking at a root, or a folder inside one, the left pane
 shows its folders under **FOLDERS**, in the grid and the loupe alike.
+Each view remembers whether you folded the section, so it can stay
+open in the grid and folded in the loupe.
 
 - Click a folder to open its frames. Click its triangle to fold or
   unfold it without opening it.

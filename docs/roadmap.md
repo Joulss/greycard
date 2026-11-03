@@ -1104,9 +1104,6 @@ clears or a tester asks for it.
 - [ ] A Midtones slider in Light between Highlights and Shadows, so
       the middle lifts without the curve (discussion 59, 2026-11-01);
       weighed before and left out as unneeded, not settled
-- [ ] The FOLDERS section's fold kept per view, open in the Library
-      and closed in the Loupe if that is how it was left (discussion
-      59, 2026-11-02)
 - [ ] Reset an edit from the Library: the grid's selection back to
       Original, one history step a frame; the Loupe has it as the
       history's bottom row (discussion 59, 2026-11-02)
