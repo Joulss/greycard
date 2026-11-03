@@ -1,7 +1,8 @@
 //! `greycard merge hdr` and `greycard merge pano`: a tripod bracket, or
 //! a panorama's frames, merged into one linear DNG beside the first
 //! frame, through the engine's merge, the one the window's Merge to HDR
-//! and Merge to Panorama run.
+//! and Merge to Panorama run. `greycard merge again`: a merged file
+//! made again from the recipe it keeps.
 
 use std::path::PathBuf;
 
@@ -34,6 +35,31 @@ pub(crate) enum MergeKind {
     /// asked; 2 when it was written but went without something, each
     /// said; 1 when nothing was written
     Pano(PanoArgs),
+    /// Make a merged file again from the recipe it keeps: its frames
+    /// found beside it by name and checked against the hashes it keeps,
+    /// and merged as they were, with the same options and in the same
+    /// geometry, nothing fitted again, so every pixel lands where it
+    /// did; `--denoise` changes the learned denoiser each frame is
+    /// walked with. The file is written over the old one (its name and
+    /// its edit kept) unless `--out` says where. Exits as the merge it
+    /// makes again: 0, 2 when something was said, 1 when nothing was
+    /// written
+    Again(AgainArgs),
+}
+
+#[derive(Args)]
+pub(crate) struct AgainArgs {
+    /// The merged file, a .dng `merge hdr` or `merge pano` wrote, with
+    /// its frames beside it
+    file: PathBuf,
+    /// The learned denoiser on each frame: fast, balanced, best, or
+    /// none; without it, the recipe's
+    #[arg(long, value_name = "TIER",
+          value_parser = ["fast", "balanced", "best", "none"])]
+    denoise: Option<String>,
+    /// Where the merge goes, a .dng; without one, over the merged file
+    #[arg(long, short, value_name = "OUT.dng")]
+    out: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -44,7 +70,7 @@ pub(crate) struct PanoArgs {
     #[arg(required = true, num_args = 2..)]
     frames: Vec<PathBuf>,
     /// The frame whose view the others are turned onto, counting from
-    /// 0; the middle one without one
+    /// 0; without one, the frame in the middle of the turn
     #[arg(long, value_name = "N")]
     reference: Option<usize>,
     /// Where the panorama goes, a .dng; without one, beside the first
@@ -82,6 +108,7 @@ pub(crate) fn run(kind: MergeKind) -> Result<u8> {
     match kind {
         MergeKind::Hdr(args) => hdr(args),
         MergeKind::Pano(args) => pano(args),
+        MergeKind::Again(args) => again(args),
     }
 }
 
@@ -125,6 +152,30 @@ fn pano(args: PanoArgs) -> Result<u8> {
         &mut greycard_engine::walk::NoModels,
         &said,
     )?;
+    Ok(said_pano(&report))
+}
+
+fn again(args: AgainArgs) -> Result<u8> {
+    dng_only(args.out.as_ref())?;
+    let overrides = merge::Overrides {
+        denoise: args.denoise.map(|t| (t != "none").then_some(t)),
+        out: args.out,
+    };
+    let again = merge::again(
+        &args.file,
+        &overrides,
+        &greycard_edit::Edit::default(),
+        &mut merge::DenoiseModels::new(),
+        &said,
+    )?;
+    Ok(match again {
+        merge::Again::Hdr(report) => said_hdr(&report),
+        merge::Again::Pano(report) => said_pano(&report),
+    })
+}
+
+/// A panorama's report on the standard output, to its exit code.
+fn said_pano(report: &greycard_engine::merge::pano::Report) -> u8 {
     println!(
         "frames        {}, turned onto {}",
         report.frames.len(),
@@ -149,8 +200,12 @@ fn pano(args: PanoArgs) -> Result<u8> {
             p.seconds
         );
     }
-    if let Some((exif, fitted)) = report.focal {
-        println!("focal length  {exif:.1} px from EXIF, {fitted:.1} px fitted");
+    match report.focal {
+        Some((Some(exif), fitted)) => {
+            println!("focal length  {exif:.1} px from EXIF, {fitted:.1} px fitted")
+        }
+        Some((None, fitted)) => println!("focal length  {fitted:.1} px fitted"),
+        None => {}
     }
     match report.span {
         Some((across, down)) => println!(
@@ -213,7 +268,7 @@ fn pano(args: PanoArgs) -> Result<u8> {
         println!("note          {w}");
     }
     println!("wrote         {}", report.out.display());
-    Ok(if report.warnings.is_empty() { 0 } else { 2 })
+    if report.warnings.is_empty() { 0 } else { 2 }
 }
 
 fn hdr(args: HdrArgs) -> Result<u8> {
@@ -225,6 +280,7 @@ fn hdr(args: HdrArgs) -> Result<u8> {
         denoiser: None,
         noise: None,
         ca: CaFits::Once,
+        registration: None,
     };
     let report = merge::hdr(
         &args.frames,
@@ -233,6 +289,11 @@ fn hdr(args: HdrArgs) -> Result<u8> {
         &mut greycard_engine::walk::NoModels,
         &said,
     )?;
+    Ok(said_hdr(&report))
+}
+
+/// A bracket's report on the standard output, to its exit code.
+fn said_hdr(report: &merge::Report) -> u8 {
     println!(
         "frames        {} at {}x{}",
         report.frames.len(),
@@ -278,7 +339,7 @@ fn hdr(args: HdrArgs) -> Result<u8> {
         println!("note          {w}");
     }
     println!("wrote         {}", report.out.display());
-    Ok(if report.warnings.is_empty() { 0 } else { 2 })
+    if report.warnings.is_empty() { 0 } else { 2 }
 }
 
 /// The process's peak resident memory, where the system says it.

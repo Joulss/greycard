@@ -616,6 +616,10 @@ mod tests {
             denoised: false,
             headroom_stops: 3.0,
             lens_corrected: true,
+            heads: vec![Some("ab".repeat(32)), None],
+            wholes: vec![None, None],
+            unread: None,
+            recipe: None,
         };
         let metadata = RawMetadata {
             exif: ::rawler::exif::Exif {

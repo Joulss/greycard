@@ -100,3 +100,74 @@ fn a_merges_exit_code_says_how_it_went() {
     assert!(String::from_utf8_lossy(&ran.stderr).contains("not a .dng"));
     assert!(!jpeg.exists());
 }
+
+fn greycard<S: AsRef<std::ffi::OsStr>>(home: &Path, args: impl IntoIterator<Item = S>) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_greycard"))
+        .args(args)
+        .env("XDG_CONFIG_HOME", home.join("config"))
+        .env("XDG_DATA_HOME", home.join("data"))
+        .env("XDG_CACHE_HOME", home.join("cache"))
+        .env("XDG_STATE_HOME", home.join("state"))
+        .output()
+        .expect("greycard runs")
+}
+
+/// `greycard merge again`: a merge made again from its recipe exits as
+/// the merge did, 0 for a still bracket and 2 for one with a frame it
+/// resampled, written over the file under its name; a file that is no
+/// merge exits 1.
+#[test]
+fn a_merge_made_again_exits_as_its_merge_did() {
+    let home = Scratch(
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("greycard-merge-again-{}", std::process::id())),
+    );
+    greycard_core::testing::remove_dir_retry(&home.0);
+    let (still, moved) = (home.0.join("still"), home.0.join("moved"));
+    std::fs::create_dir_all(&still).unwrap();
+    std::fs::create_dir_all(&moved).unwrap();
+    let frames = bracket(&still, [0; 3]);
+    assert_eq!(merge(&home.0, &frames).status.code(), Some(0));
+    let file = still.join("IMG_0-HDR.dng");
+    let again = |args: &[&std::ffi::OsStr]| {
+        greycard(
+            &home.0,
+            ["merge".as_ref(), "again".as_ref()]
+                .iter()
+                .chain(args)
+                .collect::<Vec<&&std::ffi::OsStr>>(),
+        )
+    };
+    let ran = again(&[file.as_os_str(), "--denoise".as_ref(), "none".as_ref()]);
+    let said = String::from_utf8_lossy(&ran.stdout);
+    assert_eq!(
+        ran.status.code(),
+        Some(0),
+        "{said}{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert!(
+        said.contains(&format!("wrote         {}", file.display())),
+        "{said}"
+    );
+    assert!(!still.join("IMG_0-HDR-1.dng").exists());
+
+    // A tier this machine cannot run: nothing is made, the file kept.
+    let before = std::fs::read(&file).unwrap();
+    let ran = again(&[file.as_os_str(), "--denoise".as_ref(), "balanced".as_ref()]);
+    let err = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(1), "{err}");
+    assert!(err.contains("balanced tier"), "{err}");
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+
+    let knocked = bracket(&moved, [0, 0, 2]);
+    assert_eq!(merge(&home.0, &knocked).status.code(), Some(2));
+    let ran = again(&[moved.join("IMG_0-HDR.dng").as_os_str()]);
+    let said = String::from_utf8_lossy(&ran.stdout);
+    assert_eq!(ran.status.code(), Some(2), "{said}");
+    assert!(said.contains("IMG_2.dng had moved"), "{said}");
+
+    let ran = again(&[frames[0].as_os_str()]);
+    assert_eq!(ran.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&ran.stderr).contains("not a merge"));
+}

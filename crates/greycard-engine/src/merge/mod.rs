@@ -25,7 +25,9 @@ use anyhow::{Context, Result, bail};
 use greycard_core::decode::RawMetadata;
 use greycard_core::develop::ca::CaFit;
 use greycard_core::dng::{LinearDngOptions, Merged, write_merged_dng};
-use greycard_core::merge::{self, Accumulator, Frame, Measured, Noise};
+use greycard_core::merge::{
+    self, Accumulator, Frame, Geometry, Measured, Noise, Recipe, Registration,
+};
 use greycard_core::output::OnExists;
 use greycard_core::raw::{RawFrame, Samples, Shot};
 use greycard_core::register::{self, Edge, Model};
@@ -58,6 +60,10 @@ pub struct Options {
     pub noise: Option<Noise>,
     /// How the frames' CA is fitted.
     pub ca: CaFits,
+    /// Each frame's registration as a recipe keeps it, in place of
+    /// measuring: its exposure and its move, the frames' order. For a
+    /// merge made again ([`again`]).
+    pub registration: Option<Vec<Registration>>,
 }
 
 /// How a merge fits its frames' lateral CA.
@@ -71,6 +77,24 @@ pub enum CaFits {
     PerFrame,
     /// Not at all: the same measurement's baseline.
     Off,
+}
+
+impl CaFits {
+    /// Its name in a merge's recipe.
+    pub fn name(self) -> &'static str {
+        match self {
+            CaFits::Once => "once",
+            CaFits::PerFrame => "per-frame",
+            CaFits::Off => "off",
+        }
+    }
+
+    /// The fit of that name.
+    pub fn named(name: &str) -> Option<CaFits> {
+        [CaFits::Once, CaFits::PerFrame, CaFits::Off]
+            .into_iter()
+            .find(|c| c.name() == name)
+    }
 }
 
 /// Where a merge is, for a caller to say.
@@ -181,6 +205,45 @@ pub trait Sources {
     fn path(&self, _i: usize) -> Option<PathBuf> {
         None
     }
+    /// Its content hash, the library's, for the file's tag: none for a
+    /// frame that is no file.
+    fn hash(&self, i: usize) -> Option<String> {
+        let path = self.path(i)?;
+        greycard_library::hash_file(&path)
+            .map_err(|e| log::info!("merge: {}: no hash: {e}", path.display()))
+            .ok()
+    }
+    /// Its whole file's BLAKE3, for a frame whose head hash another
+    /// frame shares: none for a frame that is no file.
+    fn whole(&self, i: usize) -> Option<String> {
+        let path = self.path(i)?;
+        whole_hash(&path)
+            .map_err(|e| log::info!("merge: {}: no hash: {e}", path.display()))
+            .ok()
+    }
+}
+
+/// BLAKE3 over every byte of `path`: the index's `whole_hash`.
+fn whole_hash(path: &Path) -> std::io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(std::fs::File::open(path)?)?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Each frame's head hash for the file's tag, and beside it its whole
+/// file's hash where another frame has the same head (raws of one size
+/// with no compression, shot in one burst, can): the head alone would
+/// take one for the other.
+fn hashes(sources: &dyn Sources) -> (Vec<Option<String>>, Vec<Option<String>>) {
+    let heads: Vec<Option<String>> = (0..sources.len()).map(|i| sources.hash(i)).collect();
+    let wholes = (0..heads.len())
+        .map(|i| {
+            let shared =
+                heads[i].is_some() && (0..heads.len()).any(|j| j != i && heads[j] == heads[i]);
+            shared.then(|| sources.whole(i)).flatten()
+        })
+        .collect();
+    (heads, wholes)
 }
 
 /// What the frames' heads say: each one's EXIF exposure, the
@@ -479,9 +542,24 @@ pub fn hdr_of(
             out.display()
         );
     };
+    if let Some(given) = &options.registration
+        && given.len() != of
+    {
+        bail!(
+            "the recipe registers {} frames and the merge has {of}",
+            given.len()
+        );
+    }
     let reserved = Reserved::new(&out)?;
     let mut warnings = Vec::new();
     let mut reports: Vec<Option<FrameReport>> = vec![None; of];
+    let mut registration = vec![
+        Registration {
+            exposure: 1.0,
+            shift: None,
+        };
+        of
+    ];
 
     // The reference, walked first and held.
     progress.step(Step::Frame { index: 1, of });
@@ -578,43 +656,71 @@ pub fn hdr_of(
         denoised |= f.denoised;
         let walked_s = t.elapsed().as_secs_f64();
 
-        // The exposure first, on the frame as it stands: a tripod's
-        // frames have not moved enough to bias a median.
-        let t = Instant::now();
-        let measure = |f: &Walked| merge::refine_exposure(&ref_rgb, &ref_mask, &f.rgb, &f.mask);
-        let mut measured = measure(&f);
-        let rough = measured.map(|m| m.ratio).or(relative[k]).unwrap_or(1.0);
-        let measure_s = t.elapsed().as_secs_f64();
+        let given = options.registration.as_ref().map(|g| g[k]);
+        let (measured, moved, shift, exposure, measure_s, fit_s) = match given {
+            // As the recipe says: neither measured nor fitted.
+            Some(g) => {
+                let t = Instant::now();
+                let moved = g.shift.map(|shift| {
+                    resample(&mut f, &shift, w, h);
+                    shift.corner_distance(&register::Transform::IDENTITY, w, h)
+                });
+                (
+                    None,
+                    moved,
+                    g.shift,
+                    g.exposure,
+                    0.0,
+                    t.elapsed().as_secs_f64(),
+                )
+            }
+            None => {
+                // The exposure first, on the frame as it stands: a
+                // tripod's frames have not moved enough to bias a
+                // median.
+                let t = Instant::now();
+                let measure =
+                    |f: &Walked| merge::refine_exposure(&ref_rgb, &ref_mask, &f.rgb, &f.mask);
+                let mut measured = measure(&f);
+                let rough = measured.map(|m| m.ratio).or(relative[k]).unwrap_or(1.0);
+                let measure_s = t.elapsed().as_secs_f64();
 
-        // A tripod's frames should not move; a fit says whether they did.
-        let t = Instant::now();
-        let (moved, resampled) = check_moved(&ref_rgb, &mut f, rough, w, h, &sources.name(k));
+                // A tripod's frames should not move; a fit says
+                // whether they did.
+                let t = Instant::now();
+                let (moved, shift) = check_moved(&ref_rgb, &mut f, rough, w, h, &sources.name(k));
+                if shift.is_some() {
+                    measured = measure(&f);
+                }
+                let fit_s = t.elapsed().as_secs_f64();
+                let exposure = match (measured, relative[k]) {
+                    (Some(m), _) => m.ratio,
+                    (None, Some(e)) => {
+                        warnings.push(format!(
+                            "{}: too little held well in both frames to measure its \
+                             exposure; its EXIF's taken",
+                            sources.name(k)
+                        ));
+                        e
+                    }
+                    (None, None) => bail!(
+                        "{}: its exposure is in neither its EXIF nor its pixels",
+                        sources.name(k)
+                    ),
+                };
+                (measured, moved, shift, exposure, measure_s, fit_s)
+            }
+        };
+        let resampled = shift.is_some();
         if resampled {
-            measured = measure(&f);
             warnings.push(format!(
                 "{} had moved {:.2} px and was resampled onto the reference",
                 sources.name(k),
                 moved.unwrap_or(0.0)
             ));
         }
-        let fit_s = t.elapsed().as_secs_f64();
-
+        registration[k] = Registration { exposure, shift };
         let t = Instant::now();
-        let exposure = match (measured, relative[k]) {
-            (Some(m), _) => m.ratio,
-            (None, Some(e)) => {
-                warnings.push(format!(
-                    "{}: too little held well in both frames to measure its exposure; \
-                     its EXIF's taken",
-                    sources.name(k)
-                ));
-                e
-            }
-            (None, None) => bail!(
-                "{}: its exposure is in neither its EXIF nor its pixels",
-                sources.name(k)
-            ),
-        };
         exposures[k] = exposure;
         // A resampled frame's noise is smoothed by the resampling and
         // says nothing true of the sensor's.
@@ -683,6 +789,7 @@ pub fn hdr_of(
         .map(|k| (exposures[k], sensor.at_iso(iso[k] as f32)))
         .collect();
     let profile = merge::noise_profile(&frames, headroom);
+    let (heads, wholes) = hashes(sources);
     let tag = merge::Tag {
         kind: "hdr".into(),
         frames: (0..of).map(|i| sources.name(i)).collect(),
@@ -690,6 +797,20 @@ pub fn hdr_of(
         denoised,
         headroom_stops: headroom.log2(),
         lens_corrected: false,
+        heads,
+        wholes,
+        unread: None,
+        recipe: Some(Recipe {
+            ca: options.ca.name().into(),
+            // The tier that ran: one asked that stood down did not.
+            denoise: options
+                .denoiser
+                .filter(|_| denoised)
+                .and_then(greycard_ai::tier_of)
+                .map(Into::into),
+            noise: options.noise,
+            geometry: Geometry::Bracket(registration),
+        }),
     };
     let preview = merge::preview(&image, &r.white_balance, 1024)?;
     let software = concat!("greycard ", env!("CARGO_PKG_VERSION"));
@@ -745,6 +866,177 @@ pub fn hdr_of(
         seconds,
         warnings,
     })
+}
+
+/// What a merge made again changes of its recipe.
+#[derive(Debug, Clone, Default)]
+pub struct Overrides {
+    /// The learned denoiser's tier on each frame: `Some(None)` for
+    /// none, none for the recipe's.
+    pub denoise: Option<Option<String>>,
+    /// Where the file goes; none for over the merged file itself, which
+    /// keeps its name and its sidecar.
+    pub out: Option<PathBuf>,
+}
+
+/// What a merge made again did: the bracket's report, or the
+/// panorama's.
+#[derive(Debug, Clone)]
+pub enum Again {
+    Hdr(Report),
+    Pano(Box<pano::Report>),
+}
+
+/// What [`again`] says of a file written before its recipe was kept.
+pub const NO_RECIPE: &str =
+    "this merge was written before its recipe was kept; merge the frames again";
+
+/// The merged file `file` made again from the recipe its tag keeps,
+/// with `overrides`: its frames found beside it by name, each checked
+/// by its head's hash, and merged with the recipe's options and its
+/// geometry, which is not fitted again: a bracket's exposures and
+/// moves, a panorama's turns, lens, gains, canvas, and crop. So the
+/// frames land where they did, to the pixel. The new file is written
+/// as a merge's is, under the hidden folder that holds the name, and
+/// renamed over the old one at the end; nothing else of it changes.
+/// `edit` is what the frames are walked under (their demosaic and
+/// CA), as the merge's caller gave it.
+pub fn again(
+    file: &Path,
+    overrides: &Overrides,
+    edit: &Edit,
+    models: &mut dyn Models,
+    progress: &dyn Progress,
+) -> Result<Again> {
+    let tag = greycard_core::decode::merge_tag_path(file)
+        .with_context(|| format!("reading {}", file.display()))?
+        .with_context(|| {
+            format!(
+                "{} is not a merge of greycard's: it keeps no recipe",
+                file.display()
+            )
+        })?;
+    let name = name_of(file);
+    let Some(recipe) = tag.recipe.clone() else {
+        match &tag.unread {
+            Some(fact) => bail!("the recipe in {name} cannot be read: {fact}"),
+            None => bail!(NO_RECIPE),
+        }
+    };
+    if let Some(k) = (0..tag.frames.len()).find(|&k| tag.heads.get(k).is_none_or(Option::is_none)) {
+        bail!(
+            "the recipe in {name} cannot be read: no head= for {}",
+            tag.frames[k]
+        );
+    }
+    let dir = file
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut frames = Vec::with_capacity(tag.frames.len());
+    for (k, frame) in tag.frames.iter().enumerate() {
+        // A frame is a file's name in the merge's folder, and nothing
+        // that reaches out of it.
+        let plain = Path::new(frame).components().count() == 1
+            && matches!(
+                Path::new(frame).components().next(),
+                Some(std::path::Component::Normal(_))
+            )
+            && !frame.contains(['/', '\\']);
+        if !plain {
+            bail!("the recipe in {name} names a frame {frame:?} that is not a file's name");
+        }
+        let path = dir.join(frame);
+        if !path.is_file() {
+            bail!(
+                "{frame} is not beside {}: a merge is made again from its frames, in its folder",
+                file.display()
+            );
+        }
+        let hash = greycard_library::hash_file(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let same = Some(&hash) == tag.heads[k].as_ref()
+            && match tag.wholes.get(k).cloned().flatten() {
+                Some(whole) => {
+                    whole_hash(&path).with_context(|| format!("reading {}", path.display()))?
+                        == whole
+                }
+                None => true,
+            };
+        if !same {
+            bail!(
+                "{frame} is not the frame that was merged: it has changed since, or another \
+                 file has its name"
+            );
+        }
+        frames.push(path);
+    }
+    let tier = match &overrides.denoise {
+        Some(t) => t.clone(),
+        None => recipe.denoise.clone(),
+    };
+    let denoiser = match tier {
+        Some(t) => {
+            let model = greycard_ai::denoiser(&t)
+                .with_context(|| format!("there is no learned denoiser called {t}"))?;
+            // Refused before any frame is walked: a merge made without
+            // the tier asked would take the place of one made with it.
+            match models.can_denoise(model) {
+                Ok(()) => {}
+                Err(crate::walk::NoLearned::Missing(_)) => bail!(
+                    "the learned denoiser's {t} tier is not fetched, and nothing was made again"
+                ),
+                Err(crate::walk::NoLearned::Failed(why)) => bail!(
+                    "the learned denoiser's {t} tier cannot run ({why}), and nothing was made \
+                     again"
+                ),
+            }
+            Some(model)
+        }
+        None => None,
+    };
+    let (out, on_exists) = match &overrides.out {
+        Some(p) => (p.clone(), OnExists::default()),
+        None => (file.to_path_buf(), OnExists::Overwrite),
+    };
+    let ca = CaFits::named(&recipe.ca)
+        .with_context(|| format!("the recipe's CA fit, {}, is not one we know", recipe.ca))?;
+    match recipe.geometry {
+        Geometry::Bracket(registration) => hdr_of(
+            &Files(&frames),
+            &out,
+            edit,
+            &Options {
+                reference: Some(tag.reference),
+                out: Some(out.clone()),
+                on_exists,
+                denoiser,
+                noise: recipe.noise,
+                ca,
+                registration: Some(registration),
+            },
+            models,
+            progress,
+        )
+        .map(Again::Hdr),
+        Geometry::Pano(laid) => pano::pano_of(
+            &Files(&frames),
+            &out,
+            edit,
+            &pano::Options {
+                reference: Some(tag.reference),
+                out: Some(out.clone()),
+                on_exists,
+                denoiser,
+                lenses: None,
+                kernel: laid.kernel,
+                geometry: Some(laid),
+            },
+            models,
+            progress,
+        )
+        .map(|r| Again::Pano(Box::new(r))),
+    }
 }
 
 /// The name `out` held for one merge: a hidden folder beside it,
@@ -877,8 +1169,8 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// only past a tenth of a pixel, and believed only where the picture
 /// has structure every way and the move fits clearly better than none.
 /// A still frame of a flat horizon otherwise reads motion along it from
-/// its noise. How far it moved, none for a fit not believed, and
-/// whether it was resampled.
+/// its noise. How far it moved, none for a fit not believed, and the
+/// move it was resampled by.
 fn check_moved(
     reference: &[f32],
     f: &mut Walked,
@@ -886,7 +1178,7 @@ fn check_moved(
     w: usize,
     h: usize,
     name: &str,
-) -> (Option<f64>, bool) {
+) -> (Option<f64>, Option<register::Transform>) {
     let (a, b) = merge::fit_planes(reference, &f.rgb, e);
     // Judged against the identity rather than by the fit's residual
     // alone: a still frame is the alternative here, and a bracket's
@@ -905,14 +1197,14 @@ fn check_moved(
         Ok(fit) => fit,
         Err(e) => {
             log::info!("merge: {name}: no fit ({e}); taken as unmoved");
-            return (None, false);
+            return (None, None);
         }
     };
     let by = fit
         .transform
         .corner_distance(&register::Transform::IDENTITY, w, h);
     if by <= merge::MOVED {
-        return (Some(by), false);
+        return (Some(by), None);
     }
     let condition = merge::condition(&a, w, h);
     let back = register::warp_plane(&b, w, h, w, h, &fit.transform, Edge::Fill(f32::NAN));
@@ -923,16 +1215,21 @@ fn check_moved(
              residual {after:.4} against {before:.4} unmoved, fit {:.3}); taken as unmoved",
             fit.residual
         );
-        return (None, false);
+        return (None, None);
     }
+    resample(f, &fit.transform, w, h);
+    (Some(by), Some(fit.transform))
+}
+
+/// Frame `f` resampled by `shift` onto the reference, and masked again.
+fn resample(f: &mut Walked, shift: &register::Transform, w: usize, h: usize) {
     let image = CameraImage {
         width: w,
         height: h,
         data: std::mem::take(&mut f.rgb),
     };
-    f.rgb = register::warp_camera_image(&image, &fit.transform, Edge::Fill(f32::NAN)).data;
+    f.rgb = register::warp_camera_image(&image, shift, Edge::Fill(f32::NAN)).data;
     f.mask = merge::clip_mask(&f.rgb, w, h);
-    (Some(by), true)
 }
 
 /// The models a merge runs from the command line or the window's merge
@@ -1194,6 +1491,229 @@ mod tests {
         assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
         assert!(report.warnings[0].contains("IMG_2.dng had moved"));
         assert!(!report.frames[0].resampled);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A merged file's samples and its tag.
+    fn samples_and_tag(file: &Path) -> (Vec<f32>, merge::Tag) {
+        let back = greycard_core::decode::decode_path(file).unwrap();
+        let Samples::F32(samples) = back.samples else {
+            panic!("float samples");
+        };
+        (samples, back.dng.merged.expect("our tag"))
+    }
+
+    /// The file keeps its recipe: the options, each frame's hash, and
+    /// each frame's exposure and move. Made again from it, the bracket
+    /// is the same to the sample, its exposures and its move taken from
+    /// the recipe rather than measured, and written over the old file
+    /// under its name, nothing hidden left.
+    #[test]
+    fn a_bracket_made_again_is_the_same_to_the_sample() {
+        let (dir, files) = bracket("again", [0, 0, 2]);
+        let report = merged(&files, &Options::default());
+        let (before, tag) = samples_and_tag(&report.out);
+        assert_eq!(
+            tag.heads,
+            files
+                .iter()
+                .map(|f| Some(greycard_library::hash_file(f).unwrap()))
+                .collect::<Vec<_>>()
+        );
+        let recipe = tag.recipe.clone().expect("a recipe");
+        assert_eq!((recipe.ca.as_str(), recipe.denoise), ("once", None));
+        let Geometry::Bracket(registration) = &recipe.geometry else {
+            panic!("a bracket's geometry");
+        };
+        assert_eq!(registration[1].exposure, 1.0);
+        assert_eq!(registration[2].exposure, report.frames[2].exposure);
+        assert!(registration[2].shift.is_some() && registration[0].shift.is_none());
+
+        let steps = std::cell::RefCell::new(Vec::new());
+        let Again::Hdr(again) = again(
+            &report.out,
+            &Overrides::default(),
+            &Edit::default(),
+            &mut crate::walk::NoModels,
+            &|s: Step| steps.borrow_mut().push(s),
+        )
+        .unwrap() else {
+            panic!("a bracket");
+        };
+        assert_eq!(steps.into_inner().len(), 4);
+        assert_eq!(again.out, report.out);
+        assert_eq!(again.warnings, report.warnings);
+        assert!(again.frames.iter().all(|f| f.measured.is_none()));
+        let (after, tag_after) = samples_and_tag(&report.out);
+        assert_eq!(tag_after, tag);
+        assert!(
+            before
+                .iter()
+                .zip(&after)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+        assert_eq!(before.len(), after.len());
+        let hidden: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with('.') || n.ends_with("-1.dng"))
+            .collect();
+        assert!(hidden.is_empty(), "{hidden:?}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A tier asked of a merge made again that is not fetched is
+    /// refused before any frame is walked, and the file left as it was;
+    /// a merge asked for a tier that stood down keeps none in its
+    /// recipe, since none ran.
+    #[test]
+    fn a_tier_not_there_is_refused_and_a_tier_not_run_not_kept() {
+        let (dir, files) = bracket("again-tier", [0; 3]);
+        let steps = std::cell::RefCell::new(Vec::new());
+        let report = hdr(
+            &files,
+            &Edit::default(),
+            &Options {
+                denoiser: greycard_ai::denoiser("balanced"),
+                ..Options::default()
+            },
+            &mut crate::walk::NoModels,
+            &|s: Step| steps.borrow_mut().push(s),
+        )
+        .unwrap();
+        assert!(!report.denoised);
+        assert!(!report.warnings.is_empty());
+        let (_, tag) = samples_and_tag(&report.out);
+        assert_eq!(tag.recipe.unwrap().denoise, None);
+
+        let before = std::fs::read(&report.out).unwrap();
+        let steps = std::cell::RefCell::new(Vec::new());
+        let refused = again(
+            &report.out,
+            &Overrides {
+                denoise: Some(Some("balanced".into())),
+                ..Default::default()
+            },
+            &Edit::default(),
+            &mut crate::walk::NoModels,
+            &|s: Step| steps.borrow_mut().push(s),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            refused,
+            "the learned denoiser's balanced tier is not fetched, and nothing was made again"
+        );
+        assert!(steps.into_inner().is_empty());
+        assert_eq!(std::fs::read(&report.out).unwrap(), before);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Frames that share a head hash (and so a size) are kept with
+    /// their whole files' hashes as well; frames that do not, without.
+    #[test]
+    fn frames_that_share_a_head_keep_their_whole_hash() {
+        let dir = scratch("wholes");
+        let head = vec![7u8; greycard_library::hash::HEAD];
+        let write = |name: &str, tail: u8| {
+            let path = dir.join(name);
+            let mut bytes = head.clone();
+            bytes.extend([tail; 100]);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let files = [write("a.raw", 1), write("b.raw", 2), {
+            let p = dir.join("c.raw");
+            std::fs::write(&p, b"another").unwrap();
+            p
+        }];
+        let (heads, wholes) = hashes(&Files(&files));
+        assert_eq!(heads[0], heads[1]);
+        assert!(heads.iter().all(Option::is_some));
+        assert!(wholes[0].is_some() && wholes[1].is_some() && wholes[2].is_none());
+        assert_ne!(wholes[0], wholes[1]);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A merge is made again only from its own frames: a file that is
+    /// no merge, one written before its recipe was kept, a frame gone
+    /// from beside it, and a frame changed since are each refused, and
+    /// the file left as it was.
+    #[test]
+    fn a_merge_without_its_recipe_or_its_frames_is_not_made_again() {
+        let (dir, files) = bracket("again-refused", [0; 3]);
+        let report = merged(&files, &Options::default());
+        let refused = |file: &Path| {
+            again(
+                file,
+                &Overrides::default(),
+                &Edit::default(),
+                &mut crate::walk::NoModels,
+                &|_: Step| {},
+            )
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+        };
+        assert_eq!(
+            refused(&files[0]),
+            format!(
+                "{} is not a merge of greycard's: it keeps no recipe",
+                files[0].display()
+            )
+        );
+        let old = dir.join("old-HDR.dng");
+        greycard_core::merge::testing::write_merged(&files[0], &old);
+        assert_eq!(refused(&old), NO_RECIPE);
+        // One fact of the recipe spoiled, its length kept, and a frame
+        // named out of the folder: each said for what it is.
+        let bytes = std::fs::read(&report.out).unwrap();
+        let spoiled = |from: &[u8], to: &[u8], name: &str| {
+            let at = bytes
+                .windows(from.len())
+                .position(|w| w == from)
+                .expect("the fact");
+            let mut b = bytes.clone();
+            b[at..at + to.len()].copy_from_slice(to);
+            let path = dir.join(name);
+            std::fs::write(&path, b).unwrap();
+            path
+        };
+        let broken = spoiled(b"exposure=2 ", b"exposure=2 x", "broken-HDR.dng");
+        let fact = refused(&broken);
+        assert!(
+            fact.starts_with("the recipe in broken-HDR.dng cannot be read: exposure=2 x"),
+            "{fact}"
+        );
+        let outside = spoiled(b"frame=IMG_1.dng", b"frame=../_1.dng", "outside-HDR.dng");
+        assert_eq!(
+            refused(&outside),
+            "the recipe in outside-HDR.dng names a frame \"../_1.dng\" that is not a file's name"
+        );
+
+        let before = std::fs::read(&report.out).unwrap();
+        let aside = dir.join("aside.dng");
+        std::fs::rename(&files[0], &aside).unwrap();
+        assert_eq!(
+            refused(&report.out),
+            format!(
+                "IMG_0.dng is not beside {}: a merge is made again from its frames, in its folder",
+                report.out.display()
+            )
+        );
+        std::fs::rename(&aside, &files[0]).unwrap();
+        let samples = mosaic_of(W, H, 3.8, Noise::ASSUMED, 99, |x, y, c| {
+            scene(x, y, c, W, H)
+        });
+        write_dng(&files[2], samples, W, H, (1, 25), "Bracket");
+        assert_eq!(
+            refused(&report.out),
+            "IMG_2.dng is not the frame that was merged: it has changed since, or another \
+             file has its name"
+        );
+        assert_eq!(std::fs::read(&report.out).unwrap(), before);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

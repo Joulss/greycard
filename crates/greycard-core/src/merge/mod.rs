@@ -32,6 +32,9 @@ pub mod blend;
 pub mod features;
 pub mod pano;
 pub mod seam;
+mod tag;
+
+pub use tag::{Geometry, Laid, Placed, Recipe, Registration, Tag};
 
 use rayon::prelude::*;
 
@@ -686,83 +689,6 @@ pub fn noise_profile(frames: &[(f64, Noise)], headroom: f32) -> [f64; 2] {
     best.1
 }
 
-/// What a merge of ours says of itself, in the file's
-/// `DNGPrivateData`: our name, then a line a fact.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Tag {
-    /// The kind of merge: `hdr` or `pano`.
-    pub kind: String,
-    /// The frames' file names, in the order given.
-    pub frames: Vec<String>,
-    /// Which of them the merge is on the scale and in the geometry of.
-    pub reference: usize,
-    /// Whether the frames were denoised before the merge: the develop's
-    /// denoisers stand down on such a file.
-    pub denoised: bool,
-    /// The stops the samples were stored under the reference's scale
-    /// by: the develop brightens by as much, so the file opens at the
-    /// reference's exposure.
-    pub headroom_stops: f32,
-    /// Whether the frames' lens was corrected in the merge (a
-    /// panorama's is): the develop's lens profile stands down on such
-    /// a file, which is in no one frame's geometry.
-    pub lens_corrected: bool,
-}
-
-/// The maker's name `DNGPrivateData` starts with, as the specification
-/// asks, ending in its NUL.
-const MAKER: &[u8] = b"greycard\0";
-
-impl Tag {
-    /// The tag's bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut text = format!(
-            "merge={}\nreference={}\ndenoised={}\nheadroom={:.4}\n",
-            self.kind,
-            self.reference,
-            u8::from(self.denoised),
-            self.headroom_stops
-        );
-        if self.lens_corrected {
-            text.push_str("lens=corrected\n");
-        }
-        for f in &self.frames {
-            // A name is one line: a line break in it would end the fact.
-            text.push_str(&format!("frame={}\n", f.replace(['\n', '\r'], " ")));
-        }
-        let mut out = MAKER.to_vec();
-        out.extend_from_slice(text.as_bytes());
-        out
-    }
-
-    /// The tag from `DNGPrivateData`'s bytes; none for another maker's
-    /// data, or ours without a kind.
-    pub fn parse(bytes: &[u8]) -> Option<Tag> {
-        let text = std::str::from_utf8(bytes.strip_prefix(MAKER)?).ok()?;
-        let mut tag = Tag::default();
-        for line in text.lines() {
-            let Some((key, value)) = line.split_once('=') else {
-                continue;
-            };
-            match key {
-                "merge" => tag.kind = value.to_string(),
-                "reference" => tag.reference = value.parse().ok()?,
-                "denoised" => tag.denoised = value == "1",
-                "headroom" => {
-                    tag.headroom_stops = value
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|v| v.is_finite() && (0.0..=32.0).contains(v))?;
-                }
-                "lens" => tag.lens_corrected = value == "corrected",
-                "frame" => tag.frames.push(value.to_string()),
-                _ => {}
-            }
-        }
-        (!tag.kind.is_empty()).then_some(tag)
-    }
-}
-
 /// An 8-bit sRGB rendering of camera RGB on the reference's scale, for
 /// a DNG's preview and thumbnail: the gains, the camera matrix, sRGB,
 /// clipped, box-averaged down to `max_side` on the long edge.
@@ -984,6 +910,7 @@ pub mod testing {
             denoised: false,
             headroom_stops: 1.0,
             lens_corrected: false,
+            ..Default::default()
         };
         let file = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
         crate::dng::write_merged_dng(
@@ -1442,31 +1369,6 @@ mod tests {
         let got = pairs.fit().unwrap();
         assert!((got.shot / truth.shot - 1.0).abs() < 0.1, "{got:?}");
         assert_eq!(PairNoise::default().fit(), None);
-    }
-
-    #[test]
-    fn the_tag_round_trips() {
-        let tag = Tag {
-            kind: "hdr".into(),
-            frames: vec!["a.CR3".into(), "b\nc.CR3".into()],
-            reference: 1,
-            denoised: true,
-            headroom_stops: 2.5,
-            lens_corrected: false,
-        };
-        let back = Tag::parse(&tag.to_bytes()).unwrap();
-        assert!(!back.lens_corrected);
-        let pano = Tag {
-            kind: "pano".into(),
-            lens_corrected: true,
-            ..back.clone()
-        };
-        assert_eq!(Tag::parse(&pano.to_bytes()), Some(pano));
-        assert_eq!(back.frames, ["a.CR3", "b c.CR3"]);
-        assert_eq!((back.reference, back.denoised), (1, true));
-        assert_eq!(back.headroom_stops, 2.5);
-        assert_eq!(Tag::parse(b"Adobe\0MakN"), None);
-        assert_eq!(Tag::parse(b"greycard\0reference=1\n"), None);
     }
 
     #[test]

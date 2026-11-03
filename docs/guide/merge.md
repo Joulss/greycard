@@ -58,9 +58,10 @@ stitched into one wide frame.
   is held to 100 megapixels for now.
 - The merge is a float DNG beside the first frame, named after it:
   `IMG_0001-pano.dng`, numbered when the name is taken, and on top of a
-  stack with its frames, as a merge to HDR is. It opens with the middle
-  frame's look: its edit less its exposure, its lens corrections, its
-  crop and straightening, its retouching, and its masks, which were
+  stack with its frames, as a merge to HDR is. It is seen from the frame
+  in the middle of the turn, whatever order you shot in, and opens with
+  that frame's look: its edit less its exposure, its lens corrections,
+  its crop and straightening, its retouching, and its masks, which were
   placed on one frame.
 - When that edit uses the learned denoiser, each frame is denoised as
   it is read.
@@ -70,3 +71,21 @@ IMG_0003.CR3`, with `--reference` to pick the frame the others are
 turned onto (counting from 0), `--out` to name the file, and
 `--on-exists` for when that name is taken. A second merge to a file
 that one is still writing is refused.
+
+# Making a merge again
+
+A merged file keeps its recipe: its frames' names with a check of
+each, the merge's options, and where every frame was placed. While the
+frames are beside it, unchanged, it can be made again from them.
+
+- `greycard merge again IMG_0001-pano.dng --denoise balanced` merges
+  the frames again with the learned denoiser on each (`fast`,
+  `balanced`, `best`, or `none`). The frames land where they did, to
+  the pixel, so the file's edit, crop, and masks still fit; only the
+  noise changes. Nothing is matched or fitted again, so it is quicker
+  than the first merge.
+- The file is replaced under its own name, and its edit kept; `--out`
+  writes it elsewhere instead.
+- A frame missing from beside the file, renamed, or changed since is
+  named, and nothing is written. A file merged before recipes were
+  kept is refused: merge its frames again.

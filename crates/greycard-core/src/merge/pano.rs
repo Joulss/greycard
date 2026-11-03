@@ -140,6 +140,66 @@ pub fn inverse3(m: &Mat3) -> Option<Mat3> {
     Some(adj.map(|v| v / det))
 }
 
+/// The unit quaternion `[w, x, y, z]` of rotation `r`, `w` never
+/// negative (Shepperd's method: the largest of the four found first,
+/// the rest from it, so no square root of a near-zero is taken).
+pub fn quaternion(r: &Mat3) -> [f64; 4] {
+    let t = r[0] + r[4] + r[8];
+    let q = if t > 0.0 {
+        let s = 2.0 * (t + 1.0).sqrt();
+        [
+            0.25 * s,
+            (r[7] - r[5]) / s,
+            (r[2] - r[6]) / s,
+            (r[3] - r[1]) / s,
+        ]
+    } else if r[0] > r[4] && r[0] > r[8] {
+        let s = 2.0 * (1.0 + r[0] - r[4] - r[8]).sqrt();
+        [
+            (r[7] - r[5]) / s,
+            0.25 * s,
+            (r[1] + r[3]) / s,
+            (r[2] + r[6]) / s,
+        ]
+    } else if r[4] > r[8] {
+        let s = 2.0 * (1.0 + r[4] - r[0] - r[8]).sqrt();
+        [
+            (r[2] - r[6]) / s,
+            (r[1] + r[3]) / s,
+            0.25 * s,
+            (r[5] + r[7]) / s,
+        ]
+    } else {
+        let s = 2.0 * (1.0 + r[8] - r[0] - r[4]).sqrt();
+        [
+            (r[3] - r[1]) / s,
+            (r[2] + r[6]) / s,
+            (r[5] + r[7]) / s,
+            0.25 * s,
+        ]
+    };
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let sign = if q[0] < 0.0 { -1.0 } else { 1.0 };
+    q.map(|v| sign * v / n)
+}
+
+/// The rotation of quaternion `q` `[w, x, y, z]`, made unit first.
+pub fn of_quaternion(q: [f64; 4]) -> Mat3 {
+    let n = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let [w, x, y, z] = q.map(|v| v / n);
+    [
+        1.0 - 2.0 * (y * y + z * z),
+        2.0 * (x * y - z * w),
+        2.0 * (x * z + y * w),
+        2.0 * (x * y + z * w),
+        1.0 - 2.0 * (x * x + z * z),
+        2.0 * (y * z - x * w),
+        2.0 * (x * z - y * w),
+        2.0 * (y * z + x * w),
+        1.0 - 2.0 * (x * x + y * y),
+    ]
+}
+
 /// A frame's lens: the corrections a develop would make of it, those
 /// that move a pixel, applied in the order the develop applies them.
 #[derive(Debug, Clone)]
@@ -273,7 +333,7 @@ pub enum Projection {
 }
 
 /// Where every frame of a panorama is, onto the reference's view.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Model {
     /// Each frame turned about the lens: its rotation from its own
     /// camera's rays to the reference's, the focal length in pixels of
@@ -286,6 +346,95 @@ pub enum Model {
     /// Each frame's corrected pixels onto the reference's: for a
     /// panorama of frames whose focal length is not known, planar.
     Planar { homographies: Vec<Homography> },
+}
+
+impl Model {
+    /// The frame nearest the middle of the turn: the one whose rotation
+    /// is nearest the mean of them all (the largest trace against
+    /// their sum, which is the least distance to their mean), or for a
+    /// planar model the one whose middle lands nearest the mean of the
+    /// middles. Of a set shot right to left, or with a frame shot
+    /// again at its end, the middle of the list is not the middle of
+    /// the picture; this is.
+    pub fn middle(&self, width: usize, height: usize) -> usize {
+        let nearest = |score: &dyn Fn(usize) -> f64, n: usize| {
+            (0..n)
+                .min_by(|&a, &b| score(a).total_cmp(&score(b)).then(a.cmp(&b)))
+                .unwrap_or(0)
+        };
+        match self {
+            Model::Turned { rotations, .. } => {
+                let mut sum = [0.0; 9];
+                for r in rotations {
+                    for (s, v) in sum.iter_mut().zip(r) {
+                        *s += v;
+                    }
+                }
+                let trace =
+                    |k: usize| -> f64 { -(0..9).map(|i| sum[i] * rotations[k][i]).sum::<f64>() };
+                nearest(&trace, rotations.len())
+            }
+            Model::Planar { homographies } => {
+                let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+                let middles: Vec<(f64, f64)> =
+                    homographies.iter().map(|h| h.apply(cx, cy)).collect();
+                let n = middles.len().max(1) as f64;
+                let mx = middles.iter().map(|p| p.0).sum::<f64>() / n;
+                let my = middles.iter().map(|p| p.1).sum::<f64>() / n;
+                let far = |k: usize| (middles[k].0 - mx).hypot(middles[k].1 - my);
+                nearest(&far, middles.len())
+            }
+        }
+    }
+
+    /// The model turned onto frame `reference`'s view: each frame's
+    /// rotation (or homography) composed with the inverse of that
+    /// frame's, so it is the identity. The pairs' fit is unchanged by
+    /// it: one turn of the whole.
+    pub fn onto(self, reference: usize) -> Model {
+        match self {
+            Model::Turned {
+                focal,
+                rotations,
+                projection,
+            } => {
+                let back = transpose(&rotations[reference]);
+                let rotations = rotations
+                    .iter()
+                    .enumerate()
+                    .map(|(k, r)| {
+                        if k == reference {
+                            IDENTITY
+                        } else {
+                            mul(&back, r)
+                        }
+                    })
+                    .collect();
+                Model::Turned {
+                    focal,
+                    rotations,
+                    projection,
+                }
+            }
+            Model::Planar { homographies } => {
+                let Some(back) = homographies[reference].inverse() else {
+                    return Model::Planar { homographies };
+                };
+                let homographies = homographies
+                    .iter()
+                    .enumerate()
+                    .map(|(k, h)| {
+                        if k == reference {
+                            Homography::IDENTITY
+                        } else {
+                            back.compose(h)
+                        }
+                    })
+                    .collect();
+                Model::Planar { homographies }
+            }
+        }
+    }
 }
 
 /// A panorama's frames as they lie: the model, the frames' size, and
@@ -1047,11 +1196,12 @@ pub struct Canvas {
     pub height: usize,
 }
 
-/// The canvas that holds every frame, and each frame's bounding
-/// rectangle on it.
-pub fn canvas(placement: &Placement, lens: &FrameLens, n: usize) -> Option<(Canvas, Vec<Rect>)> {
+/// Each frame's outline on the canvas, in the projection's
+/// coordinates: its least and greatest x and y. None for a frame no
+/// point of which lands.
+fn extents(placement: &Placement, lens: &FrameLens, n: usize) -> Vec<(f64, f64, f64, f64)> {
     let outline = lens.outline(64);
-    let boxes: Vec<(f64, f64, f64, f64)> = (0..n)
+    (0..n)
         .map(|k| {
             outline
                 .iter()
@@ -1060,7 +1210,13 @@ pub fn canvas(placement: &Placement, lens: &FrameLens, n: usize) -> Option<(Canv
                     (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y))
                 })
         })
-        .collect();
+        .collect()
+}
+
+/// The canvas that holds every frame, and each frame's bounding
+/// rectangle on it.
+pub fn canvas(placement: &Placement, lens: &FrameLens, n: usize) -> Option<(Canvas, Vec<Rect>)> {
+    let boxes = extents(placement, lens, n);
     if boxes.iter().any(|b| !(b.0 <= b.2 && b.1 <= b.3)) {
         return None;
     }
@@ -1071,32 +1227,48 @@ pub fn canvas(placement: &Placement, lens: &FrameLens, n: usize) -> Option<(Canv
     if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
         return None;
     }
-    let width = (x1 - x0) as usize;
-    let height = (y1 - y0) as usize;
-    let rects = boxes
+    let canvas = Canvas {
+        x0,
+        y0,
+        width: (x1 - x0) as usize,
+        height: (y1 - y0) as usize,
+    };
+    Some((canvas, rects_on(&boxes, &canvas)))
+}
+
+/// Each frame's bounding rectangle on a canvas already settled: a
+/// merge made again lays its frames on the canvas its tag keeps.
+/// None when a frame does not land.
+pub fn boxes_on(
+    placement: &Placement,
+    lens: &FrameLens,
+    n: usize,
+    canvas: &Canvas,
+) -> Option<Vec<Rect>> {
+    let boxes = extents(placement, lens, n);
+    if boxes.iter().any(|b| !(b.0 <= b.2 && b.1 <= b.3)) {
+        return None;
+    }
+    Some(rects_on(&boxes, canvas))
+}
+
+fn rects_on(boxes: &[(f64, f64, f64, f64)], canvas: &Canvas) -> Vec<Rect> {
+    let (x0, y0, width, height) = (canvas.x0, canvas.y0, canvas.width, canvas.height);
+    boxes
         .iter()
         .map(|b| {
             let x = ((b.0 - x0).floor().max(0.0)) as usize;
             let y = ((b.1 - y0).floor().max(0.0)) as usize;
-            let r = (((b.2 - x0).ceil()) as usize).min(width);
-            let bt = (((b.3 - y0).ceil()) as usize).min(height);
+            let r = (((b.2 - x0).ceil().max(0.0)) as usize).min(width);
+            let bt = (((b.3 - y0).ceil().max(0.0)) as usize).min(height);
             Rect {
-                x,
-                y,
+                x: x.min(width),
+                y: y.min(height),
                 width: r.saturating_sub(x),
                 height: bt.saturating_sub(y),
             }
         })
-        .collect();
-    Some((
-        Canvas {
-            x0,
-            y0,
-            width,
-            height,
-        },
-        rects,
-    ))
+        .collect()
 }
 
 /// The largest rectangle of `covered` (`width` by `height`) that is
@@ -1153,6 +1325,22 @@ pub enum Kernel {
 }
 
 impl Kernel {
+    /// Its name in a merge's tag.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kernel::Bilinear => "bilinear",
+            Kernel::Cubic => "cubic",
+            Kernel::Lanczos3 => "lanczos3",
+        }
+    }
+
+    /// The kernel of that name.
+    pub fn named(name: &str) -> Option<Kernel> {
+        [Kernel::Bilinear, Kernel::Cubic, Kernel::Lanczos3]
+            .into_iter()
+            .find(|k| k.name() == name)
+    }
+
     fn reach(self) -> isize {
         match self {
             Kernel::Bilinear => 1,
@@ -1504,6 +1692,49 @@ mod tests {
 
     const W: usize = 600;
     const H: usize = 400;
+
+    /// The middle of a turn shot right to left in uneven steps is the
+    /// frame nearest the mean turn, not the list's middle; turned onto
+    /// it, that frame is the identity and each frame keeps its turn
+    /// from every other. A planar model's middle is the frame whose
+    /// middle lands nearest the mean of the middles.
+    #[test]
+    fn the_middle_of_the_turn_and_the_frames_turned_onto_it() {
+        let yaws = [0.5, 0.3, 0.0, -0.3];
+        let rotations: Vec<Mat3> = yaws.iter().map(|&y| rotation([0.0, y, 0.0])).collect();
+        let model = Model::Turned {
+            focal: 500.0,
+            rotations: rotations.clone(),
+            projection: Projection::Planar,
+        };
+        assert_eq!(model.middle(W, H), 2);
+        let Model::Turned {
+            rotations: onto, ..
+        } = model.onto(2)
+        else {
+            unreachable!()
+        };
+        assert_eq!(onto[2], IDENTITY);
+        for (a, b) in [(0, 1), (1, 3), (0, 3)] {
+            let before = mul(&transpose(&rotations[a]), &rotations[b]);
+            let after = mul(&transpose(&onto[a]), &onto[b]);
+            for (x, y) in before.iter().zip(&after) {
+                assert!((x - y).abs() < 1e-12);
+            }
+        }
+        let shift = |dx: f64| Homography {
+            m: [1.0, 0.0, dx, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        };
+        let planar = Model::Planar {
+            homographies: vec![shift(500.0), shift(300.0), shift(0.0), shift(-300.0)],
+        };
+        assert_eq!(planar.middle(W, H), 2);
+        let Model::Planar { homographies } = planar.onto(1) else {
+            unreachable!()
+        };
+        assert_eq!(homographies[1], Homography::IDENTITY);
+        assert!((homographies[3].apply(0.0, 0.0).0 + 600.0).abs() < 1e-9);
+    }
 
     /// A frame turned 40 degrees about the vertical lands on a cylinder
     /// where the angle says, and back; the planar homography of the

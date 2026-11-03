@@ -197,7 +197,8 @@ enum Command {
     },
     /// Merge frames into one: a tripod bracket into a frame of its
     /// whole range (`hdr`), or a panorama's frames into one wide
-    /// picture (`pano`)
+    /// picture (`pano`); or make a merged file again from the recipe it
+    /// keeps (`again`)
     Merge {
         #[command(subcommand)]
         kind: merge::MergeKind,

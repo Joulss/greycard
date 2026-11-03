@@ -182,16 +182,19 @@ impl Job {
                 Kind::Hdr => merge::reference_of(&self.files, None)?,
                 Kind::Pano => pano::reference_of(self.files.len(), None)?,
             };
-            let edit = &self.edits[reference].clone().unwrap_or_else(|| {
-                if self.write_sidecars {
-                    greycard_edit_io::on_disk::read_sidecar_said(&self.files[reference])
-                        .0
-                        .current
-                        .clone()
-                } else {
-                    greycard_edit::Edit::default()
-                }
-            });
+            let edit_of = |k: usize| {
+                self.edits[k].clone().unwrap_or_else(|| {
+                    if self.write_sidecars {
+                        greycard_edit_io::on_disk::read_sidecar_said(&self.files[k])
+                            .0
+                            .current
+                            .clone()
+                    } else {
+                        greycard_edit::Edit::default()
+                    }
+                })
+            };
+            let edit = &edit_of(reference);
             let progress = |step: Step| {
                 said(match step {
                     Step::Frame { index, of } => format!("merging frame {index} of {of}"),
@@ -220,36 +223,54 @@ impl Job {
                     )
                 }
                 Kind::Pano => {
-                    // The learned denoiser on each frame, when the
-                    // reference's edit has it.
-                    let denoiser = edit.noise.tier().and_then(greycard_ai::denoiser);
-                    let options = pano::Options {
-                        denoiser,
-                        ..pano::Options::default()
+                    // Under `edit`, the learned denoiser on each frame
+                    // when it has it; `again`, walked from that frame
+                    // and written over that file.
+                    let run = |edit: &Edit, again: Option<(usize, PathBuf)>| {
+                        let denoiser = edit.noise.tier().and_then(greycard_ai::denoiser);
+                        let options = pano::Options {
+                            denoiser,
+                            reference: again.as_ref().map(|(k, _)| *k),
+                            on_exists: match again {
+                                Some(_) => greycard_core::output::OnExists::Overwrite,
+                                None => Default::default(),
+                            },
+                            out: again.map(|(_, out)| out),
+                            ..pano::Options::default()
+                        };
+                        match denoiser {
+                            Some(_) => pano::pano(
+                                &self.files,
+                                edit,
+                                &options,
+                                &mut merge::DenoiseModels::new(),
+                                &progress,
+                            ),
+                            None => pano::pano(
+                                &self.files,
+                                edit,
+                                &options,
+                                &mut greycard_engine::walk::NoModels,
+                                &progress,
+                            ),
+                        }
                     };
-                    let r = match denoiser {
-                        Some(_) => pano::pano(
-                            &self.files,
-                            edit,
-                            &options,
-                            &mut merge::DenoiseModels::new(),
-                            &progress,
-                        )?,
-                        None => pano::pano(
-                            &self.files,
-                            edit,
-                            &options,
-                            &mut greycard_engine::walk::NoModels,
-                            &progress,
-                        )?,
-                    };
-                    (
-                        r.out,
-                        r.headroom_stops,
-                        r.seconds,
-                        r.warnings,
-                        pano::edit_for_pano(edit),
-                    )
+                    let mut r = run(edit, None)?;
+                    // The reference is the middle of the turn, which the
+                    // list's middle need not be. One frame walks the
+                    // panorama and gives it its edit: when the two
+                    // frames' edits walk differently, it is merged
+                    // again from the reference, under its edit.
+                    let mut theirs = None;
+                    if r.reference != reference {
+                        let other = edit_of(r.reference);
+                        if !pano::walks_alike(edit, &other) {
+                            r = run(&other, Some((r.reference, r.out.clone())))?;
+                        }
+                        theirs = Some(other);
+                    }
+                    let look = pano::edit_for_pano(theirs.as_ref().unwrap_or(edit));
+                    (r.out, r.headroom_stops, r.seconds, r.warnings, look)
                 }
             };
             for w in &warnings {

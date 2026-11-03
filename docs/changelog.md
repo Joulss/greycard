@@ -143,6 +143,12 @@ design note behind it.
   seams led around what moved, and the middle frame's look.
   `greycard merge pano` does the same from the command line
   ([§530](https://github.com/jessolmstead/greycard/blob/master/docs/notes/530-the-panorama.md)).
+- `greycard merge again <file> --denoise <tier>` makes a merged file
+  again from its frames with the learned denoiser on each, every pixel
+  where it was, so its edit and masks still fit; a panorama now takes
+  the frame in the middle of the turn as its reference, whatever order
+  the frames were shot in
+  ([§537](https://github.com/jessolmstead/greycard/blob/master/docs/notes/537-the-recipe-kept-and-the-merge-made-again.md)).
 
 ### Mac
 

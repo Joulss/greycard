@@ -20,6 +20,17 @@
 //! to the canvas's bands. Held at once: the bands, one frame, and the
 //! reduced copies.
 //!
+//! The reference, whose view and scale the panorama is in, is the
+//! frame in the middle of the turn once the frames are placed, unless
+//! one is asked; the frame walked first (the middle of the list) gives
+//! every frame its white and CA fit.
+//!
+//! The file's tag keeps how the frames were laid. Given that
+//! ([`Options::geometry`]), as a merge made again is, the first pass
+//! only walks and spills, and nothing is matched, fitted, leveled,
+//! measured for its gains, or cropped: the frames are resampled,
+//! seamed, and blended onto the canvas and crop the tag keeps.
+//!
 //! The command line's `greycard merge pano` and the window's Merge to
 //! Panorama both run [`pano`].
 
@@ -37,7 +48,7 @@ use greycard_core::merge::pano::{
     self as geo, FrameLens, Kernel, Link, Model as Laid, Placement, Rect, Source,
 };
 use greycard_core::merge::seam::{Composite, Cut};
-use greycard_core::merge::{self, PairNoise};
+use greycard_core::merge::{self, Geometry, PairNoise, Recipe};
 use greycard_core::output::OnExists;
 use greycard_core::raw::{Orientation, RawFrame};
 use greycard_core::register::{self, Model};
@@ -81,7 +92,8 @@ const PANO_RESIDUAL: f32 = 0.25;
 #[derive(Clone)]
 pub struct Options {
     /// The frame whose view the others are turned onto, by its place
-    /// among the frames; none for the middle one.
+    /// among the frames; none for the middle of the turn, found once
+    /// the frames are placed (the middle of the list is walked first).
     pub reference: Option<usize>,
     /// Where the file goes; none for beside the first frame, named
     /// after it ([`default_output`]).
@@ -94,6 +106,11 @@ pub struct Options {
     pub lenses: Option<Arc<greycard_lens::Database>>,
     /// How each frame is resampled onto the canvas.
     pub kernel: Kernel,
+    /// The frames laid as a recipe keeps them, in place of the fit:
+    /// their turns, the lens, the gains, the canvas, and the crop. For
+    /// a merge made again ([`super::again`]); `reference` then says
+    /// which frame the recipe's reference is.
+    pub geometry: Option<Box<merge::Laid>>,
 }
 
 impl Default for Options {
@@ -105,6 +122,7 @@ impl Default for Options {
             denoiser: None,
             lenses: None,
             kernel: Kernel::Lanczos3,
+            geometry: None,
         }
     }
 }
@@ -136,9 +154,11 @@ pub struct Report {
     pub reference: usize,
     pub frames: Vec<String>,
     pub pairs: Vec<PairReport>,
-    /// The focal length in pixels from EXIF and the sensor's size, and
-    /// as fitted; none for a planar panorama of unknown focal length.
-    pub focal: Option<(f64, f64)>,
+    /// The focal length in pixels from EXIF and the sensor's size
+    /// (none when not read: a merge made again reads no lens
+    /// database), and as fitted; none for a planar panorama of unknown
+    /// focal length.
+    pub focal: Option<(Option<f64>, f64)>,
     /// The projection, in words.
     pub projection: String,
     /// The field the frames span, degrees across and down.
@@ -179,8 +199,10 @@ pub fn default_output(first: &Path) -> PathBuf {
     }
 }
 
-/// The frame a panorama is turned onto: the one asked, or the middle
-/// of those given.
+/// The frame a panorama is walked from first: the one asked, or the
+/// middle of those given. Asked, it is the reference too; otherwise
+/// the reference is the middle of the turn, which the merge finds once
+/// the frames are placed ([`geo::Model::middle`]).
 pub fn reference_of(count: usize, asked: Option<usize>) -> Result<usize> {
     if count < 2 {
         bail!("a panorama wants two frames or more; got {count}");
@@ -209,6 +231,17 @@ pub fn edit_for_pano(reference: &Edit) -> Edit {
     edit.retouch = Default::default();
     edit.adjustments = Vec::new();
     edit
+}
+
+/// Whether frames walked under edit `a` and under edit `b` come out
+/// alike for a panorama: the same demosaic, camera profile, lens
+/// section, and learned denoiser. What else an edit holds, a merge's
+/// walk does not read.
+pub fn walks_alike(a: &Edit, b: &Edit) -> bool {
+    a.demosaic == b.demosaic
+        && a.camera == b.camera
+        && a.lens == b.lens
+        && a.noise.tier() == b.noise.tier()
 }
 
 /// The frames `files` merged into a panorama under `edit`'s demosaic,
@@ -285,9 +318,20 @@ pub fn pano_of(
     let started = Instant::now();
     let mut seconds: Vec<(&'static str, f64)> = Vec::new();
     let n = sources.len();
-    let reference = reference_of(n, options.reference)?;
+    let given = options.geometry.as_ref();
+    // The frame walked first, whose white and CA fit every frame takes:
+    // the one asked, or the middle of the list. The reference, whose
+    // view and scale the panorama is in, is settled once the frames
+    // are placed.
+    let anchor = reference_of(n, given.map(|g| g.anchor).or(options.reference))?;
+    if let Some(g) = given {
+        let placed = g.placed.len();
+        if placed != n || g.gains.len() != n {
+            bail!("the recipe places {placed} frames and the merge has {n}");
+        }
+    }
     // One body: the frames' heads, before anything is read whole.
-    heads(sources, Some(reference))?;
+    heads(sources, Some(anchor))?;
     let names: Vec<String> = (0..n).map(|i| sources.name(i)).collect();
     let out = match &options.out {
         Some(p) => p.clone(),
@@ -311,7 +355,9 @@ pub fn pano_of(
     // name clears.
     let reserved = super::Reserved::new(&out)?;
     let mut warnings: Vec<String> = Vec::new();
+    // Laid already, the lens is the recipe's: the database is not read.
     let lenses = options.lenses.clone().or_else(|| {
+        given.is_none().then_some(())?;
         greycard_lens::Store::user()
             .ok()
             .and_then(|s| s.load())
@@ -321,8 +367,8 @@ pub fn pano_of(
     // The reference first: its white is every frame's, and its lens
     // and size are the panorama's.
     let mut kept: Vec<Option<Kept>> = (0..n).map(|_| None).collect();
-    let mut order: Vec<usize> = vec![reference];
-    order.extend((0..n).filter(|&k| k != reference));
+    let mut order: Vec<usize> = vec![anchor];
+    order.extend((0..n).filter(|&k| k != anchor));
     let mut white: Option<[f64; 3]> = None;
     let mut lens: Option<(FrameLens, Vec<LensCorrection>)> = None;
     let mut size = (0usize, 0usize);
@@ -330,7 +376,10 @@ pub fn pano_of(
     // The reference fits the CA once; every other frame takes its fit,
     // or fits its own where the reference made none.
     let mut ca = MergeCa::Make;
-    let mut ref_parts: Option<(Walked, RawFrame, RawMetadata)> = None;
+    let mut ref_walked: Option<Walked> = None;
+    // Each frame's tags, its samples let go: the reference's go into
+    // the file.
+    let mut frame_tags: Vec<Option<(RawFrame, RawMetadata)>> = (0..n).map(|_| None).collect();
     let mut denoised = false;
     let mut links: Vec<Link> = Vec::new();
     let mut pairs: Vec<PairReport> = Vec::new();
@@ -347,7 +396,7 @@ pub fn pano_of(
         });
         let t = Instant::now();
         let (raw, metadata) = sources.load(k)?;
-        if k != reference && (raw.width, raw.height) != raw_size {
+        if k != anchor && (raw.width, raw.height) != raw_size {
             bail!(
                 "{} is {}x{} and the reference {}x{}: a panorama wants frames of one size",
                 names[k],
@@ -357,22 +406,30 @@ pub fn pano_of(
                 raw_size.1
             );
         }
-        if k != reference && raw.shot.focal_length != focal_mm {
+        if k != anchor && raw.shot.focal_length != focal_mm {
             bail!(
                 "{} was shot at another focal length than the reference: a panorama wants \
                  frames of one focal length",
                 names[k]
             );
         }
-        if k == reference {
+        if k == anchor {
             raw_size = (raw.width, raw.height);
             focal_mm = raw.shot.focal_length;
             // The reference's lens is the panorama's: the profile is
             // read from it before it is walked.
             let crop = raw.effective_crop();
-            let corrections = lens_of(edit, &raw, (crop.width, crop.height), lenses.as_deref());
+            let corrections = match given {
+                Some(g) => g.lens.clone(),
+                None => lens_of(edit, &raw, (crop.width, crop.height), lenses.as_deref()),
+            };
             if corrections.is_empty() {
-                let said = uncorrected(edit, &raw, lenses.is_some());
+                let said = match given {
+                    Some(_) => "the frames were not corrected for their lens when they were \
+                                merged, and are not now"
+                        .to_string(),
+                    None => uncorrected(edit, &raw, lenses.is_some()),
+                };
                 log::info!("merge: {said}");
                 warnings.push(said);
             }
@@ -408,7 +465,7 @@ pub fn pano_of(
             }
         }
         denoised |= f.denoised;
-        if k == reference {
+        if k == anchor {
             ca = match &f.ca_fit {
                 Some(fit) => MergeCa::Take(CaFitRef(fit.clone())),
                 None => MergeCa::Own,
@@ -437,7 +494,11 @@ pub fn pano_of(
 
         let t = Instant::now();
         let (w, h) = size;
-        let (plane, corners) = planes_of(&f.rgb, w, h, frame_lens);
+        // With the frames laid already, nothing is matched.
+        let (plane, corners) = match given {
+            Some(_) => (Vec::new(), Vec::new()),
+            None => planes_of(&f.rgb, w, h, frame_lens),
+        };
         let reduced = {
             let (mut rgb, clipped, rw, rh) = geo::reduce_by(&f.rgb, w, h, STEP);
             for (p, c) in rgb.chunks_mut(3).zip(&clipped) {
@@ -450,16 +511,17 @@ pub fn pano_of(
         features_s += t.elapsed().as_secs_f64();
 
         // The pairs this frame makes with those held: its neighbors in
-        // the order given, two away, and the last with the first.
+        // the order given, two away, and the last with the first. None
+        // with the frames laid already.
         let mut partners: Vec<usize> = recent.clone();
-        if k != reference && !partners.contains(&reference) {
-            partners.push(reference);
+        if k != anchor && !partners.contains(&anchor) {
+            partners.push(anchor);
         }
         if k != 0 && !partners.contains(&0) && kept[0].is_some() {
             partners.push(0);
         }
         partners.retain(|&j| {
-            j != k && {
+            given.is_none() && j != k && {
                 let d = j.abs_diff(k);
                 d <= 2 || (d == n - 1 && n > 2)
             }
@@ -517,15 +579,16 @@ pub fn pano_of(
         recent.push(k);
         if recent.len() > 2 {
             let gone = recent.remove(0);
-            if gone != reference
+            if gone != anchor
                 && gone != 0
                 && let Some(kp) = kept[gone].as_mut()
             {
                 kp.plane = None;
             }
         }
-        if k == reference {
-            ref_parts = Some((f, frame, meta));
+        frame_tags[k] = Some((frame, meta));
+        if k == anchor {
+            ref_walked = Some(f);
         }
     }
     seconds.push(("walk the frames", walk_s));
@@ -534,7 +597,9 @@ pub fn pano_of(
     for kp in kept.iter_mut().flatten() {
         kp.plane = None;
     }
-    if let Some(k) = geo::unjoined(&links, n, reference) {
+    if given.is_none()
+        && let Some(k) = geo::unjoined(&links, n, anchor)
+    {
         bail!(
             "{} shares no matches with the others: a panorama wants frames that overlap",
             names[k]
@@ -545,7 +610,8 @@ pub fn pano_of(
     // or a correction set by hand ran on the frames.
     let lens_corrected = !corrections.is_empty();
     let (w, h) = size;
-    let (ref_walked, ref_frame, ref_meta) = ref_parts.expect("the reference walked");
+    let ref_walked = ref_walked.expect("the anchor walked");
+    let (anchor_frame, _) = frame_tags[anchor].as_ref().expect("the anchor walked");
 
     // Every frame placed at once.
     progress.step(Step::Placing);
@@ -553,26 +619,53 @@ pub fn pano_of(
     let exif_focal = focal_mm.and_then(|mm| {
         let crop = lenses
             .as_deref()
-            .and_then(|db| db.camera(&ref_frame.make, &ref_frame.model))
+            .and_then(|db| db.camera(&anchor_frame.make, &anchor_frame.model))
             .map(|c| c.crop_factor)?;
         let diagonal = 43.2666 / f64::from(crop);
         let width_mm = diagonal * w as f64 / (w as f64).hypot(h as f64);
         Some(f64::from(mm) * w as f64 / width_mm)
     });
-    if focal_mm.is_none() {
-        warnings.push(format!(
-            "{} gives no focal length: the panorama is laid on a plane",
-            names[reference]
-        ));
-    } else if exif_focal.is_none() {
-        warnings.push(format!(
-            "the size of the {} {}'s sensor is not known here: the panorama is laid on a plane",
-            ref_frame.make, ref_frame.model
-        ));
+    let flat = match given {
+        Some(g) => matches!(g.placed, merge::Placed::Planar { .. }),
+        None => exif_focal.is_none(),
+    };
+    if flat {
+        warnings.push(if given.is_some() {
+            // A merge made again reads no lens database, and says what
+            // its recipe says.
+            "the panorama is laid on a plane, as its recipe says".to_string()
+        } else if focal_mm.is_none() {
+            format!(
+                "{} gives no focal length: the panorama is laid on a plane",
+                names[anchor]
+            )
+        } else {
+            format!(
+                "the size of the {} {}'s sensor is not known here: the panorama is laid on a \
+                 plane",
+                anchor_frame.make, anchor_frame.model
+            )
+        });
     }
-    let (model, residuals, focal, span) = match exif_focal {
-        Some(f0) => {
-            let mut adjusted = geo::adjust_turned(&links, n, reference, f0, true, (w, h));
+    // The frames are placed by the model as the tag keeps it, so a
+    // merge made from the tag places them as this one does.
+    let (placed, residuals, focal, span, reference) = match (given, exif_focal) {
+        (Some(g), _) => {
+            let reference = reference_of(n, options.reference)?;
+            let span = Placement {
+                model: g.placed.model(),
+                width: w,
+                height: h,
+            }
+            .span(&frame_lens);
+            let focal = match &g.placed {
+                merge::Placed::Turned { focal, .. } => Some((exif_focal, *focal)),
+                merge::Placed::Planar { .. } => None,
+            };
+            (g.placed.clone(), Vec::new(), focal, span, reference)
+        }
+        (None, Some(f0)) => {
+            let mut adjusted = geo::adjust_turned(&links, n, anchor, f0, true, (w, h));
             if let Laid::Turned { focal, .. } = &adjusted.model
                 && !(0.6..=1.6).contains(&(focal / f0))
             {
@@ -580,10 +673,16 @@ pub fn pano_of(
                     "the frames' fitted focal length ({focal:.0} px) was far from the EXIF's \
                      ({f0:.0} px); the EXIF's is used"
                 ));
-                adjusted = geo::adjust_turned(&links, n, reference, f0, false, (w, h));
+                adjusted = geo::adjust_turned(&links, n, anchor, f0, false, (w, h));
             }
+            // The reference is the middle of the turn unless one was
+            // asked, and the frames are turned onto it.
+            let reference = options
+                .reference
+                .unwrap_or_else(|| adjusted.model.middle(w, h));
+            let turned = adjusted.model.onto(reference);
             let placement = Placement {
-                model: adjusted.model.clone(),
+                model: turned.clone(),
                 width: w,
                 height: h,
             };
@@ -591,22 +690,22 @@ pub fn pano_of(
             let projection = geo::projection_for(span.0, span.1).map_err(anyhow::Error::msg)?;
             let Laid::Turned {
                 focal, rotations, ..
-            } = adjusted.model
+            } = turned
             else {
                 unreachable!("adjusted turned")
             };
-            let model = geo::centered(
+            let placed = merge::Placed::of(&geo::centered(
                 Laid::Turned {
                     focal,
                     rotations,
                     projection,
                 },
                 &frame_lens,
-            );
+            ));
             // Leveled, the field is the panorama's own: a camera
             // tipped as it turned read taller than it is.
             let span = Placement {
-                model: model.clone(),
+                model: placed.model(),
                 width: w,
                 height: h,
             }
@@ -615,13 +714,37 @@ pub fn pano_of(
             if projection != geo::Projection::Planar {
                 geo::projection_for(span.0, span.1).map_err(anyhow::Error::msg)?;
             }
-            (model, adjusted.residuals, Some((f0, focal)), Some(span))
+            (
+                placed,
+                adjusted.residuals,
+                Some((Some(f0), focal)),
+                Some(span),
+                reference,
+            )
         }
-        None => {
-            let adjusted = geo::adjust_planar(&links, n, reference, w, h);
-            (adjusted.model, adjusted.residuals, None, None)
+        (None, None) => {
+            let adjusted = geo::adjust_planar(&links, n, anchor, w, h);
+            let reference = options
+                .reference
+                .unwrap_or_else(|| adjusted.model.middle(w, h));
+            (
+                merge::Placed::of(&adjusted.model.onto(reference)),
+                adjusted.residuals,
+                None,
+                None,
+                reference,
+            )
         }
     };
+    if reference != anchor {
+        log::info!(
+            "merge: {} is the middle of the turn and the panorama's reference; {} was walked \
+             first",
+            names[reference],
+            names[anchor]
+        );
+    }
+    let model = placed.model();
     for (p, r) in pairs.iter_mut().zip(&residuals) {
         p.placed_rms = *r;
     }
@@ -645,9 +768,20 @@ pub fn pano_of(
         width: w,
         height: h,
     };
-    let (canvas, boxes) = geo::canvas(&placement, &frame_lens, n)
-        .context("the frames could not be laid on one canvas")?;
-    if canvas.width * canvas.height > 16 * CANVAS_CAP {
+    let (canvas, boxes) = match given {
+        Some(g) => (
+            g.canvas,
+            geo::boxes_on(&placement, &frame_lens, n, &g.canvas)
+                .context("the frames could not be laid on the recipe's canvas")?,
+        ),
+        None => geo::canvas(&placement, &frame_lens, n)
+            .context("the frames could not be laid on one canvas")?,
+    };
+    if canvas
+        .width
+        .checked_mul(canvas.height)
+        .is_none_or(|area| area > 16 * CANVAS_CAP)
+    {
         bail!(
             "the frames would lie on a canvas of {}x{}: past what a panorama holds",
             canvas.width,
@@ -693,6 +827,9 @@ pub fn pano_of(
     }
     let mut ratios = Vec::new();
     for a in 0..n {
+        if given.is_some() {
+            break;
+        }
         for b in a + 1..n {
             let Some(both) = tiles[a].rect.intersect(&tiles[b].rect) else {
                 continue;
@@ -703,7 +840,10 @@ pub fn pano_of(
             }
         }
     }
-    let gains = geo::gains(&ratios, n, reference);
+    let gains = match given {
+        Some(g) => g.gains.clone(),
+        None => geo::gains(&ratios, n, reference),
+    };
     for (tile, g) in tiles.iter_mut().zip(&gains) {
         for p in tile.rgb.chunks_mut(3) {
             for c in 0..3 {
@@ -718,18 +858,45 @@ pub fn pano_of(
         .map(|(k, tile)| composite.add(k as u16, tile))
         .collect();
     drop(tiles);
-    let covered: Vec<bool> = composite.owner.iter().map(Option::is_some).collect();
-    let inner = geo::largest_rectangle(&covered, lw, lh);
-    if inner.width < 3 || inner.height < 3 {
-        bail!("the frames cover no rectangle together: a panorama wants frames that overlap");
-    }
-    // A reduced pixel in from each side, so the full canvas's crop is
-    // covered throughout.
-    let crop = Rect {
-        x: (inner.x + 1) * STEP,
-        y: (inner.y + 1) * STEP,
-        width: ((inner.width - 2) * STEP).min(canvas.width - (inner.x + 1) * STEP),
-        height: ((inner.height - 2) * STEP).min(canvas.height - (inner.y + 1) * STEP),
+    let (inner, crop) = match given {
+        Some(g) => {
+            let crop = g.crop;
+            if crop.width == 0
+                || crop.height == 0
+                || crop.x + crop.width > canvas.width
+                || crop.y + crop.height > canvas.height
+            {
+                bail!("the recipe's crop is not on its canvas");
+            }
+            // The reduced rectangle the crop was cut from, near enough
+            // for the seams' points.
+            let (x, y) = ((crop.x / STEP).max(1) - 1, (crop.y / STEP).max(1) - 1);
+            let inner = Rect {
+                x,
+                y,
+                width: ((crop.x + crop.width).div_ceil(STEP) + 1).min(lw) - x,
+                height: ((crop.y + crop.height).div_ceil(STEP) + 1).min(lh) - y,
+            };
+            (inner, crop)
+        }
+        None => {
+            let covered: Vec<bool> = composite.owner.iter().map(Option::is_some).collect();
+            let inner = geo::largest_rectangle(&covered, lw, lh);
+            if inner.width < 3 || inner.height < 3 {
+                bail!(
+                    "the frames cover no rectangle together: a panorama wants frames that overlap"
+                );
+            }
+            // A reduced pixel in from each side, so the full canvas's
+            // crop is covered throughout.
+            let crop = Rect {
+                x: (inner.x + 1) * STEP,
+                y: (inner.y + 1) * STEP,
+                width: ((inner.width - 2) * STEP).min(canvas.width - (inner.x + 1) * STEP),
+                height: ((inner.height - 2) * STEP).min(canvas.height - (inner.y + 1) * STEP),
+            };
+            (inner, crop)
+        }
     };
     if crop.area() > CANVAS_CAP {
         bail!(
@@ -863,6 +1030,7 @@ pub fn pano_of(
         );
     }
     let profile = merge::noise_profile(&[(1.0, sensor)], headroom);
+    let (heads, wholes) = super::hashes(sources);
     let tag = merge::Tag {
         kind: "pano".into(),
         frames: names.clone(),
@@ -870,9 +1038,32 @@ pub fn pano_of(
         denoised,
         headroom_stops: headroom.log2(),
         lens_corrected,
+        heads,
+        wholes,
+        unread: None,
+        recipe: Some(Recipe {
+            ca: super::CaFits::Once.name().into(),
+            // The tier that ran: one asked that stood down did not.
+            denoise: options
+                .denoiser
+                .filter(|_| denoised)
+                .and_then(greycard_ai::tier_of)
+                .map(Into::into),
+            noise: None,
+            geometry: Geometry::Pano(Box::new(merge::Laid {
+                anchor,
+                kernel: options.kernel,
+                placed,
+                lens: corrections.clone(),
+                gains: gains.clone(),
+                canvas,
+                crop,
+            })),
+        }),
     };
     let preview = merge::preview(&image, &ref_walked.white_balance, 1024)?;
     let software = concat!("greycard ", env!("CARGO_PKG_VERSION"));
+    let (ref_frame, ref_meta) = frame_tags[reference].take().expect("every frame walked");
     let metadata = without_lens(&ref_meta);
     let dng = LinearDngOptions {
         metadata: Some(&metadata),
@@ -1350,6 +1541,7 @@ mod tests {
             report.projection
         );
         let (exif, fitted) = report.focal.unwrap();
+        let exif = exif.unwrap();
         assert!((exif - FOCAL).abs() < 0.1, "{exif}");
         assert!((fitted - FOCAL).abs() < 0.01 * FOCAL, "{fitted}");
         let (across, _) = report.span.unwrap();
@@ -1405,6 +1597,119 @@ mod tests {
             .filter(|n| n.starts_with('.'))
             .collect();
         assert!(left.is_empty(), "{left:?}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A merged file's samples and its tag.
+    fn samples_and_tag(file: &Path) -> (Vec<f32>, merge::Tag) {
+        let back = greycard_core::decode::decode_path(file).unwrap();
+        let greycard_core::raw::Samples::F32(samples) = back.samples else {
+            panic!("float samples");
+        };
+        (samples, back.dng.merged.expect("our tag"))
+    }
+
+    /// The panorama keeps how it was laid: made again from its recipe,
+    /// with no lens database and nothing matched or fitted, it is the
+    /// same picture to the sample, on the same canvas and crop.
+    #[test]
+    fn a_panorama_made_again_is_placed_to_the_bit() {
+        let (dir, files) = frames("again", &[-0.45, 0.0, 0.45]);
+        let report = pano(
+            &files,
+            &Edit::default(),
+            &options(),
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap();
+        let (before, tag) = samples_and_tag(&report.out);
+        let recipe = tag.recipe.clone().expect("a recipe");
+        let Geometry::Pano(laid) = &recipe.geometry else {
+            panic!("a panorama's geometry");
+        };
+        assert_eq!((laid.anchor, tag.reference), (1, 1));
+        assert_eq!(laid.kernel, Kernel::Lanczos3);
+        assert_eq!(laid.crop, report.crop);
+        assert_eq!(laid.gains, report.gains);
+        assert_eq!(laid.lens.len(), 1);
+        assert!(matches!(laid.placed, merge::Placed::Turned { .. }));
+
+        let out = dir.join("again.dng");
+        let steps = std::cell::RefCell::new(Vec::new());
+        let super::super::Again::Pano(again) = super::super::again(
+            &report.out,
+            &super::super::Overrides {
+                out: Some(out.clone()),
+                ..Default::default()
+            },
+            &Edit::default(),
+            &mut crate::walk::NoModels,
+            &|s: Step| steps.borrow_mut().push(s),
+        )
+        .unwrap() else {
+            panic!("a panorama");
+        };
+        assert_eq!(steps.into_inner().len(), 8);
+        assert_eq!(again.out, out);
+        assert!(again.pairs.is_empty());
+        assert!(again.warnings.is_empty(), "{:?}", again.warnings);
+        assert_eq!((again.canvas, again.crop), (report.canvas, report.crop));
+        let (after, tag_after) = samples_and_tag(&out);
+        assert_eq!(tag_after, tag);
+        assert_eq!(before.len(), after.len());
+        assert!(
+            before
+                .iter()
+                .zip(&after)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Frames shot right to left with uneven steps: the middle of the
+    /// list is the second frame, the middle of the turn the third. The
+    /// third is the reference, the frames turned onto it; the second,
+    /// walked first, is the recipe's anchor. Asked for, the second is
+    /// the reference.
+    #[test]
+    fn the_reference_is_the_middle_of_the_turn() {
+        let (dir, files) = frames("middle", &[0.5, 0.3, 0.0, -0.3]);
+        assert_eq!(reference_of(files.len(), None).unwrap(), 1);
+        let report = pano(
+            &files,
+            &Edit::default(),
+            &options(),
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap();
+        assert_eq!(report.reference, 2);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(report.gains[2].iter().all(|&g| g == 1.0));
+        let (_, tag) = samples_and_tag(&report.out);
+        assert_eq!(tag.reference, 2);
+        let Some(Recipe {
+            geometry: Geometry::Pano(laid),
+            ..
+        }) = &tag.recipe
+        else {
+            panic!("a panorama's recipe");
+        };
+        assert_eq!(laid.anchor, 1);
+        let asked = pano(
+            &files,
+            &Edit::default(),
+            &Options {
+                reference: Some(1),
+                out: Some(dir.join("asked.dng")),
+                ..options()
+            },
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap();
+        assert_eq!(asked.reference, 1);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
@@ -1742,7 +2047,53 @@ mod tests {
             ]
         );
         assert!(report.pairs[0].placed_rms < 0.5, "{:?}", report.pairs);
+        // Made again, it says what its recipe says, having read no lens
+        // database.
+        let (before, _) = samples_and_tag(&report.out);
+        let super::super::Again::Pano(again) = super::super::again(
+            &report.out,
+            &super::super::Overrides::default(),
+            &Edit::default(),
+            &mut crate::walk::NoModels,
+            &|_: Step| {},
+        )
+        .unwrap() else {
+            panic!("a panorama");
+        };
+        assert_eq!(
+            again.warnings,
+            [
+                "the frames were not corrected for their lens when they were merged, and are \
+                 not now",
+                "the panorama is laid on a plane, as its recipe says"
+            ]
+        );
+        let (after, _) = samples_and_tag(&report.out);
+        assert!(
+            before
+                .iter()
+                .zip(&after)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
         greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Two frames walked alike for a panorama: the look apart, only the
+    /// demosaic, the camera profile, the lens section, and the learned
+    /// tier tell them apart.
+    #[test]
+    fn edits_walk_alike_but_for_what_the_walk_reads() {
+        let a = Edit::default();
+        let mut b = a.clone();
+        b.light.exposure = 1.0;
+        b.noise.strength = 0.3;
+        assert!(walks_alike(&a, &b));
+        let mut c = a.clone();
+        c.noise.learned = greycard_edit::Learned::Balanced;
+        assert!(!walks_alike(&a, &c));
+        let mut d = a.clone();
+        d.lens.enabled = !d.lens.enabled;
+        assert!(!walks_alike(&a, &d));
     }
 
     /// The frames a measurement runs on: `GREYCARD_PANO_FRAMES`, paths

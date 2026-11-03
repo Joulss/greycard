@@ -549,3 +549,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§534. A white canvas](notes/534-a-white-canvas.md) (2026-11-02)
 - [§535. A Lightroom XMP beside a raw, taken on its first open](notes/535-a-lightroom-xmp-beside-a-raw-taken-on-its-first-open.md) (2026-11-02)
 - [§536. The merge's Deflate write is parallel already](notes/536-the-merges-deflate-write-is-parallel-already.md) (2026-11-02)
+- [§537. The recipe kept and the merge made again](notes/537-the-recipe-kept-and-the-merge-made-again.md) (2026-11-02)
