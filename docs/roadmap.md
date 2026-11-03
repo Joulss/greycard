@@ -623,6 +623,23 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] Failures as a dialog queue, not a status line: a failed outcome
+      today becomes "failed: {message}" in the status bar
+      (deliver.rs); a queue of typed errors with a kind, the frame it
+      concerns, and a next step (retry, open the log, report), shown
+      one at a time and never lost under the next status. A sidecar
+      that could not be written gets its own recovery sheet (an
+      outside review against CalibRaw, 2026-11-02)
+- [ ] A Flatpak on Flathub: the AppImage's contents under the
+      freedesktop runtime, the GPU, the roots and the model cache as
+      portals or holes, the ort dylib and the models fetched into the
+      sandbox's cache; the one install path Linux testers ask for
+      first, and where the other open editors are found (an outside
+      review, 2026-11-02)
+- [ ] Translations: the window's strings through Slint's `@tr` and a
+      gettext catalog, English the source, the first languages the
+      ones testers offer; the guide and the release notes stay English
+      (an outside review, 2026-11-02)
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it
@@ -832,6 +849,38 @@ clears or a tester asks for it.
 
 #### Engine
 
+- [ ] A layering check in CI: a task over `cargo tree` that fails when
+      a crate gains an edge the architecture page does not list (core
+      on nothing, edit and library on core, the window on everything),
+      and a grep that fails when the window calls a core op directly
+      (`greycard_core::develop::orient` in crop.rs and browser.rs
+      today); the direction is clean by convention and nothing holds
+      it (an outside review, 2026-11-02)
+- [ ] The unwraps counted down: about 230 `unwrap` and 380 `expect`
+      outside tests, most of them lock `expect`s in the engine and
+      the rest in the window and the models; a lock helper that
+      recovers a poisoned mutex, `?` with context where a Result
+      already flows, and the count printed by the size report so it
+      only falls (an outside review, 2026-11-02)
+- [ ] A `[lints]` table in the workspace manifest with the clippy set
+      CI runs, so an editor shows what CI will say; the 52
+      `too_many_arguments` allows looked at one by one, a struct where
+      the arguments are one thing (an outside review, 2026-11-02)
+- [ ] The sidecar written at the oldest schema that holds the edit,
+      so an older build reads a newer build's file until a field it
+      lacks is used; today a newer version is refused outright
+      (migration.rs). Each migration step carries the release it can
+      be removed in, checked by a test (an outside review, 2026-11-02)
+- [ ] `greycard develop` through the stage list: the CLI's develop
+      calls core ops in its own order (architecture.md), the one path
+      outside `walk`; a `Purpose` for it, so there is one pipeline
+      (an outside review, 2026-11-02)
+- [ ] Export on the GPU, or the reason it is not written down: every
+      export runs the CPU finish while the viewport runs the shader
+      twin, so a fast card never speeds an export; the twin is held
+      to the CPU by the parity test, so the shader could serve export
+      at full size through tiles, with the CPU as the fallback and the
+      reference (an outside review, 2026-11-02)
 - [ ] Samples below black kept through the demosaic: `normalize_levels`
       clamps every photosite at zero after the black is taken off, so
       read noise's negative half is cut and the deepest shadows' mean
