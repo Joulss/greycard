@@ -551,3 +551,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§536. The merge's Deflate write is parallel already](notes/536-the-merges-deflate-write-is-parallel-already.md) (2026-11-02)
 - [§537. The recipe kept and the merge made again](notes/537-the-recipe-kept-and-the-merge-made-again.md) (2026-11-02)
 - [§538. The FOLDERS fold kept per view](notes/538-the-folders-fold-kept-per-view.md) (2026-11-03)
+- [§539. Auto reads a merge's headroom](notes/539-auto-reads-a-merges-headroom.md) (2026-11-03)

@@ -9,6 +9,13 @@
 //! white balance. The same histogram gives the same numbers, to the
 //! bit, so a second press changes nothing.
 //!
+//! A merge of ours keeps range over its reference's clip: stored that
+//! many stops under, and brightened by as much in the develop
+//! ([`Headroom`]). Auto reads it as the develop shows it, its
+//! headroom on, and reads its kept range over display white as
+//! Highlights pulls it in the finish, so it lands where its
+//! reference's Auto does and leaves the kept range to Highlights.
+//!
 //! The finish's arithmetic it aims through (where display white sits,
 //! how far the whites' power reaches, what the black point crushes)
 //! is `greycard-render`'s `finish.rs`; the few numbers it needs from
@@ -289,6 +296,65 @@ impl Histogram {
     }
 }
 
+/// What a frame keeps over display white: a merge of ours, its
+/// samples stored `stops` under its reference's scale and brightened
+/// by as much in the develop, and the frame's median and top as the
+/// render reads them (the guide plane's `frame_range`), in stops over
+/// mid grey of the frame as stored.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Headroom {
+    pub stops: f32,
+    pub range: [f32; 2],
+}
+
+/// The finish's pull on a merge's kept range ([`crate::kept`]), as
+/// Auto reads it: at contrast one, in Auto's stops (the scene with the
+/// headroom on and the exposure `exposure`, display white at
+/// [`SCENE_WHITE`]). The negative travel of Highlights compresses what
+/// reads over a knee [`SPAN`]'s least under white toward it, `share`
+/// of the excess at the frame's top, the excess its top's height over
+/// white, at most the headroom. `None` where nothing reads over white.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pull {
+    top: f32,
+    knee: f32,
+    excess: f32,
+}
+
+impl Pull {
+    pub fn of(headroom: Headroom, exposure: f32) -> Option<Pull> {
+        if headroom.stops <= 0.0 {
+            return None;
+        }
+        let top = headroom.range[1] + headroom.stops + exposure;
+        let excess = (top - SCENE_WHITE).min(headroom.stops);
+        (excess > 0.0).then_some(Pull {
+            top,
+            knee: SCENE_WHITE - SPAN.0,
+            excess,
+        })
+    }
+
+    /// The share of the pull a Highlights of `highlights` asks for.
+    pub fn share(highlights: f32) -> f32 {
+        crate::kept::share(highlights)
+    }
+
+    /// A region reading `g` with `share` of the pull on it.
+    pub fn at(&self, g: f32, share: f32) -> f32 {
+        crate::kept::pull(g, share, self.knee, self.top, self.excess)
+    }
+
+    /// A pixel reading `g` with `share` of the pull on it, as the finish
+    /// moves a pixel: by its region's pull. The region is taken to read
+    /// `g` up to the frame's top, the top past it, so a pixel over the
+    /// top keeps what it reads over its region.
+    pub fn at_pixel(&self, g: f32, share: f32) -> f32 {
+        let region = g.min(self.top);
+        g + self.at(region, share) - region
+    }
+}
+
 /// What Auto sets: the Light section's exposure and its four tone
 /// sliders, in the edit's own units.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -328,7 +394,26 @@ fn hundredth(v: f32) -> f32 {
 
 /// The five sliders for a frame whose scene before exposure has the
 /// histogram `h`, at a baseline of `baseline` stops (the body's, or
-/// the one an older edit keeps). An empty histogram gives all zeros.
+/// the one an older edit keeps): [`auto_light_kept`] for a frame that
+/// keeps nothing over display white.
+pub fn auto_light(h: &Histogram, baseline: f32) -> LightChanges {
+    auto_light_kept(h, baseline, None)
+}
+
+/// The five sliders for a frame whose scene before exposure, as
+/// stored, has the histogram `h`, at a baseline of `baseline` stops
+/// (the exposure the slider's zero stands for: the body's, or the one
+/// an older edit keeps, and a merge's headroom on top), with
+/// `headroom` what a merge keeps over display white. An empty
+/// histogram gives all zeros.
+///
+/// A merge is read as the develop shows it, its headroom on, so its
+/// middle and its top sit where its reference's do. Its kept range is
+/// Highlights' to bring down, as the finish pulls it: where Whites
+/// reads the frame's top, and where the cut asks what the top wants
+/// past Highlights' limit, the top is read through the pull at that
+/// Highlights. Highlights itself reads the frame as the default shows
+/// it, as on any frame.
 ///
 /// In order, each on the scene the ones before it leave:
 /// - Exposure brings the middle ([`MIDDLE_TRIM`]'s trimmed mean of
@@ -350,13 +435,21 @@ fn hundredth(v: f32) -> f32 {
 ///   does: Whites is held so no more of the frame reaches white than
 ///   at the default, after the exposure, and Blacks so no more goes to
 ///   black.
-pub fn auto_light(h: &Histogram, baseline: f32) -> LightChanges {
+pub fn auto_light_kept(h: &Histogram, baseline: f32, headroom: Option<Headroom>) -> LightChanges {
     if h.total() == 0 {
         return LightChanges::default();
     }
     // All in stops over mid grey of the scene before the baseline,
-    // where display white is `SCENE_WHITE` whatever the body.
-    let middle = h.trimmed_mean(MIDDLE_TRIM.0, MIDDLE_TRIM.1);
+    // where display white is `SCENE_WHITE` whatever the body: a merge's
+    // read with its headroom on, as the develop shows it.
+    let shift = headroom.map_or(0.0, |k| k.stops);
+    let body = baseline - shift;
+    let q = |at: f32| h.quantile(at) + shift;
+    let pull = |exposure: f32| headroom.and_then(|k| Pull::of(k, exposure));
+    let pulled = |g: f32, exposure: f32, highlights: f32| {
+        pull(exposure).map_or(g, |p| p.at_pixel(g, Pull::share(highlights)))
+    };
+    let middle = h.trimmed_mean(MIDDLE_TRIM.0, MIDDLE_TRIM.1) + shift;
     // The key kept: a lift is whole up to `FULL_LIFT` and half past
     // it, so a dark frame ends darker than an ordinary one.
     let short = MIDDLE - middle;
@@ -368,12 +461,12 @@ pub fn auto_light(h: &Histogram, baseline: f32) -> LightChanges {
     .clamp(-EXPOSURE_LIMIT, EXPOSURE_LIMIT);
     // A frame lit at night: real lights near white and a median far
     // under the target. Its median rises a stop at most.
-    let median = h.quantile(0.5);
-    if h.quantile(0.99) >= SCENE_WHITE - NIGHT_LIGHTS && median < MIDDLE - NIGHT_MEDIAN {
+    let median = q(0.5);
+    if q(0.99) >= SCENE_WHITE - NIGHT_LIGHTS && median < MIDDLE - NIGHT_MEDIAN {
         exposure = exposure.min(NIGHT_LIFT);
     }
     if exposure > 0.0 {
-        let room = SCENE_WHITE - P90_UNDER_WHITE - h.quantile(0.90);
+        let room = SCENE_WHITE - P90_UNDER_WHITE - q(0.90);
         exposure = exposure.min(room.max(0.0));
     }
     // A cut never takes the shadows more than `CUT_SHADOWS` under the
@@ -384,8 +477,11 @@ pub fn auto_light(h: &Histogram, baseline: f32) -> LightChanges {
     // first asked.
     let asked = exposure;
     if exposure < 0.0 {
-        exposure = exposure.max((MIDDLE - CUT_SHADOWS - h.quantile(CUT_AT)).min(0.0));
-        let over = h.quantile(HIGHLIGHTS_AT.0) + exposure - (SCENE_WHITE - HIGHLIGHTS_AT.1);
+        exposure = exposure.max((MIDDLE - CUT_SHADOWS - q(CUT_AT)).min(0.0));
+        // Highlights' limit pulls a merge's kept range as far as it
+        // reaches.
+        let p97 = pulled(q(HIGHLIGHTS_AT.0) + exposure, exposure, -TONE_LIMIT);
+        let over = p97 - (SCENE_WHITE - HIGHLIGHTS_AT.1);
         let beyond = over - TONE_LIMIT / HIGHLIGHTS_PULL;
         if beyond > 0.0 {
             exposure = (exposure - beyond).max(asked);
@@ -396,22 +492,25 @@ pub fn auto_light(h: &Histogram, baseline: f32) -> LightChanges {
     let refused = (exposure - asked.min(0.0)).max(0.0).min(-asked.min(0.0));
     let mut exposure = hundredth(exposure);
 
-    let p97 = h.quantile(HIGHLIGHTS_AT.0) + exposure;
+    let p97 = q(HIGHLIGHTS_AT.0) + exposure;
     let highlights = (-(p97 - (SCENE_WHITE - HIGHLIGHTS_AT.1)).max(0.0) * HIGHLIGHTS_PULL)
         .min(-refused / HIGHLIGHTS_PEAK)
         .max(-TONE_LIMIT);
-    let p3 = h.quantile(SHADOWS_AT.0) + exposure + baseline;
+    let p3 = q(SHADOWS_AT.0) + exposure + body;
     let shadows = ((SHADOWS_AT.1 - p3).max(0.0) * SHADOWS_PULL).min(TONE_LIMIT);
 
     let (lo, hi) = (h.quantile(BLACKS_AT), h.quantile(WHITES_AT));
     let stretch = smoothstep(STRETCH_RANGE.0, STRETCH_RANGE.1, hi - lo);
+    let hi = hi + shift;
 
     // Whites, in the finish's terms: display white `SCENE_WHITE` over
     // grey, a pivot `f` at the foot of the frame's span, and a power
-    // that takes `top - f` to `(top - f) * reach / (reach - w)`.
-    let top = hi + exposure + highlights * HIGHLIGHTS_AT_TOP;
-    let median = h.quantile(0.5) + exposure;
-    let p99 = h.quantile(0.99) + exposure;
+    // that takes `top - f` to `(top - f) * reach / (reach - w)`. A
+    // merge's top as Highlights pulls it; the pivot on the span as the
+    // frame has it, as the finish keeps it.
+    let top = pulled(hi + exposure, exposure, highlights) + highlights * HIGHLIGHTS_AT_TOP;
+    let median = q(0.5) + exposure;
+    let p99 = q(0.99) + exposure;
     let f = (p99 - (p99 - median).clamp(SPAN.0, SPAN.1)).clamp(WHITES_PIVOT.0, WHITES_PIVOT.1);
     let reach = SCENE_WHITE - f;
     let mut whites = if top - f > 0.5 {
@@ -434,11 +533,11 @@ pub fn auto_light(h: &Histogram, baseline: f32) -> LightChanges {
     // Read on each pixel's brightest channel, since a channel reaches
     // white before the luminance does: the white point's gain rises
     // with the luminance, so holding the channel holds the pixel.
-    let clipped = h.peak_over(SCENE_WHITE);
+    let clipped = h.peak_over(SCENE_WHITE - shift);
     let start = if clipped > 0.0 {
-        h.peak_quantile(1.0 - clipped)
+        h.peak_quantile(1.0 - clipped) + shift
     } else {
-        h.peak_quantile(WHITES_HELD) + WHITE_MARGIN
+        h.peak_quantile(WHITES_HELD) + WHITE_MARGIN + shift
     };
     // Rounded down to the hundredth the slider shows, which only
     // clips less.
@@ -674,5 +773,81 @@ mod tests {
             ),
             (0.5, -0.3, 0.2, 0.1, -0.01)
         );
+    }
+
+    /// A frame stored `stops` under, as a merge is, read at its
+    /// headroom: its luminances `stops` lower, and its brightest
+    /// channels with them.
+    fn stored(lo: f32, hi: f32, n: u32, kept: &[(f32, u64)], stops: f32) -> Histogram {
+        let mut h = spread(lo - stops, hi - stops, n);
+        for &(at, count) in kept {
+            h.add_n(MID_GREY * 2f32.powf(at - stops), count);
+        }
+        h
+    }
+
+    /// A merge whose range sits under display white reads as the frame
+    /// it was made from: its headroom on, it lands where the same
+    /// scene unstored does.
+    #[test]
+    fn a_merge_under_white_reads_as_its_scene() {
+        for (lo, hi) in [(MIDDLE - 3.0, MIDDLE + 2.0), (-7.0, -2.0), (-4.0, 1.5)] {
+            let scene = auto_light(&spread(lo, hi, 20_000), 0.8);
+            let stops = 2.5;
+            let merge = auto_light_kept(
+                &stored(lo, hi, 20_000, &[], stops),
+                0.8 + stops,
+                Some(Headroom {
+                    stops,
+                    range: [(lo + hi) / 2.0 - stops, hi - stops],
+                }),
+            );
+            for (a, b) in [
+                (merge.exposure, scene.exposure),
+                (merge.highlights, scene.highlights),
+                (merge.shadows, scene.shadows),
+                (merge.whites, scene.whites),
+                (merge.blacks, scene.blacks),
+            ] {
+                assert!(
+                    (a - b).abs() <= 0.02,
+                    "{lo}..{hi}: {merge:?} against {scene:?}"
+                );
+            }
+        }
+    }
+
+    /// A merge's kept range is Highlights' to bring down: a frame
+    /// three stops over white at its top, read with its headroom on
+    /// but its range taken as it stands, sends Whites to its limit and
+    /// the rest off the exposure; read through the pull, as the
+    /// finish shows it at Auto's Highlights, it leaves the exposure
+    /// where the frame's middle asks and Whites short of its limit.
+    #[test]
+    fn a_merges_kept_range_is_left_to_highlights() {
+        let stops = 3.0;
+        // The scene to a stop under white, and a tenth of it spread
+        // over white to the headroom's top.
+        let kept: Vec<(f32, u64)> = (0..100)
+            .map(|i| (SCENE_WHITE + stops * (i as f32 + 0.5) / 100.0, 40))
+            .collect();
+        let h = stored(-7.0, SCENE_WHITE - 1.0, 36_000, &kept, stops);
+        let headroom = Headroom {
+            stops,
+            range: [-2.0 - stops, SCENE_WHITE + 2.7 - stops],
+        };
+        let mut unpulled = spread(-7.0, SCENE_WHITE - 1.0, 36_000);
+        for &(at, count) in &kept {
+            unpulled.add_n(MID_GREY * 2f32.powf(at), count);
+        }
+        let read = auto_light(&unpulled, 0.8);
+        assert_eq!(read.whites, -WHITES_LIMIT, "{read:?}");
+        let merge = auto_light_kept(&h, 0.8 + stops, Some(headroom));
+        assert!(merge.whites > -WHITES_LIMIT + 0.3, "{merge:?}");
+        assert!(
+            merge.exposure > read.exposure + 0.3,
+            "{merge:?} against {read:?}"
+        );
+        assert!(merge.highlights < 0.0 && merge.whites < 0.0, "{merge:?}");
     }
 }

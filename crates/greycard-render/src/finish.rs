@@ -186,6 +186,18 @@ impl Source {
         }
     }
 
+    /// What Auto reads of a frame's kept range
+    /// ([`greycard_edit::auto::Headroom`]): a merge's headroom and the
+    /// frame's range as the render places the pull by it
+    /// ([`Guide::frame_range`]); nothing for a frame with no headroom.
+    pub fn auto_headroom(self, guide: &Guide) -> Option<greycard_edit::auto::Headroom> {
+        let stops = self.headroom();
+        (stops > 0.0).then(|| greycard_edit::auto::Headroom {
+            stops,
+            range: guide.frame_range(),
+        })
+    }
+
     /// The display curve, per channel or AgX as `how` says,
     /// or a clip at white for a picture that has been through one
     /// already, at the default baseline's white.
@@ -1267,15 +1279,6 @@ fn span_of(median: f32, top: f32) -> [f32; 2] {
     [top - width, width]
 }
 
-/// The highlights slider's limit: its negative travel's end, where a
-/// merge's kept range is pulled under display white in full.
-const HIGHLIGHTS_TRAVEL: f32 = 2.0;
-
-/// The soft knee of the pull on a merge's kept range, in stops: the
-/// pull's slope rises from nothing at its foot to most of its full
-/// value over about this much ([`Kept::pull`]).
-const KEPT_KNEE: f32 = 0.5;
-
 /// What a frame with headroom keeps over display white, as the
 /// highlights slider's negative travel reaches it: a merge's
 /// ([`Baseline::headroom`]). The highlights ramp alone takes about
@@ -1353,21 +1356,18 @@ impl Kept {
     }
 
     /// The share of the pull a blended highlights asks for: its
-    /// negative travel, held to the slider's.
+    /// negative travel, held to the slider's
+    /// ([`greycard_edit::kept::share`]).
     #[inline]
     fn share(highlights: f32) -> f32 {
-        (-highlights / HIGHLIGHTS_TRAVEL).clamp(0.0, 1.0)
+        greycard_edit::kept::share(highlights)
     }
 
-    /// A region reading `g` with `share` of the pull on it.
+    /// A region reading `g` with `share` of the pull on it
+    /// ([`greycard_edit::kept::pull`]).
     #[inline]
     fn pull(&self, g: f32, share: f32) -> f32 {
-        let u = g - self.knee;
-        if u <= 0.0 {
-            return g;
-        }
-        let ramp = |u: f32| u - KEPT_KNEE * (1.0 - (-u / KEPT_KNEE).exp());
-        g - share * self.excess * ramp(u) / ramp(self.top - self.knee)
+        greycard_edit::kept::pull(g, share, self.knee, self.top, self.excess)
     }
 
     /// The highlights span with `share` of the pull on the frame's
@@ -1931,6 +1931,56 @@ mod tests {
         assert_eq!(auto::HIGHLIGHTS_PEAK, HIGHLIGHTS_PEAK);
         assert_eq!(auto::SPAN, HIGHLIGHTS_SPAN);
         assert_eq!(auto::WHITES_PIVOT, WHITES_PIVOT);
+    }
+
+    /// Auto's reading of a merge's pull is the finish's at contrast
+    /// one: the same reading, in Auto's stops (the body's baseline off),
+    /// for merges of half a stop to six, ranges, exposures, readings
+    /// from under the knee to over the top, and the whole travel.
+    #[test]
+    fn autos_pull_is_the_finishs() {
+        use greycard_edit::auto::{Headroom, Pull};
+        let light = Light::default();
+        for body in [0.52, BASELINE_EXPOSURE] {
+            for headroom in [0.5, 1.5, 2.92, 4.0, 6.0] {
+                let source = Source::Scene(Baseline::of_stops(body).with_headroom(headroom));
+                let white = White::of(source, &light).stops;
+                for range in [[-4.2, 2.2], [-1.0, 0.0], [-6.0, -1.0]] {
+                    for exposure in [-1.0, 0.0, 1.5] {
+                        let finish = Kept::of(
+                            range,
+                            source.baseline(&light) + exposure,
+                            1.0,
+                            source.headroom(),
+                            white,
+                        );
+                        let auto = Pull::of(
+                            Headroom {
+                                stops: source.headroom(),
+                                range,
+                            },
+                            exposure,
+                        );
+                        assert_eq!(finish.is_some(), auto.is_some(), "{headroom} {range:?}");
+                        let (Some(finish), Some(auto)) = (finish, auto) else {
+                            continue;
+                        };
+                        for highlights in [0.0, -0.5, -1.0, -2.0] {
+                            let share = Kept::share(highlights);
+                            assert_eq!(share, Pull::share(highlights));
+                            for g in [-3.0, 1.0, 2.0, 3.0, 4.5, 6.0, 9.0] {
+                                let a = auto.at(g, share) + body;
+                                let f = finish.pull(g + body, share);
+                                assert!(
+                                    (a - f).abs() < 1e-4,
+                                    "{headroom} {range:?} {exposure} {highlights} {g}: {a} against {f}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Two demosaic choices that run as one method on the frame's

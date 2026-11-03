@@ -560,14 +560,12 @@ brackets and the panorama to shoot for testing are in
       window's second pass written under the `.merging` folder
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
       the most voting tiles rather than the reference, measured on a
-      real bracket with a clipped sky (§529); Auto reading a merge's
-      headroom (it reads the frame about three stops dark and leaves
-      the kept range clipped); the Highlights pull's aim at display
-      white measured on a real bracket (§528); a noise model with the
-      merge's steps in it for its readers; a faster Deflate in rawler,
-      upstream (libflate does 30 MB/s a thread, §536); the per-frame
-      learned denoiser offered in the action and the command line; the
-      measurement on a real tripod bracket
+      real bracket with a clipped sky (§529); the Highlights pull's aim
+      at display white measured on a real bracket (§528); a noise model
+      with the merge's steps in it for its readers; a faster Deflate in
+      rawler, upstream (libflate does 30 MB/s a thread, §536); the
+      per-frame learned denoiser offered in the action and the command
+      line; the measurement on a real tripod bracket
 - [ ] Phase 2's leftovers (§530): a merge in strips so the 100 MP cap
       can go (a 20-frame handheld set is refused only after its walk);
       a sphere; the uncropped canvas; the learned denoise on by default

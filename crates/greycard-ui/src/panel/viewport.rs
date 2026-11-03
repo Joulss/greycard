@@ -298,14 +298,16 @@ pub(crate) fn auto_light(st: &mut State, app: &App, worker: &Worker) {
     };
     let edit = read_edit(app, &st.develop.edit, st.develop.target);
     let baseline = kind.baseline(&edit.light);
+    let headroom = kind.auto_headroom(&st.develop.drawn_guide);
     let histogram = greycard_edit::auto::Histogram::of_pixels(&grid);
-    let set = greycard_edit::auto::auto_light(&histogram, baseline);
+    let set = greycard_edit::auto::auto_light_kept(&histogram, baseline, headroom);
     tracing::info!(
-        "auto light: middle {:+.2}, 0.5/50/99.5% {:+.2} {:+.2} {:+.2} stops, baseline {baseline:.2}: {set:?}",
+        "auto light: middle {:+.2}, 0.5/50/99.5% {:+.2} {:+.2} {:+.2} stops, baseline {baseline:.2}, headroom {:.2}: {set:?}",
         histogram.trimmed_mean(0.1, 0.9),
         histogram.quantile(0.005),
         histogram.quantile(0.5),
         histogram.quantile(0.995),
+        kind.headroom(),
     );
     let mut auto = edit.clone();
     auto.light = set.applied(&edit.light);

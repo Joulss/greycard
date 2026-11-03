@@ -1322,7 +1322,6 @@ mod tests {
     use greycard_core::merge::testing::{
         checker, mosaic_of, scene, two_patches, write_dng, write_dng_at,
     };
-    use greycard_core::raw::Orientation;
 
     const W: usize = 256;
     const H: usize = 160;
@@ -1924,11 +1923,20 @@ mod tests {
     /// default edit, on the CPU, brightened by its baseline: what the
     /// finish starts from.
     fn developed(file: &Path) -> WorkingImage {
+        let (mut image, source) = scene_of(file);
+        // The scene is laid across the frame as written: no turn.
+        assert_eq!((image.width, image.height), (W, H));
+        let baseline = source.baseline(&Edit::default().light).exp2();
+        image.data.iter_mut().for_each(|v| *v *= baseline);
+        image
+    }
+
+    /// `file` developed as the viewport's walk develops it under the
+    /// default edit, on the CPU, before any exposure: the picture the
+    /// window holds and Auto reads, and what the finish is handed.
+    fn scene_of(file: &Path) -> (WorkingImage, greycard_render::finish::Source) {
         let frame = greycard_core::decode::decode_path(file).unwrap();
-        let baseline = (greycard_edit::baseline::for_frame(&frame)
-            + greycard_edit::baseline::headroom(&frame))
-        .exp2();
-        assert_eq!(frame.orientation, Orientation::Normal);
+        let source = greycard_render::finish::Source::of_frame(&frame);
         let input = Input::Raw(Arc::new(frame));
         let edit = Edit::default();
         let steps = stages(&edit, &Purpose::Viewport, &input.facts(0), None);
@@ -1946,9 +1954,22 @@ mod tests {
         let Buf::Working(image) = walked.buf else {
             panic!("the walk ends in the working space");
         };
-        let mut image = (*image).clone();
-        image.data.iter_mut().for_each(|v| *v *= baseline);
-        image
+        ((*image).clone(), source)
+    }
+
+    /// Auto on `file` under `edit`, as the window reads it: the
+    /// histogram of the picture before any exposure, at the frame's
+    /// baseline, with a merge's headroom and the frame's range.
+    fn auto_of(file: &Path, edit: &Edit) -> greycard_edit::auto::LightChanges {
+        use greycard_edit::auto::{Histogram, auto_light_kept};
+        let (image, source) = scene_of(file);
+        let pixels: Vec<[f32; 3]> = image.data.chunks(3).map(|p| [p[0], p[1], p[2]]).collect();
+        let guide = greycard_render::finish::guide_plane(&image);
+        auto_light_kept(
+            &Histogram::of_pixels(&pixels),
+            source.baseline(&edit.light),
+            source.auto_headroom(&guide),
+        )
     }
 
     /// `file` exported under `edit`, its encoded values from 0 to 1.
@@ -2060,6 +2081,68 @@ mod tests {
         assert!(rise(&re) < 0.01, "the reference: {}", rise(&re));
         assert!(rise(&me) > 0.03, "the merge: {}", rise(&me));
         greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Auto reads a merge as the develop shows it: where its reference
+    /// lands on the same scene, its exposure within a quarter stop, its
+    /// Highlights within 0.15, and its Whites within three quarters
+    /// (the merge's top reads two stops over the reference's, and
+    /// Whites holds it under white where the reference's clip needs
+    /// less), and the kept range left to Highlights' pull: at the
+    /// merge's Auto it climbs under white.
+    /// Read without its headroom, as before, the merge read three stops
+    /// dark (Highlights -0.39 and Whites -0.08 where the reference
+    /// gets -0.9 and -1.02), and the kept range stayed at white.
+    #[test]
+    fn auto_lands_a_merge_where_its_reference_lands() {
+        let (dir, files) = bracket("auto", [0; 3]);
+        let report = merged(&files, &Options::default());
+        let edit = edit_for_merge(&Edit::default());
+        let (reference, merge) = (auto_of(&files[1], &edit), auto_of(&report.out, &edit));
+        eprintln!("auto: the reference {reference:?}, the merge {merge:?}");
+        for (what, m, r, within) in [
+            ("exposure", merge.exposure, reference.exposure, 0.25),
+            ("highlights", merge.highlights, reference.highlights, 0.15),
+            ("whites", merge.whites, reference.whites, 0.75),
+        ] {
+            assert!((m - r).abs() <= within, "{what}: {m} against {r}");
+        }
+        assert!(merge.whites > -2.0, "{merge:?}");
+
+        let mut at = edit.clone();
+        at.light = merge.applied(&edit.light);
+        let me = exported(&report.out, &at);
+        let bands: Vec<f64> = (0..5)
+            .map(|k| {
+                let from = 0.75 + 0.05 * k as f32;
+                shown(&me, from, from + 0.05)
+            })
+            .collect();
+        eprintln!("the merge at its Auto, 0.75 to 1.0: {bands:?}");
+        assert!(
+            bands.windows(2).all(|b| b[1] > b[0] + 0.005),
+            "the kept range climbs: {bands:?}"
+        );
+        // Under white, the last band's texture lifting its mean into
+        // the shoulder.
+        assert!(bands[3] < 0.99 && bands[4] < 0.999, "{bands:?}");
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Auto on the raws named by `GREYCARD_AUTO_RAWS` (paths split by
+    /// `:`), as the window reads them, printed to the bit: frames
+    /// without headroom compared across a change.
+    #[test]
+    #[ignore]
+    fn auto_on_named_raws() {
+        let Ok(raws) = std::env::var("GREYCARD_AUTO_RAWS") else {
+            return;
+        };
+        for raw in raws.split(':') {
+            let a = auto_of(Path::new(raw), &Edit::default());
+            let bits = [a.exposure, a.highlights, a.shadows, a.whites, a.blacks].map(f32::to_bits);
+            println!("auto {raw}: {a:?} {bits:08x?}");
+        }
     }
 
     /// Highlights at -100 brings back what the merge kept over its

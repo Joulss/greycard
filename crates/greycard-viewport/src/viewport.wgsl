@@ -988,7 +988,8 @@ fn highlights_weight(g: f32, span: vec2<f32>) -> f32 {
 // as `Kept` in `finish.rs`: the frame's median and top at the
 // picture's exposure and contrast, the pull's knee (the span's least
 // under display white), and what the full travel takes off the top.
-// No excess: no pull.
+// No excess: no pull. The constants and the pull are greycard-edit's
+// `kept`, which the finish and Auto share.
 const HIGHLIGHTS_TRAVEL: f32 = 2.0;
 const KEPT_KNEE: f32 = 0.5;
 
