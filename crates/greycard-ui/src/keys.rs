@@ -977,7 +977,7 @@ pub(crate) fn install(app: &App) {
             }
             let app_weak = app.as_weak();
             std::thread::spawn(move || {
-                if let Err(e) = webbrowser::open(&url) {
+                if let Err(e) = crate::web::open_url(&url) {
                     tracing::warn!("help: no browser would open the guide: {e}");
                     let _ = app_weak.upgrade_in_event_loop(move |app| {
                         app.set_status(

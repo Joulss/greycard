@@ -416,7 +416,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 return;
             }
             std::thread::spawn(move || {
-                if let Err(e) = webbrowser::open(&url) {
+                if let Err(e) = crate::web::open_url(&url) {
                     tracing::warn!("update: no browser would open {url}: {e}");
                 }
             });

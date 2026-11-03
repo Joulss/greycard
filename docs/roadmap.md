@@ -15,9 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Help opens the guide in Chrome on a desktop whose default is
-      Brave (issue 60): the browser crate tries `$BROWSER` before the
-      desktop's own opener; a GUI app should ask `xdg-open` first
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
       them in 1.5 to 2.6 s from a warm cache. The window says

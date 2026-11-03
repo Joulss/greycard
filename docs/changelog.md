@@ -144,6 +144,10 @@ design note behind it.
 
 ### Fixes
 
+- On Linux, Help, Report a problem, and the release page open in the
+  desktop's default browser, not the one a shell's `BROWSER` names
+  (issue 60)
+  ([§533](https://github.com/jessolmstead/greycard/blob/master/docs/notes/533-help-asks-the-desktop-for-its-browser.md)).
 - A first Subtract or Erase stroke with a new brush, in a mask that
   already has shapes, cuts the brush out of the mask; it used to do
   nothing, or empty the whole mask when the shape was added as

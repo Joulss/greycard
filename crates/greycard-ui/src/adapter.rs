@@ -29,8 +29,8 @@ const WGPU_ADAPTER_NAME: &str = "WGPU_ADAPTER_NAME";
 
 /// Set beside `SLINT_WGPU_CPU` where we set it: a greycard started
 /// from anything we start (a browser `webbrowser` opened, which takes
-/// no environment of ours) inherits both, and reads the first as ours
-/// and not as asked for by hand.
+/// no environment of ours, where the desktop has no opener) inherits
+/// both, and reads the first as ours and not as asked for by hand.
 const OURS: &str = "GREYCARD_SET_SLINT_WGPU_CPU";
 
 /// Whether we set `SLINT_WGPU_CPU` ourselves, and so take it off the

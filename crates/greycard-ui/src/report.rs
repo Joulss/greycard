@@ -355,7 +355,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
         }
         let app_weak = app.as_weak();
         std::thread::spawn(move || {
-            if let Err(e) = webbrowser::open(&url) {
+            if let Err(e) = crate::web::open_url(&url) {
                 tracing::warn!("report: no browser would open the form: {e}");
                 let _ = app_weak.upgrade_in_event_loop(|app| {
                     app.set_status(

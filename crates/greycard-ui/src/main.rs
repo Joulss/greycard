@@ -49,6 +49,7 @@ pub(crate) mod testing;
 mod tree;
 mod update;
 mod versions;
+mod web;
 mod window_fit;
 
 // The modules with no window in them, in the library beside this

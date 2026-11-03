@@ -545,3 +545,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§530. The panorama](notes/530-the-panorama.md) (2026-11-01)
 - [§531. A first Subtract or Erase stroke cuts a new brush out](notes/531-a-first-subtract-or-erase-stroke-cuts-a-new-brush-out.md) (2026-11-02)
 - [§532. The merge recipe and the re-merge](notes/532-the-merge-recipe-and-the-re-merge.md) (2026-11-02)
+- [§533. Help asks the desktop for its browser](notes/533-help-asks-the-desktop-for-its-browser.md) (2026-11-02)
