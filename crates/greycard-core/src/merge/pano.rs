@@ -357,10 +357,14 @@ impl Model {
     /// again at its end, the middle of the list is not the middle of
     /// the picture; this is.
     pub fn middle(&self, width: usize, height: usize) -> usize {
+        // Scores within a rounding of the least are a tie, and the
+        // first frame of a tie wins: two frames score the same but
+        // for the last bit, which differs between machines.
         let nearest = |score: &dyn Fn(usize) -> f64, n: usize| {
-            (0..n)
-                .min_by(|&a, &b| score(a).total_cmp(&score(b)).then(a.cmp(&b)))
-                .unwrap_or(0)
+            let scores: Vec<f64> = (0..n).map(score).collect();
+            let least = scores.iter().copied().fold(f64::INFINITY, f64::min);
+            let near = 1e-9 * least.abs().max(1.0);
+            scores.iter().position(|&s| s <= least + near).unwrap_or(0)
         };
         match self {
             Model::Turned { rotations, .. } => {
@@ -1734,6 +1738,38 @@ mod tests {
         };
         assert_eq!(homographies[1], Homography::IDENTITY);
         assert!((homographies[3].apply(0.0, 0.0).0 + 600.0).abs() < 1e-9);
+    }
+
+    /// Two frames score the same middle but for rounding, and the
+    /// first wins however the last bit falls: a score a rounding worse
+    /// than the least is still a tie, one clearly worse is not.
+    #[test]
+    fn a_tie_for_the_middle_goes_to_the_first_frame() {
+        let mut second = rotation([0.0, 0.3, 0.0]);
+        second[0] += 1e-13;
+        let model = Model::Turned {
+            focal: 500.0,
+            rotations: vec![IDENTITY, second],
+            projection: Projection::Planar,
+        };
+        assert_eq!(model.middle(W, H), 0);
+        let model = Model::Turned {
+            focal: 500.0,
+            rotations: vec![rotation([0.0, 0.3, 0.0]), IDENTITY],
+            projection: Projection::Planar,
+        };
+        assert_eq!(model.middle(W, H), 0);
+        let shift = |dx: f64| Homography {
+            m: [1.0, 0.0, dx, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        };
+        let planar = Model::Planar {
+            homographies: vec![shift(300.0 + 1e-10), shift(0.0)],
+        };
+        assert_eq!(planar.middle(W, H), 0);
+        let planar = Model::Planar {
+            homographies: vec![shift(300.0), shift(0.0), shift(150.0)],
+        };
+        assert_eq!(planar.middle(W, H), 2);
     }
 
     /// A frame turned 40 degrees about the vertical lands on a cylinder

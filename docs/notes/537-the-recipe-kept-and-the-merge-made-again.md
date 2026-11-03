@@ -88,7 +88,10 @@ changes no pair's fit. The gains are on its scale and the file takes
 its EXIF. `pano::reference_of` still answers the asked case and names
 the anchor. On a synthetic set shot right to left in uneven steps
 (yaws 0.5, 0.3, 0, -0.3 rad) the list's middle is the second frame and
-the reference the third.
+the reference the third. Two frames score the same middle but for
+the last bit of a sum, which fell the other way on Apple's ARM (CI,
+2026-11-03): scores within a rounding of the least are a tie, and the
+first frame of a tie wins.
 
 In the window one frame both walks the panorama and gives it its edit.
 The walk needs an edit before the reference is known, so the window
