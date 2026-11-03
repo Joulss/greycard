@@ -15,6 +15,9 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] Help opens the guide in Chrome on a desktop whose default is
+      Brave (issue 60): the browser crate tries `$BROWSER` before the
+      desktop's own opener; a GUI app should ask `xdg-open` first
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
       them in 1.5 to 2.6 s from a warm cache. The window says
@@ -456,6 +459,11 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
+- [ ] A Lightroom XMP beside a raw read on import and on a first
+      open (issue 61): a Lightroom Cloud export carries its develop
+      settings there, not in a catalog; the catalog importer's mapper
+      makes the edit, with "Imported from Lightroom" as the history's
+      start, and the Import sheet counts what it read
 - [ ] The filter bar's last two chips: a "none" chip for frames with
       no value for a facet (decide it with a library of phone JPEGs in
       hand), and an error row in the index for a file whose hash fails
