@@ -9,6 +9,17 @@ rust-version = "1.98"
 authors = ["Jess Olmstead"]
 repository = "https://github.com/jessolmstead/greycard"
 
+# The lint levels that differ from the defaults, so the editor and CI
+# agree: any lint we allow or raise workspace wide goes here, and every
+# crate opts in with `[lints] workspace = true`. None differ today. CI's
+# `-D warnings` (and the pre-push hook's) is what makes a warning fail,
+# so the editor shows warnings as warnings; a blanket deny here would
+# stop every plain build on one, a newer toolchain's new lint among
+# them.
+[workspace.lints.rust]
+
+[workspace.lints.clippy]
+
 [workspace.dependencies]
 rawler = "0.8"
 rawcolor = "0.1.1"

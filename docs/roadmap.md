@@ -842,23 +842,18 @@ clears or a tester asks for it.
 
 #### Engine
 
-- [ ] A layering check in CI: a task over `cargo tree` that fails when
-      a crate gains an edge the architecture page does not list (core
-      on nothing, edit and library on core, the window on everything),
-      and a grep that fails when the window calls a core op directly
-      (`greycard_core::develop::orient` in crop.rs and browser.rs
-      today); the direction is clean by convention and nothing holds
-      it (an outside review, 2026-11-02)
+- [ ] The window's horizon call (`greycard_core::horizon::horizon` in
+      panel/crop.rs) moved behind the engine; a core op outside
+      develop, so the layering test (§540) cannot see it
 - [ ] The unwraps counted down: about 230 `unwrap` and 380 `expect`
       outside tests, most of them lock `expect`s in the engine and
       the rest in the window and the models; a lock helper that
       recovers a poisoned mutex, `?` with context where a Result
       already flows, and the count printed by the size report so it
       only falls (an outside review, 2026-11-02)
-- [ ] A `[lints]` table in the workspace manifest with the clippy set
-      CI runs, so an editor shows what CI will say; the 52
-      `too_many_arguments` allows looked at one by one, a struct where
-      the arguments are one thing (an outside review, 2026-11-02)
+- [ ] The 52 `too_many_arguments` allows looked at one by one, a
+      struct where the arguments are one thing (an outside review,
+      2026-11-02)
 - [ ] The sidecar written at the oldest schema that holds the edit,
       so an older build reads a newer build's file until a field it
       lacks is used; today a newer version is refused outright

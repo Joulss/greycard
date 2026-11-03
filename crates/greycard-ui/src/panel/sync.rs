@@ -1232,7 +1232,7 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
     // The demosaic as this frame runs it, not a choice stored for
     // another mosaic: a paste then leaves it off the other mosaic's
     // frames.
-    let edit = if edit.demosaic.method() == greycard_core::develop::DemosaicMethod::Bilinear {
+    let edit = if edit.demosaic == greycard_edit::Demosaic::Bilinear {
         edit
     } else {
         as_source(edit, crate::panel::browser::mosaic_of(st, cell))

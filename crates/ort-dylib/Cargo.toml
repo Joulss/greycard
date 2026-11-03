@@ -9,6 +9,9 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 # The same versions and features ort-sys's own download used, so the

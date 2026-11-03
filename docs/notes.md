@@ -552,3 +552,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§537. The recipe kept and the merge made again](notes/537-the-recipe-kept-and-the-merge-made-again.md) (2026-11-02)
 - [§538. The FOLDERS fold kept per view](notes/538-the-folders-fold-kept-per-view.md) (2026-11-03)
 - [§539. Auto reads a merge's headroom](notes/539-auto-reads-a-merges-headroom.md) (2026-11-03)
+- [§540. A lints table and the layer rule as a test](notes/540-a-lints-table-and-the-layer-rule-as-a-test.md) (2026-11-03)

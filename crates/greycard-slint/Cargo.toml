@@ -8,6 +8,9 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 # No tests of its own: the editor's tests drive this UI. A test build of
 # the library would compile all the generated code a second time, for
 # nothing, in every `cargo test` of the workspace.

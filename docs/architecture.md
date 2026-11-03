@@ -84,6 +84,10 @@ The rules, in prose:
 - **The command line is on the engine and has no window**: no
   viewport, no Slint.
 
+A test, `crates/greycard-core/tests/layering.rs`, holds the rule: it
+fails when `cargo metadata` and the table above part ways in either
+direction, and when the window names core's develop outside its tests.
+
 A crate the log lists do not name (`OURS` in
 `crates/greycard-ui/src/log.rs` and `crates/greycard-cli/src/log.rs`)
 logs at warn only; one whose info lines matter joins the lists.
