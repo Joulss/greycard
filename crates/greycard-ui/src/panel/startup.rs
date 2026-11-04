@@ -20,9 +20,9 @@ use crate::panel::curve::{PARAMETRIC, draw_curve};
 use crate::panel::deliver::{chosen_preset, deliver, read_sheet, show_presets_picker, show_sheet};
 use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_moves};
 use crate::panel::mask::{ask_for, bake_locals};
-use crate::panel::retouch::patch_outlines;
+use crate::panel::retouch::shown_outlines;
 use crate::panel::viewport::{
-    ViewMap, display_key, drawn_kind, drawn_picture, effective_zoom, picture_up, proof_settings,
+    display_key, drawn_kind, drawn_picture, effective_zoom, picture_up, proof_settings,
     schedule_snapshot, settle_source_size, show_crop_on_view, show_hover, show_source_shape,
     source_to_view, sync_display, write_screenshot, zoom_label,
 };
@@ -1339,14 +1339,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // The chosen patch's shape on the view, while the
                     // Retouch tab shows: its edge, and where its
                     // feather begins.
-                    let (edge, feather) =
-                        match selected.filter(|_| app.get_panel_tab() == "Retouch") {
-                            Some(p) => {
-                                let map = ViewMap::of(st, &app);
-                                patch_outlines(&mut st.develop.patch_shape, p, &map)
-                            }
-                            None => (String::new(), String::new()),
-                        };
+                    let (edge, feather) = shown_outlines(st, &app, &edit);
                     if app.get_patch_outline() != edge {
                         app.set_patch_outline(edge.into());
                     }
@@ -1612,7 +1605,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             highlights: app.get_warn_highlights(),
                         },
                         peaking: peaking_of(&app),
-                        show_mask: app.get_show_mask().then_some(st.develop.target).flatten(),
+                        show_mask: crate::panel::mask::shown_mask(&app, st.develop.target),
                         show_sharpen: app.get_show_sharpen_mask() && app.get_sharpen(),
                         mask_alone: false,
                         weigh_by: None,

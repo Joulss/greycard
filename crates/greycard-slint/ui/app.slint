@@ -1965,6 +1965,12 @@ export component App inherits Window {
     in-out property <float> patch-opacity: 1.0;
     in-out property <[string]> patch-names: [];
     in-out property <int> patch: -1;
+    // The mask and the patch whose rows are under the pointer, -1 for
+    // none, lit over the picture while they are; and their change,
+    // for a redraw.
+    in-out property <int> mask-lit: -1;
+    in-out property <int> patch-lit: -1;
+    callback lit-changed();
     // Whether the chosen patch is a Fill the generative remove made,
     // whose row offers its next variation.
     in-out property <bool> patch-varies: false;
@@ -3315,6 +3321,8 @@ export component App inherits Window {
                         collapsed-adjustments <=> root.collapsed-adjustments;
                         target-changed(a) => { root.target-changed(a); }
                         adjustment-toggled(a) => { root.adjustment-toggled(a); }
+                        mask-lit <=> root.mask-lit;
+                        lit-changed => { root.lit-changed(); }
                         // The button's new mask is named at once: its
                         // section opens and its name takes the keys. M's
                         // is not, as its shape is in hand for a drag.
@@ -4003,6 +4011,8 @@ export component App inherits Window {
                             fill-chosen(c) => { root.fill-chosen(c); }
                             retouch-toggled(a) => { root.retouch-toggled(a); }
                             patch-changed(a) => { root.patch-changed(a); }
+                            patch-lit <=> root.patch-lit;
+                            lit-changed => { root.lit-changed(); }
                             delete-patch => { root.delete-patch(); }
                             patch-edited => { root.patch-edited(); }
                             patch-another => { root.patch-another(); }

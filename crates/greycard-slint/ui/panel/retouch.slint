@@ -26,6 +26,12 @@ export component RetouchSection inherits Section {
     callback retouch-toggled(string);
     callback patch-another();
     callback patch-changed(int);
+    // The patch whose row is under the pointer, -1 for none: its
+    // outline drawn while it is.
+    in-out property <int> patch-lit: -1;
+    callback lit-changed();
+    changed patch-names => { root.patch-lit = -1; root.lit-changed(); }
+    init => { root.patch-lit = -1; }
     callback delete-patch();
     callback patch-edited();
 
@@ -118,45 +124,55 @@ export component RetouchSection inherits Section {
                 border-radius: Theme.radius-sm;
                 background: on ? Theme.raised : (prow.has-hover ? Theme.hover : transparent);
                 animate background { duration: Theme.quick; }
+                // The row's buttons inside it, so the row keeps its
+                // hover over them.
                 prow := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
-                    clicked => { root.patch-changed(i); }
-                }
-                HorizontalLayout {
-                    padding-left: Theme.space-2;
-                    padding-right: Theme.space-1;
-                    spacing: Theme.space-2;
-                    Text {
-                        text: name;
-                        color: on ? Theme.text : Theme.text-secondary;
-                        font-size: Theme.font-xs;
-                        font-weight: on ? Theme.weight-medium : Theme.weight-regular;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                    }
-                    if on && root.patch-varies: PanelButton {
-                        text: "Another";
-                        height: Theme.control-height - 4px;
-                        y: 2px;
-                        clicked => { root.patch-another(); }
-                    }
-                    if on: Rectangle {
-                        width: Theme.control-height - 4px;
-                        accessible-role: button;
-                        accessible-label: "Remove " + name;
-                        accessible-action-default => { root.delete-patch(); }
-                        Image {
-                            source: @image-url("../icons/trash-2.svg");
-                            colorize: pbin.has-hover ? Theme.text : Theme.text-secondary;
-                            width: Theme.icon;
-                            height: Theme.icon;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
+                    changed has-hover => {
+                        if (self.has-hover) {
+                            root.patch-lit = i;
+                        } else if (root.patch-lit == i) {
+                            root.patch-lit = -1;
                         }
-                        pbin := TipArea {
-                            words: "Remove";
-                            mouse-cursor: MouseCursor.pointer;
-                            clicked => { root.delete-patch(); }
+                        root.lit-changed();
+                    }
+                    clicked => { root.patch-changed(i); }
+                    HorizontalLayout {
+                        padding-left: Theme.space-2;
+                        padding-right: Theme.space-1;
+                        spacing: Theme.space-2;
+                        Text {
+                            text: name;
+                            color: on ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        if on && root.patch-varies: PanelButton {
+                            text: "Another";
+                            height: Theme.control-height - 4px;
+                            y: 2px;
+                            clicked => { root.patch-another(); }
+                        }
+                        if on: Rectangle {
+                            width: Theme.control-height - 4px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + name;
+                            accessible-action-default => { root.delete-patch(); }
+                            Image {
+                                source: @image-url("../icons/trash-2.svg");
+                                colorize: pbin.has-hover ? Theme.text : Theme.text-secondary;
+                                width: Theme.icon;
+                                height: Theme.icon;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            pbin := TipArea {
+                                words: "Remove";
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => { root.delete-patch(); }
+                            }
                         }
                     }
                 }

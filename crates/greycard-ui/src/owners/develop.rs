@@ -210,6 +210,8 @@ pub(crate) struct Develop {
     /// The chosen patch's rings in the picture's units, for the
     /// patch they were made for, so a frame maps them and no more.
     pub(crate) patch_shape: Option<PatchShape>,
+    /// The same for the patch whose row is under the pointer.
+    pub(crate) lit_shape: Option<PatchShape>,
     /// The perspective guide's first stroke, while it waits for the
     /// second.
     pub(crate) guiding: Guiding,

@@ -62,6 +62,10 @@ the shapes are not.
 
 **O** turns the chosen mask's **Show mask** on or off.
 
+Rest the pointer on a mask's row in the list and that mask is painted
+red too, so the one to fix is found among many; on the Retouch tab, a
+repair's row draws its outline.
+
 **Refine edge** fits the whole mask's edge to the picture's, after
 its shapes are combined and inverted. At 0, the default, the mask is
 exactly what its shapes make. Turned up, where the picture has an edge

@@ -63,6 +63,31 @@ pub(crate) fn patch_outlines(
     (mapped(&shape.edge), mapped(&shape.feather))
 }
 
+/// The patches' outlines on the view while the Retouch tab shows: the
+/// chosen one's, and beside it the one's whose row is under the
+/// pointer, drawn the same way.
+pub(crate) fn shown_outlines(st: &mut State, app: &App, edit: &Edit) -> (String, String) {
+    if app.get_panel_tab() != "Retouch" {
+        return (String::new(), String::new());
+    }
+    let map = ViewMap::of(st, app);
+    let patch = |i: i32| {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| edit.retouch.patches.get(i))
+    };
+    let (mut edge, mut feather) = match patch(app.get_patch()) {
+        Some(p) => patch_outlines(&mut st.develop.patch_shape, p, &map),
+        None => (String::new(), String::new()),
+    };
+    if let Some(p) = patch(app.get_patch_lit()).filter(|_| app.get_patch_lit() != app.get_patch()) {
+        let (e, f) = patch_outlines(&mut st.develop.lit_shape, p, &map);
+        edge.push_str(&e);
+        feather.push_str(&f);
+    }
+    (edge, feather)
+}
+
 /// The patches' names on the panel, the chosen one's values on its
 /// sliders, and whether its row has "Another": a Fill the generative
 /// remove made, by what the last develop said ([`took_engines`]).
@@ -429,8 +454,8 @@ mod tests {
     use crate::testing::{press, retouch_state, window};
     use crate::{App, Shared};
     use greycard_edit::retouch::{Method as RetouchMethod, Patch};
-    use slint::Model;
     use slint::platform::Key;
+    use slint::{ComponentHandle, Model};
 
     thread_local! {
         /// The UNets [`super::prepare_remove`] would have opened ahead.
@@ -991,5 +1016,76 @@ mod tests {
         }
         crate::ai::set_test_webgpu(None);
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A patch's row under the pointer draws that patch's outline as
+    /// the chosen one's is drawn, beside it; leaving the row takes it
+    /// off. The chosen patch is as it was.
+    #[test]
+    fn a_hovered_patchs_row_draws_its_outline() {
+        use slint::platform::WindowEvent;
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (400, 300);
+            st.develop.image_size = (400, 300);
+            st.develop.zoom = 1.0;
+            let heal = |id, u| Patch {
+                id,
+                method: RetouchMethod::Heal,
+                points: vec![[u, 0.4]],
+                radius: 0.05,
+                feather: 0.3,
+                ..Default::default()
+            };
+            st.develop.edit.retouch.patches = vec![heal(1, 0.3), heal(2, 0.7)];
+            super::show_patches(&st, &st.develop.edit, &app);
+        }
+        app.set_panel_tab("Retouch".into());
+        app.set_patch(0);
+        let outlines = || {
+            let mut st = state.borrow_mut();
+            let edit = st.develop.edit.clone();
+            super::shown_outlines(&mut st, &app, &edit)
+        };
+        let (chosen, chosen_feather) = outlines();
+        assert!(!chosen.is_empty() && !chosen_feather.is_empty());
+        let (p, size) = crate::testing::labeled(&app, "Heal 2");
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0),
+        });
+        assert_eq!(app.get_patch_lit(), 1, "the row under the pointer");
+        let (edge, feather) = outlines();
+        let alone = {
+            let st = state.borrow();
+            let map = crate::panel::viewport::ViewMap::of(&st, &app);
+            super::patch_outlines(&mut None, &st.develop.edit.retouch.patches[1], &map)
+        };
+        assert_eq!(
+            edge,
+            format!("{chosen}{}", alone.0),
+            "the chosen one's and the hovered one's"
+        );
+        assert_eq!(feather, format!("{chosen_feather}{}", alone.1));
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        assert_eq!(app.get_patch_lit(), -1);
+        // The whole row counts: the chosen row's bin too.
+        let (p, size) = crate::testing::labeled(&app, "Remove Heal 1");
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0),
+        });
+        assert_eq!(app.get_patch_lit(), 0, "on the bin");
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        assert_eq!(
+            outlines(),
+            (chosen, chosen_feather),
+            "left: the chosen one's alone"
+        );
+        assert_eq!(app.get_patch(), 0, "the chosen patch as it was");
     }
 }

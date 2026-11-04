@@ -21,6 +21,11 @@ export component AdjustmentsList inherits Section {
     in-out property <bool> collapsed-adjustments;
     callback target-changed(int);
     callback adjustment-toggled(int);
+    // The mask whose row is under the pointer, by its index among the
+    // masks, -1 for none: lit over the picture while it is.
+    in-out property <int> mask-lit: -1;
+    callback lit-changed();
+    changed adjustment-names => { root.mask-lit = -1; root.lit-changed(); }
     callback new-mask();
     callback delete-adjustment();
     in property <bool> ctrl-click-menu;
@@ -94,6 +99,9 @@ export component AdjustmentsList inherits Section {
     init => {
         root.fit-rows();
         root.reveal-target();
+        // Built again on coming back to the tab: no row under the
+        // pointer yet.
+        root.mask-lit = -1;
     }
     frame := Rectangle {
         border-radius: Theme.radius-md;
@@ -144,9 +152,19 @@ export component AdjustmentsList inherits Section {
                     border-radius: Theme.radius-sm;
                     background: on ? Theme.raised : (row.has-hover ? Theme.hover : transparent);
                     animate background { duration: Theme.quick; }
+                    // The row's switch and bin inside it, so the row
+                    // keeps its hover over them.
                     row := TouchArea {
                         property <bool> skip;
                         mouse-cursor: MouseCursor.pointer;
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.mask-lit = i - 1;
+                            } else if (root.mask-lit == i - 1) {
+                                root.mask-lit = -1;
+                            }
+                            root.lit-changed();
+                        }
                         pointer-event(e) => {
                             if (e.kind != PointerEventKind.down) { return; }
                             // As a collection's row: the press that
@@ -166,54 +184,54 @@ export component AdjustmentsList inherits Section {
                             if (self.skip) { return; }
                             root.target-changed(i);
                         }
-                    }
-                    HorizontalLayout {
-                        padding-left: Theme.space-2;
-                        // Room for the inner scroll bar, which draws
-                        // over the rows, so the bin stays clickable.
-                        padding-right: Theme.space-1 + Theme.scrollbar-band;
-                        spacing: Theme.space-2;
-                        if i > 0: Rectangle {
-                            width: 14px;
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                background: lit ? Theme.accent : transparent;
-                                border-width: 1px;
-                                border-color: lit ? Theme.accent : Theme.text-secondary;
+                        HorizontalLayout {
+                            padding-left: Theme.space-2;
+                            // Room for the inner scroll bar, which draws
+                            // over the rows, so the bin stays clickable.
+                            padding-right: Theme.space-1 + Theme.scrollbar-band;
+                            spacing: Theme.space-2;
+                            if i > 0: Rectangle {
+                                width: 14px;
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: lit ? Theme.accent : transparent;
+                                    border-width: 1px;
+                                    border-color: lit ? Theme.accent : Theme.text-secondary;
+                                }
+                                TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.adjustment-toggled(i - 1); }
+                                }
                             }
-                            TouchArea {
-                                mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.adjustment-toggled(i - 1); }
+                            Text {
+                                text: name;
+                                color: !lit ? Theme.text-secondary : on ? Theme.text : Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                                font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
                             }
-                        }
-                        Text {
-                            text: name;
-                            color: !lit ? Theme.text-secondary : on ? Theme.text : Theme.text-secondary;
-                            font-size: Theme.font-xs;
-                            font-weight: on ? Theme.weight-medium : Theme.weight-regular;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                            overflow: elide;
-                        }
-                        if on && i > 0: Rectangle {
-                            width: Theme.control-height - 4px;
-                            accessible-role: button;
-                            accessible-label: "Remove " + name;
-                            accessible-action-default => { root.delete-adjustment(); }
-                            Image {
-                                source: @image-url("../icons/trash-2.svg");
-                                colorize: bin.has-hover ? Theme.text : Theme.text-secondary;
-                                width: Theme.icon;
-                                height: Theme.icon;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                            }
-                            bin := TipArea {
-                                words: "Remove";
-                                mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.delete-adjustment(); }
+                            if on && i > 0: Rectangle {
+                                width: Theme.control-height - 4px;
+                                accessible-role: button;
+                                accessible-label: "Remove " + name;
+                                accessible-action-default => { root.delete-adjustment(); }
+                                Image {
+                                    source: @image-url("../icons/trash-2.svg");
+                                    colorize: bin.has-hover ? Theme.text : Theme.text-secondary;
+                                    width: Theme.icon;
+                                    height: Theme.icon;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                bin := TipArea {
+                                    words: "Remove";
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.delete-adjustment(); }
+                                }
                             }
                         }
                     }

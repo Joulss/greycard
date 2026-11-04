@@ -1091,9 +1091,6 @@ clears or a tester asks for it.
 - [ ] A mask's edge tools beside Feather and Refine edge: grow and
       contract by a radius, a blur, and the holes filled, each on a
       shape and on the whole mask (discussion 59, 2026-11-04)
-- [ ] A mask or a retouch lit over the picture while its row is
-      hovered, so the one to fix is found among many (discussion 59,
-      2026-11-04)
 - [ ] A fill's area painted over again after the fact: strokes added
       to an existing retouch and the fill made again (discussion 59,
       2026-11-04)

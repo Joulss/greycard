@@ -727,7 +727,28 @@ fn arm_range_pick(app: &App, state: &Shared, kind: &str) {
     crate::panel::deliver::show_hint(app, &mut state.borrow_mut(), made_hint(kind));
 }
 
+/// The mask painted over the picture: the one whose row is under the
+/// pointer, whatever Show mask says, else the chosen one while Show
+/// mask is on. Its weight is the one the view already computes for
+/// every mask, so a hover asks for no develop.
+pub(crate) fn shown_mask(app: &App, target: Option<usize>) -> Option<usize> {
+    let lit = usize::try_from(app.get_mask_lit())
+        .ok()
+        .filter(|_| app.get_panel_tab() == "Masks");
+    lit.or(target.filter(|_| app.get_show_mask()))
+}
+
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
+    // A mask's or a patch's row under the pointer or left: the view
+    // drawn again with it lit or not.
+    {
+        let app_weak = app.as_weak();
+        app.on_lit_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.window().request_redraw();
+            }
+        });
+    }
     // The mask toggle thrown by hand while a tool is in hand: that
     // choice stands once the tool is down.
     {
@@ -4146,5 +4167,136 @@ mod tests {
         app.set_mask_kind("Linear".into());
         press(&app, Key::Escape);
         assert!(app.get_handles_down(), "the next Esc is the handles'");
+    }
+
+    /// A mask's row under the pointer lights that mask over the
+    /// picture in the overlay's red, whatever Show mask says, and the
+    /// pointer leaving the row puts back what was shown; the chosen
+    /// mask and Show mask are as they were. The pixels are checked
+    /// where there is a GPU to draw them.
+    #[test]
+    fn a_hovered_masks_row_lights_its_mask() {
+        use crate::render::{Renderer, View};
+        use slint::platform::WindowEvent;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (128, 128);
+            st.develop.image_size = (128, 128);
+            st.develop.zoom = 1.0;
+            let disc = |id, name: &str, u| Adjustment {
+                id,
+                name: name.into(),
+                mask: Mask {
+                    components: vec![Component {
+                        shape: Shape::Radial {
+                            center: [u, 0.5],
+                            radius: [0.1, 0.1],
+                            angle: 0.0,
+                            feather: 0.0,
+                        },
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            st.develop.edit.adjustments = vec![disc(1, "Left", 0.25), disc(2, "Right", 0.75)];
+            st.develop.target = Some(0);
+            show_names(&st.develop.edit, &app);
+        }
+        app.set_panel_tab("Masks".into());
+        app.set_target(1);
+        let at = |label: &str| {
+            let (p, size) = crate::testing::labeled(&app, label);
+            slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0)
+        };
+        let (left, right) = (at("Left"), at("Right"));
+        let to = |position| {
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position })
+        };
+        let away = slint::LogicalPosition::new(0.0, 0.0);
+        let shown = || shown_mask(&app, state.borrow().develop.target);
+
+        // The overlay as the view draws it: red over the right disc's
+        // middle or not, and never over the left's.
+        let reds = |show: Option<usize>| -> Option<(bool, bool)> {
+            let (device, queue) = greycard_viewport::testing::device("hovered_mask_row")?;
+            let n = 128usize;
+            let image = greycard_core::image::WorkingImage {
+                width: n,
+                height: n,
+                data: vec![0.2; n * n * 3],
+            };
+            let mut renderer = Renderer::new(&device, &queue);
+            renderer.upload(&greycard_render::halves::Halves::from_image(&image, None));
+            let mut view = View::blank();
+            view.center = (n as f32 / 2.0, n as f32 / 2.0);
+            view.plane = (n as f32, n as f32);
+            view.frame_size = (n as f32, n as f32);
+            let mut st = state.borrow_mut();
+            let st = &mut *st;
+            view.locals = bake_locals(
+                &st.develop.edit,
+                &mut st.develop.rasters,
+                &mut st.develop.learned,
+                1.0,
+                None,
+            )
+            .0;
+            view.show_mask = show;
+            let target = renderer.render(n as u32, n as u32, &view).0;
+            let picture = renderer.read_back(&target).expect("read back");
+            let red = |x: u32| {
+                let p = picture.get_pixel(x, n as u32 / 2).0;
+                p[0] as i32 - p[1] as i32 > 60
+            };
+            Some((red(32), red(96)))
+        };
+
+        assert_eq!(shown(), None);
+        to(right);
+        assert_eq!(app.get_mask_lit(), 1, "the row under the pointer");
+        assert_eq!(shown(), Some(1), "lit with Show mask off");
+        if let Some(lit) = reds(shown()) {
+            assert_eq!(lit, (false, true), "the right disc painted, the left not");
+        }
+        to(away);
+        assert_eq!(app.get_mask_lit(), -1);
+        assert_eq!(shown(), None, "left: nothing shown, as before");
+        if let Some(lit) = reds(shown()) {
+            assert_eq!(lit, (false, false));
+        }
+
+        // The whole row counts: its switch, and the chosen row's bin.
+        let (row, _) = crate::testing::labeled(&app, "Right");
+        to(slint::LogicalPosition::new(row.x + 8.0 + 7.0, right.y));
+        assert_eq!(app.get_mask_lit(), 1, "on the switch");
+        to(at("Remove Left"));
+        assert_eq!(app.get_mask_lit(), 0, "on the bin");
+        to(away);
+
+        // With Show mask on, another row lights its own mask and the
+        // chosen one's row its own; leaving puts the chosen back.
+        app.set_show_mask(true);
+        assert_eq!(shown(), Some(0));
+        to(right);
+        assert_eq!(shown(), Some(1));
+        to(left);
+        assert_eq!(shown(), Some(0), "the chosen mask's own row");
+        to(away);
+        assert_eq!(shown(), Some(0));
+        // Off the tab, a row left lit by a tab switch lights nothing.
+        to(right);
+        app.set_panel_tab("Develop".into());
+        assert_eq!(shown(), Some(0));
+        app.set_panel_tab("Masks".into());
+        to(away);
+
+        assert!(app.get_show_mask(), "Show mask as it was");
+        assert_eq!(app.get_target(), 1, "the chosen row as it was");
+        assert_eq!(state.borrow().develop.target, Some(0));
     }
 }

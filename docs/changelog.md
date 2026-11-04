@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- The pointer on a mask's row paints that mask red over the picture,
+  and on a repair's row draws its outline, so the one to fix is found
+  among many (discussion 59)
+  ([§552](https://github.com/jessolmstead/greycard/blob/master/docs/notes/552-a-mask-or-a-retouch-lit-while-its-row-is-hovered.md)).
 - A mask's DETAIL has Sharpen: -100 takes the Develop tab's Sharpen off
   under the mask, +100 puts it on once more; with the Develop tab's
   Sharpen off, a positive amount sharpens inside the mask alone (pixls,

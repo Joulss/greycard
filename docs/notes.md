@@ -564,3 +564,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§549. Samples below black: measured, and kept clamped](notes/549-samples-below-black-measured-and-kept-clamped.md) (2026-11-05)
 - [§550. The keys after Level, a guide, or Draw](notes/550-the-keys-after-level-a-guide-or-draw.md) (2026-11-05)
 - [§551. The non-local means, each pair of offsets once](notes/551-the-non-local-means-each-pair-of-offsets-once.md) (2026-11-05)
+- [§552. A mask or a retouch lit while its row is hovered](notes/552-a-mask-or-a-retouch-lit-while-its-row-is-hovered.md) (2026-11-05)
