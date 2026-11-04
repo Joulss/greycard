@@ -223,6 +223,10 @@ design note behind it.
 
 ### Fixes
 
+- Panasonic raws in the older split-block format (a Lumix GX9, among
+  others) no longer show short blue dashes: one read a block crossed
+  into the next block
+  ([§562](https://github.com/jessolmstead/greycard/blob/master/docs/notes/562-a-panasonic-v4-window-read-within-its-block.md)).
 - On Windows a sidecar save waits up to 1.8 s for a scanner or a sync
   client holding the old file, instead of failing at once
   ([§558](https://github.com/jessolmstead/greycard/blob/master/docs/notes/558-a-rename-into-place-waits-out-a-hold.md)).

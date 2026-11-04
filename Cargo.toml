@@ -71,8 +71,9 @@ slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030"
 
 # The pinned branch, float-deflate-pin, is upstream main at 01f3f092
 # (which has dnglab/dnglab#840, the EOS R6 Mark II's white level, and
-# dnglab/dnglab#880, an ORF's preview) and two things on top:
-# dnglab/dnglab#896, Deflate compressed floating point DNGs; and
+# dnglab/dnglab#880, an ORF's preview) and three things on top:
+# dnglab/dnglab#896, Deflate compressed floating point DNGs;
+# dnglab/dnglab#925, a Panasonic v4 window read within its block; and
 # dnglab/dnglab#835, Nikon High Efficiency decoding, behind a `jpegxs`
 # feature that is off unless greycard's `nikon-he` turns it on, with our
 # refit of #835's curve, which continues it below black instead of
@@ -82,7 +83,7 @@ slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030"
 # patch comes out when a release has both. fuzz/Cargo.toml carries a
 # copy of this line, its workspace being its own; change both.
 [patch.crates-io]
-rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "4e6f0f0156800a0cf9425c45dde0e4a51712e2e3" }
+rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "fcc02bde87301a299ac7e9432c188860a69d15b7" }
 # femtovg 0.27.0 plus one change: a render pipeline is kept through
 # flushes that do not bind it, where 0.27.0 drops it at every flush and
 # compiles it again next frame (§208; femtovg/femtovg#371). Upstream
