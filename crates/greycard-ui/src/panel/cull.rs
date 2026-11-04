@@ -1548,7 +1548,13 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
             rect: *rect,
         })
         .collect();
-    let texture = renderer.render_encoded(vw, vh, canvas, &drawn);
+    let texture = renderer.render_encoded(
+        vw,
+        vh,
+        canvas,
+        &drawn,
+        crate::panel::startup::peaking_of(app),
+    );
     // The rule and the names are for telling compared frames apart;
     // one frame alone needs neither.
     if holding || rows.len() < 2 {

@@ -20,6 +20,7 @@ use greycard_render::finish::{Local, MAX_LOCALS, RasterRef, Source};
 mod draw;
 mod inputs;
 mod locals;
+mod peaking;
 mod sample;
 mod scopes;
 #[cfg(test)]
@@ -30,6 +31,7 @@ use self::{
     scopes::EditKey,
 };
 
+pub use self::peaking::{MOST_RECTS, shown_rect};
 pub use self::sample::{SAMPLE_SIZES, sample_reach, sample_size, texel_of};
 
 /// The canvas's five levels, by name, index matching `app.slint`'s
@@ -133,6 +135,9 @@ pub struct View {
     pub grain: Grain,
     /// The clipping warnings to paint over the picture.
     pub warn: Warn,
+    /// Focus peaking: the sharpest parts of the picture as displayed
+    /// painted over it in this color, encoded (`crate::peaking`).
+    pub peaking: Option<[f32; 3]>,
     /// The canvas outside the frame, encoded sRGB: the panel's
     /// choice, matching what the Rectangle behind the viewport
     /// paints (`app.slint`'s `canvas-colors`), so the two agree.
@@ -206,6 +211,7 @@ impl View {
             vignette: Vignette::default(),
             grain: Grain::default(),
             warn: Warn::default(),
+            peaking: None,
             canvas: [0.0; 3],
             source: Source::SCENE,
             display_curve: greycard_edit::DisplayCurve::Channels,
@@ -288,6 +294,10 @@ pub struct Renderer {
     /// so a window at rest costs no frame.
     drawn: Option<(u32, u32, View)>,
     redraw: bool,
+    /// The peaking passes, made the first time peaking is on.
+    peaking: Option<peaking::Peaking>,
+    /// The display table carries the proof's gamut marks.
+    gamut_marks: bool,
 }
 
 /// The scopes: the whole image drawn small through the same shader,
@@ -554,6 +564,8 @@ impl Renderer {
             scopes: Scopes::new(device),
             drawn: None,
             redraw: true,
+            peaking: None,
+            gamut_marks: false,
             device: device.clone(),
             queue: queue.clone(),
             pipeline,

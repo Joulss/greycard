@@ -68,6 +68,15 @@ The lamps say what the exported file will clip after the tone curve,
 not what the camera's sensor clipped. The painted warning always
 covers the whole frame, even with **Selection** on.
 
+## Focus peaking
+
+Press **Shift+J** in the Loupe, in Cull or Develop, to paint the
+sharpest parts of the picture green, and again to take the paint off.
+The measure is the picture's own, so a frame sharp in one place paints
+there and a frame sharp throughout paints most of itself. It is taken
+on the picture as shown, so at 1:1 it finds a missed focus that Fit
+hides. The choice is remembered.
+
 ## Soft proofing
 
 A soft proof shows how the picture will look in a narrower color

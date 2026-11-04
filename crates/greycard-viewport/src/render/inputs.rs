@@ -67,6 +67,7 @@ impl Renderer {
     /// a new picture to them.
     pub fn set_display_lut(&mut self, lut: &Lut3d) {
         self.lut = Self::lut_texture(&self.device, &self.queue, lut);
+        self.gamut_marks = !lut.warn.is_empty();
         self.scopes.image_changed = true;
         self.redraw = true;
     }

@@ -125,6 +125,34 @@ struct Params {
     agx: [f32; 4],
 }
 
+/// What of the picture and its overlays (the clipping paint, the
+/// mask's and the sharpen's red, the proof's gamut grey) a draw writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Layer {
+    Both,
+    /// The picture with no overlay: what focus peaking measures and
+    /// paints on.
+    Bare,
+    /// The overlays alone, every other pixel of the target left as it
+    /// is: drawn over the peaking's paint.
+    Overlays,
+}
+
+/// Where a draw goes in its target and what of it: into `rect` (x, y,
+/// width, height) with the rest left as it is, or the whole target.
+#[derive(Debug, Clone, Copy)]
+struct Part {
+    rect: Option<(u32, u32, u32, u32)>,
+    layer: Layer,
+}
+
+impl Part {
+    const WHOLE: Part = Part {
+        rect: None,
+        layer: Layer::Both,
+    };
+}
+
 /// Which table a draw ends in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Through {
@@ -169,17 +197,36 @@ impl Renderer {
         v: &View,
         table: bool,
     ) {
+        self.draw_layer(encoder, target, v, table, Layer::Both);
+    }
+
+    /// [`Self::draw`], of `layer` alone.
+    pub(super) fn draw_layer(
+        &self,
+        encoder: &mut gpu::CommandEncoder,
+        target: &gpu::Texture,
+        v: &View,
+        table: bool,
+        layer: Layer,
+    ) {
         let through = match (self.encoded, table) {
             (true, _) => Through::Encoded,
             (false, true) => Through::Monitor,
             (false, false) => Through::Nothing,
         };
-        self.draw_source(encoder, target, v, self.source.as_ref(), through, None);
+        self.draw_source(
+            encoder,
+            target,
+            v,
+            self.source.as_ref(),
+            through,
+            Part { rect: None, layer },
+        );
     }
 
-    /// Draw the view of `source` into `target`, or into `rect` of it
-    /// (x, y, width, height) with the rest left as it is. An
-    /// encoded source is sRGB bytes already and skips the look.
+    /// Draw the view of `source` into `target`, or into the part of it
+    /// `part` says. An encoded source is sRGB bytes already and skips
+    /// the look.
     fn draw_source(
         &self,
         encoder: &mut gpu::CommandEncoder,
@@ -187,8 +234,9 @@ impl Renderer {
         v: &View,
         source: Option<&gpu::Texture>,
         through: Through,
-        rect: Option<(u32, u32, u32, u32)>,
+        part: Part,
     ) {
+        let Part { rect, layer } = part;
         let encoded = through == Through::Encoded;
         // The source the view is in: the texture's, stood on end by
         // an odd turn the texture has not caught up with.
@@ -309,7 +357,12 @@ impl Renderer {
                 v.source.headroom(),
                 0.0,
             ],
-            tile: [ox as f32, oy as f32, 0.0, 0.0],
+            tile: [
+                ox as f32,
+                oy as f32,
+                if layer == Layer::Bare { 1.0 } else { 0.0 },
+                if layer == Layer::Overlays { 1.0 } else { 0.0 },
+            ],
             look: self.look.params,
             look_min: self.look.min,
             look_max: self.look.max,
@@ -383,9 +436,9 @@ impl Renderer {
             storage("viewport local tables", bytemuck::cast_slice(&local_tables));
         let shapes_buffer = storage("viewport shapes", bytemuck::cast_slice(&shapes));
         let view = target.create_view(&Default::default());
-        // A tile is drawn over what the target holds; the whole
-        // target starts from a clear.
-        let load = if rect.is_some() {
+        // A tile is drawn over what the target holds, and so are the
+        // overlays alone; the whole target starts from a clear.
+        let load = if rect.is_some() || layer == Layer::Overlays {
             gpu::LoadOp::Load
         } else {
             gpu::LoadOp::Clear(gpu::Color {
@@ -549,12 +602,15 @@ impl Renderer {
     /// Draw `tiles` of encoded pictures, each its own view into its
     /// own rectangle of a `width` by `height` target: the culling
     /// loupe, and its compare view. The scopes read nothing of it.
+    /// With `peaking`, the tiles' sharpest parts are painted in it,
+    /// each tile measured on its own.
     pub fn render_encoded(
         &mut self,
         width: u32,
         height: u32,
         canvas: [f32; 3],
         tiles: &[Tile],
+        peaking: Option<[f32; 3]>,
     ) -> gpu::Texture {
         let target = match &self.target {
             Some(t) if t.width() == width && t.height() == height => t.clone(),
@@ -575,7 +631,14 @@ impl Renderer {
             canvas,
             ..View::blank()
         };
-        self.draw_source(&mut encoder, &target, &blank, None, Through::Encoded, None);
+        self.draw_source(
+            &mut encoder,
+            &target,
+            &blank,
+            None,
+            Through::Encoded,
+            Part::WHOLE,
+        );
         for tile in tiles {
             self.draw_source(
                 &mut encoder,
@@ -583,11 +646,38 @@ impl Renderer {
                 &tile.view,
                 Some(tile.texture),
                 Through::Encoded,
-                Some(tile.rect),
+                Part {
+                    rect: Some(tile.rect),
+                    layer: Layer::Both,
+                },
             );
+        }
+        if let Some(color) = peaking {
+            let rects: Vec<_> = tiles
+                .iter()
+                .filter_map(|t| shown_rect(&t.view, t.rect))
+                .take(MOST_RECTS)
+                .collect();
+            self.peak(&mut encoder, &target, &rects, color);
         }
         self.queue.submit(Some(encoder.finish()));
         target
+    }
+
+    /// The peaking passes over what `target` holds, made the first
+    /// time they are wanted.
+    fn peak(
+        &mut self,
+        encoder: &mut gpu::CommandEncoder,
+        target: &gpu::Texture,
+        rects: &[crate::peaking::Rect],
+        color: [f32; 3],
+    ) {
+        let device = self.device.clone();
+        let peaking = self
+            .peaking
+            .get_or_insert_with(|| peaking::Peaking::new(&device));
+        peaking.encode(&device, &self.queue, encoder, target, rects, color);
     }
 
     /// Put a developed image on the GPU.
@@ -684,6 +774,7 @@ impl Renderer {
                         vignette,
                         grain,
                         warn,
+                        peaking,
                         canvas,
                         source,
                         display_curve,
@@ -715,7 +806,24 @@ impl Renderer {
             .create_command_encoder(&gpu::CommandEncoderDescriptor {
                 label: Some("viewport"),
             });
-        self.draw(&mut encoder, &target, v, true);
+        if let Some(color) = v.peaking {
+            // The picture bare, the peaks painted on it, and the
+            // overlays over the paint, so neither the clipping paint
+            // nor a mask's red is taken for detail, and both still
+            // show.
+            self.draw_layer(&mut encoder, &target, v, true, Layer::Bare);
+            let rects: Vec<_> = shown_rect(v, (0, 0, width, height)).into_iter().collect();
+            self.peak(&mut encoder, &target, &rects, color);
+            let overlays = v.warn != Warn::default()
+                || v.show_mask.is_some()
+                || v.show_sharpen
+                || self.gamut_marks;
+            if overlays {
+                self.draw_layer(&mut encoder, &target, v, true, Layer::Overlays);
+            }
+        } else {
+            self.draw(&mut encoder, &target, v, true);
+        }
         self.queue.submit(Some(encoder.finish()));
         (target, true)
     }

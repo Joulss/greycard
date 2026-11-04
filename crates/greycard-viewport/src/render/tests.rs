@@ -7,7 +7,9 @@ use greycard_edit::{Look, Mask};
 use greycard_render::finish::Baked;
 use rayon::prelude::*;
 
-/// Both shaders parse and validate. Nothing else in `cargo test`
+use crate::testing::device;
+
+/// The shaders parse and validate. Nothing else in `cargo test`
 /// reads the WGSL — the pipelines are built against a real
 /// device, which the test machines have no business needing — so
 /// without this a typo in `viewport.wgsl` is found by a black
@@ -19,6 +21,7 @@ fn the_shaders_parse_and_validate() {
     for (name, source) in [
         ("viewport.wgsl", include_str!("../viewport.wgsl")),
         ("scope.wgsl", include_str!("../scope.wgsl")),
+        ("peaking.wgsl", include_str!("../peaking.wgsl")),
     ] {
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|e| panic!("{name}:\n{}", e.emit_to_string(source)));
@@ -66,36 +69,6 @@ fn the_shaders_shift_fade_at_black_is_the_cpus() {
     ] {
         assert_eq!(shader_literal(name), value, "the shader's {name}");
     }
-}
-
-/// A device of our own, off any window; none without an adapter,
-/// and the test says so rather than passing in silence.
-fn device(what: &str) -> Option<(gpu::Device, gpu::Queue)> {
-    let instance = greycard_gpu::instance();
-    let got = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
-        power_preference: gpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .ok()
-    .and_then(|adapter| {
-        pollster::block_on(adapter.request_device(&gpu::DeviceDescriptor {
-            label: Some("mask test"),
-            ..Default::default()
-        }))
-        .ok()
-    });
-    if got.is_none() {
-        // Under CI the skip is a failure: the runner installs a
-        // software adapter so that these tests run, and a run
-        // that finds none has lost it, not earned a pass.
-        assert!(
-            std::env::var_os("GREYCARD_REQUIRE_GPU").is_none_or(|v| v.is_empty()),
-            "{what} has no GPU to run on and GREYCARD_REQUIRE_GPU is set"
-        );
-        eprintln!("SKIPPED: {what} has no GPU to run on");
-        println!("SKIPPED: {what} has no GPU to run on");
-    }
-    got
 }
 
 /// A local with `shapes` joined in order and nothing to its look.
@@ -3732,4 +3705,301 @@ fn the_shader_is_the_cpu_over_random_edits() {
             ))
             .collect::<Vec<_>>()
     );
+}
+
+/// A grey picture whose left half is a fine checker and whose right
+/// half is the same checker blurred flat: what peaking must tell apart.
+fn sharp_and_blurred(w: usize, h: usize) -> WorkingImage {
+    let mut data = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            let v = if x < w / 2 {
+                if (x / 3 + y / 3) % 2 == 0 { 0.08 } else { 0.4 }
+            } else {
+                // The blur of the checker: its mean, and a slow ramp
+                // so the half is not flat.
+                0.2 + 0.05 * (y as f32 / h as f32)
+            };
+            data.extend_from_slice(&[v, v, v]);
+        }
+    }
+    WorkingImage {
+        width: w,
+        height: h,
+        data,
+    }
+}
+
+/// The shader's peaking paints what the CPU reference paints, at 1:1
+/// and at half, over a picture with a sharp half and a blurred one,
+/// and the sharp half alone.
+#[test]
+fn peaking_on_the_device_is_the_cpus() {
+    let Some((device, queue)) = device("peaking_on_the_device_is_the_cpus") else {
+        return;
+    };
+    let (w, h) = (256usize, 160usize);
+    let image = sharp_and_blurred(w, h);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    // A paint no pixel of the grey picture has.
+    let paint = [1.0f32, 0.0, 1.0];
+    for zoom in [1.0f32, 0.5] {
+        let (vw, vh) = (240u32, 150u32);
+        let shot = |r: &mut Renderer, v: &View| {
+            let t = r.render(vw, vh, v).0;
+            r.read_back(&t).unwrap()
+        };
+        let mut view = View::blank();
+        view.zoom = zoom;
+        view.center = (w as f32 / 2.0, h as f32 / 2.0);
+        view.plane = (w as f32, h as f32);
+        view.frame_size = (w as f32, h as f32);
+        let off = shot(&mut renderer, &view);
+        view.peaking = Some(paint);
+        let on = shot(&mut renderer, &view);
+        let base: Vec<[u8; 4]> = off.pixels().map(|p| p.0).collect();
+        let rect = shown_rect(&view, (0, 0, vw, vh)).expect("the picture is shown");
+        let want = crate::peaking::reference(&base, vw, vh, &[rect]);
+        let got: Vec<bool> = on
+            .pixels()
+            .zip(off.pixels())
+            .map(|(a, b)| a != b && a.0 == [255, 0, 255, 255])
+            .collect();
+        let differ = want.iter().zip(&got).filter(|(a, b)| a != b).count();
+        let painted = got.iter().filter(|&&g| g).count();
+        eprintln!("zoom {zoom}: {painted} painted, {differ} differ from the CPU");
+        assert!(painted > 0, "zoom {zoom}: nothing painted");
+        assert_eq!(differ, 0, "zoom {zoom}: pixels that differ from the CPU's");
+        // The blurred half, past the smoothing's reach of the seam,
+        // takes none of it.
+        let seam = vw as f32 / 2.0 + (w as f32 / 2.0 - view.center.0) * zoom;
+        let blurred = got
+            .iter()
+            .enumerate()
+            .filter(|(i, g)| **g && (*i as u32 % vw) as f32 > seam + 4.0)
+            .count();
+        assert_eq!(blurred, 0, "zoom {zoom}: the blurred half painted");
+        // Off again, the picture as it was.
+        view.peaking = None;
+        let again = shot(&mut renderer, &view);
+        assert_eq!(again, off, "zoom {zoom}");
+    }
+}
+
+/// Under the clipping paint, peaking measures the picture and not
+/// the paint: it paints where it paints without it, and the clipping
+/// paint still shows over it.
+#[test]
+fn peaking_measures_the_picture_under_the_clipping_paint() {
+    let Some((device, queue)) = device("peaking_measures_the_picture_under_the_clipping_paint")
+    else {
+        return;
+    };
+    let (w, h) = (256usize, 160usize);
+    let mut image = sharp_and_blurred(w, h);
+    // A speckle of black in the blurred half, which the shadows'
+    // paint turns blue.
+    for y in (0..h).step_by(5) {
+        for x in (w / 2 + 8..w).step_by(7) {
+            image.data[(y * w + x) * 3..][..3].copy_from_slice(&[0.0; 3]);
+        }
+    }
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let (vw, vh) = (w as u32, h as u32);
+    let shot = |r: &mut Renderer, v: &View| {
+        let t = r.render(vw, vh, v).0;
+        r.read_back(&t).unwrap()
+    };
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    let bare = shot(&mut renderer, &view);
+    view.peaking = Some([1.0, 0.0, 1.0]);
+    let peaks = shot(&mut renderer, &view);
+    view.warn = Warn {
+        shadows: true,
+        highlights: true,
+    };
+    let both = shot(&mut renderer, &view);
+    view.peaking = None;
+    let clipping = shot(&mut renderer, &view);
+    let blue = [51u8, 102, 255, 255];
+    let magenta = [255u8, 0, 255, 255];
+    for (((b, p), c), x) in both
+        .pixels()
+        .zip(peaks.pixels())
+        .zip(clipping.pixels())
+        .zip(bare.pixels())
+    {
+        if c.0 == blue {
+            assert_eq!(b.0, blue, "the clipping paint over the peaks");
+        } else if p.0 == magenta {
+            assert_eq!(b.0, magenta, "the peaks, as without the clipping paint");
+        } else {
+            assert_eq!(b, x, "the picture elsewhere");
+        }
+    }
+    assert!(clipping.pixels().any(|p| p.0 == blue), "the speckle clips");
+    assert!(peaks.pixels().any(|p| p.0 == magenta), "something peaks");
+}
+
+/// In the compare view each tile is measured on its own: the shader's
+/// paint is the CPU's with a rectangle a tile.
+#[test]
+fn peaking_measures_each_compare_tile_on_its_own() {
+    let Some((device, queue)) = device("peaking_measures_each_compare_tile_on_its_own") else {
+        return;
+    };
+    let (w, h) = (160u32, 120u32);
+    // One tile the checker at full contrast, the other at a tenth.
+    let tile_picture = |contrast: f32| -> Vec<u8> {
+        (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                let v = if (x / 3 + y / 3) % 2 == 0 { 1.0 } else { -1.0 };
+                let v = (128.0 + 100.0 * contrast * v * (x as f32 / w as f32)) as u8;
+                [v, v, v, 255]
+            })
+            .collect()
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    let loud = renderer.encoded_texture(w, h, &tile_picture(1.0));
+    let soft = renderer.encoded_texture(w, h, &tile_picture(0.1));
+    let (vw, vh) = (2 * w, h);
+    let view = {
+        let mut v = View::blank();
+        v.center = (w as f32 / 2.0, h as f32 / 2.0);
+        v.plane = (w as f32, h as f32);
+        v.frame_size = (w as f32, h as f32);
+        v
+    };
+    let tiles = [
+        Tile {
+            texture: &loud,
+            view: view.clone(),
+            rect: (0, 0, w, h),
+        },
+        Tile {
+            texture: &soft,
+            view: view.clone(),
+            rect: (w, 0, w, h),
+        },
+    ];
+    let off = renderer.render_encoded(vw, vh, [0.0; 3], &tiles, None);
+    let off = renderer.read_back(&off).unwrap();
+    let on = renderer.render_encoded(vw, vh, [0.0; 3], &tiles, Some([1.0, 0.0, 1.0]));
+    let on = renderer.read_back(&on).unwrap();
+    let base: Vec<[u8; 4]> = off.pixels().map(|p| p.0).collect();
+    let rects: Vec<_> = tiles
+        .iter()
+        .filter_map(|t| shown_rect(&t.view, t.rect))
+        .collect();
+    let want = crate::peaking::reference(&base, vw, vh, &rects);
+    let got: Vec<bool> = on
+        .pixels()
+        .zip(off.pixels())
+        .map(|(a, b)| a != b && a.0 == [255, 0, 255, 255])
+        .collect();
+    assert_eq!(want.iter().zip(&got).filter(|(a, b)| a != b).count(), 0);
+    let soft_painted = got
+        .iter()
+        .enumerate()
+        .filter(|(i, g)| **g && *i as u32 % vw >= w)
+        .count();
+    assert!(soft_painted > 0, "the soft tile paints by its own top");
+}
+
+/// The rectangle a view's picture covers, a pixel in from its edges,
+/// and none for a view of nothing.
+#[test]
+fn the_shown_rectangle_is_the_pictures() {
+    let mut view = View::blank();
+    view.zoom = 0.5;
+    view.center = (100.0, 50.0);
+    view.frame_size = (200.0, 100.0);
+    // A 200 by 100 frame at half in a 300 by 100 target: 100 by 50,
+    // centered.
+    assert_eq!(
+        shown_rect(&view, (0, 0, 300, 100)),
+        Some([101, 26, 199, 74])
+    );
+    // In a tile, moved with it.
+    assert_eq!(
+        shown_rect(&view, (300, 0, 300, 100)),
+        Some([401, 26, 499, 74])
+    );
+    // Zoomed past the target: the whole of it.
+    view.zoom = 4.0;
+    assert_eq!(shown_rect(&view, (0, 0, 300, 100)), Some([1, 1, 299, 99]));
+    view.center = (-500.0, 50.0);
+    assert_eq!(shown_rect(&view, (0, 0, 300, 100)), None);
+}
+
+/// What the peaking passes cost on this machine's GPU over a picture
+/// at `GREYCARD_PEAKING_PICTURE` (a PNG, 24 megapixels for the notes)
+/// in a 2560 by 1440 view, at Fit and at 1:1: each frame drawn and
+/// waited for, plain, with the clipping paint, and with peaking.
+#[test]
+#[ignore = "a timing, not a test"]
+fn timing_of_peaking() {
+    let Some(path) = std::env::var_os("GREYCARD_PEAKING_PICTURE") else {
+        return;
+    };
+    let Some((device, queue)) = device("timing_of_peaking") else {
+        return;
+    };
+    let picture = image::open(path).unwrap().to_rgb32f();
+    let (pw, ph) = picture.dimensions();
+    let image = WorkingImage {
+        width: pw as usize,
+        height: ph as usize,
+        data: picture.into_raw(),
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let (vw, vh) = (2560u32, 1440u32);
+    for (name, zoom) in [
+        ("Fit", (vw as f32 / pw as f32).min(vh as f32 / ph as f32)),
+        ("1:1", 1.0),
+    ] {
+        let mut view = View::blank();
+        view.zoom = zoom;
+        view.center = (pw as f32 / 2.0, ph as f32 / 2.0);
+        view.plane = (pw as f32, ph as f32);
+        view.frame_size = (pw as f32, ph as f32);
+        let mut time = |view: &mut View| {
+            let mut spent = Vec::new();
+            for k in 0..30 {
+                // A new center each time, so each is a frame drawn.
+                view.center.0 = pw as f32 / 2.0 + (k % 2) as f32;
+                let t = std::time::Instant::now();
+                renderer.render(vw, vh, view);
+                crate::lost::poll(&device, gpu::PollType::wait_indefinitely()).unwrap();
+                spent.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            spent.sort_by(f64::total_cmp);
+            spent[spent.len() / 2]
+        };
+        let plain = time(&mut view);
+        view.warn = Warn {
+            shadows: true,
+            highlights: true,
+        };
+        let clipping = time(&mut view);
+        view.warn = Warn::default();
+        view.peaking = Some([0.2, 1.0, 0.15]);
+        let peaking = time(&mut view);
+        view.warn = Warn {
+            shadows: true,
+            highlights: true,
+        };
+        let both = time(&mut view);
+        println!(
+            "{name}: a frame {plain:.2} ms, with the clipping paint {clipping:.2} ms, \
+             with peaking {peaking:.2} ms, with both {both:.2} ms (medians of 30)"
+        );
+    }
 }

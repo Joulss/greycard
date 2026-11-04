@@ -535,10 +535,8 @@ the user.
       otherwise; a sort, a `focus:` term, and the order inside a burst
 - [ ] Closed eyes said from the face parts the Parts mask already
       finds (§252), as a term and a mark on the tile, never a reject
-- [ ] Focus peaking: the sharpness map the focus stacker builds, drawn
-      over the picture in the Loupe and the lightbox, toggled by a key
-      like the clipping paint, so what is in focus reads at a glance
-      (asked 2026-11-03, discussion 62)
+- [ ] Focus peaking in the lightbox: its tiles are Slint images, not
+      the viewport's draw, so Shift+J does not reach them (§542)
 - [ ] Search by phrase: an image embedding from a CLIP-style model
       (SigLIP 2 a candidate, its license and training data checked)
       computed by the indexer from each preview and kept in the

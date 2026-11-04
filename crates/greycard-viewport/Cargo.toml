@@ -28,11 +28,14 @@ half = { workspace = true, features = ["bytemuck"] }
 lcms2.workspace = true
 image.workspace = true
 tracing.workspace = true
+# The test device of `testing`, for the window's tests too.
+pollster = { workspace = true, optional = true }
 
 [features]
-# The scopes' test pictures the window's tests of their drawing share
-# with these. Turned on by greycard-ui's dev-dependency only.
-testing = []
+# The scopes' test pictures and a test device, which the window's
+# tests of their drawing share with these. Turned on by greycard-ui's
+# dev-dependency only.
+testing = ["dep:pollster"]
 
 [dev-dependencies]
 # The shader compiler wgpu already carries, so `cargo test` parses

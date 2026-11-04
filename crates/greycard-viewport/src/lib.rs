@@ -9,6 +9,7 @@
 
 pub mod display;
 pub mod lost;
+pub mod peaking;
 mod pixels;
 pub mod render;
 pub mod scope;

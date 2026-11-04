@@ -195,6 +195,11 @@ pub(crate) const TABLE: &[Group] = &[
                 &["J"],
                 "In the Loupe, shadow and highlight clipping warnings",
             ),
+            act(
+                "peaking",
+                &["Shift+J"],
+                "In the Loupe, focus peaking: the sharpest parts painted over the picture",
+            ),
             act("proof", &["S"], "Soft proof (in the grid, a stack: below)"),
         ],
     },
@@ -2340,5 +2345,82 @@ mod tests {
         crate::testing::settle(&app);
         app.set_keys_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
         crate::testing::keeps_its_last_line(&app, "Row 11: shows", (580.0, 600.0), 1400.0);
+    }
+
+    /// Shift+J paints focus peaking over the Loupe's picture: on a frame
+    /// with a sharp half and a blurred one, the sharp half and not the
+    /// blurred; again, nothing. The choice outlives a restart.
+    #[test]
+    fn shift_j_paints_the_sharp_half_and_is_kept_across_a_restart() {
+        use crate::panel::startup::{peaking_of, remember, show_overlays};
+        use crate::render::{Renderer, View};
+        let app = window(3);
+        assert!(!app.get_grid_open(), "in the Loupe");
+        assert_eq!(peaking_of(&app), None, "off by default");
+        shifted(&app, "J");
+        assert!(app.get_peaking());
+        // The clipping paint's key is not it.
+        assert!(!app.get_warn_shadows() && !app.get_warn_highlights());
+
+        // The frame, drawn as the Loupe draws it, peaking as the
+        // window has it now.
+        let shot = |app: &App| -> Option<(usize, usize)> {
+            let (device, queue) =
+                greycard_viewport::testing::device("shift_j_paints_the_sharp_half")?;
+            let (w, h) = (192usize, 128usize);
+            let data = (0..w * h)
+                .flat_map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    let v = if x < w / 2 {
+                        if (x / 2 + y / 2) % 2 == 0 { 0.06 } else { 0.45 }
+                    } else {
+                        0.2
+                    };
+                    [v, v, v]
+                })
+                .collect();
+            let image = greycard_core::image::WorkingImage {
+                width: w,
+                height: h,
+                data,
+            };
+            let mut renderer = Renderer::new(&device, &queue);
+            renderer.upload(&greycard_render::halves::Halves::from_image(&image, None));
+            let mut view = View::blank();
+            view.center = (w as f32 / 2.0, h as f32 / 2.0);
+            view.plane = (w as f32, h as f32);
+            view.frame_size = (w as f32, h as f32);
+            view.peaking = peaking_of(app);
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            let paint = [0x3c, 0xff, 0x28, 0xff];
+            let painted = |left: bool| {
+                shown
+                    .enumerate_pixels()
+                    .filter(|(x, _, p)| {
+                        let x = *x as usize;
+                        (if left { x + 4 < w / 2 } else { x > w / 2 + 4 }) && p.0 == paint
+                    })
+                    .count()
+            };
+            Some((painted(true), painted(false)))
+        };
+        if let Some((sharp, blurred)) = shot(&app) {
+            assert!(sharp > 1000, "the sharp half: {sharp}");
+            assert_eq!(blurred, 0, "the blurred half");
+        }
+
+        // Kept: the settings a run leaves, written and read back, put
+        // on a new window as the start puts them.
+        let kept = serde_json::to_string(&remember(&app)).unwrap();
+        let restarted = window(3);
+        show_overlays(&restarted, false, &serde_json::from_str(&kept).unwrap());
+        assert!(restarted.get_peaking(), "kept across a restart");
+
+        shifted(&app, "J");
+        assert!(!app.get_peaking());
+        if let Some((sharp, blurred)) = shot(&app) {
+            assert_eq!((sharp, blurred), (0, 0), "a second press clears it");
+        }
     }
 }

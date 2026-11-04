@@ -156,6 +156,9 @@ They fill in once greycard has indexed the folder.
 - **Space** zooms to 1:1 to check focus, and back. At 1:1 you always
   see the camera's full JPEG, even on an edited frame, and in compare
   every frame shows its own, versions of one frame excepted.
+- **Shift+J** paints the sharpest parts of each frame green, to see
+  at a glance where the focus landed
+  ([Focus peaking](scopes-and-color.md#focus-peaking)).
 - **V** cycles through comparing 1, 2 or 4 frames side by side. The
   **Compare** buttons (**1**, **2**, **4**) do the same. Click a frame
   in the compare view to choose it.

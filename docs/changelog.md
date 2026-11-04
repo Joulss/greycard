@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- **Shift+J** in the Loupe, in Cull or Develop, paints the sharpest
+  parts of the picture green, measured on the picture as shown, so 1:1
+  finds a missed focus that Fit hides (discussion 62)
+  ([§542](https://github.com/jessolmstead/greycard/blob/master/docs/notes/542-focus-peaking.md)).
 - FOLDERS keeps its fold in each view, so it can stay open in the
   Library and folded in the Loupe (discussion 59)
   ([§538](https://github.com/jessolmstead/greycard/blob/master/docs/notes/538-the-folders-fold-kept-per-view.md)).

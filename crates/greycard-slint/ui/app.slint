@@ -1858,6 +1858,8 @@ export component App inherits Window {
     in-out property <bool> warn-shadows;
     in-out property <bool> warn-highlights;
     callback warn-changed();
+    // Focus peaking over the picture in the Loupe (Shift+J).
+    in-out property <bool> peaking;
     // The soft proof: on or off (S), its profile (a space's name, or
     // "File" with the path), the intent, and the gamut warning.
     in-out property <bool> proofing;
@@ -3037,6 +3039,13 @@ export component App inherits Window {
                 root.warn-shadows = on;
                 root.warn-highlights = on;
                 root.warn-changed();
+                return accept;
+            }
+            if (chord == "Shift+J" && !root.grid-open) {
+                if (!e.repeat) {
+                    root.peaking = !root.peaking;
+                    root.warn-changed();
+                }
                 return accept;
             }
             return reject;

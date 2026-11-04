@@ -46,6 +46,8 @@ pub struct Settings {
     pub curve_mode: String,
     pub warn_shadows: bool,
     pub warn_highlights: bool,
+    /// Focus peaking over the picture in the Loupe.
+    pub peaking: bool,
     /// The proof's profile, a space's name or a file's path, and its
     /// intent; whether the proof is on is not kept, as a proof is a
     /// look at one export.
@@ -566,6 +568,7 @@ impl Default for Settings {
             curve_mode: "Point".into(),
             warn_shadows: false,
             warn_highlights: false,
+            peaking: false,
             proof_profile: crate::export::Space::Srgb.name().into(),
             proof_intent: crate::display::ProofIntent::default().name().into(),
             gamut_warning: false,
@@ -977,6 +980,7 @@ mod tests {
             curve_mode: "Parametric".into(),
             warn_shadows: true,
             warn_highlights: false,
+            peaking: true,
             proof_profile: "/tmp/paper.icc".into(),
             proof_intent: "Relative".into(),
             gamut_warning: true,

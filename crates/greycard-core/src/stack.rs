@@ -156,6 +156,7 @@ use rayon::prelude::*;
 use crate::error::{Error, Result};
 use crate::image::{CameraImage, WorkingImage};
 use crate::register::{self, Edge, Fit, Transform};
+use crate::sharpness;
 
 /// Which frame the others are put onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -476,7 +477,7 @@ fn merge(
         .map(|frame| {
             let lum = luminance_of(frame, luma);
             let log = register::log_plane(&lum, options.register.floor_stops);
-            let energy = laplacian_energy(&log, width, height);
+            let energy = sharpness::laplacian_energy(&log, width, height);
             (energy.iter().map(|&e| e as f64).sum::<f64>() / energy.len() as f64).sqrt() as f32
         })
         .collect();
@@ -619,7 +620,13 @@ fn merge(
         // luminance throughout and a working-space one in the working
         // space's.
         let lum = luminance_of(&warped, luma);
-        let map = sharpness_map(&lum, width, height, options);
+        let map = sharpness::map(
+            &lum,
+            width,
+            height,
+            options.register.floor_stops,
+            options.sharpness_radius,
+        );
         drop(lum);
 
         let mean = (map.iter().map(|&v| v as f64).sum::<f64>() / map.len().max(1) as f64) as f32;
@@ -649,7 +656,7 @@ fn merge(
                     .par_chunks(CHANNELS)
                     .map(|px| px.iter().map(|v| v.abs()).sum::<f32>() / CHANNELS as f32)
                     .collect();
-                let contrast = box_blur(&magnitude, lw, lh, options.band_radius);
+                let contrast = sharpness::box_blur(&magnitude, lw, lh, options.band_radius);
                 let floor = options.band_floor;
                 // Squaring is the default and `powf` is not cheap over
                 // a pyramid a frame.
@@ -812,98 +819,6 @@ fn fit_all(
         }
     }
     chain
-}
-
-/// The local energy of the Laplacian of the log luminance, smoothed.
-fn sharpness_map(lum: &[f32], width: usize, height: usize, options: &Options) -> Vec<f32> {
-    let log = register::log_plane(lum, options.register.floor_stops);
-    let energy = laplacian_energy(&log, width, height);
-    box_blur(&energy, width, height, options.sharpness_radius)
-}
-
-/// The square of the four-neighbor Laplacian, the taps clamped at the
-/// border.
-fn laplacian_energy(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let mut out = vec![0.0f32; width * height];
-    out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
-        let mid = &plane[y * width..(y + 1) * width];
-        let up = &plane[y.saturating_sub(1) * width..][..width];
-        let down = &plane[(y + 1).min(height - 1) * width..][..width];
-        for (x, o) in row.iter_mut().enumerate() {
-            let left = mid[x.saturating_sub(1)];
-            let right = mid[(x + 1).min(width - 1)];
-            let lap = 4.0 * mid[x] - left - right - up[x] - down[x];
-            *o = lap * lap;
-        }
-    });
-    out
-}
-
-/// The mean over a `2r+1` square, the window cut down at the border
-/// rather than padded, by running sums. The vertical pass is the
-/// horizontal one over a transposed copy: two blocked transposes cost
-/// less than a strided traversal of a 24-megapixel plane.
-fn box_blur(src: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
-    if radius == 0 {
-        return src.to_vec();
-    }
-    let mut rows = vec![0.0f32; width * height];
-    rows.par_chunks_mut(width)
-        .zip(src.par_chunks(width))
-        .for_each(|(out, row)| run_1d(row, out, radius));
-    let turned = transpose(&rows, width, height);
-    let mut blurred = vec![0.0f32; width * height];
-    blurred
-        .par_chunks_mut(height)
-        .zip(turned.par_chunks(height))
-        .for_each(|(out, row)| run_1d(row, out, radius));
-    transpose(&blurred, height, width)
-}
-
-/// One line's running mean.
-fn run_1d(src: &[f32], out: &mut [f32], radius: usize) {
-    let n = src.len();
-    let mut sum = 0.0f64;
-    let mut hi = radius.min(n - 1);
-    for v in src.iter().take(hi + 1) {
-        sum += *v as f64;
-    }
-    let mut lo = 0usize;
-    for (x, o) in out.iter_mut().enumerate() {
-        let want_hi = (x + radius).min(n - 1);
-        let want_lo = x.saturating_sub(radius);
-        while hi < want_hi {
-            hi += 1;
-            sum += src[hi] as f64;
-        }
-        while lo < want_lo {
-            sum -= src[lo] as f64;
-            lo += 1;
-        }
-        *o = (sum / (want_hi - want_lo + 1) as f64) as f32;
-    }
-}
-
-/// `src` turned on its side: the result is `height` wide and `width`
-/// tall. In blocks, so neither side of the copy runs down a column.
-fn transpose(src: &[f32], width: usize, height: usize) -> Vec<f32> {
-    const BLOCK: usize = 64;
-    let mut out = vec![0.0f32; width * height];
-    out.par_chunks_mut(height * BLOCK)
-        .enumerate()
-        .for_each(|(block_index, block)| {
-            let x0 = block_index * BLOCK;
-            let columns = block.len() / height;
-            for y0 in (0..height).step_by(BLOCK) {
-                for y in y0..(y0 + BLOCK).min(height) {
-                    let row = &src[y * width..];
-                    for i in 0..columns {
-                        block[i * height + y] = row[x0 + i];
-                    }
-                }
-            }
-        });
-    out
 }
 
 /// The level sizes, full resolution first.
@@ -1130,7 +1045,7 @@ mod tests {
     fn energy_over(image: &WorkingImage, x0: usize, x1: usize, margin: usize) -> f32 {
         let (w, h) = (image.width, image.height);
         let log = register::log_plane(&plane(image), 14.0);
-        let energy = laplacian_energy(&log, w, h);
+        let energy = sharpness::laplacian_energy(&log, w, h);
         let mut sum = 0.0f64;
         let mut n = 0u64;
         for y in margin..h - margin {

@@ -422,8 +422,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_scope(opening_scope(&cli, &remembered).name().into());
     app.set_scope_selection(cli.scope_selection);
     app.set_show_sharpen_mask(cli.sharpen_mask);
-    app.set_warn_shadows(cli.clipping || remembered.warn_shadows);
-    app.set_warn_highlights(cli.clipping || remembered.warn_highlights);
+    show_overlays(&app, cli.clipping, &remembered);
     app.set_sync_shift_temperature(remembered.sync_shift.temperature);
     app.set_sync_shift_tint(remembered.sync_shift.tint);
     app.set_sync_shift_exposure(remembered.sync_shift.exposure);
@@ -1612,6 +1611,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             shadows: app.get_warn_shadows(),
                             highlights: app.get_warn_highlights(),
                         },
+                        peaking: peaking_of(&app),
                         show_mask: app.get_show_mask().then_some(st.develop.target).flatten(),
                         show_sharpen: app.get_show_sharpen_mask() && app.get_sharpen(),
                         mask_alone: false,
@@ -2420,6 +2420,23 @@ pub(crate) fn keep_choices(app: &App, state: &Rc<Shared>, choices: &Choices) -> 
     timer
 }
 
+/// What the last run painted over the picture, the clipping warnings
+/// and focus peaking; `clipping` (the command line's) turns both
+/// warnings on whatever it left.
+pub(crate) fn show_overlays(app: &App, clipping: bool, remembered: &settings::Settings) {
+    app.set_warn_shadows(clipping || remembered.warn_shadows);
+    app.set_warn_highlights(clipping || remembered.warn_highlights);
+    app.set_peaking(remembered.peaking);
+}
+
+/// Focus peaking's paint, the theme's, when it is on.
+pub(crate) fn peaking_of(app: &App) -> Option<[f32; 3]> {
+    app.get_peaking().then(|| {
+        let c = app.global::<crate::Theme>().get_peaking();
+        [c.red(), c.green(), c.blue()].map(|v| v as f32 / 255.0)
+    })
+}
+
 /// The panel's choices, to keep for the next run. What the panel
 /// does not own — the last file, the Settings sheet's two and the
 /// lens offer's answer, each written to the file when it changes —
@@ -2449,6 +2466,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         curve_mode: app.get_curve_mode().into(),
         warn_shadows: app.get_warn_shadows(),
         warn_highlights: app.get_warn_highlights(),
+        peaking: app.get_peaking(),
         proof_profile: proof_settings(app)
             .map(|p| p.profile.key())
             .unwrap_or_default(),

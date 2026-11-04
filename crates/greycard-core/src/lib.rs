@@ -28,7 +28,8 @@
 //! on the other for; and [`register`], which fits the transform that
 //! puts one frame on top of another, what every stack — a handheld
 //! bracket, a focus stack, a panorama's refinement — needs before it
-//! can merge anything; [`stack`], which merges a focus stack into
+//! can merge anything; [`sharpness`], how sharp a picture is at each
+//! pixel; [`stack`], which merges a focus stack into
 //! the frame that is sharp everywhere; and [`merge`], which merges a
 //! tripod bracket into one frame of the whole range.
 //!
@@ -52,6 +53,7 @@ pub mod output;
 pub mod picture;
 pub mod raw;
 pub mod register;
+pub mod sharpness;
 pub mod stack;
 
 #[cfg(any(test, feature = "testing"))]

@@ -183,6 +183,7 @@ frames as ← and → do.
 | Z | Fit or 3:1 |
 | F | A mat of the canvas around the picture at Fit, or none |
 | J | In the Loupe, shadow and highlight clipping warnings; in the lightbox, the badges |
+| Shift+J | In the Loupe, focus peaking: the sharpest parts painted over the picture |
 | S | Soft proof (in the grid, a stack: below) |
 
 **Ctrl+wheel** over the grid changes the tile size as **+** and **−**

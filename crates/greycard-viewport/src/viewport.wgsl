@@ -596,6 +596,12 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // The scopes' analysis draw stops here, at the export space's
     // encoded values: what the file will hold, whatever the monitor.
     var d = e;
+    // Under focus peaking the picture is drawn twice: first with no
+    // overlay (tile.z), for the peaking passes to measure and paint
+    // on, then the overlays alone (tile.w), over the paint, every
+    // other pixel left as it is.
+    let bare = p.tile.z > 0.5;
+    var overlaid = false;
     if (p.cubic.w < 0.5) {
         // Sample the table at its grid: the first and last points sit
         // half a texel in from the edges.
@@ -606,38 +612,46 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         // working-space color: grey where the proof's profile cannot
         // hold it.
         let mark = textureSampleLevel(lut, lut_samp, wide * (n - 1.0) / n + 0.5 / n, 0.0);
-        if (mark.a > 0.5) {
+        if (mark.a > 0.5 && !bare) {
             d = vec3<f32>(0.5, 0.5, 0.5);
+            overlaid = true;
         }
     }
     // A mask on show: red over the picture where it acts.
-    if (p.show_mask > 0.5) {
+    if (p.show_mask > 0.5 && !bare) {
         let k = u32(p.show_mask) - 1u;
         if (k < count) {
             if (p.range.y > 0.5) {
                 return vec4<f32>(vec3<f32>(weights[k]), 1.0);
             }
             d = mix(d, vec3<f32>(1.0, 0.15, 0.15), 0.6 * weights[k]);
+            overlaid = overlaid || weights[k] > 0.0;
         }
     }
     // The sharpen's mask on show, the same way.
-    if (p.cubic.y > 0.5) {
+    if (p.cubic.y > 0.5 && !bare) {
         d = mix(d, vec3<f32>(1.0, 0.15, 0.15), 0.6 * clamp(t4.a, 0.0, 1.0));
+        overlaid = overlaid || t4.a > 0.0;
     }
     // The clipping warnings: where a channel of the output lands in
     // the histogram's first or last bin, as `scope.wgsl` rounds it,
     // the pixel is painted blue for the shadows or red for the
     // highlights, the highlights over the shadows.
     let clip = u32(p.clip.x);
-    if (clip != 0u) {
+    if (clip != 0u && !bare) {
         let level = floor(e * 255.0 + 0.5);
         let lo = min(min(level.r, level.g), level.b) <= 0.0;
         let hi = max(max(level.r, level.g), level.b) >= 255.0;
         if ((clip & 2u) != 0u && hi) {
             d = vec3<f32>(1.0, 0.15, 0.15);
+            overlaid = true;
         } else if ((clip & 1u) != 0u && lo) {
             d = vec3<f32>(0.2, 0.4, 1.0);
+            overlaid = true;
         }
+    }
+    if (p.tile.w > 0.5 && !overlaid) {
+        discard;
     }
     // The scopes weighed by a mask: its coverage in the alpha, which
     // the analysis texture holds in eight bits and `scope.wgsl` reads.
