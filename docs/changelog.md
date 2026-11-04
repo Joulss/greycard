@@ -7,6 +7,20 @@ design note behind it.
 
 ### The window
 
+- Fixed: a crop as wide or as tall as the view can be dragged by its
+  edge handles; the Hide panel and strip arrows move off them while
+  the crop is in hand (discussion 59)
+  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
+- A mask's only shape has its **×** too; the mask stays, empty, and
+  one undo brings the shape back (discussion 59)
+  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
+- **Esc** with no tool in hand hides a Linear or Radial shape's
+  handles; a click on its row or the shape brings them back
+  (discussion 59)
+  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
+- A line under **New mask** shows the sections going under the
+  pinned mask list (discussion 59)
+  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
 - **Reset to Original**, in the HISTORY section's head and in the
   frame menu for a selection, puts each frame's edit back to its
   Original as one step that Ctrl+Z takes back (discussion 59)

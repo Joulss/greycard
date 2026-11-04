@@ -126,6 +126,9 @@ export component Viewport inherits Rectangle {
     callback place-released();
     in-out property <string> mask-kind;
     in-out property <[Pt]> mask-handles;
+    // The handles put down by Esc: none drawn, and a press on the
+    // shape's body brings them back.
+    in-out property <bool> handles-down;
     in-out property <[MaskBox]> mask-boxes;
     in-out property <[MaskPick]> mask-picks;
     in-out property <[PersonBox]> person-boxes;
@@ -376,6 +379,7 @@ export component Viewport inherits Rectangle {
                 self.body-down = e.button == PointerEventButton.left && !self.picked-down
                     && !self.placed-down && root.mask-body-live
                     && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key);
+                if (self.body-down) { root.handles-down = false; }
             } else if (e.kind == PointerEventKind.up) {
                 if (!self.held) {
                     // The release of a press that closed a menu.
@@ -928,7 +932,7 @@ export component Viewport inherits Rectangle {
         }
     }
     // The chosen mask shape: its outline and its handles.
-    if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.placeholder: Rectangle {
+    if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.placeholder && !root.handles-down: Rectangle {
         for h[i] in root.mask-handles: Rule {
             stroke: i == 0 ? #ffffff60 : #ffffffcc;
             halo: i != 0;
@@ -940,7 +944,7 @@ export component Viewport inherits Rectangle {
             y1: h.y + self.dy;
         }
     }
-    if root.mask-kind == "Radial" && root.mask-handles.length == 5 && !root.placeholder: Rectangle {
+    if root.mask-kind == "Radial" && root.mask-handles.length == 5 && !root.placeholder && !root.handles-down: Rectangle {
         for s[k] in [1.0, root.mask-feather-scale]: Ring {
             stroke: s == 1.0 ? #ffffffcc : #ffffff50;
             halo: k == 0;
@@ -1013,7 +1017,7 @@ export component Viewport inherits Rectangle {
         primary: true;
         clicked => { root.all-people(); }
     }
-    if root.mask-kind != "" && !root.placeholder: Rectangle {
+    if root.mask-kind != "" && !root.placeholder && !root.handles-down: Rectangle {
         for h[i] in root.mask-handles: CropHandle {
             id: i;
             x: h.x * 1px - 10px;

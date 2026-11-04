@@ -557,3 +557,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§542. Focus peaking](notes/542-focus-peaking.md) (2026-11-04)
 - [§543. The window's second merge under the merging folder](notes/543-the-windows-second-merge-under-the-merging-folder.md) (2026-11-04)
 - [§544. Reset to Original](notes/544-reset-to-original.md) (2026-11-04)
+- [§545. Four small asks from discussion 59](notes/545-four-small-asks-from-discussion-59.md) (2026-11-04)

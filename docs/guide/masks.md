@@ -85,7 +85,7 @@ its kind, such as "+ Radial".
 
 - The dot switches the shape on and off without deleting it.
 - The half-filled circle inverts that shape alone. It lights when on.
-- **×** deletes the shape. It shows when the mask has more than one.
+- **×** deletes the shape. Deleting the last one leaves the mask empty, as **New mask** makes it.
 - Click a row to choose it and see its settings.
 
 ## Adding shapes
@@ -105,6 +105,9 @@ Intersect is how you limit one shape to a place, such as a
 **Linear**, then a **Luminance** with **Intersect**.
 
 Press **Esc** to put a drawing tool down, or click its button again.
+With no tool in hand, **Esc** hides a Linear or Radial shape's handles
+so you can see the picture; click its row or the shape to bring them
+back.
 
 ### Linear
 

@@ -53,11 +53,12 @@ export component AdjustmentsList inherits Section {
     // binding would be a loop.
     in property <length> room: 1000px;
     property <int> max-rows: 6;
-    // What the list takes besides its rows: its block's padding (8),
-    // the section's padding (4), header (16 + 4) and rule with the
-    // spacing either side (6 + 1 + 6), the list's border (2), the
-    // spacing before New mask (4) and New mask itself (28): 79 px.
-    property <length> chrome: Theme.space-2 + Theme.space-1 + Theme.icon + Theme.space-1 + 6px + 1px + 6px + 2px + Theme.space-1 + Theme.control-height;
+    // What the list takes besides its rows: its block's padding (8 +
+    // 8) and the line under it (1), the section's padding (4), header
+    // (16 + 4) and rule with the spacing either side (6 + 1 + 6), the
+    // list's border (2), the spacing before New mask (4) and New mask
+    // itself (28): 88 px.
+    property <length> chrome: Theme.space-2 * 2 + 1px + Theme.space-1 + Theme.icon + Theme.space-1 + 6px + 1px + 6px + 2px + Theme.space-1 + Theme.control-height;
     // The least view of the sections a row is given up for.
     property <length> sections-view: 150px;
     function fit-rows() {
@@ -490,7 +491,9 @@ export component AdjustmentsSection inherits Section {
                                     }
                                 }
                             }
-                            if root.component-names.length > 1: Rectangle {
+                            // The last one too: the mask stays, empty,
+                            // as New mask leaves one.
+                            Rectangle {
                                 width: Theme.control-height - 4px;
                                 accessible-role: button;
                                 accessible-label: "Remove this shape";

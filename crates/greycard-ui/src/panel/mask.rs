@@ -3975,4 +3975,104 @@ mod tests {
         assert_eq!((shape_mode, first.op), (Mode::Add, Op::Erase));
         assert_eq!(app.get_brush_op(), "Erase");
     }
+
+    /// The edit's rest, past the save's wait, so each change is its
+    /// own step.
+    fn rest() {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+            crate::panel::edit::SAVE_MS + 100,
+        ));
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// A mask's only shape has its × too: the mask stays, empty, the
+    /// step says the shape was removed as any other delete's does, and
+    /// one undo gives the shape back.
+    #[test]
+    fn the_last_shape_is_deleted_by_its_cross_and_one_undo_restores_it() {
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Add".into());
+        rest();
+        crate::testing::settle(&app);
+        assert_eq!(count_labeled(&app, "Remove this shape"), 1);
+        let (at, size) = crate::testing::labeled(&app, "Remove this shape");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        rest();
+        {
+            let st = state.borrow();
+            assert_eq!(st.develop.edit.adjustments.len(), 1, "the mask stays");
+            assert!(st.develop.edit.adjustments[0].mask.components.is_empty());
+        }
+        let top = app.get_history_rows().row_data(0).unwrap().name;
+        assert!(top.ends_with(" shape removed"), "{top}");
+        app.invoke_undo();
+        let st = state.borrow();
+        assert_eq!(st.develop.edit.adjustments.len(), 1);
+        assert_eq!(st.develop.edit.adjustments[0].mask.components.len(), 1);
+    }
+
+    /// Esc with nothing in hand puts a placed linear's handles down,
+    /// the shape still chosen; a press on its row or on its band
+    /// brings them back. With the brush in hand Esc puts the brush
+    /// down and leaves the handles be.
+    #[test]
+    fn esc_puts_a_shapes_handles_down_and_a_press_brings_them_back() {
+        use crate::testing::press;
+        use slint::platform::Key;
+        let linear = Shape::Linear {
+            from: [0.5, 0.3],
+            to: [0.5, 0.45],
+        };
+        let (app, state, _worker, base) = body_setup(linear);
+        {
+            let st = state.borrow();
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
+        }
+        let handles = |app: &App| {
+            let pts = [(0.5, 0.375), (0.5, 0.3), (0.5, 0.45)].map(|(u, v)| {
+                let (x, y) = source_to_view(&state.borrow(), app, u, v);
+                Pt { x, y }
+            });
+            app.set_mask_handles(ModelRc::new(VecModel::from(pts.to_vec())));
+        };
+        handles(&app);
+        app.set_mask_kind("Linear".into());
+        let target = app.get_target();
+        press(&app, Key::Escape);
+        assert!(app.get_handles_down(), "Esc put the handles down");
+        assert_eq!(app.get_mask_kind(), "Linear", "the shape still chosen");
+        assert_eq!(app.get_target(), target);
+        assert_eq!(
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CropHandle")
+                .count(),
+            0,
+            "none drawn"
+        );
+        // Its row, beside its own invert.
+        let (at, size) = crate::testing::labeled(&app, "Invert this shape");
+        click(&app, at.x - 60.0, at.y + size.height / 2.0);
+        assert!(!app.get_handles_down(), "the row brought them back");
+        press(&app, Key::Escape);
+        assert!(app.get_handles_down());
+        // Its band on the picture, clear of the handles.
+        let p = shown_at(&app, &state, base, 0.15, 0.375);
+        click(&app, p.0, p.1);
+        assert!(!app.get_handles_down(), "the band brought them back");
+        // The brush in hand: Esc is the brush's alone.
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Brush");
+        press(&app, Key::Escape);
+        assert_eq!(app.get_placing(), "", "the brush put down");
+        assert!(!app.get_handles_down(), "and nothing else");
+        handles(&app);
+        app.set_mask_kind("Linear".into());
+        press(&app, Key::Escape);
+        assert!(app.get_handles_down(), "the next Esc is the handles'");
+    }
 }

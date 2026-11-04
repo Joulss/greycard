@@ -49,9 +49,6 @@ the reasoning lives in `docs/notes.md`.
       Windows (issue 44): waits on the reporter's log
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
-- [ ] The crop rectangle's side handles sit under the Hide panel
-      buttons when the rectangle is full width, so they cannot be
-      grabbed (discussion 59, 2026-11-04)
 - [ ] A fill on a denoised frame still gets more grain than its
       surround after §434 (1.3x at every distance on an overcast sky
       with the learned denoiser, the amount not the shape): the
@@ -1114,18 +1111,10 @@ clears or a tester asks for it.
 - [ ] A fill's area painted over again after the fact: strokes added
       to an existing retouch and the fill made again (discussion 59,
       2026-11-04)
-- [ ] A shape's handles put down with Esc once it is placed, as the
-      brush is, so they do not sit over the edit (discussion 59,
-      2026-11-04)
 - [ ] The grading and tint wheels: Shift-drag holds the hue and
       Ctrl-drag the amount, and a click on the picture with a wheel
       in hand takes that color or its complement (discussion 59,
       2026-11-04)
-- [ ] Delete a mask's only shape, leaving the mask empty (discussion
-      59, 2026-11-04)
-- [ ] A line or a shadow under the mask list's New mask button, so
-      a section card scrolled up under it reads as under it, not
-      around it (discussion 59, 2026-11-02)
 - [ ] A lens profile picked by hand for a file that names no lens:
       the Lens list should already show every LCP in the profile
       folder; check with the tester's CR3 and LCP (discussion 59,

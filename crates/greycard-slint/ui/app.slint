@@ -296,7 +296,7 @@ export component App inherits Window {
     /// The frames the strip shows now, first and last, so their
     /// pictures are made before the rest of the folder's.
     callback strip-range(int, int);
-    changed selected => { root.strip-reveal(); root.grid-reveal(); }
+    changed selected => { root.strip-reveal(); root.grid-reveal(); root.handles-down = false; }
     /// Scroll the strip the least that brings the selected frame into
     /// view, leaving the padding beside it. Called when the selection
     /// moves and when the strip is first laid out or refilled.
@@ -1126,7 +1126,7 @@ export component App inherits Window {
         Typing.close-all();
         root.look-list-gone();
     }
-    changed target => { Typing.close-all(); }
+    changed target => { Typing.close-all(); root.handles-down = false; }
     changed curve-mode => { Typing.close-all(); }
     changed culling => { Typing.close-all(); }
     callback tab-changed(string);
@@ -1335,6 +1335,12 @@ export component App inherits Window {
     // its lines.
     in-out property <string> mask-kind: "";
     in-out property <[Pt]> mask-handles: [];
+    // The chosen shape's handles put down by Esc, the shape still
+    // chosen: back with a press on its row or its body, or with
+    // another shape, mask or frame.
+    in-out property <bool> handles-down: false;
+    changed component => { root.handles-down = false; }
+    changed mask-kind => { root.handles-down = false; }
     // An object's boxes and picks, the chosen one's or the one being
     // placed.
     in-out property <[MaskBox]> mask-boxes: [];
@@ -2798,6 +2804,14 @@ export component App inherits Window {
                 if (!e.repeat) { root.import-stop(); }
                 return accept;
             }
+            // Last of Escape's: the chosen linear or radial's handles
+            // put down, so the picture is seen without them.
+            if (chord == "Esc" && !root.handles-down && root.mask-handles.length > 0
+                && (root.mask-kind == "Linear" || root.mask-kind == "Radial")
+                && !root.tool-in-hand() && !Typing.editing && !root.sheet-open() && !root.grid-open) {
+                root.handles-down = true;
+                return accept;
+            }
             if (root.culling && !root.sheet-open() && chord == "V") {
                 // Three up is Compare versions' alone; V goes on from it
                 // to four, as from two.
@@ -3116,6 +3130,7 @@ export component App inherits Window {
                 place-released => { root.place-released(); }
                 mask-kind <=> root.mask-kind;
                 mask-handles <=> root.mask-handles;
+                handles-down <=> root.handles-down;
                 mask-boxes <=> root.mask-boxes;
                 mask-picks <=> root.mask-picks;
                 person-boxes <=> root.person-boxes;
@@ -3274,6 +3289,7 @@ export component App inherits Window {
                     padding-left: Theme.space-4;
                     padding-right: Theme.space-4;
                     padding-top: Theme.space-2;
+                    padding-bottom: Theme.space-2;
                     AdjustmentsList {
                         // What the panel has under its head (the
                         // scope, whose height is the scope's), the tab
@@ -3308,6 +3324,9 @@ export component App inherits Window {
                         menu-shown => { return root.menu-shown(); }
                     }
                 }
+                // The list's foot, so a section scrolled up under it
+                // reads as going under and not as round New mask.
+                if root.shown-tab == "Masks": Rectangle { height: 1px; background: Theme.border; }
                 // Named so the tests find the view's own edges.
                 panel-view := ScrollPane {
                     content-y <=> root.panel-scroll;
@@ -3504,7 +3523,7 @@ export component App inherits Window {
                             delete-shape-at(a) => { root.delete-shape-at(a); }
                             shape-toggled(a) => { root.shape-toggled(a); }
                             invert-shape-toggled(a) => { root.invert-shape-toggled(a); }
-                            component-changed(a) => { root.component-changed(a); }
+                            component-changed(a) => { root.handles-down = false; root.component-changed(a); }
                             renamed => { root.renamed(); }
                             view-changed => { root.view-changed(); }
                         }
@@ -4082,9 +4101,37 @@ export component App inherits Window {
     // picture; under the grid and the sheets, which are declared
     // after. With all three away they go quiet (see EdgeArrow).
     property <length> view-mid: (root.height - root.strip-h) / 2;
+    // With the crop in hand, an arrow over the crop's handles on its
+    // edge (a full-width crop's) moves along the edge until it clears
+    // them: the arrows are drawn over the viewport, so a handle under
+    // one never sees the pointer, and drawn under it they would be
+    // under its picture-wide press area too. `ax` is the arrow's left
+    // and `hx` the handles' column, in the window.
+    pure function arrow-clears(top: length) -> bool {
+        if (top < 0 || top + 40px > root.height - root.strip-h) { return false; }
+        // A handle is 20 px; 2 px more of air either side.
+        let ct = root.crop-top;
+        let cm = root.crop-top + root.crop-height / 2;
+        let cb = root.crop-top + root.crop-height;
+        return !(ct > top - 12px && ct < top + 52px) && !(cm > top - 12px && cm < top + 52px)
+            && !(cb > top - 12px && cb < top + 52px);
+    }
+    pure function arrow-top(ax: length, hx: length) -> length {
+        let rest = root.view-mid - 20px;
+        if (!root.crop-mode || root.grid-open || root.placeholder || abs(hx - ax - 8px) >= 18px
+            || root.arrow-clears(rest)) {
+            return rest;
+        }
+        let cm = root.crop-top + root.crop-height / 2;
+        if (root.arrow-clears(cm + 12px)) { return cm + 12px; }
+        if (root.arrow-clears(cm - 52px)) { return cm - 52px; }
+        if (root.arrow-clears(root.crop-top + root.crop-height + 12px)) { return root.crop-top + root.crop-height + 12px; }
+        if (root.arrow-clears(root.crop-top - 52px)) { return root.crop-top - 52px; }
+        return rest;
+    }
     EdgeArrow {
         x: root.width - root.right-w - self.width;
-        y: root.view-mid - self.height / 2;
+        y: root.arrow-top(self.x, root.left-w + root.crop-left + root.crop-width);
         width: 16px;
         height: 40px;
         quiet: root.all-hidden();
@@ -4094,8 +4141,33 @@ export component App inherits Window {
         icon: root.right-hidden ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-right.svg");
         clicked => { root.right-hidden = !root.right-hidden; keys.focus(); }
     }
+    // The strip's arrow the same way along the foot, off a
+    // full-height crop's bottom handles.
+    pure function strip-arrow-clears(left: length) -> bool {
+        if (left < root.left-w || left + 40px > root.width - root.right-w) { return false; }
+        let cl = root.left-w + root.crop-left;
+        let cm = cl + root.crop-width / 2;
+        let cr = cl + root.crop-width;
+        return !(cl > left - 12px && cl < left + 52px) && !(cm > left - 12px && cm < left + 52px)
+            && !(cr > left - 12px && cr < left + 52px);
+    }
+    pure function strip-arrow-left() -> length {
+        let rest = root.left-w + (root.width - root.left-w - root.right-w - 40px) / 2;
+        let cb = root.crop-top + root.crop-height;
+        if (!root.crop-mode || root.grid-open || root.placeholder
+            || abs(cb - (root.height - root.strip-h - 8px)) >= 18px || root.strip-arrow-clears(rest)) {
+            return rest;
+        }
+        let cl = root.left-w + root.crop-left;
+        let cm = cl + root.crop-width / 2;
+        if (root.strip-arrow-clears(cm + 12px)) { return cm + 12px; }
+        if (root.strip-arrow-clears(cm - 52px)) { return cm - 52px; }
+        if (root.strip-arrow-clears(cl + root.crop-width + 12px)) { return cl + root.crop-width + 12px; }
+        if (root.strip-arrow-clears(cl - 52px)) { return cl - 52px; }
+        return rest;
+    }
     EdgeArrow {
-        x: root.left-w + (root.width - root.left-w - root.right-w - self.width) / 2;
+        x: root.strip-arrow-left();
         y: root.height - root.strip-h - self.height;
         width: 40px;
         height: 16px;
@@ -4671,7 +4743,7 @@ export component App inherits Window {
     // away, as the others.
     EdgeArrow {
         x: root.left-w;
-        y: root.grid-open ? (root.height - self.height) / 2 : root.view-mid - self.height / 2;
+        y: root.grid-open ? (root.height - self.height) / 2 : root.arrow-top(self.x, root.left-w + root.crop-left);
         width: 16px;
         height: 40px;
         quiet: root.all-hidden() && !root.grid-open;

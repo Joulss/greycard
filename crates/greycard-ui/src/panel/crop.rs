@@ -2322,4 +2322,56 @@ mod tests {
         press();
         assert!((app.get_geo_angle() - first).abs() < 0.1);
     }
+
+    /// A crop the view's whole width has its side handles at the
+    /// view's edges, where the Hide panel arrows sit, and one its whole
+    /// height its bottom handle under the strip's: with the crop in
+    /// hand the arrows move off them, so a press there is the handle's,
+    /// and the arrow still works where it went.
+    #[test]
+    fn a_crops_edge_handles_are_not_under_the_edge_arrows() {
+        let app = window(1);
+        let (_state, _worker) = retouch_state(&app);
+        let view = ElementHandle::find_by_element_type_name(&app, "Viewport")
+            .next()
+            .expect("the viewport is on screen");
+        let (base, size) = (view.absolute_position(), view.size());
+        app.set_crop_mode(true);
+        app.set_crop_left(0.0);
+        app.set_crop_top(size.height / 2.0 - 100.0);
+        app.set_crop_width(size.width);
+        app.set_crop_height(200.0);
+        let pressed = Rc::new(RefCell::new(Vec::new()));
+        {
+            let pressed = pressed.clone();
+            app.on_crop_pressed(move |i| pressed.borrow_mut().push(i));
+        }
+        let mid = base.y + size.height / 2.0;
+        for (x, id) in [(base.x + size.width - 5.0, 3), (base.x + 5.0, 7)] {
+            pressed.borrow_mut().clear();
+            crate::testing::click(&app, x, mid);
+            assert_eq!(*pressed.borrow(), [id], "the side handle at {x}");
+        }
+        assert!(!app.get_right_hidden());
+        let (at, arrow) = crate::testing::labeled(&app, "Right panel");
+        crate::testing::click(&app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
+        assert!(app.get_right_hidden(), "the arrow, moved, still works");
+        // A crop the view's whole height: its bottom handle is under
+        // the strip's arrow, which moves along the foot the same way.
+        app.set_right_hidden(false);
+        app.set_crop_left(size.width / 2.0 - 100.0);
+        app.set_crop_top(0.0);
+        app.set_crop_width(200.0);
+        app.set_crop_height(size.height);
+        pressed.borrow_mut().clear();
+        crate::testing::click(&app, base.x + size.width / 2.0, base.y + size.height - 5.0);
+        assert_eq!(*pressed.borrow(), [5], "the bottom handle");
+        assert!(!app.get_strip_hidden());
+        let (at, arrow) = crate::testing::labeled(&app, "Strip");
+        crate::testing::click(&app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
+        assert!(
+            app.get_strip_hidden(),
+            "the strip's arrow, moved, still works"
+        );
+    }
 }
