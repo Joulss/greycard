@@ -577,3 +577,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§562. A Panasonic v4 window read within its block](notes/562-a-panasonic-v4-window-read-within-its-block.md) (2026-11-04)
 - [§563. ONNX Runtime's telemetry, off](notes/563-onnx-runtimes-telemetry-off.md) (2026-11-04)
 - [§564. Lenses sharing an id, told apart](notes/564-lenses-sharing-an-id-told-apart.md) (2026-11-04)
+- [§565. A DNG's sample maps, applied](notes/565-a-dngs-sample-maps-applied.md) (2026-11-04)

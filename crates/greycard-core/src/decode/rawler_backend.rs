@@ -738,10 +738,21 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     }
     if !forward.is_empty() || frame.dng.opcode_area.is_some() {
         log::info!(
-            "DNG tags: forward matrices for illuminant(s) {:?}, {} gain map(s), {} bad-pixel list(s), {} warp(s)",
+            "DNG tags: forward matrices for illuminant(s) {:?}, {} gain map(s), {} sample map(s), {} bad-pixel list(s), {} warp(s)",
             forward.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
             crate::opcodes::gain_maps_of(&frame.dng.mosaic).count(),
-            frame.dng.mosaic.len() - crate::opcodes::gain_maps_of(&frame.dng.mosaic).count(),
+            frame
+                .dng
+                .mosaic
+                .iter()
+                .filter(|op| matches!(op, crate::opcodes::MosaicOp::Remap(_)))
+                .count(),
+            frame
+                .dng
+                .mosaic
+                .iter()
+                .filter(|op| matches!(op, crate::opcodes::MosaicOp::BadPixels(..)))
+                .count(),
             frame.dng.warps.len()
         );
     }

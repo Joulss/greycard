@@ -4,11 +4,11 @@
 //! A list is big-endian whatever the file's byte order: a count, then
 //! each opcode as its id, the DNG version it was written for, its flags,
 //! the byte count of its parameters, and the parameters. Of the opcodes
-//! the gain maps, the rectilinear warps, and the two bad-pixel lists are
-//! read; every other is named in the log and left, as a reader may leave
-//! one flagged optional. One that is not optional is left too, with the
-//! log saying so: a picture with a correction missing is more use than
-//! no picture.
+//! the gain maps, the two sample maps, the rectilinear warps, and the
+//! two bad-pixel lists are read; every other is named in the log and
+//! left, as a reader may leave one flagged optional. One that is not
+//! optional is left too, with the log saying so: a picture with a
+//! correction missing is more use than no picture.
 //!
 //! Where the specification leaves a reader a choice, the reading
 //! follows Adobe's DNG SDK (`dng_lens_correction.cpp` for the warps'
@@ -27,6 +27,8 @@ const WARP_RECTILINEAR: u32 = 1;
 const WARP_FISHEYE: u32 = 2;
 const FIX_BAD_PIXELS_CONSTANT: u32 = 4;
 const FIX_BAD_PIXELS_LIST: u32 = 5;
+const MAP_TABLE: u32 = 7;
+const MAP_POLYNOMIAL: u32 = 8;
 const GAIN_MAP: u32 = 9;
 const WARP_RECTILINEAR_2: u32 = 14;
 
@@ -41,6 +43,14 @@ const MAX_OPCODES: u32 = 1024;
 /// The most points a gain map is read with, every plane counted: a
 /// phone's maps are 1200, and a map past this is a damaged one.
 const MAX_MAP_POINTS: u64 = 1 << 22;
+
+/// The highest degree of a `MapPolynomial`: the SDK's limit, and a
+/// file past it is damaged.
+const MAX_DEGREE: usize = 8;
+
+/// The most entries of a `MapTable`, one a 16-bit value; the SDK's
+/// limit too.
+const MAX_TABLE: usize = 65536;
 
 /// A `GainMap` opcode: a grid of gains over an area of the image,
 /// interpolated between its points and multiplied into the samples of
@@ -192,6 +202,61 @@ impl BadPixels {
     }
 }
 
+/// A `MapTable` or `MapPolynomial` opcode: a curve on every sample of
+/// the planes it names, over an area of the image. A maker undoes a
+/// nonlinearity with one; Lightroom's merges (a panorama, an HDR) are
+/// linear DNGs that carry their tone and color in three, one a plane,
+/// and are magenta and clipped without them. Read for `OpcodeList2`,
+/// where the curve runs on the linear values, 0 at the black and 1 at
+/// the white; the first list's runs on the stored values and is left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Remap {
+    /// The area, the planes, and the pitches, as a [`GainMap`]'s.
+    pub top: u32,
+    pub left: u32,
+    pub bottom: u32,
+    pub right: u32,
+    pub plane: u32,
+    pub planes: u32,
+    pub row_pitch: u32,
+    pub col_pitch: u32,
+    pub curve: Curve,
+}
+
+/// The curve of a [`Remap`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Curve {
+    /// The coefficients by power of the sample, the constant term first.
+    Polynomial(Vec<f64>),
+    /// A table over the 16-bit sample; a sample past its end takes its
+    /// last entry.
+    Table(Vec<u16>),
+}
+
+impl Curve {
+    /// The curve at `x`, a sample 0 at the black and 1 at the white,
+    /// held to that range as the SDK holds it.
+    #[inline]
+    pub fn at(&self, x: f32) -> f32 {
+        match self {
+            Curve::Polynomial(k) => {
+                let x = f64::from(x);
+                let y = k.iter().rev().fold(0.0, |acc, k| acc * x + k);
+                // A NaN pins to 0, as the table's index does.
+                if y.is_nan() {
+                    0.0
+                } else {
+                    y.clamp(0.0, 1.0) as f32
+                }
+            }
+            Curve::Table(t) => {
+                let i = ((x * 65535.0).round() as usize).min(t.len() - 1);
+                f32::from(t[i]) / 65535.0
+            }
+        }
+    }
+}
+
 /// Which of a DNG's three opcode lists an opcode came from: the first
 /// runs on the stored values, the second on the linear values of the
 /// active area, the third after the demosaic.
@@ -217,6 +282,8 @@ impl OpcodeList {
 pub enum MosaicOp {
     /// `OpcodeList2`'s.
     GainMap(GainMap),
+    /// `OpcodeList2`'s.
+    Remap(Remap),
     /// The first list's or the second's.
     BadPixels(OpcodeList, BadPixels),
 }
@@ -249,7 +316,7 @@ impl Corrections {
 pub fn gain_maps_of(ops: &[MosaicOp]) -> impl Iterator<Item = &GainMap> {
     ops.iter().filter_map(|op| match op {
         MosaicOp::GainMap(map) => Some(map),
-        MosaicOp::BadPixels(..) => None,
+        MosaicOp::Remap(_) | MosaicOp::BadPixels(..) => None,
     })
 }
 
@@ -360,6 +427,11 @@ pub fn corrections(
                 (OpcodeList::Two, GAIN_MAP) => parse_gain_map(op.params).map(|map| {
                     out.mosaic.push(MosaicOp::GainMap(map));
                 }),
+                (OpcodeList::Two, MAP_TABLE | MAP_POLYNOMIAL) => {
+                    parse_remap(op.id, op.params).map(|map| {
+                        out.mosaic.push(MosaicOp::Remap(map));
+                    })
+                }
                 (
                     OpcodeList::One | OpcodeList::Two,
                     FIX_BAD_PIXELS_CONSTANT | FIX_BAD_PIXELS_LIST,
@@ -460,6 +532,53 @@ pub fn parse_gain_map(params: &[u8]) -> Option<GainMap> {
     if map.gains.iter().any(|g| !g.is_finite()) {
         return None;
     }
+    Some(map)
+}
+
+/// A `MapTable` (`id` 7) or `MapPolynomial` (`id` 8)'s parameters, or
+/// `None` when they are out of shape: a zero pitch or plane count, a
+/// degree past [`MAX_DEGREE`], a table of no entry or of more than
+/// [`MAX_TABLE`], a byte count not the count's, or a coefficient that
+/// is not a number. An empty area is read as the whole image.
+pub fn parse_remap(id: u32, params: &[u8]) -> Option<Remap> {
+    let mut r = Reader {
+        bytes: params,
+        at: 0,
+    };
+    let mut map = Remap {
+        top: r.u32()?,
+        left: r.u32()?,
+        bottom: r.u32()?,
+        right: r.u32()?,
+        plane: r.u32()?,
+        planes: r.u32()?,
+        row_pitch: r.u32()?,
+        col_pitch: r.u32()?,
+        curve: Curve::Table(Vec::new()),
+    };
+    if map.bottom <= map.top || map.right <= map.left {
+        (map.top, map.left, map.bottom, map.right) = (0, 0, u32::MAX, u32::MAX);
+    }
+    if map.planes == 0 || map.row_pitch == 0 || map.col_pitch == 0 {
+        return None;
+    }
+    let count = r.u32()? as usize;
+    let rest = r.bytes.len() - r.at;
+    map.curve = if id == MAP_POLYNOMIAL {
+        if count > MAX_DEGREE || rest != (count + 1) * 8 {
+            return None;
+        }
+        let k = (0..=count).map(|_| r.f64()).collect::<Option<Vec<_>>>()?;
+        if k.iter().any(|k| !k.is_finite()) {
+            return None;
+        }
+        Curve::Polynomial(k)
+    } else {
+        if count == 0 || count > MAX_TABLE || rest != count * 2 {
+            return None;
+        }
+        Curve::Table((0..count).map(|_| r.u16()).collect::<Option<Vec<_>>>()?)
+    };
     Some(map)
 }
 
@@ -575,6 +694,10 @@ impl<'a> Reader<'a> {
         Some(out)
     }
 
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_be_bytes(self.take(2)?.try_into().ok()?))
+    }
+
     fn u32(&mut self) -> Option<u32> {
         Some(u32::from_be_bytes(self.take(4)?.try_into().ok()?))
     }
@@ -661,6 +784,57 @@ pub(crate) fn warp_bytes(warp: &Warp, second: bool) -> Vec<u8> {
         out.extend(u32::from(warp.reciprocal).to_be_bytes());
     }
     out
+}
+
+/// A `Remap`'s parameters as a file lays them out, for the opcode its
+/// curve is.
+#[cfg(test)]
+pub(crate) fn remap_bytes(map: &Remap) -> Vec<u8> {
+    let mut out = Vec::new();
+    for v in [
+        map.top,
+        map.left,
+        map.bottom,
+        map.right,
+        map.plane,
+        map.planes,
+        map.row_pitch,
+        map.col_pitch,
+    ] {
+        out.extend(v.to_be_bytes());
+    }
+    match &map.curve {
+        Curve::Polynomial(k) => {
+            out.extend((k.len() as u32 - 1).to_be_bytes());
+            for k in k {
+                out.extend(k.to_be_bytes());
+            }
+        }
+        Curve::Table(t) => {
+            out.extend((t.len() as u32).to_be_bytes());
+            for t in t {
+                out.extend(t.to_be_bytes());
+            }
+        }
+    }
+    out
+}
+
+/// A `Remap` of `curve` over the whole image, every sample of `planes`
+/// planes from `plane`.
+#[cfg(test)]
+pub(crate) fn whole_remap(plane: u32, planes: u32, curve: Curve) -> Remap {
+    Remap {
+        top: 0,
+        left: 0,
+        bottom: u32::MAX,
+        right: u32::MAX,
+        plane,
+        planes,
+        row_pitch: 1,
+        col_pitch: 1,
+        curve,
+    }
 }
 
 /// A `FixBadPixelsList`'s parameters as a file lays them out.
@@ -901,6 +1075,80 @@ mod tests {
                 MosaicOp::GainMap(map),
             ]
         );
+    }
+
+    /// The second list's sample maps read back as written, in their
+    /// place among the mosaic's opcodes; the first list's are left, as
+    /// they run on the stored values, and the third's as misplaced.
+    #[test]
+    fn the_sample_maps_read_back_as_written() {
+        let poly = whole_remap(0, 3, Curve::Polynomial(vec![0.01, 1.5, -0.4]));
+        let table = Remap {
+            top: 2,
+            left: 1,
+            bottom: 6,
+            right: 7,
+            plane: 1,
+            planes: 1,
+            row_pitch: 2,
+            col_pitch: 1,
+            curve: Curve::Table(vec![0, 100, 65535]),
+        };
+        let one = list_bytes(&[(MAP_POLYNOMIAL, 0, remap_bytes(&poly))]);
+        let two = list_bytes(&[
+            (MAP_POLYNOMIAL, 0, remap_bytes(&poly)),
+            (MAP_TABLE, 1, remap_bytes(&table)),
+        ]);
+        let read = corrections(Some(&one), Some(&two), Some(&one));
+        assert_eq!(
+            read.mosaic,
+            vec![MosaicOp::Remap(poly), MosaicOp::Remap(table)]
+        );
+        assert_eq!(read.gain_maps().count(), 0);
+        assert!(read.warps.is_empty());
+        // An empty area is the whole image.
+        let mut empty = whole_remap(0, 1, Curve::Table(vec![7]));
+        (empty.top, empty.left, empty.bottom, empty.right) = (0, 0, 0, 0);
+        let read = parse_remap(MAP_TABLE, &remap_bytes(&empty)).unwrap();
+        assert_eq!((read.top, read.left), (0, 0));
+        assert_eq!((read.bottom, read.right), (u32::MAX, u32::MAX));
+    }
+
+    /// A sample map out of shape is passed over: a degree past the
+    /// SDK's, a table of no entry, a byte count not the count's, a
+    /// coefficient that is not a number, a zero pitch.
+    #[test]
+    fn damaged_sample_maps_are_passed_over() {
+        let nine = whole_remap(0, 1, Curve::Polynomial(vec![1.0; 10]));
+        assert_eq!(parse_remap(MAP_POLYNOMIAL, &remap_bytes(&nine)), None);
+        let none = whole_remap(0, 1, Curve::Table(Vec::new()));
+        assert_eq!(parse_remap(MAP_TABLE, &remap_bytes(&none)), None);
+        let fine = whole_remap(0, 1, Curve::Polynomial(vec![0.0, 1.0]));
+        let mut bytes = remap_bytes(&fine);
+        assert!(parse_remap(MAP_POLYNOMIAL, &bytes).is_some());
+        bytes.push(0);
+        assert_eq!(parse_remap(MAP_POLYNOMIAL, &bytes), None);
+        let nan = whole_remap(0, 1, Curve::Polynomial(vec![0.0, f64::NAN]));
+        assert_eq!(parse_remap(MAP_POLYNOMIAL, &remap_bytes(&nan)), None);
+        let mut still = fine.clone();
+        still.col_pitch = 0;
+        assert_eq!(parse_remap(MAP_POLYNOMIAL, &remap_bytes(&still)), None);
+    }
+
+    /// A curve is read at a sample: the polynomial by its powers, held
+    /// to 0..1; the table by the 16-bit value, its last entry past the
+    /// end.
+    #[test]
+    fn a_curve_is_read_at_a_sample() {
+        let poly = Curve::Polynomial(vec![0.1, 2.0, -1.0]);
+        assert!((poly.at(0.5) - 0.85).abs() < 1e-6);
+        assert_eq!(poly.at(1.0), 1.0);
+        assert_eq!(Curve::Polynomial(vec![-0.5]).at(0.3), 0.0);
+        let table = Curve::Table(vec![0, 32768, 65535]);
+        assert_eq!(table.at(0.0), 0.0);
+        assert_eq!(table.at(1.0 / 65535.0), 32768.0 / 65535.0);
+        assert_eq!(table.at(0.5), 1.0);
+        assert_eq!(table.at(1.0), 1.0);
     }
 
     /// A file's correction is read with at most [`MAX_WARPS`] warps: a

@@ -25,6 +25,7 @@ pub mod profile;
 pub mod rcd;
 pub mod reduced;
 pub mod refine_edge;
+pub mod remap;
 pub mod retouch;
 pub mod segments;
 pub mod sharpen;
@@ -1008,7 +1009,7 @@ fn apply_dng_mosaic(
         image_width: area.width,
         image_height: area.height,
     };
-    let (mut maps, mut held, mut made) = (0, 0, 0);
+    let (mut maps, mut held, mut curves, mut moved, mut made) = (0, 0, 0, 0, 0);
     for op in &frame.dng.mosaic {
         match op {
             MosaicOp::GainMap(map) if inside => {
@@ -1020,6 +1021,10 @@ fn apply_dng_mosaic(
                     std::slice::from_ref(map),
                 );
                 maps += 1;
+            }
+            MosaicOp::Remap(map) if inside => {
+                moved += remap::apply_remap(samples, width, frame.channels, at, map);
+                curves += 1;
             }
             MosaicOp::BadPixels(OpcodeList::One, fix) => {
                 made += fix_bad_pixels(
@@ -1047,7 +1052,7 @@ fn apply_dng_mosaic(
         }
     }
     log::debug!(
-        "DNG mosaic opcodes: {maps} gain map(s), {held} of {} samples held at the white; {made} bad photosite(s) made again",
+        "DNG mosaic opcodes: {maps} gain map(s), {held} of {} samples held at the white; {curves} sample map(s), {moved} samples moved; {made} bad photosite(s) made again",
         samples.len()
     );
 }
@@ -1608,6 +1613,104 @@ pub(crate) mod tests {
             assert!(close(*a * 0.5, *b), "{a} halved is not {b}");
         }
         assert!(plain.image.data.iter().any(|v| *v > 0.1));
+    }
+
+    /// A DNG's sample maps go on the linear samples: a polynomial of
+    /// half the sample develops as the frame at half its gain.
+    #[test]
+    fn a_dngs_sample_maps_go_on_the_mosaic() {
+        use crate::opcodes::{Curve, MosaicOp, whole_remap};
+        let settings = DevelopSettings {
+            hot_pixels: None,
+            chromatic_aberration: None,
+            ..Default::default()
+        };
+        let plain = demosaic(&flat_frame(), &settings).unwrap();
+        let mut frame = flat_frame();
+        frame.dng.mosaic = vec![MosaicOp::Remap(whole_remap(
+            0,
+            1,
+            Curve::Polynomial(vec![0.0, 0.5]),
+        ))];
+        let halved = demosaic(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&halved.image.data) {
+            assert!(close(*a * 0.5, *b), "{a} halved is not {b}");
+        }
+        assert!(plain.image.data.iter().any(|v| *v > 0.1));
+    }
+
+    /// A linear frame's three sample maps reach their own planes: a
+    /// Lightroom merge's case, one polynomial a plane, the second
+    /// list's coordinates placed by the crop. A crop that starts
+    /// before the list's area leaves them, said in the log.
+    #[test]
+    fn a_linear_frames_sample_maps_reach_their_planes() {
+        use crate::opcodes::{Curve, MosaicOp, Remap};
+        let settings = DevelopSettings {
+            hot_pixels: None,
+            chromatic_aberration: None,
+            ..Default::default()
+        };
+        let mut frame = flat_frame();
+        frame.layout = SensorLayout::Linear;
+        frame.channels = 3;
+        frame.levels = Levels {
+            black: LevelPattern::uniform(0.0, 3),
+            white: LevelPattern::uniform(1000.0, 3),
+            black_deltas: None,
+        };
+        frame.samples = Samples::U16(vec![500; 4 * 4 * 3]);
+        let plain = demosaic(&frame, &settings).unwrap();
+        // Each plane its own curve, over the rows and columns from
+        // (1, 1) of the list's image, which the crop starts at.
+        let curve = |plane: u32, k: f64| {
+            MosaicOp::Remap(Remap {
+                top: 1,
+                left: 1,
+                bottom: u32::MAX,
+                right: u32::MAX,
+                plane,
+                planes: 1,
+                row_pitch: 1,
+                col_pitch: 1,
+                curve: Curve::Polynomial(vec![0.0, k]),
+            })
+        };
+        frame.dng.mosaic = vec![curve(0, 0.5), curve(1, 1.0), curve(2, 2.0)];
+        frame.dng.opcode_area = Some(Rect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        });
+        frame.crop = Some(Rect {
+            x: 1,
+            y: 1,
+            width: 3,
+            height: 3,
+        });
+        let mapped = demosaic(&frame, &settings).unwrap();
+        assert_eq!(mapped.image.width, 3);
+        let plain_px = &plain.image.data[..3];
+        for px in mapped.image.data.chunks(3) {
+            for (c, (m, p)) in px.iter().zip(plain_px).enumerate() {
+                let k = [0.5, 1.0, 2.0][c];
+                assert!(close(*m, (p * k).min(1.0)), "plane {c}: {m} != {p} * {k}");
+            }
+        }
+        // The crop starts before the list's area: nothing applied.
+        frame.dng.opcode_area = Some(Rect {
+            x: 2,
+            y: 2,
+            width: 2,
+            height: 2,
+        });
+        let left = demosaic(&frame, &settings).unwrap();
+        for px in left.image.data.chunks(3) {
+            for (m, p) in px.iter().zip(plain_px) {
+                assert!(close(*m, *p), "{m} != {p}");
+            }
+        }
     }
 
     /// A DNG's bad photosites are made again on the mosaic: a listed

@@ -1,12 +1,14 @@
 //! A DNG's opcode list, read as each of the three lists and what it
-//! asks applied to a small buffer: the gain maps to one plane and three,
-//! the bad photosites to a mosaic, the warps to RGB. Never a panic, and
-//! samples that start between 0 and 1 stay finite. The first four bytes
+//! asks applied to a small buffer: the gain maps and the sample maps to
+//! one plane and three, the bad photosites to a mosaic, the warps to
+//! RGB. Never a panic, and samples that start between 0 and 1 stay
+//! finite, the sample maps' within 0 and 1. The first four bytes
 //! place the buffer in the lists' image; the rest is the list.
 #![no_main]
 
 use greycard_core::develop::bad_pixels::{mark_listed, repair};
 use greycard_core::develop::gain_map::{MapPlacement, apply_gain_maps};
+use greycard_core::develop::remap::apply_remap;
 use greycard_core::develop::warp::{WarpPlacement, apply_warps};
 use greycard_core::opcodes::{MosaicOp, corrections};
 use greycard_core::raw::CfaPattern;
@@ -31,6 +33,16 @@ fuzz_target!(|data: &[u8]| {
         let held = apply_gain_maps(&mut samples, width, cpp, at, &maps);
         assert!(held <= samples.len() * maps.len());
         assert!(samples.iter().all(|s| s.is_finite()), "{samples:?}");
+        for op in &read.mosaic {
+            if let MosaicOp::Remap(map) = op {
+                let moved = apply_remap(&mut samples, width, cpp, at, map);
+                assert!(moved <= samples.len());
+                assert!(
+                    samples.iter().all(|s| (0.0..=1.0).contains(s)),
+                    "{samples:?}"
+                );
+            }
+        }
     }
 
     let mut mosaic = start(width * height);

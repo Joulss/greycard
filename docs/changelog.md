@@ -223,6 +223,11 @@ design note behind it.
 
 ### Fixes
 
+- A panorama or HDR merged in Lightroom Classic (a DNG 1.7 linear
+  raw with `MapPolynomial` opcodes) no longer opens magenta and
+  blown out; the file's own sample curves are applied, as its
+  `MapTable` opcodes would be
+  ([§565](https://github.com/jessolmstead/greycard/blob/master/docs/notes/565-a-dngs-sample-maps-applied.md)).
 - A Canon frame on a third-party lens that shares its lens id with
   others (a Sigma 17-70mm on a Rebel T8i, among many) now names the
   lens, from the focal range the file carries, instead of "not
