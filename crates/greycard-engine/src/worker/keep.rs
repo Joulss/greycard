@@ -83,7 +83,6 @@ pub(super) fn keep_open(
         .and_then(|_| base.kept.picture(crate::stages::Keep::Developed).cloned())
         .map(|image| (image, base.left_out.clone()));
     let gpu = hand.shown.filter(|s| of_keep(&s.edit, s.turn));
-    let device = hand.gpu;
     let (cpu, gpu) = match (cpu, gpu, hand.gpu) {
         (Some(l), _, _) => (Some(l), None),
         (None, Some(s), Some(ctx)) => (None, Some((s, ctx))),
@@ -150,7 +149,7 @@ pub(super) fn keep_open(
     // The refined masks' picture, made here when the edit refines and
     // none is kept: a Refine edge moved is saved without a develop, and
     // its ask for the picture may not have run yet.
-    let picture = super::masks::picture_for(base, &keep.edit, device);
+    let picture = super::masks::picture_for(base, &keep.edit);
     let job = crate::edited_pictures::Keeping {
         frame,
         hash,
@@ -169,7 +168,13 @@ pub(super) fn keep_open(
             guide: Some(super::masks::guide_with(base, picture)),
             kind: base.meta.source,
             white: base.white_shift(),
-            detail: base.planes_for(&keep.edit),
+            detail: greycard_render::detail::DetailPlanes::with_sample(
+                base.planes_for(&keep.edit),
+                keep.edit
+                    .samples_before_detail()
+                    .then(|| base.patched_picture()),
+                base.meta.clip_level,
+            ),
             edit: keep.edit,
         },
     };

@@ -792,9 +792,6 @@ clears or a tester asks for it.
       machines (§157)
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
-- [ ] The range masks' sample from before the Detail section, so dehaze
-      stops moving a luminance window; needs a second full-size texture
-      on the GPU (§158)
 - [ ] A dropper for the luminance window's edges and a swatch of the
       color window beside its sliders (§158)
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or

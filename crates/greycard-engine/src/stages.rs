@@ -568,6 +568,10 @@ pub enum Tap {
     /// The picture the refined masks are made against, before the
     /// sharpen: only for an edit that refines a mask.
     MaskPicture,
+    /// The picture the range masks read, from before the Detail
+    /// section, for a finish on the CPU; the viewport's develop hands
+    /// on the patched picture it keeps.
+    Sample,
 }
 
 /// Where a walk leaves what it has for the next to start from.
@@ -929,6 +933,20 @@ pub fn stages(
     }
     s.keep(Keep::Patched);
     let wants = edit.detail_wants();
+    let sample = wants.sample;
+    if sample && matches!(purpose, Purpose::Export(_) | Purpose::Reduced) {
+        s.tap(Tap::Sample);
+    }
+    // The refined masks' picture, from before the Detail section and
+    // the sharpen: a refined edge is the picture's own, and a refined
+    // range window takes in what an unrefined one does.
+    if greycard_render::refine::refines(edit) && *purpose != Purpose::ModelsSee {
+        s.tap(Tap::MaskPicture);
+    }
+    let wants = greycard_edit::DetailWants {
+        sample: false,
+        ..wants
+    };
     let global = edit.detail.options();
     if wants.bands() && *purpose != Purpose::ModelsSee {
         s.tap(Tap::Planes {
@@ -943,9 +961,6 @@ pub fn stages(
         return s;
     }
     s.keep(Keep::PreSharpen);
-    if greycard_render::refine::refines(edit) {
-        s.tap(Tap::MaskPicture);
-    }
     // A mask's Sharpen reads the sharpen's delta, made by the global's
     // settings whether or not the global sharpens the picture.
     match (edit.sharpen.options(), wants.sharpen) {
@@ -1228,6 +1243,7 @@ mod tests {
                 Step::Tap(Tap::Planes { beside, .. }) => format!("planes beside {beside}"),
                 Step::Tap(Tap::Masks(m)) => format!("masks {m:?}"),
                 Step::Tap(Tap::MaskPicture) => "mask picture".into(),
+                Step::Tap(Tap::Sample) => "sample".into(),
                 Step::Keep(k) => format!("keep {k:?}"),
             })
             .collect()
@@ -1235,6 +1251,73 @@ mod tests {
 
     fn export() -> Purpose {
         Purpose::Export(Box::default())
+    }
+
+    /// The range masks' picture from before Detail is tapped for a
+    /// finish on the CPU alone, and only for a range shape under a
+    /// Detail section that does something; the viewport's list does
+    /// not change, and no band asks for it.
+    #[test]
+    fn the_sample_is_tapped_for_a_finish_on_the_cpu() {
+        use greycard_edit::mask::{Component, Shape};
+        let mut edit = Edit::default();
+        edit.detail.dehaze = 0.5;
+        let mut a = greycard_edit::Adjustment::default();
+        a.mask.components.push(Component {
+            shape: Shape::LUMINANCE,
+            ..Component::default()
+        });
+        edit.adjustments.push(a);
+        let has = |e: &Edit, p: &Purpose| {
+            stages(e, p, &raw(0), None)
+                .steps
+                .iter()
+                .any(|s| matches!(s, Step::Tap(Tap::Sample)))
+        };
+        assert!(has(&edit, &export()));
+        assert!(has(&edit, &Purpose::Reduced));
+        assert!(!has(&edit, &Purpose::Viewport));
+        let plain = Edit {
+            adjustments: Vec::new(),
+            ..edit.clone()
+        };
+        assert_eq!(
+            stages(&edit, &Purpose::Viewport, &raw(0), None),
+            stages(&plain, &Purpose::Viewport, &raw(0), None)
+        );
+        assert!(
+            !stages(&edit, &export(), &raw(0), None)
+                .steps
+                .iter()
+                .any(|s| matches!(s, Step::Tap(Tap::Planes { .. })))
+        );
+        // The refined masks' picture is tapped once, before the Detail
+        // section, for a range shape and a gradient alike.
+        let at = |e: &Edit, want: &dyn Fn(&Step) -> bool| {
+            stages(e, &Purpose::Viewport, &raw(0), None)
+                .steps
+                .iter()
+                .position(want)
+                .expect("the step is there")
+        };
+        let picture = |s: &Step| matches!(s, Step::Tap(Tap::MaskPicture));
+        let dehaze = |s: &Step| matches!(s, Step::Op(Stage::Dehaze(_)));
+        edit.adjustments[0].mask.refine = 0.3;
+        assert!(at(&edit, &picture) < at(&edit, &dehaze));
+        let taps = |e: &Edit| {
+            stages(e, &Purpose::Viewport, &raw(0), None)
+                .steps
+                .iter()
+                .filter(|s| picture(s))
+                .count()
+        };
+        assert_eq!(taps(&edit), 1);
+        let mut gradient = edit.clone();
+        gradient.adjustments[0].mask.components[0] = Component::default();
+        assert!(at(&gradient, &picture) < at(&gradient, &dehaze));
+        assert_eq!(taps(&gradient), 1);
+        edit.detail.dehaze = 0.0;
+        assert!(!has(&edit, &export()));
     }
 
     #[test]

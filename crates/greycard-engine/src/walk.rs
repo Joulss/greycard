@@ -186,6 +186,9 @@ pub struct Taps {
     pub masks: Option<(Masks, Arc<WorkingImage>)>,
     /// The picture the refined masks are made against.
     pub picture: Option<Arc<greycard_render::refine::MaskPicture>>,
+    /// The picture the range masks read, from before the Detail
+    /// section, put with the planes at the walk's end.
+    pub sample: Option<Arc<WorkingImage>>,
 }
 
 impl Taps {
@@ -809,6 +812,7 @@ impl Kept {
         };
         let bands = DetailWants {
             sharpen: false,
+            sample: false,
             ..*wants
         };
         let planes = if bands.bands() {
@@ -911,14 +915,6 @@ impl Kept {
     #[cfg(test)]
     pub(crate) fn haze_copy(&self) -> Option<&Arc<dehaze::Reduced>> {
         self.haze.as_ref().map(|(_, reduced)| reduced)
-    }
-
-    /// The picture kept on the device at `keep`.
-    pub fn device_picture(&self, keep: Keep) -> Option<&Arc<greycard_gpu::Image>> {
-        self.points.iter().find_map(|p| match &p.buf {
-            KeptBuf::Device(image) if p.keep == keep => Some(image),
-            _ => None,
-        })
     }
 
     /// Whether the patched picture's upload is kept on the device.
@@ -1126,6 +1122,11 @@ fn walk_held(
                 walked.taps.planes = with_sharpen(
                     walked.taps.planes.take(),
                     walked.taps.sharpen.as_ref(),
+                    walked.meta.clip_level,
+                );
+                walked.taps.planes = DetailPlanes::with_sample(
+                    walked.taps.planes.take(),
+                    walked.taps.sample.take(),
                     walked.meta.clip_level,
                 );
                 if let Some((how, base)) = walked.taps.masks.clone() {
@@ -1397,6 +1398,7 @@ fn attempt(
                             .push(("guide", started.elapsed().as_secs_f64()));
                     }
                     Tap::Masks(how) => st.taps.masks = Some((*how, image.clone())),
+                    Tap::Sample => st.taps.sample = Some(image.clone()),
                     Tap::MaskPicture => {
                         let to = &steps.steps[..i];
                         match &kept.mask_picture {

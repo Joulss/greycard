@@ -671,7 +671,9 @@ pub(crate) fn look_edited(st: &mut State, app: &App) {
 /// Whether the panel's edit asks for a detail plane the shown develop
 /// did not come with: a mask's Texture, Clarity, Structure, Dehaze, or
 /// Sharpen moved off zero (or its section, its adjustment, or a shape
-/// switched on under one) where no mask asked for that plane before.
+/// switched on under one) where no mask asked for that plane before,
+/// or a range shape put in under a Detail section that does something,
+/// whose picture from before that section the develop hands on.
 /// Its amounts are the finish's and need no develop; a plane does. One no longer
 /// asked for is left where it is until the next develop.
 /// A plane already asked for and on its way counts as there, so a
@@ -686,6 +688,7 @@ pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
         haze: has.haze || asked.haze,
         structure: has.structure || asked.structure,
         sharpen: has.sharpen || asked.sharpen,
+        sample: has.sample || asked.sample,
     };
     if coming.covers(&wants) {
         return false;

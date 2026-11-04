@@ -965,7 +965,6 @@ mod tests {
         assert!(size > 0);
         b.mask_picture = Some(super::super::KeptMaskPicture {
             patched: b.patched_picture(),
-            detail: edit.detail,
             picture: picture.clone(),
         });
         assert_eq!(b.bytes(), with, "counted once");

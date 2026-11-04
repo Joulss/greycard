@@ -958,7 +958,7 @@ pub(super) fn run(
                 let picture = base
                     .as_mut()
                     .filter(|_| current)
-                    .and_then(|b| super::masks::picture_for(b, &edit, gpu.as_ref()));
+                    .and_then(|b| super::masks::picture_for(b, &edit));
                 deliver(Outcome::MaskPicture {
                     generation,
                     picture,

@@ -116,6 +116,10 @@ pub struct DetailWants {
     pub structure: bool,
     /// The sharpen's delta, made where the develop sharpens.
     pub sharpen: bool,
+    /// The picture from before the Detail section, which the range
+    /// masks read when that section is on: no band, and made nowhere,
+    /// only kept beside the planes ([`Edit::samples_before_detail`]).
+    pub sample: bool,
 }
 
 impl DetailWants {
@@ -137,6 +141,7 @@ impl DetailWants {
             && (self.haze || !other.haze)
             && (self.structure || !other.structure)
             && (self.sharpen || !other.sharpen)
+            && (self.sample || !other.sample)
     }
 }
 
@@ -274,7 +279,24 @@ impl Edit {
                 d.sharpen > 0.0
             };
         }
+        wants.sample = self.samples_before_detail();
         wants
+    }
+
+    /// Whether the range masks read a picture of their own, the one
+    /// from before the Detail section: some mask has a Luminance or
+    /// Color shape and the section does something. Switched off or on,
+    /// since a switched-off adjustment's mask can still be shown.
+    /// Otherwise they read the developed picture, which with the
+    /// section doing nothing differs from it by the capture sharpen
+    /// alone.
+    pub fn samples_before_detail(&self) -> bool {
+        (self.detail.options().is_some() || self.detail.dehaze_options().is_some())
+            && self
+                .adjustments
+                .iter()
+                .take(MAX_MASKS)
+                .any(|a| a.mask.reads_picture())
     }
 
     /// The look of a target: an adjustment by index, or the global
@@ -590,6 +612,7 @@ mod tests {
                 haze: true,
                 structure: true,
                 sharpen: false,
+                sample: false,
             }
         );
         let structure = masked(Detail {
@@ -627,6 +650,26 @@ mod tests {
         assert!(!off.detail_wants().any());
         off.adjustments[0].look.detail.sharpen = 0.5;
         assert!(off.detail_wants().sharpen);
+    }
+
+    /// The range masks read the picture from before the Detail section
+    /// when one of them is there and the section does something; a
+    /// switched-off adjustment's counts, since its mask can be shown.
+    #[test]
+    fn the_sample_is_asked_for_by_a_range_shape_under_the_detail_section() {
+        let mut edit = masked(Detail::default());
+        edit.adjustments[0].mask.components[0].shape = mask::Shape::LUMINANCE;
+        assert!(!edit.detail_wants().sample);
+        edit.detail.dehaze = 0.4;
+        assert!(edit.detail_wants().sample);
+        assert!(!edit.detail_wants().any());
+        edit.adjustments[0].enabled = false;
+        assert!(edit.samples_before_detail());
+        edit.detail.enabled = false;
+        assert!(!edit.samples_before_detail());
+        edit.detail.enabled = true;
+        edit.adjustments[0].mask.components[0] = mask::Component::default();
+        assert!(!edit.samples_before_detail());
     }
 
     /// A control reached in culling: its change alone goes over the

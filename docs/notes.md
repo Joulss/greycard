@@ -572,3 +572,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§557. Constrained mask drags](notes/557-constrained-mask-drags.md) (2026-11-05)
 - [§558. A rename into place waits out a hold](notes/558-a-rename-into-place-waits-out-a-hold.md) (2026-11-05)
 - [§559. A focus score for every frame](notes/559-a-focus-score-for-every-frame.md) (2026-11-05)
+- [§560. The range masks read the picture from before Detail](notes/560-the-range-masks-read-the-picture-from-before-detail.md) (2026-11-05)

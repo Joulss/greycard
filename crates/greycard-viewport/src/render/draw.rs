@@ -123,6 +123,9 @@ struct Params {
     /// AgX fitted to that white (`agx::shader_params`): its gain, its
     /// range, its pivot and its toe scale.
     agx: [f32; 4],
+    /// In x whether the range masks read their own picture, the one
+    /// from before the Detail section, rather than the source.
+    range_sample: [f32; 4],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -389,6 +392,7 @@ impl Renderer {
             ],
             white: [display.white, display.stops, display.gain, agx[4]],
             agx: [agx[0], agx[1], agx[2], agx[3]],
+            range_sample: [if self.has_sample() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
         };
         // Each draw has its own uniform buffer, since two draws share a
         // submission.
@@ -478,6 +482,7 @@ impl Renderer {
             let guide_view = self.guide.create_view(&Default::default());
             let detail_view = self.detail.create_view(&Default::default());
             let sharpen_view = self.sharpen.create_view(&Default::default());
+            let sample_view = self.sample.create_view(&Default::default());
             let look_view = self.look.texture.create_view(&Default::default());
             let bind_group = self.device.create_bind_group(&gpu::BindGroupDescriptor {
                 label: Some("viewport"),
@@ -542,6 +547,10 @@ impl Renderer {
                     gpu::BindGroupEntry {
                         binding: 14,
                         resource: gpu::BindingResource::TextureView(&sharpen_view),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 15,
+                        resource: gpu::BindingResource::TextureView(&sample_view),
                     },
                 ],
             });
@@ -738,6 +747,7 @@ impl Renderer {
     /// Draw the view: `width` by `height` display pixels, `zoom` display
     /// pixels per image pixel, the image pixel `center` in the middle.
     pub fn render(&mut self, width: u32, height: u32, v: &View) -> (gpu::Texture, bool) {
+        self.sync_sample(v);
         let same = !self.redraw
             && self
                 .drawn

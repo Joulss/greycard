@@ -582,6 +582,19 @@ pub fn render_framed(
     white: Option<&greycard_edit::WhiteShift>,
     detail: Option<(&crate::detail::BandImages, &crate::detail::DetailMeta)>,
 ) -> Rendered {
+    // The picture from before the Detail section, when it came with
+    // the bands: what the range masks read, through the resize with
+    // the picture.
+    let reads = edit
+        .adjustments
+        .iter()
+        .any(|a| a.enabled && a.mask.reads_picture());
+    let sample = detail
+        .and_then(|(d, _)| d.sample.as_deref())
+        .filter(|_| reads)
+        .filter(|s| {
+            crate::detail::fits((s.width, s.height), image.width, image.height, "the export")
+        });
     // The bands with the picture through its resize, when one reads
     // them and they are the picture's size.
     let detail = detail
@@ -598,21 +611,21 @@ pub fn render_framed(
                 "the export",
             )
         });
-    let detail_fitted = detail.and_then(|(d, _)| d.fit(settings.long_edge));
+    let detail_fitted = detail.and_then(|(d, _)| d.fit(settings.long_edge, sample.is_some()));
+    let sample_fitted = match &detail_fitted {
+        Some(d) => d.sample.clone(),
+        None => sample.and_then(|s| fit(s, settings.long_edge).map(std::sync::Arc::new)),
+    };
     let fitted;
-    // The range masks read the picture from before the output
-    // sharpen, so an export at any size samples the stage the
-    // viewport does (`finish::sample`); kept only when one reads it.
+    // Without that picture the range masks read the one from before
+    // the output sharpen, so an export at any size samples the stage
+    // the viewport does (`finish::sample`); kept only when one reads it.
     let unsharpened;
-    let mut sampled = None;
-    let reads = edit
-        .adjustments
-        .iter()
-        .any(|a| a.enabled && a.mask.reads_picture());
+    let mut sampled = sample_fitted.as_deref().or(sample);
     let image = match fit(image, settings.long_edge) {
         Some(mut f) => {
             if let Some(options) = settings.sharpen.options() {
-                if reads {
+                if reads && sampled.is_none() {
                     unsharpened = f.clone();
                     sampled = Some(&unsharpened);
                 }
@@ -1579,6 +1592,173 @@ mod tests {
             .expect("a profile");
         assert_eq!(icc, Space::DisplayP3.icc().unwrap());
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// With the Detail section on, a range mask reads the picture from
+    /// before it, handed beside the planes: a Dehaze that moves a ramp's
+    /// lightness across a window's edges moves nothing of the window,
+    /// at the picture's size and through a resize.
+    #[test]
+    fn the_range_masks_read_the_picture_from_before_the_detail_section() {
+        use greycard_edit::mask::{Component, Mask, Shape};
+        let (w, h) = (192usize, 96usize);
+        // A grey ramp under a bluish haze, a little darker lower down.
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let v = (0.03 + 0.6 * x as f32 / w as f32) * (1.0 - 0.2 * y as f32 / h as f32);
+                data.extend_from_slice(&[v + 0.08, v + 0.09, v + 0.12]);
+            }
+        }
+        let before = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let mut after = before.clone();
+        greycard_core::develop::dehaze::dehaze(
+            &mut after,
+            &greycard_core::develop::dehaze::DehazeOptions { amount: 0.6 },
+        );
+        let (low, high) = (0.55, 0.75);
+        let mut edit = greycard_edit::Edit::default();
+        edit.detail.dehaze = 0.6;
+        let mut adjustment = greycard_edit::Adjustment {
+            id: 1,
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Luminance {
+                        low,
+                        high,
+                        low_feather: 0.0,
+                        high_feather: 0.0,
+                    },
+                    ..Component::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        adjustment.look.light.exposure = -8.0;
+        edit.adjustments.push(adjustment);
+        assert!(edit.samples_before_detail());
+        // Which pixels the window takes in, read off a picture.
+        let window = |img: &WorkingImage| -> Vec<bool> {
+            img.data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|&px| {
+                    let l = finish::sample(px, None, 0.0).lightness;
+                    (low..=high).contains(&l)
+                })
+                .collect()
+        };
+        let moved = |a: &[bool], b: &[bool]| a.iter().zip(b).filter(|(a, b)| a != b).count();
+        let (in_before, in_after) = (window(&before), window(&after));
+        assert!(
+            moved(&in_before, &in_after) > w * h / 20,
+            "the dehaze moves the window: {}",
+            moved(&in_before, &in_after)
+        );
+        let planes = crate::detail::DetailPlanes::with_sample(
+            None,
+            Some(std::sync::Arc::new(before.clone())),
+            1.0,
+        )
+        .unwrap();
+        assert!(!planes.has_bands() && planes.wants.sample);
+        let bands = planes.to_image();
+        for long_edge in [None, Some(96)] {
+            let settings = Settings {
+                format: Format::Png,
+                long_edge,
+                ..Settings::default()
+            };
+            let rendered = render(
+                &after,
+                &edit,
+                &greycard_edit::NoStores,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::SCENE,
+                None,
+                Some((&bands, &planes.meta)),
+            );
+            let Pixels::Eight(p) = &rendered.pixels else {
+                panic!("a PNG here is eight bits")
+            };
+            let dark: Vec<bool> = p
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|px| px.iter().all(|&v| v < 12))
+                .collect();
+            let fitted = |img: &WorkingImage| fit(img, long_edge).unwrap_or_else(|| img.clone());
+            let (b, a) = (window(&fitted(&before)), window(&fitted(&after)));
+            assert_eq!(dark.len(), b.len());
+            assert!(b.iter().any(|&v| v) && b.iter().any(|&v| !v));
+            assert_eq!(
+                moved(&dark, &b),
+                0,
+                "at {long_edge:?}: the window before the dehaze"
+            );
+            assert!(moved(&dark, &a) > dark.len() / 20, "at {long_edge:?}");
+        }
+        // Refined, against the picture from before the dehaze, as the
+        // develop makes it then: the same pixels within a little, and
+        // against the one after, the dehaze's.
+        let settings = Settings {
+            format: Format::Png,
+            long_edge: None,
+            ..Settings::default()
+        };
+        let coverage = |edit: &greycard_edit::Edit, picture: Option<&WorkingImage>| {
+            let guide = picture.map(|p| {
+                finish::guide_plane(&after)
+                    .with_picture(Some(std::sync::Arc::new(crate::refine::mask_picture(p))))
+            });
+            let rendered = render(
+                &after,
+                edit,
+                &greycard_edit::NoStores,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                1.0,
+                guide.as_ref(),
+                finish::Source::SCENE,
+                None,
+                Some((&bands, &planes.meta)),
+            );
+            let Pixels::Eight(p) = &rendered.pixels else {
+                panic!("a PNG here is eight bits")
+            };
+            p.as_chunks::<3>()
+                .0
+                .iter()
+                .map(|px| px.iter().all(|&v| v < 12))
+                .collect::<Vec<bool>>()
+        };
+        let unrefined = coverage(&edit, None);
+        let mut refined = edit.clone();
+        refined.adjustments[0].mask.refine = 0.05;
+        let (before_detail, after_detail) = (
+            coverage(&refined, Some(&before)),
+            coverage(&refined, Some(&after)),
+        );
+        let share = |a: &[bool]| moved(a, &unrefined) as f32 / unrefined.len() as f32;
+        eprintln!(
+            "refined against unrefined, pixels apart: on the picture before the dehaze {:.4}, \
+             after it {:.4}",
+            share(&before_detail),
+            share(&after_detail)
+        );
+        assert!(share(&before_detail) < 0.01);
+        assert!(share(&after_detail) > 0.05);
     }
 
     #[test]

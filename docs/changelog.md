@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- A Luminance or Color mask no longer moves when you change Texture,
+  Clarity, Structure, or Dehaze: it reads the picture from before them,
+  and so does Refine edge
+  ([§560](https://github.com/jessolmstead/greycard/blob/master/docs/notes/560-the-range-masks-read-the-picture-from-before-detail.md)).
 - Hold Shift as you start dragging a Linear mask to keep its angle to
   15-degree steps, or a Radial to keep it a circle. Space still moves
   the picture

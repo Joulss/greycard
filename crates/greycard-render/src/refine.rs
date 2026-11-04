@@ -11,9 +11,11 @@
 //! Sky's wide raster is read at it too.
 //!
 //! The picture it is made against is made only for an edit that
-//! refines a mask ([`refines`]), from the picture before the sharpen,
-//! after the Detail section, the stage the range shapes read in the
-//! finish.
+//! refines a mask ([`refines`]), always of the picture from before the
+//! Detail section and the sharpen: the one the range shapes read while
+//! that section does something, so a refined window takes in what an
+//! unrefined one does, and a refined edge is the picture's own, with
+//! no Dehaze or Clarity halo, whatever another mask holds.
 
 use std::sync::Arc;
 
@@ -149,52 +151,6 @@ pub fn mask_picture(image: &WorkingImage) -> MaskPicture {
         aspect: h as f32 / w as f32,
         lab,
     }
-}
-
-/// [`mask_picture`] of a picture `w` by `h` held elsewhere (on the
-/// GPU), read `band` rows at a time by `read(y, rows)` as RGB floats:
-/// the same texels, without the whole picture in memory at once. None
-/// when a band cannot be read.
-pub fn mask_picture_by_bands(
-    w: usize,
-    h: usize,
-    band: usize,
-    mut read: impl FnMut(usize, usize) -> Option<Vec<f32>>,
-) -> Option<MaskPicture> {
-    if w == 0 || h == 0 {
-        return Some(MaskPicture::NONE);
-    }
-    let (gw, gh) = grid(w, h);
-    let mut lab = vec![[f16::ZERO; 3]; gw * gh];
-    // A band read, then every grid row it holds whole made at once.
-    let mut gy = 0;
-    while gy < gh {
-        let (from, _) = span(gy, gh, h);
-        let n = band.max(span(gy, gh, h).1 - from).min(h - from);
-        let rows = read(from, n)?;
-        if rows.len() != n * w * 3 {
-            return None;
-        }
-        let end = (gy..gh)
-            .take_while(|&g| span(g, gh, h).1 <= from + n)
-            .last()
-            .map_or(gy + 1, |g| g + 1);
-        lab[gy * gw..end * gw]
-            .par_chunks_mut(gw)
-            .enumerate()
-            .for_each(|(k, out)| {
-                let (y0, y1) = span(gy + k, gh, h);
-                let at = (y0 - from) * w * 3;
-                grid_row(out, &rows[at..at + (y1 - y0) * w * 3], w);
-            });
-        gy = end;
-    }
-    Some(MaskPicture {
-        width: gw,
-        height: gh,
-        aspect: h as f32 / w as f32,
-        lab,
-    })
 }
 
 /// Whether `edit` refines a mask: an enabled adjustment, with a shape,
@@ -337,23 +293,6 @@ mod tests {
             assert!((at(10)[c] - dark[c]).abs() < 2e-3, "{:?}", at(10));
             assert!((at(2040)[c] - light[c]).abs() < 2e-3, "{:?}", at(2040));
         }
-    }
-
-    /// Read a band at a time, the picture on the masks' grid is the
-    /// one made whole, to the bit, whatever the band.
-    #[test]
-    fn the_picture_by_bands_is_the_picture_made_whole() {
-        let image = two_sides();
-        let whole = mask_picture(&image);
-        let w = image.width;
-        for band in [1, 7, 64, 1000] {
-            let banded = mask_picture_by_bands(w, image.height, band, |y, n| {
-                Some(image.data[y * w * 3..(y + n) * w * 3].to_vec())
-            })
-            .unwrap();
-            assert!(banded == whole, "band {band}");
-        }
-        assert!(mask_picture_by_bands(w, image.height, 64, |_, _| None).is_none());
     }
 
     /// A hard edge drawn a little short of the picture's boundary, 20

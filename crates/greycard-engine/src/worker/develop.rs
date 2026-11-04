@@ -106,7 +106,14 @@ pub(super) fn develop_job(
         .guide
         .clone()
         .unwrap_or_else(|| Arc::new(greycard_render::finish::Guide::NONE));
-    h.planes = walked.taps.planes.clone();
+    // The range masks' picture from before the Detail section is the
+    // patched picture kept here, shared, not copied: the viewport puts
+    // it on the GPU beside the planes.
+    h.planes = greycard_render::detail::DetailPlanes::with_sample(
+        walked.taps.planes.clone(),
+        edit.samples_before_detail().then(|| h.patched_picture()),
+        walked.meta.clip_level,
+    );
     // Where each stage ran, and whether this walk ran it.
     let at = |want: &dyn Fn(&Stage) -> bool| {
         steps
@@ -138,25 +145,19 @@ pub(super) fn develop_job(
     // A run the device declined went on on the CPU, which kept its
     // picture before the sharpen in memory: a picture the size of the
     // frame on the frames largest, which the window keeps only on the
-    // device. The refined masks' picture is read from it, then it goes.
-    // (With the Detail section off it is the patched picture itself,
-    // which costs nothing more.)
-    let declined = gpu
+    // device; it goes. (With the Detail section off it is the patched
+    // picture itself, which costs nothing more.)
+    if gpu
         .as_ref()
         .and_then(|_| h.kept.picture(Keep::PreSharpen))
         .is_some_and(|pre| !Arc::ptr_eq(pre, &h.patched_picture()))
-        .then(|| h.kept.take_working(Keep::PreSharpen))
-        .flatten();
-    // What the picture kept on the device before the sharpen was made
-    // from, for the refined masks' picture to be read back from it.
+    {
+        h.kept.take_working(Keep::PreSharpen);
+    }
     let patched = h.patched_picture();
-    h.pre = h
-        .kept
-        .on_device(Keep::PreSharpen)
-        .then(|| (patched.clone(), edit.detail));
     // The refined masks' picture, made only for an edit that refines a
-    // mask, and let go when it no longer does: tapped by a walk on the
-    // CPU, read back from the device's picture before the sharpen.
+    // mask, and let go when it no longer does: tapped by the walk at the
+    // patched picture, or made of it here.
     let mask_picture = if !greycard_render::refine::refines(edit) {
         h.mask_picture = None;
         h.kept.forget_mask_picture();
@@ -164,21 +165,11 @@ pub(super) fn develop_job(
     } else if let Some(picture) = walked.taps.picture.clone() {
         h.mask_picture = Some(KeptMaskPicture {
             patched: patched.clone(),
-            detail: edit.detail,
             picture: picture.clone(),
         });
         Some(picture)
     } else {
-        use super::masks::{Pre, mask_picture};
-        let pre = match (&walked.buf, gpu.as_ref()) {
-            _ if declined.is_some() => Pre::Cpu(declined.as_deref().expect("declined")),
-            // The sharpen is off: the texture is the picture before it.
-            (Buf::Texture(texture), Some(ctx)) if walked.sharpen.is_none() => {
-                Pre::Viewport(ctx, texture)
-            }
-            _ => Pre::Find(gpu.as_ref()),
-        };
-        Some(mask_picture(h, &patched, edit, pre))
+        Some(super::masks::mask_picture(h, &patched))
     };
     if let Some(ctx) = gpu.as_ref() {
         // What the device holds for a stage that is off goes.

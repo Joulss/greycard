@@ -17,6 +17,10 @@
 //! delta in stops (`greycard_core::develop::sharpen::delta`), made
 //! where the develop sharpens, and a mask's Sharpen puts that on again
 //! or takes it off by its weight.
+//!
+//! Beside them goes the picture the range masks read when the global
+//! Detail section is on: the one it ran on, so a Dehaze or a Clarity
+//! does not move what a Luminance or Color window takes in.
 
 use greycard_core::develop::dehaze::{self, Reduced};
 use greycard_core::develop::local_contrast::{
@@ -65,6 +69,11 @@ pub struct DetailPlanes {
     /// `R16Float` texture holds it: made where the develop sharpens,
     /// from the picture the sharpen saw.
     pub sharpen: Option<Arc<[f16]>>,
+    /// The picture from before the Detail section, which the range
+    /// masks read when that section is on
+    /// (`Edit::samples_before_detail`): the one the bands are made of,
+    /// shared, not copied.
+    pub sample: Option<Arc<WorkingImage>>,
     pub meta: DetailMeta,
     /// The bands asked for when these were made.
     pub wants: DetailWants,
@@ -139,6 +148,7 @@ impl DetailPlanes {
         // the local contrast, but where the develop sharpens.
         let wants = DetailWants {
             sharpen: false,
+            sample: false,
             ..wants
         };
         if !wants.bands() {
@@ -205,6 +215,7 @@ impl DetailPlanes {
             height: h,
             data: data.into(),
             sharpen: None,
+            sample: None,
             meta: DetailMeta {
                 airlight,
                 clip_level,
@@ -223,6 +234,7 @@ impl DetailPlanes {
             height,
             data: Arc::from(Vec::new()),
             sharpen: Some(delta),
+            sample: None,
             meta: DetailMeta {
                 airlight: [1.0; 3],
                 clip_level,
@@ -247,6 +259,48 @@ impl DetailPlanes {
             },
             ..self.clone()
         }
+    }
+
+    /// `planes` with the range masks' `sample` beside them, or the
+    /// sample alone when there are none; as they were without one, or
+    /// with one of another size than theirs.
+    pub fn with_sample(
+        planes: Option<Arc<Self>>,
+        sample: Option<Arc<WorkingImage>>,
+        clip_level: f32,
+    ) -> Option<Arc<Self>> {
+        let Some(sample) = sample else {
+            return planes;
+        };
+        let (w, h) = (sample.width, sample.height);
+        let wants = |wants| DetailWants {
+            sample: true,
+            ..wants
+        };
+        Some(Arc::new(match planes {
+            Some(p) if (p.width, p.height) == (w, h) => Self {
+                sample: Some(sample),
+                wants: wants(p.wants),
+                ..(*p).clone()
+            },
+            Some(p) => {
+                fits((p.width, p.height), w, h, "the range masks' sample");
+                return Some(p);
+            }
+            None => Self {
+                width: w,
+                height: h,
+                data: Arc::from(Vec::new()),
+                sharpen: None,
+                sample: Some(sample),
+                meta: DetailMeta {
+                    airlight: [1.0; 3],
+                    clip_level,
+                    sharpened: true,
+                },
+                wants: wants(DetailWants::default()),
+            },
+        }))
     }
 
     /// These planes beside a picture that was never sharpened: the
@@ -302,6 +356,13 @@ impl DetailPlanes {
                     width,
                     height,
                     data,
+                }
+            }),
+            sample: self.sample.as_ref().map(|s| {
+                if factor == 1 {
+                    s.clone()
+                } else {
+                    Arc::new(crate::reduce::reduce(s, factor))
                 }
             }),
         }
@@ -397,6 +458,9 @@ pub struct BandImages {
     pub lanes: Option<WorkingImage>,
     pub structure: Option<Plane>,
     pub sharpen: Option<Plane>,
+    /// The range masks' picture ([`DetailPlanes::sample`]), taken
+    /// through the same steps.
+    pub sample: Option<Arc<WorkingImage>>,
 }
 
 impl Plane {
@@ -449,23 +513,35 @@ impl BandImages {
             .map(|l| crate::geometry::apply(l, geometry));
         let structure = self.structure.as_ref().map(|s| s.framed(geometry));
         let sharpen = self.sharpen.as_ref().map(|s| s.framed(geometry));
+        let sample = self
+            .sample
+            .as_ref()
+            .map(|s| Arc::new(crate::geometry::apply(s, geometry)));
         let size = lanes
             .as_ref()
             .map(|l| (l.width, l.height))
             .or_else(|| structure.as_ref().map(|s| (s.width, s.height)))
             .or_else(|| sharpen.as_ref().map(|s| (s.width, s.height)))
+            .or_else(|| sample.as_ref().map(|s| (s.width, s.height)))
             .unwrap_or(self.size);
         Self {
             size,
             lanes,
             structure,
             sharpen,
+            sample,
         }
     }
 
     /// Each resampled to `w` by `h` as the picture is, or none when
     /// they are that size already.
     pub fn fit_exact(&self, w: u32, h: u32) -> Option<Self> {
+        self.fit_exact_with(w, h, true)
+    }
+
+    /// [`Self::fit_exact`], the range masks' picture resampled too
+    /// only `with_sample`, and left out otherwise.
+    fn fit_exact_with(&self, w: u32, h: u32, with_sample: bool) -> Option<Self> {
         if self.size == (w as usize, h as usize) {
             return None;
         }
@@ -477,14 +553,20 @@ impl BandImages {
                 .map(|l| crate::export::fit_exact(l, w, h).unwrap_or_else(|| l.clone())),
             structure: self.structure.as_ref().map(|s| s.fit_exact(w, h)),
             sharpen: self.sharpen.as_ref().map(|s| s.fit_exact(w, h)),
+            sample: self
+                .sample
+                .as_ref()
+                .filter(|_| with_sample)
+                .map(|s| crate::export::fit_exact(s, w, h).map_or_else(|| s.clone(), Arc::new)),
         })
     }
 
     /// Each no larger than `long_edge` on its long side, as the export
-    /// fits the picture; none when they already fit.
-    pub(crate) fn fit(&self, long_edge: Option<u32>) -> Option<Self> {
+    /// fits the picture, the range masks' picture only `with_sample`;
+    /// none when they already fit.
+    pub(crate) fn fit(&self, long_edge: Option<u32>, with_sample: bool) -> Option<Self> {
         let (w, h) = crate::export::fit_size(self.width(), self.height(), long_edge)?;
-        self.fit_exact(w, h)
+        self.fit_exact_with(w, h, with_sample)
     }
 }
 
@@ -655,6 +737,7 @@ mod tests {
             haze: d.dehaze != 0.0,
             structure: d.structure != 0.0,
             sharpen: false,
+            sample: false,
         }
     }
 
@@ -855,6 +938,7 @@ mod tests {
             haze: true,
             structure: true,
             sharpen: false,
+            sample: false,
         };
         let first = DetailPlanes::make(&image, None, CLIP, all).unwrap();
         let global = Some(LocalContrastOptions {
@@ -1012,6 +1096,7 @@ mod tests {
                 haze: true,
                 structure: true,
                 sharpen: false,
+                sample: false,
             },
         )
         .unwrap();

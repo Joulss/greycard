@@ -110,13 +110,29 @@ fn gpu_against_cpu(
     exposure: f32,
     covered: bool,
 ) -> (f32, f32) {
+    gpu_against_cpu_sampled(device, queue, image, None, locals, exposure, covered)
+}
+
+/// [`gpu_against_cpu`] with the range masks reading `before`, the
+/// picture from before the Detail section, beside the planes, where
+/// there is one: the CPU reads it in the source's place.
+fn gpu_against_cpu_sampled(
+    device: &gpu::Device,
+    queue: &gpu::Queue,
+    image: &WorkingImage,
+    before: Option<&WorkingImage>,
+    locals: &[Local],
+    exposure: f32,
+    covered: bool,
+) -> (f32, f32) {
     use greycard_render::finish::{local_ab, sample};
     let (w, h) = (image.width, image.height);
     let halves = Halves::from_image(image, None);
+    let read = before.unwrap_or(image);
     let seen = WorkingImage {
         width: w,
         height: h,
-        data: image
+        data: read
             .data
             .iter()
             .map(|v| half::f16::from_f32(*v).to_f32())
@@ -124,6 +140,12 @@ fn gpu_against_cpu(
     };
     let mut renderer = Renderer::new(device, queue);
     renderer.upload(&halves);
+    let planes = greycard_render::detail::DetailPlanes::with_sample(
+        None,
+        before.map(|b| Arc::new(b.clone())),
+        1.0,
+    );
+    renderer.set_detail(planes.as_ref());
     let ab = local_ab(&seen);
     let stops = exposure;
     let mut worst = 0.0f32;
@@ -749,6 +771,86 @@ fn the_shaders_range_masks_are_the_cpus() {
     eprintln!("range masks, GPU against CPU: max {worst:.4}, mean {mean:.5}");
     assert!(worst <= 3.0 / 255.0, "max {worst}");
     assert!(mean <= 0.5 / 255.0, "mean {mean}");
+}
+
+/// With the Detail section on, the shader's range masks read the
+/// picture from before it, as the CPU's do: on the field dehazed, the
+/// masks that the dehazed field would move are where the field puts
+/// them.
+#[test]
+fn the_shaders_range_masks_read_the_picture_from_before_detail() {
+    use greycard_render::finish::{local_ab, sample};
+    let before = field();
+    let mut after = before.clone();
+    greycard_core::develop::dehaze::dehaze(
+        &mut after,
+        &greycard_core::develop::dehaze::DehazeOptions { amount: 0.6 },
+    );
+    // The premise: read off the dehazed field, a window moves.
+    let locals = range_locals();
+    let (ab0, ab1) = (local_ab(&before), local_ab(&after));
+    let (w, h) = (before.width, before.height);
+    let moved = (0..w * h)
+        .filter(|&i| {
+            let (x, y) = (i % w, i / w);
+            let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
+            let at = |img: &WorkingImage, ab: &[[f32; 2]]| {
+                locals[0].weight_sampled(u, v, Some(sample(img.pixel(x, y), Some(ab[i]), -0.3)))
+            };
+            (at(&before, &ab0) - at(&after, &ab1)).abs() > 0.05
+        })
+        .count();
+    assert!(moved > w * h / 50, "the dehaze moves the window: {moved}");
+    let Some((device, queue)) = device("the range masks' sample before Detail") else {
+        return;
+    };
+    let (worst, mean) =
+        gpu_against_cpu_sampled(&device, &queue, &after, Some(&before), &locals, -0.3, true);
+    eprintln!("range masks read before Detail, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+    assert!(worst <= 3.0 / 255.0, "max {worst}");
+    assert!(mean <= 0.5 / 255.0, "mean {mean}");
+}
+
+/// The range masks' picture goes up only while a drawn mask reads
+/// it: a switched-off adjustment's Luminance window leaves it at a
+/// texel, switching it on puts it up, switching it off again takes it
+/// down, and showing the switched-off one's mask puts it up.
+#[test]
+fn the_range_sample_goes_up_only_while_a_drawn_mask_reads_it() {
+    let Some((device, queue)) = device("the range sample's upload") else {
+        return;
+    };
+    let image = field();
+    let (w, h) = (image.width as u32, image.height as u32);
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let planes = greycard_render::detail::DetailPlanes::with_sample(
+        None,
+        Some(Arc::new(image.clone())),
+        1.0,
+    );
+    renderer.set_detail(planes.as_ref());
+    let mut local = local_of(vec![(Shape::LUMINANCE, Mode::Add)]);
+    local.enabled = false;
+    let mut view = View::blank();
+    view.center = (w as f32 / 2.0, h as f32 / 2.0);
+    view.plane = (w as f32, h as f32);
+    view.frame_size = (w as f32, h as f32);
+    view.locals = vec![local];
+    let size = |r: &Renderer| (r.sample.width(), r.sample.height());
+    renderer.render(w, h, &view);
+    assert_eq!(size(&renderer), (1, 1), "switched off, nothing reads it");
+    view.locals[0].enabled = true;
+    renderer.render(w, h, &view);
+    assert_eq!(size(&renderer), (w, h), "switched on");
+    view.locals[0].enabled = false;
+    renderer.render(w, h, &view);
+    assert_eq!(size(&renderer), (1, 1), "switched off again");
+    view.show_mask = Some(0);
+    renderer.render(w, h, &view);
+    assert_eq!(size(&renderer), (w, h), "its mask shown");
+    renderer.set_detail(None);
+    assert_eq!(size(&renderer), (1, 1), "a develop without one");
 }
 
 /// Refined masks on the GPU are the CPU's: the range masks above,
@@ -2471,6 +2573,7 @@ fn parity_planes(w: usize, h: usize) -> greycard_render::detail::DetailPlanes {
         height: h,
         data: data.into(),
         sharpen: None,
+        sample: None,
         meta: greycard_render::detail::DetailMeta {
             airlight: [0.9, 0.86, 0.8],
             clip_level: 1.0,
@@ -2482,6 +2585,7 @@ fn parity_planes(w: usize, h: usize) -> greycard_render::detail::DetailPlanes {
             haze: true,
             structure: true,
             sharpen: false,
+            sample: false,
         },
     }
     .with_sharpen(greycard_render::detail::sharpen_delta(&delta))
@@ -2801,6 +2905,7 @@ fn a_masks_detail_timed_on_the_gpu() {
                     .map(|i| half::f16::from_f32((i % 7) as f32 / 30.0 - 0.1))
                     .collect(),
             ),
+            sample: None,
             meta: greycard_render::detail::DetailMeta {
                 airlight: [0.9, 0.86, 0.8],
                 clip_level: 1.0,
@@ -2812,6 +2917,7 @@ fn a_masks_detail_timed_on_the_gpu() {
                 haze: true,
                 structure: true,
                 sharpen: true,
+                sample: false,
             },
         });
         let mut renderer = Renderer::new(&device, &queue);
@@ -2891,6 +2997,7 @@ fn a_masks_detail_on_both_sides() {
             haze: true,
             structure: true,
             sharpen: false,
+            sample: false,
         },
     )
     .map(Arc::new)

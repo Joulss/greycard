@@ -201,6 +201,7 @@ impl Renderer {
         scope: Scope,
         weigh_by: Option<usize>,
     ) -> (Option<(Scope, &[u32])>, bool) {
+        self.sync_sample(v);
         let weigh_by = weigh_by.filter(|&k| k < v.locals.len().min(MAX_LOCALS));
         // Collect a finished read back, or let a lost one go and
         // analyze again ([`unmap_lost`]).

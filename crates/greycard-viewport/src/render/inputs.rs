@@ -303,21 +303,140 @@ impl Renderer {
         })
     }
 
+    pub(super) fn sample_texture(device: &gpu::Device, width: u32, height: u32) -> gpu::Texture {
+        device.create_texture(&gpu::TextureDescriptor {
+            label: Some("range sample"),
+            size: gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: gpu::TextureDimension::D2,
+            format: gpu::TextureFormat::Rgba16Float,
+            usage: gpu::TextureUsages::TEXTURE_BINDING | gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
+    /// The range masks' picture from before the Detail section, from
+    /// now on: held, and put on the GPU only while a drawn mask reads
+    /// it ([`Self::sync_sample`]).
+    fn set_sample(&mut self, sample: Option<&Arc<greycard_core::image::WorkingImage>>) {
+        let sample = sample.filter(|s| s.width > 0 && s.height > 0);
+        if let (Some(s), Some(h)) = (sample, &self.sample_held)
+            && Arc::ptr_eq(s, h)
+        {
+            return;
+        }
+        self.sample_held = sample.cloned();
+        if self.sample_of.is_some() {
+            self.drop_sample();
+        }
+    }
+
+    /// The range masks' texture back to a texel.
+    fn drop_sample(&mut self) {
+        self.sample = Self::sample_texture(&self.device, 1, 1);
+        self.sample_of = None;
+        self.redraw = true;
+        self.scopes.image_changed = true;
+    }
+
+    /// The range masks' picture on the GPU while `v` draws a mask that
+    /// reads it, an adjustment switched on with a live range shape or
+    /// the one whose mask is shown, and back to a texel when none does:
+    /// 360 MB at 45 MP held only for a mask that reads it. Uploaded
+    /// once a picture; a Detail slider's develop hands on the same one.
+    pub(super) fn sync_sample(&mut self, v: &View) {
+        let wanted = self.sample_held.is_some()
+            && v.locals.iter().take(MAX_LOCALS).enumerate().any(|(k, l)| {
+                l.refined.is_none()
+                    && l.mask.reads_picture()
+                    && (l.enabled || v.show_mask == Some(k))
+            });
+        if !wanted {
+            if self.sample_of.is_some() {
+                self.drop_sample();
+            }
+            return;
+        }
+        let Some(sample) = self.sample_held.clone() else {
+            return;
+        };
+        if self
+            .sample_of
+            .as_ref()
+            .and_then(|w| w.upgrade())
+            .is_some_and(|h| Arc::ptr_eq(&h, &sample))
+        {
+            return;
+        }
+        let (w, h) = (sample.width as u32, sample.height as u32);
+        let halves = Halves::from_image(&sample, None);
+        self.sample = Self::sample_texture(&self.device, w, h);
+        self.queue.write_texture(
+            gpu::TexelCopyTextureInfo {
+                texture: &self.sample,
+                mip_level: 0,
+                origin: gpu::Origin3d::ZERO,
+                aspect: gpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&halves.pixels),
+            gpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 8),
+                rows_per_image: Some(h),
+            },
+            gpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.sample_of = Some(Arc::downgrade(&sample));
+        self.redraw = true;
+        self.scopes.image_changed = true;
+    }
+
+    /// Whether the range masks read a picture of their own.
+    pub(super) fn has_sample(&self) -> bool {
+        self.sample_of.is_some()
+    }
+
     /// Put the masks' detail planes on the GPU, or take them down: the
     /// planes of the develop the source is, at its size, read at the
-    /// texel the source is read at.
+    /// texel the source is read at; and the range masks' picture that
+    /// comes with them.
     ///
-    /// The same planes landing again with a develop that kept them are
+    /// The same bands landing again with a develop that kept them are
     /// not uploaded again: 360 MB at 45 MP.
     pub fn set_detail(&mut self, planes: Option<&Arc<greycard_render::detail::DetailPlanes>>) {
-        if let (Some(p), Some(up)) = (planes, self.detail_of.as_ref().and_then(|w| w.upgrade()))
-            && Arc::ptr_eq(p, &up)
+        self.set_sample(planes.and_then(|p| p.sample.as_ref()));
+        let same = |a: &std::sync::Weak<[half::f16]>, b: &Arc<[half::f16]>| {
+            a.upgrade().is_some_and(|a| Arc::ptr_eq(&a, b))
+        };
+        if let (Some(p), Some((data, sharpen, meta))) = (planes, &self.detail_of)
+            && same(data, &p.data)
+            && match (sharpen, &p.sharpen) {
+                (Some(a), Some(b)) => same(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && *meta == p.meta
         {
             return;
         }
         self.redraw = true;
         self.scopes.image_changed = true;
-        self.detail_of = planes.map(Arc::downgrade);
+        self.detail_of = planes.map(|p| {
+            (
+                Arc::downgrade(&p.data),
+                p.sharpen.as_ref().map(Arc::downgrade),
+                p.meta,
+            )
+        });
         let Some(planes) = planes.filter(|p| p.width > 0 && p.height > 0) else {
             if self.detail_meta[3] != 0.0 {
                 self.detail = Self::detail_texture(&self.device, 1, 1);

@@ -370,17 +370,18 @@ impl Local {
 /// own, not clipped, its a and b `ab`, the mean about it
 /// ([`local_ab`]), brought to that exposure, when given, else its own.
 ///
-/// What that pixel has been through: the whole develop — the white
-/// balance, the camera profile, the denoise, the lens corrections, the
-/// Detail section (texture, clarity, dehaze) and the capture sharpen —
-/// and the geometry, and in an export made smaller the resize, but not
-/// the output sharpen after it (`export::render` hands the finish the
-/// picture from before it). None of the look: not the tone controls,
-/// the curves, the mixer, the color, the tint, a look table, the
-/// vignette or any local. So a range mask never moves under its own
-/// adjustment or another's, and the Detail section moves one a little:
-/// dehaze at 0.6 moved 6.3% of the pixels of a sky window (70 to 100,
-/// fading 6) on `3G0A4650`, its coverage 36.7% to 30.5%.
+/// What that pixel has been through: the develop up to the Detail
+/// section — the white balance, the camera profile, the denoise, the
+/// lens corrections, the retouch — and the geometry, and in an export
+/// made smaller the resize, but not the output sharpen after it
+/// (`export::render` hands the finish the picture from before it).
+/// With the Detail section on, not that section (texture, clarity,
+/// structure, dehaze) nor the capture sharpen after it: the picture
+/// they ran on goes beside the planes (`DetailPlanes::sample`). With it
+/// off, the capture sharpen is in. None of the look: not the tone
+/// controls, the curves, the mixer, the color, the tint, a look table,
+/// the vignette or any local. So a range mask never moves under its
+/// own adjustment, another's, or the Detail section.
 ///
 /// `exposure` is the global exposure alone, not the baseline a raw is
 /// shown brighter by (`Source::baseline`), so a lightness of 1 is the
@@ -1792,8 +1793,9 @@ pub(crate) fn decode(v: f32) -> f32 {
 /// in pixels, which is what `position`'s units are.
 ///
 /// `sampled` is the picture the range masks read ([`sample`]) when it
-/// is not `image`: an export's, from before its output sharpen, the
-/// same size. The mixer reads `image`.
+/// is not `image`: the one from before the Detail section, or an
+/// export's from before its output sharpen, the same size. The mixer
+/// reads `image`.
 ///
 /// `detail` is the develop's bands for the masks' Detail
 /// ([`crate::detail::DetailPlanes`]) brought into the frame with the

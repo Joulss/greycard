@@ -278,8 +278,21 @@ pub struct Renderer {
     /// (`DetailPlanes::sharpen`); a texel of nothing when there is
     /// none.
     sharpen: gpu::Texture,
-    /// The planes it holds, to know them again (`set_detail`).
-    detail_of: Option<std::sync::Weak<greycard_render::detail::DetailPlanes>>,
+    /// The bands and the delta it holds, and what came with them, to
+    /// know them again (`set_detail`).
+    detail_of: Option<HeldPlanes>,
+    /// The picture the range masks read, from before the Detail
+    /// section, Rgba16Float at the source's size
+    /// (`DetailPlanes::sample`): 192 MB at 24 MP, 360 MB at 45 MP, up
+    /// only while a drawn mask reads it ([`Renderer::sync_sample`]). A
+    /// texel of nothing otherwise, and the masks read the source.
+    sample: gpu::Texture,
+    /// The picture it holds, to know it again, and whether it holds
+    /// one (`Params::range_sample`).
+    sample_of: Option<std::sync::Weak<greycard_core::image::WorkingImage>>,
+    /// The picture the last develop handed on for it, shared with the
+    /// engine's base, which goes up when a drawn mask reads it.
+    sample_held: Option<Arc<greycard_core::image::WorkingImage>>,
     /// Its `Params::detail` and `Params::detail_clip`.
     detail_meta: [f32; 4],
     detail_clip: [f32; 4],
@@ -484,6 +497,17 @@ impl Renderer {
                     },
                     count: None,
                 },
+                // The range masks' picture from before the Detail section.
+                gpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // The wide rasters, a layer each.
                 gpu::BindGroupLayoutEntry {
                     binding: 13,
@@ -600,6 +624,9 @@ impl Renderer {
             detail,
             sharpen,
             detail_of: None,
+            sample: Self::sample_texture(device, 1, 1),
+            sample_of: None,
+            sample_held: None,
             detail_meta: [1.0, 1.0, 1.0, 0.0],
             detail_clip: [-1.0, 0.0, 0.0, 0.0],
             frame_range: Self::TYPICAL_RANGE,
@@ -609,6 +636,14 @@ impl Renderer {
         }
     }
 }
+
+/// The planes' bands and delta on the GPU, by the allocations they
+/// came in, and what came with them.
+type HeldPlanes = (
+    std::sync::Weak<[half::f16]>,
+    Option<std::sync::Weak<[half::f16]>>,
+    greycard_render::detail::DetailMeta,
+);
 
 /// The display texture's format: plain bytes, encoded by the shader,
 /// because Slint's renderer shows every texture's bytes as they are.

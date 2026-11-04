@@ -76,6 +76,8 @@ mask's edge is smoothed into a ramp. The slider sets the reach: at
 picture's color as well as its lightness, so a red coat against green
 leaves of the same lightness still holds the mask. It fits an edge
 drawn near the subject's; it does not find one drawn far from it.
+It reads the picture from before the Detail section and the capture
+sharpen, so a Dehaze or Clarity halo is not taken for an edge.
 
 The edge is found on the masks' own grid, 2048 across whatever the
 picture's size: about 4 pixels a step on a 45 MP frame, so at 1:1 the
@@ -312,7 +314,12 @@ runs, not in the edit.
 
 Both read the picture as developed, before any mask's own sliders,
 the curves or the look, so a mask doesn't shift as you edit under it.
-Exposure moves them; dehaze and clarity can move them a little.
+While the Detail section does something (texture, clarity, structure,
+or dehaze), they read the picture from before it and before the
+capture sharpen, so those sliders don't move them either; with Detail
+at rest they read the developed picture, sharpen included. Refine edge
+always finds its edge on the picture from before Detail and before the
+capture sharpen. Exposure moves them.
 
 ## A mask's own sliders
 

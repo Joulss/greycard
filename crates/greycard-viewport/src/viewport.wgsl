@@ -182,6 +182,9 @@ struct Params {
     // AgX fitted to that white (`agx::shader_params`): its gain, its
     // range, its pivot and its toe scale.
     agx: vec4<f32>,
+    // In x whether the range masks read `range_src` rather than the
+    // source.
+    range_sample: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -336,6 +339,10 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // source is (`DetailPlanes::sharpen`). A texel of nothing when no mask
 // asks.
 @group(0) @binding(14) var sharpen_plane: texture_2d<f32>;
+// The picture the range masks read when the Detail section is on: the
+// one from before it, at the source's size, read where the source is
+// (`DetailPlanes::sample`). A texel of nothing when there is none.
+@group(0) @binding(15) var range_src: texture_2d<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -422,18 +429,34 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // the baseline, the vignette or the locals), in Oklab; its own
     // lightness, not clipped, and for a color window the mean a and b
     // about it. The mean is made once, at no exposure, and kept for
-    // the mixer below.
+    // the mixer below. With the Detail section on, the picture from
+    // before it, read as the source is, and its own mean.
     var sample = vec3<f32>(0.0);
     var mean = vec2<f32>(0.0);
     var have_mean = false;
     if (p.range.x > 0.5) {
+        let own = p.range_sample.x > 0.5 && all(textureDimensions(range_src) == textureDimensions(src));
+        var ts = t;
+        if (own) {
+            if (p.cubic.x < 0.5) {
+                ts = textureSampleLevel(range_src, samp, tex_at / vec2<f32>(textureDimensions(range_src)), 0.0).rgb;
+            } else {
+                ts = sample_cubic(range_src, tex_at).rgb;
+            }
+        }
         let gain = exp2(p.range.z);
-        let lab0 = to_oklab(vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * gain);
+        let lab0 = to_oklab(vec3<f32>(dot(p.w0.xyz, ts), dot(p.w1.xyz, ts), dot(p.w2.xyz, ts)) * gain);
         sample = lab0;
         if (p.range.x > 1.5) {
-            mean = local_ab(tex_at);
-            have_mean = true;
-            sample = vec3<f32>(lab0.x, mean * exp2(p.range.z / 3.0));
+            var m: vec2<f32>;
+            if (own) {
+                m = local_ab_of(range_src, tex_at);
+            } else {
+                mean = local_ab(tex_at);
+                have_mean = true;
+                m = mean;
+            }
+            sample = vec3<f32>(lab0.x, m * exp2(p.range.z / 3.0));
         }
     }
     // The white balance here, rows: the preview's (the develop's own
@@ -1184,14 +1207,19 @@ fn texel_at(at: vec2<f32>) -> vec2<f32> {
 // with the edges clamped, as `local_ab` in `finish.rs`: each tap
 // through the white balance and to Oklab, then the mean.
 fn local_ab(s: vec2<f32>) -> vec2<f32> {
-    let limit = vec2<i32>(textureDimensions(src)) - vec2<i32>(1, 1);
+    return local_ab_of(src, s);
+}
+
+// `local_ab` of another texture of the source's size.
+fn local_ab_of(tex: texture_2d<f32>, s: vec2<f32>) -> vec2<f32> {
+    let limit = vec2<i32>(textureDimensions(tex)) - vec2<i32>(1, 1);
     let center = vec2<i32>(floor(s));
     var acc = vec2<f32>(0.0);
     for (var j = -MEAN_RADIUS; j <= MEAN_RADIUS; j = j + 1) {
         let sy = clamp(center.y + j, 0, limit.y);
         for (var i = -MEAN_RADIUS; i <= MEAN_RADIUS; i = i + 1) {
             let sx = clamp(center.x + i, 0, limit.x);
-            let t = textureLoad(src, vec2<i32>(sx, sy), 0).rgb;
+            let t = textureLoad(tex, vec2<i32>(sx, sy), 0).rgb;
             let c = vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t));
             let lms = signed_cbrt(vec3<f32>(dot(p.ok_in0.xyz, c), dot(p.ok_in1.xyz, c), dot(p.ok_in2.xyz, c)));
             acc = acc + (LMS_TO_LAB * lms).yz;

@@ -5,7 +5,7 @@ use greycard_core::develop::retouch::Region;
 use greycard_edit::retouch::Patch;
 
 use super::*;
-use crate::stages::{Facts, Keep, Purpose, Step, Steps, Tap, stages};
+use crate::stages::{Facts, Keep, Purpose, Step, Steps, stages};
 use crate::walk::{Kept, Meta, NoLearned, Place};
 
 /// The seconds each stage of a develop took, in the order they ran,
@@ -57,10 +57,6 @@ pub(super) struct FrameKept {
     /// ([`super::masks::mask_picture`]), kept for the next develop of
     /// it, and shelved with the base.
     pub mask_picture: Option<KeptMaskPicture>,
-    /// What the picture kept on the device before the sharpen was made
-    /// from: the patched picture and the Detail section run on it, for
-    /// the refined masks' picture to be read back from it.
-    pub pre: Option<(Arc<WorkingImage>, greycard_edit::Detail)>,
     /// The edit and the quarter turns of the last develop, and what it
     /// left out of what the edit asked for ([`left_out_of`]): a save of
     /// the frame makes its pictures from that develop when it is of the
@@ -70,11 +66,9 @@ pub(super) struct FrameKept {
 }
 
 /// The refined masks' picture ([`greycard_render::refine::MaskPicture`])
-/// with what it was made from: the patched picture and the Detail
-/// section run on it before the sharpen.
+/// with what it was made from: the patched picture.
 pub(super) struct KeptMaskPicture {
     pub patched: Arc<WorkingImage>,
-    pub detail: greycard_edit::Detail,
     pub picture: Arc<greycard_render::refine::MaskPicture>,
 }
 
@@ -109,7 +103,6 @@ impl FrameKept {
             planes: None,
             on_gpu: false,
             mask_picture: None,
-            pre: None,
             developed_as: None,
             left_out: Vec::new(),
         }
@@ -221,10 +214,8 @@ impl FrameKept {
 /// the sharpen, one more picture the size of the frame held for a
 /// slider the CPU's sharpen is quick at. On the device it keeps the
 /// picture before the sharpen, which a sharpen move starts from, and
-/// its developed picture is the viewport's texture. On the device the
-/// refined masks' picture is read back from the picture kept before
-/// the sharpen rather than tapped from one in memory, which a run
-/// there does not have.
+/// its developed picture is the viewport's texture. The refined masks'
+/// picture is tapped from the patched picture, in memory either way.
 pub(super) fn window_steps(
     edit: &Edit,
     facts: &Facts,
@@ -236,7 +227,6 @@ pub(super) fn window_steps(
     steps.steps.retain(|s| match s {
         Step::Keep(Keep::Developed) => !lent,
         Step::Keep(Keep::PreSharpen) => lent,
-        Step::Tap(Tap::MaskPicture) => !lent,
         _ => true,
     });
     let plan = crate::walk::plan(&steps, &purpose, lent);

@@ -479,20 +479,6 @@ impl Context {
             .map_err(|e| Error::ReadBack(e.to_string()))
     }
 
-    /// Rows `y..y + rows` of a picture on the GPU read back, its alpha
-    /// dropped: RGB floats, row after row. For a caller that reduces
-    /// the picture a band at a time rather than holding it whole.
-    pub fn download_rows(&self, image: &Image, y: u32, rows: u32) -> Result<Vec<f32>> {
-        let rgba = self.read_texture(&image.texture, 0, y, image.width, rows, 16)?;
-        let rgba: &[f32] = bytemuck::cast_slice(&rgba);
-        Ok(rgba
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .flat_map(|px| [px[0], px[1], px[2]])
-            .collect())
-    }
-
     /// Rows `y..y + rows` of a texture made by
     /// [`viewport_texture`](Self::viewport_texture), read back as they
     /// are: RGBA half floats, eight bytes a texel, row after row, the

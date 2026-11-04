@@ -4063,10 +4063,10 @@ fn refining(dehaze: f32) -> Edit {
 
 /// The develop of an edit that refines a mask hands the window the
 /// picture its refined masks are made against, made from the picture
-/// the finish's range shapes read, after the Dehaze: the same picture
-/// on the masks' grid, where the patched picture before the Dehaze is
-/// another. And a develop that refines nothing makes none and keeps
-/// none.
+/// the finish's range shapes read, the patched one from before the
+/// Dehaze: the same picture on the masks' grid, where the developed
+/// picture after the Dehaze is another. And a develop that refines
+/// nothing makes none and keeps none.
 #[test]
 fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     let frame = Arc::new(aberrated_frame(160, 120));
@@ -4090,16 +4090,17 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     };
     let picture = guide.picture.clone().expect("a picture beside the guide");
     let developed = image.unwrap();
-    assert!(*picture == greycard_render::refine::mask_picture(&developed));
+    assert!(*picture != greycard_render::refine::mask_picture(&developed));
     let b = base.as_ref().unwrap();
     let patched = b.patched_picture();
-    assert!(*picture != greycard_render::refine::mask_picture(&patched));
+    assert!(*picture == greycard_render::refine::mask_picture(&patched));
     assert!(b.mask_picture.is_some());
     // The open frame's own pictures (`keep`) are made against it too.
     assert!(b.mask_picture.is_some());
     // A Luminance shape reads the same lightness in the picture refined
-    // against as the finish reads in the developed one, on average over
+    // against as the finish reads in the patched one, on average over
     // each texel, to the half float's rounding.
+    let developed = patched.clone();
     let (w, h) = (developed.width, developed.height);
     let texel = |gx: usize, gy: usize| picture.lab[gy * picture.width + gx][0].to_f32();
     let (gx, gy) = (picture.width / 2, picture.height / 3);
@@ -4134,15 +4135,15 @@ fn the_refined_masks_picture_is_the_one_the_range_shapes_read() {
     // edge moved from 0, `keep_open`) makes it from the base in hand:
     // the picture the develop made, and kept for the next.
     let b = base.as_mut().unwrap();
-    let made = masks::picture_for(b, &edit, None).expect("made for the save");
+    let made = masks::picture_for(b, &edit).expect("made for the save");
     assert!(*made == *picture);
     assert!(b.mask_picture.is_some());
-    assert!(masks::picture_for(b, &plain, None).is_none());
+    assert!(masks::picture_for(b, &plain).is_none());
 }
 
-/// On the CPU a move after the picture before the sharpen (the
-/// sharpen itself) taps the refined masks' picture no more: the one
-/// kept is handed out again.
+/// A move after the patched picture (the Detail section, the sharpen)
+/// taps the refined masks' picture no more: the one kept is handed out
+/// again.
 #[test]
 fn a_sharpen_move_keeps_the_refined_masks_picture() {
     let frame = Arc::new(aberrated_frame(160, 120));
@@ -4171,11 +4172,16 @@ fn a_sharpen_move_keeps_the_refined_masks_picture() {
     let first = develop(&edit);
     edit.sharpen.iterations += 1;
     assert!(Arc::ptr_eq(&develop(&edit), &first), "kept");
+    // Made before the Detail section, so a Dehaze move keeps it too,
+    // for a range shape and a gradient alike; and a gradient's is the
+    // same picture, whatever shape another mask holds.
     edit.detail.dehaze = 0.6;
     assert!(
-        !Arc::ptr_eq(&develop(&edit), &first),
-        "a Dehaze move taps it again"
+        Arc::ptr_eq(&develop(&edit), &first),
+        "kept by a Dehaze move"
     );
+    edit.adjustments[0].mask.components[0] = greycard_edit::mask::Component::default();
+    assert!(Arc::ptr_eq(&develop(&edit), &first), "kept for a gradient");
 }
 
 /// A set frame's walk makes the refined masks' picture after the
@@ -4292,13 +4298,12 @@ fn the_edits_pictures_are_refined() {
     crate::testing::remove_dir_retry(&dir);
 }
 
-/// With the GPU, the refined masks' picture is read back from the
-/// device's picture before the sharpen, a band at a time, and not made
-/// again on the CPU: the viewport's texture with the sharpen off, the
-/// kept picture before it with the sharpen on. Each is the CPU
-/// develop's within the GPU's Detail and the half floats' rounding.
+/// With the GPU, the refined masks' picture is made of the patched
+/// picture in memory, as on the CPU, with the sharpen on or off: nothing
+/// is read back from the device, and it is the CPU develop's within the
+/// base's own GPU ops' rounding.
 #[test]
-fn with_the_gpu_the_refined_masks_picture_is_read_back() {
+fn with_the_gpu_the_refined_masks_picture_is_the_patched_ones() {
     let Some(ctx) = greycard_gpu::Context::own().ok() else {
         skipped("the refined masks' picture on the GPU");
         return;
@@ -4322,11 +4327,15 @@ fn with_the_gpu_the_refined_masks_picture_is_read_back() {
         let Outcome::Developed { guide, .. } = outcome else {
             panic!("developed")
         };
-        guide.picture.clone().expect("a picture")
+        let picture = guide.picture.clone().expect("a picture");
+        let patched = base.as_ref().unwrap().patched_picture();
+        assert!(*picture == greycard_render::refine::mask_picture(&patched));
+        picture
     };
     let mut gpu = Some(ctx);
     for sharpen in [false, true] {
         let mut edit = refining(0.3);
+        edit.adjustments[0].mask.components[0] = greycard_edit::mask::Component::default();
         edit.detail.clarity = 0.4;
         edit.sharpen.enabled = sharpen;
         let on_gpu = picture(&edit, &mut gpu);
