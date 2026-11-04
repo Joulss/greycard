@@ -60,7 +60,10 @@ the reasoning lives in `docs/notes.md`.
       variance within its quiet blocks, per level bin, would let a
       truly wide grain be drawn in full. And a fill whose own grain
       exceeds the surround's (3x with the profiled denoise) wants
-      smoothing, not grain. Harness in target/captures-2026-10-26/fill-grain
+      smoothing, not grain. A Windows tester sees the fill keep the
+      frame's own noise under the learned denoiser (issue 63,
+      2026-11-04); wants the raw. Harness in
+      target/captures-2026-10-26/fill-grain
 
 ## Tracks
 
@@ -1101,7 +1104,12 @@ clears or a tester asks for it.
       weighed before and left out as unneeded, not settled
 - [ ] Reset an edit from the Library: the grid's selection back to
       Original, one history step a frame; the Loupe has it as the
-      history's bottom row (discussion 59, 2026-11-02)
+      history's bottom row, which a second tester finds too far to
+      scroll with the panel closed and asks for a button (discussion
+      59, 2026-11-02 and 2026-11-04)
+- [ ] The develop's base kept on disk, so a frame left and opened
+      again on a small card is quick without its neighbors' bases
+      held in memory (discussion 59, 2026-11-04)
 
 ## Blocked
 
