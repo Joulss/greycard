@@ -102,6 +102,14 @@ jobs:
           restore-keys: |
             ort-build-${{ env.ORT_TAG }}-x86_64-macos-coreml-
 
+      # Warnings stay warnings: the Core ML provider's optimization
+      # hints (model.mm, ConfigureOptimizationHints) use macOS 14.4 and
+      # 15.0 calls with no @available guard, chosen by the SDK's
+      # ceiling rather than the deployment target, so under -Werror a
+      # 13.4 target refuses them (first run, 2026-11-04). Microsoft's
+      # own build never sees it, since it targets the runner's macOS.
+      # The hints are set only when a strategy is asked for, which
+      # greycard never does, so on 13.4 the calls are never reached.
       - name: Build
         run: |
           ort-src/build.sh \
@@ -112,6 +120,7 @@ jobs:
             --parallel \
             --skip_tests \
             --skip_submodule_sync \
+            --compile_no_warning_as_error \
             --osx_arch x86_64 \
             --cmake_extra_defines \
               CMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \

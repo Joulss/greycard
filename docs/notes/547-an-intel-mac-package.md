@@ -56,6 +56,13 @@ remove, which runs on WebGPU alone, is refused as on Windows on ARM. The
 processor check is skipped on a Mac: our build is plain x86-64 with its
 kernels chosen at run time, and every Mac that runs 13.4 has x86-64-v3
 anyway. Info.plist's floor stays 13.4, the build's deployment target.
+The first run (2026-11-04) refused it under -Werror: the Core ML
+provider's optimization hints call macOS 14.4 and 15.0 methods with no
+@available guard, gated on the SDK's ceiling rather than the target,
+which Microsoft's build never meets since it targets the runner's own
+macOS. Warnings stay warnings for our build; the hints are set only when
+a strategy is asked for, which greycard never does, so the calls are
+never reached.
 
 ## Untested
 
