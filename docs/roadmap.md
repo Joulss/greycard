@@ -871,15 +871,16 @@ clears or a tester asks for it.
       to the CPU by the parity test, so the shader could serve export
       at full size through tiles, with the CPU as the fallback and the
       reference (an outside review, 2026-11-02)
-- [ ] Samples below black kept through the demosaic: `normalize_levels`
-      clamps every photosite at zero after the black is taken off, so
-      read noise's negative half is cut and the deepest shadows' mean
-      rises and can tint, worst at high ISO (darktable keeps them).
-      Measure first on an ISO 12800 frame (shadow mean and noise
-      before and after), then drop the lower clamp there and clamp
-      after the denoise, checking what the hot pixel repair, the
-      learned denoiser's packed input and the GPU path assume of the
-      range (an outside review)
+- [ ] Samples below black kept through the demosaic: measured (§549),
+      the clamp lifts the darkest 1% by 3% at ten stops under white
+      on an ISO 1250 frame, under one raw unit, and dropping it would
+      rework four demosaics, the CA passes, and the denoise's
+      transform. Waits on an ISO 12800 frame with true black in it;
+      `examples/below_black.rs` takes the table again
+- [ ] The profiled denoise's unbiased inverse has a pole below zero
+      when the fitted `b` is zero (`Vst`, §549): nothing reaches it
+      today, since the develop never hands the denoise a negative, but
+      a guard belongs there
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
       correction's were, with captured models re-read per pixel; the
       lens gain (§165) says they are the next place to look
