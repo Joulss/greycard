@@ -223,6 +223,11 @@ design note behind it.
 
 ### Fixes
 
+- A Canon frame on a third-party lens that shares its lens id with
+  others (a Sigma 17-70mm on a Rebel T8i, among many) now names the
+  lens, from the focal range the file carries, instead of "not
+  recorded"
+  ([§564](https://github.com/jessolmstead/greycard/blob/master/docs/notes/564-lenses-sharing-an-id-told-apart.md)).
 - On a Windows machine whose processor needs the CPU-only ONNX
   Runtime, that runtime no longer logs the models you run to Windows'
   diagnostic data; its telemetry is off on every path now

@@ -24,7 +24,7 @@ greycard-library = { path = "../crates/greycard-library" }
 # root of the workspace it is in, and this is its own. Kept in step
 # with the root Cargo.toml's, which has the reason.
 [patch.crates-io]
-rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "fcc02bde87301a299ac7e9432c188860a69d15b7" }
+rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "5271c4790b467cd2104d508929df8068d41e4c09" }
 
 [workspace]
 members = ["."]

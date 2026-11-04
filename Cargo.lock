@@ -313,7 +313,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1202,7 +1202,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3902,7 +3902,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4831,7 +4831,7 @@ checksum = "1839c82df8c23135a69c027587efada55602a7311af4b5849313062f831630ca"
 [[package]]
 name = "rawler"
 version = "0.8.0"
-source = "git+https://github.com/jessolmstead/dnglab?rev=fcc02bde87301a299ac7e9432c188860a69d15b7#fcc02bde87301a299ac7e9432c188860a69d15b7"
+source = "git+https://github.com/jessolmstead/dnglab?rev=5271c4790b467cd2104d508929df8068d41e4c09#5271c4790b467cd2104d508929df8068d41e4c09"
 dependencies = [
  "backtrace",
  "bitstream-io",
@@ -5131,7 +5131,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
