@@ -65,6 +65,9 @@ export component FrameMenu inherits Rectangle {
     /// The sync sheet over the selection, from the frame on screen:
     /// offered with more than one frame chosen, as Ctrl+Shift+S is.
     callback sync();
+    /// Every edit of the selection back to the Original, a step on
+    /// each frame that moves.
+    callback reset();
     /// The frame on screen, which a sync takes its settings from.
     in property <string> current;
     /// Whether the lightbox is on, for its item's words, and the item.
@@ -150,6 +153,10 @@ export component FrameMenu inherits Rectangle {
                 title: "Sync " + (root.count - 1) + (root.count == 2 ? " frame to " : " frames to ")
                     + (root.current == "" ? "this one" : root.current) + "...";
                 activated => { root.sync(); }
+            }
+            if !root.queue: MenuItem {
+                title: "Reset to Original";
+                activated => { root.reset(); }
             }
             MenuSeparator { }
             MenuItem {

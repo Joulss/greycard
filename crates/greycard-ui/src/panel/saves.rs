@@ -50,6 +50,9 @@ struct Out {
     /// moving, for a wait that gives up only on one that is not.
     moved: Arc<AtomicUsize>,
     sent: Instant,
+    /// What the batch is, for a caller that has the landing say what
+    /// reached the disk ([`save_for`]); none says only the failures.
+    what: Option<&'static str>,
 }
 
 /// One file's save, as the window made it.
@@ -98,6 +101,12 @@ struct Done {
 /// them, and those it follows on an archive's copy saved as they are
 /// one at a time (in memory, the copy written by the archive write).
 pub(crate) fn save(st: &mut State, files: &[usize]) {
+    save_for(st, files, None);
+}
+
+/// [`save`], the landing saying in the log under `what` how many files
+/// were written and naming those that were not.
+pub(crate) fn save_for(st: &mut State, files: &[usize], what: Option<&'static str>) {
     let started = Instant::now();
     let Some((id, items)) = prepare(st, files) else {
         return;
@@ -152,6 +161,7 @@ pub(crate) fn save(st: &mut State, files: &[usize]) {
             done,
             moved,
             sent: Instant::now(),
+            what,
         },
     );
     if inline {
@@ -389,6 +399,7 @@ fn land(st: &mut State, id: u64) {
         let _ = thread.join();
     }
     let (mut saved, mut taken, mut failed) = (0, 0, 0);
+    let mut not_written = Vec::new();
     for d in done {
         match d.outcome {
             Outcome::Saved(mark) => {
@@ -416,10 +427,9 @@ fn land(st: &mut State, id: u64) {
             Outcome::TakenBack => taken += 1,
             Outcome::Failed(e) => {
                 failed += 1;
-                tracing::warn!(
-                    "{}: sidecar not saved: {e}",
-                    crate::panel::browser::file_name(&d.raw)
-                );
+                let name = crate::panel::browser::file_name(&d.raw);
+                tracing::warn!("{name}: sidecar not saved: {e}");
+                not_written.push(name);
             }
         }
     }
@@ -428,6 +438,12 @@ fn land(st: &mut State, id: u64) {
          before them, {failed} failed",
         out.sent.elapsed().as_secs_f64() * 1e3
     );
+    if let Some(what) = out.what {
+        tracing::info!("{what}: {saved} file(s) written");
+        if !not_written.is_empty() {
+            tracing::warn!("{what}: not written: {}", not_written.join(", "));
+        }
+    }
 }
 
 /// Take file `file` back from the batch that holds it, before the

@@ -31,6 +31,7 @@ pub(crate) mod prefs;
 pub(crate) mod queue_view;
 pub(crate) mod rawtherapee;
 pub(crate) mod recent;
+pub(crate) mod reset;
 pub(crate) mod retouch;
 pub(crate) mod saves;
 pub(crate) mod sort;

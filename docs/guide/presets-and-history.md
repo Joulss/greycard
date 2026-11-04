@@ -191,6 +191,10 @@ balance on".
 - **Hover** over a row to see that state in the picture without
   changing anything.
 - **Ctrl+Z** undoes a step, **Ctrl+Shift+Z** or **Ctrl+Y** redoes it.
+- **Reset to Original**, in the section's head while the edit is not
+  the Original, puts the edit back there as one step, "Reset to
+  Original", which Ctrl+Z takes back. It is there with the section
+  folded too.
 
 The history keeps the last 50 steps, plus "Original". Use a snapshot
 for a state you want to keep for good.
@@ -382,6 +386,8 @@ menu. On a Mac, Control+click does the same.
   frames (greyed until you have copied something)
 - **Sync 4 frames to** the frame on screen, with more than one frame
   selected
+- **Reset to Original**, every selected frame's edit back to the
+  Original, one step on each (see [History](#history))
 - **New version** and **New version from the original**, and on a
   version **Rename version...**, **Swap with the original** and
   **Delete version...**; **Compare versions** on a frame that has

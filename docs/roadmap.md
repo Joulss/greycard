@@ -1102,11 +1102,6 @@ clears or a tester asks for it.
 - [ ] A Midtones slider in Light between Highlights and Shadows, so
       the middle lifts without the curve (discussion 59, 2026-11-01);
       weighed before and left out as unneeded, not settled
-- [ ] Reset an edit from the Library: the grid's selection back to
-      Original, one history step a frame; the Loupe has it as the
-      history's bottom row, which a second tester finds too far to
-      scroll with the panel closed and asks for a button (discussion
-      59, 2026-11-02 and 2026-11-04)
 - [ ] The develop's base kept on disk, so a frame left and opened
       again on a small card is quick without its neighbors' bases
       held in memory (discussion 59, 2026-11-04)

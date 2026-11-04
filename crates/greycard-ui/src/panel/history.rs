@@ -32,6 +32,7 @@ pub(crate) fn show_history(st: &State, app: &App) {
         app.set_snapshot_names(names(Vec::new()));
         app.set_can_undo(false);
         app.set_can_redo(false);
+        app.set_history_resettable(false);
         return;
     };
     // Which version the history is of, after its title: none for the
@@ -39,6 +40,7 @@ pub(crate) fn show_history(st: &State, app: &App) {
     app.set_history_version(st.version_name(c).unwrap_or_default().into());
     app.set_can_undo(!sidecar.history.is_empty());
     app.set_can_redo(!sidecar.redo.is_empty());
+    app.set_history_resettable(!crate::panel::reset::at_original(st, c));
     // Whatever moved the history (a save, a reset, an undo, an export
     // landing) moved what the frame's cell says of its edit and its
     // exports; the cell is written only if it differs.

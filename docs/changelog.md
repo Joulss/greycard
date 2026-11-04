@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- **Reset to Original**, in the HISTORY section's head and in the
+  frame menu for a selection, puts each frame's edit back to its
+  Original as one step that Ctrl+Z takes back (discussion 59)
+  ([§544](https://github.com/jessolmstead/greycard/blob/master/docs/notes/544-reset-to-original.md)).
 - **Shift+J** in the Loupe, in Cull or Develop, paints the sharpest
   parts of the picture green, measured on the picture as shown, so 1:1
   finds a missed focus that Fit hides (discussion 62)

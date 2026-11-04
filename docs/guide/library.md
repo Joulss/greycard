@@ -89,7 +89,9 @@ view; on a Mac the window's green button does.
 
 An edited frame shows its edit in the filmstrip, the grid, the cull
 view and compare, not the camera's JPEG. Reset a frame's edit and the
-camera's picture comes back.
+camera's picture comes back. To reset several at once, select them,
+right-click one and choose **Reset to Original**: each edited frame
+goes back to its Original in one step, which its history can undo.
 
 Some frames are edited without being opened: a sync, a preset or a
 paste over a selection, an edit joined from another machine through an

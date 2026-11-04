@@ -149,6 +149,11 @@ export component Section inherits VerticalLayout {
     in property <string> note;
     in property <bool> switchable: false;
     in-out property <bool> on: true;
+    // A command at the header's right, in words: a click on it does
+    // what it says and leaves the fold as it is, so it is there with
+    // the section folded too. Empty for none.
+    in property <string> action;
+    callback action-clicked();
     // Whether the focused slider is in this section, by where it last
     // said it was (it says so at each move).
     pure function holds-the-keys() -> bool {
@@ -261,11 +266,15 @@ export component Section inherits VerticalLayout {
                     overflow: elide;
                     min-width: root.owner == "" ? 0px : self.preferred-width;
                 }
+                // Cut first, so a long one (a version's name) never
+                // pushes the header's action off the panel.
                 if root.hint != "": Text {
                     text: root.hint;
                     color: Theme.text-muted;
                     font-size: Theme.font-xs;
                     vertical-alignment: center;
+                    overflow: elide;
+                    min-width: 0px;
                 }
             }
             if root.note != "": Text {
@@ -297,6 +306,25 @@ export component Section inherits VerticalLayout {
                         root.show-opened();
                     }
                 }
+            }
+        }
+        if root.action != "": Rectangle {
+            width: action-text.preferred-width + 2 * Theme.space-1;
+            border-radius: Theme.radius-sm;
+            background: action-area.pressed ? Theme.pressed : action-area.has-hover ? Theme.hover : transparent;
+            animate background { duration: Theme.quick; }
+            accessible-role: button;
+            accessible-label: root.action;
+            accessible-action-default => { root.action-clicked(); }
+            action-text := Text {
+                text: root.action;
+                color: action-area.has-hover ? Theme.text : Theme.text-secondary;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            action-area := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { root.action-clicked(); }
             }
         }
         if root.switchable: Switch {

@@ -1089,6 +1089,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::crop::install(app, &state, &worker);
     panel::curve::install(app, &state, &worker);
     panel::history::install(app, &state, &worker);
+    panel::reset::install(app, &state, &worker);
     panel::retouch::install(app, &state, &worker);
     panel::prefs::install(app, &state, &worker);
     panel::sync::install(app, &state, &worker);

@@ -234,8 +234,14 @@ export component HistorySection inherits Section {
     callback history-clicked(int);
     callback history-hovered(int);
     in-out property <bool> collapsed-history;
+    /// Whether the frame's edit is not the Original already, so the
+    /// head offers to put it back there as one step.
+    in property <bool> resettable;
+    callback reset-asked();
 
     title: "HISTORY";
+    action: root.resettable ? "Reset to Original" : "";
+    action-clicked => { root.reset-asked(); }
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
     if root.history-rows.length > 0: Rectangle {

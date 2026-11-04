@@ -303,6 +303,11 @@ pub(crate) const SAVE_MS: u64 = 800;
 
 /// Write the current file's sidecar once the panel has rested.
 pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
+    // The history's Reset to Original follows the panel at once, not
+    // the step the timer records.
+    if let Some(app) = app_weak.upgrade() {
+        crate::panel::reset::show_panel_resettable(st, &app);
+    }
     let Some(state) = STATE.with(|s| s.borrow().clone()) else {
         return;
     };

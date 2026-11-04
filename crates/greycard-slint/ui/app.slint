@@ -178,6 +178,8 @@ export component App inherits Window {
     in property <string> edit-in-app: "";
     /// The frame right-clicked, exported and handed to that app.
     callback menu-edit-in();
+    /// The frame menu's Reset to Original, over the selection.
+    callback menu-reset();
     /// The Settings sheet's Edit in row: the app asked for.
     callback edit-in-choose();
     /// Whether a Control+click is a right-click: a Mac's.
@@ -1228,6 +1230,10 @@ export component App inherits Window {
     in-out property <int> history-current: -1;
     callback history-clicked(int);
     callback history-hovered(int);
+    /// Whether the frame on screen's edit is not the Original, for the
+    /// history's Reset to Original; and the reset, as one step.
+    in property <bool> history-resettable: false;
+    callback history-reset();
     in-out property <bool> collapsed-snapshots: false;
     in-out property <bool> collapsed-history: false;
     /// Paint the capture sharpening's blend mask over the picture.
@@ -4573,6 +4579,8 @@ export component App inherits Window {
                     history-current <=> root.history-current;
                     history-clicked(a) => { root.history-clicked(a); }
                     history-hovered(a) => { root.history-hovered(a); }
+                    resettable: root.history-resettable;
+                    reset-asked => { root.history-reset(); }
                     collapsed-history <=> root.collapsed-history;
                 }
             }
@@ -5193,6 +5201,7 @@ export component App inherits Window {
         reveal => { root.menu-reveal(); root.menu-done(); }
         edit-in-app: root.edit-in-app;
         edit-in => { root.menu-edit-in(); root.menu-done(); }
+        reset => { root.menu-reset(); root.menu-done(); }
         // The sheet takes the focus itself, as the time shift's does.
         export => {
             root.menu-export();
