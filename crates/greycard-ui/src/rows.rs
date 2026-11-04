@@ -544,6 +544,8 @@ pub(crate) fn request_in(
 /// request behind the one running, the mosaics read on a thread of
 /// their own and kept for the session (`browser::learn_mosaic`), and
 /// the action run on the window's thread once they are in.
+// A request's frames, scope, words, and action, passed apart in every
+// call of this module, and the paths to read.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn after_mosaics(
     state: &Rc<Shared>,

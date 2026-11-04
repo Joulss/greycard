@@ -1015,9 +1015,11 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                     &x_before,
                     &x_after,
                     opts.rounds,
-                    "catalog",
-                    &format!("catalog folder {}", c + 1),
-                    &|f| f.catalog == c,
+                    Holding {
+                        by: "catalog",
+                        held: &format!("catalog folder {}", c + 1),
+                        pick: &|f| f.catalog == c,
+                    },
                 ));
             }
         }
@@ -1030,9 +1032,11 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                     &x_before,
                     &x_after,
                     opts.rounds,
-                    "body",
-                    b,
-                    &|f| f.rec.camera == *b,
+                    Holding {
+                        by: "body",
+                        held: b,
+                        pick: &|f| f.rec.camera == *b,
+                    },
                 ));
             }
         }
@@ -1048,9 +1052,11 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                     &x_before,
                     &x_after,
                     opts.rounds,
-                    "edit",
-                    c,
-                    &|f| f.cluster == *c,
+                    Holding {
+                        by: "edit",
+                        held: c,
+                        pick: &|f| f.cluster == *c,
+                    },
                 ));
             }
         }
@@ -1147,12 +1153,19 @@ fn fit_offsets(frames: &[&Frame], space: &Space, x0: &[f32], rounds: usize) -> (
     (x, best)
 }
 
+/// Which frames [`hold`] holds out: what they are held by, the name
+/// of those held, and the test that picks them.
+struct Holding<'a> {
+    by: &'a str,
+    held: &'a str,
+    pick: &'a dyn Fn(&Frame) -> bool,
+}
+
 /// Hold the frames `held` picks out: fit on the rest from `x0`, and
 /// measure the held frames under the shipped scales, under `x_all`
 /// (the fit on everything) and under the fit on the rest. A held body
 /// has no offset among the rest, so its offset alone is then fitted on
 /// the held frames, which is said.
-#[allow(clippy::too_many_arguments)]
 fn hold(
     all: &[&Frame],
     space: &Space,
@@ -1160,9 +1173,7 @@ fn hold(
     x_before: &[f32],
     x_all: &[f32],
     rounds: usize,
-    by: &str,
-    held: &str,
-    pick: &dyn Fn(&Frame) -> bool,
+    Holding { by, held, pick }: Holding<'_>,
 ) -> HeldOut {
     let held_frames: Vec<&Frame> = all.iter().copied().filter(|f| pick(f)).collect();
     let rest: Vec<&Frame> = all.iter().copied().filter(|f| !pick(f)).collect();

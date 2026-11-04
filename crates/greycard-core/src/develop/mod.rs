@@ -1025,8 +1025,7 @@ fn apply_dng_mosaic(
                 made += fix_bad_pixels(
                     frame,
                     samples,
-                    width,
-                    height,
+                    (width, height),
                     crop,
                     (crop.x, crop.y),
                     true,
@@ -1037,8 +1036,7 @@ fn apply_dng_mosaic(
                 made += fix_bad_pixels(
                     frame,
                     samples,
-                    width,
-                    height,
+                    (width, height),
                     crop,
                     (at.x, at.y),
                     false,
@@ -1060,12 +1058,10 @@ fn apply_dng_mosaic(
 /// against the values as they stand, scaled to 0..65535 as the SDK's
 /// 16-bit stage holds them. Answers how many were made again; a linear
 /// frame has none made, said in the log.
-#[allow(clippy::too_many_arguments)]
 fn fix_bad_pixels(
     frame: &RawFrame,
     samples: &mut [f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     crop: Rect,
     at: (usize, usize),
     stored: bool,

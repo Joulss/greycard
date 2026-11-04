@@ -2623,8 +2623,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     swap_base(
         &mut base,
         &mut shelf,
-        Some(key.clone()),
-        None,
+        (Some(key.clone()), None),
         &edit,
         0,
         None,
@@ -2635,8 +2634,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     swap_base(
         &mut base,
         &mut shelf,
-        None,
-        Some(&key),
+        (None, Some(&key)),
         &edit,
         0,
         None,
@@ -2668,8 +2666,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     swap_base(
         &mut base,
         &mut shelf,
-        Some(key.clone()),
-        Some(&key),
+        (Some(key.clone()), Some(&key)),
         &warmer,
         0,
         None,
@@ -2717,8 +2714,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
     swap_base(
         &mut base,
         &mut shelf,
-        Some(key.clone()),
-        None,
+        (Some(key.clone()), None),
         &edit,
         0,
         gpu.as_ref(),
@@ -2728,8 +2724,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
     swap_base(
         &mut base,
         &mut shelf,
-        None,
-        Some(&key),
+        (None, Some(&key)),
         &edit,
         0,
         gpu.as_ref(),
@@ -2830,8 +2825,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
     swap_base(
         &mut base,
         &mut shelf,
-        None,
-        Some(&key),
+        (None, Some(&key)),
         &edit,
         0,
         None,

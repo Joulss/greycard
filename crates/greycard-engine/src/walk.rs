@@ -1315,6 +1315,7 @@ fn start(
     ))
 }
 
+// The walk's seven, as `walk` takes them, and the tier that stood in.
 #[allow(clippy::too_many_arguments)]
 fn attempt(
     steps: &Steps,
@@ -1466,7 +1467,7 @@ fn attempt(
                 let end = run_end(steps, plan, i);
                 let ctx = gpu.as_ref().expect("a plan on the device has a context");
                 let inline = matches!(step, Step::Op(Stage::Ca(_) | Stage::Lens(_)));
-                match device_run(steps, i, end, ctx, &mut st, kept, &mut places, &mut walked) {
+                match device_run(steps, i..end, ctx, &mut st, kept, &mut places, &mut walked) {
                     Ok(()) => i = end,
                     // The CA and the lens read a picture still in hand:
                     // their run again on the CPU is the stage itself.
@@ -1929,15 +1930,13 @@ fn lens_in_camera(
     }
 }
 
-/// A run of stages on the device, from `i` to `end`: the CA and the
+/// A run of stages on the device, `i..end` of `steps`: the CA and the
 /// lens one at a time on pictures in memory, the Detail section and the
 /// sharpen as one run with one upload at its head and the device's
 /// picture between, a run ending at the shader writing its texture.
-#[allow(clippy::too_many_arguments)]
 fn device_run(
     steps: &Steps,
-    i: usize,
-    end: usize,
+    std::ops::Range { start: i, end }: std::ops::Range<usize>,
     ctx: &greycard_gpu::Context,
     st: &mut Carried,
     kept: &mut Kept,

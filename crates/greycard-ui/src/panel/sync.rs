@@ -282,6 +282,7 @@ pub(crate) struct Synced {
 /// its history row shows in place of the sections that moved: a
 /// sync's "Sync from" the frame it came from, a preset's "Preset ×3:"
 /// and its name; `None` records the steps with no words.
+// `profiles` and `probe` pair through every sync call: the module's change.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lay_over_targets(
     st: &mut State,
@@ -308,6 +309,7 @@ pub(crate) fn lay_over_targets(
 
 /// [`lay_over_targets`], each target's preset first [`shifted`] from
 /// its own edit when a sync's sheet asked for a shift.
+// `profiles` and `probe` pair through every sync call: the module's change.
 #[allow(clippy::too_many_arguments)]
 fn lay_shifted_over_targets(
     st: &mut State,
@@ -504,6 +506,7 @@ pub(crate) fn sync_selection(
 /// Each field `modes` shifts moves every target from its own value by
 /// `from`'s own move ([`shifted`]); the shift laid comes back beside
 /// what moved.
+// `profiles` and `probe` pair through every sync call: the module's change.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_onto(
     st: &mut State,
@@ -951,7 +954,6 @@ pub(crate) fn preset_pressed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>,
 /// rest as a sync's targets. When the frame on screen is not among
 /// them (the selection moved on while their sidecars were read), they
 /// all take it as targets and the panel is left alone.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_preset_to(
     st: &mut State,
     app: &App,
@@ -1382,7 +1384,6 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
 /// each frame's step "Paste from" the frame copied. `chosen` is what
 /// the paste was pressed on, whatever the selection is by the time the
 /// frames' sidecars are in.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn paste_onto(
     st: &mut State,
     app: &App,
@@ -1471,7 +1472,6 @@ struct Pasted<'a> {
 /// every frame, through [`lay_over_targets`], exactly as a sync's
 /// targets. Each frame that moved gets one step. The status line says
 /// what happened, and rides the develop the frame on screen asks for.
-#[allow(clippy::too_many_arguments)]
 fn lay_paste(
     st: &mut State,
     app: &App,

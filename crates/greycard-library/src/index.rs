@@ -1188,6 +1188,8 @@ fn read_ahead(path: &Path, hint: Option<Hint>, looks: bool) -> Ahead {
 /// was read before the pass and another writer may have added a row
 /// since, so a path it did not hold is looked up again inside the
 /// transaction before anything is inserted.
+// The connection, the folder's files and rows, progress, stop, and the
+// channel the far reads are asked on.
 #[allow(clippy::too_many_arguments)]
 fn index_paths(
     conn: &mut Connection,

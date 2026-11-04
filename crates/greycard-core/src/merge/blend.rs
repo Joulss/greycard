@@ -99,7 +99,6 @@ impl Bands {
     /// weight `mask`, `width` by `height`, its corner at `(x, y)` of the
     /// canvas, both multiples of [`Bands::alignment`]. What reaches past
     /// the canvas is left out.
-    #[allow(clippy::too_many_arguments)]
     pub fn add(
         &mut self,
         x: usize,

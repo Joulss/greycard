@@ -765,8 +765,7 @@ pub(super) fn run(
                         swap_base(
                             &mut base,
                             shelf.get_or_insert_with(Shelf::user),
-                            opened_file.take(),
-                            coming.as_ref(),
+                            (opened_file.take(), coming.as_ref()),
                             &edit,
                             turn,
                             gpu.as_ref(),
@@ -1141,12 +1140,10 @@ pub(super) fn drop_changed(
 /// own; the shelf is brought under its budget only after, so the base
 /// taken back is never one it lets go. A file the file system would
 /// not answer for (`None`) is not shelved or taken.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn swap_base(
     base: &mut Option<FrameKept>,
     shelf: &mut Shelf,
-    leaving: Option<FileKey>,
-    coming: Option<&FileKey>,
+    (leaving, coming): (Option<FileKey>, Option<&FileKey>),
     edit: &Edit,
     turn: u8,
     gpu: Option<&greycard_gpu::Context>,

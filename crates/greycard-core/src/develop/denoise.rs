@@ -379,8 +379,7 @@ pub fn denoise_profiled(
         atrous_level(
             &mut planes,
             acc,
-            width,
-            height,
+            (width, height),
             scale,
             sb2,
             &shrink,
@@ -673,12 +672,10 @@ struct Scratch {
 /// detail is shrunk into `acc` in the same sweep; after the next band
 /// is blurred, the rows nothing later reads are copied into `cur`, from
 /// the previous buffer's tail and this one's head.
-#[allow(clippy::too_many_arguments)]
 fn atrous_level(
     cur: &mut [f32],
     acc: &mut [f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     scale: usize,
     band_variance: f32,
     shrink: &Shrink,
@@ -723,15 +720,12 @@ fn atrous_level(
                     |scratch, (i, (((((t0, t1), t2), a0), a1), a2))| {
                         blur_row(
                             input,
-                            width,
-                            height,
+                            (width, height),
                             y0 + i,
-                            mult,
-                            inv_sigma2,
+                            (mult, inv_sigma2),
                             shrink,
                             scratch,
-                            [t0, t1, t2],
-                            [a0, a1, a2],
+                            ([t0, t1, t2], [a0, a1, a2]),
                         );
                     },
                 );
@@ -768,7 +762,7 @@ fn atrous_level(
 
 /// Row `y` of the guarded blur of `input` at spacing `mult` into `out`,
 /// and the detail it leaves, shrunk, into `acc`; `out` and `acc` are
-/// the row in each plane.
+/// the row in each plane. `inv_sigma2` is the level's edge guard.
 ///
 /// The row goes in blocks of [`BLOCK`] pixels. A block's stretch of each
 /// of the five tap rows, with the blur's reach either side and the
@@ -780,18 +774,14 @@ fn atrous_level(
 /// out with no index arithmetic or clamp per pixel, so the vectorizer
 /// takes it. The taps come in the order the per-pixel form took them,
 /// so the sums are the same to the bit.
-#[allow(clippy::too_many_arguments)]
 fn blur_row(
     input: [&[f32]; 3],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     y: usize,
-    mult: usize,
-    inv_sigma2: f32,
+    (mult, inv_sigma2): (usize, f32),
     shrink: &Shrink,
     scratch: &mut Scratch,
-    mut out: [&mut [f32]; 3],
-    acc: [&mut [f32]; 3],
+    (mut out, acc): ([&mut [f32]; 3], [&mut [f32]; 3]),
 ) {
     let m = mult as isize;
     let reach = 2 * mult;
@@ -1176,7 +1166,7 @@ mod tests {
                 gain: [0.0; 3],
                 sb2,
             };
-            atrous_level(cur, acc, w, h, scale, sb2, &shrink, &mut bands);
+            atrous_level(cur, acc, (w, h), scale, sb2, &shrink, &mut bands);
         }
     }
 
@@ -1281,7 +1271,7 @@ mod tests {
                 gain: [0.0; 3],
                 sb2,
             };
-            atrous_level(&mut cur, &mut acc, w, h, scale, sb2, &shrink, &mut bands);
+            atrous_level(&mut cur, &mut acc, (w, h), scale, sb2, &shrink, &mut bands);
             plain = plain_blur(&plain, w, h, 1 << scale, 0.02 / sb2);
             assert_eq!(cur, plain, "coarse after scale {scale} at {w}x{h}");
         }

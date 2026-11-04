@@ -476,7 +476,6 @@ impl Geometry {
     /// crop lands on the source, then whatever is left of each axis is
     /// tried on its own, so a crop pushed into one edge slides along
     /// it rather than stopping dead.
-    #[allow(clippy::too_many_arguments)]
     pub fn drag_within(
         &self,
         start: &Crop,
@@ -484,8 +483,7 @@ impl Geometry {
         dx: f32,
         dy: f32,
         ratio: Option<f32>,
-        w: f32,
-        h: f32,
+        (w, h): (f32, f32),
     ) -> Crop {
         let (pw, ph) = self.plane_size(w, h);
         let at = |ox: f32, oy: f32| start.dragged(handle, ox, oy, ratio, pw, ph);
@@ -2014,13 +2012,13 @@ mod tests {
             w: 0.3,
             h: 0.3,
         };
-        let m = g.drag_within(&start, Handle::Move, 0.9, 0.0, None, W, H);
+        let m = g.drag_within(&start, Handle::Move, 0.9, 0.0, None, (W, H));
         assert!((m.x + m.w - 1.0).abs() < 1e-3, "{m:?}");
         assert!((m.y - start.y).abs() < 1e-6, "{m:?}");
         assert_eq!((m.w, m.h), (start.w, start.h));
         // Pushed into that edge at an angle, it still takes the whole
         // of the drag down.
-        let d = g.drag_within(&start, Handle::Move, 0.9, 0.2, None, W, H);
+        let d = g.drag_within(&start, Handle::Move, 0.9, 0.2, None, (W, H));
         assert!((d.x + d.w - 1.0).abs() < 1e-3, "{d:?}");
         assert!((d.y - (start.y + 0.2)).abs() < 1e-3, "{d:?}");
     }
@@ -2035,14 +2033,14 @@ mod tests {
             w: 0.2,
             h: 0.3,
         };
-        let c = g.drag_within(&start, Handle::BottomRight, 0.5, 0.5, Some(1.0), W, H);
+        let c = g.drag_within(&start, Handle::BottomRight, 0.5, 0.5, Some(1.0), (W, H));
         assert!(g.fits(&c, W, H), "{c:?}");
         assert!((c.x + c.w - 1.0).abs() < 1e-3, "{c:?}");
         assert!(c.w > start.w && c.h > start.h, "{c:?}");
         // The aspect is still held: as many pixels across as down.
         assert!((c.w * W - c.h * H).abs() < 1.0, "{c:?}");
         // A drag that fits is passed through whole.
-        let small = g.drag_within(&start, Handle::BottomRight, 0.05, 0.0, Some(1.0), W, H);
+        let small = g.drag_within(&start, Handle::BottomRight, 0.05, 0.0, Some(1.0), (W, H));
         assert_eq!(
             small,
             start.dragged(Handle::BottomRight, 0.05, 0.0, Some(1.0), W, H)

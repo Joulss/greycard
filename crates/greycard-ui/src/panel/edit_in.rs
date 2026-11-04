@@ -303,13 +303,15 @@ fn start(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, frames: 
     let set = crate::panel::deliver::start_set(
         &mut st,
         app,
-        vec![frame],
-        None,
-        None,
-        settings,
+        crate::panel::deliver::Pending {
+            frames: vec![frame],
+            folder: None,
+            sub: None,
+            settings,
+            preset: None,
+            stems: vec![stem_of(&source)],
+        },
         OnExists::Increment,
-        None,
-        vec![stem_of(&source)],
     );
     st.work.edit_in.frame = set.is_some().then(|| (source, version.map(|v| v.id)));
     st.work.edit_in.set = set;

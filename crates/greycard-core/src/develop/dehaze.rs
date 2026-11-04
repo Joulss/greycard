@@ -282,18 +282,18 @@ fn clear_row(
     model: &Model,
     columns: &[(usize, usize, f32)],
 ) -> (f64, f32) {
-    let (y0, y1, fy) = tap(y, model.height, model.factor);
+    let row_tap = tap(y, model.height, model.factor);
     let a = model.airlight;
     let mut sum = 0f64;
     let mut min = f32::INFINITY;
-    for (x, (px, &(x0, x1, fx))) in row
+    for (x, (px, &column_tap)) in row
         .as_chunks_mut::<3>()
         .0
         .iter_mut()
         .zip(columns)
         .enumerate()
     {
-        let t = model.transmission(x0, x1, fx, y0, y1, fy, px);
+        let t = model.transmission(column_tap, row_tap, px);
         for (v, &a) in px.iter_mut().zip(&a) {
             *v = (*v - a) / t + a;
         }
@@ -325,16 +325,14 @@ impl Model {
     /// at or above zero. Without it a leaf thinner than a reduced
     /// pixel takes the sky's transmission from the grid around it and
     /// comes out below black, as a color the sky never had.
+    ///
+    /// Each tap is [`tap`]'s: the two grid cells and the fraction
+    /// between them, on that axis.
     #[inline]
-    #[allow(clippy::too_many_arguments)]
     fn transmission(
         &self,
-        x0: usize,
-        x1: usize,
-        fx: f32,
-        y0: usize,
-        y1: usize,
-        fy: f32,
+        (x0, x1, fx): (usize, usize, f32),
+        (y0, y1, fy): (usize, usize, f32),
         px: &[f32; 3],
     ) -> f32 {
         let w = self.width;

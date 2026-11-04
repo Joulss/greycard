@@ -940,7 +940,7 @@ pub mod testing {
         iso: u16,
         model: &str,
     ) {
-        write_dng_shot(path, samples, width, height, shutter, iso, model, None);
+        write_dng_shot(path, samples, (width, height), shutter, iso, model, None);
     }
 
     /// The light all round a camera at pixel `(x, y)` and channel `c`
@@ -949,7 +949,6 @@ pub mod testing {
     /// sphere of directions, a cell about a hundredth of a radian, and
     /// a gentle gradient, nothing near the clip. Frames of it are a
     /// panorama a camera turned exactly about its lens.
-    #[allow(clippy::too_many_arguments)]
     pub fn turned(
         x: usize,
         y: usize,
@@ -991,12 +990,10 @@ pub mod testing {
 
     /// [`write_dng_at`] with the focal length in millimeters the EXIF
     /// says, if any.
-    #[allow(clippy::too_many_arguments)]
     pub fn write_dng_shot(
         path: &Path,
         samples: Vec<u16>,
-        width: usize,
-        height: usize,
+        (width, height): (usize, usize),
         shutter: (u32, u32),
         iso: u16,
         model: &str,

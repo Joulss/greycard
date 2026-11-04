@@ -77,7 +77,7 @@ pub fn repair(
             let color = pattern.color_at(y, x);
             [2, MAX_REACH]
                 .into_iter()
-                .find_map(|reach| median(read, width, height, pattern, bad, color, x, y, reach))
+                .find_map(|reach| median(read, (width, height), pattern, bad, color, (x, y), reach))
                 .map(|v| (i, v))
         })
         .collect();
@@ -89,16 +89,13 @@ pub fn repair(
 
 /// The median of the good photosites of `color` within `reach` of
 /// (`x`, `y`), or `None` when there is none.
-#[allow(clippy::too_many_arguments)]
 fn median(
     samples: &[f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     pattern: &CfaPattern,
     bad: &[bool],
     color: CfaColor,
-    x: usize,
-    y: usize,
+    (x, y): (usize, usize),
     reach: usize,
 ) -> Option<f32> {
     let mut found = [0.0f32; (2 * MAX_REACH + 1) * (2 * MAX_REACH + 1)];

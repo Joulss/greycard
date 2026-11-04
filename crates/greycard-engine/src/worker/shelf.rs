@@ -339,11 +339,9 @@ impl Shelf {
     /// base found is taken for the edit's: the edits are otherwise the
     /// same, and a base made without a learned tier does not depend on
     /// it.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn holds(
         &self,
-        path: &Path,
-        stat: &Stat,
+        (path, stat): (&Path, &Stat),
         edit: &Edit,
         seeded: bool,
         turn: u8,
@@ -736,7 +734,7 @@ mod tests {
         strength.noise.learned_strength = 0.4;
         assert!(shelf.put(a.clone(), base(&strength, 1, 32, 24)));
         let holds = |shelf: &Shelf, edit: &Edit, seed: bool, turn: u8, has_gpu: bool| {
-            shelf.holds(&a.path, &a.stat, edit, seed, turn, has_gpu, None)
+            shelf.holds((&a.path, &a.stat), edit, seed, turn, has_gpu, None)
         };
         assert!(holds(&shelf, &strength, false, 1, true));
         assert!(
@@ -750,15 +748,15 @@ mod tests {
             modified: 8,
             ..a.stat.clone()
         };
-        assert!(!shelf.holds(&a.path, &other, &strength, false, 1, true, None));
-        assert!(!shelf.holds(Path::new("b"), &a.stat, &strength, false, 1, true, None));
+        assert!(!shelf.holds((&a.path, &other), &strength, false, 1, true, None));
+        assert!(!shelf.holds((Path::new("b"), &a.stat), &strength, false, 1, true, None));
 
         let mut gpu = base(&edit, 0, 32, 24);
         gpu.kept.as_if_on_device(|s| matches!(s, Stage::Ca(_)));
         assert!(shelf.put(file("g"), gpu));
         let g = file("g");
-        assert!(shelf.holds(&g.path, &g.stat, &edit, false, 0, true, None));
-        assert!(!shelf.holds(&g.path, &g.stat, &edit, false, 0, false, None));
+        assert!(shelf.holds((&g.path, &g.stat), &edit, false, 0, true, None));
+        assert!(!shelf.holds((&g.path, &g.stat), &edit, false, 0, false, None));
 
         // Under a tier the strength is the base's blend.
         let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
@@ -799,8 +797,7 @@ mod tests {
         swap_base(
             &mut held,
             &mut shelf,
-            Some(file("b")),
-            Some(&file("a")),
+            (Some(file("b")), Some(&file("a"))),
             &edit,
             0,
             None,
@@ -814,8 +811,7 @@ mod tests {
         swap_base(
             &mut held,
             &mut shelf,
-            Some(file("a")),
-            Some(&file("a")),
+            (Some(file("a")), Some(&file("a"))),
             &edit,
             0,
             None,
@@ -825,7 +821,7 @@ mod tests {
 
         // A file that cannot be read for its stat is neither shelved
         // nor taken.
-        swap_base(&mut held, &mut shelf, None, None, &edit, 0, None, None);
+        swap_base(&mut held, &mut shelf, (None, None), &edit, 0, None, None);
         assert!(held.is_none());
         assert_eq!(shelf.len(), 0);
     }
@@ -884,7 +880,14 @@ mod tests {
             1
         );
         assert!(shelf.take(&file("a"), &warmer(), 0, true, None).is_none());
-        assert!(shelf.holds(Path::new("a"), &file("a").stat, &edit, false, 0, true, None));
+        assert!(shelf.holds(
+            (Path::new("a"), &file("a").stat),
+            &edit,
+            false,
+            0,
+            true,
+            None
+        ));
         // Turned by a paste: no open takes the unturned base.
         assert_eq!(
             shelf.drop_changed(Path::new("a"), Some(&now(vec![after], 1)), None),

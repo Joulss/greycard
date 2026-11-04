@@ -84,7 +84,6 @@ fn stack_default_output(first: &std::path::Path) -> PathBuf {
 /// The color tags and the EXIF come from the frame the merge was
 /// registered onto, since the result is in its geometry and at its
 /// white balance.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stack_files(
     files: &[PathBuf],
     output: Option<&std::path::Path>,
@@ -230,9 +229,7 @@ pub(crate) fn stack_files(
         .map(|n| n.to_string_lossy().into_owned());
     write_stack(
         merged,
-        frame,
-        metadata,
-        balance,
+        (frame, metadata, balance),
         format,
         &out_path,
         source_name.as_deref(),
@@ -305,12 +302,16 @@ fn stack_preview(
 /// Split out of [`stack_files`] so that a test can drive it without a
 /// RAW file on disk, since what it does — the gains, the matrix, the
 /// tags — is the part with something to get wrong.
-#[allow(clippy::too_many_arguments)]
+///
+/// The frame the merge was registered onto comes with its metadata
+/// and its white balance, as `stack_files` read them.
 fn write_stack(
     merged: CameraImage,
-    frame: &RawFrame,
-    metadata: &greycard_core::decode::rawler_backend::RawMetadata,
-    balance: &greycard_core::WhiteBalance,
+    (frame, metadata, balance): (
+        &RawFrame,
+        &greycard_core::decode::rawler_backend::RawMetadata,
+        &greycard_core::WhiteBalance,
+    ),
     format: StackFormat,
     out_path: &std::path::Path,
     source_name: Option<&str>,
@@ -569,9 +570,7 @@ mod tests {
         let dng = dir.join("stack.dng");
         write_stack(
             merged.clone(),
-            &frame,
-            &metadata,
-            balance,
+            (&frame, &metadata, balance),
             StackFormat::Dng,
             &dng,
             None,
@@ -593,9 +592,7 @@ mod tests {
         let tiff = dir.join("stack.tif");
         write_stack(
             merged.clone(),
-            &frame,
-            &metadata,
-            balance,
+            (&frame, &metadata, balance),
             StackFormat::Tiff,
             &tiff,
             None,

@@ -1482,13 +1482,25 @@ pub struct Warped {
     pub inside: Vec<f32>,
 }
 
-/// Frame `k` resampled over `rect` of a canvas at `step` canvas pixels
-/// a pixel (one for the canvas itself), through its lens and its
-/// placement, each channel at its own place, by `kernel`; each
-/// pixel's brightness multiplied by `gain`'s channel. A pixel whose
-/// green light falls within `margin` sensor pixels of the edge, or off
-/// it, is not the frame's.
-#[allow(clippy::too_many_arguments)]
+/// How [`warp`] resamples a frame.
+#[derive(Debug, Clone, Copy)]
+pub struct Resampling {
+    /// Canvas pixels a pixel: one for the canvas itself.
+    pub step: f64,
+    pub kernel: Kernel,
+    /// Each channel's multiplier on the pixel's brightness.
+    pub gain: [f32; 3],
+    /// Sensor pixels from the edge within which the green light is
+    /// not the frame's.
+    pub margin: f64,
+}
+
+/// Frame `k` resampled over `rect` of a canvas at the [`Resampling`]'s
+/// `step` canvas pixels a pixel (one for the canvas itself), through
+/// its lens and its placement, each channel at its own place, by its
+/// `kernel`; each pixel's brightness multiplied by its `gain`'s
+/// channel. A pixel whose green light falls within its `margin` sensor
+/// pixels of the edge, or off it, is not the frame's.
 pub fn warp(
     source: &Source<'_>,
     placement: &Placement,
@@ -1496,11 +1508,14 @@ pub fn warp(
     canvas: &Canvas,
     k: usize,
     rect: Rect,
-    step: f64,
-    kernel: Kernel,
-    gain: [f32; 3],
-    margin: f64,
+    resampling: Resampling,
 ) -> Warped {
+    let Resampling {
+        step,
+        kernel,
+        gain,
+        margin,
+    } = resampling;
     let (sw, sh) = (lens.width as f64, lens.height as f64);
     // A distortion's polynomial folds back past some radius, and a
     // corrected point far outside the frame would find light on the
@@ -1991,10 +2006,12 @@ mod tests {
             &canvas,
             1,
             boxes[1],
-            1.0,
-            Kernel::Bilinear,
-            [1.0; 3],
-            2.0,
+            Resampling {
+                step: 1.0,
+                kernel: Kernel::Bilinear,
+                gain: [1.0; 3],
+                margin: 2.0,
+            },
         );
         let mut checked = 0;
         for (n, p) in warped.rgb.chunks(3).enumerate() {

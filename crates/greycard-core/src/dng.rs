@@ -99,10 +99,8 @@ pub fn write_linear_dng<W: Write + Seek>(
         out,
         frame,
         &raw,
-        compression,
-        &CompressionParams::default(),
+        (compression, &CompressionParams::default()),
         gains,
-        headroom,
         options,
         None,
     )
@@ -177,13 +175,14 @@ pub fn write_merged_dng<W: Write + Seek>(
         out,
         frame,
         &raw,
-        compression,
-        &CompressionParams {
-            deflate_float_bits: bits,
-            ..CompressionParams::default()
-        },
+        (
+            compression,
+            &CompressionParams {
+                deflate_float_bits: bits,
+                ..CompressionParams::default()
+            },
+        ),
         gains,
-        headroom,
         options,
         Some(merged),
     )
@@ -191,19 +190,19 @@ pub fn write_merged_dng<W: Write + Seek>(
 
 /// The container around `raw`: the preview, the base tags, the
 /// metadata, the orientation, the white, the baseline, the color
-/// matrices, and a merge's own tags.
-#[allow(clippy::too_many_arguments)]
+/// matrices, and a merge's own tags. `packing` is how the samples are
+/// stored; the headroom is the options', as the caller checked it.
 fn write_container<W: Write + Seek>(
     out: W,
     frame: &RawFrame,
     raw: &RawImage,
-    compression: DngCompression,
-    params: &CompressionParams,
+    packing: (DngCompression, &CompressionParams),
     gains: [f32; 3],
-    headroom: f32,
     options: &LinearDngOptions<'_>,
     merged: Option<&Merged<'_>>,
 ) -> Result<()> {
+    let (compression, params) = packing;
+    let headroom = options.headroom.unwrap_or(1.0);
     let calibrations = calibration_pair(&frame.calibrations);
     if calibrations.is_empty() {
         return Err(Error::NoCalibration);

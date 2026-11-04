@@ -852,10 +852,12 @@ fn laid(
                 &canvas,
                 k,
                 rect,
-                STEP as f64,
-                Kernel::Bilinear,
-                [1.0; 3],
-                1.5 * STEP as f64,
+                geo::Resampling {
+                    step: STEP as f64,
+                    kernel: Kernel::Bilinear,
+                    gain: [1.0; 3],
+                    margin: 1.5 * STEP as f64,
+                },
             )
         })
         .collect();
@@ -1001,10 +1003,12 @@ fn laid(
             &canvas,
             k,
             rect,
-            1.0,
-            options.kernel,
-            g,
-            0.0,
+            geo::Resampling {
+                step: 1.0,
+                kernel: options.kernel,
+                gain: g,
+                margin: 0.0,
+            },
         );
         drop(rgb);
         let mut tile = warped.rgb;
@@ -1521,7 +1525,7 @@ mod tests {
                 let samples = mosaic_of(W, H, 1.0, Noise::ASSUMED, 40 + k as u64, |x, y, c| {
                     turned(x, y, c, W, H, FOCAL, yaw)
                 });
-                write_dng_shot(&path, samples, W, H, (1, 100), 100, "Pano", Some(30));
+                write_dng_shot(&path, samples, (W, H), (1, 100), 100, "Pano", Some(30));
                 path
             })
             .collect();
@@ -1824,8 +1828,7 @@ mod tests {
             mosaic_of(W, H, 1.0, Noise::ASSUMED, 3, |x, y, c| {
                 turned(x, y, c, W, H, FOCAL, 0.3)
             }),
-            W,
-            H,
+            (W, H),
             (1, 100),
             100,
             "Another",
@@ -1843,8 +1846,7 @@ mod tests {
             mosaic_of(W / 2, H, 1.0, Noise::ASSUMED, 3, |x, y, c| {
                 turned(x, y, c, W / 2, H, FOCAL, 0.0)
             }),
-            W / 2,
-            H,
+            (W / 2, H),
             (1, 100),
             100,
             "Pano",
@@ -1864,8 +1866,7 @@ mod tests {
             mosaic_of(W, H, 1.0, Noise::ASSUMED, 4, |x, y, c| {
                 turned(x, y, c, W, H, FOCAL, 0.3)
             }),
-            W,
-            H,
+            (W, H),
             (1, 100),
             100,
             "Pano",

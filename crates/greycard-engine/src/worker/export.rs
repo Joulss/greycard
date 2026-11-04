@@ -11,7 +11,6 @@ use crate::walk::NoLearned;
 /// window's points (on the device too) are as they were for its next
 /// develop. The export's list runs on the CPU, so it resumes only from
 /// a point the CPU made. What of the edit was left out.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn export_open(
     edit: &Edit,
     turn: u8,

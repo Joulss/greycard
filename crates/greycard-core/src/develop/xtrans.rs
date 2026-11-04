@@ -264,7 +264,7 @@ fn interior(
     bands.par_iter().zip(slices).for_each(|(band, slice)| {
         let mut scratch = Scratch::new(passes);
         for left in (3..width - 19).step_by(TS - 16) {
-            scratch.tile(samples, width, height, layout, band, left, slice);
+            scratch.tile(samples, (width, height), layout, band, left, slice);
         }
     });
 }
@@ -315,12 +315,11 @@ impl Scratch {
     /// One tile at (`band.top`, `left`), written into `out`, the band's
     /// rows. The loops index as the reference's do, so the two read
     /// alike.
-    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    #[allow(clippy::needless_range_loop)]
     fn tile(
         &mut self,
         samples: &[f32],
-        width: usize,
-        height: usize,
+        (width, height): (usize, usize),
         layout: &Layout,
         band: &Band,
         left: usize,

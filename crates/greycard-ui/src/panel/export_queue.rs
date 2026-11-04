@@ -629,9 +629,15 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     #[cfg(test)]
     let sent: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
     let stems = crate::panel::deliver::set_stems(st, &frames, &name);
-    let Some(set) = crate::panel::deliver::start_set(
-        st, app, frames, folder, sub, settings, on_exists, preset, stems,
-    ) else {
+    let set = crate::panel::deliver::Pending {
+        frames,
+        folder,
+        sub,
+        settings,
+        preset,
+        stems,
+    };
+    let Some(set) = crate::panel::deliver::start_set(st, app, set, on_exists) else {
         st.work.queue_run = None;
         show_queue(st, app);
         return;

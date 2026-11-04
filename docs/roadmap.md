@@ -836,9 +836,10 @@ clears or a tester asks for it.
       recovers a poisoned mutex, `?` with context where a Result
       already flows, and the count printed by the size report so it
       only falls (an outside review, 2026-11-02)
-- [ ] The 52 `too_many_arguments` allows looked at one by one, a
-      struct where the arguments are one thing (an outside review,
-      2026-11-02)
+- [ ] The eight `too_many_arguments` allows a module-wide grouping
+      would take: `worker::masks::On` moved into `ai` for the four
+      rasters, the sync's profiles-and-probe pair, a row request
+      through `rows` (§561)
 - [ ] The sidecar written at the oldest schema that holds the edit,
       so an older build reads a newer build's file until a field it
       lacks is used; today a newer version is refused outright

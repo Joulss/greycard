@@ -522,6 +522,7 @@ pub struct Rendered {
 ///
 /// `loader` reads the look's table the edit names, as the viewport's
 /// is read.
+// The picture, the edit and its loader, and each plane the develop made.
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     image: &WorkingImage,
@@ -566,6 +567,7 @@ pub fn render(
 /// `detail` is the masks' bands ([`crate::detail::DetailPlanes`])
 /// brought into the frame as `image` was, the same size as it: they
 /// are resized here with the picture, by the same filter.
+// The picture, the edit and its loader, and each plane the develop made.
 #[allow(clippy::too_many_arguments)]
 pub fn render_framed(
     image: &WorkingImage,

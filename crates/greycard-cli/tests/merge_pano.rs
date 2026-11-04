@@ -34,7 +34,7 @@ fn frames(dir: &Path, yaws: &[f64]) -> Vec<PathBuf> {
             let samples = mosaic_of(W, H, 1.0, Noise::ASSUMED, 20 + k as u64, |x, y, c| {
                 turned(x, y, c, W, H, 800.0, yaw)
             });
-            write_dng_shot(&path, samples, W, H, (1, 100), 100, "Pano", Some(30));
+            write_dng_shot(&path, samples, (W, H), (1, 100), 100, "Pano", Some(30));
             path
         })
         .collect()

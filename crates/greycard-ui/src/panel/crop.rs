@@ -666,8 +666,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 dx * scale / zoom / pw,
                 dy * scale / zoom / ph,
                 ratio,
-                sw,
-                sh,
+                (sw, sh),
             );
             set_crop(&app, Some(moved));
             app.window().request_redraw();

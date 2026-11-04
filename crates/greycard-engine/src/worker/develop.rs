@@ -17,6 +17,7 @@ use crate::walk::{Buf, NoHold, NoLearned, Place, walk};
 /// back with its half floats. A device that declines a picture runs
 /// that run on the CPU with its context kept; any other device error
 /// lets the context go for the session.
+// The job, the frame kept, and each model, device, and channel, held apart.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn develop_job(
     input: &Input,
@@ -252,19 +253,19 @@ pub(super) fn develop_job(
         Developed::Halves(h) => (h.width, h.height),
     };
     let seconds = start.elapsed().as_secs_f64();
-    note_developed(
+    note_developed(&DevelopLog {
         width,
         height,
         from,
         ca,
-        &learned,
-        &fills,
-        &stages,
-        detail_ran,
-        walked.dehaze.and(dehaze_ran),
+        learned: &learned,
+        fills: &fills,
+        stages: &stages,
+        detail: detail_ran,
+        dehazed: walked.dehaze.and(dehaze_ran),
         sharpened,
-        seconds,
-    );
+        total: seconds,
+    });
     let outcome = Outcome::Developed {
         generation,
         turn,
@@ -352,32 +353,30 @@ enum BaseFrom {
     Shelf,
 }
 
+/// What a develop's log line reads: the picture's size, what was made
+/// anew and what was kept, and the seconds in all.
+struct DevelopLog<'a> {
+    width: u32,
+    height: u32,
+    from: BaseFrom,
+    ca: Option<(CaRan, f64)>,
+    learned: &'a LearnedReport,
+    fills: &'a FillReport,
+    stages: &'a Stages,
+    detail: Option<DetailRan>,
+    dehazed: Option<DehazeRan>,
+    sharpened: Option<Sharpened>,
+    total: f64,
+}
+
 /// One line for a develop: what was made anew and what was kept,
 /// and the seconds, the same the outcome carries. A model that is
 /// missing is a state, named here and offered by the UI, not warned
 /// on every develop; one that would not load is warned where the
 /// load fails. A fill that failed is warned here, with its name.
-#[allow(clippy::too_many_arguments)]
-fn note_developed(
-    width: u32,
-    height: u32,
-    from: BaseFrom,
-    ca: Option<(CaRan, f64)>,
-    learned: &LearnedReport,
-    fills: &FillReport,
-    stages: &Stages,
-    detail: Option<DetailRan>,
-    dehazed: Option<DehazeRan>,
-    sharpened: Option<Sharpened>,
-    total: f64,
-) {
-    warn_failed_fills(fills);
-    tracing::info!(
-        "{}",
-        developed_line(
-            width, height, from, ca, learned, fills, stages, detail, dehazed, sharpened, total
-        )
-    );
+fn note_developed(log: &DevelopLog<'_>) {
+    warn_failed_fills(log.fills);
+    tracing::info!("{}", developed_line(log));
 }
 
 /// The learned denoiser's part of a develop's line: how its answer
@@ -427,20 +426,20 @@ pub(super) fn warn_failed_fills(fills: &FillReport) {
 /// (a fresh base's own, the retouch, and the picture's way to the
 /// viewport: its upload to the device or its half floats), then the
 /// fills and the ops after the base, and the total.
-#[allow(clippy::too_many_arguments)]
-fn developed_line(
-    width: u32,
-    height: u32,
-    from: BaseFrom,
-    ca: Option<(CaRan, f64)>,
-    learned: &LearnedReport,
-    fills: &FillReport,
-    stages: &Stages,
-    detail: Option<DetailRan>,
-    dehazed: Option<DehazeRan>,
-    sharpened: Option<Sharpened>,
-    total: f64,
-) -> String {
+fn developed_line(log: &DevelopLog<'_>) -> String {
+    let &DevelopLog {
+        width,
+        height,
+        from,
+        ca,
+        learned,
+        fills,
+        stages,
+        detail,
+        dehazed,
+        sharpened,
+        total,
+    } = log;
     let mut parts: Vec<String> = Vec::new();
     parts.push(
         match from {
@@ -523,19 +522,19 @@ mod tests {
             ("guide", 0.02),
             ("upload", 0.12),
         ];
-        let line = developed_line(
-            8192,
-            5464,
-            BaseFrom::Made,
-            Some((CaRan::Gpu, 0.25)),
-            &LearnedReport::Off,
-            &FillReport::default(),
-            &stages,
-            None,
-            None,
-            Some(Sharpened::Gpu),
-            2.5,
-        );
+        let line = developed_line(&DevelopLog {
+            width: 8192,
+            height: 5464,
+            from: BaseFrom::Made,
+            ca: Some((CaRan::Gpu, 0.25)),
+            learned: &LearnedReport::Off,
+            fills: &FillReport::default(),
+            stages: &stages,
+            detail: None,
+            dehazed: None,
+            sharpened: Some(Sharpened::Gpu),
+            total: 2.5,
+        });
         assert_eq!(
             line,
             "developed 8192x5464: base made, CA on the GPU 0.25 s, prepare 0.31 s, \
@@ -543,38 +542,38 @@ mod tests {
              sharpen on the GPU, total 2.50 s"
         );
 
-        let line = developed_line(
-            8192,
-            5464,
-            BaseFrom::Shelf,
-            None,
-            &LearnedReport::Kept,
-            &FillReport::default(),
-            &vec![("upload", 0.118)],
-            None,
-            None,
-            Some(Sharpened::Gpu),
-            0.4,
-        );
+        let line = developed_line(&DevelopLog {
+            width: 8192,
+            height: 5464,
+            from: BaseFrom::Shelf,
+            ca: None,
+            learned: &LearnedReport::Kept,
+            fills: &FillReport::default(),
+            stages: &vec![("upload", 0.118)],
+            detail: None,
+            dehazed: None,
+            sharpened: Some(Sharpened::Gpu),
+            total: 0.4,
+        });
         assert_eq!(
             line,
             "developed 8192x5464: base from the shelf, denoiser kept, upload 0.12 s, \
              sharpen on the GPU, total 0.40 s"
         );
 
-        let line = developed_line(
-            300,
-            200,
-            BaseFrom::Kept,
-            None,
-            &LearnedReport::Off,
-            &FillReport::default(),
-            &Stages::new(),
-            Some(DetailRan::Cpu(0.5)),
-            Some(DehazeRan::Cpu),
-            Some(Sharpened::Cpu),
-            0.75,
-        );
+        let line = developed_line(&DevelopLog {
+            width: 300,
+            height: 200,
+            from: BaseFrom::Kept,
+            ca: None,
+            learned: &LearnedReport::Off,
+            fills: &FillReport::default(),
+            stages: &Stages::new(),
+            detail: Some(DetailRan::Cpu(0.5)),
+            dehazed: Some(DehazeRan::Cpu),
+            sharpened: Some(Sharpened::Cpu),
+            total: 0.75,
+        });
         assert_eq!(
             line,
             "developed 300x200: base kept, local contrast 0.50 s, dehaze, sharpen, total 0.75 s"

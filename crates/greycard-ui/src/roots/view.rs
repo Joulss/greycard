@@ -240,6 +240,7 @@ pub(crate) fn open_nothing(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
 /// in the new list, the folders
 /// looked at again, and the bar put up if the read is slow. `order` is
 /// what it is read in.
+// The view, its source, its count and time asked, and what the read keeps.
 #[allow(clippy::too_many_arguments)]
 fn send_view(
     state: &Rc<Shared>,

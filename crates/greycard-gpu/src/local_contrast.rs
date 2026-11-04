@@ -529,13 +529,10 @@ impl Passes<'_> {
 
     /// The box mean of `src` into `dst` by way of `tmp`, on a plane
     /// of `size`; `square` sums the squares.
-    #[allow(clippy::too_many_arguments)]
     fn box_mean(
         &self,
         pass: &mut wgpu::ComputePass<'_>,
-        src: &wgpu::Texture,
-        tmp: &wgpu::Texture,
-        dst: &wgpu::Texture,
+        (src, tmp, dst): (&wgpu::Texture, &wgpu::Texture, &wgpu::Texture),
         size: [u32; 2],
         radius: u32,
         square: bool,
@@ -571,7 +568,6 @@ impl Passes<'_> {
     /// size: the averaged intercept left in `a` and the averaged slope
     /// in `b`, for the base `a + b * input` to be taken where it is
     /// read.
-    #[allow(clippy::too_many_arguments)]
     fn guided_filter(
         &self,
         pass: &mut wgpu::ComputePass<'_>,
@@ -587,8 +583,8 @@ impl Passes<'_> {
             _ => unreachable!("the run's needs made the slope and intercept"),
         };
         // a: the mean; b: the mean of the squares.
-        self.box_mean(pass, input, &work.tmp, a, size, radius, false);
-        self.box_mean(pass, input, &work.tmp, b, size, radius, true);
+        self.box_mean(pass, (input, &work.tmp, a), size, radius, false);
+        self.box_mean(pass, (input, &work.tmp, b), size, radius, true);
         // b: the slope; a: the intercept.
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let coef = self
@@ -627,8 +623,8 @@ impl Passes<'_> {
         );
         pass.dispatch_workgroups(groups(size[0], 16), groups(size[1], 16), 1);
         // Each averaged over the windows.
-        self.box_mean(pass, b, &work.tmp, b, size, radius, false);
-        self.box_mean(pass, a, &work.tmp, a, size, radius, false);
+        self.box_mean(pass, (b, &work.tmp, b), size, radius, false);
+        self.box_mean(pass, (a, &work.tmp, a), size, radius, false);
     }
 
     /// The reference's `coarse_guided_filter`'s stages on the grid:
@@ -693,9 +689,9 @@ impl Passes<'_> {
         // A window's pixels as a share of its blocks, then the
         // filter's first stages on the grid.
         let r = grid.radius;
-        self.box_mean(pass, &grid.share, &grid.tmp, &grid.held, size, r, false);
-        self.box_mean(pass, &grid.mean, &grid.tmp, &grid.mean, size, r, false);
-        self.box_mean(pass, &grid.sq, &grid.tmp, &grid.sq, size, r, false);
+        self.box_mean(pass, (&grid.share, &grid.tmp, &grid.held), size, r, false);
+        self.box_mean(pass, (&grid.mean, &grid.tmp, &grid.mean), size, r, false);
+        self.box_mean(pass, (&grid.sq, &grid.tmp, &grid.sq), size, r, false);
         let coef = self
             .ctx
             .device
@@ -736,8 +732,8 @@ impl Passes<'_> {
         pass.set_pipeline(&p.grid_coefficients);
         pass.set_bind_group(0, &coef, &[slot]);
         pass.dispatch_workgroups(groups(size[0], 16), groups(size[1], 16), 1);
-        self.box_mean(pass, &grid.sq, &grid.tmp, &grid.sq, size, r, false);
-        self.box_mean(pass, &grid.mean, &grid.tmp, &grid.mean, size, r, false);
+        self.box_mean(pass, (&grid.sq, &grid.tmp, &grid.sq), size, r, false);
+        self.box_mean(pass, (&grid.mean, &grid.tmp, &grid.mean), size, r, false);
         pass.set_pipeline(&p.grid_divide);
         pass.set_bind_group(0, &coef, &[slot]);
         pass.dispatch_workgroups(groups(size[0], 16), groups(size[1], 16), 1);
@@ -1011,9 +1007,7 @@ impl Context {
                 for _ in 0..2 {
                     passes.box_mean(
                         &mut pass,
-                        &work.log,
-                        &work.tmp,
-                        &work.log,
+                        (&work.log, &work.tmp, &work.log),
                         size,
                         texture_radius as u32,
                         false,

@@ -433,22 +433,6 @@ pub fn max_scroll_in(
     Layout::square(cell, columns, count, heads).max_scroll(height, top)
 }
 
-/// [`reveal`] under `heads`, over square cells.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub fn reveal_in(
-    offset: f32,
-    height: f32,
-    cell: f32,
-    columns: i32,
-    count: i32,
-    selected: i32,
-    top: f32,
-    heads: &[i32],
-) -> f32 {
-    Layout::square(cell, columns, count, heads).reveal(offset, height, selected, top)
-}
-
 /// How far a cell's picture is inset from the cell's edges, logical
 /// pixels: the theme's `space-1`, which the `.slint` file insets it by.
 pub const INSET: f32 = 4.0;
@@ -1145,10 +1129,11 @@ mod tests {
         // Revealing the second run's first frame from the foot brings
         // its heading in above it.
         let max = max_scroll_in(250.0, cell, cols, count, 0.0, &heads);
-        let to = reveal_in(max, 250.0, cell, cols, count, 5, 0.0, &heads);
+        let layout = Layout::square(cell, cols, count, &heads);
+        let to = layout.reveal(max, 250.0, 5, 0.0);
         assert_eq!(to, third - HEAD - PAD);
         // A frame below the fold comes up against the foot.
-        let down = reveal_in(0.0, 250.0, cell, cols, count, 7, 0.0, &heads);
+        let down = layout.reveal(0.0, 250.0, 7, 0.0);
         assert_eq!(down, (third + cell + LABEL + PAD - 250.0).min(max));
     }
 

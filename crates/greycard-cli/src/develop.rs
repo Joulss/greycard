@@ -818,6 +818,7 @@ fn correct_lens(
 ///
 /// `db` is the lens database [`lens_database`] read before the decode,
 /// or none when no profile is asked for.
+// The picture, its camera, the lens, each op's options, and what was measured.
 #[allow(clippy::too_many_arguments)]
 fn correct_and_sharpen(
     image: &mut WorkingImage,
@@ -998,6 +999,7 @@ struct After {
     sharpen: Option<sharpen::SharpenOptions>,
 }
 
+// The file, its outputs, and each flag group the command line parsed apart.
 #[allow(clippy::too_many_arguments)]
 fn run_develop(
     file: &std::path::Path,

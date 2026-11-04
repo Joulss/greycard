@@ -1560,18 +1560,20 @@ pub(crate) fn set_stems(st: &State, frames: &SetFrames, pattern: &str) -> Vec<St
 /// into `sub` under each file's folder or beside each file, each under
 /// its stem of `stems` ([`set_stems`]), and hold the set to cancel it.
 /// The set started, or none when there was nothing to send.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_set(
     st: &mut State,
     app: &App,
-    frames: SetFrames,
-    folder: Option<PathBuf>,
-    sub: Option<PathBuf>,
-    settings: export::Settings,
+    set: Pending,
     on_exists: export::OnExists,
-    preset: Option<String>,
-    stems: Vec<String>,
 ) -> Option<Arc<queue::Set>> {
+    let Pending {
+        frames,
+        folder,
+        sub,
+        settings,
+        preset,
+        stems,
+    } = set;
     st.work.export_choosing = false;
     // Nothing to write would never be said done: the spinner would run
     // and a batch run would wait for ever.
@@ -1633,44 +1635,32 @@ pub(crate) fn start_set(
     Some(set)
 }
 
-/// A set held while the overwrite sheet asks about the files it would
-/// write over: what `start_set` takes, but the policy, which is the
-/// answer's.
+/// What `start_set` takes, but the policy: a set held while the
+/// overwrite sheet asks about the files it would write over, whose
+/// answer is the policy.
 pub(crate) struct Pending {
-    frames: SetFrames,
-    folder: Option<PathBuf>,
-    sub: Option<PathBuf>,
-    settings: export::Settings,
-    preset: Option<String>,
-    stems: Vec<String>,
+    pub(crate) frames: SetFrames,
+    pub(crate) folder: Option<PathBuf>,
+    pub(crate) sub: Option<PathBuf>,
+    pub(crate) settings: export::Settings,
+    pub(crate) preset: Option<String>,
+    pub(crate) stems: Vec<String>,
 }
 
 /// `start_set`, unless the policy is Overwrite and some of the files
 /// the set would write are there: then the overwrite sheet names every
 /// one of them and the set waits for its answer. Only an export the
 /// editor names the files of comes here; a file the desktop's chooser
-/// named was confirmed in the chooser.
-#[allow(clippy::too_many_arguments)]
-fn start_or_ask(
-    st: &mut State,
-    app: &App,
-    frames: SetFrames,
-    folder: Option<PathBuf>,
-    sub: Option<PathBuf>,
-    settings: export::Settings,
-    on_exists: export::OnExists,
-    preset: Option<String>,
-    name: String,
-) {
-    // Named once: the question and the set take the same names.
-    let stems = set_stems(st, &frames, &name);
+/// named was confirmed in the chooser. The set's stems are named once,
+/// so the question and the set take the same names.
+fn start_or_ask(st: &mut State, app: &App, set: Pending, on_exists: export::OnExists) {
     if on_exists == export::OnExists::Overwrite {
         let there: Vec<PathBuf> = queue::named_as(
-            &set_sources(&frames),
-            &stems,
-            folder.as_deref(),
-            sub.as_deref(),
-            settings.format,
+            &set_sources(&set.frames),
+            &set.stems,
+            set.folder.as_deref(),
+            set.sub.as_deref(),
+            set.settings.format,
             on_exists,
         )
         .into_iter()
@@ -1693,20 +1683,11 @@ fn start_or_ask(
             app.set_status(format!("{title}: overwrite?").into());
             // One question at a time: another Export waits for this.
             st.work.export_choosing = true;
-            st.work.export_pending = Some(Pending {
-                frames,
-                folder,
-                sub,
-                settings,
-                preset,
-                stems,
-            });
+            st.work.export_pending = Some(set);
             return;
         }
     }
-    start_set(
-        st, app, frames, folder, sub, settings, on_exists, preset, stems,
-    );
+    start_set(st, app, set, on_exists);
 }
 
 /// The overwrite sheet's answer: 0 no, 1 keep both (the set under
@@ -1725,9 +1706,7 @@ fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
             return;
         }
     };
-    start_set(
-        st, app, p.frames, p.folder, p.sub, p.settings, on_exists, p.preset, p.stems,
-    );
+    start_set(st, app, p, on_exists);
 }
 
 /// The Subfolder field as the export reads it: the line under the
@@ -2321,17 +2300,16 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
     // each, the frame on screen as much as a set.
     if let Some(sub) = sub {
         let mut st = state.borrow_mut();
-        start_or_ask(
-            &mut st,
-            app,
+        let stems = set_stems(&st, &frames, &sheet.name);
+        let set = Pending {
             frames,
-            None,
-            Some(sub),
+            folder: None,
+            sub: Some(sub),
             settings,
-            on_exists,
             preset,
-            sheet.name,
-        );
+            stems,
+        };
+        start_or_ask(&mut st, app, set, on_exists);
         return;
     }
     // Into the folder the Folder row shows, with no dialog, once it
@@ -2352,17 +2330,16 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
             return;
         };
         let mut st = state.borrow_mut();
-        start_or_ask(
-            &mut st,
-            app,
+        let stems = set_stems(&st, &frames, &sheet.name);
+        let set = Pending {
             frames,
-            Some(folder),
-            None,
+            folder: Some(folder),
+            sub: None,
             settings,
-            on_exists,
             preset,
-            sheet.name,
-        );
+            stems,
+        };
+        start_or_ask(&mut st, app, set, on_exists);
     };
     check_folder(app, folder.clone(), move |app, problem| {
         let Some(state) = STATE.with(|s| s.borrow().clone()) else {

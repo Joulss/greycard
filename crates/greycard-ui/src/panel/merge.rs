@@ -1046,7 +1046,7 @@ mod tests {
                 let samples = mosaic_of(w, h, 1.0, Noise::ASSUMED, 70 + k as u64, |x, y, c| {
                     turned(x, y, c, w, h, 800.0, yaw)
                 });
-                write_dng_shot(&p, samples, w, h, (1, 100), 100, "Pano", Some(30));
+                write_dng_shot(&p, samples, (w, h), (1, 100), 100, "Pano", Some(30));
                 p
             })
             .collect();
@@ -1155,7 +1155,7 @@ mod tests {
                 let samples = mosaic_of(w, h, 1.0, Noise::ASSUMED, 70 + k as u64, |x, y, c| {
                     turned(x, y, c, w, h, 800.0, yaw)
                 });
-                write_dng_shot(&p, samples, w, h, (1, 100), 100, "Pano", Some(30));
+                write_dng_shot(&p, samples, (w, h), (1, 100), 100, "Pano", Some(30));
                 p
             })
             .collect();

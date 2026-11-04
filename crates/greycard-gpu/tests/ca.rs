@@ -271,13 +271,11 @@ fn check_votes(
 /// mosaics within [`TOLERANCE`] relative at every sample but for at
 /// most `steps_allowed` guard flips, with the mean under
 /// [`MEAN_TOLERANCE`].
-#[allow(clippy::too_many_arguments)]
 fn check(
     ctx: &Context,
     what: &str,
     mosaic: &[f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     pattern: &CfaPattern,
     options: &CaOptions,
     steps_allowed: usize,
@@ -344,8 +342,7 @@ fn a_synthetic_mosaic_matches_the_reference() {
             &ctx,
             &format!("{w}x{h}"),
             &mosaic,
-            w,
-            h,
+            (w, h),
             &pattern,
             &CaOptions::default(),
             3,
@@ -373,8 +370,7 @@ fn the_other_patterns_and_options_match_the_reference() {
             &ctx,
             name,
             &mosaic,
-            401,
-            321,
+            (401, 321),
             pattern,
             &CaOptions::default(),
             3,
@@ -393,8 +389,7 @@ fn the_other_patterns_and_options_match_the_reference() {
         &ctx,
         "one pass",
         &mosaic,
-        400,
-        320,
+        (400, 320),
         &pattern,
         &one,
         one_pass_steps,
@@ -403,7 +398,7 @@ fn the_other_patterns_and_options_match_the_reference() {
         iterations: 2,
         avoid_color_shift: false,
     };
-    check(&ctx, "no guard", &mosaic, 400, 320, &pattern, &bare, 3);
+    check(&ctx, "no guard", &mosaic, (400, 320), &pattern, &bare, 3);
 }
 
 /// A mosaic with nothing to correct, one too small for a fit, and a
@@ -420,8 +415,7 @@ fn the_degenerate_cases_match_the_reference() {
         &ctx,
         "unaberrated",
         &clean,
-        400,
-        320,
+        (400, 320),
         &pattern,
         &CaOptions::default(),
         3,
@@ -479,8 +473,7 @@ fn a_device_error_is_an_error_not_a_panic() {
         &ctx,
         "300x300 after the error",
         &mosaic,
-        300,
-        300,
+        (300, 300),
         &pattern,
         &CaOptions::default(),
         3,
@@ -1173,7 +1166,7 @@ struct PassVotes {
 /// cast on both paths and within [`VOTE_PIXELS`] and [`VOTE_SHARE`] of
 /// the reference's. A tile's weight is held to [`WEIGHT_SHARE`] where
 /// the vote it is taken from is steady.
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+#[allow(clippy::needless_range_loop)]
 fn check_pass_votes(
     what: &str,
     input: &[f32],
@@ -1480,13 +1473,11 @@ fn check_resample(
 /// resample, so that a vote off does not hide what the pass did); then
 /// the GPU's whole run against its passes chained, and with the guard
 /// against the reference's guard on that chain.
-#[allow(clippy::too_many_arguments)]
 fn check_decomposed(
     ctx: &Context,
     what: &str,
     mosaic: &[f32],
-    width: usize,
-    height: usize,
+    (width, height): (usize, usize),
     pattern: &CfaPattern,
     options: &CaOptions,
     loose: &mut Loose,
@@ -1620,7 +1611,13 @@ fn the_gpu_correction_is_the_reference_over_random_settings() {
             return;
         }
         check_decomposed(
-            &ctx, what, &mosaic, d.width, d.height, &pattern, &d.options, &mut loose,
+            &ctx,
+            what,
+            &mosaic,
+            (d.width, d.height),
+            &pattern,
+            &d.options,
+            &mut loose,
         );
     });
     let share = |n: usize, of: usize| n as f64 / of.max(1) as f64;

@@ -381,8 +381,7 @@ pub(super) fn prefetch(
         return skipped("its base is the open frame's".into());
     }
     if shelf.holds(
-        &n.path,
-        &key.stat,
+        (&n.path, &key.stat),
         &n.edit,
         n.seed_blend,
         turn,

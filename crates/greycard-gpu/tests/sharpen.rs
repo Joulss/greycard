@@ -185,10 +185,7 @@ fn check(
     if mask.max > tolerance {
         check_steep_mask(
             what,
-            image,
-            options,
-            measured,
-            clip_level,
+            (image, options, measured, clip_level),
             cpu_stats.threshold,
             (&cpu_mask, &gpu_mask),
             tolerance,
@@ -248,14 +245,11 @@ const STEEP_SHARE: f64 = 0.01;
 /// within the tolerance; the GPU
 /// value must lie inside that range, so a NaN or a black there still
 /// fails, and the pixels that needed it are capped at
-/// [`STEEP_SHARE`].
-#[allow(clippy::too_many_arguments)]
+/// [`STEEP_SHARE`]. The run is the picture, the options, the measured
+/// radius, and the clip level the sharpen was given.
 fn check_steep_mask(
     what: &str,
-    image: &WorkingImage,
-    options: &SharpenOptions,
-    measured: Option<f32>,
-    clip_level: f32,
+    (image, options, measured, clip_level): (&WorkingImage, &SharpenOptions, Option<f32>, f32),
     threshold: f32,
     (cpu, gpu): (&[f32], &[f32]),
     tolerance: f32,

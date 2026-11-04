@@ -1508,7 +1508,7 @@ pub fn warp_plane(
     edge: Edge,
 ) -> Vec<f32> {
     assert_eq!(src.len(), width * height);
-    warp_interleaved(src, width, height, 1, out_width, out_height, t, edge)
+    warp_interleaved(src, width, height, 1, (out_width, out_height), t, edge)
 }
 
 /// [`warp_plane`] for interleaved samples of any channel count, at
@@ -1523,7 +1523,7 @@ pub fn warp_samples(
     edge: Edge,
 ) -> Vec<f32> {
     assert_eq!(src.len(), width * height * channels);
-    warp_interleaved(src, width, height, channels, width, height, t, edge)
+    warp_interleaved(src, width, height, channels, (width, height), t, edge)
 }
 
 /// [`warp_plane`] for a working-space image, at its own size.
@@ -1533,8 +1533,7 @@ pub fn warp_image(src: &WorkingImage, t: &Transform, edge: Edge) -> WorkingImage
         src.width,
         src.height,
         WorkingImage::CHANNELS,
-        src.width,
-        src.height,
+        (src.width, src.height),
         t,
         edge,
     );
@@ -1553,8 +1552,7 @@ pub fn warp_camera_image(src: &CameraImage, t: &Transform, edge: Edge) -> Camera
         src.width,
         src.height,
         CameraImage::CHANNELS,
-        src.width,
-        src.height,
+        (src.width, src.height),
         t,
         edge,
     );
@@ -1565,17 +1563,17 @@ pub fn warp_camera_image(src: &CameraImage, t: &Transform, edge: Edge) -> Camera
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// `out` is the warped picture's width and height.
 fn warp_interleaved(
     src: &[f32],
     width: usize,
     height: usize,
     channels: usize,
-    out_width: usize,
-    out_height: usize,
+    out: (usize, usize),
     t: &Transform,
     edge: Edge,
 ) -> Vec<f32> {
+    let (out_width, out_height) = out;
     assert_eq!(src.len(), width * height * channels);
     if out_width == 0 || out_height == 0 {
         return Vec::new();

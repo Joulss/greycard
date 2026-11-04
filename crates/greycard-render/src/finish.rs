@@ -670,6 +670,7 @@ pub fn finish_pixel_look(
 /// what §19 shipped and what this now falls back to: the droppers'
 /// [`pick`], which reads one pixel and has no plane, and the tests
 /// that call `finish_pixel` on a color alone.
+// One pixel's own inputs, each a different stage's, in the hot loop.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn finish_pixel_with(
@@ -910,6 +911,7 @@ pub struct Picked {
     pub shown_hue: f32,
 }
 
+// The sections as each caller has them: from an edit or a look, not one Baked.
 #[allow(clippy::too_many_arguments)]
 pub fn pick(
     px: [f32; 3],
@@ -1805,6 +1807,7 @@ pub(crate) fn decode(v: f32) -> f32 {
 ///
 /// The image at the full-size develop's scale: [`finish_reaching`] of
 /// one that is not.
+// The picture, the looks, the pixel maps, and the output: each its own.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_with<T: Copy + Default + Send>(
     image: &WorkingImage,
@@ -1828,6 +1831,7 @@ pub fn finish_with<T: Copy + Default + Send>(
 /// full-size develop, as an export made smaller is: the mean a color
 /// window and the mixer read a hue from spans the same part of the
 /// scene as in the viewport ([`local_ab_at`]).
+// The picture, the looks, the pixel maps, and the output: each its own.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_reaching<T: Copy + Default + Send>(
     image: &WorkingImage,

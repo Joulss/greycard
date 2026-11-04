@@ -2267,6 +2267,7 @@ impl Ai {
     /// had without ONNX Runtime; what cannot be had where the runtime
     /// is off says so, rather than the store's or a load's own word
     /// for a model it could not have run anyway.
+    // `base` to `turn` are `worker::masks::On`'s picture; moving it is its own change.
     #[allow(clippy::too_many_arguments)]
     pub fn raster(
         &mut self,
@@ -2290,6 +2291,7 @@ impl Ai {
     /// whose binning rounds its height: so the reduced develop, the
     /// index's masks and the open frame make the same raster, row for
     /// row, and keep it in the same slot.
+    // `base` to `turn` are `worker::masks::On`'s picture; moving it is its own change.
     #[allow(clippy::too_many_arguments)]
     pub fn raster_for(
         &mut self,
@@ -2320,6 +2322,7 @@ impl Ai {
     /// so it is not tried again until the patches change. A fill over it
     /// still unmade leaves the base's raster: the picture there is the
     /// base's.
+    // `base` to `turn` are `worker::masks::On`'s picture; moving it is its own change.
     #[allow(clippy::too_many_arguments)]
     pub fn raster_retouched(
         &mut self,
@@ -2536,6 +2539,7 @@ impl Ai {
         again
     }
 
+    // `base` to `turn` are `worker::masks::On`'s picture; moving it is its own change.
     #[allow(clippy::too_many_arguments)]
     fn raster_of(
         &mut self,
