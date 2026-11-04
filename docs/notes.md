@@ -566,3 +566,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§551. The non-local means, each pair of offsets once](notes/551-the-non-local-means-each-pair-of-offsets-once.md) (2026-11-05)
 - [§552. A mask or a retouch lit while its row is hovered](notes/552-a-mask-or-a-retouch-lit-while-its-row-is-hovered.md) (2026-11-05)
 - [§553. The viewport's half floats round to nearest](notes/553-the-viewports-half-floats-round-to-nearest.md) (2026-11-05)
+- [§554. The sharpen's threshold to 200](notes/554-the-sharpens-threshold-to-200.md) (2026-11-05)

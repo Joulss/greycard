@@ -1286,6 +1286,34 @@ mod tests {
         assert!(app.get_collapsed_grain() && app.get_collapsed_metadata());
     }
 
+    /// The sharpen's Threshold slider runs 0 to 200 percent in steps of
+    /// one, RawTherapee's range, and shows a value at its top as such.
+    #[test]
+    fn the_sharpen_threshold_runs_to_200_percent() {
+        use crate::testing::settle;
+        use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 4000.0));
+        for (_, _, set) in FOLDS {
+            set(&app, true);
+        }
+        app.set_collapsed_sharpen(false);
+        app.set_sharpen_auto_threshold(false);
+        app.set_sharpen_threshold(2.0);
+        settle(&app);
+        let sliders: Vec<_> = ElementHandle::find_by_accessible_label(&app, "Threshold")
+            .filter(|e| e.accessible_role() == Some(AccessibleRole::Slider))
+            .filter(|e| e.accessible_value().is_some_and(|v| v.ends_with('%')))
+            .collect();
+        assert_eq!(sliders.len(), 1, "the sharpen's Threshold, built once");
+        let s = &sliders[0];
+        assert_eq!(s.accessible_value_minimum(), Some(0.0));
+        assert_eq!(s.accessible_value_maximum(), Some(2.0));
+        assert_eq!(s.accessible_value_step(), Some(0.01));
+        assert_eq!(s.accessible_value().as_deref(), Some("200%"));
+    }
+
     /// One section open at a time: a section opened by its header,
     /// with an open one above it folding, is brought into the panel's
     /// view, its header first, rather than carried up out of sight.

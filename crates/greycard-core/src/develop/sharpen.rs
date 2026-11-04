@@ -86,7 +86,8 @@ pub enum Radius {
 }
 
 /// The local contrast below which a pixel is left alone, in
-/// RawTherapee's units (a fraction; its panel shows a percentage).
+/// RawTherapee's units: a fraction, 0 to 2, its panel's 0 to 200
+/// percent over a hundred, and ours.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Threshold {
     /// Set from the flattest patch in the picture, so that its noise
@@ -1192,6 +1193,58 @@ mod tests {
                 .iter()
                 .zip(&before)
                 .all(|(a, b)| (a - b).abs() < 1e-3)
+        );
+    }
+
+    /// The threshold's units are RawTherapee's: its panel's percentage
+    /// over a hundred, against a contrast taken on L* scaled to 32768
+    /// times `0.0625 / 327.68` (`buildBlendMask` in `rt_algo.cc`). So
+    /// our 0, 50, and 200 percent are its 0, 50, and 200, the same
+    /// blend at every contrast; at 0 both blend everything in full.
+    #[test]
+    fn the_threshold_is_rawtherapees_at_0_50_and_200_percent() {
+        // RawTherapee's, in its units: L 0 to 32768 and the panel's
+        // integer percentage.
+        let rt_blend = |l: &[f32; 5], percent: f32| -> f32 {
+            let t = percent / 100.0;
+            if t == 0.0 {
+                return 1.0;
+            }
+            let scale = 0.0625 / 327.68;
+            let d1 = l[3] - l[1];
+            let d2 = l[4] - l[0];
+            let c = (d1 * d1 + d2 * d2).sqrt() * scale;
+            let x = -16.0 + (16.0 / t) * c;
+            0.5 * (1.0 + x / (1.0 + x * x).sqrt())
+        };
+        // A 5x5 patch, a ramp along x, flat along y: the contrast at
+        // the center reads only the row.
+        for slope in [0.0f32, 0.5, 2.0, 8.0, 15.0, 30.0, 60.0] {
+            let row: [f32; 5] = std::array::from_fn(|x| 50.0 + slope * x as f32);
+            let lstar: Vec<f32> = (0..25).map(|i| row[i % 5]).collect();
+            let ours_c = contrast(&lstar, 5, 2, 2);
+            let theirs = row.map(|v| v * 327.68);
+            for percent in [50.0f32, 200.0] {
+                let ours = blend_factor(ours_c, percent / 100.0);
+                let rt = rt_blend(&theirs, percent);
+                assert!(
+                    (ours - rt).abs() < 1e-5,
+                    "{slope} at {percent}%: {ours} vs {rt}"
+                );
+            }
+            assert_eq!(rt_blend(&theirs, 0.0), 1.0);
+        }
+        // Half at the threshold, on both: a contrast of 0.5 at 50
+        // percent, of 2 at 200.
+        assert!((blend_factor(0.5, 0.5) - 0.5).abs() < 1e-6);
+        assert!((blend_factor(2.0, 2.0) - 0.5).abs() < 1e-6);
+        // Zero blends every unclipped pixel in full, as RawTherapee's.
+        let lstar: Vec<f32> = (0..100).map(|i| (i % 7) as f32 * 9.0).collect();
+        let clip = vec![1f32; 100];
+        assert!(
+            blend_mask(&lstar, &clip, 10, 10, 0.0)
+                .iter()
+                .all(|&b| b == 1.0)
         );
     }
 

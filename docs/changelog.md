@@ -7,6 +7,9 @@ design note behind it.
 
 ### The window
 
+- The Sharpen's Threshold runs to 200%, RawTherapee's range, for a
+  picture whose flat areas still sharpen at 50% (pixls)
+  ([§554](https://github.com/jessolmstead/greycard/blob/master/docs/notes/554-the-sharpens-threshold-to-200.md)).
 - The pointer on a mask's row paints that mask red over the picture,
   and on a repair's row draws its outline, so the one to fix is found
   among many (discussion 59)

@@ -488,7 +488,9 @@ already been sharpened once.
   shows the measured value.
 - **Iterations** (5 to 50, default 20): more passes sharpen harder.
 - **Auto threshold** keeps flat areas, like sky and skin, from being
-  sharpened. Turn it off to set **Threshold** (0 to 50%) yourself.
+  sharpened. Turn it off to set **Threshold** (0 to 200%) yourself:
+  higher leaves more alone, and past about 100% only strong edges
+  sharpen.
 - **Show mask** paints in red where the sharpening acts.
 
 ## Vignette

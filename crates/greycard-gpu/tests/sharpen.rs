@@ -347,6 +347,22 @@ fn a_synthetic_picture_matches_the_reference() {
         ..options
     };
     check(&ctx, "no early stop", &image, &steady, None, 2.0, TOLERANCE);
+    // The panel's old top and its new one, RawTherapee's.
+    for t in [0.5, 2.0] {
+        let high = SharpenOptions {
+            contrast: Threshold::Fixed(t),
+            ..options
+        };
+        check(
+            &ctx,
+            &format!("threshold {t}"),
+            &image,
+            &high,
+            None,
+            2.0,
+            TOLERANCE,
+        );
+    }
     // The measured radius, and a threshold of zero: the clip mask is
     // the blend.
     let measured = SharpenOptions {
@@ -924,7 +940,7 @@ fn draw(r: &mut Rng) -> Drawn {
     ]);
     let scene_seed = r.next();
     // The panel's ranges: radius 0.4 to 2, iterations 5 to 50, a
-    // threshold of 0 to 0.5, each automatic or fixed. A fixed radius
+    // threshold of 0 to 2, each automatic or fixed. A fixed radius
     // sits on one of the kernel's width steps now and then, and the
     // iterations on the border's.
     let radius = if r.chance(0.5) {
@@ -945,7 +961,7 @@ fn draw(r: &mut Rng) -> Drawn {
     } else if r.chance(0.2) {
         Threshold::Fixed(r.range(0.0, 0.05))
     } else {
-        Threshold::Fixed(r.slider(0.0, 0.5))
+        Threshold::Fixed(r.slider(0.0, 2.0))
     };
     let stop_early = r.chance(0.8);
     // The clip level is the frame's ceiling's, at least 0.98.

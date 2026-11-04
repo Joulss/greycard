@@ -440,7 +440,10 @@ pub struct Sharpen {
     pub iterations: u32,
     /// Set the contrast threshold from the picture's flattest patch.
     pub auto_threshold: bool,
-    /// The threshold otherwise, a fraction (the panel shows a percentage).
+    /// The threshold otherwise, a fraction, 0 to 2 (the panel shows 0
+    /// to 200 percent, RawTherapee's range and units). Not clamped on
+    /// reading: a build whose panel stopped at 0.5 develops a higher
+    /// one as written.
     pub threshold: f32,
 }
 
@@ -738,6 +741,29 @@ mod tests {
         // The picture's own Detail never writes one.
         let json: serde_json::Value = serde_json::from_str(&Edit::default().to_json()).unwrap();
         assert!(json["detail"].get("sharpen").is_none(), "{json}");
+    }
+
+    /// The sharpen's threshold at the panel's top, 200 percent: written
+    /// as the fraction, read back as it was, and handed to the engine
+    /// unclamped; and one from a sidecar written at the old top of 50
+    /// percent reads and develops as it did.
+    #[test]
+    fn a_sharpen_threshold_of_200_percent_round_trips() {
+        let mut e = Edit::default();
+        e.sharpen.auto_threshold = false;
+        e.sharpen.threshold = 2.0;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert_eq!(json["sharpen"]["threshold"].as_f64(), Some(2.0), "{json}");
+        let read = Edit::from_json(&e.to_json()).unwrap();
+        assert_eq!(read, e);
+        assert_eq!(read.sharpen.settings().contrast, Threshold::Fixed(2.0));
+        let old = r#"{"version": 5, "sharpen": {"auto_threshold": false, "threshold": 0.5}}"#;
+        let old = Edit::from_json(old).unwrap();
+        assert_eq!(old.sharpen.settings().contrast, Threshold::Fixed(0.5));
+        assert_ne!(
+            old.develop_key_with(&[], None),
+            e.develop_key_with(&[], None)
+        );
     }
 
     #[test]
