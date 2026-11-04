@@ -215,6 +215,9 @@ design note behind it.
 
 ### Fixes
 
+- On Windows a sidecar save waits up to 1.8 s for a scanner or a sync
+  client holding the old file, instead of failing at once
+  ([§558](https://github.com/jessolmstead/greycard/blob/master/docs/notes/558-a-rename-into-place-waits-out-a-hold.md)).
 - A sync onto frames the library has not indexed yet no longer holds
   the window while it reads what kind of raw each one is
   ([§556](https://github.com/jessolmstead/greycard/blob/master/docs/notes/556-a-syncs-first-read-of-unindexed-frames-off-the-window.md)).

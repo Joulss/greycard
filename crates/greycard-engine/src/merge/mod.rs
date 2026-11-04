@@ -1204,9 +1204,10 @@ impl Reserved {
 
     /// `file`, written in the folder, renamed onto the name held: the
     /// one rename every merge ends with, over a file there only when
-    /// the name was settled to be written over.
+    /// the name was settled to be written over. A moment's hold on that
+    /// file is waited out ([`greycard_core::fs::rename_into_place`]).
     pub fn promote(&self, file: &Path) -> Result<PathBuf> {
-        std::fs::rename(file, &self.out)
+        greycard_core::fs::rename_into_place(file, &self.out)
             .with_context(|| format!("writing {}", self.out.display()))?;
         Ok(self.out.clone())
     }

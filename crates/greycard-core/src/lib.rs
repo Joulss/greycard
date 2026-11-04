@@ -33,6 +33,9 @@
 //! the frame that is sharp everywhere; and [`merge`], which merges a
 //! tripod bracket into one frame of the whole range.
 //!
+//! [`fs`] holds the rename into place that sidecars and merges end
+//! with.
+//!
 //! What this crate deliberately does not contain: any tone mapping, display
 //! transform, edit schema or UI concern. Those belong to consumers.
 
@@ -43,6 +46,7 @@ pub mod develop;
 pub mod dng;
 pub mod error;
 pub mod exif;
+pub mod fs;
 pub mod guided;
 pub mod horizon;
 pub mod image;

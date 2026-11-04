@@ -736,7 +736,7 @@ impl Sidecar {
                 let shoot = raw.parent().unwrap_or(Path::new(""));
                 Self::folder_under(shoot)?;
             }
-            std::fs::rename(&other, &here)?;
+            greycard_core::fs::rename_into_place(&other, &here)?;
             Ok(Settled::Moved)
         } else {
             std::fs::remove_file(&other)?;
@@ -810,10 +810,12 @@ impl Staged {
         &self.temp
     }
 
-    /// Rename the temporary file over the one it replaces. On a
-    /// failure the old file is as it was and the temporary one goes.
+    /// Rename the temporary file over the one it replaces, waiting out
+    /// a moment's hold on it ([`greycard_core::fs::rename_into_place`]).
+    /// On a failure the old file is as it was and the temporary one
+    /// goes.
     pub fn commit(mut self) -> std::io::Result<()> {
-        std::fs::rename(&self.temp, &self.path)?;
+        greycard_core::fs::rename_into_place(&self.temp, &self.path)?;
         self.done = true;
         Ok(())
     }

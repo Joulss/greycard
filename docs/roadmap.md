@@ -560,7 +560,7 @@ brackets and the panorama to shoot for testing are in
 `docs/test-frames.md`.
 
 - [ ] Next: the re-merge's rename over an open file tried on Windows
-      (§541; a bounded retry in `promote` if it fails there, §543)
+      with §558's retry in `promote` (§541, §543)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
       the most voting tiles rather than the reference, measured on a
       real bracket with a clipped sky (§529); the Highlights pull's aim
@@ -745,8 +745,6 @@ clears or a tester asks for it.
 - [ ] A sidecar batch's writes a few at a time (four or eight) where
       the share rewards it, measured on a network share and on a Mac
       first (§498)
-- [ ] A rename into place retried on Windows' sharing violation, from
-      a scanner or a sync client holding the old sidecar open (§498)
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
       from a base whose CA ran on the GPU, where `--export` makes it
