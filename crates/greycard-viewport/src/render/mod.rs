@@ -274,6 +274,10 @@ pub struct Renderer {
     /// (`greycard_render::detail::DetailPlanes`). A texel of nothing when there
     /// are none.
     detail: gpu::Texture,
+    /// The sharpen's delta, R16Float at the source's size
+    /// (`DetailPlanes::sharpen`); a texel of nothing when there is
+    /// none.
+    sharpen: gpu::Texture,
     /// The planes it holds, to know them again (`set_detail`).
     detail_of: Option<std::sync::Weak<greycard_render::detail::DetailPlanes>>,
     /// Its `Params::detail` and `Params::detail_clip`.
@@ -469,6 +473,17 @@ impl Renderer {
                     },
                     count: None,
                 },
+                // The sharpen's delta for the masks' Sharpen.
+                gpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // The wide rasters, a layer each.
                 gpu::BindGroupLayoutEntry {
                     binding: 13,
@@ -559,6 +574,7 @@ impl Renderer {
         };
         let guide = Self::guide_texture(device, 1, 1);
         let detail = Self::detail_texture(device, 1, 1);
+        let sharpen = Self::sharpen_texture(device, 1, 1);
         let output = greycard_render::export::Space::Srgb.matrix();
         Self {
             scopes: Scopes::new(device),
@@ -582,6 +598,7 @@ impl Renderer {
             guide,
             guide_cover: [1.0, 1.0, 0.0, 0.0],
             detail,
+            sharpen,
             detail_of: None,
             detail_meta: [1.0, 1.0, 1.0, 0.0],
             detail_clip: [-1.0, 0.0, 0.0, 0.0],

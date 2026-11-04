@@ -4340,3 +4340,222 @@ fn with_the_gpu_the_refined_masks_picture_is_read_back() {
         assert!(worst < 5e-3, "sharpen {sharpen}: {worst} apart");
     }
 }
+
+/// An edit with a mask over the whole frame whose Detail has `sharpen`,
+/// the global sharpen on or off.
+fn masked_sharpen(sharpen: f32, global: bool) -> Edit {
+    let mut edit = Edit::default();
+    edit.sharpen.enabled = global;
+    let mut a = greycard_edit::Adjustment {
+        id: 1,
+        ..Default::default()
+    };
+    a.mask.components.push(greycard_edit::mask::Component {
+        shape: greycard_edit::mask::Shape::Linear {
+            from: [0.5, 10.0],
+            to: [0.5, 11.0],
+        },
+        ..Default::default()
+    });
+    a.look.detail.sharpen = sharpen;
+    edit.adjustments.push(a);
+    edit
+}
+
+/// A mask's Sharpen through the export: the open frame's export and a
+/// fresh walk's are the same pixels, with the global sharpen on and
+/// off, and each is another picture than the mask without it; at -1
+/// over a sharpened frame it is near the frame unsharpened, and at +1
+/// over an unsharpened one near the frame sharpened.
+#[test]
+fn a_masks_sharpen_is_in_the_export() {
+    use greycard_render::export::Pixels;
+    let input = Input::Raw(Arc::new(aberrated_frame(200, 150)));
+    let sixteen = |r: &greycard_render::export::Rendered| match &r.pixels {
+        Pixels::Sixteen(p) => p.clone(),
+        Pixels::Eight(_) => panic!("a TIFF is sixteen bits"),
+    };
+    let export = |what: &str, edit: &Edit| {
+        let ((developed, _), (walked, _)) = develop_and_walk(what, &input, edit, 0);
+        same_pixels(&developed, &walked);
+        sixteen(&walked)
+    };
+    let worst = |a: &[u16], b: &[u16]| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max();
+    let sharp = export("mask-sharpen-sharp", &masked_sharpen(0.0, true));
+    let soft = export("mask-sharpen-soft", &masked_sharpen(0.0, false));
+    assert_ne!(sharp, soft, "the sharpen did nothing");
+    let off = export("mask-sharpen-off", &masked_sharpen(-1.0, true));
+    assert_ne!(off, sharp);
+    let on = export("mask-sharpen-on", &masked_sharpen(1.0, false));
+    assert_ne!(on, soft);
+    let (taken, put) = (worst(&off, &soft), worst(&on, &sharp));
+    eprintln!("-1 over the sharpen: {taken:?} of 65535 off; +1 without: {put:?}");
+    assert!(taken <= Some(10), "{taken:?}");
+    assert!(put <= Some(10), "{put:?}");
+}
+
+/// A mask's Sharpen develops its delta on the GPU's path and the
+/// CPU's alike: the planes come with it, the delta of one is the
+/// other's to the planes' rounding, and with the global sharpen off
+/// the picture is the unsharpened one, to the bit on each path.
+#[test]
+fn a_masks_sharpen_delta_is_made_on_both_paths() {
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let deliver: Deliver = Arc::new(|_| {});
+    let develop = |edit: &Edit, gpu: &mut Option<greycard_gpu::Context>| {
+        let (outcome, _) = develop_job(
+            &Input::Raw(frame.clone()),
+            edit,
+            0,
+            1,
+            &mut None,
+            &mut Ai::new(),
+            None,
+            None,
+            gpu,
+            &deliver,
+        );
+        let Outcome::Developed { image, planes, .. } = outcome else {
+            panic!("developed");
+        };
+        (image, planes)
+    };
+    let picture = |image: &Developed, gpu: &Option<greycard_gpu::Context>| -> Vec<f32> {
+        match image {
+            Developed::Texture(t) => read_viewport(gpu.as_ref().unwrap(), t).data,
+            Developed::Halves(h) => h
+                .pixels
+                .chunks(4)
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .map(|v| v.to_f32())
+                .collect(),
+        }
+    };
+    let mut paths = vec![None];
+    match greycard_gpu::Context::own() {
+        Ok(ctx) => paths.push(Some(ctx)),
+        Err(_) => skipped("a mask's Sharpen on the GPU's path"),
+    }
+    let mut deltas = Vec::new();
+    for mut gpu in paths {
+        for global in [true, false] {
+            // A share of the sharpen: positive when there is none.
+            let amount = if global { -0.7 } else { 0.7 };
+            let (image, planes) = develop(&masked_sharpen(amount, global), &mut gpu);
+            let planes = planes.expect("the planes");
+            assert!(planes.wants.sharpen && !planes.has_bands());
+            let delta = planes.sharpen.clone().expect("the delta");
+            assert!(delta.iter().any(|d| d.to_f32().abs() > 0.01));
+            let (bare, none) = develop(&masked_sharpen(0.0, global), &mut gpu);
+            assert!(none.is_none());
+            // On the device's path the bare develop runs nothing there
+            // and is made half floats on the CPU, the mask's in the
+            // shader: the two may round a value a half float's step
+            // apart.
+            let (a, b) = (picture(&image, &gpu), picture(&bare, &gpu));
+            let past = a
+                .iter()
+                .zip(&b)
+                .filter(|(x, y)| (*x - *y).abs() > y.abs() * 1e-3 + 1e-7)
+                .count();
+            assert!(
+                a.len() == b.len() && (if gpu.is_some() { past == 0 } else { a == b }),
+                "global {global}, GPU {}: {past} values off the develop's without the mask",
+                gpu.is_some()
+            );
+            deltas.push(delta);
+        }
+    }
+    if deltas.len() == 4 {
+        for (cpu, gpu) in [(&deltas[0], &deltas[2]), (&deltas[1], &deltas[3])] {
+            let worst = cpu
+                .iter()
+                .zip(gpu.iter())
+                .map(|(a, b)| (a.to_f32() - b.to_f32()).abs())
+                .fold(0f32, f32::max);
+            assert!(
+                worst <= 1e-3,
+                "the GPU's delta is {worst} stops off the CPU's"
+            );
+        }
+    }
+}
+
+/// With the picture's sharpen off, a mask's negative Sharpen is no
+/// share of a sharpen that never ran: no delta is made, and the export
+/// is the unsharpened picture, to the bit.
+#[test]
+fn a_negative_masks_sharpen_without_the_global_is_nothing() {
+    use greycard_render::export::Pixels;
+    let input = Input::Raw(Arc::new(aberrated_frame(200, 150)));
+    let sixteen = |r: &greycard_render::export::Rendered| match &r.pixels {
+        Pixels::Sixteen(p) => p.clone(),
+        Pixels::Eight(_) => panic!("a TIFF is sixteen bits"),
+    };
+    let negative = masked_sharpen(-1.0, false);
+    assert!(!negative.detail_wants().any());
+    let ((developed, _), (walked, _)) = develop_and_walk("mask-sharpen-neg", &input, &negative, 0);
+    same_pixels(&developed, &walked);
+    let ((_, _), (bare, _)) = develop_and_walk(
+        "mask-sharpen-neg-bare",
+        &input,
+        &masked_sharpen(0.0, false),
+        0,
+    );
+    assert!(sixteen(&walked) == sixteen(&bare), "the export moved");
+    let deliver: Deliver = Arc::new(|_| {});
+    let (outcome, _) = develop_job(
+        &input,
+        &negative,
+        0,
+        1,
+        &mut None,
+        &mut Ai::new(),
+        None,
+        None,
+        &mut None,
+        &deliver,
+    );
+    let Outcome::Developed { planes, .. } = outcome else {
+        panic!("developed");
+    };
+    assert!(planes.is_none(), "no delta made");
+}
+
+/// The delta kept for the masks goes with the picture it was made of:
+/// a develop after it that sharpens a changed picture without one
+/// leaves no delta for the kept pictures to read.
+#[test]
+fn a_kept_sharpen_delta_does_not_outlive_its_picture() {
+    let input = Input::Raw(Arc::new(aberrated_frame(200, 150)));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let develop = |edit: &Edit, base: &mut Option<FrameKept>| {
+        let (outcome, _) = develop_job(
+            &input,
+            edit,
+            0,
+            1,
+            base,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut None,
+            &deliver,
+        );
+        assert!(matches!(outcome, Outcome::Developed { .. }));
+    };
+    let asking = masked_sharpen(-0.7, true);
+    develop(&asking, &mut base);
+    let planes = base.as_ref().unwrap().planes_for(&asking).expect("kept");
+    assert!(planes.sharpen.is_some());
+    // The global Texture moved and the mask's Sharpen gone: the
+    // sharpen runs again on another picture, with no delta.
+    let mut other = masked_sharpen(0.0, true);
+    other.detail.texture = 0.4;
+    develop(&other, &mut base);
+    assert!(
+        base.as_ref().unwrap().planes_for(&asking).is_none(),
+        "the old picture's delta is kept"
+    );
+}

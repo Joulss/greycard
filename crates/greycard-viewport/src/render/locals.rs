@@ -33,8 +33,10 @@ pub(super) struct LocalGpu {
     color: f32,
     saturation: f32,
     vibrance: f32,
-    /// Keeps what follows 16-byte aligned.
-    pad0: f32,
+    /// Its own Sharpen, the share of the sharpen's delta it puts on
+    /// (`Baked::detail`'s last); in the slot that keeps what follows
+    /// 16-byte aligned.
+    sharpen: f32,
     /// This adjustment's tint as a vector, in x and y.
     tint: [f32; 4],
     /// Its own Texture, Clarity, Dehaze, and Structure amounts
@@ -244,12 +246,12 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
             color: if b.color.enabled { 1.0 } else { 0.0 },
             saturation: b.color.saturation,
             vibrance: b.color.vibrance,
-            pad0: 0.0,
+            sharpen: b.detail[4],
             tint: {
                 let v = b.tint.vector();
                 [v[0], v[1], 0.0, 0.0]
             },
-            detail: b.detail,
+            detail: [b.detail[0], b.detail[1], b.detail[2], b.detail[3]],
             white: match &b.white {
                 Some(m) => [
                     [m[0][0], m[0][1], m[0][2], 1.0],

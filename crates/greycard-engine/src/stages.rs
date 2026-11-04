@@ -422,9 +422,33 @@ pub enum Stage {
     Retouch(Retouch, Fills),
     LocalContrast(LocalContrastOptions),
     Dehaze(DehazeOptions),
-    Sharpen(SharpenOptions),
+    /// The capture sharpen, and the delta beside it for the masks'
+    /// Sharpen when one asks.
+    Sharpen(SharpenOptions, Delta),
     /// Working to what the purpose ends at.
     Finish(Finish),
+}
+
+/// What the sharpen makes for the masks' Sharpen: nothing; its delta
+/// beside the sharpened picture; or its delta alone, the picture left
+/// unsharpened, when the global Sharpen is off and a mask asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delta {
+    No,
+    Also,
+    Only,
+}
+
+impl Delta {
+    /// Whether the picture is sharpened.
+    pub fn sharpens(self) -> bool {
+        self != Delta::Only
+    }
+
+    /// Whether the delta is made.
+    pub fn made(self) -> bool {
+        self != Delta::No
+    }
 }
 
 /// A camera profile compared by pointer.
@@ -443,7 +467,7 @@ impl Stage {
     /// contrast, the dehaze, and the sharpen.
     pub fn device(&self) -> bool {
         match self {
-            Stage::Ca(_) | Stage::LocalContrast(_) | Stage::Dehaze(_) | Stage::Sharpen(_) => true,
+            Stage::Ca(_) | Stage::LocalContrast(_) | Stage::Dehaze(_) | Stage::Sharpen(..) => true,
             Stage::Lens(c) => c.iter().any(LensCorrection::moves),
             _ => false,
         }
@@ -478,7 +502,7 @@ impl Stage {
             Stage::Retouch(..) => "retouch",
             Stage::LocalContrast(_) => "local contrast",
             Stage::Dehaze(_) => "dehaze",
-            Stage::Sharpen(_) => "sharpen",
+            Stage::Sharpen(..) => "sharpen",
             Stage::Finish(_) => "finish",
         }
     }
@@ -906,7 +930,7 @@ pub fn stages(
     s.keep(Keep::Patched);
     let wants = edit.detail_wants();
     let global = edit.detail.options();
-    if wants.any() && *purpose != Purpose::ModelsSee {
+    if wants.bands() && *purpose != Purpose::ModelsSee {
         s.tap(Tap::Planes {
             wants,
             haze_after: global.filter(|_| wants.haze),
@@ -922,9 +946,16 @@ pub fn stages(
     if greycard_render::refine::refines(edit) {
         s.tap(Tap::MaskPicture);
     }
-    match edit.sharpen.options() {
-        Some(_) if reduced => s.skip("the capture sharpen", Skip::Reduced),
-        options => s.op_if(options.map(Stage::Sharpen)),
+    // A mask's Sharpen reads the sharpen's delta, made by the global's
+    // settings whether or not the global sharpens the picture.
+    match (edit.sharpen.options(), wants.sharpen) {
+        (Some(_), _) | (None, true) if reduced => s.skip("the capture sharpen", Skip::Reduced),
+        (Some(options), masks) => s.op(Stage::Sharpen(
+            options,
+            if masks { Delta::Also } else { Delta::No },
+        )),
+        (None, true) => s.op(Stage::Sharpen(edit.sharpen.settings(), Delta::Only)),
+        (None, false) => {}
     }
     s.keep(Keep::Developed);
     s.op(Stage::Finish(match purpose {

@@ -322,11 +322,17 @@ as the global one does.
 
 ### Detail in a mask
 
-The mask's **DETAIL** has **Texture**, **Clarity**, **Structure**, and
-**Dehaze**, as the Develop tab's does: smooth the skin of a face and
-leave the rest sharp, or clear the haze from a distant ridge and leave
-the foreground. It shows in the viewport, the export, and the thumbnails
-alike, and its steps land in the history like any other.
+The mask's **DETAIL** has **Texture**, **Clarity**, **Structure**,
+**Dehaze**, and **Sharpen**, the first four as the Develop tab's: smooth
+the skin of a face and leave the rest sharp, or clear the haze from a
+distant ridge and leave the foreground. It shows in the viewport, the
+export, and the thumbnails alike, and its steps land in the history like
+any other.
+
+**Sharpen** is a share of the capture sharpen, by the Develop tab's
+radius, iterations, and threshold: -100 takes the Develop tab's Sharpen
+off under the mask, +100 puts it on once more; with the Develop tab's
+Sharpen off, a positive amount sharpens inside the mask alone.
 
 A mask over the whole frame gives the same picture as the global
 slider, one slider at a time. A mask's **Dehaze** used together with

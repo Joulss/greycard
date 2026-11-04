@@ -249,6 +249,82 @@ pub fn sharpen_with_mask(
     measured: Option<f32>,
     clip_level: f32,
 ) -> (SharpenStats, Vec<f32>) {
+    let d = deconvolved(image, options, measured, clip_level);
+    scale(image, &d.luminance, &d.sharpened);
+    (d.stats, d.blend)
+}
+
+/// [`sharpen_with_mask`], and what the sharpen did as a plane:
+/// [`delta`] at each pixel, in stops, which [`apply_delta`] puts on a
+/// pixel once more or takes off it.
+pub fn sharpen_with_delta(
+    image: &mut WorkingImage,
+    options: &SharpenOptions,
+    measured: Option<f32>,
+    clip_level: f32,
+) -> (SharpenStats, Vec<f32>, Vec<f32>) {
+    let d = deconvolved(image, options, measured, clip_level);
+    scale(image, &d.luminance, &d.sharpened);
+    let deltas = d.deltas();
+    (d.stats, d.blend, deltas)
+}
+
+/// The plane [`sharpen_with_delta`] makes, with the picture left as
+/// it was: what the sharpen would have done.
+pub fn sharpen_delta(
+    image: &WorkingImage,
+    options: &SharpenOptions,
+    measured: Option<f32>,
+    clip_level: f32,
+) -> (SharpenStats, Vec<f32>, Vec<f32>) {
+    let d = deconvolved(image, options, measured, clip_level);
+    let deltas = d.deltas();
+    (d.stats, d.blend, deltas)
+}
+
+/// The sharpen's change to a pixel, in stops: the sharpened luminance
+/// over the old, both on the pedestal. Shared.
+#[inline]
+pub fn delta(old: f32, new: f32) -> f32 {
+    (new / old).log2()
+}
+
+/// `stops` of a sharpen's [`delta`] put on a pixel as the sharpen puts
+/// its factor on, every channel scaled about the pedestal's negative:
+/// one of them on the picture before the sharpen is the sharpen, minus
+/// one on the sharpened picture is the picture before it. Shared.
+#[inline]
+pub fn apply_delta(px: [f32; 3], stops: f32) -> [f32; 3] {
+    let k = BLACK_PEDESTAL;
+    let factor = stops.exp2();
+    px.map(|c| (c + k) * factor - k)
+}
+
+/// The deconvolution's inputs and answer, before any channel moves.
+struct Deconvolved {
+    stats: SharpenStats,
+    blend: Vec<f32>,
+    /// The luminance on its pedestal, before and after.
+    luminance: Vec<f32>,
+    sharpened: Vec<f32>,
+}
+
+impl Deconvolved {
+    fn deltas(&self) -> Vec<f32> {
+        self.luminance
+            .par_iter()
+            .zip(self.sharpened.par_iter())
+            .map(|(&old, &new)| delta(old, new))
+            .collect()
+    }
+}
+
+fn deconvolved(
+    image: &WorkingImage,
+    options: &SharpenOptions,
+    measured: Option<f32>,
+    clip_level: f32,
+) -> Deconvolved {
     let radius = match options.radius {
         Radius::Auto => measured.unwrap_or(DEFAULT_RADIUS),
         Radius::Fixed(r) => r,
@@ -288,12 +364,27 @@ pub fn sharpen_with_mask(
     let blend_mean = mean(&blend);
 
     let sharpened = deconvolve(&luminance, &blend, w, h, radius, options);
+    Deconvolved {
+        stats: SharpenStats {
+            radius,
+            threshold,
+            blend_mean,
+            clipped,
+            iterations: options.iterations,
+        },
+        blend,
+        luminance,
+        sharpened,
+    }
+}
 
-    // Every channel scaled about the pedestal's negative: a gain, so
-    // a color keeps its ratios, wherever the pedestal is small beside
-    // the channel, and an equal step in each channel where it is not.
-    // A channel under the pedestal's negative stays there, scaled
-    // away from it by a factor that the pedestal keeps near one.
+/// Every channel scaled about the pedestal's negative: a gain, so a
+/// color keeps its ratios, wherever the pedestal is small beside the
+/// channel, and an equal step in each channel where it is not. A
+/// channel under the pedestal's negative stays there, scaled away from
+/// it by a factor that the pedestal keeps near one.
+fn scale(image: &mut WorkingImage, luminance: &[f32], sharpened: &[f32]) {
+    let k = BLACK_PEDESTAL;
     image
         .data
         .par_chunks_mut(3)
@@ -305,16 +396,6 @@ pub fn sharpen_with_mask(
             px[1] = (px[1] + k) * factor - k;
             px[2] = (px[2] + k) * factor - k;
         });
-    (
-        SharpenStats {
-            radius,
-            threshold,
-            blend_mean,
-            clipped,
-            iterations: options.iterations,
-        },
-        blend,
-    )
 }
 
 /// The mean of a plane, summed in double so a large picture does not
@@ -1021,6 +1102,43 @@ mod tests {
                 "stopping early {stop_early}: the edge's slope {was} -> {is}"
             );
         }
+    }
+
+    /// The delta is the sharpen: put on the picture before it, it is
+    /// the sharpened picture; taken off the sharpened, it is the
+    /// picture before; and made without the sharpen it is the same.
+    #[test]
+    fn the_delta_is_the_sharpen_on_and_off() {
+        let (w, h) = (96, 64);
+        let before = blurred_edge(w, h, 1.0);
+        let options = SharpenOptions {
+            radius: Radius::Fixed(1.0),
+            contrast: Threshold::Fixed(0.0),
+            ..Default::default()
+        };
+        let mut sharpened = before.clone();
+        let (stats, mask, delta) = sharpen_with_delta(&mut sharpened, &options, None, 10.0);
+        let mut plain = before.clone();
+        let (stats_plain, mask_plain) = sharpen_with_mask(&mut plain, &options, None, 10.0);
+        assert_eq!((stats, &mask), (stats_plain, &mask_plain));
+        assert_eq!(sharpened, plain, "the same sharpen");
+        let (_, _, again) = sharpen_delta(&before, &options, None, 10.0);
+        assert_eq!(again, delta);
+        assert!(
+            delta.iter().any(|d| d.abs() > 0.05),
+            "the sharpen did something"
+        );
+        let (mut on, mut off) = (0f32, 0f32);
+        for (i, &d) in delta.iter().enumerate() {
+            let px = |im: &WorkingImage| [im.data[i * 3], im.data[i * 3 + 1], im.data[i * 3 + 2]];
+            let a = apply_delta(px(&before), d);
+            let b = apply_delta(px(&sharpened), -d);
+            for c in 0..3 {
+                on = on.max((a[c] - sharpened.data[i * 3 + c]).abs());
+                off = off.max((b[c] - before.data[i * 3 + c]).abs());
+            }
+        }
+        assert!(on < 1e-5 && off < 1e-5, "on {on}, off {off}");
     }
 
     #[test]

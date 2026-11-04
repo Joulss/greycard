@@ -1013,9 +1013,6 @@ clears or a tester asks for it.
 - [ ] A default preset applied to every frame on its first open, so
       the tools a user never wants start off (pixls, 2026-10-24;
       asked again as a saved baseline, discussion 59, 2026-10-30)
-- [ ] Sharpen in a mask's Detail, beside Texture, Clarity, and
-      Dehaze, so a gradient can sharpen the foreground more
-      (pixls, 2026-10-24)
 - [ ] The sharpen's threshold to a higher top: the slider stops at
       50% and a tester at 50% still wants flat areas left alone;
       RawTherapee's runs to 200% (pixls, 2026-10-25)

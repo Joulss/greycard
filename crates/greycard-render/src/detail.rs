@@ -1,7 +1,7 @@
 //! Detail in a mask: the bands the develop keeps beside the picture so
-//! that a mask's Texture, Clarity, Structure, and Dehaze can be put on
-//! at the finish, by the mask's weight, where every other part of its
-//! look is.
+//! that a mask's Texture, Clarity, Structure, Dehaze, and Sharpen can
+//! be put on at the finish, by the mask's weight, where every other
+//! part of its look is.
 //!
 //! The develop's Texture, Clarity, and Structure are bands of the log
 //! luminance put on as a gain, and its Dehaze a transmission from a
@@ -11,16 +11,24 @@
 //! So the develop makes the bands once, at the picture's size, when a
 //! mask asks for one, and the finish reads them at the pixel and puts
 //! on what the masks' amounts there say, as the global op would.
+//!
+//! The capture sharpen is no band of an amount: it is a deconvolution
+//! at the global's radius. What it did to a pixel is kept instead, its
+//! delta in stops (`greycard_core::develop::sharpen::delta`), made
+//! where the develop sharpens, and a mask's Sharpen puts that on again
+//! or takes it off by its weight.
 
 use greycard_core::develop::dehaze::{self, Reduced};
 use greycard_core::develop::local_contrast::{
     self, CLARITY_GAIN, LocalContrastOptions, STRUCTURE_GAIN, TEXTURE_GAIN, Wanted, clip_fade,
     local_contrast_with_bands,
 };
+use greycard_core::develop::sharpen::apply_delta;
 use greycard_core::image::WorkingImage;
 use greycard_edit::DetailWants;
 use half::f16;
 use rayon::prelude::*;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// What goes with the planes, one value for the picture.
@@ -31,13 +39,18 @@ pub struct DetailMeta {
     pub airlight: [f32; 3],
     /// The develop's clip level, which the bands' gain fades out at.
     pub clip_level: f32,
+    /// Whether the picture beside the planes was sharpened. A mask's
+    /// Sharpen is a share of the sharpen, never less than none: over a
+    /// picture never sharpened, its summed share is held at zero from
+    /// below, so a negative one does nothing.
+    pub sharpened: bool,
 }
 
 /// The bands of a developed picture, at its size: Texture's band,
 /// Clarity's (its mid-tone weight in it), and Structure's (its weight
 /// and its knee in it), in stops, and the haze, what a transmission at
 /// a strength `s` is `1 - s * haze` of. A band no mask asked for is
-/// zero.
+/// zero. And the sharpen's delta, when a mask asked for it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DetailPlanes {
     pub width: usize,
@@ -45,11 +58,26 @@ pub struct DetailPlanes {
     /// The texture, clarity, haze, and structure of each pixel, as the
     /// viewport's `Rgba16Float` texture holds them: half floats, since
     /// a band is a few stops at most and its thousandth of one is below
-    /// what a gain can show.
-    pub data: Vec<f16>,
+    /// what a gain can show. Empty when no mask asks for any of the
+    /// four. Shared, so planes given another delta copy none of it.
+    pub data: Arc<[f16]>,
+    /// The sharpen's delta at each pixel, in stops, as the viewport's
+    /// `R16Float` texture holds it: made where the develop sharpens,
+    /// from the picture the sharpen saw.
+    pub sharpen: Option<Arc<[f16]>>,
     pub meta: DetailMeta,
     /// The bands asked for when these were made.
     pub wants: DetailWants,
+}
+
+/// The sharpen's delta, made of `deltas` in stops, as the planes hold
+/// it.
+pub fn sharpen_delta(deltas: &[f32]) -> Arc<[f16]> {
+    deltas
+        .par_iter()
+        .map(|&d| f16::from_f32(d))
+        .collect::<Vec<_>>()
+        .into()
 }
 
 /// Whether planes of `planes` size fit a picture of `width` by
@@ -107,7 +135,13 @@ impl DetailPlanes {
         reuse: Option<&DetailPlanes>,
         cancel: &AtomicBool,
     ) -> Option<Self> {
-        if !wants.any() {
+        // The sharpen's delta is not made here, from the picture before
+        // the local contrast, but where the develop sharpens.
+        let wants = DetailWants {
+            sharpen: false,
+            ..wants
+        };
+        if !wants.bands() {
             return None;
         }
         let (w, h) = (patched.width, patched.height);
@@ -169,13 +203,62 @@ impl DetailPlanes {
         Some(Self {
             width: w,
             height: h,
-            data,
+            data: data.into(),
+            sharpen: None,
             meta: DetailMeta {
                 airlight,
                 clip_level,
+                sharpened: true,
             },
             wants,
         })
+    }
+
+    /// Planes of the sharpen's delta alone, `width` by `height`: what a
+    /// mask that asks for its Sharpen and no band is handed.
+    pub fn sharpen_only(width: usize, height: usize, clip_level: f32, delta: Arc<[f16]>) -> Self {
+        debug_assert_eq!(delta.len(), width * height);
+        Self {
+            width,
+            height,
+            data: Arc::from(Vec::new()),
+            sharpen: Some(delta),
+            meta: DetailMeta {
+                airlight: [1.0; 3],
+                clip_level,
+                sharpened: true,
+            },
+            wants: DetailWants {
+                sharpen: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// These planes with the sharpen's `delta` beside them, the bands
+    /// shared and not copied.
+    pub fn with_sharpen(&self, delta: Arc<[f16]>) -> Self {
+        debug_assert_eq!(delta.len(), self.width * self.height);
+        Self {
+            sharpen: Some(delta),
+            wants: DetailWants {
+                sharpen: true,
+                ..self.wants
+            },
+            ..self.clone()
+        }
+    }
+
+    /// These planes beside a picture that was never sharpened: the
+    /// delta is what the sharpen would have done ([`DetailMeta::sharpened`]).
+    pub fn unsharpened(mut self) -> Self {
+        self.meta.sharpened = false;
+        self
+    }
+
+    /// Whether the four bands' lanes are held: some band was asked for.
+    pub fn has_bands(&self) -> bool {
+        !self.data.is_empty()
     }
 
     /// The planes as pictures, for the geometry and the resize to take
@@ -188,15 +271,33 @@ impl DetailPlanes {
     /// `reduce::reduce` averages the picture, without the full-size
     /// copy in between.
     pub fn to_image_reduced(&self, factor: usize) -> BandImages {
-        let (data, width, height) = self.lanes_of(factor, [0, 1, 2]);
+        let factor = factor.max(1);
+        let size = if factor == 1 {
+            (self.width, self.height)
+        } else {
+            ((self.width / factor).max(1), (self.height / factor).max(1))
+        };
+        let bands = self.has_bands();
         BandImages {
-            lanes: WorkingImage {
-                width,
-                height,
-                data,
-            },
-            structure: self.wants.structure.then(|| {
+            size,
+            lanes: bands.then(|| {
+                let (data, width, height) = self.lanes_of(factor, [0, 1, 2]);
+                WorkingImage {
+                    width,
+                    height,
+                    data,
+                }
+            }),
+            structure: (bands && self.wants.structure).then(|| {
                 let (data, width, height) = self.lanes_of(factor, [3]);
+                Plane {
+                    width,
+                    height,
+                    data,
+                }
+            }),
+            sharpen: self.sharpen.as_ref().map(|d| {
+                let (data, width, height) = reduce_plane(d, self.width, self.height, factor);
                 Plane {
                     width,
                     height,
@@ -246,6 +347,35 @@ impl DetailPlanes {
     }
 }
 
+/// A plane of half floats `width` by `height` box-averaged by
+/// `factor` each way, as the picture is, and the size it comes to.
+fn reduce_plane(
+    plane: &[f16],
+    width: usize,
+    height: usize,
+    factor: usize,
+) -> (Vec<f32>, usize, usize) {
+    if factor <= 1 {
+        return (plane.iter().map(|v| v.to_f32()).collect(), width, height);
+    }
+    let (w, h) = ((width / factor).max(1), (height / factor).max(1));
+    let mut data = vec![0.0f32; w * h];
+    let n = (factor * factor) as f32;
+    data.par_chunks_mut(w).enumerate().for_each(|(y, out)| {
+        for (x, o) in out.iter_mut().enumerate() {
+            let mut sum = 0.0f32;
+            for sy in y * factor..((y + 1) * factor).min(height) {
+                let row = &plane[sy * width..][..width];
+                for v in &row[x * factor..((x + 1) * factor).min(width)] {
+                    sum += v.to_f32();
+                }
+            }
+            *o = sum / n;
+        }
+    });
+    (data, w, h)
+}
+
 /// One band as a plane of its own, a value a pixel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plane {
@@ -255,65 +385,98 @@ pub struct Plane {
 }
 
 /// The planes brought into a frame by the steps the picture takes:
-/// texture, clarity, and haze in the three channels of `lanes`, and
-/// Structure's band, when a mask asked for it, in a plane of its own,
-/// so that a mask without one costs the geometry and the resize
-/// nothing more than it did, and one with it a channel more.
+/// texture, clarity, and haze in the three channels of `lanes`, when a
+/// mask asked for any band, and Structure's band and the sharpen's
+/// delta, when a mask asked for them, each in a plane of its own, so
+/// that a mask without one costs the geometry and the resize nothing
+/// more than it did, and one with it a channel more.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BandImages {
-    pub lanes: WorkingImage,
+    /// The size they are all of.
+    pub size: (usize, usize),
+    pub lanes: Option<WorkingImage>,
     pub structure: Option<Plane>,
+    pub sharpen: Option<Plane>,
+}
+
+impl Plane {
+    /// The frame of `geometry` cut from it, as from a channel of the
+    /// picture.
+    fn framed(&self, geometry: &greycard_edit::geometry::Geometry) -> Self {
+        let (data, width, height) =
+            crate::geometry::apply_plane(&self.data, self.width, self.height, geometry);
+        Plane {
+            width,
+            height,
+            data,
+        }
+    }
+
+    /// Resampled to `w` by `h` as a channel of the picture is.
+    fn fit_exact(&self, w: u32, h: u32) -> Self {
+        Plane {
+            width: w as usize,
+            height: h as usize,
+            data: crate::export::fit_exact_plane(&self.data, self.width, self.height, w, h)
+                .unwrap_or_else(|| self.data.clone()),
+        }
+    }
 }
 
 impl BandImages {
     pub fn width(&self) -> usize {
-        self.lanes.width
+        self.size.0
     }
 
     pub fn height(&self) -> usize {
-        self.lanes.height
+        self.size.1
     }
 
-    /// The four bands at a pixel, in the planes' order: texture,
-    /// clarity, haze, structure.
+    /// The five bands at a pixel, in the planes' order: texture,
+    /// clarity, haze, structure, and the sharpen's delta.
     #[inline]
-    pub fn at(&self, x: usize, y: usize) -> [f32; 4] {
-        let [t, c, h] = self.lanes.pixel(x, y);
-        let s = self
-            .structure
-            .as_ref()
-            .map_or(0.0, |s| s.data[y * s.width + x]);
-        [t, c, h, s]
+    pub fn at(&self, x: usize, y: usize) -> [f32; 5] {
+        let [t, c, h] = self.lanes.as_ref().map_or([0.0; 3], |l| l.pixel(x, y));
+        let one = |p: &Option<Plane>| p.as_ref().map_or(0.0, |p| p.data[y * p.width + x]);
+        [t, c, h, one(&self.structure), one(&self.sharpen)]
     }
 
     /// The frame of `geometry` cut from each, as from the picture.
     pub fn framed(&self, geometry: &greycard_edit::geometry::Geometry) -> Self {
+        let lanes = self
+            .lanes
+            .as_ref()
+            .map(|l| crate::geometry::apply(l, geometry));
+        let structure = self.structure.as_ref().map(|s| s.framed(geometry));
+        let sharpen = self.sharpen.as_ref().map(|s| s.framed(geometry));
+        let size = lanes
+            .as_ref()
+            .map(|l| (l.width, l.height))
+            .or_else(|| structure.as_ref().map(|s| (s.width, s.height)))
+            .or_else(|| sharpen.as_ref().map(|s| (s.width, s.height)))
+            .unwrap_or(self.size);
         Self {
-            lanes: crate::geometry::apply(&self.lanes, geometry),
-            structure: self.structure.as_ref().map(|s| {
-                let (data, width, height) =
-                    crate::geometry::apply_plane(&s.data, s.width, s.height, geometry);
-                Plane {
-                    width,
-                    height,
-                    data,
-                }
-            }),
+            size,
+            lanes,
+            structure,
+            sharpen,
         }
     }
 
     /// Each resampled to `w` by `h` as the picture is, or none when
     /// they are that size already.
     pub fn fit_exact(&self, w: u32, h: u32) -> Option<Self> {
-        let lanes = crate::export::fit_exact(&self.lanes, w, h)?;
+        if self.size == (w as usize, h as usize) {
+            return None;
+        }
         Some(Self {
-            lanes,
-            structure: self.structure.as_ref().map(|s| Plane {
-                width: w as usize,
-                height: h as usize,
-                data: crate::export::fit_exact_plane(&s.data, s.width, s.height, w, h)
-                    .unwrap_or_else(|| s.data.clone()),
-            }),
+            size: (w as usize, h as usize),
+            lanes: self
+                .lanes
+                .as_ref()
+                .map(|l| crate::export::fit_exact(l, w, h).unwrap_or_else(|| l.clone())),
+            structure: self.structure.as_ref().map(|s| s.fit_exact(w, h)),
+            sharpen: self.sharpen.as_ref().map(|s| s.fit_exact(w, h)),
         })
     }
 
@@ -364,43 +527,50 @@ pub fn soft(k: f32) -> f32 {
 }
 
 /// The masks' Detail at a pixel, summed by their weights: Texture's,
-/// Clarity's, and Structure's stops a band and Dehaze's amount, each as
-/// the global op takes it (the gain on the band, the strength on the
-/// haze), in the planes' order: texture, clarity, dehaze, structure.
-/// Two masks over one pixel add their stops, and a Dehaze's amount is
-/// held to the slider's ends. None when every sum is
+/// Clarity's, and Structure's stops a band, Dehaze's amount, and the
+/// share of the sharpen's delta, each as the global op takes it (the
+/// gain on the band, the strength on the haze), in the planes' order:
+/// texture, clarity, dehaze, structure, sharpen. Two masks over one
+/// pixel add their stops, and a Dehaze's amount and a Sharpen's share
+/// are held to the slider's ends. None when every sum is
 /// [`NEGLIGIBLE`].
 #[inline]
-pub fn amounts(locals: &[(&crate::finish::Baked, f32)]) -> Option<[f32; 4]> {
-    let mut k = [0.0f32; 4];
+pub fn amounts(locals: &[(&crate::finish::Baked, f32)]) -> Option<[f32; 5]> {
+    let mut k = [0.0f32; 5];
     for (b, w) in locals {
-        if b.detail != [0.0; 4] {
+        if b.detail != [0.0; 5] {
             for (k, d) in k.iter_mut().zip(b.detail) {
                 *k += w * d;
             }
         }
     }
     let k = k.map(soft);
-    (k != [0.0; 4]).then(|| {
+    (k != [0.0; 5]).then(|| {
         [
             k[0] * TEXTURE_GAIN,
             k[1] * CLARITY_GAIN,
             k[2].clamp(-1.0, 1.0) * dehaze::FULL_STRENGTH,
             k[3] * STRUCTURE_GAIN,
+            k[4].clamp(-1.0, 1.0),
         ]
     })
 }
 
-/// A pixel with the masks' Detail put on: Texture's band as a gain
-/// under the fade toward the clip, then Clarity's and Structure's with
-/// the fade read again before each, as the global op puts them on,
-/// then the haze cleared by the transmission at the strength, bounded
-/// as the global's apply bounds it. `k` is what [`amounts`] makes and
-/// `bands` the planes at the pixel. The shader's `detail_at` is the
-/// same arithmetic.
+/// A pixel with the masks' Detail put on: first the sharpen's delta at
+/// the masks' share, the last thing the develop did undone or done
+/// again first; then Texture's band as a gain under the fade toward
+/// the clip, then Clarity's and Structure's with the fade read again
+/// before each, as the global op puts them on, then the haze cleared
+/// by the transmission at the strength, bounded as the global's apply
+/// bounds it. `k` is what [`amounts`] makes and `bands` the planes at
+/// the pixel. The shader's `detail_at` is the same arithmetic.
 #[inline]
-pub fn apply(px: [f32; 3], bands: [f32; 4], k: [f32; 4], meta: &DetailMeta) -> [f32; 3] {
+pub fn apply(px: [f32; 3], bands: [f32; 5], k: [f32; 5], meta: &DetailMeta) -> [f32; 3] {
     let mut px = px;
+    let share = if meta.sharpened { k[4] } else { k[4].max(0.0) };
+    if share != 0.0 && bands[4] != 0.0 {
+        px = apply_delta(px, share * bands[4]);
+    }
     for (gain, band) in [(k[0], bands[0]), (k[1], bands[1]), (k[3], bands[3])] {
         if gain != 0.0 {
             let fade = clip_fade(px[0].max(px[1]).max(px[2]), meta.clip_level);
@@ -484,6 +654,7 @@ mod tests {
             clarity: d.clarity != 0.0,
             haze: d.dehaze != 0.0,
             structure: d.structure != 0.0,
+            sharpen: false,
         }
     }
 
@@ -613,6 +784,7 @@ mod tests {
                     clarity,
                     structure,
                     dehaze,
+                    sharpen: 0.0,
                 };
                 let (worst, _) = whole_against_global(&image, d, white);
                 assert!(worst <= 10, "{white:?} {d:?}: {worst} of 65535");
@@ -682,6 +854,7 @@ mod tests {
             clarity: true,
             haze: true,
             structure: true,
+            sharpen: false,
         };
         let first = DetailPlanes::make(&image, None, CLIP, all).unwrap();
         let global = Some(LocalContrastOptions {
@@ -760,6 +933,7 @@ mod tests {
                 clarity,
                 structure,
                 dehaze,
+                sharpen: 0.0,
             };
             let half = Detail {
                 enabled: true,
@@ -767,6 +941,7 @@ mod tests {
                 clarity: clarity / 2.0,
                 structure: structure / 2.0,
                 dehaze: dehaze / 2.0,
+                sharpen: 0.0,
             };
             let want = global(&image, &half);
             let planes = DetailPlanes::make(&image, None, CLIP, wants(&d)).unwrap();
@@ -836,14 +1011,16 @@ mod tests {
                 clarity: true,
                 haze: true,
                 structure: true,
+                sharpen: false,
             },
         )
         .unwrap();
         for k in [1, 2, 3, 5] {
             let a = planes.to_image_reduced(k);
             let whole = planes.to_image();
-            let b = crate::reduce::reduce(&whole.lanes, k);
-            assert_eq!(a.lanes, b, "by {k}");
+            let b = crate::reduce::reduce(whole.lanes.as_ref().unwrap(), k);
+            assert_eq!(a.lanes.as_ref(), Some(&b), "by {k}");
+            assert_eq!(a.size, (b.width, b.height));
             // Structure's plane as a picture of three channels of it,
             // reduced as the picture is.
             let s = whole.structure.unwrap();
@@ -904,10 +1081,18 @@ mod tests {
         // two paths can be read against each other.
         let mut bands = planes.to_image();
         let plane = bands.structure.clone().unwrap();
-        for (px, &v) in bands.lanes.pixels_mut().zip(&plane.data) {
+        for (px, &v) in bands.lanes.as_mut().unwrap().pixels_mut().zip(&plane.data) {
             px[0] = v;
         }
-        let first = |b: &BandImages| -> Vec<f32> { b.lanes.data.chunks(3).map(|p| p[0]).collect() };
+        let first = |b: &BandImages| -> Vec<f32> {
+            b.lanes
+                .as_ref()
+                .unwrap()
+                .data
+                .chunks(3)
+                .map(|p| p[0])
+                .collect()
+        };
         let turned = greycard_edit::geometry::Geometry {
             angle: 5.0,
             crop: Some(greycard_edit::geometry::Crop {
@@ -935,6 +1120,135 @@ mod tests {
                 .fit_exact(framed.width() as u32, framed.height() as u32)
                 .is_none()
         );
+    }
+
+    /// The sharpen's delta goes through the geometry and the resize as
+    /// a channel of the picture does, to the bit, beside the bands.
+    #[test]
+    fn the_sharpen_plane_is_framed_and_fitted_as_a_channel_is() {
+        let image = picture(61, 43);
+        let delta: Vec<f32> = (0..61 * 43)
+            .map(|i| ((i * 37 % 101) as f32 / 101.0 - 0.5) * 0.6)
+            .collect();
+        let delta = sharpen_delta(&delta);
+        for planes in [
+            DetailPlanes::sharpen_only(61, 43, CLIP, delta.clone()),
+            DetailPlanes::make(
+                &image,
+                None,
+                CLIP,
+                DetailWants {
+                    texture: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .with_sharpen(delta.clone()),
+        ] {
+            let bands = planes.to_image();
+            let plane = bands.sharpen.clone().unwrap();
+            let as_channel = WorkingImage {
+                width: plane.width,
+                height: plane.height,
+                data: plane.data.iter().flat_map(|&v| [v; 3]).collect(),
+            };
+            let first =
+                |im: &WorkingImage| -> Vec<f32> { im.data.chunks(3).map(|p| p[0]).collect() };
+            let turned = greycard_edit::geometry::Geometry {
+                angle: -4.0,
+                crop: Some(greycard_edit::geometry::Crop {
+                    x: 0.12,
+                    y: 0.1,
+                    w: 0.66,
+                    h: 0.7,
+                }),
+                ..Default::default()
+            };
+            let framed = bands.framed(&turned);
+            let channel = crate::geometry::apply(&as_channel, &turned);
+            let s = framed.sharpen.as_ref().unwrap();
+            assert_eq!((s.width, s.height), (framed.width(), framed.height()));
+            assert_eq!((channel.width, channel.height), framed.size);
+            assert_eq!(s.data, first(&channel));
+            let fitted = framed.fit_exact(30, 20).unwrap();
+            let channel = crate::export::fit_exact(&channel, 30, 20).unwrap();
+            assert_eq!(fitted.sharpen.as_ref().unwrap().data, first(&channel));
+            assert_eq!(fitted.size, (30, 20));
+            // Reduced from the half floats as the picture of it is.
+            let reduced = planes.to_image_reduced(3);
+            let want = crate::reduce::reduce(&as_channel, 3);
+            assert_eq!(reduced.sharpen.unwrap().data, first(&want));
+            assert_eq!(reduced.size, (want.width, want.height));
+            assert_eq!(reduced.lanes.is_some(), planes.has_bands());
+        }
+    }
+
+    /// The CPU reference of a mask's Sharpen: over the whole frame at
+    /// -1 it takes the develop's sharpen off, and at +1 on the picture
+    /// before the sharpen it puts it on, through the whole export, to
+    /// the delta's half-float rounding; at -1 a pixel's luminance is
+    /// the unsharpened one's to well under a thousandth; and off by
+    /// its switch it is nothing.
+    #[test]
+    fn a_whole_frame_masks_sharpen_takes_the_sharpen_off_and_puts_it_on() {
+        use greycard_core::develop::sharpen::{self, Radius, SharpenOptions, Threshold};
+        let image = picture(160, 120);
+        let options = SharpenOptions {
+            radius: Radius::Fixed(0.9),
+            contrast: Threshold::Fixed(0.0),
+            ..Default::default()
+        };
+        let mut sharpened = image.clone();
+        let (_, _, delta) = sharpen::sharpen_with_delta(&mut sharpened, &options, None, CLIP);
+        let planes = DetailPlanes::sharpen_only(160, 120, CLIP, sharpen_delta(&delta));
+        let masked = |amount: f32| {
+            let mut e = greycard_edit::Edit::default();
+            e.adjustments.push(everywhere(Detail {
+                sharpen: amount,
+                ..Detail::default()
+            }));
+            e
+        };
+        let mut off = masked(-1.0);
+        off.adjustments[0].look.detail.enabled = false;
+        let plain = export(&image, &off, None, None);
+        let sharp = export(&sharpened, &off, None, None);
+        assert_ne!(plain, sharp, "the sharpen did nothing");
+        assert_eq!(export(&sharpened, &off, Some(&planes), None), sharp);
+        let worst = |a: &[u16], b: &[u16]| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max();
+        let taken = export(&sharpened, &masked(-1.0), Some(&planes), None);
+        assert!(
+            worst(&taken, &plain) <= Some(10),
+            "{:?}",
+            worst(&taken, &plain)
+        );
+        let put = export(&image, &masked(1.0), Some(&planes), None);
+        assert!(worst(&put, &sharp) <= Some(10), "{:?}", worst(&put, &sharp));
+        // The luminance itself, at the pixel, as the finish takes it.
+        let bands = planes.to_image();
+        let local = crate::finish::Baked::of(&masked(-1.0).adjustments[0].look);
+        let k = amounts(&[(&local, 1.0)]).unwrap();
+        let luma = |p: [f32; 3]| {
+            sharpen::LUMA[0] * p[0] + sharpen::LUMA[1] * p[1] + sharpen::LUMA[2] * p[2]
+        };
+        let mut most = 0f32;
+        for y in 0..image.height {
+            for x in 0..image.width {
+                let back = apply(sharpened.pixel(x, y), bands.at(x, y), k, &planes.meta);
+                most = most.max((luma(back) - luma(image.pixel(x, y))).abs());
+            }
+        }
+        assert!(most < 1e-4, "{most}");
+        // Beside a picture never sharpened the share is never less
+        // than none: -1 is nothing, to the bit, and +1 still the
+        // sharpen.
+        let unsharpened = planes.clone().unsharpened();
+        assert_eq!(
+            export(&image, &masked(-1.0), Some(&unsharpened), None),
+            plain
+        );
+        let put = export(&image, &masked(1.0), Some(&unsharpened), None);
+        assert!(worst(&put, &sharp) <= Some(10), "{:?}", worst(&put, &sharp));
     }
 
     #[test]

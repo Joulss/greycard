@@ -238,6 +238,10 @@ export component DetailSection inherits Section {
     in-out property <float> detail-clarity;
     in-out property <float> detail-structure;
     in-out property <float> detail-dehaze;
+    // A mask's share of the capture sharpen, shown only on a mask's
+    // Detail: the picture's sharpen is its own section.
+    in property <bool> local;
+    in-out property <float> detail-sharpen;
     callback develop-changed();
 
     title: "DETAIL";
@@ -297,6 +301,19 @@ export component DetailSection inherits Section {
         value <=> root.detail-dehaze;
         scale: 100;
         text: (root.detail-dehaze >= 0 ? "+" : "") + round(root.detail-dehaze * 100);
+        changed(v) => { root.develop-changed(); }
+    }
+    if root.local: EditSlider {
+        label: "Sharpen";
+        enabled: root.detail-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        steps: Steps.percent;
+        value <=> root.detail-sharpen;
+        scale: 100;
+        text: (root.detail-sharpen >= 0 ? "+" : "") + round(root.detail-sharpen * 100);
         changed(v) => { root.develop-changed(); }
     }
 }

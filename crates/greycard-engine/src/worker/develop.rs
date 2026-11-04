@@ -182,7 +182,7 @@ pub(super) fn develop_job(
     };
     if let Some(ctx) = gpu.as_ref() {
         // What the device holds for a stage that is off goes.
-        if edit.sharpen.options().is_none() {
+        if edit.sharpen.options().is_none() && !edit.detail_wants().sharpen {
             ctx.release_sharpen();
         }
         if edit.detail.options().is_none() {
@@ -213,7 +213,7 @@ pub(super) fn develop_job(
             DehazeRan::Cpu
         }
     });
-    let sharpened = at(&|s| matches!(s, Stage::Sharpen(_)))
+    let sharpened = at(&|s| matches!(s, Stage::Sharpen(..)))
         .filter(|_| walked.sharpen.is_some())
         .map(|i| {
             if on_device(i) {

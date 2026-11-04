@@ -385,7 +385,7 @@ impl Renderer {
                 self.detail_clip[0],
                 self.detail_clip[1],
                 greycard_core::develop::local_contrast::STRUCTURE_GAIN,
-                0.0,
+                self.detail_clip[3],
             ],
             white: [display.white, display.stops, display.gain, agx[4]],
             agx: [agx[0], agx[1], agx[2], agx[3]],
@@ -477,6 +477,7 @@ impl Renderer {
             let wide_view = self.wide.view();
             let guide_view = self.guide.create_view(&Default::default());
             let detail_view = self.detail.create_view(&Default::default());
+            let sharpen_view = self.sharpen.create_view(&Default::default());
             let look_view = self.look.texture.create_view(&Default::default());
             let bind_group = self.device.create_bind_group(&gpu::BindGroupDescriptor {
                 label: Some("viewport"),
@@ -537,6 +538,10 @@ impl Renderer {
                     gpu::BindGroupEntry {
                         binding: 13,
                         resource: gpu::BindingResource::TextureView(&wide_view),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 14,
+                        resource: gpu::BindingResource::TextureView(&sharpen_view),
                     },
                 ],
             });

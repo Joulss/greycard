@@ -655,8 +655,8 @@ pub(crate) fn look_edited(st: &mut State, app: &App) {
 }
 
 /// Whether the panel's edit asks for a detail plane the shown develop
-/// did not come with: a mask's Texture, Clarity, Structure, or Dehaze
-/// moved off zero (or its section, its adjustment, or a shape
+/// did not come with: a mask's Texture, Clarity, Structure, Dehaze, or
+/// Sharpen moved off zero (or its section, its adjustment, or a shape
 /// switched on under one) where no mask asked for that plane before.
 /// Its amounts are the finish's and need no develop; a plane does. One no longer
 /// asked for is left where it is until the next develop.
@@ -671,6 +671,7 @@ pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
         clarity: has.clarity || asked.clarity,
         haze: has.haze || asked.haze,
         structure: has.structure || asked.structure,
+        sharpen: has.sharpen || asked.sharpen,
     };
     if coming.covers(&wants) {
         return false;
@@ -1910,6 +1911,77 @@ mod tests {
         let off = edit();
         assert_eq!(describe(&back, &off, &[]), format!("{name}: Detail off"));
         assert_eq!(off.adjustments[0].look.detail.texture, -0.8);
+    }
+
+    /// A mask's Sharpen is a look control like its Texture: the
+    /// overlay hidden, its history row, a develop asked for its delta
+    /// and none for a move after, and through the sidecar's JSON and
+    /// back onto the panel; the picture's own sharpen untouched.
+    #[test]
+    fn a_masks_sharpen_is_its_own_and_a_look_control() {
+        use greycard_edit::history::describe;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        state.borrow_mut().develop.edit.adjustments[0]
+            .mask
+            .components
+            .push(greycard_edit::mask::Component::default());
+        let edit = || {
+            let st = state.borrow();
+            read_edit(&app, &st.develop.edit, st.develop.target)
+        };
+        let before = edit();
+        app.set_show_mask(true);
+        app.set_local_sharpen(-1.0);
+        app.invoke_view_changed();
+        assert!(!app.get_show_mask(), "a Detail slider is a look control");
+        let after = edit();
+        assert_eq!(after.adjustments[0].look.detail.sharpen, -1.0);
+        assert_eq!(
+            after.sharpen, before.sharpen,
+            "the picture's sharpen untouched"
+        );
+        assert_eq!(after.detail.sharpen, 0.0);
+        let name = app.get_adjustment_name().to_string();
+        assert_eq!(
+            describe(&before, &after, &[]),
+            format!("{name}: Sharpen -100")
+        );
+        // The delta is asked for: the panel's edit went to be developed.
+        let sent = || {
+            state.borrow().develop.edit.adjustments[0]
+                .look
+                .detail
+                .sharpen
+        };
+        assert_eq!(sent(), -1.0);
+        assert!(state.borrow().develop.planes_asked.sharpen);
+        // It lands with the delta; a move after is the finish's alone.
+        {
+            let mut st = state.borrow_mut();
+            st.develop.planes_wants.sharpen = true;
+            st.develop.planes_asked = Default::default();
+        }
+        app.set_local_sharpen(0.4);
+        app.invoke_view_changed();
+        assert_eq!(sent(), -1.0);
+        let saved = edit();
+        assert_eq!(saved.adjustments[0].look.detail.sharpen, 0.4);
+        let back = greycard_edit::Edit::from_json(&saved.to_json()).unwrap();
+        assert_eq!(back, saved);
+        app.set_local_sharpen(0.0);
+        {
+            let st = state.borrow();
+            show_edit(&st, &back, &app, st.develop.target);
+        }
+        assert_eq!(app.get_local_sharpen(), 0.4);
+        assert_eq!(
+            edit().adjustments[0].look.detail,
+            back.adjustments[0].look.detail
+        );
     }
 
     /// A look change while a tool is in hand hides the overlay and

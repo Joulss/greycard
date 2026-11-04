@@ -169,8 +169,11 @@ impl FrameKept {
         edit: &Edit,
     ) -> Option<Arc<greycard_render::detail::DetailPlanes>> {
         let wants = edit.detail_wants();
-        self.kept
-            .planes_for(&wants, edit.detail.options().filter(|_| wants.haze))
+        self.kept.planes_for(
+            &wants,
+            edit.detail.options().filter(|_| wants.haze),
+            &edit.sharpen.settings(),
+        )
     }
 
     /// The bytes the frame's develop holds in memory: its pictures, the

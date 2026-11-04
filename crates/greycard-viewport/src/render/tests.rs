@@ -2420,6 +2420,7 @@ fn random_case(
             clarity: rng.slider(0.5, -1.0, 1.0, 0.0),
             dehaze: rng.slider(0.5, -1.0, 1.0, 0.0),
             structure: rng.slider(0.5, -1.0, 1.0, 0.0),
+            sharpen: rng.slider(0.4, -1.0, 1.0, 0.0),
         };
         if has("local detail") {
             a.look.detail = detail;
@@ -2446,13 +2447,14 @@ fn random_case(
 }
 
 /// Detail planes for the parity test: bands of a few stops either
-/// way (Structure's within its knee) and a haze from nothing to most
-/// of the way, varying pixel to
-/// pixel, so a plane read at the wrong texel shows; the airlight
-/// warm, and the clip at one, where the frame has highlights past.
+/// way (Structure's within its knee), a haze from nothing to most
+/// of the way, and a sharpen's delta of a third of a stop either way,
+/// varying pixel to pixel, so a plane read at the wrong texel shows;
+/// the airlight warm, and the clip at one, where the frame has
+/// highlights past.
 fn parity_planes(w: usize, h: usize) -> greycard_render::detail::DetailPlanes {
     let mut rng = Rng::new(7, u64::MAX - 1);
-    let data = (0..w * h)
+    let data: Vec<half::f16> = (0..w * h)
         .flat_map(|_| {
             [
                 rng.range(-1.5, 1.5),
@@ -2463,21 +2465,26 @@ fn parity_planes(w: usize, h: usize) -> greycard_render::detail::DetailPlanes {
         })
         .map(half::f16::from_f32)
         .collect();
+    let delta: Vec<f32> = (0..w * h).map(|_| rng.range(-0.35, 0.35)).collect();
     greycard_render::detail::DetailPlanes {
         width: w,
         height: h,
-        data,
+        data: data.into(),
+        sharpen: None,
         meta: greycard_render::detail::DetailMeta {
             airlight: [0.9, 0.86, 0.8],
             clip_level: 1.0,
+            sharpened: true,
         },
         wants: greycard_edit::DetailWants {
             texture: true,
             clarity: true,
             haze: true,
             structure: true,
+            sharpen: false,
         },
     }
+    .with_sharpen(greycard_render::detail::sharpen_delta(&delta))
 }
 
 /// A small frame with the corners of what a picture holds: rows of
@@ -2789,15 +2796,22 @@ fn a_masks_detail_timed_on_the_gpu() {
             data: (0..w * h * 4)
                 .map(|i| half::f16::from_f32((i % 13) as f32 / 20.0 - 0.3))
                 .collect(),
+            sharpen: Some(
+                (0..w * h)
+                    .map(|i| half::f16::from_f32((i % 7) as f32 / 30.0 - 0.1))
+                    .collect(),
+            ),
             meta: greycard_render::detail::DetailMeta {
                 airlight: [0.9, 0.86, 0.8],
                 clip_level: 1.0,
+                sharpened: true,
             },
             wants: greycard_edit::DetailWants {
                 texture: true,
                 clarity: true,
                 haze: true,
                 structure: true,
+                sharpen: true,
             },
         });
         let mut renderer = Renderer::new(&device, &queue);
@@ -2809,6 +2823,7 @@ fn a_masks_detail_timed_on_the_gpu() {
                 clarity: 0.3,
                 structure: 0.4,
                 dehaze: 0.3,
+                sharpen: -0.6,
             },
             ..Default::default()
         };
@@ -2848,7 +2863,7 @@ fn a_masks_detail_timed_on_the_gpu() {
         let with = draw(&mut renderer);
         eprintln!(
             "{w}x{h}: the planes up in {:.0} ms; a {vw}x{vh} draw {:.1} ms without them, \
-             {:.1} ms with a mask's four",
+             {:.1} ms with a mask's five",
             upload * 1e3,
             without * 1e3,
             with * 1e3
@@ -2875,6 +2890,7 @@ fn a_masks_detail_on_both_sides() {
             clarity: true,
             haze: true,
             structure: true,
+            sharpen: false,
         },
     )
     .map(Arc::new)
@@ -2886,6 +2902,7 @@ fn a_masks_detail_on_both_sides() {
             clarity: -0.6,
             structure: 0.9,
             dehaze: 0.7,
+            sharpen: 0.0,
         },
         ..Default::default()
     };
@@ -2915,6 +2932,103 @@ fn a_masks_detail_on_both_sides() {
     let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
     assert_eq!(off, bare);
     assert_eq!(off_gpu, bare_gpu);
+}
+
+/// A mask's Sharpen on both sides: the sharpen's delta of the picture
+/// over the whole frame, taken off at -1 and put on again at +1, alone
+/// and with the bands, the shader the CPU's to two levels; nothing
+/// with the section off; and beside a picture never sharpened, nothing
+/// below none.
+#[test]
+fn a_masks_sharpen_on_both_sides() {
+    use greycard_core::develop::sharpen::{Radius, SharpenOptions, Threshold, sharpen_with_delta};
+    let Some((device, queue)) = device("the masks' Sharpen check") else {
+        return;
+    };
+    let mut image = parity_frame();
+    let options = SharpenOptions {
+        radius: Radius::Fixed(0.9),
+        contrast: Threshold::Fixed(0.0),
+        ..Default::default()
+    };
+    let (_, _, delta) = sharpen_with_delta(&mut image, &options, None, 1.0);
+    let delta = greycard_render::detail::sharpen_delta(&delta);
+    let (w, h) = (image.width, image.height);
+    let alone = Arc::new(greycard_render::detail::DetailPlanes::sharpen_only(
+        w,
+        h,
+        1.0,
+        delta.clone(),
+    ));
+    let with_bands = Arc::new(
+        greycard_render::detail::DetailPlanes::make(
+            &image,
+            None,
+            1.0,
+            greycard_edit::DetailWants {
+                texture: true,
+                ..Default::default()
+            },
+        )
+        .expect("planes")
+        .with_sharpen(delta),
+    );
+    let (bare, _) = both_sides_with(
+        &device,
+        &queue,
+        &image,
+        &greycard_edit::Edit::default(),
+        None,
+    );
+    for (planes, texture) in [(&alone, 0.0), (&with_bands, -0.7)] {
+        for amount in [-1.0, 1.0, -0.4] {
+            let look = Look {
+                detail: greycard_edit::Detail {
+                    texture,
+                    sharpen: amount,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut edit = greycard_edit::Edit::default();
+            edit.adjustments.push(everywhere(look));
+            let (cpu, gpu) = both_sides_with(&device, &queue, &image, &edit, Some(planes));
+            assert!(cpu != bare, "the Sharpen at {amount} did nothing");
+            let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+            assert!(
+                worst <= Some(2),
+                "{amount} with Texture {texture}: {worst:?}"
+            );
+            edit.adjustments[0].look.detail.enabled = false;
+            let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(planes));
+            let (none, none_gpu) = both_sides_with(&device, &queue, &image, &edit, None);
+            assert_eq!(off, none);
+            assert_eq!(off_gpu, none_gpu);
+        }
+    }
+    // Beside a picture never sharpened, a negative share is held at
+    // none on both sides, and a positive one still sharpens.
+    let unsharpened = Arc::new((*alone).clone().unsharpened());
+    for amount in [-1.0, 0.8] {
+        let mut edit = greycard_edit::Edit::default();
+        edit.adjustments.push(everywhere(Look {
+            detail: greycard_edit::Detail {
+                sharpen: amount,
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let (cpu, gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&unsharpened));
+        let (none, none_gpu) = both_sides_with(&device, &queue, &image, &edit, None);
+        if amount < 0.0 {
+            assert_eq!(cpu, none);
+            assert_eq!(gpu, none_gpu);
+        } else {
+            assert!(cpu != none, "a positive share did nothing");
+            let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+            assert!(worst <= Some(2), "{worst:?}");
+        }
+    }
 }
 
 /// The stacked corner the random draws found the shader's display

@@ -105,20 +105,28 @@ pub struct Look {
 }
 
 /// Which of the detail bands some mask asks the develop for: the
-/// texture, clarity, and structure bands and the haze, each made only
-/// when an enabled mask with something in it has that slider off zero
-/// under its section's switch.
+/// texture, clarity, and structure bands, the haze, and the sharpen's
+/// delta, each made only when an enabled mask with something in it
+/// has that slider off zero under its section's switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DetailWants {
     pub texture: bool,
     pub clarity: bool,
     pub haze: bool,
     pub structure: bool,
+    /// The sharpen's delta, made where the develop sharpens.
+    pub sharpen: bool,
 }
 
 impl DetailWants {
     /// Whether any band is wanted at all.
     pub fn any(&self) -> bool {
+        self.bands() || self.sharpen
+    }
+
+    /// Whether any of the bands made from the picture before the
+    /// local contrast is wanted: all but the sharpen's delta.
+    pub fn bands(&self) -> bool {
         self.texture || self.clarity || self.haze || self.structure
     }
 
@@ -128,6 +136,7 @@ impl DetailWants {
             && (self.clarity || !other.clarity)
             && (self.haze || !other.haze)
             && (self.structure || !other.structure)
+            && (self.sharpen || !other.sharpen)
     }
 }
 
@@ -256,6 +265,14 @@ impl Edit {
             wants.clarity |= d.clarity != 0.0;
             wants.structure |= d.structure != 0.0;
             wants.haze |= d.dehaze != 0.0;
+            // A share of the sharpen, never less than none: with the
+            // picture's own off, only a positive one has a delta to
+            // read.
+            wants.sharpen |= if self.sharpen.enabled {
+                d.sharpen != 0.0
+            } else {
+                d.sharpen > 0.0
+            };
         }
         wants
     }
@@ -572,6 +589,7 @@ mod tests {
                 clarity: true,
                 haze: true,
                 structure: true,
+                sharpen: false,
             }
         );
         let structure = masked(Detail {
@@ -587,6 +605,28 @@ mod tests {
         );
         assert!(all.detail_wants().covers(&structure.detail_wants()));
         assert!(!quiet.detail_wants().covers(&structure.detail_wants()));
+        // A mask's Sharpen asks for the sharpen's delta, and no band.
+        let sharpen = masked(Detail {
+            sharpen: -1.0,
+            ..Detail::default()
+        });
+        let wants = sharpen.detail_wants();
+        assert_eq!(
+            wants,
+            DetailWants {
+                sharpen: true,
+                ..Default::default()
+            }
+        );
+        assert!(wants.any() && !wants.bands());
+        assert!(!all.detail_wants().covers(&wants));
+        // With the picture's sharpen off, a negative share asks for
+        // nothing, a positive one for the delta.
+        let mut off = sharpen.clone();
+        off.sharpen.enabled = false;
+        assert!(!off.detail_wants().any());
+        off.adjustments[0].look.detail.sharpen = 0.5;
+        assert!(off.detail_wants().sharpen);
     }
 
     /// A control reached in culling: its change alone goes over the

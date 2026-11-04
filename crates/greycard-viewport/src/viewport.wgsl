@@ -166,8 +166,11 @@ struct Params {
     // whether there are planes to read; Texture's and Clarity's gains,
     // the dehaze's full strength and its floor on the transmission;
     // the develop's clip level in x (none under zero), where the fade
-    // toward it starts, as a share of it, in y, and Structure's gain
-    // in z.
+    // toward it starts, as a share of it, in y, Structure's gain in z,
+    // and in w the sharpen's pedestal when there is a sharpen's delta
+    // to read (`sharpen::apply_delta`), none at zero, negated when the
+    // picture was never sharpened, where a mask's share is held at
+    // zero from below (`DetailMeta::sharpened`).
     detail: vec4<f32>,
     detail_k: vec4<f32>,
     detail_clip: vec4<f32>,
@@ -200,8 +203,9 @@ struct Local {
     color: f32,
     saturation: f32,
     vibrance: f32,
-    // Keeps what follows 16-byte aligned.
-    pad0: f32,
+    // Its own Sharpen, the share of the sharpen's delta it puts on:
+    // nothing while its Detail is off.
+    sharpen: f32,
     // This adjustment's tint as a vector, in xy.
     tint: vec4<f32>,
     // Its own Texture, Clarity, and Dehaze amounts, in xyz, and its
@@ -328,6 +332,10 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // stops, the haze, and Structure's band, in stops (`DetailPlanes` in
 // `detail.rs`). A texel of nothing when no mask asks.
 @group(0) @binding(12) var detail_planes: texture_2d<f32>;
+// The sharpen's delta at the source's size, in stops, read where the
+// source is (`DetailPlanes::sharpen`). A texel of nothing when no mask
+// asks.
+@group(0) @binding(14) var sharpen_plane: texture_2d<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -441,6 +449,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // The masks' Detail amounts here, summed by their weights, as
     // `detail::amounts` sums them.
     var detail_k = vec4<f32>(0.0);
+    var detail_s = 0.0;
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
@@ -450,6 +459,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if (any(l.detail != vec4<f32>(0.0))) {
             detail_k = detail_k + w * l.detail;
         }
+        detail_s = detail_s + w * l.sharpen;
         if (l.white0.w > 0.5) {
             wm0 = wm0 + w * (l.white0.xyz - p.w0.xyz);
             wm1 = wm1 + w * (l.white1.xyz - p.w1.xyz);
@@ -492,15 +502,35 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     detail_k = select(detail_k, ramp, ka < vec4<f32>(2.0 * DETAIL_NEGLIGIBLE));
     detail_k = select(detail_k, vec4<f32>(0.0), ka < vec4<f32>(DETAIL_NEGLIGIBLE));
     let detailed = any(detail_k != vec4<f32>(0.0));
+    let sa = abs(detail_s);
+    detail_s = select(detail_s, sign(detail_s) * 2.0 * (sa - DETAIL_NEGLIGIBLE), sa < 2.0 * DETAIL_NEGLIGIBLE);
+    detail_s = clamp(select(detail_s, 0.0, sa < DETAIL_NEGLIGIBLE), -1.0, 1.0);
     var td = t;
+    // The sharpen's delta first, the develop's last op undone or done
+    // again, as `detail::apply` puts it on.
+    if (p.detail_clip.w < 0.0) {
+        detail_s = max(detail_s, 0.0);
+    }
+    let pedestal = abs(p.detail_clip.w);
+    if (detail_s != 0.0 && pedestal > 0.0 && all(textureDimensions(sharpen_plane) == textureDimensions(src))) {
+        var d: f32;
+        if (p.cubic.x < 0.5) {
+            d = planes_at(sharpen_plane, tex_at).r;
+        } else {
+            d = sample_cubic(sharpen_plane, tex_at).r;
+        }
+        if (d != 0.0) {
+            td = (td + pedestal) * exp2(detail_s * d) - pedestal;
+        }
+    }
     if (detailed && p.detail.w > 0.5 && all(textureDimensions(detail_planes) == textureDimensions(src))) {
         var bands: vec4<f32>;
         if (p.cubic.x < 0.5) {
-            bands = planes_at(tex_at);
+            bands = planes_at(detail_planes, tex_at);
         } else {
             bands = sample_cubic(detail_planes, tex_at);
         }
-        td = detail_at(t, bands, detail_k);
+        td = detail_at(td, bands, detail_k);
     }
     var c = vec3<f32>(dot(wm0, td), dot(wm1, td), dot(wm2, td)) * exp2(look.exposure);
     // The pass only where it would change something, as
@@ -826,18 +856,18 @@ fn guide_at(pos: vec2<f32>) -> f32 {
 // sampler gives the picture, without the sampler's own rounding of
 // the weights, which a plane that changes a stop from one pixel to the
 // next would show.
-fn planes_at(pos: vec2<f32>) -> vec4<f32> {
-    let size = vec2<i32>(textureDimensions(detail_planes));
+fn planes_at(tex: texture_2d<f32>, pos: vec2<f32>) -> vec4<f32> {
+    let size = vec2<i32>(textureDimensions(tex));
     let g = pos - vec2<f32>(0.5);
     let lo = floor(g);
     let f = g - lo;
     let last = size - vec2<i32>(1);
     let a = clamp(vec2<i32>(lo), vec2<i32>(0), last);
     let b = clamp(vec2<i32>(lo) + vec2<i32>(1), vec2<i32>(0), last);
-    let t00 = textureLoad(detail_planes, a, 0);
-    let t10 = textureLoad(detail_planes, vec2<i32>(b.x, a.y), 0);
-    let t01 = textureLoad(detail_planes, vec2<i32>(a.x, b.y), 0);
-    let t11 = textureLoad(detail_planes, b, 0);
+    let t00 = textureLoad(tex, a, 0);
+    let t10 = textureLoad(tex, vec2<i32>(b.x, a.y), 0);
+    let t01 = textureLoad(tex, vec2<i32>(a.x, b.y), 0);
+    let t11 = textureLoad(tex, b, 0);
     let top = t00 + (t10 - t00) * f.x;
     let bottom = t01 + (t11 - t01) * f.x;
     return top + (bottom - top) * f.y;

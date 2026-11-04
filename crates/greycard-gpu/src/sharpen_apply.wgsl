@@ -1,7 +1,10 @@
 // The capture sharpening's last step: every channel scaled about the
 // pedestal's negative by the sharpened luminance over the old, both on
 // the pedestal, the blend mask in the alpha, into the viewport's
-// half-float texture or into full floats for a read back.
+// half-float texture or into full floats for a read back; or the
+// picture as it was, for a develop that makes the sharpen's delta and
+// leaves the picture unsharpened. And the delta itself, in stops, as
+// `sharpen::delta` makes it, for a mask's Sharpen.
 
 struct Params {
     size: vec2<u32>,
@@ -36,6 +39,7 @@ struct Params {
 @group(0) @binding(5) var out_half: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(6) var out_full: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(7) var out_mask: texture_storage_2d<r32float, write>;
+@group(0) @binding(8) var out_delta: texture_storage_2d<r32float, write>;
 
 fn sharpened_pixel(at: vec2<i32>) -> vec4<f32> {
     let px = textureLoad(rgb, at, 0).rgb;
@@ -64,4 +68,38 @@ fn apply_full(@builtin(global_invocation_id) gid: vec3<u32>) {
     let v = sharpened_pixel(at);
     textureStore(out_full, at, vec4<f32>(v.rgb, 1.0));
     textureStore(out_mask, at, vec4<f32>(v.a, 0.0, 0.0, 0.0));
+}
+
+// The picture as it was, the alpha zero as the Detail section's leaves
+// it: no sharpen to paint.
+@compute @workgroup_size(16, 16, 1)
+fn keep_half(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= p.size.x || gid.y >= p.size.y {
+        return;
+    }
+    let at = vec2<i32>(gid.xy);
+    textureStore(out_half, at, vec4<f32>(textureLoad(rgb, at, 0).rgb, 0.0));
+}
+
+@compute @workgroup_size(16, 16, 1)
+fn keep_full(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= p.size.x || gid.y >= p.size.y {
+        return;
+    }
+    let at = vec2<i32>(gid.xy);
+    textureStore(out_full, at, vec4<f32>(textureLoad(rgb, at, 0).rgb, 1.0));
+    textureStore(out_mask, at, vec4<f32>(textureLoad(blend, at, 0).r, 0.0, 0.0, 0.0));
+}
+
+// The sharpen's change to the pixel in stops: the sharpened luminance
+// over the old, both on the pedestal.
+@compute @workgroup_size(16, 16, 1)
+fn delta(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= p.size.x || gid.y >= p.size.y {
+        return;
+    }
+    let at = vec2<i32>(gid.xy);
+    let old = textureLoad(lum, at, 0).r;
+    let now = textureLoad(sharpened, at, 0).r;
+    textureStore(out_delta, at, vec4<f32>(log2(now / old), 0.0, 0.0, 0.0));
 }

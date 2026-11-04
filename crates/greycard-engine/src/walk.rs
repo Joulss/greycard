@@ -18,7 +18,9 @@ use greycard_core::develop::dehaze::{self, DehazeStats};
 use greycard_core::develop::denoise;
 use greycard_core::develop::local_contrast::{LocalContrastStats, local_contrast};
 use greycard_core::develop::retouch::Region;
-use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
+use greycard_core::develop::sharpen::{
+    SharpenOptions, SharpenStats, sharpen_delta, sharpen_with_delta, sharpen_with_mask,
+};
 use greycard_core::develop::warp::{WarpPlacement, apply_warps};
 use greycard_core::develop::{
     self as core_develop, DemosaicMethod, DevelopSettings, Prepared, demosaic_prepared,
@@ -34,7 +36,7 @@ use greycard_gpu::wgpu;
 use greycard_render::detail::DetailPlanes;
 use greycard_render::finish::{Guide, Source, guide_plane};
 
-use crate::stages::{Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
+use crate::stages::{Delta, Facts, Fills, Keep, Masks, Purpose, Stage, Step, Steps, Tap, quarters};
 
 /// The open file: a raw to develop, or a picture already in the
 /// working space, its image shared rather than copied.
@@ -177,6 +179,9 @@ impl Meta {
 pub struct Taps {
     pub guide: Option<Arc<Guide>>,
     pub planes: Option<Arc<DetailPlanes>>,
+    /// The sharpen's delta for the masks' Sharpen, made by the sharpen
+    /// and put with the planes at the walk's end.
+    pub sharpen: Option<SharpenTap>,
     /// The picture the learned masks are made on, and how.
     pub masks: Option<(Masks, Arc<WorkingImage>)>,
     /// The picture the refined masks are made against.
@@ -191,6 +196,67 @@ impl Taps {
             (Some(g), Some(p)) => Some(Arc::new(g.with_picture(Some(p.clone())))),
             (g, _) => g.clone(),
         }
+    }
+}
+
+/// The sharpen's delta as the sharpen made it: the picture's size, the
+/// options it was made by, whether the picture was sharpened by it,
+/// and the plane in stops.
+#[derive(Clone)]
+pub struct SharpenTap {
+    pub width: usize,
+    pub height: usize,
+    pub options: SharpenOptions,
+    pub sharpened: bool,
+    pub delta: Arc<[half::f16]>,
+}
+
+impl SharpenTap {
+    fn of(image: &WorkingImage, options: &SharpenOptions, sharpened: bool, delta: &[f32]) -> Self {
+        Self {
+            width: image.width,
+            height: image.height,
+            options: *options,
+            sharpened,
+            delta: greycard_render::detail::sharpen_delta(delta),
+        }
+    }
+}
+
+/// `planes` with the sharpen's delta `sharpen` beside them, or the
+/// delta alone when no band was asked for; as they were without one.
+fn with_sharpen(
+    planes: Option<Arc<DetailPlanes>>,
+    sharpen: Option<&SharpenTap>,
+    clip_level: f32,
+) -> Option<Arc<DetailPlanes>> {
+    let Some(s) = sharpen else {
+        return planes;
+    };
+    let mark = |mut p: DetailPlanes| {
+        p.meta.sharpened = s.sharpened;
+        Arc::new(p)
+    };
+    match planes {
+        Some(p) if (p.width, p.height) == (s.width, s.height) => {
+            Some(mark(p.with_sharpen(s.delta.clone())))
+        }
+        Some(p) => {
+            log::warn!(
+                "the sharpen's delta is {}x{}, the masks' bands {}x{}; the delta is left off",
+                s.width,
+                s.height,
+                p.width,
+                p.height
+            );
+            Some(p)
+        }
+        None => Some(mark(DetailPlanes::sharpen_only(
+            s.width,
+            s.height,
+            clip_level,
+            s.delta.clone(),
+        ))),
     }
 }
 
@@ -401,6 +467,8 @@ pub struct Kept {
     /// The masks' bands, with the steps to the picture they were made
     /// from and what was asked of them.
     planes: Option<KeptPlanes>,
+    /// The sharpen's delta the last walk that made one made.
+    sharpen: Option<SharpenTap>,
     /// A picture's upload, with the picture it was made from: the very
     /// one, not one of the same steps, since a picture made again with
     /// a step in another place (the CA on the CPU for an export) is not
@@ -627,6 +695,7 @@ impl Kept {
             p.places = plan[..=n].to_vec();
         }
         self.planes = None;
+        self.sharpen = None;
         self.uploaded = None;
         self.haze = None;
         self.points = points;
@@ -685,6 +754,7 @@ impl Kept {
         self.points
             .retain(|p| matches!(p.keep, Keep::Pair | Keep::Base | Keep::Patched));
         self.planes = None;
+        self.sharpen = None;
         self.mask_picture = None;
     }
 
@@ -724,16 +794,40 @@ impl Kept {
     }
 
     /// The masks' bands kept, when they hold every band `wants` asks
-    /// for, with the haze read after `haze_after` when it asks for one.
+    /// for, with the haze read after `haze_after` when it asks for one,
+    /// and the sharpen's delta made by `sharpen` when it asks for that.
     pub fn planes_for(
         &self,
         wants: &DetailWants,
         haze_after: Option<greycard_core::develop::local_contrast::LocalContrastOptions>,
+        sharpen: &SharpenOptions,
     ) -> Option<Arc<DetailPlanes>> {
-        self.planes
-            .as_ref()
-            .filter(|k| k.wants.covers(wants) && (!wants.haze || k.haze_after == haze_after))
-            .map(|k| k.planes.clone())
+        let delta = match &self.sharpen {
+            Some(s) if wants.sharpen && s.options == *sharpen => Some(s),
+            _ if wants.sharpen => return None,
+            _ => None,
+        };
+        let bands = DetailWants {
+            sharpen: false,
+            ..*wants
+        };
+        let planes = if bands.bands() {
+            Some(
+                self.planes
+                    .as_ref()
+                    .filter(|k| {
+                        k.wants.covers(&bands) && (!wants.haze || k.haze_after == haze_after)
+                    })
+                    .map(|k| k.planes.clone())?,
+            )
+        } else {
+            None
+        };
+        let clip = self
+            .points
+            .last()
+            .map_or(f32::INFINITY, |p| p.meta.clip_level);
+        with_sharpen(planes, delta, clip)
     }
 
     /// Whether the base kept here and the one `other` keeps are the
@@ -1023,6 +1117,17 @@ fn walk_held(
                 if let Some(job) = out.planes.take() {
                     walked.taps.planes = job.land(kept);
                 }
+                // A walk to the finish, past the sharpen, leaves the
+                // delta it made or carried, or none: a delta kept from an
+                // earlier picture is not this one's.
+                if steps.ops().any(|s| matches!(s, Stage::Finish(_))) {
+                    kept.sharpen = walked.taps.sharpen.clone();
+                }
+                walked.taps.planes = with_sharpen(
+                    walked.taps.planes.take(),
+                    walked.taps.sharpen.as_ref(),
+                    walked.meta.clip_level,
+                );
                 if let Some((how, base)) = walked.taps.masks.clone() {
                     // The patched picture, only where a retouch made it.
                     let point = kept.points.iter().find(|p| p.keep == Keep::Patched);
@@ -1776,10 +1881,25 @@ fn cpu_op(
             walked.dehaze = Some(dehaze::dehaze(&mut image, options));
             st.buf = Buf::Working(Arc::new(image));
         }
-        Stage::Sharpen(options) => {
+        Stage::Sharpen(options, Delta::Only) => {
+            // The picture as it was; the delta of what the sharpen
+            // would have done, for the masks' Sharpen.
+            let Buf::Working(image) = &st.buf else {
+                unreachable!("a stage on the working picture")
+            };
+            let (_, _, delta) = sharpen_delta(image, options, st.meta.radius, st.meta.clip_level);
+            st.taps.sharpen = Some(SharpenTap::of(image, options, false, &delta));
+        }
+        Stage::Sharpen(options, delta) => {
             let mut image = owned(working(&mut st.buf));
-            let (stats, mask) =
-                sharpen_with_mask(&mut image, options, st.meta.radius, st.meta.clip_level);
+            let (stats, mask) = if delta.made() {
+                let (stats, mask, delta) =
+                    sharpen_with_delta(&mut image, options, st.meta.radius, st.meta.clip_level);
+                st.taps.sharpen = Some(SharpenTap::of(&image, options, true, &delta));
+                (stats, mask)
+            } else {
+                sharpen_with_mask(&mut image, options, st.meta.radius, st.meta.clip_level)
+            };
             walked.sharpen = Some(stats);
             walked.sharpen_mask = Some(mask);
             st.buf = Buf::Working(Arc::new(image));
@@ -1968,13 +2088,35 @@ fn device_run(
                 }
                 places.push(Place::Gpu);
             }
-            Step::Op(Stage::Sharpen(options)) => {
+            Step::Op(Stage::Sharpen(options, delta)) => {
                 let out = match &texture {
                     Some(out) => out.clone(),
                     None => ctx.viewport_texture(image.width(), image.height()),
                 };
-                walked.sharpen =
-                    Some(ctx.sharpen(&image, options, st.meta.radius, st.meta.clip_level, &out)?);
+                let (radius, clip) = (st.meta.radius, st.meta.clip_level);
+                if delta.made() {
+                    let (stats, d) = ctx.sharpen_with_delta(
+                        &image,
+                        options,
+                        radius,
+                        clip,
+                        &out,
+                        delta.sharpens(),
+                    )?;
+                    let (w, h) = (image.width() as usize, image.height() as usize);
+                    st.taps.sharpen = Some(SharpenTap {
+                        width: w,
+                        height: h,
+                        options: *options,
+                        sharpened: delta.sharpens(),
+                        delta: greycard_render::detail::sharpen_delta(&d),
+                    });
+                    if delta.sharpens() {
+                        walked.sharpen = Some(stats);
+                    }
+                } else {
+                    walked.sharpen = Some(ctx.sharpen(&image, options, radius, clip, &out)?);
+                }
                 places.push(Place::Gpu);
                 written = Some(out);
             }

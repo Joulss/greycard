@@ -365,6 +365,54 @@ fn a_synthetic_picture_matches_the_reference() {
     );
 }
 
+/// The sharpen's delta on the GPU is the reference's: with the
+/// picture sharpened and with it left as it was, which is then the
+/// picture to the bit. The delta is a log of the two luminances whose
+/// ratio the picture is scaled by, so it is held to the pictures'
+/// tolerance in stops.
+#[test]
+fn the_delta_matches_the_reference_sharpened_or_not() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let image = textured(523, 389, 1.0);
+    let options = SharpenOptions {
+        radius: Radius::Fixed(1.0),
+        iterations: 20,
+        contrast: Threshold::Fixed(0.02),
+        stop_early: true,
+    };
+    for apply in [true, false] {
+        let mut cpu = image.clone();
+        let (cpu_stats, _, cpu_delta) = if apply {
+            reference::sharpen_with_delta(&mut cpu, &options, None, 2.0)
+        } else {
+            reference::sharpen_delta(&cpu, &options, None, 2.0)
+        };
+        let mut gpu = image.clone();
+        let (gpu_stats, _, gpu_delta) = ctx
+            .sharpen_image_with_delta(&mut gpu, &options, None, 2.0, apply)
+            .expect("the GPU sharpen runs");
+        let worst = cpu_delta
+            .iter()
+            .zip(&gpu_delta)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        let most = cpu_delta.iter().fold(0f32, |m, d| m.max(d.abs()));
+        println!("apply {apply}: the delta at most {most:.3} stops, {worst:.3e} apart");
+        assert_eq!(cpu_delta.len(), gpu_delta.len());
+        assert!(most > 0.1, "the sharpen did something: {most}");
+        assert!(worst <= TOLERANCE, "apply {apply}: {worst:.3e} stops apart");
+        assert_eq!(cpu_stats.threshold, gpu_stats.threshold);
+        if apply {
+            assert!(apart(&cpu.data, &gpu.data).relative <= TOLERANCE);
+        } else {
+            assert_eq!(gpu, image, "left as it was");
+            assert_eq!(cpu, image);
+        }
+    }
+}
+
 /// The automatic threshold: found on the GPU's tile statistics from
 /// the same flattest patch the reference finds, on noise at mid grey
 /// and on a picture where the coarse pass finds nothing flat.

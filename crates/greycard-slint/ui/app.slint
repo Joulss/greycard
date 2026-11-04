@@ -1580,6 +1580,7 @@ export component App inherits Window {
     in-out property <float> local-texture: 0;
     in-out property <float> local-clarity: 0;
     in-out property <float> local-structure: 0;
+    in-out property <float> local-sharpen: 0;
     in-out property <float> local-dehaze: 0;
     in-out property <bool> sharpen: true;
     // The lens: what the database found for the file, whether it
@@ -3749,9 +3750,10 @@ export component App inherits Window {
                             view-changed => { root.view-changed(); }
                         }
                         // The chosen mask's own Texture, Clarity,
-                        // Structure, and Dehaze: a look control, put on
-                        // at the finish from the bands the develop
-                        // keeps beside the picture.
+                        // Structure, Dehaze, and Sharpen: a look
+                        // control, put on at the finish from the bands
+                        // and the sharpen's delta the develop keeps
+                        // beside the picture.
                         if root.shown-tab == "Masks" && root.target > 0: DetailSection {
                             one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
@@ -3761,6 +3763,8 @@ export component App inherits Window {
                             detail-clarity <=> root.local-clarity;
                             detail-structure <=> root.local-structure;
                             detail-dehaze <=> root.local-dehaze;
+                            local: true;
+                            detail-sharpen <=> root.local-sharpen;
                             develop-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop": NoiseSection {

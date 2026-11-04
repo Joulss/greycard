@@ -769,3 +769,194 @@ fn a_masks_detail_on_the_gpu_path_timed() {
         );
     }
 }
+
+/// A mask over the whole frame with `detail`, for the measurements.
+fn whole_mask(detail: greycard_edit::Detail) -> greycard_edit::Adjustment {
+    let mut a = greycard_edit::Adjustment {
+        id: 1,
+        name: "whole".into(),
+        ..Default::default()
+    };
+    a.mask.components.push(Component {
+        shape: Shape::Linear {
+            from: [0.5, 10.0],
+            to: [0.5, 11.0],
+        },
+        ..Default::default()
+    });
+    a.look.detail = detail;
+    a
+}
+
+/// A mask's Sharpen on the sample raws, through the export's develop:
+/// at -1 over the global sharpen, each pixel's luminance against the
+/// develop with the sharpen off (the delta put on at the finish, as
+/// `detail::apply` puts it); and the order against the global's, a
+/// mask's Sharpen of +1 with its Texture -0.5 over a frame with the
+/// global sharpen off, against the global Texture -0.5 with the
+/// sharpen on, which sharpens the textured picture, in ΔE over the
+/// whole frame.
+#[test]
+#[ignore = "needs GREYCARD_SAMPLES; a measurement"]
+fn a_masks_sharpen_measured() {
+    use greycard_core::develop::sharpen::LUMA;
+    let raws = sample_raws();
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Jpeg,
+        sharpen: greycard_render::export::Sharpen::Off,
+        metadata: greycard_render::export::Metadata::None,
+        ..Default::default()
+    };
+    let eight = |r: greycard_render::export::Rendered| match r.pixels {
+        greycard_render::export::Pixels::Eight(p) => p,
+        greycard_render::export::Pixels::Sixteen(_) => unreachable!(),
+    };
+    for path in &raws {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let mut plain = Edit::default();
+        plain.noise.enabled = false;
+        plain.sharpen.enabled = true;
+        let mut unsharpened = plain.clone();
+        unsharpened.sharpen.enabled = false;
+        let mut off = plain.clone();
+        off.adjustments.push(whole_mask(greycard_edit::Detail {
+            sharpen: -1.0,
+            ..Default::default()
+        }));
+        let sharp = FrameDevelop::develop(path, &off, None).expect("developed");
+        let soft = FrameDevelop::develop(path, &unsharpened, None).expect("developed");
+        let planes = sharp.input.planes.as_ref().expect("the delta");
+        let bands = planes.to_image();
+        let local = greycard_render::finish::Baked::of(&off.adjustments[0].look);
+        let k = greycard_render::detail::amounts(&[(&local, 1.0)]).unwrap();
+        let luma = |p: [f32; 3]| LUMA[0] * p[0] + LUMA[1] * p[1] + LUMA[2] * p[2];
+        let (w, h) = (sharp.image.width, sharp.image.height);
+        let mut apart: Vec<f32> = Vec::with_capacity(w * h);
+        let mut moved = 0f32;
+        for y in 0..h {
+            for x in 0..w {
+                let px = sharp.image.pixel(x, y);
+                let back = greycard_render::detail::apply(px, bands.at(x, y), k, &planes.meta);
+                let want = luma(soft.image.pixel(x, y));
+                apart.push((luma(back) - want).abs());
+                moved = moved.max((luma(px) - want).abs());
+            }
+        }
+        apart.sort_by(f32::total_cmp);
+        let at = |q: f64| apart[((apart.len() as f64 * q) as usize).min(apart.len() - 1)];
+        // The order: the mask's Sharpen and Texture at the finish over
+        // the unsharpened frame, against the global's pair.
+        let mut global = plain.clone();
+        global.detail.texture = -0.5;
+        let mut masked = unsharpened.clone();
+        masked.adjustments.push(whole_mask(greycard_edit::Detail {
+            texture: -0.5,
+            sharpen: 1.0,
+            ..Default::default()
+        }));
+        let mut g = FrameDevelop::develop(path, &global, None).expect("developed");
+        let mut m = FrameDevelop::develop(path, &masked, None).expect("developed");
+        let (mean, p99) = delta_e(
+            &eight(g.finish(&global, &settings)),
+            &eight(m.finish(&masked, &settings)),
+        );
+        // And the mask's Sharpen alone at +1 over the unsharpened frame
+        // against the global sharpen: the same delta, put on at the
+        // finish.
+        let mut alone = unsharpened.clone();
+        alone.adjustments.push(whole_mask(greycard_edit::Detail {
+            sharpen: 1.0,
+            ..Default::default()
+        }));
+        let mut s = FrameDevelop::develop(path, &plain, None).expect("developed");
+        let mut a = FrameDevelop::develop(path, &alone, None).expect("developed");
+        let (alone_mean, alone_p99) = delta_e(
+            &eight(s.finish(&plain, &settings)),
+            &eight(a.finish(&alone, &settings)),
+        );
+        eprintln!(
+            "{name} {w}x{h} ({:.1} MP): -1 over the sharpen, luminance off the unsharpened by \
+             at most {:.2e} (p99.9 {:.2e}, median {:.2e}; the sharpen itself moved it by up to \
+             {moved:.3}); the order, mask Texture -0.5 + Sharpen +1 against the global pair, ΔE \
+             mean {mean:.3} p99 {p99:.3}; Sharpen +1 alone against the global, ΔE mean \
+             {alone_mean:.3} p99 {alone_p99:.3}",
+            (w * h) as f64 / 1e6,
+            at(1.0),
+            at(0.999),
+            at(0.5),
+        );
+    }
+}
+
+/// The develop's time with and without a mask's Sharpen, the global
+/// sharpen on and off, on the sample raws: a white moved each time so
+/// the patched picture and everything after it is made again, best of
+/// three. On the GPU's path, or with `GREYCARD_PLANES_CPU=1` the CPU's.
+#[test]
+#[ignore = "needs GREYCARD_SAMPLES and a GPU; a measurement"]
+fn a_masks_sharpen_timed() {
+    let raws = sample_raws();
+    let on_cpu = std::env::var_os("GREYCARD_PLANES_CPU").is_some();
+    for path in &raws {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let (input, _) = timed_open(path).expect("opened");
+        let mut gpu = if on_cpu {
+            None
+        } else {
+            Some(greycard_gpu::Context::own().expect("a GPU"))
+        };
+        let mut base = None;
+        let mut ai = Ai::new();
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut run = |edit: &Edit, base: &mut Option<FrameKept>| {
+            let started = Instant::now();
+            let (outcome, _) = develop_job(
+                &input, edit, 0, 1, base, &mut ai, None, None, &mut gpu, &deliver,
+            );
+            assert!(matches!(outcome, Outcome::Developed { .. }));
+            started.elapsed().as_secs_f64()
+        };
+        let mut moved = |edit: &Edit, base: &mut Option<FrameKept>| {
+            let mut best = f64::INFINITY;
+            for k in 0..4 {
+                let mut e = edit.clone();
+                e.white_balance = greycard_edit::WhiteBalance::Custom {
+                    temperature: 5000.0 + 100.0 * k as f64,
+                    tint: 0.0,
+                };
+                let t = run(&e, base);
+                if k > 0 {
+                    best = best.min(t);
+                }
+            }
+            best
+        };
+        let mut line = Vec::new();
+        for global in [true, false] {
+            let mut plain = Edit::default();
+            plain.noise.enabled = false;
+            plain.sharpen.enabled = global;
+            let mut masked = plain.clone();
+            masked.adjustments.push(whole_mask(greycard_edit::Detail {
+                sharpen: if global { -0.6 } else { 0.6 },
+                ..Default::default()
+            }));
+            let without = moved(&plain, &mut base);
+            let with = moved(&masked, &mut base);
+            line.push(format!(
+                "global sharpen {}: {without:.2} s without a mask's Sharpen, {with:.2} s with",
+                if global { "on" } else { "off" }
+            ));
+        }
+        let size = base
+            .as_ref()
+            .map(|b| (b.image.width, b.image.height))
+            .unwrap_or_default();
+        eprintln!(
+            "{name} ({:.1} MP, {}): {}",
+            (size.0 * size.1) as f64 / 1e6,
+            if on_cpu { "CPU" } else { "GPU" },
+            line.join("; ")
+        );
+    }
+}

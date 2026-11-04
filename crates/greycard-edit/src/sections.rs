@@ -376,6 +376,13 @@ pub struct Detail {
     /// haze in. Zero is nothing. Runs after the local contrast and
     /// before the sharpen, and follows the section's switch.
     pub dehaze: f32,
+    /// A mask's share of the capture sharpen, -1 to 1 (the panel shows
+    /// ±100): the sharpen's change taken off under the mask at -1, put
+    /// on once more at 1, by the global's radius, iterations, and
+    /// threshold. Read only on a mask's look; the picture's sharpen is
+    /// its own section. Left out of a sidecar at zero.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub sharpen: f32,
 }
 
 impl Default for Detail {
@@ -386,6 +393,7 @@ impl Default for Detail {
             clarity: 0.0,
             structure: 0.0,
             dehaze: 0.0,
+            sharpen: 0.0,
         }
     }
 }
@@ -452,7 +460,13 @@ impl Default for Sharpen {
 impl Sharpen {
     /// The engine's options, or none when off.
     pub fn options(&self) -> Option<SharpenOptions> {
-        self.enabled.then_some(SharpenOptions {
+        self.enabled.then(|| self.settings())
+    }
+
+    /// The engine's options whether the section is on or off: what a
+    /// mask's Sharpen deconvolves by when the picture is not sharpened.
+    pub fn settings(&self) -> SharpenOptions {
+        SharpenOptions {
             radius: if self.auto_radius {
                 Radius::Auto
             } else {
@@ -465,7 +479,7 @@ impl Sharpen {
                 Threshold::Fixed(self.threshold)
             },
             stop_early: true,
-        })
+        }
     }
 }
 
@@ -685,6 +699,45 @@ mod tests {
         // A sidecar from a build before it reads as none.
         let old = r#"{"version": 3, "detail": {"texture": 0.2, "clarity": 0.1}}"#;
         assert_eq!(Edit::from_json(old).unwrap().detail.structure, 0.0);
+    }
+
+    /// A mask's Sharpen in the sidecar: absent it reads as zero, at
+    /// zero it is left out so the file and the develop key are what
+    /// they were, and set it is written and read back as it was.
+    #[test]
+    fn a_masks_sharpen_round_trips_absent_zero_and_set() {
+        let mut e = Edit::default();
+        e.adjustments.push(crate::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        e.adjustments[0].look.detail.texture = -0.3;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        let detail = &json["adjustments"][0]["look"]["detail"];
+        assert!(detail.get("texture").is_some(), "{json}");
+        assert!(detail.get("sharpen").is_none(), "zero is left out: {json}");
+        let before = e.develop_key_with(&[], None);
+        // Absent: a sidecar from before the field.
+        let mut old = json.clone();
+        old["adjustments"][0]["look"]["detail"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sharpen");
+        let read = Edit::from_json(&old.to_string()).unwrap();
+        assert_eq!(read.adjustments[0].look.detail.sharpen, 0.0);
+        assert_eq!(read, e);
+        // Set: written, read back, and another develop.
+        e.adjustments[0].look.detail.sharpen = -0.85;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        let written = json["adjustments"][0]["look"]["detail"]["sharpen"].as_f64();
+        assert!(written.is_some_and(|v| (v + 0.85).abs() < 1e-6), "{json}");
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+        assert_ne!(e.develop_key_with(&[], None), before);
+        e.adjustments[0].look.detail.sharpen = 0.0;
+        assert_eq!(e.develop_key_with(&[], None), before);
+        // The picture's own Detail never writes one.
+        let json: serde_json::Value = serde_json::from_str(&Edit::default().to_json()).unwrap();
+        assert!(json["detail"].get("sharpen").is_none(), "{json}");
     }
 
     #[test]

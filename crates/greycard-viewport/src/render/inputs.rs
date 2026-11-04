@@ -286,6 +286,23 @@ impl Renderer {
         })
     }
 
+    pub(super) fn sharpen_texture(device: &gpu::Device, width: u32, height: u32) -> gpu::Texture {
+        device.create_texture(&gpu::TextureDescriptor {
+            label: Some("sharpen delta"),
+            size: gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: gpu::TextureDimension::D2,
+            format: gpu::TextureFormat::R16Float,
+            usage: gpu::TextureUsages::TEXTURE_BINDING | gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
     /// Put the masks' detail planes on the GPU, or take them down: the
     /// planes of the develop the source is, at its size, read at the
     /// texel the source is read at.
@@ -305,6 +322,9 @@ impl Renderer {
             if self.detail_meta[3] != 0.0 {
                 self.detail = Self::detail_texture(&self.device, 1, 1);
             }
+            if self.detail_clip[3] != 0.0 {
+                self.sharpen = Self::sharpen_texture(&self.device, 1, 1);
+            }
             self.detail_meta = [1.0, 1.0, 1.0, 0.0];
             self.detail_clip = [-1.0, 0.0, 0.0, 0.0];
             return;
@@ -320,6 +340,58 @@ impl Renderer {
             );
         }
         let (w, h) = (planes.width as u32, planes.height as u32);
+        let extent = gpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        };
+        // The sharpen's delta, a lane of its own beside the four.
+        match &planes.sharpen {
+            Some(delta) => {
+                self.sharpen = Self::sharpen_texture(&self.device, w, h);
+                self.queue.write_texture(
+                    gpu::TexelCopyTextureInfo {
+                        texture: &self.sharpen,
+                        mip_level: 0,
+                        origin: gpu::Origin3d::ZERO,
+                        aspect: gpu::TextureAspect::All,
+                    },
+                    bytemuck::cast_slice(delta),
+                    gpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 2),
+                        rows_per_image: Some(h),
+                    },
+                    extent,
+                );
+            }
+            None if self.detail_clip[3] != 0.0 => {
+                self.sharpen = Self::sharpen_texture(&self.device, 1, 1);
+            }
+            None => {}
+        }
+        // Negated over a picture never sharpened, where the shader
+        // holds a mask's share at zero from below.
+        let pedestal = match (&planes.sharpen, planes.meta.sharpened) {
+            (Some(_), true) => greycard_core::develop::sharpen::BLACK_PEDESTAL,
+            (Some(_), false) => -greycard_core::develop::sharpen::BLACK_PEDESTAL,
+            (None, _) => 0.0,
+        };
+        let a = planes.meta.airlight;
+        let clip = planes.meta.clip_level;
+        self.detail_clip = [
+            if clip.is_finite() { clip } else { -1.0 },
+            greycard_core::develop::local_contrast::CLIP_FADE,
+            0.0,
+            pedestal,
+        ];
+        if !planes.has_bands() {
+            if self.detail_meta[3] != 0.0 {
+                self.detail = Self::detail_texture(&self.device, 1, 1);
+            }
+            self.detail_meta = [a[0], a[1], a[2], 0.0];
+            return;
+        }
         self.detail = Self::detail_texture(&self.device, w, h);
         self.queue.write_texture(
             gpu::TexelCopyTextureInfo {
@@ -340,14 +412,6 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
         );
-        let a = planes.meta.airlight;
         self.detail_meta = [a[0], a[1], a[2], 1.0];
-        let clip = planes.meta.clip_level;
-        self.detail_clip = [
-            if clip.is_finite() { clip } else { -1.0 },
-            greycard_core::develop::local_contrast::CLIP_FADE,
-            0.0,
-            0.0,
-        ];
     }
 }

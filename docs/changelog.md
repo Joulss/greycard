@@ -7,6 +7,11 @@ design note behind it.
 
 ### The window
 
+- A mask's DETAIL has Sharpen: -100 takes the Develop tab's Sharpen off
+  under the mask, +100 puts it on once more; with the Develop tab's
+  Sharpen off, a positive amount sharpens inside the mask alone (pixls,
+  discussion 59)
+  ([§548](https://github.com/jessolmstead/greycard/blob/master/docs/notes/548-sharpen-in-a-masks-detail.md)).
 - The grading wheels and the tint's ring: Shift-drag keeps the hue and
   Ctrl-drag the strength, and a Ctrl-click on the picture gives the
   wheel last used that color's hue, Ctrl+Shift its opposite
