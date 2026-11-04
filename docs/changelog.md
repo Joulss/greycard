@@ -204,6 +204,9 @@ design note behind it.
 
 ### Fixes
 
+- Escape puts Level, a perspective guide, or Draw down right after
+  its button is clicked, wherever the pointer is
+  ([§550](https://github.com/jessolmstead/greycard/blob/master/docs/notes/550-the-keys-after-level-a-guide-or-draw.md)).
 - On Linux, Help, Report a problem, and the release page open in the
   desktop's default browser, not the one a shell's `BROWSER` names
   (issue 60)

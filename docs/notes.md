@@ -562,3 +562,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§547. An Intel Mac package](notes/547-an-intel-mac-package.md) (2026-11-04)
 - [§548. Sharpen in a mask's Detail](notes/548-sharpen-in-a-masks-detail.md) (2026-11-04)
 - [§549. Samples below black: measured, and kept clamped](notes/549-samples-below-black-measured-and-kept-clamped.md) (2026-11-05)
+- [§550. The keys after Level, a guide, or Draw](notes/550-the-keys-after-level-a-guide-or-draw.md) (2026-11-05)

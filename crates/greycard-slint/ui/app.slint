@@ -3917,6 +3917,7 @@ export component App inherits Window {
                             crop-toggled => { root.crop-toggled(); }
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }
+                            focus-keys => { keys.focus(); }
                         }
                         if root.shown-tab == "Crop": RotateSection {
                             one-of-panel: !root.grid-open;
@@ -3932,6 +3933,7 @@ export component App inherits Window {
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }
                             straightened => { root.straightened(); }
+                            focus-keys => { keys.focus(); }
                         }
                         // The keystone: the camera's tilt, up or to the
                         // right positive, for a lens whose focal length
@@ -3948,6 +3950,7 @@ export component App inherits Window {
                             geometry-changed => { root.geometry-changed(); }
                             geometry-reset => { root.geometry-reset(); }
                             guide-dropped => { root.guide-dropped(); }
+                            focus-keys => { keys.focus(); }
                         }
                         if root.shown-tab == "Develop": DemosaicSection {
                             one-of-panel: !root.grid-open;

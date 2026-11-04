@@ -2310,6 +2310,64 @@ mod tests {
         keys_back(&app, "the filter");
     }
 
+    /// The filter's words keep the keys while the pointer crosses the
+    /// picture; a press on the picture ends the typing, and the next
+    /// key is the window's.
+    #[test]
+    fn a_press_on_the_picture_ends_a_text_boxs_typing() {
+        use crate::testing::{click, type_text};
+        let (app, state, _worker) = develop_window();
+        app.set_panel_tab(crate::panel::cull::CULL_TAB.into());
+        press(&app, "/");
+        slint::platform::update_timers_and_animations();
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(700.0, 400.0),
+        });
+        type_text(&app, "ab");
+        assert_eq!(app.get_filter_text(), "ab", "the typing goes on");
+        // Cleared, so the frame is in view again to be rated.
+        press(&app, Key::Backspace);
+        press(&app, Key::Backspace);
+        assert_eq!(app.get_filter_text(), "");
+        click(&app, 700.0, 400.0);
+        assert_eq!(app.global::<crate::Typing>().get_boxes(), 0);
+        press(&app, "2");
+        assert_eq!(app.get_filter_text(), "");
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 2, "rated");
+    }
+
+    /// A click on Level or a guide's button hands the keys to the
+    /// window: Escape puts the tool down with the pointer still over
+    /// the panel.
+    #[test]
+    fn escape_after_a_click_on_level_or_a_guide_puts_it_down() {
+        use crate::testing::{click, labeled};
+        let (app, _state, _worker) = develop_window();
+        press(&app, "r");
+        let click_on = |app: &App, label: &str| {
+            let (at, size) = labeled(app, label);
+            click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        };
+        click_on(&app, "Level");
+        assert!(app.get_level_mode());
+        press(&app, Key::Escape);
+        assert!(!app.get_level_mode(), "the level put down");
+        assert!(app.get_crop_mode());
+        click_on(&app, "Verticals");
+        assert_eq!(app.get_guide_mode(), "Vertical");
+        press(&app, Key::Escape);
+        assert_eq!(app.get_guide_mode(), "", "the guide put down");
+        click_on(&app, "Horizontals");
+        assert_eq!(app.get_guide_mode(), "Horizontal");
+        press(&app, Key::Escape);
+        assert_eq!(app.get_guide_mode(), "");
+        click_on(&app, "Draw");
+        assert!(app.get_crop_draw_armed());
+        press(&app, Key::Escape);
+        assert!(!app.get_crop_draw_armed(), "the Draw put down");
+        assert!(app.get_crop_mode());
+    }
+
     #[test]
     fn the_guide_is_this_releases() {
         let url = guide_url();

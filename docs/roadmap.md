@@ -766,16 +766,6 @@ clears or a tester asks for it.
       top and Monitor, Proof and Demosaic at the bottom, and up and down
       buttons for it in the Settings sheet. Goes with the develop
       panel's move out of app.slint, since that is the same rewiring
-- [ ] The picture takes the keys when the pointer enters it, so a text
-      box in a panel (the filter, a custom aspect, a mask's name) loses
-      the keys the moment the pointer crosses the picture; a typing flag
-      the panels' text boxes set should hold the keys until a press, as
-      a snapshot's name does since §290
-- [ ] Escape after clicking Level or a guide button reaches the window
-      only once the pointer is back over the picture, and the level's
-      and the guides' overlays cover the picture so a hover never hands
-      the keys back; the button should give the keys up on click, or the
-      overlay should take the hover
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport

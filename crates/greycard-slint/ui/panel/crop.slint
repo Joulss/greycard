@@ -23,6 +23,9 @@ export component CropSection inherits Section {
     callback crop-clicked();
     callback geometry-changed();
     callback guide-dropped();
+    // The keys to the window, so Escape puts a tool down wherever the
+    // pointer is.
+    callback focus-keys();
 
     // The custom aspect's box goes with "Custom", which a frame
     // change, an undo, or a paste can take away under its focus: a
@@ -61,6 +64,7 @@ export component CropSection inherits Section {
                 root.guide-mode = "";
                 root.guide-dropped();
                 root.crop-draw-armed = !root.crop-draw-armed;
+                root.focus-keys();
             }
         }
     }
@@ -125,6 +129,7 @@ export component RotateSection inherits Section {
     callback geometry-changed();
     callback guide-dropped();
     callback straightened();
+    callback focus-keys();
 
     title: "ROTATE";
     icon: @image-url("../icons/rotate-cw.svg");
@@ -142,6 +147,7 @@ export component RotateSection inherits Section {
                 root.guide-mode = "";
                 root.guide-dropped();
                 root.level-mode = !root.level-mode;
+                root.focus-keys();
             }
         }
         PanelButton {
@@ -235,6 +241,7 @@ export component PerspectiveSection inherits Section {
     callback geometry-changed();
     callback geometry-reset();
     callback guide-dropped();
+    callback focus-keys();
 
     title: "PERSPECTIVE";
     icon: @image-url("../icons/keystone.svg");
@@ -253,6 +260,7 @@ export component PerspectiveSection inherits Section {
                 root.level-mode = false;
                 root.guide-dropped();
                 root.guide-mode = root.guide-mode == "Vertical" ? "" : "Vertical";
+                root.focus-keys();
             }
         }
         PanelButton {
@@ -264,6 +272,7 @@ export component PerspectiveSection inherits Section {
                 root.level-mode = false;
                 root.guide-dropped();
                 root.guide-mode = root.guide-mode == "Horizontal" ? "" : "Horizontal";
+                root.focus-keys();
             }
         }
     }
