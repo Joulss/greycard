@@ -167,6 +167,22 @@ pub(crate) fn denoise_stabilized(
     strength: f32,
     options: &NlmOptions,
 ) -> NlmStats {
+    denoise_stabilized_by(rgb, width, height, sigma, strength, options, accumulate)
+}
+
+/// A tile's weighted sums: [`accumulate`], or under test the reference
+/// it is checked against.
+type Accumulate = fn(&[f32], &Params, &mut Scratch, (usize, usize), (usize, usize));
+
+fn denoise_stabilized_by(
+    rgb: &mut [f32],
+    width: usize,
+    height: usize,
+    sigma: f32,
+    strength: f32,
+    options: &NlmOptions,
+    sums: Accumulate,
+) -> NlmStats {
     let patch_radius = options
         .patch_radius
         .unwrap_or_else(|| auto_patch_radius(sigma))
@@ -237,7 +253,7 @@ pub(crate) fn denoise_stabilized(
                 |scratch, (tx, rows)| {
                     let x0 = tx * TILE;
                     let x1 = (x0 + TILE).min(width);
-                    denoise_tile(rows, rgb, &params, scratch, (x0, x1), (y0, y1));
+                    denoise_tile(rows, rgb, &params, scratch, (x0, x1), (y0, y1), sums);
                 },
             );
         });
@@ -357,25 +373,25 @@ struct Scratch {
 }
 
 impl Scratch {
-    fn ready(&mut self, tw: usize, th: usize, ew: usize, rows: usize) {
+    /// The tile's sums, `tw` by `th`, cleared.
+    fn ready(&mut self, tw: usize, th: usize) {
         self.acc.clear();
         self.acc.resize(tw * th, [0.0; 4]);
+    }
+
+    /// The rows for a region `bw` wide, `ew` with its patch margin, and
+    /// a ring of `rows` of them.
+    fn rows(&mut self, ew: usize, bw: usize, rows: usize) {
         self.ring.resize(rows * ew, 0.0);
         self.vsum.resize(ew, 0.0);
-        self.hsum.resize(tw, 0.0);
-        self.wrow.resize(tw, 0.0);
+        self.hsum.resize(bw, 0.0);
+        self.wrow.resize(bw, 0.0);
     }
 }
 
 /// One tile of the output, `x0..x1` by `y0..y1`, interleaved RGB, into
 /// `out`: the tile's own part of each of its rows, `y1 - y0` of them,
 /// `(x1 - x0) * 3` long.
-///
-/// The rows of squared differences are made one at a time and kept in a
-/// ring only as tall as the patch, so the vertical box sums run down
-/// whole rows rather than down a column at a stride, and the tile's two
-/// largest scratch planes go away. The arithmetic is the same and in the
-/// same order, so the output is the same to the bit.
 fn denoise_tile(
     out: &mut [&mut [f32]],
     input: &[f32],
@@ -383,6 +399,7 @@ fn denoise_tile(
     s: &mut Scratch,
     xs: (usize, usize),
     ys: (usize, usize),
+    sums: Accumulate,
 ) {
     let tw = xs.1 - xs.0;
     debug_assert_eq!(
@@ -391,7 +408,7 @@ fn denoise_tile(
         "a tile writes every one of its rows"
     );
     debug_assert!(out.iter().all(|line| line.len() == tw * 3));
-    accumulate(input, p, s, xs, ys);
+    sums(input, p, s, xs, ys);
     for (line, arow) in out.iter_mut().zip(s.acc.chunks(tw)) {
         for (o, a) in line.as_chunks_mut::<3>().0.iter_mut().zip(arow) {
             let inv = if a[3] > 0.0 { 1.0 / a[3] } else { 0.0 };
@@ -401,6 +418,17 @@ fn denoise_tile(
 }
 
 /// The weighted sums for one tile, left in `s.acc`.
+///
+/// The offsets come in pairs, `d` and `-d`, and the patch dissimilarity
+/// of a pixel and its partner is the same whichever of the two is the
+/// center: the pair `(c, c + d)` weighs `c + d` for `c` exactly as much
+/// as it weighs `c` for `c + d`. So only the first half of the offsets
+/// is walked, each over the tile and the tile moved back by it, and
+/// each weight is given to both pixels of its pair that fall in the
+/// tile. The differences, the box sums, and the weights, which are most
+/// of the work, are made once a pair instead of twice; the accumulation
+/// is the same count as before. The zero offset is the middle one, and
+/// its weight is exactly one.
 ///
 /// Kept out of [`denoise_tile`], whose caller holds the frame's own
 /// rows as `&mut [f32]` read out of a slice. When the means were made
@@ -415,12 +443,84 @@ fn denoise_tile(
 #[inline(never)]
 fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys: (usize, usize)) {
     let ((x0, x1), (y0, y1)) = (xs, ys);
-    let (w, h, r) = (p.width, p.height, p.radius);
+    let (w, h) = (p.width as isize, p.height as isize);
     let (tw, th) = (x1 - x0, y1 - y0);
+    s.ready(tw, th);
+    let n = p.offsets.len();
+    let (half, rest) = p.offsets.split_at(n / 2);
+    debug_assert!(
+        n % 2 == 1 && rest[0] == (0, 0),
+        "the zero offset in the middle"
+    );
+    debug_assert!(
+        half.iter()
+            .zip(rest.iter().rev())
+            .all(|(a, b)| (a.0, a.1) == (-b.0, -b.1)),
+        "the offsets in pairs, d and -d"
+    );
+
+    // The zero offset: every pixel its own partner at a weight of one.
+    for (a, q) in s
+        .acc
+        .iter_mut()
+        .zip((y0..y1).flat_map(|y| input[(y * p.width + x0) * 3..][..tw * 3].as_chunks::<3>().0))
+    {
+        *a = [q[0], q[1], q[2], 1.0];
+    }
+
+    let tile = ((x0 as isize, x1 as isize), (y0 as isize, y1 as isize));
+    for &(dr, dc) in half {
+        // Centers whose partner is inside the image.
+        let (vx0, vx1) = ((-dc).max(0), w.min(w - dc));
+        let (vy0, vy1) = ((-dr).max(0), h.min(h - dr));
+        let clip = |(a, b): (isize, isize), (lo, hi): (isize, isize)| (a.max(lo), b.min(hi));
+        let ((tx0, tx1), (ty0, ty1)) = tile;
+        if dc.unsigned_abs() >= tw || dr.unsigned_abs() >= th {
+            // The tile and the tile moved back by the offset do not
+            // overlap, so one region over both would mostly be the gap
+            // between them: each half of the pair on its own instead.
+            for (r, c) in [(dr, dc), (-dr, -dc)] {
+                let xs = clip((tx0, tx1), ((-c).max(0), w.min(w - c)));
+                let ys = clip((ty0, ty1), ((-r).max(0), h.min(h - r)));
+                pass(input, p, s, tile, (r, c), (xs, ys), false);
+            }
+            continue;
+        }
+        let xs = clip((tx0.min(tx0 - dc), tx1.max(tx1 - dc)), (vx0, vx1));
+        let ys = clip((ty0.min(ty0 - dr), ty1.max(ty1 - dr)), (vy0, vy1));
+        pass(input, p, s, tile, (dr, dc), (xs, ys), true);
+    }
+}
+
+/// One offset's weights over `region`, every center of which has its
+/// partner `d` away inside the image, added into the tile's sums: to the
+/// center, when it is in the tile, its partner's sample, and when
+/// `mirror`, to the partner, when it is in the tile, the center's.
+///
+/// The rows of squared differences are made one at a time and kept in a
+/// ring only as tall as the patch, so the vertical box sums run down
+/// whole rows rather than down a column at a stride.
+fn pass(
+    input: &[f32],
+    p: &Params,
+    s: &mut Scratch,
+    tile: ((isize, isize), (isize, isize)),
+    (dr, dc): (isize, isize),
+    ((bx0, bx1), (by0, by1)): ((isize, isize), (isize, isize)),
+    mirror: bool,
+) {
+    if bx0 >= bx1 || by0 >= by1 {
+        return;
+    }
+    let ((x0, x1), (y0, y1)) = tile;
+    let tw = (x1 - x0) as usize;
+    let (w, h, r) = (p.width as isize, p.height as isize, p.radius);
+    let ri = r as isize;
+    let (bw, bh) = ((bx1 - bx0) as usize, (by1 - by0) as usize);
     let span = 2 * r + 1;
-    let (ew, eh) = (tw + 2 * r, th + 2 * r);
+    let (ew, eh) = (bw + 2 * r, bh + 2 * r);
     let rows = span + 1;
-    s.ready(tw, th, ew, rows);
+    s.rows(ew, bw, rows);
     let Scratch {
         acc,
         ring,
@@ -429,118 +529,125 @@ fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys
         wrow,
     } = s;
 
-    for &(dr, dc) in p.offsets {
-        // Center pixels whose partner is inside the image.
-        let cx0 = (x0 as isize).max(-dc) as usize;
-        let cx1 = (x1 as isize).min(w as isize - dc) as usize;
-        let cy0 = (y0 as isize).max(-dr) as usize;
-        let cy1 = (y1 as isize).min(h as isize - dr) as usize;
-        if cx0 >= cx1 || cy0 >= cy1 {
-            continue;
+    // Squared differences where both pixels of a pair exist; zero
+    // elsewhere, as the reference's sums treat the outside.
+    let (ex0, ey0) = (bx0 - ri, by0 - ri);
+    let px0 = (bx0 - ri).max(0).max(-dc);
+    let px1 = (bx1 + ri).min(w).min(w - dc);
+    let py0 = (by0 - ri).max(0).max(-dr);
+    let py1 = (by1 + ri).min(h).min(h - dr);
+    // Row `j` of the ring's coordinates, `0..eh`, is image row
+    // `ey0 + j`; only the covered part carries differences.
+    let (dlo, dhi) = ((px0 - ex0) as usize, (px1 - ex0) as usize);
+    let at = |y: isize, x: isize| (y * w + x) as usize * 3;
+    let row = |j: usize, dst: &mut [f32]| {
+        let y = ey0 + j as isize;
+        if y < py0 || y >= py1 {
+            dst.fill(0.0);
+            return;
         }
-        // Squared differences where both pixels of a pair exist; zero
-        // elsewhere, as the reference's sums treat the outside.
-        let ex0 = x0 as isize - r as isize;
-        let ey0 = y0 as isize - r as isize;
-        let px0 = (cx0 as isize - r as isize).max(0).max(-dc) as usize;
-        let px1 = (cx1 as isize + r as isize)
-            .min(w as isize)
-            .min(w as isize - dc) as usize;
-        let py0 = (cy0 as isize - r as isize).max(0).max(-dr) as usize;
-        let py1 = (cy1 as isize + r as isize)
-            .min(h as isize)
-            .min(h as isize - dr) as usize;
-        // Row `j` of the ring's coordinates, `0..eh`, is image row
-        // `ey0 + j`; only the covered part carries differences.
-        let (dlo, dhi) = ((px0 as isize - ex0) as usize, (px1 as isize - ex0) as usize);
-        let row = |j: usize, dst: &mut [f32]| {
-            let y = ey0 + j as isize;
-            if y < py0 as isize || y >= py1 as isize {
-                dst.fill(0.0);
-                return;
-            }
-            let y = y as usize;
-            dst[..dlo].fill(0.0);
-            dst[dhi..].fill(0.0);
-            let n = px1 - px0;
-            let a = &input[(y * w + px0) * 3..][..n * 3];
-            let yy = (y as isize + dr) as usize;
-            let b = &input[(yy * w + (px0 as isize + dc) as usize) * 3..][..n * 3];
-            let (a, _) = a.as_chunks::<3>();
-            let (b, _) = b.as_chunks::<3>();
-            for ((o, a), b) in dst[dlo..dhi].iter_mut().zip(a).zip(b) {
-                let (e0, e1, e2) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-                *o = e0 * e0 + e1 * e1 + e2 * e2;
-            }
-        };
+        dst[..dlo].fill(0.0);
+        dst[dhi..].fill(0.0);
+        let n = (px1 - px0) as usize;
+        let a = &input[at(y, px0)..][..n * 3];
+        let b = &input[at(y + dr, px0 + dc)..][..n * 3];
+        let (a, _) = a.as_chunks::<3>();
+        let (b, _) = b.as_chunks::<3>();
+        for ((o, a), b) in dst[dlo..dhi].iter_mut().zip(a).zip(b) {
+            let (e0, e1, e2) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+            *o = e0 * e0 + e1 * e1 + e2 * e2;
+        }
+    };
 
-        // The window over rows `0..span`, summed in that order.
-        vsum.fill(0.0);
-        for k in 0..span.min(eh) {
-            let (lo, hi) = (k * ew, k * ew + ew);
-            row(k, &mut ring[lo..hi]);
-            for (v, d) in vsum.iter_mut().zip(&ring[lo..hi]) {
-                *v += *d;
-            }
+    // The window over rows `0..span`, summed in that order.
+    vsum.fill(0.0);
+    for k in 0..span {
+        let (lo, hi) = (k * ew, k * ew + ew);
+        row(k, &mut ring[lo..hi]);
+        for (v, d) in vsum.iter_mut().zip(&ring[lo..hi]) {
+            *v += *d;
         }
-        // The tile's rows, the window sliding down as they go. At row
-        // `ty` the ring holds image rows `ty..ty + span`, so the patch's
-        // own row, `ty + r`, is in it and the slot the row entering the
-        // window wants is the one the row leaving it does not.
-        // `old` is the slot of row `ty`; the slots are walked rather than
-        // taken modulo, since a modulo by a value only known at run time
-        // is an integer division in the middle of the loop.
-        let mut old = 0usize;
-        for ty in 0..th {
-            let y = y0 + ty;
-            let wrap = |i: usize| if i >= rows { i - rows } else { i };
-            if y >= cy0 && y < cy1 {
-                let c = wrap(old + r) * ew;
-                let drow = &ring[c..c + ew];
-                // `hsum[tx]` is the patch sum for tile column `tx`, over
-                // `tx..tx + span` in extended coordinates, running.
-                let mut run: f32 = vsum[..span.min(ew)].iter().sum();
-                for (tx, hs) in hsum.iter_mut().enumerate() {
-                    *hs = run;
-                    if tx + span < ew {
-                        run += vsum[tx + span] - vsum[tx];
-                    }
+    }
+    // The region's rows, the window sliding down as they go. At row
+    // `ty` the ring holds rows `ty..ty + span`, so the patch's own row,
+    // `ty + r`, is in it, and the slot the row entering the window wants
+    // is the one the row leaving it does not. `old` is the slot of row
+    // `ty`; the slots are walked rather than taken modulo, since a modulo
+    // by a value only known at run time is an integer division in the
+    // middle of the loop.
+    let wrap = |i: usize| if i >= rows { i - rows } else { i };
+    let mut old = 0usize;
+    for ty in 0..bh {
+        let y = by0 + ty as isize;
+        // The columns whose weights some pixel of the tile wants: the
+        // centers in it, and the centers whose partners are.
+        let direct = (y >= y0 && y < y1).then(|| (bx0.max(x0), bx1.min(x1)));
+        let yy = y + dr;
+        let mirrored =
+            (mirror && yy >= y0 && yy < y1).then(|| (bx0.max(x0 - dc), bx1.min(x1 - dc)));
+        let (clo, chi) = match (direct, mirrored) {
+            (Some(a), Some(b)) => (a.0.min(b.0), a.1.max(b.1)),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => (0, 0),
+        };
+        if clo < chi {
+            let (clo, chi) = ((clo - bx0) as usize, (chi - bx0) as usize);
+            let c = wrap(old + r) * ew;
+            let drow = &ring[c..c + ew];
+            // `hsum[tx]` is the patch sum for region column `tx`, over
+            // `tx..tx + span` in extended coordinates, running.
+            let mut run: f32 = vsum[clo..clo + span].iter().sum();
+            for (tx, hs) in hsum.iter_mut().enumerate().take(chi).skip(clo) {
+                *hs = run;
+                if tx + span < ew {
+                    run += vsum[tx + span] - vsum[tx];
                 }
-                let (tlo, thi) = (cx0 - x0, cx1 - x0);
-                let n = thi - tlo;
-                let yy = (y as isize + dr) as usize;
-                let q =
-                    &input[((yy * w) as isize + (x0 + tlo) as isize + dc) as usize * 3..][..n * 3];
+            }
+            // The weights first, over plain floats, then the
+            // accumulation: together in one loop the weight's arithmetic
+            // is stuck at the pace of the three-wide gathers beside it.
+            for ((wt, &hs), &d) in wrow[clo..chi]
+                .iter_mut()
+                .zip(&hsum[clo..chi])
+                .zip(&drow[clo + r..chi + r])
+            {
+                *wt = weight((hs + p.center * d) * p.norm - 2.0);
+            }
+            if let Some((lo, hi)) = direct.filter(|(lo, hi)| lo < hi) {
+                let n = (hi - lo) as usize;
+                let q = &input[at(yy, lo + dc)..][..n * 3];
                 let (q, _) = q.as_chunks::<3>();
-                // The weights first, over plain floats, then the
-                // accumulation: together in one loop the weight's
-                // arithmetic is stuck at the pace of the three-wide
-                // gather beside it.
-                let wrow = &mut wrow[tlo..thi];
-                for ((wt, &hs), &d) in wrow
-                    .iter_mut()
-                    .zip(&hsum[tlo..thi])
-                    .zip(&drow[tlo + r..thi + r])
-                {
-                    *wt = weight((hs + p.center * d) * p.norm - 2.0);
-                }
-                let arow = &mut acc[ty * tw + tlo..ty * tw + thi];
-                for ((a, &wt), q) in arow.iter_mut().zip(&*wrow).zip(q) {
+                let o = (y - y0) as usize * tw + (lo - x0) as usize;
+                let k = (lo - bx0) as usize;
+                for ((a, &wt), q) in acc[o..o + n].iter_mut().zip(&wrow[k..k + n]).zip(q) {
                     a[0] += wt * q[0];
                     a[1] += wt * q[1];
                     a[2] += wt * q[2];
                     a[3] += wt;
                 }
             }
-            if ty + span < eh {
-                let (o, n) = (old * ew, wrap(old + span) * ew);
-                row(ty + span, &mut ring[n..n + ew]);
-                for x in 0..ew {
-                    vsum[x] += ring[n + x] - ring[o + x];
+            if let Some((lo, hi)) = mirrored.filter(|(lo, hi)| lo < hi) {
+                let n = (hi - lo) as usize;
+                let q = &input[at(y, lo)..][..n * 3];
+                let (q, _) = q.as_chunks::<3>();
+                let o = (yy - y0) as usize * tw + (lo + dc - x0) as usize;
+                let k = (lo - bx0) as usize;
+                for ((a, &wt), q) in acc[o..o + n].iter_mut().zip(&wrow[k..k + n]).zip(q) {
+                    a[0] += wt * q[0];
+                    a[1] += wt * q[1];
+                    a[2] += wt * q[2];
+                    a[3] += wt;
                 }
             }
-            old = wrap(old + 1);
         }
+        if ty + span < eh {
+            let (o, n) = (old * ew, wrap(old + span) * ew);
+            row(ty + span, &mut ring[n..n + ew]);
+            for x in 0..ew {
+                vsum[x] += ring[n + x] - ring[o + x];
+            }
+        }
+        old = wrap(old + 1);
     }
 }
 
@@ -601,6 +708,222 @@ mod tests {
     use super::*;
     use crate::develop::noise::tests::Gauss;
 
+    /// The means as they were before the offsets were taken in pairs:
+    /// every offset walked over the tile alone, each pixel's sum in the
+    /// order of the offsets. Kept as the reference [`accumulate`] is
+    /// checked against.
+    fn accumulate_reference(
+        input: &[f32],
+        p: &Params,
+        s: &mut Scratch,
+        xs: (usize, usize),
+        ys: (usize, usize),
+    ) {
+        let ((x0, x1), (y0, y1)) = (xs, ys);
+        let (w, h, r) = (p.width, p.height, p.radius);
+        let (tw, th) = (x1 - x0, y1 - y0);
+        let span = 2 * r + 1;
+        let (ew, eh) = (tw + 2 * r, th + 2 * r);
+        let rows = span + 1;
+        s.ready(tw, th);
+        s.rows(ew, tw, rows);
+        let Scratch {
+            acc,
+            ring,
+            vsum,
+            hsum,
+            wrow,
+        } = s;
+
+        for &(dr, dc) in p.offsets {
+            // Center pixels whose partner is inside the image. Compared
+            // signed: an offset wider than a small frame takes the upper
+            // bound below zero.
+            let cx0 = (x0 as isize).max(-dc);
+            let cx1 = (x1 as isize).min(w as isize - dc);
+            let cy0 = (y0 as isize).max(-dr);
+            let cy1 = (y1 as isize).min(h as isize - dr);
+            if cx0 >= cx1 || cy0 >= cy1 {
+                continue;
+            }
+            let (cx0, cx1, cy0, cy1) = (cx0 as usize, cx1 as usize, cy0 as usize, cy1 as usize);
+            // Squared differences where both pixels of a pair exist; zero
+            // elsewhere, as the reference's sums treat the outside.
+            let ex0 = x0 as isize - r as isize;
+            let ey0 = y0 as isize - r as isize;
+            let px0 = (cx0 as isize - r as isize).max(0).max(-dc) as usize;
+            let px1 = (cx1 as isize + r as isize)
+                .min(w as isize)
+                .min(w as isize - dc) as usize;
+            let py0 = (cy0 as isize - r as isize).max(0).max(-dr) as usize;
+            let py1 = (cy1 as isize + r as isize)
+                .min(h as isize)
+                .min(h as isize - dr) as usize;
+            // Row `j` of the ring's coordinates, `0..eh`, is image row
+            // `ey0 + j`; only the covered part carries differences.
+            let (dlo, dhi) = ((px0 as isize - ex0) as usize, (px1 as isize - ex0) as usize);
+            let row = |j: usize, dst: &mut [f32]| {
+                let y = ey0 + j as isize;
+                if y < py0 as isize || y >= py1 as isize {
+                    dst.fill(0.0);
+                    return;
+                }
+                let y = y as usize;
+                dst[..dlo].fill(0.0);
+                dst[dhi..].fill(0.0);
+                let n = px1 - px0;
+                let a = &input[(y * w + px0) * 3..][..n * 3];
+                let yy = (y as isize + dr) as usize;
+                let b = &input[(yy * w + (px0 as isize + dc) as usize) * 3..][..n * 3];
+                let (a, _) = a.as_chunks::<3>();
+                let (b, _) = b.as_chunks::<3>();
+                for ((o, a), b) in dst[dlo..dhi].iter_mut().zip(a).zip(b) {
+                    let (e0, e1, e2) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+                    *o = e0 * e0 + e1 * e1 + e2 * e2;
+                }
+            };
+
+            // The window over rows `0..span`, summed in that order.
+            vsum.fill(0.0);
+            for k in 0..span.min(eh) {
+                let (lo, hi) = (k * ew, k * ew + ew);
+                row(k, &mut ring[lo..hi]);
+                for (v, d) in vsum.iter_mut().zip(&ring[lo..hi]) {
+                    *v += *d;
+                }
+            }
+            // The tile's rows, the window sliding down as they go. At row
+            // `ty` the ring holds image rows `ty..ty + span`, so the patch's
+            // own row, `ty + r`, is in it and the slot the row entering the
+            // window wants is the one the row leaving it does not.
+            // `old` is the slot of row `ty`; the slots are walked rather than
+            // taken modulo, since a modulo by a value only known at run time
+            // is an integer division in the middle of the loop.
+            let mut old = 0usize;
+            for ty in 0..th {
+                let y = y0 + ty;
+                let wrap = |i: usize| if i >= rows { i - rows } else { i };
+                if y >= cy0 && y < cy1 {
+                    let c = wrap(old + r) * ew;
+                    let drow = &ring[c..c + ew];
+                    // `hsum[tx]` is the patch sum for tile column `tx`, over
+                    // `tx..tx + span` in extended coordinates, running.
+                    let mut run: f32 = vsum[..span.min(ew)].iter().sum();
+                    for (tx, hs) in hsum.iter_mut().enumerate() {
+                        *hs = run;
+                        if tx + span < ew {
+                            run += vsum[tx + span] - vsum[tx];
+                        }
+                    }
+                    let (tlo, thi) = (cx0 - x0, cx1 - x0);
+                    let n = thi - tlo;
+                    let yy = (y as isize + dr) as usize;
+                    let q = &input[((yy * w) as isize + (x0 + tlo) as isize + dc) as usize * 3..]
+                        [..n * 3];
+                    let (q, _) = q.as_chunks::<3>();
+                    // The weights first, over plain floats, then the
+                    // accumulation: together in one loop the weight's
+                    // arithmetic is stuck at the pace of the three-wide
+                    // gather beside it.
+                    let wrow = &mut wrow[tlo..thi];
+                    for ((wt, &hs), &d) in wrow
+                        .iter_mut()
+                        .zip(&hsum[tlo..thi])
+                        .zip(&drow[tlo + r..thi + r])
+                    {
+                        *wt = weight((hs + p.center * d) * p.norm - 2.0);
+                    }
+                    let arow = &mut acc[ty * tw + tlo..ty * tw + thi];
+                    for ((a, &wt), q) in arow.iter_mut().zip(&*wrow).zip(q) {
+                        a[0] += wt * q[0];
+                        a[1] += wt * q[1];
+                        a[2] += wt * q[2];
+                        a[3] += wt;
+                    }
+                }
+                if ty + span < eh {
+                    let (o, n) = (old * ew, wrap(old + span) * ew);
+                    row(ty + span, &mut ring[n..n + ew]);
+                    for x in 0..ew {
+                        vsum[x] += ring[n + x] - ring[o + x];
+                    }
+                }
+                old = wrap(old + 1);
+            }
+        }
+    }
+
+    /// A frame through the means both ways, the same tiling and threads.
+    fn both_ways(
+        rgb: &[f32],
+        (w, h): (usize, usize),
+        strength: f32,
+        options: &NlmOptions,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut halved = rgb.to_vec();
+        let mut reference = rgb.to_vec();
+        let a = denoise_stabilized_by(&mut halved, w, h, 0.03, strength, options, accumulate);
+        let b = denoise_stabilized_by(
+            &mut reference,
+            w,
+            h,
+            0.03,
+            strength,
+            options,
+            accumulate_reference,
+        );
+        assert_eq!(a, b);
+        (halved, reference)
+    }
+
+    /// The paired offsets against the reference over sizes under,
+    /// across, and well past a tile, patches, strengths, center weights,
+    /// and scatterings, on a noisy picture with edges and gradients in
+    /// the stabilized space. The two differ only in the order of their
+    /// sums: the box sums of a pair run from different starts, and a
+    /// pixel's sum takes its offsets in a different order. That is a few
+    /// of the last bits of a value; it is held at 1e-5 of the value, under
+    /// a 16-bit sample's step.
+    #[test]
+    fn the_paired_offsets_match_the_reference() {
+        let mut g = Gauss(29);
+        let mut worst = 0.0f32;
+        for &(w, h) in &[(1, 1), (5, 3), (23, 19), (96, 96), (97, 130), (201, 150)] {
+            let rgb: Vec<f32> = (0..w * h * 3)
+                .map(|i| {
+                    let (x, y) = ((i / 3) % w, (i / 3) / w);
+                    let edge = if x * 3 < w { 8.0 } else { 20.0 };
+                    edge + 4.0 * (y as f32 * 0.11).sin() + (i % 3) as f32 + g.next()
+                })
+                .collect();
+            for (patch, strength, center, scattering, search) in [
+                (1, 1.5, DEFAULT_CENTER_WEIGHT, 0.0, DEFAULT_SEARCH),
+                (0, 1.0, 0.0, 0.0, 3),
+                (2, 3.0, 0.3, 0.0, DEFAULT_SEARCH),
+                (1, 0.5, DEFAULT_CENTER_WEIGHT, 0.5, 5),
+                (1, 1.5, DEFAULT_CENTER_WEIGHT, 1.0, DEFAULT_SEARCH),
+            ] {
+                let options = NlmOptions {
+                    patch_radius: Some(patch),
+                    search_radius: search,
+                    scattering: Some(scattering),
+                    center_weight: center,
+                };
+                let (got, want) = both_ways(&rgb, (w, h), strength, &options);
+                for (i, (&a, &b)) in got.iter().zip(&want).enumerate() {
+                    let rel = (a - b).abs() / b.abs().max(1.0);
+                    worst = worst.max(rel);
+                    assert!(
+                        rel < 1e-5,
+                        "{w}x{h} patch {patch} strength {strength} center {center} \
+                         scattering {scattering}, sample {i}: {a} vs {b}"
+                    );
+                }
+            }
+        }
+        eprintln!("worst relative difference {worst:e}");
+    }
+
     #[test]
     fn scattering_spreads_without_duplicates() {
         let dense = offsets(7, 0.0);
@@ -658,7 +981,15 @@ mod tests {
             let mut tiled = vec![0.0f32; w * h * 3];
             {
                 let mut rows: Vec<&mut [f32]> = tiled.chunks_mut(w * 3).collect();
-                denoise_tile(&mut rows, &input, &p, &mut scratch, (0, w), (0, h));
+                denoise_tile(
+                    &mut rows,
+                    &input,
+                    &p,
+                    &mut scratch,
+                    (0, w),
+                    (0, h),
+                    accumulate,
+                );
             }
             let at = |y: isize, x: isize| -> Option<&[f32]> {
                 (x >= 0 && y >= 0 && x < w as isize && y < h as isize)
@@ -711,7 +1042,15 @@ mod tests {
             let mut a = vec![0.0f32; 10 * 7 * 3];
             {
                 let mut rows: Vec<&mut [f32]> = a.chunks_mut(10 * 3).collect();
-                denoise_tile(&mut rows, &input, &p, &mut scratch, (0, 10), (0, 7));
+                denoise_tile(
+                    &mut rows,
+                    &input,
+                    &p,
+                    &mut scratch,
+                    (0, 10),
+                    (0, 7),
+                    accumulate,
+                );
             }
             for ty in 0..7 {
                 for tx in 0..10 {

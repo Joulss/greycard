@@ -240,12 +240,6 @@ seconds.
       times Core ML's difference though still invisible; kept at
       fp32 for now, the user's call. CUDA unmeasured, no toolkit on
       the machine
-- [ ] The non-local means' symmetric-offset halving, §128's leftover:
-      the means are the larger half of the hybrid denoise again (about
-      4.4 s of the 45 MP denoise at six threads against the chain's
-      2.3), and it is the next second (§164). The whole 45 MP develop
-      with the hybrid denoise is 12.7 s at six threads, the number a
-      tester can watch
 - [ ] The GPU's memory on an 8 GB Mac: the local contrast's planes
       are made per run on unified memory already, and a Clarity move at
       102 MP peaks at 12.1 GB on a 24 GB M5 (§479). Waits on an 8 GB

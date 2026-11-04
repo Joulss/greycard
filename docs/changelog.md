@@ -204,6 +204,10 @@ design note behind it.
 
 ### Fixes
 
+- The profiled denoise's non-local means are a quarter quicker: each
+  pair of search offsets is weighed once, about a second off a 45 MP
+  develop at six threads
+  ([§551](https://github.com/jessolmstead/greycard/blob/master/docs/notes/551-the-non-local-means-each-pair-of-offsets-once.md)).
 - Escape puts Level, a perspective guide, or Draw down right after
   its button is clicked, wherever the pointer is
   ([§550](https://github.com/jessolmstead/greycard/blob/master/docs/notes/550-the-keys-after-level-a-guide-or-draw.md)).
