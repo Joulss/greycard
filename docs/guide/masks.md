@@ -418,6 +418,16 @@ the MIT license. The models run on the CPU alone, and the status line
 says so. **Not now** and `greycard models --fetch onnxruntime` work
 as above.
 
+### On an Intel Mac
+
+The copy of ONNX Runtime that comes with greycard on an Intel Mac is
+built without the graphics path the other platforms use, and nothing
+is downloaded for it. The learned denoiser and the Sky and Landscape
+masks run through Core ML, on the Mac's GPU or its CPU; Subject,
+Background, Object, People and LaMa's fill run on the CPU alone. The
+generative remove needs that graphics path, so its two buttons are
+greyed, as on a machine without a GPU.
+
 ## Masks and other frames
 
 Masks are drawn around one picture, so syncing settings onto other

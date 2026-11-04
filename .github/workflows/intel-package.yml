@@ -1,0 +1,166 @@
+# The Intel Mac package from any branch, on request, for a tester to
+# try before a release carries it: Actions, "Intel Mac package", Run
+# workflow, and the disk image is the run's package-x86_64-macos-dmg
+# artifact for a week, the tarball package-x86_64-macos.
+#
+# Its own file, as arm-package.yml is, for the reason given there. The
+# steps are release.yml's x86_64-macos leg, less the release: the same
+# runner, the same checks on the toolchain and on what was built, our
+# own ONNX Runtime fetched by scripts/ort-intel-mac.sh, the same
+# signing and notarization, and package.sh with no argument, so the
+# version is Cargo.toml's. release.yml's header has why the runtime is
+# our own and how it is made (onnxruntime-intel-mac.yml), which has to
+# have been run, and its archive attached, before this can.
+
+name: Intel Mac package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  package:
+    name: x86_64-macos package
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # As in release.yml: lcms2 from lcms2-sys's own source, not
+      # Homebrew's.
+      - name: Static lcms2
+        run: echo "LCMS2_STATIC=1" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - name: The toolchain's host is x86_64-apple-darwin
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "rustc host: $host"
+          if [ "$host" != x86_64-apple-darwin ]; then
+            echo "this package wants an x86_64-apple-darwin toolchain, and rustc's host is $host" >&2
+            exit 1
+          fi
+
+      # Nikon High Efficiency decoding stays out of anything handed to
+      # a tester, as out of a release; see release.yml.
+      - name: No JPEG XS decoder in the dependency tree
+        run: |
+          tree=$(cargo tree --locked -p greycard-ui -p greycard-cli -e features -i rawler)
+          if grep -q jpegxs <<<"$tree"; then
+            echo "rawler's jpegxs feature is on in the build"
+            exit 1
+          fi
+
+      # Before the build, so a fetch that cannot work (no hash yet)
+      # fails in seconds rather than after it.
+      - name: ONNX Runtime library
+        run: scripts/ort-intel-mac.sh release
+
+      - name: Build
+        run: cargo build --locked --release -p greycard-ui -p greycard-cli
+
+      # As in release.yml: neither binary names ONNX Runtime or Dawn
+      # as a library to load at exec.
+      - name: Nothing of ONNX Runtime or Dawn loaded at exec
+        run: |
+          for bin in target/release/greycard target/release/greycard-ui; do
+            needed=$(otool -L "$bin")
+            if grep -Eqi 'onnxruntime|webgpu_dawn' <<<"$needed"; then
+              echo "$bin links ONNX Runtime or Dawn at exec:"
+              echo "$needed"
+              exit 1
+            fi
+          done
+
+      - name: No JPEG XS decoder in the binaries
+        run: |
+          for bin in target/release/greycard target/release/greycard-ui; do
+            test -f "$bin"
+            if grep -qa 'JPEG XS' "$bin"; then
+              echo "$bin carries the JPEG XS decoder"
+              exit 1
+            fi
+          done
+
+      # As in release.yml, so a tester's download opens past
+      # Gatekeeper.
+      - name: Signing keychain
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(openssl rand -hex 24)
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+          printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials greycard \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" --keychain "$keychain"
+          rm "$RUNNER_TEMP/notary.p8"
+          identity=$(security find-identity -v -p codesigning "$keychain" |
+            sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$identity" ]; then
+            echo "no Developer ID Application identity in the .p12" >&2
+            exit 1
+          fi
+          {
+            echo "MACOS_SIGN_IDENTITY=$identity"
+            echo "MACOS_NOTARY_PROFILE=greycard"
+            echo "MACOS_NOTARY_KEYCHAIN=$keychain"
+          } >> "$GITHUB_ENV"
+
+      # No argument: the version is the workspace's, from cargo
+      # metadata.
+      - name: Package
+        run: scripts/package.sh
+
+      - name: What is in the package
+        run: tar tzf target/dist/greycard-*-x86_64-macos.tar.gz
+
+      - name: What is in the disk image
+        run: |
+          dmg=$(ls target/dist/greycard-*-x86_64-macos.dmg)
+          hdiutil verify "$dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          ls -la "$mnt"
+          test -f "$mnt/.DS_Store"
+          test -f "$mnt/.background/background.tiff"
+          spctl --assess --type execute --verbose=2 "$mnt/greycard.app"
+          "$mnt/greycard.app/Contents/MacOS/greycard" --version
+          hdiutil detach -quiet "$mnt"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-x86_64-macos
+          path: target/dist/greycard-*-x86_64-macos.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-x86_64-macos-dmg
+          path: target/dist/greycard-*-x86_64-macos.dmg
+          if-no-files-found: error
+          retention-days: 7

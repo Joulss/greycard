@@ -21,9 +21,12 @@ default = ["webgpu", "coreml"]
 # the adapter it ran on, for the provider-outcome record (runtime.rs,
 # notes §97): `wgpu` for WebGPU (the same struct `greycard-ui` reads
 # off its own device), `nvidia-smi` at run time for CUDA, since
-# neither `ort` nor ONNX Runtime exposes the adapter it picked.
+# neither `ort` nor ONNX Runtime exposes the adapter it picked. On an
+# Intel Mac the provider is not offered even with the feature on
+# (build.rs): the library there is our own build, without WebGPU.
 webgpu = ["ort/webgpu", "dep:wgpu", "dep:pollster"]
-# Core ML on macOS, tried before WebGPU and timed against it. On by
+# Core ML on macOS, tried before WebGPU and timed against it (on an
+# Intel Mac, before the CPU, there being no WebGPU). On by
 # default everywhere since a feature cannot default per target: it
 # only adds `ort`'s registration code (with `load-dynamic`, ort-sys
 # links and downloads nothing for it), and the provider is offered

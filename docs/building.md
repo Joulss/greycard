@@ -1,7 +1,7 @@
 # Building greycard from source
 
-From a machine with nothing on it to a running editor. Linux, an
-Apple silicon Mac, or Windows. Half an hour the first time, most
+From a machine with nothing on it to a running editor. Linux, a
+Mac, or Windows. Half an hour the first time, most
 of it the compiler working.
 
 If you only want to run it, there are tarballs on the [releases
@@ -66,8 +66,9 @@ xcode-select --install
 ```
 
 Full Xcode is not needed. lcms2 builds from the source its crate
-carries, so there is no Homebrew step. macOS 13.4 or newer, and an
-Apple silicon Mac — there is no Intel build.
+carries, so there is no Homebrew step. macOS 13.4 or newer, on Apple
+silicon or Intel. On an Intel Mac, step 4 takes ONNX Runtime from
+`scripts/ort-intel-mac.sh` instead of `scripts/ort-dylib.sh`.
 
 ### Windows
 
@@ -167,7 +168,31 @@ On Windows on ARM the script refuses: the one prebuilt archive for
 that target carries DirectML, which greycard does not use, and none
 carries WebGPU. The editor offers to download Microsoft's CPU-only
 runtime instead, and `greycard models --fetch onnxruntime` fetches
-it. A tester's Windows on ARM package can come from any branch before
+it.
+
+On an Intel Mac `scripts/ort-dylib.sh` refuses too: there is no
+prebuilt archive for x86-64 macOS, and Microsoft's own Intel Mac
+releases stop at 1.23.2, older than the API `ort` binds. greycard
+ships its own instead, built from Microsoft's v1.28.0 source with
+Core ML and without WebGPU, so there is no Dawn beside it and the
+models run through Core ML or on the CPU. `scripts/ort-intel-mac.sh`
+fetches that build from the repository's
+`onnxruntime-1.28.0-x86_64-macos` release, checks its hash, and puts
+it in `target/debug/` and `target/release/` as `ort-dylib.sh` would.
+The build itself is made once a version, by hand: run the "ONNX
+Runtime for Intel Macs" workflow (`onnxruntime-intel-mac.yml`; an
+hour or more), take the tar.gz out of its artifact, attach it to a
+pre-release with that tag (`gh release create
+onnxruntime-1.28.0-x86_64-macos --prerelease --latest=false …`; a
+pre-release, so the update check's `releases/latest` stays on
+greycard's own), and put the SHA-256 the run printed into
+`scripts/ort-intel-mac.sh`. The workflow's head comment has the whole
+step. The "Intel Mac package" workflow (`intel-package.yml`) builds a
+tester's signed disk image from any branch, as the Windows on ARM one
+below does; its artifacts are `package-x86_64-macos-dmg` and
+`package-x86_64-macos`.
+
+A tester's Windows on ARM package can come from any branch before
 a release carries it: run the "Windows on ARM package" workflow by
 hand from the repository's Actions tab (or `gh workflow run
 arm-package.yml --ref <branch>`; GitHub lists a workflow run by hand
@@ -198,7 +223,8 @@ libwebgpu_dawn.so       the GPU backend it runs them on
 The two libraries (`.dylib` on a Mac) are symlinks into
 `target/ort-dylib/`. The binaries look for ONNX Runtime beside
 themselves, and it finds Dawn beside itself, so if you copy them
-anywhere, copy both libraries too — dereferenced.
+anywhere, copy both libraries too — dereferenced. On an Intel Mac
+there is no Dawn, and the runtime is a copy of the fetched one.
 
 The workspace's other crates, what each owns and what each may
 depend on, are in [architecture.md](architecture.md).

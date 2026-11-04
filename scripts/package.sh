@@ -19,7 +19,10 @@
 #            it can go into Applications and be opened like any app.
 #            install.sh links the command line out of it. The sidecar
 #            gets its own .icns beside the app's, for Info.plist's
-#            document types.
+#            document types. On an Intel Mac (x86_64-macos) the
+#            library is our own build of ONNX Runtime with Core ML and
+#            without WebGPU, which scripts/ort-intel-mac.sh puts where
+#            ort-dylib.sh would, and there is no Dawn beside it.
 #   Windows  bin/ with the two binaries, the three DLLs and the
 #            sidecar icon; install.cmd, uninstall.cmd, register.cmd
 #            and unregister.cmd beside it rather than install.sh.
@@ -88,6 +91,8 @@ host=$(rustc -vV | sed -n 's/^host: //p')
 arch=${host%%-*}
 case "$host" in
 *-linux-*) os=linux; libs="libonnxruntime.so libwebgpu_dawn.so"; exe= ;;
+# Our own runtime on an Intel Mac, without WebGPU, so no Dawn; see above.
+x86_64-*-darwin*) os=macos; libs="libonnxruntime.dylib"; exe= ;;
 *-darwin*) os=macos; libs="libonnxruntime.dylib libwebgpu_dawn.dylib"; exe= ;;
 # No runtime of ours on Windows on ARM, so nothing beside the
 # binaries; see above.
@@ -115,7 +120,12 @@ for f in "$build/greycard-ui$exe" "$build/greycard$exe"; do
 done
 for l in $libs; do
     if [ ! -e "$build/$l" ]; then
-        echo "package.sh: $build/$l is missing; run scripts/ort-dylib.sh release first" >&2
+        if [ "$host" = x86_64-apple-darwin ]; then
+            fill=scripts/ort-intel-mac.sh
+        else
+            fill=scripts/ort-dylib.sh
+        fi
+        echo "package.sh: $build/$l is missing; run $fill release first" >&2
         exit 1
     fi
 done
@@ -191,8 +201,9 @@ mkdir -p "$stage"
 
 if [ "$os" = macos ]; then
     # The bundle. Both binaries sit in Contents/MacOS beside the one
-    # copy of ONNX Runtime and Dawn, since each looks for the runtime
-    # beside itself and the runtime finds Dawn through @loader_path.
+    # copy of ONNX Runtime and Dawn (no Dawn on an Intel Mac), since
+    # each looks for the runtime beside itself and the runtime finds
+    # Dawn through @loader_path.
     app="$stage/greycard.app/Contents"
     mkdir -p "$app/MacOS" "$app/Resources"
     cp "$build/greycard-ui" "$build/greycard" "$app/MacOS/"
@@ -374,9 +385,8 @@ if [ "$os" = macos ]; then
     # anything outside the system and the bundle stops the package.
     # v0.1.0 went out linked to Homebrew's lcms2 and ran only on Macs
     # that happened to have it.
-    stray=$(for f in "$app/MacOS/greycard-ui" "$app/MacOS/greycard" \
-        "$app/MacOS/libonnxruntime.dylib" "$app/MacOS/libwebgpu_dawn.dylib"; do
-        otool -L "$f" | tail -n +2 | awk '{ print $1 }'
+    stray=$(for f in greycard-ui greycard $libs; do
+        otool -L "$app/MacOS/$f" | tail -n +2 | awk '{ print $1 }'
     done | grep -Ev '^(/usr/lib/|/System/Library/|@rpath/|@executable_path/)' |
         sort -u) || true
     if [ -n "$stray" ]; then

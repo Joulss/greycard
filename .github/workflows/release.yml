@@ -7,9 +7,10 @@
 # on and ubuntu-24.04's 2.39 is already newer than some desktops out
 # there. Ubuntu 22.04 went into deprecation on 2026-09-17 with brownouts
 # that fail jobs outright, so 24.04 is the floor until 26.04 takes its
-# turn. The macOS runner is Apple silicon, which is the only Mac the
-# tarball is for; the floor there is Dawn's 13.4, set in Info.plist,
-# not the runner's.
+# turn. The first macOS runner is Apple silicon, and its package is
+# for Apple silicon alone; the floor there is Dawn's 13.4, set in
+# Info.plist, not the runner's. Intel Macs get a leg of their own,
+# below.
 #
 # The Windows runner has to carry an MSVC toolset at least as new as
 # the one ort's prebuilt onnxruntime.lib was compiled with, which for
@@ -37,6 +38,20 @@
 # and its globs need only one zip to match. The workflow in
 # arm-package.yml builds the same package by hand from any branch,
 # for a tester before a release.
+#
+# Intel Macs are a fifth leg, on macos-15-intel, GitHub's x86-64
+# macOS 15 image, building the two binaries natively and signed and
+# notarized as the Apple silicon ones are. pyke makes no x86-64 macOS
+# build of ONNX Runtime, and Microsoft's last Intel Mac release is
+# 1.23.2, older than the API ort binds, so the package carries our
+# own: built from Microsoft's v1.28.0 source with Core ML and without
+# WebGPU by onnxruntime-intel-mac.yml, run once by hand and attached
+# to this repository's release tagged onnxruntime-1.28.0-x86_64-macos.
+# The leg fetches it from there and checks its hash
+# (scripts/ort-intel-mac.sh, its matrix row saying runtime: prebuilt),
+# and ships no Dawn. Its package is untried on an Intel Mac, so it is
+# tentative as the ARM leg is. intel-package.yml builds the same
+# package by hand from any branch.
 
 name: Release
 
@@ -127,6 +142,14 @@ jobs:
             host: aarch64-pc-windows-msvc
             runtime: none
             tentative: true
+          # Our own runtime, fetched rather than made, and allowed to
+          # fail: see the header.
+          - os: macos-15-intel
+            package: x86_64-macos
+            ext: tar.gz
+            host: x86_64-apple-darwin
+            runtime: prebuilt
+            tentative: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.tentative == true }}
     # package.sh is /bin/sh, and the Windows runner's default shell is
@@ -215,13 +238,6 @@ jobs:
             exit 1
           fi
 
-      # No build cache here, on purpose: a release is rare enough to pay
-      # for a cold build, and builds exactly what the tree says.
-      # --locked: the lockfile is committed, and one dependency is
-      # pinned to a git revision. A release builds what it says it does.
-      - name: Build
-        run: cargo build --locked --release -p greycard-ui -p greycard-cli
-
       # ONNX Runtime as a shared library, made from pyke's static build
       # and left with Dawn in target/release for package.sh. The
       # binaries load it at first use and link none of it: linked in,
@@ -229,9 +245,27 @@ jobs:
       # Skipped by a matrix row rather than by runner.arch, so that the
       # row says what its package carries: on Windows on ARM pyke has
       # no WebGPU build to make one from, and ort-dylib refuses there.
+      # On an Intel Mac pyke has none either, and the row's prebuilt
+      # takes our own build, Core ML and no Dawn, from its release
+      # instead, to the same place. Before the build, so a fetch that
+      # cannot work (no hash yet) fails in seconds rather than after it.
       - name: ONNX Runtime library
         if: matrix.runtime != 'none'
-        run: scripts/ort-dylib.sh release
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          if [ "$RUNTIME" = prebuilt ]; then
+            scripts/ort-intel-mac.sh release
+          else
+            scripts/ort-dylib.sh release
+          fi
+
+      # No build cache here, on purpose: a release is rare enough to pay
+      # for a cold build, and builds exactly what the tree says.
+      # --locked: the lockfile is committed, and one dependency is
+      # pinned to a git revision. A release builds what it says it does.
+      - name: Build
+        run: cargo build --locked --release -p greycard-ui -p greycard-cli
 
       # Checked on what was built: neither binary may name ONNX Runtime
       # or Dawn as a library to load at exec, or a processor without

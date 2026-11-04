@@ -1,0 +1,172 @@
+# greycard's own ONNX Runtime for Intel Macs, built from Microsoft's
+# source on request: Actions, "ONNX Runtime for Intel Macs", Run
+# workflow. Run once a version, not once a release.
+#
+# Why our own: pyke makes no x86-64 macOS build to link one from
+# (ort-dylib's rows are copied from ort-sys's dist.tsv, which lists
+# aarch64 alone for macOS), and Microsoft's last Intel Mac release is
+# 1.23.2, older than the API ort binds (api-27, and runtime.rs calls
+# into 1.28). So this builds v1.28.0, the version ort binds and the
+# other legs' libraries are, as a shared library with Core ML and
+# without WebGPU, for macOS 13.4, Info.plist's floor; plain x86-64,
+# its kernels chosen at run time, as Microsoft builds it.
+#
+# The tools are Microsoft's own macOS CI's in that tag
+# (.github/workflows/macos-ci-build-and-test-workflow.yml): Xcode 26.3,
+# CMake 3.31.8, and no submodules. Their x86-64 build is a cross
+# compile, --osx_arch x86_64 on the Apple silicon macos-15 with the
+# tests skipped (mac.yml); nothing of theirs builds the tag natively
+# on an Intel runner, so this native build is ours alone. If it fails
+# on macos-15-intel, theirs is the configuration to fall back to:
+# runs-on macos-15, the same flags. Unlike theirs it takes no vcpkg:
+# every dependency is fetched from the pinned sources in
+# cmake/deps.txt, never found in Homebrew, so the library links
+# nothing a Mac does not have, which is checked below.
+#
+# What to do with it, once it is green:
+#
+#   1. Download the run's onnxruntime-1.28.0-x86_64-macos-coreml
+#      artifact (a zip holding the tar.gz) and take the tar.gz out.
+#   2. Attach it to a release of this repository tagged
+#      onnxruntime-1.28.0-x86_64-macos, made as a pre-release so that
+#      releases/latest, which the update check and the site read,
+#      stays on greycard's own:
+#        gh release create onnxruntime-1.28.0-x86_64-macos \
+#          --prerelease --latest=false --target master \
+#          --title "ONNX Runtime 1.28.0 for Intel Macs" \
+#          --notes "Built by onnxruntime-intel-mac.yml; MIT, Microsoft." \
+#          onnxruntime-1.28.0-x86_64-macos-coreml.tar.gz
+#      The tag is not a v tag, so release.yml does not run on it.
+#   3. Put the SHA-256 the Package step printed into
+#      scripts/ort-intel-mac.sh, which release.yml's Intel Mac leg and
+#      intel-package.yml fetch the archive with.
+#
+# The build tree is cached under a key of the tag, saved even when the
+# build fails. What a rerun gains for certain is the fetched
+# dependencies under _deps: the fresh clone's sources are newer than
+# the saved objects, so most of ONNX Runtime compiles again.
+
+name: ONNX Runtime for Intel Macs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ORT_TAG: v1.28.0
+  ORT_VERSION: 1.28.0
+  MACOSX_DEPLOYMENT_TARGET: "13.4"
+
+jobs:
+  build:
+    name: ONNX Runtime 1.28.0, x86_64-macos, Core ML
+    runs-on: macos-15-intel
+    # An hour or more, cached or not.
+    timeout-minutes: 360
+    steps:
+      - name: Source
+        run: |
+          git clone --depth 1 --branch "$ORT_TAG" \
+            https://github.com/microsoft/onnxruntime.git ort-src
+          git -C ort-src rev-parse HEAD
+          test "$(cat ort-src/VERSION_NUMBER)" = "$ORT_VERSION"
+
+      - name: Tools
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app
+          xcodebuild -version
+          echo "image's python3: $(python3 --version), cmake: $(cmake --version | head -n 1)"
+          # Kitware's own build of the CMake Microsoft's CI pins (PyPI
+          # has no 3.31.8), checked against the release's SHA-256.
+          cmake=cmake-3.31.8-macos-universal
+          curl -fL --retry 3 -o "$RUNNER_TEMP/$cmake.tar.gz" \
+            "https://github.com/Kitware/CMake/releases/download/v3.31.8/$cmake.tar.gz"
+          echo "d1449f969c54d5c00886d5b643340d493dfb3c81cb39ee29b35453395c11ebf7  $RUNNER_TEMP/$cmake.tar.gz" |
+            shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/$cmake.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$cmake/CMake.app/Contents/bin" >> "$GITHUB_PATH"
+
+      - name: Versions the build runs with
+        run: |
+          uname -m
+          python3 --version
+          cmake --version | head -n 1
+
+      - id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ort-build
+          key: ort-build-${{ env.ORT_TAG }}-x86_64-macos-coreml-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ort-build-${{ env.ORT_TAG }}-x86_64-macos-coreml-
+
+      - name: Build
+        run: |
+          ort-src/build.sh \
+            --build_dir "$GITHUB_WORKSPACE/ort-build" \
+            --config Release \
+            --build_shared_lib \
+            --use_coreml \
+            --parallel \
+            --skip_tests \
+            --skip_submodule_sync \
+            --osx_arch x86_64 \
+            --cmake_extra_defines \
+              CMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+              FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER \
+              onnxruntime_BUILD_UNIT_TESTS=OFF
+
+      - name: Save the build tree
+        if: always() && steps.cache.outcome == 'success'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ort-build
+          key: ort-build-${{ env.ORT_TAG }}-x86_64-macos-coreml-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # The library as greycard will load it: x86-64 alone, for 13.4,
+      # exporting OrtGetApiBase, carrying Core ML, and linking nothing
+      # outside the system (no Homebrew, no Dawn).
+      - name: Package
+        run: |
+          lib="ort-build/Release/libonnxruntime.$ORT_VERSION.dylib"
+          name="onnxruntime-$ORT_VERSION-x86_64-macos-coreml"
+          test -f "$lib"
+          mkdir -p "dist/$name"
+          cp "$lib" "dist/$name/"
+          strip -x "dist/$name/libonnxruntime.$ORT_VERSION.dylib"
+          cp ort-src/LICENSE ort-src/ThirdPartyNotices.txt "dist/$name/"
+          out="dist/$name/libonnxruntime.$ORT_VERSION.dylib"
+          archs=$(lipo -archs "$out")
+          echo "architectures: $archs"
+          test "$archs" = x86_64
+          otool -l "$out" | grep -A4 LC_BUILD_VERSION
+          otool -l "$out" | grep -A4 LC_BUILD_VERSION | grep -q "minos $MACOSX_DEPLOYMENT_TARGET"
+          nm -gU "$out" | grep -q ' _OrtGetApiBase$'
+          otool -L "$out"
+          otool -L "$out" | grep -q CoreML.framework
+          stray=$(otool -L "$out" | tail -n +2 | awk '{ print $1 }' |
+            grep -Ev '^(/usr/lib/|/System/Library/|@rpath/libonnxruntime)') || true
+          if [ -n "$stray" ]; then
+            echo "the library links what a Mac will not have:" >&2
+            printf '  %s\n' $stray >&2
+            exit 1
+          fi
+          (cd dist && COPYFILE_DISABLE=1 tar --format ustar -czf "$name.tar.gz" "$name")
+          ls -l "dist/$name.tar.gz"
+          sum=$(shasum -a 256 "dist/$name.tar.gz" | awk '{ print $1 }')
+          echo "SHA-256 of $name.tar.gz: $sum"
+          {
+            echo "### $name.tar.gz"
+            echo
+            echo "SHA-256 \`$sum\`, for scripts/ort-intel-mac.sh."
+            echo "Attach it to the pre-release onnxruntime-$ORT_VERSION-x86_64-macos; see the workflow's head comment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: onnxruntime-${{ env.ORT_VERSION }}-x86_64-macos-coreml
+          path: dist/onnxruntime-${{ env.ORT_VERSION }}-x86_64-macos-coreml.tar.gz
+          if-no-files-found: error
+          retention-days: 30

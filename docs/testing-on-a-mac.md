@@ -5,10 +5,11 @@ after that. Nothing here needs a terminal unless you want one.
 
 ## What you need
 
-- A Mac with an Apple chip: any MacBook Air or Pro, iMac, Mac mini
-  or Mac Studio from 2020 on with M1, M2, M3, M4 or M5 in its name.
-  Apple menu, About This Mac: the line that says **Chip**. If it
-  says Intel, greycard has no build for it yet.
+- A Mac with an Apple chip (any MacBook Air or Pro, iMac, Mac mini
+  or Mac Studio from 2020 on with M1, M2, M3, M4 or M5 in its name)
+  or an Intel one. Apple menu, About This Mac: the line that says
+  **Chip**, or **Processor** on an Intel Mac. The Intel build is new
+  and tentative, so a release may come without it.
 - macOS 13.4 (Ventura) or newer. Same window, the **macOS** line.
 - A folder with some raw files in it. Canon, Fujifilm GFX, Sony,
   Panasonic and Nikon raws are all tested.
@@ -18,7 +19,9 @@ after that. Nothing here needs a terminal unless you want one.
 1. Open the link you were sent, or go to the releases page and find
    the newest release.
 2. Under **Assets**, download the file whose name ends in
-   `-aarch64-macos.dmg`. Ignore the two "Source code" links.
+   `-aarch64-macos.dmg`, or `-x86_64-macos.dmg` on an Intel Mac,
+   where a release has one.
+   Ignore the two "Source code" links.
 
 ## Installing
 

@@ -187,6 +187,11 @@ design note behind it.
 
 ### Mac
 
+- An Intel Mac package, `x86_64-macos.dmg`, new and tentative: nobody
+  has run it on an Intel Mac yet; the denoiser and Sky run through
+  Core ML, the other models on the CPU, and the generative remove is
+  not available
+  ([§547](https://github.com/jessolmstead/greycard/blob/master/docs/notes/547-an-intel-mac-package.md)).
 - The learned denoise runs 1.4 to 2.5 times as fast on Apple silicon:
   Core ML takes each tier's fp16 copy, fetched with the tier, or in the
   background for a tier already fetched

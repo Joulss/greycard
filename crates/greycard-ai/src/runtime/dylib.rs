@@ -10,6 +10,10 @@
 //! instruction. So the processor is asked first, by the CPUID bits
 //! the standard library already reads, and the library is looked for
 //! where the build and the package put it; only then is it loaded.
+//! On an Intel Mac the shipped library is our own build from
+//! Microsoft's source (`.github/workflows/onnxruntime-intel-mac.yml`),
+//! compiled for plain x86-64 with its kernels chosen at run time, so
+//! there is no processor to ask there either.
 //!
 //! `GREYCARD_ORT_DYLIB` names a library by hand and is taken without
 //! the processor check: the check is about the library greycard
@@ -70,13 +74,14 @@ pub const LIBRARY: &str = if cfg!(windows) {
 };
 
 /// Whether greycard ships an ONNX Runtime of its own for this build's
-/// platform: true exactly where `crates/ort-dylib` has an archive of
-/// pyke's to make one from (Linux on x86-64, macOS on Apple silicon,
-/// and Windows on x86-64), so where a package carries one beside the
-/// executables.
+/// platform: where `crates/ort-dylib` has an archive of pyke's to make
+/// one from (Linux on x86-64, macOS on Apple silicon, and Windows on
+/// x86-64), and on an Intel Mac, where pyke has none and the package
+/// carries our own build instead (`scripts/ort-intel-mac.sh`); so
+/// where a package carries one beside the executables.
 pub const SHIPS: bool = cfg!(any(
     all(target_os = "linux", target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64"),
+    target_os = "macos",
     all(windows, target_arch = "x86_64", target_env = "msvc"),
 ));
 
@@ -390,9 +395,10 @@ pub(crate) fn probe() -> Result<Found, Unavailable> {
 
 /// The x86-64-v3 instructions pyke's build of ONNX Runtime assumes
 /// (and Dawn's with it) that this processor lacks. An AArch64 build
-/// assumes nothing a Mac or an ARM Linux machine lacks.
+/// assumes nothing a Mac or an ARM Linux machine lacks, and an Intel
+/// Mac's library is not pyke's: ours assumes plain x86-64.
 fn missing_instructions() -> Vec<&'static str> {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(target_os = "macos")))]
     {
         let mut missing = Vec::new();
         macro_rules! want {
@@ -414,7 +420,7 @@ fn missing_instructions() -> Vec<&'static str> {
         );
         missing
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", not(target_os = "macos"))))]
     {
         Vec::new()
     }

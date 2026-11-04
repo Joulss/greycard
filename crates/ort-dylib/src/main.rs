@@ -75,8 +75,10 @@
 // DirectML, which greycard does not use, and none carries WebGPU, so
 // the release skips this step there and the package ships no runtime;
 // greycard-ai offers to fetch Microsoft's CPU-only one on first use
-// instead (`greycard_ai::runtime::SHIPS` is false wherever `DIST` is
-// `None`).
+// instead (`greycard_ai::runtime::SHIPS` is false there). An Intel Mac
+// is the other: pyke has no x86-64 macOS build, so the package carries
+// our own, built from Microsoft's source with Core ML and without
+// WebGPU, which `scripts/ort-intel-mac.sh` puts where this would.
 
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -154,6 +156,12 @@ const MACOS_FLOOR: &str = "13.4";
 fn main() -> Result<()> {
     let args = Args::from(std::env::args_os().skip(1))?;
     let Some(dist) = DIST else {
+        if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            bail!(
+                "pyke makes no ONNX Runtime for an Intel Mac; scripts/ort-intel-mac.sh fetches \
+                 greycard's own build"
+            );
+        }
         bail!(
             "no prebuilt ONNX Runtime with WebGPU for this platform; the AI features need a \
              library given by GREYCARD_ORT_DYLIB"

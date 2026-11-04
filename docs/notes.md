@@ -559,3 +559,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§544. Reset to Original](notes/544-reset-to-original.md) (2026-11-04)
 - [§545. Four small asks from discussion 59](notes/545-four-small-asks-from-discussion-59.md) (2026-11-04)
 - [§546. The wheels' held drags and the pick from the picture](notes/546-the-wheels-held-drags-and-the-pick-from-the-picture.md) (2026-11-04)
+- [§547. An Intel Mac package](notes/547-an-intel-mac-package.md) (2026-11-04)

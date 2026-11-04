@@ -913,9 +913,11 @@ pub const RUNTIMES: &[Runtime] = &[
 /// The CPU-only runtime for this build's platform: on Linux and
 /// Windows on x86-64, where the one greycard ships may not run, and on
 /// Windows on ARM64, where greycard ships none. None on a Mac, whose
-/// package is for Apple silicon alone (which lacks nothing greycard's
-/// library needs; Microsoft publishes no Intel Mac build of 1.28.0
-/// either), and none on Linux on ARM, which has no package.
+/// package carries a library that runs on every Mac it is for: on
+/// Apple silicon, made from pyke's build, and on an Intel one, our own
+/// from Microsoft's source, built for plain x86-64 (Microsoft's last
+/// Intel Mac release is 1.23.2, older than the API `ort` binds). None
+/// on Linux on ARM, which has no package.
 pub fn cpu_runtime() -> Option<&'static Runtime> {
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         Some(&ONNXRUNTIME_CPU_LINUX_X64)
@@ -1214,7 +1216,8 @@ mod tests {
         );
         assert!(!ONNXRUNTIME_CPU_WINDOWS_ARM64.purpose.contains("AVX2"));
         // Kept under the name greycard's own library has, on the
-        // platform it is offered on; none offered on a Mac.
+        // platform it is offered on; none offered on a Mac, Intel or
+        // not, whose package carries its own.
         if let Some(r) = cpu_runtime() {
             assert_eq!(r.library.name, crate::runtime::LIBRARY);
         }

@@ -74,7 +74,7 @@ impl Provider {
             // and keeps the faster.
             #[cfg(all(feature = "coreml", target_os = "macos"))]
             Provider::CoreMl,
-            #[cfg(feature = "webgpu")]
+            #[cfg(webgpu_ep)]
             Provider::WebGpu,
             Provider::Cpu,
         ]
@@ -160,7 +160,7 @@ impl Provider {
             Provider::Cuda => Some(ort::ep::CUDA::default().build().error_on_failure()),
             #[cfg(all(feature = "coreml", target_os = "macos"))]
             Provider::CoreMl => Some(coreml(coreml_cache(path, fixed).as_deref(), false)),
-            #[cfg(feature = "webgpu")]
+            #[cfg(webgpu_ep)]
             // The storage buffer cache is ONNX Runtime's default for
             // every session, one mode for the process: it lives on the
             // WebGPU context, made once and shared, so the first
@@ -199,9 +199,9 @@ impl Provider {
             Provider::CoreMl => coreml_machine_identity(),
             #[cfg(not(all(feature = "coreml", target_os = "macos")))]
             Provider::CoreMl => None,
-            #[cfg(feature = "webgpu")]
+            #[cfg(webgpu_ep)]
             Provider::WebGpu => webgpu_adapter_identity(),
-            #[cfg(not(feature = "webgpu"))]
+            #[cfg(not(webgpu_ep))]
             Provider::WebGpu => None,
             Provider::Cpu => None,
         }
@@ -404,7 +404,7 @@ fn coreml_machine_identity() -> Option<String> {
 /// model file, not once a launch. It asks for what `WGPU_POWER_PREF`
 /// names, high performance where it names nothing, as the window
 /// does; greycard-gpu always asks high performance.
-#[cfg(feature = "webgpu")]
+#[cfg(webgpu_ep)]
 fn webgpu_adapter_identity() -> Option<String> {
     webgpu_adapter().map(|a| a.identity.clone())
 }
@@ -420,7 +420,7 @@ pub fn webgpu_unified() -> Option<bool> {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         return Some(true);
     }
-    #[cfg(feature = "webgpu")]
+    #[cfg(webgpu_ep)]
     {
         match webgpu_adapter()?.device_type {
             wgpu::DeviceType::IntegratedGpu => Some(true),
@@ -428,7 +428,7 @@ pub fn webgpu_unified() -> Option<bool> {
             wgpu::DeviceType::Cpu | wgpu::DeviceType::Other => None,
         }
     }
-    #[cfg(not(feature = "webgpu"))]
+    #[cfg(not(webgpu_ep))]
     {
         None
     }
@@ -449,18 +449,18 @@ pub fn webgpu_memory() -> Option<u64> {
 /// [`webgpu_memory`], with what it was read from, for the log:
 /// Vulkan's device-local heaps or DXGI's dedicated video memory.
 pub fn webgpu_memory_read() -> Option<(u64, &'static str)> {
-    #[cfg(feature = "webgpu")]
+    #[cfg(webgpu_ep)]
     {
         webgpu_adapter()?.memory
     }
-    #[cfg(not(feature = "webgpu"))]
+    #[cfg(not(webgpu_ep))]
     {
         None
     }
 }
 
 /// What the WebGPU probe learned of the adapter.
-#[cfg(feature = "webgpu")]
+#[cfg(webgpu_ep)]
 struct Adapter {
     /// Name, backend, and driver.
     identity: String,
@@ -473,7 +473,7 @@ struct Adapter {
 /// The bytes of `adapter`'s own memory, asked of the backend under
 /// wgpu, which keeps it to itself, and which of the backend's answers
 /// it is.
-#[cfg(feature = "webgpu")]
+#[cfg(webgpu_ep)]
 fn adapter_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
     // Where wgpu builds its Vulkan backend: not on a Mac, where Metal
     // is the backend and the memory the machine's.
@@ -517,7 +517,7 @@ fn adapter_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
 
 /// The adapter's identity, type, and memory, asked once a process and
 /// kept.
-#[cfg(feature = "webgpu")]
+#[cfg(webgpu_ep)]
 fn webgpu_adapter() -> Option<&'static Adapter> {
     static ADAPTER: OnceLock<Option<Adapter>> = OnceLock::new();
     ADAPTER
@@ -1552,8 +1552,12 @@ mod tests {
     fn core_ml_comes_before_webgpu_where_it_is_built() {
         let all = Provider::all();
         let at = |p| all.iter().position(|q| *q == p);
-        if cfg!(all(feature = "coreml", target_os = "macos")) {
+        if cfg!(all(feature = "coreml", target_os = "macos", webgpu_ep)) {
             assert!(at(Provider::CoreMl) < at(Provider::WebGpu));
+        } else if cfg!(all(feature = "coreml", target_os = "macos")) {
+            // An Intel Mac: Core ML and the CPU, no WebGPU.
+            assert_eq!(at(Provider::CoreMl), Some(0));
+            assert_eq!(at(Provider::WebGpu), None);
         } else {
             assert_eq!(at(Provider::CoreMl), None);
         }
@@ -1708,7 +1712,7 @@ mod tests {
     /// provider registration shared by both builds the fallback's
     /// session crashed the process on its first run. Where the
     /// `webgpu` feature is built and WebGPU opens the fixture at all.
-    #[cfg(feature = "webgpu")]
+    #[cfg(webgpu_ep)]
     #[test]
     fn a_fallback_on_webgpu_leaves_the_context_whole() {
         if let Err(why) = init() {
