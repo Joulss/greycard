@@ -56,7 +56,7 @@ fn apply_half(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(gid.xy);
-    textureStore(out_half, at, sharpened_pixel(at));
+    textureStore(out_half, at, halves_nearest(sharpened_pixel(at)));
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -78,7 +78,7 @@ fn keep_half(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(gid.xy);
-    textureStore(out_half, at, vec4<f32>(textureLoad(rgb, at, 0).rgb, 0.0));
+    textureStore(out_half, at, halves_nearest(vec4<f32>(textureLoad(rgb, at, 0).rgb, 0.0)));
 }
 
 @compute @workgroup_size(16, 16, 1)

@@ -231,7 +231,7 @@ impl Pipelines {
         };
         let planes = module("sharpen planes", include_str!("sharpen_planes.wgsl"));
         let tiles = module("sharpen tiles", include_str!("sharpen_tiles.wgsl"));
-        let apply = module("sharpen apply", include_str!("sharpen_apply.wgsl"));
+        let apply = module("sharpen apply", with_halves!("sharpen_apply.wgsl"));
         use wgpu::StorageTextureAccess::{ReadWrite, WriteOnly};
         use wgpu::TextureFormat::{R32Float, Rgba16Float, Rgba32Float};
         let planes_layout = layout(
@@ -1314,7 +1314,7 @@ mod tests {
         for (name, source) in [
             ("sharpen_planes.wgsl", include_str!("sharpen_planes.wgsl")),
             ("sharpen_tiles.wgsl", include_str!("sharpen_tiles.wgsl")),
-            ("sharpen_apply.wgsl", include_str!("sharpen_apply.wgsl")),
+            ("sharpen_apply.wgsl", with_halves!("sharpen_apply.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(source)
                 .unwrap_or_else(|e| panic!("{name}:\n{}", e.emit_to_string(source)));

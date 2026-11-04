@@ -92,7 +92,7 @@ impl Pipelines {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dehaze"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("dehaze.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(with_halves!("dehaze.wgsl").into()),
         });
         use wgpu::StorageTextureAccess::WriteOnly;
         use wgpu::TextureFormat::{Rgba16Float, Rgba32Float};
@@ -449,7 +449,7 @@ mod tests {
     /// found by the suite and not by a black viewport.
     #[test]
     fn the_shader_parses_and_validates() {
-        let source = include_str!("dehaze.wgsl");
+        let source = with_halves!("dehaze.wgsl");
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|e| panic!("dehaze.wgsl:\n{}", e.emit_to_string(source)));
         naga::valid::Validator::new(

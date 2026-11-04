@@ -1470,9 +1470,10 @@ fn the_detail_section_on_the_gpu_is_the_cpus() {
             "texture {texture}, clarity {clarity}, dehaze {dehaze}: worst {worst:.2e}; airlight {:?} / {:?}",
             cpu_stats.airlight, gpu_stats.airlight
         );
-        // Two of a half float's ulps.
+        // One of a half float's ulps: half of one for the rounding to
+        // nearest, and the ops' own differences inside the rest.
         assert!(
-            worst < 2e-3,
+            worst < 1e-3,
             "the viewport is {worst:.2e} off the CPU's picture"
         );
         for c in 0..3 {

@@ -27,3 +27,4 @@ log.workspace = true
 # WGSL without a GPU.
 naga.workspace = true
 anyhow.workspace = true
+half.workspace = true

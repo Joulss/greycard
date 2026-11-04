@@ -659,8 +659,8 @@ fn the_viewport_texture_holds_the_picture_with_alpha_zero() {
         assert_eq!(got[3], 0.0, "alpha at {i}");
     }
     println!("viewport halves vs cpu: relative {max:.3e}");
-    // Half floats carry eleven bits of mantissa.
-    assert!(max < 2e-3, "the halves are {max:.3e} from the reference");
+    // Half floats carry eleven bits of mantissa, rounded to nearest.
+    assert!(max < 1e-3, "the halves are {max:.3e} from the reference");
 }
 
 /// Identity options leave the picture as it is, as the reference does.

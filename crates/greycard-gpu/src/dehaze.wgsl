@@ -168,7 +168,7 @@ fn apply_half(
 ) {
     let px = cleared(gid.xy, lid, wid.xy, n.x);
     if gid.x < p.size.x && gid.y < p.size.y {
-        textureStore(out_half, gid.xy, vec4<f32>(px, 0.0));
+        textureStore(out_half, gid.xy, halves_nearest(vec4<f32>(px, 0.0)));
     }
 }
 

@@ -2099,6 +2099,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "greycard-core",
+ "half",
  "log",
  "naga",
  "pollster",

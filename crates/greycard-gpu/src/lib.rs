@@ -26,6 +26,15 @@ use greycard_core::image::WorkingImage;
 
 pub use wgpu;
 
+/// A shader that stores half floats, `half.wgsl` before it: its
+/// `halves_nearest` rounds what the shader stores as the CPU's halves
+/// are rounded.
+macro_rules! with_halves {
+    ($file:literal) => {
+        concat!(include_str!("half.wgsl"), "\n", include_str!($file))
+    };
+}
+
 mod ca;
 mod dehaze;
 mod lens;

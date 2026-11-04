@@ -15,6 +15,12 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The local contrast's GPU sweep fails one case in a thousand:
+      seed 1, case 758, a 55x2547 Steps scene with texture -0.82,
+      clarity -1, and structure 1, the GPU 1.3e-4 and the CPU 2.3e-4
+      from the f64 port over the 5e-5 limit, on NVIDIA and lavapipe
+      alike, on master before §553. The CPU reference is the one off;
+      find the term that drifts on a tall thin scene
 - [ ] The remove's UNet at a frame's first fill in the editor after a
       restart: 27 s and 40 s on the M5 before §482, whose bench loads
       them in 1.5 to 2.6 s from a warm cache. The window says
@@ -244,9 +250,6 @@ seconds.
       are made per run on unified memory already, and a Clarity move at
       102 MP peaks at 12.1 GB on a 24 GB M5 (§479). Waits on an 8 GB
       Mac at 45 MP
-- [ ] Round the GPU ops' half-float stores to nearest: both NVIDIA
-      and lavapipe round toward zero, a bias of up to 0.1% on every
-      GPU output against the CPU's halves (§269)
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)

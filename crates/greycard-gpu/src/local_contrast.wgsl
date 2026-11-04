@@ -439,7 +439,7 @@ fn apply_half(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let at = vec2<i32>(gid.xy);
-    textureStore(out_half, at, vec4<f32>(applied(at), 0.0));
+    textureStore(out_half, at, halves_nearest(vec4<f32>(applied(at), 0.0)));
 }
 
 // Into full floats for the sharpen or a read back, the alpha one as

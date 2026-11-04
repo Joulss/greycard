@@ -134,7 +134,7 @@ impl Pipelines {
     pub(crate) fn new(device: &wgpu::Device, keep: bool) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("local contrast"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("local_contrast.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(with_halves!("local_contrast.wgsl").into()),
         });
         use wgpu::StorageTextureAccess::{ReadWrite, WriteOnly};
         use wgpu::TextureFormat::{R32Float, Rgba16Float, Rgba32Float};
@@ -1231,7 +1231,7 @@ mod tests {
     /// found by the suite and not by a black viewport.
     #[test]
     fn the_shader_parses_and_validates() {
-        let source = include_str!("local_contrast.wgsl");
+        let source = with_halves!("local_contrast.wgsl");
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|e| panic!("local_contrast.wgsl:\n{}", e.emit_to_string(source)));
         naga::valid::Validator::new(
@@ -1266,7 +1266,7 @@ mod tests {
         assert_eq!(offset_of!(Params, knee), 96);
         assert_eq!(std::mem::size_of::<Params>(), 112);
         // And the shader's struct is the same size.
-        let source = include_str!("local_contrast.wgsl");
+        let source = with_halves!("local_contrast.wgsl");
         let module = naga::front::wgsl::parse_str(source).expect("the shader parses");
         let mut layouter = naga::proc::Layouter::default();
         layouter

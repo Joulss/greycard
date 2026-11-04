@@ -476,8 +476,8 @@ fn zero_is_the_identity() {
     assert_eq!(stats.transmission_mean, 1.0);
 }
 
-/// The viewport's texture holds the full-float result to its half
-/// float's rounding, its alpha zero, and the stats are the same.
+/// The viewport's texture holds the full-float result rounded to the
+/// nearest half float, its alpha zero, and the stats are the same.
 #[test]
 fn the_viewport_texture_holds_the_picture_with_alpha_zero() {
     let Some(ctx) = context() else {
@@ -502,9 +502,10 @@ fn the_viewport_texture_holds_the_picture_with_alpha_zero() {
         let h: [f32; 4] =
             std::array::from_fn(|c| half_to_f32(u16::from_le_bytes([px[c * 2], px[c * 2 + 1]])));
         for (&half, &f) in h.iter().zip(&full.data[i * 3..][..3]) {
-            // Half an ulp of a half float, either way of rounding.
-            assert!(
-                (half - f).abs() <= f.abs() * 2f32.powi(-10) + 6e-8,
+            // The nearest half float, as the CPU's halves round.
+            assert_eq!(
+                half.to_bits(),
+                half::f16::from_f32(f).to_f32().to_bits(),
                 "pixel {i}: {half} against {f}"
             );
         }
