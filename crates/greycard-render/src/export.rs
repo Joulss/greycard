@@ -539,6 +539,7 @@ pub fn render(
     render_framed(
         image,
         image.width as f32,
+        image.width as f32,
         edit,
         loader,
         source,
@@ -558,6 +559,10 @@ pub fn render(
 /// masks, the guide plane and the vignette are placed by the frame and
 /// not by the reduced copy's pixels.
 ///
+/// `full_framed` is the frame's width at the full-size develop, which
+/// `framed` is when the image was not reduced before it: what the
+/// color mean's span is measured against ([`finish::finish_reaching`]).
+///
 /// `detail` is the masks' bands ([`crate::detail::DetailPlanes`])
 /// brought into the frame as `image` was, the same size as it: they
 /// are resized here with the picture, by the same filter.
@@ -565,6 +570,7 @@ pub fn render(
 pub fn render_framed(
     image: &WorkingImage,
     framed: f32,
+    full_framed: f32,
     edit: &greycard_edit::Edit,
     loader: &dyn greycard_edit::Loader,
     source: (u32, u32),
@@ -639,6 +645,7 @@ pub fn render_framed(
     // source, in units of the source's width.
     let frame = edit.geometry.frame(sw, sh);
     let scale = framed / image.width as f32;
+    let reach = image.width as f32 / full_framed;
     let position = |x: usize, y: usize| {
         let r = (
             frame.origin.0 + (x as f32 + 0.5) * scale,
@@ -688,8 +695,9 @@ pub fn render_framed(
         .map(|g| (g, sw));
     let detail = detail.map(|(d, meta)| (detail_fitted.as_ref().unwrap_or(d), meta));
     let pixels = match settings.format {
-        Format::Tiff => Pixels::Sixteen(finish::finish_with(
+        Format::Tiff => Pixels::Sixteen(finish::finish_reaching(
             image,
+            reach,
             sampled,
             &global,
             &locals,
@@ -701,8 +709,9 @@ pub fn render_framed(
             &m,
             |v| (settings.space.recode(v) * 65535.0).round() as u16,
         )),
-        Format::Jpeg | Format::Png => Pixels::Eight(finish::finish_with(
+        Format::Jpeg | Format::Png => Pixels::Eight(finish::finish_reaching(
             image,
+            reach,
             sampled,
             &global,
             &locals,

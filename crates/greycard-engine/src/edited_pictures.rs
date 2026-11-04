@@ -1006,6 +1006,8 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     });
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
     let frame_width = edit.geometry.frame(sw, sh).size.0;
+    let (fw, fh) = (finish.full.0 as f32, finish.full.1 as f32);
+    let full_width = edit.geometry.frame(fw, fh).size.0;
     let settings = greycard_render::export::Settings {
         format: greycard_render::export::Format::Jpeg,
         long_edge: None,
@@ -1017,6 +1019,7 @@ pub fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     let rendered = greycard_render::export::render_framed(
         image,
         frame_width,
+        full_width,
         edit,
         &greycard_edit_io::Stores::user(),
         finish.source,
@@ -1232,6 +1235,85 @@ pub mod tests {
             ..Geometry::default()
         };
         assert_eq!(factor_for((8192, 5464), &cropped), 2);
+    }
+
+    /// The reduced develop's pictures read the color mean over the
+    /// span the full develop's would: a stripe of teal six full-size
+    /// pixels wide, three in the reduced picture, under a color window
+    /// that takes the stripe and not four fifths of its chroma. Told
+    /// the full develop is twice the picture, the window takes the
+    /// stripe's middle and brightens it; told it is the picture, the
+    /// 5x5 reads grey in and leaves it.
+    #[test]
+    fn the_kept_pictures_color_mean_spans_the_full_develops_pixels() {
+        use greycard_edit::mask::{Component, Mask, Mode, Shape};
+        let (w, h) = (BIG as usize, 16usize);
+        let ok = greycard_core::color::Oklab::for_working_space();
+        let from_lms = greycard_core::color::invert3(ok.to_lms).unwrap();
+        let of_lab = |lab: [f32; 3]| {
+            let lms = greycard_core::color::apply3(&greycard_core::color::LAB_TO_LMS, lab)
+                .map(|v| v * v * v);
+            greycard_core::color::apply3(&from_lms, lms)
+        };
+        let (grey, teal) = (of_lab([0.5, 0.0, 0.0]), of_lab([0.5, -0.07, -0.07]));
+        let mut data = Vec::with_capacity(w * h * 3);
+        for _ in 0..h {
+            for x in 0..w {
+                data.extend(if (1000..1003).contains(&x) {
+                    teal
+                } else {
+                    grey
+                });
+            }
+        }
+        let reduced = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let mut edit = Edit::default();
+        let mut adjustment = greycard_edit::Adjustment {
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Color {
+                        hue: 225.0,
+                        width: 30.0,
+                        hue_feather: 0.0,
+                        chroma: 0.9 * 0.07 * 2f32.sqrt(),
+                        chroma_feather: 0.0,
+                    },
+                    mode: Mode::Add,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        adjustment.look.light.exposure = 2.0;
+        edit.adjustments.push(adjustment);
+        let middle = |full: (u32, u32)| {
+            let finish = Finish {
+                edit: edit.clone(),
+                turn: 0,
+                source: (w as u32, h as u32),
+                full,
+                rasters: Default::default(),
+                clip_level: 1.0,
+                guide: None,
+                kind: greycard_render::finish::Source::SCENE,
+                white: None,
+                detail: None,
+            };
+            let big = make(&reduced, &finish).big;
+            assert_eq!((big.width, big.height), (w as u32, h as u32));
+            let i = ((h / 2) * w + 1001) * 3;
+            big.rgb[i..i + 3].iter().map(|v| u32::from(*v)).sum::<u32>()
+        };
+        let (at_full, at_own) = (
+            middle((2 * w as u32, 2 * h as u32)),
+            middle((w as u32, h as u32)),
+        );
+        assert!(at_full > at_own + 60, "{at_full} against {at_own}");
     }
 
     /// A frame edited without being opened: its sidecar saved on disk

@@ -72,8 +72,9 @@ pub const CENTERS: [f32; BANDS] = [25.0, 60.0, 100.0, 140.0, 195.0, 265.0, 300.0
 /// skin at 0.08 and up.
 pub const CHROMA_FULL: f32 = 0.03;
 
-/// The radius, in source pixels, of the mean of a and b the mixer
-/// reads its hue and its confidence from: a 5x5 box.
+/// The radius, in pixels of the full-size develop, of the mean of a
+/// and b the mixer and a color window read a hue from: a 5x5 box,
+/// spanning the same part of the scene in a picture made smaller.
 pub const MEAN_RADIUS: usize = 2;
 
 /// How far the mixer trusts a color of this Oklab chroma, 0 at grey

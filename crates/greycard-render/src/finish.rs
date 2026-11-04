@@ -1118,6 +1118,16 @@ fn snap_residue(c: [f32; 3]) -> [f32; 3] {
 /// does not choose its band. Of the source before any exposure; the
 /// finish scales it by the cube root of the gain.
 pub fn local_ab(image: &WorkingImage) -> Vec<[f32; 2]> {
+    local_ab_at(image, 1.0)
+}
+
+/// [`local_ab`] of a picture `reach` of its pixels to a pixel of the
+/// full-size develop: the box spans the same part of the scene at any
+/// size, so a smaller export reads the hue the viewport reads. Its
+/// half-width is `MEAN_RADIUS` and a half full-size pixels, at least
+/// the pixel itself, and a tap the box covers in part counts for that
+/// part. At a reach of one it is the plain 5x5.
+pub fn local_ab_at(image: &WorkingImage, reach: f32) -> Vec<[f32; 2]> {
     let (w, h) = (image.width, image.height);
     let ab: Vec<[f32; 2]> = image
         .data
@@ -1127,8 +1137,12 @@ pub fn local_ab(image: &WorkingImage) -> Vec<[f32; 2]> {
             [lab[1], lab[2]]
         })
         .collect();
-    let r = MEAN_RADIUS as isize;
-    let n = (2 * MEAN_RADIUS + 1) as f32;
+    let half = ((MEAN_RADIUS as f32 + 0.5) * reach).max(0.5);
+    let r = (half - 0.5).ceil() as isize;
+    let weights: Vec<f32> = (-r..=r)
+        .map(|d| (half + 0.5 - d.abs() as f32).clamp(0.0, 1.0))
+        .collect();
+    let n = 2.0 * half;
     // Along the rows, then down the columns, edges clamped both ways.
     let mut rows = vec![[0.0f32; 2]; w * h];
     rows.par_chunks_mut(w)
@@ -1136,10 +1150,10 @@ pub fn local_ab(image: &WorkingImage) -> Vec<[f32; 2]> {
         .for_each(|(out, row)| {
             for (x, o) in out.iter_mut().enumerate() {
                 let mut acc = [0.0f32; 2];
-                for d in -r..=r {
+                for (d, k) in (-r..=r).zip(&weights) {
                     let sx = (x as isize + d).clamp(0, w as isize - 1) as usize;
-                    acc[0] += row[sx][0];
-                    acc[1] += row[sx][1];
+                    acc[0] += k * row[sx][0];
+                    acc[1] += k * row[sx][1];
                 }
                 *o = [acc[0] / n, acc[1] / n];
             }
@@ -1148,10 +1162,10 @@ pub fn local_ab(image: &WorkingImage) -> Vec<[f32; 2]> {
     out.par_chunks_mut(w).enumerate().for_each(|(y, line)| {
         for (x, o) in line.iter_mut().enumerate() {
             let mut acc = [0.0f32; 2];
-            for d in -r..=r {
+            for (d, k) in (-r..=r).zip(&weights) {
                 let sy = (y as isize + d).clamp(0, h as isize - 1) as usize;
-                acc[0] += rows[sy * w + x][0];
-                acc[1] += rows[sy * w + x][1];
+                acc[0] += k * rows[sy * w + x][0];
+                acc[1] += k * rows[sy * w + x][1];
             }
             *o = [acc[0] / n, acc[1] / n];
         }
@@ -1786,9 +1800,36 @@ pub(crate) fn decode(v: f32) -> f32 {
 /// picture, by the same geometry and resize, so a pixel's bands are at
 /// that pixel of it: texture, clarity, haze, and structure, the size of
 /// `image`.
+///
+/// The image at the full-size develop's scale: [`finish_reaching`] of
+/// one that is not.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_with<T: Copy + Default + Send>(
     image: &WorkingImage,
+    sampled: Option<&WorkingImage>,
+    global: &Baked,
+    locals: &[Local],
+    position: impl Fn(usize, usize) -> (f32, f32) + Sync,
+    frame: impl Fn(usize, usize) -> (f32, Option<[f32; 3]>) + Sync,
+    guide: Option<(&Guide, f32)>,
+    detail: Option<(&crate::detail::BandImages, &DetailMeta)>,
+    look: Option<&lut::Look>,
+    to_out: &[[f32; 3]; 3],
+    quantize: impl Fn(f32) -> T + Sync,
+) -> Vec<T> {
+    finish_reaching(
+        image, 1.0, sampled, global, locals, position, frame, guide, detail, look, to_out, quantize,
+    )
+}
+
+/// [`finish_with`] of an image `reach` of its pixels to a pixel of the
+/// full-size develop, as an export made smaller is: the mean a color
+/// window and the mixer read a hue from spans the same part of the
+/// scene as in the viewport ([`local_ab_at`]).
+#[allow(clippy::too_many_arguments)]
+pub fn finish_reaching<T: Copy + Default + Send>(
+    image: &WorkingImage,
+    reach: f32,
     sampled: Option<&WorkingImage>,
     global: &Baked,
     locals: &[Local],
@@ -1805,7 +1846,7 @@ pub fn finish_with<T: Copy + Default + Send>(
     let reference = (global.mixer.enabled
         || global.bw.enabled
         || locals.iter().any(|l| l.enabled && l.baked.mixer.enabled))
-    .then(|| local_ab(image));
+    .then(|| local_ab_at(image, reach));
     // The range masks' sample, at the global exposure alone, and the
     // same mean of their picture only when a color window reads it:
     // the mixer's when that is the same picture.
@@ -1816,7 +1857,7 @@ pub fn finish_with<T: Copy + Default + Send>(
         .any(Local::reads_color)
         .then(|| match (&reference, source) {
             (Some(_), None) => None,
-            _ => Some(local_ab(source.unwrap_or(image))),
+            _ => Some(local_ab_at(source.unwrap_or(image), reach)),
         });
     let exposure = global.light.exposure;
     // The bands only where a local puts some on, and only of the
@@ -4734,6 +4775,141 @@ mod tests {
             }
         }
         assert!((corner[0] - tally[0]).abs() < 1e-6 && (corner[1] - tally[1]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_color_mean_spans_the_same_scene_at_half_size() {
+        // A stripe of color six pixels wide on grey, and the same
+        // picture binned 2x2: three pixels wide. A window that takes
+        // the stripe's chroma and not four fifths of it.
+        let (w, h) = (32usize, 8usize);
+        let ok = greycard_core::color::Oklab::for_working_space();
+        let from_lms = greycard_core::color::invert3(ok.to_lms).unwrap();
+        let of_lab = |lab: [f32; 3]| {
+            let lms = greycard_core::color::apply3(&greycard_core::color::LAB_TO_LMS, lab)
+                .map(|v| v * v * v);
+            greycard_core::color::apply3(&from_lms, lms)
+        };
+        let (grey, teal) = (of_lab([0.6, 0.0, 0.0]), of_lab([0.6, -0.07, -0.07]));
+        let chroma = 0.07 * 2f32.sqrt();
+        let mut data = Vec::new();
+        for _ in 0..h {
+            for x in 0..w {
+                data.extend(if (12..18).contains(&x) { teal } else { grey });
+            }
+        }
+        let full = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let mut binned = Vec::new();
+        for y in 0..h / 2 {
+            for x in 0..w / 2 {
+                let mut c = [0.0f32; 3];
+                for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                    let px = full.pixel(2 * x + dx, 2 * y + dy);
+                    (0..3).for_each(|k| c[k] += px[k] / 4.0);
+                }
+                binned.extend(c);
+            }
+        }
+        let half = WorkingImage {
+            width: w / 2,
+            height: h / 2,
+            data: binned,
+        };
+        let window = greycard_edit::mask::Shape::Color {
+            hue: 225.0,
+            width: 30.0,
+            hue_feather: 0.0,
+            chroma: 0.9 * chroma,
+            chroma_feather: 0.0,
+        };
+        let weight = |image: &WorkingImage, ab: &[[f32; 2]], x: usize| {
+            let i = (image.height / 2) * image.width + x;
+            window.of_sample(sample(image.pixel(x, image.height / 2), Some(ab[i]), 0.0))
+        };
+        let at_full = local_ab(&full);
+        let fixed = local_ab_at(&half, 0.5);
+        let own = local_ab_at(&half, 1.0);
+        // Each half pixel against the two full ones it bins.
+        for x in 0..w / 2 {
+            let want = weight(&full, &at_full, 2 * x).max(weight(&full, &at_full, 2 * x + 1));
+            assert_eq!(weight(&half, &fixed, x), want, "column {x}");
+        }
+        // The stripe's middle is in at full size and at the fixed
+        // scale; a 5x5 of the half-size pixels reads grey into it.
+        assert_eq!(weight(&half, &fixed, 7), 1.0);
+        assert_eq!(weight(&half, &own, 7), 0.0);
+    }
+
+    /// How far a color window with hard edges at half size is from
+    /// the full-size one binned 2x2, with the mean at the half-size
+    /// pixels and at the fixed scale: `GREYCARD_MASK_FRAME` names the
+    /// raw. Run it in release, ignored tests included, with the output
+    /// shown.
+    #[test]
+    #[ignore]
+    fn a_real_frames_color_window_at_half_size() {
+        let Some(path) = std::env::var_os("GREYCARD_MASK_FRAME") else {
+            panic!("set GREYCARD_MASK_FRAME to a raw");
+        };
+        let frame = greycard_core::decode::decode_path(&path).expect("decode");
+        let settings = greycard_core::develop::DevelopSettings::default();
+        let full = greycard_core::develop::develop(&frame, &settings)
+            .expect("develop")
+            .image;
+        let (w, h) = (full.width / 2 * 2, full.height / 2 * 2);
+        let half = crate::export::fit_exact(&full, (w / 2) as u32, (h / 2) as u32).unwrap();
+        let window = greycard_edit::mask::Shape::Color {
+            hue: 195.0,
+            width: 30.0,
+            hue_feather: 0.0,
+            chroma: 0.03,
+            chroma_feather: 0.0,
+        };
+        let weights = |image: &WorkingImage, ab: &[[f32; 2]]| -> Vec<f32> {
+            (0..image.width * image.height)
+                .into_par_iter()
+                .map(|i| {
+                    let (x, y) = (i % image.width, i / image.width);
+                    window.of_sample(sample(image.pixel(x, y), Some(ab[i]), 0.0))
+                })
+                .collect()
+        };
+        let at_full = weights(&full, &local_ab(&full));
+        let (hw, hh) = (half.width, half.height);
+        let binned: Vec<f32> = (0..hw * hh)
+            .map(|i| {
+                let (x, y) = (2 * (i % hw), 2 * (i / hw));
+                let at = |x: usize, y: usize| at_full[y * full.width + x];
+                (at(x, y) + at(x + 1, y) + at(x, y + 1) + at(x + 1, y + 1)) / 4.0
+            })
+            .collect();
+        let covered = binned.iter().sum::<f32>() / binned.len() as f32;
+        eprintln!(
+            "{} x {}, the window covers {:.1}%",
+            full.width,
+            full.height,
+            100.0 * covered
+        );
+        for (name, reach) in [("its own pixels", 1.0), ("the fixed scale", 0.5)] {
+            let got = weights(&half, &local_ab_at(&half, reach));
+            let d: Vec<f32> = got
+                .iter()
+                .zip(&binned)
+                .map(|(a, b)| (a - b).abs())
+                .collect();
+            let n = d.len() as f32;
+            eprintln!(
+                "{name}: max {:.3}, mean {:.4}, over 0.5 {:.2}%, coverage {:.1}%",
+                d.iter().fold(0.0f32, |m, v| m.max(*v)),
+                d.iter().sum::<f32>() / n,
+                100.0 * d.iter().filter(|v| **v > 0.5).count() as f32 / n,
+                100.0 * got.iter().sum::<f32>() / n,
+            );
+        }
     }
 
     #[test]

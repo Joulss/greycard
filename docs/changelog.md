@@ -211,6 +211,9 @@ design note behind it.
 
 ### Fixes
 
+- A color window's edge and the mixer's hue in an export made smaller
+  now match the viewport's
+  ([§555](https://github.com/jessolmstead/greycard/blob/master/docs/notes/555-the-color-mean-at-a-fixed-scale.md)).
 - The profiled denoise's non-local means are a quarter quicker: each
   pair of search offsets is weighed once, about a second off a 45 MP
   develop at six threads
