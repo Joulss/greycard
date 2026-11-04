@@ -1335,6 +1335,8 @@ export component App inherits Window {
     callback place-pressed(length, length, bool);
     callback place-dragged(length, length);
     callback place-released();
+    // Shift at the press placing a shape (`Viewport.place-shift`).
+    in-out property <bool> place-shift;
     // The chosen shape on the view: its kind, its handles (the whole
     // first), and for a radial its outline; for a linear the angle of
     // its lines.
@@ -1356,7 +1358,8 @@ export component App inherits Window {
     in-out property <float> mask-rx: 0;
     in-out property <float> mask-ry: 0;
     in-out property <float> mask-feather-scale: 0.5;
-    callback mask-grabbed(int);
+    // Shift at the press: the shape held as it is placed.
+    callback mask-grabbed(int, bool);
     // `alt`: Alt as the handle's own pointer event reported it on this
     // move (`CropHandle`'s `alt`), not a window-wide latch — a mask
     // handle's own drag reads it to choose pivot (plain) or free-end
@@ -3112,7 +3115,7 @@ export component App inherits Window {
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
                 hovered(a, b, c) => { root.view-hovered(a, b, c); }
-                hand: root.hand-key || root.shift-held;
+                hand: root.hand-key || (root.shift-held && !self.shift-holds);
                 hand-panned <=> root.hand-panned;
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;
@@ -3147,6 +3150,7 @@ export component App inherits Window {
                 place-pressed(a, b, c) => { root.place-pressed(a, b, c); }
                 place-dragged(a, b) => { root.place-dragged(a, b); }
                 place-released => { root.place-released(); }
+                place-shift <=> root.place-shift;
                 mask-kind <=> root.mask-kind;
                 mask-handles <=> root.mask-handles;
                 handles-down <=> root.handles-down;
@@ -3158,7 +3162,7 @@ export component App inherits Window {
                 mask-rx <=> root.mask-rx;
                 mask-ry <=> root.mask-ry;
                 mask-feather-scale <=> root.mask-feather-scale;
-                mask-grabbed(a) => { root.mask-grabbed(a); }
+                mask-grabbed(a, b) => { root.mask-grabbed(a, b); }
                 mask-dragged(a, b, c, d) => { root.mask-dragged(a, b, c, d); }
                 mask-dropped => { root.mask-dropped(); }
                 mask-body-at(a, b, c) => { return root.mask-body-at(a, b, c); }

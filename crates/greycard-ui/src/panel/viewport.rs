@@ -2887,14 +2887,15 @@ mod tests {
         app.invoke_retouch_toggled("Heal".into());
         assert_eq!(app.get_retouch_mode(), "");
 
-        // A Linear in hand from M, waiting for the drag that places it.
+        // A Linear in hand from M, waiting for the drag that places it:
+        // Space pans; Shift holds the shape instead, placed on a step.
         state.borrow_mut().develop.zoom = 1.0;
         press(&app, "m");
         assert_eq!(app.get_placing(), "Linear");
         let before = center();
-        shift(true);
+        space(true);
         drag(&app, &path);
-        shift(false);
+        space(false);
         assert_ne!(center(), before);
         assert_eq!(app.get_placing(), "Linear", "still in hand");
         assert!(
@@ -2903,6 +2904,60 @@ mod tests {
                 .components
                 .is_empty(),
             "nothing placed"
+        );
+        let before = center();
+        shift(true);
+        drag(&app, &path);
+        shift(false);
+        assert_eq!(center(), before, "no pan");
+        let st = state.borrow();
+        let greycard_edit::mask::Shape::Linear { from, to } =
+            st.develop.edit.adjustments[0].mask.components[0].shape
+        else {
+            panic!("a linear placed")
+        };
+        let a = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
+        assert!((a - 15.0).abs() < 1e-3, "on the step: {a}");
+    }
+
+    /// Under a Straighten, a Shift drag placing a Linear steps its
+    /// angle as the screen shows it: a near-level drag lands level on
+    /// the view, which in the picture's own units is tilted.
+    #[test]
+    fn a_shift_placed_linear_is_level_on_a_straightened_view() {
+        use crate::testing::{drag, press};
+        use slint::platform::{Key, WindowEvent};
+        let (app, state, _worker) = hover_frame(1.0);
+        app.set_geo_angle(5.0);
+        press(&app, "m");
+        assert_eq!(app.get_placing(), "Linear");
+        let shift = |down: bool| {
+            let text = Key::Shift.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        shift(true);
+        drag(&app, &[(600.0, 400.0), (620.0, 400.0), (800.0, 410.0)]);
+        shift(false);
+        let st = state.borrow();
+        let greycard_edit::mask::Shape::Linear { from, to } =
+            st.develop.edit.adjustments[0].mask.components[0].shape
+        else {
+            panic!("a linear placed")
+        };
+        let (a, b) = (
+            source_to_view(&st, &app, from[0], from[1]),
+            source_to_view(&st, &app, to[0], to[1]),
+        );
+        assert!((a.1 - b.1).abs() < 0.01, "level on the view: {a:?} {b:?}");
+        assert!(b.0 - a.0 > 100.0, "{a:?} {b:?}");
+        let tilt = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
+        assert!(
+            (tilt.abs() - 5.0).abs() < 0.01,
+            "tilted in the picture: {tilt}"
         );
     }
 

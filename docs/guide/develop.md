@@ -23,8 +23,9 @@ pan and zoom straight away.
   400%; under them, **Full screen** (**F11**).
 - **Drag** to move the picture when you are zoomed in. With a tool in
   hand that draws on the picture (a repair, or a mask's shape waiting
-  for its drag), hold **Space** or **Shift** and drag: the pointer is
-  a hand, the picture moves, and nothing is drawn. A tap of **Space**
+  for its drag), hold **Space** and drag (**Shift** too, except with a
+  Linear or Radial waiting, where Shift holds the shape): the pointer
+  is a hand, the picture moves, and nothing is drawn. A tap of **Space**
   still zooms.
 - A **mouse wheel** zooms a step in or out about the pointer with each
   click. A tilted wheel moves the picture sideways.

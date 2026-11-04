@@ -4599,7 +4599,7 @@ mod tests {
         let grabbed = Rc::new(std::cell::Cell::new(false));
         {
             let grabbed = grabbed.clone();
-            app.on_mask_grabbed(move |_| grabbed.set(true));
+            app.on_mask_grabbed(move |_, _| grabbed.set(true));
         }
         // A handle at these view pixels sits at 240 + x of the window,
         // the left bar being 240 wide.

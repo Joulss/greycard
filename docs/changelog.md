@@ -7,6 +7,10 @@ design note behind it.
 
 ### The window
 
+- Hold Shift as you start dragging a Linear mask to keep its angle to
+  15-degree steps, or a Radial to keep it a circle. Space still moves
+  the picture
+  ([§557](https://github.com/jessolmstead/greycard/blob/master/docs/notes/557-constrained-mask-drags.md)).
 - The Sharpen's Threshold runs to 200%, RawTherapee's range, for a
   picture whose flat areas still sharpen at 50% (pixls)
   ([§554](https://github.com/jessolmstead/greycard/blob/master/docs/notes/554-the-sharpens-threshold-to-200.md)).

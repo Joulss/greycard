@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use greycard_edit::brush::{Op, Raster, Stroke};
-use greycard_edit::mask::{Component, MIN_RADIUS, Mask, Mode, Pick, Shape};
+use greycard_edit::mask::{Component, MIN_RADIUS, Mask, Mode, Pick, Shape, on_angle_step};
 use greycard_edit::retouch::{Method as RetouchMethod, Patch};
 use greycard_edit::{Adjustment, Edit, Look};
 use greycard_render::refine::MaskPicture;
@@ -16,7 +16,7 @@ use crate::panel::assets::offer_model;
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{develop_soon, read_edit, show_edit, show_names};
 use crate::panel::retouch::show_patches;
-use crate::panel::viewport::{source_to_view, view_on_picture, view_to_source};
+use crate::panel::viewport::{ViewMap, source_to_view, view_on_picture, view_to_source};
 use crate::worker::{Job, Worker};
 use crate::{App, Shared, State, WORKER};
 
@@ -38,6 +38,18 @@ pub(crate) struct Placing {
     pub(crate) component: Option<usize>,
     /// An object's press has become a box.
     pub(crate) boxed: bool,
+    /// Shift at the press: a linear held to steps of its angle, a
+    /// radial to a circle.
+    pub(crate) held: bool,
+}
+
+/// `p` turned about `anchor`, both in the masks' units, to the nearest
+/// angle step as the view shows them: a Straighten or a keystone
+/// between the two, a step level on the screen stays level.
+fn on_view_step(st: &State, app: &App, anchor: (f32, f32), p: (f32, f32)) -> (f32, f32) {
+    let map = ViewMap::of(st, app);
+    let s = on_angle_step(map.to_view(anchor.0, anchor.1), map.to_view(p.0, p.1));
+    view_to_source(st, app, s.0, s.1)
 }
 
 /// A stroke starting at `at`, as the panel has the brush.
@@ -234,6 +246,8 @@ pub(crate) struct MaskDrag {
     handle: usize,
     /// The handle's place on the view when pressed, logical pixels.
     at: (f32, f32),
+    /// Shift at the press (`Shape::dragged_held`).
+    held: bool,
 }
 
 /// The adjustments baked for the viewport, their brushes' rasters
@@ -985,6 +999,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 index,
                 component,
                 boxed: false,
+                held: false,
             });
             tool_in_hand(&mut st, &app);
             app.set_placing_into(true);
@@ -1420,6 +1435,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             placing.component = Some(which);
             placing.from = at;
             placing.boxed = false;
+            placing.held = app.get_place_shift();
             app.set_component(which as i32);
             st.develop.placing = Some(placing);
             show_edit(&st, &st.develop.edit, &app, st.develop.target);
@@ -1445,14 +1461,24 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 app.window().request_redraw();
                 return;
             }
+            let Some((from, index, which, held)) = st
+                .develop
+                .placing
+                .as_ref()
+                .and_then(|p| Some((p.from, p.index, p.component?, p.held)))
+            else {
+                return;
+            };
+            // Shift's step, measured on the view.
+            let stepped = if held {
+                on_view_step(&st, &app, from, at)
+            } else {
+                at
+            };
             let st = &mut *st;
             let Some(placing) = st.develop.placing.as_mut() else {
                 return;
             };
-            let Some(which) = placing.component else {
-                return;
-            };
-            let (from, index) = (placing.from, placing.index);
             let Some(component) = st
                 .develop
                 .edit
@@ -1463,12 +1489,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             match &mut component.shape {
-                Shape::Linear { to, .. } => *to = [at.0, at.1],
+                Shape::Linear { to, .. } => {
+                    *to = [stepped.0, stepped.1];
+                }
                 Shape::Radial { radius, .. } => {
-                    *radius = [
+                    let r = [
                         (at.0 - from.0).abs().max(MIN_RADIUS),
                         (at.1 - from.1).abs().max(MIN_RADIUS),
-                    ]
+                    ];
+                    *radius = if held { [r[0].max(r[1]); 2] } else { r };
                 }
                 Shape::Brush { strokes } => {
                     // A point once the pointer has moved a texel.
@@ -1644,7 +1673,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     // pointer's travel since; release records the edit.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_mask_grabbed(move |handle| {
+        app.on_mask_grabbed(move |handle, held| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -1663,7 +1692,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let at = source_to_view(&st, &app, u, v);
-            st.develop.mask_drag = Some(MaskDrag { shape, handle, at });
+            st.develop.mask_drag = Some(MaskDrag {
+                shape,
+                handle,
+                at,
+                held,
+            });
         });
     }
     {
@@ -1673,11 +1707,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some((shape, handle, at)) = st
+            let Some((shape, handle, at, held)) = st
                 .develop
                 .mask_drag
                 .as_ref()
-                .map(|d| (d.shape.clone(), d.handle, d.at))
+                .map(|d| (d.shape.clone(), d.handle, d.at, d.held))
             else {
                 return;
             };
@@ -1690,7 +1724,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // next — toggling Alt mid-drag keeps the dragged end
             // under the pointer, though the far end does jump between
             // its mirrored and its press-time spot.
-            let moved = if alt {
+            // Shift, read at the press, holds it as placing does.
+            let moved = if held {
+                shape.dragged_held(handle, p, alt, |a, q| on_view_step(&st, &app, a, q))
+            } else if alt {
                 shape.dragged_free(handle, p)
             } else {
                 shape.dragged(handle, p)
@@ -2378,7 +2415,7 @@ mod tests {
         let grabbed = Rc::new(Cell::new(false));
         {
             let grabbed = grabbed.clone();
-            app.on_mask_grabbed(move |_| grabbed.set(true));
+            app.on_mask_grabbed(move |_, _| grabbed.set(true));
         }
         // A handle at these view pixels sits at `LEFT_BAR + x` of the
         // window, so a negative x is over the left bar.
@@ -2392,6 +2429,38 @@ mod tests {
         // The same handle on the picture is pressable, so the test is
         // about the clip and not about the wiring.
         assert!(at(360.0), "a handle on the picture is not pressable");
+    }
+
+    /// A handle's press tells `mask-grabbed` whether Shift was held,
+    /// from the pointer event itself.
+    #[test]
+    fn a_handles_press_reports_shift() {
+        use slint::platform::{Key, WindowEvent};
+        let app = window(1);
+        app.set_mask_kind("Linear".into());
+        app.set_mask_handles(ModelRc::new(VecModel::from(vec![Pt {
+            x: 360.0,
+            y: 400.0,
+        }])));
+        let held = Rc::new(Cell::new(None));
+        {
+            let held = held.clone();
+            app.on_mask_grabbed(move |_, shift| held.set(Some(shift)));
+        }
+        let shift = |down: bool| {
+            let text = Key::Shift.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        shift(true);
+        click(&app, LEFT_BAR + 360.0, 400.0);
+        shift(false);
+        assert_eq!(held.get(), Some(true), "Shift held at the press");
+        click(&app, LEFT_BAR + 360.0, 400.0);
+        assert_eq!(held.get(), Some(false), "a plain press");
     }
 
     /// Sky from its button is made whole, like Subject; on a chosen sky
@@ -3493,7 +3562,7 @@ mod tests {
         let grabbed = Rc::new(Cell::new(false));
         {
             let grabbed = grabbed.clone();
-            app.on_mask_grabbed(move |_| grabbed.set(true));
+            app.on_mask_grabbed(move |_, _| grabbed.set(true));
         }
         app.set_picking("White".into());
         let press = shown_at(&app, &state, base, 0.6, 0.375);
@@ -4298,5 +4367,82 @@ mod tests {
         assert!(app.get_show_mask(), "Show mask as it was");
         assert_eq!(app.get_target(), 1, "the chosen row as it was");
         assert_eq!(state.borrow().develop.target, Some(0));
+    }
+
+    /// Shift at the press holds a shape: a linear placed or turned by
+    /// an end lands on a 15-degree step, a radial placed or reached by
+    /// an axis end is a circle. The history steps are a plain drag's.
+    #[test]
+    fn a_shift_drag_holds_a_linear_to_steps_and_a_radial_to_a_circle() {
+        // A frame's window, a shape of `kind` placed by a drag from
+        // (300, 200) by (dx, dy), then its handle `h` dragged by (60,
+        // 25); Shift at both presses when `shift`. The shape after each
+        // drag and the history's rows.
+        let run = |kind: &str, (dx, dy): (f32, f32), h: i32, shift: bool| {
+            let app = window(1);
+            let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+            app.invoke_select(0);
+            {
+                let mut st = state.borrow_mut();
+                st.develop.source_size = (3000, 2000);
+                st.develop.center = (1500.0, 1000.0);
+            }
+            app.set_panel_tab("Masks".into());
+            app.invoke_new_mask();
+            rest();
+            app.invoke_add_shape(kind.into(), "Add".into());
+            app.set_place_shift(shift);
+            app.invoke_place_pressed(300.0, 200.0, false);
+            app.invoke_place_dragged(300.0 + dx, 200.0 + dy);
+            app.invoke_place_released();
+            rest();
+            let shape = || {
+                let st = state.borrow();
+                st.develop.edit.adjustments[0].mask.components[0]
+                    .shape
+                    .clone()
+            };
+            let placed = shape();
+            app.invoke_mask_grabbed(h, shift);
+            app.invoke_mask_dragged(h, 60.0, 25.0, false);
+            app.invoke_mask_dropped();
+            rest();
+            let rows = app.get_history_rows();
+            let steps: Vec<String> = (0..rows.row_count())
+                .map(|i| rows.row_data(i).unwrap().name.to_string())
+                .collect();
+            (placed, shape(), steps)
+        };
+        let degrees = |s: &Shape| {
+            let Shape::Linear { from, to } = *s else {
+                panic!("{s:?}")
+            };
+            (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees()
+        };
+        let off_step = |a: f32| {
+            let r = a.rem_euclid(15.0);
+            r.min(15.0 - r)
+        };
+        let (placed, turned, held_steps) = run("Linear", (300.0, 130.0), 2, true);
+        assert!(off_step(degrees(&placed)) < 1e-3, "{placed:?}");
+        assert!(off_step(degrees(&turned)) < 1e-3, "{turned:?}");
+        let (placed, turned, plain_steps) = run("Linear", (300.0, 130.0), 2, false);
+        assert!(off_step(degrees(&placed)) > 1.0, "{placed:?}");
+        assert!(off_step(degrees(&turned)) > 1.0, "{turned:?}");
+        assert_eq!(held_steps, plain_steps);
+        let radii = |s: &Shape| {
+            let Shape::Radial { radius, .. } = *s else {
+                panic!("{s:?}")
+            };
+            radius
+        };
+        let (placed, reached, held_steps) = run("Radial", (100.0, 30.0), 1, true);
+        let (p, r) = (radii(&placed), radii(&reached));
+        assert!(p[0] == p[1] && r[0] == r[1], "{p:?} {r:?}");
+        assert!((r[0] - p[0]).abs() > 1e-3, "the handle reached");
+        let (placed, reached, plain_steps) = run("Radial", (100.0, 30.0), 1, false);
+        let (p, r) = (radii(&placed), radii(&reached));
+        assert!(p[0] != p[1] && r[0] != r[1], "{p:?} {r:?}");
+        assert_eq!(held_steps, plain_steps);
     }
 }

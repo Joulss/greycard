@@ -133,6 +133,23 @@ fn toward_at_least(anchor: (f32, f32), p: (f32, f32), was: (f32, f32)) -> (f32, 
     (anchor.0 + ux * MIN_RADIUS, anchor.1 + uy * MIN_RADIUS)
 }
 
+/// Shift's step for a linear gradient's direction, in degrees.
+pub const ANGLE_STEP: f32 = 15.0;
+
+/// `p` turned about `anchor` to the nearest [`ANGLE_STEP`], at its own
+/// distance: Shift's hold on a linear gradient. Both coordinates are
+/// in the picture's width, so the angle is the picture's own.
+pub fn on_angle_step(anchor: (f32, f32), p: (f32, f32)) -> (f32, f32) {
+    let (dx, dy) = (p.0 - anchor.0, p.1 - anchor.1);
+    let reach = dx.hypot(dy);
+    if reach <= f32::EPSILON {
+        return p;
+    }
+    let step = ANGLE_STEP.to_radians();
+    let (s, c) = ((dy.atan2(dx) / step).round() * step).sin_cos();
+    (anchor.0 + reach * c, anchor.1 + reach * s)
+}
+
 /// A shape's value at a point, 0 to 1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -967,6 +984,56 @@ impl Shape {
         }
     }
 
+    /// `dragged`, or `dragged_free` when `free`, as Shift holds it: a
+    /// linear gradient's end turned by `step` about the point it turns
+    /// on (the center, or the far end when free), `step(anchor, p)`
+    /// being [`on_angle_step`] as the caller sees the picture; a
+    /// radial's axis end giving both radii its reach, a circle. A
+    /// center moves as plainly.
+    pub fn dragged_held(
+        &self,
+        handle: usize,
+        p: (f32, f32),
+        free: bool,
+        step: impl Fn((f32, f32), (f32, f32)) -> (f32, f32),
+    ) -> Self {
+        let plain = |p| {
+            if free {
+                self.dragged_free(handle, p)
+            } else {
+                self.dragged(handle, p)
+            }
+        };
+        match (self, handle) {
+            (Shape::Linear { from, to }, 1 | 2) => {
+                let anchor = match (free, handle) {
+                    (false, _) => ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0),
+                    (true, 1) => (to[0], to[1]),
+                    (true, _) => (from[0], from[1]),
+                };
+                plain(step(anchor, p))
+            }
+            (Shape::Radial { .. }, 1..=4) => match plain(p) {
+                Shape::Radial {
+                    center,
+                    radius,
+                    angle,
+                    feather,
+                } => {
+                    let r = radius[usize::from(handle > 2)];
+                    Shape::Radial {
+                        center,
+                        radius: [r, r],
+                        angle,
+                        feather,
+                    }
+                }
+                other => other,
+            },
+            _ => plain(p),
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Shape::Linear { .. } => "Linear",
@@ -1441,6 +1508,51 @@ mod tests {
         assert_eq!(
             disc.dragged_free(1, (0.5, 0.8)),
             disc.dragged(1, (0.5, 0.8))
+        );
+    }
+
+    #[test]
+    fn a_held_drag_steps_a_linear_and_rounds_a_radial() {
+        let deg = |a: (f32, f32), b: (f32, f32)| (b.1 - a.1).atan2(b.0 - a.0).to_degrees();
+        // 20 degrees off the axis, about the center: 15.
+        let line = Shape::Linear {
+            from: [0.2, 0.5],
+            to: [0.6, 0.5],
+        };
+        let t = 20f32.to_radians();
+        let p = (0.4 + 0.3 * t.cos(), 0.5 + 0.3 * t.sin());
+        let Shape::Linear { from, to } = line.dragged_held(2, p, false, on_angle_step) else {
+            panic!()
+        };
+        let a = deg((from[0], from[1]), (to[0], to[1]));
+        assert!((a - 15.0).abs() < 1e-3, "{a}");
+        assert!((from[0] + to[0] - 0.8).abs() < 1e-5, "the center holds");
+        // Free, about the far end, which stays.
+        let Shape::Linear { from, to } = line.dragged_held(1, (0.25, 0.42), true, on_angle_step)
+        else {
+            panic!()
+        };
+        assert_eq!(to, [0.6, 0.5]);
+        let a = deg((to[0], to[1]), (from[0], from[1]));
+        assert!(
+            (a.rem_euclid(15.0)).min(15.0 - a.rem_euclid(15.0)) < 1e-3,
+            "{a}"
+        );
+        // A radial's axis end: both radii its reach; its center plain.
+        let disc = Shape::Radial {
+            center: [0.5, 0.5],
+            radius: [0.2, 0.1],
+            angle: 0.0,
+            feather: 0.5,
+        };
+        let Shape::Radial { radius, .. } = disc.dragged_held(3, (0.5, 0.8), false, on_angle_step)
+        else {
+            panic!()
+        };
+        assert!((radius[0] - 0.3).abs() < 1e-5 && radius[0] == radius[1]);
+        assert_eq!(
+            disc.dragged_held(0, (0.4, 0.4), false, on_angle_step),
+            disc.dragged(0, (0.4, 0.4))
         );
     }
 

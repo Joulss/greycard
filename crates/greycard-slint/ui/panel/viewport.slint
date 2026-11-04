@@ -128,6 +128,11 @@ export component Viewport inherits Rectangle {
     callback place-pressed(length, length, bool);
     callback place-dragged(length, length);
     callback place-released();
+    // Shift at the press that places a shape: a linear held to steps
+    // of its angle, a radial to a circle.
+    in-out property <bool> place-shift;
+    // Whether Shift holds the shape in hand, and so is not the hand.
+    out property <bool> shift-holds: root.placing == "Linear" || root.placing == "Radial";
     in-out property <string> mask-kind;
     in-out property <[Pt]> mask-handles;
     // The handles put down by Esc: none drawn, and a press on the
@@ -142,7 +147,8 @@ export component Viewport inherits Rectangle {
     in-out property <float> mask-rx;
     in-out property <float> mask-ry;
     in-out property <float> mask-feather-scale;
-    callback mask-grabbed(int);
+    // Shift at the handle's press: the shape held as it is placed.
+    callback mask-grabbed(int, bool);
     // Alt as the handle's own pointer event reported it on this move
     // (`CropHandle.alt`), so a linear gradient's end can choose pivot
     // (plain) or free-end (Alt) rotation.
@@ -360,7 +366,7 @@ export component Viewport inherits Rectangle {
                 // was picked to keep it from a plain click.
                 self.picked-down = false;
                 self.placed-down = false;
-                self.hand-down = (root.hand || e.modifiers.shift) && root.hand-tool
+                self.hand-down = (root.hand || (e.modifiers.shift && !root.shift-holds)) && root.hand-tool
                     && e.button == PointerEventButton.left;
                 if (root.placeholder) {
                 } else if (self.hand-down) {
@@ -378,6 +384,7 @@ export component Viewport inherits Rectangle {
                     }
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     self.placed-down = true;
+                    root.place-shift = e.modifiers.shift;
                     root.place-pressed(self.mouse-x, self.mouse-y, e.button == PointerEventButton.right);
                 }
                 self.last-x = self.mouse-x;
@@ -469,7 +476,7 @@ export component Viewport inherits Rectangle {
                     // where the press was.
                     if (!self.body-moving) {
                         self.body-moving = true;
-                        root.mask-grabbed(0);
+                        root.mask-grabbed(0, false);
                     }
                     root.mask-dragged(0, self.mouse-x - self.down-x, self.mouse-y - self.down-y, false);
                 } else if (self.dragged && !self.picked-down && !self.placed-down && root.crop-mode && !root.placeholder) {
@@ -1044,7 +1051,7 @@ export component Viewport inherits Rectangle {
                 border-width: 1px;
                 border-color: #00000080;
             }
-            grabbed(k) => { root.mask-grabbed(k); }
+            grabbed(k) => { root.mask-grabbed(k, self.press-modifiers.shift); }
             dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy, self.alt); }
             dropped => { root.mask-dropped(); }
         }

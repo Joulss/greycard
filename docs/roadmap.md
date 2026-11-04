@@ -1007,9 +1007,6 @@ clears or a tester asks for it.
 - [ ] ART's `.arp` profiles read beside a raw as RawTherapee's
       `.pp3` are: the same key file, found by its extension
       (pixls, 2026-10-24)
-- [ ] Constrained mask drags: Shift holds a linear mask to the axes
-      or 15-degree steps and a radial mask to a circle
-      (pixls, 2026-10-24)
 - [ ] The clipping warnings as a pair of plain buttons, with the
       toolbar (pixls, 2026-10-24)
 - [ ] A color negative photographed with a digital camera inverted:
