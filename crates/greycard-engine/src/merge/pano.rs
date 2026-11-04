@@ -56,7 +56,7 @@ use greycard_core::{CameraImage, decode::RawMetadata};
 use greycard_edit::Edit;
 use rayon::prelude::*;
 
-use super::{Files, Progress, Sources, Step, Walked, heads, same_file, walk_loaded};
+use super::{Files, Progress, Sources, Step, Walked, heads, walk_loaded};
 use crate::stages::{CaFitRef, Facts, MergeCa, MergeInput};
 use crate::walk::Models;
 
@@ -315,6 +315,64 @@ pub fn pano_of(
     models: &mut dyn Models,
     progress: &dyn Progress,
 ) -> Result<Report> {
+    let out = match &options.out {
+        Some(p) => p.clone(),
+        None => default_out.to_path_buf(),
+    };
+    // The name held, and the frames spilled in its folder: a merge
+    // killed midway leaves one folder, which the next merge to the
+    // name clears.
+    let reserved = super::hold(sources, &out, options.on_exists)?;
+    let mut report = laid(
+        sources,
+        edit,
+        options,
+        &reserved,
+        &reserved.part(),
+        models,
+        progress,
+    )?;
+    report.out = reserved.promote(&report.out)?;
+    Ok(report)
+}
+
+/// [`pano`] written under the name `reserved` holds, as its file
+/// `name` there ([`super::Reserved::join`]), and left there for the
+/// caller to promote or not: for a caller that may merge the frames
+/// again before it keeps one. The report's `out` is that file;
+/// `options.out` and `options.on_exists` are the reservation's to
+/// settle, and not read.
+pub fn pano_under(
+    files: &[PathBuf],
+    reserved: &super::Reserved,
+    name: &str,
+    edit: &Edit,
+    options: &Options,
+    models: &mut dyn Models,
+    progress: &dyn Progress,
+) -> Result<Report> {
+    laid(
+        &Files(files),
+        edit,
+        options,
+        reserved,
+        &reserved.join(name),
+        models,
+        progress,
+    )
+}
+
+/// The panorama of `sources` written to `to`, in the folder `reserved`
+/// holds, which also takes its spilled frames.
+fn laid(
+    sources: &dyn Sources,
+    edit: &Edit,
+    options: &Options,
+    reserved: &super::Reserved,
+    to: &Path,
+    models: &mut dyn Models,
+    progress: &dyn Progress,
+) -> Result<Report> {
     let started = Instant::now();
     let mut seconds: Vec<(&'static str, f64)> = Vec::new();
     let n = sources.len();
@@ -333,27 +391,6 @@ pub fn pano_of(
     // One body: the frames' heads, before anything is read whole.
     heads(sources, Some(anchor))?;
     let names: Vec<String> = (0..n).map(|i| sources.name(i)).collect();
-    let out = match &options.out {
-        Some(p) => p.clone(),
-        None => default_out.to_path_buf(),
-    };
-    if let Some(k) = (0..n).find(|&k| sources.path(k).is_some_and(|p| same_file(&p, &out))) {
-        bail!(
-            "{} is one of the frames: a merge is never written over its frames",
-            names[k]
-        );
-    }
-    let resolved = options.on_exists.resolve(&out);
-    let Some(out) = resolved.path().map(Path::to_path_buf) else {
-        bail!(
-            "{} is there already, and nothing was written",
-            out.display()
-        );
-    };
-    // The name held, and the frames spilled in its folder: a merge
-    // killed midway leaves one folder, which the next merge to the
-    // name clears.
-    let reserved = super::Reserved::new(&out)?;
     let mut warnings: Vec<String> = Vec::new();
     // Laid already, the lens is the recipe's: the database is not read.
     let lenses = options.lenses.clone().or_else(|| {
@@ -1072,9 +1109,8 @@ pub fn pano_of(
         headroom: Some(headroom),
         ..Default::default()
     };
-    let part = reserved.part();
     let written = (|| -> Result<()> {
-        let file = std::fs::File::create(&part)?;
+        let file = std::fs::File::create(to)?;
         let mut writer = std::io::BufWriter::new(file);
         write_merged_dng(
             &mut writer,
@@ -1090,17 +1126,15 @@ pub fn pano_of(
         writer.flush()?;
         writer.get_ref().sync_all()?;
         drop(writer);
-        std::fs::rename(&part, &out)?;
         Ok(())
     })();
     if let Err(e) = written {
-        return Err(e.context(format!("writing {}", out.display())));
+        return Err(e.context(format!("writing {}", reserved.out().display())));
     }
-    drop(reserved);
     seconds.push(("write", t.elapsed().as_secs_f64()));
     seconds.push(("total", started.elapsed().as_secs_f64()));
     Ok(Report {
-        out,
+        out: to.to_path_buf(),
         reference,
         frames: names,
         pairs,

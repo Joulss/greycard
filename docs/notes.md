@@ -555,3 +555,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§540. A lints table and the layer rule as a test](notes/540-a-lints-table-and-the-layer-rule-as-a-test.md) (2026-11-03)
 - [§541. Making a merge again from the Noise section](notes/541-making-a-merge-again-from-the-noise-section.md) (2026-11-03)
 - [§542. Focus peaking](notes/542-focus-peaking.md) (2026-11-04)
+- [§543. The window's second merge under the merging folder](notes/543-the-windows-second-merge-under-the-merging-folder.md) (2026-11-04)

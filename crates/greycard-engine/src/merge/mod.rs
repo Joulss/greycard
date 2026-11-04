@@ -523,25 +523,6 @@ pub fn hdr_of(
                 .then(a.cmp(&b))
         })
         .expect("two frames or more");
-    let out = match &options.out {
-        Some(p) => p.clone(),
-        None => default_out.to_path_buf(),
-    };
-    // Whatever is asked of a name that is there, a frame is never
-    // written over: it is read after the name is settled.
-    if let Some(k) = (0..of).find(|&k| sources.path(k).is_some_and(|p| same_file(&p, &out))) {
-        bail!(
-            "{} is one of the frames: a merge is never written over its frames",
-            sources.name(k)
-        );
-    }
-    let resolved = options.on_exists.resolve(&out);
-    let Some(out) = resolved.path().map(Path::to_path_buf) else {
-        bail!(
-            "{} is there already, and nothing was written",
-            out.display()
-        );
-    };
     if let Some(given) = &options.registration
         && given.len() != of
     {
@@ -550,7 +531,12 @@ pub fn hdr_of(
             given.len()
         );
     }
-    let reserved = Reserved::new(&out)?;
+    let out = match &options.out {
+        Some(p) => p.clone(),
+        None => default_out.to_path_buf(),
+    };
+    let reserved = hold(sources, &out, options.on_exists)?;
+    let out = reserved.out().to_path_buf();
     let mut warnings = Vec::new();
     let mut reports: Vec<Option<FrameReport>> = vec![None; of];
     let mut registration = vec![
@@ -844,12 +830,12 @@ pub fn hdr_of(
         writer.flush()?;
         writer.get_ref().sync_all()?;
         drop(writer);
-        std::fs::rename(&part, &out)?;
         Ok(())
     })();
     if let Err(e) = written {
         return Err(e.context(format!("writing {}", out.display())));
     }
+    reserved.promote(&part)?;
     drop(reserved);
     seconds.push(("write", t.elapsed().as_secs_f64()));
     seconds.push(("total", started.elapsed().as_secs_f64()));
@@ -1084,6 +1070,33 @@ pub fn again(
     }
 }
 
+/// The name a merge of `sources` writes, held ([`Reserved`]): `out`
+/// as `on_exists` settles it when something is there, and refused
+/// when it would be one of the frames, whatever is asked, or when
+/// nothing is to be written. A caller that runs more than one merge
+/// for one name holds it once, writes each under it
+/// ([`pano::pano_under`]), and promotes the one it keeps.
+pub fn hold(sources: &dyn Sources, out: &Path, on_exists: OnExists) -> Result<Reserved> {
+    // Whatever is asked of a name that is there, a frame is never
+    // written over: it is read after the name is settled.
+    if let Some(k) =
+        (0..sources.len()).find(|&k| sources.path(k).is_some_and(|p| same_file(&p, out)))
+    {
+        bail!(
+            "{} is one of the frames: a merge is never written over its frames",
+            sources.name(k)
+        );
+    }
+    let resolved = on_exists.resolve(out);
+    let Some(out) = resolved.path() else {
+        bail!(
+            "{} is there already, and nothing was written",
+            out.display()
+        );
+    };
+    Reserved::new(out)
+}
+
 /// The name `out` held for one merge: a hidden folder beside it,
 /// `.<name>.merging`, and an exclusive lock on the file `lock` in it,
 /// held for the merge's whole life. A second merge to the same name
@@ -1093,9 +1106,10 @@ pub fn again(
 /// taken over. It holds the file until its rename and a panorama's
 /// spilled frames, and is removed with all in it however the merge
 /// ends, the lock let go first, since Windows removes no open file.
-struct Reserved {
+pub struct Reserved {
     dir: PathBuf,
     lock: Option<std::fs::File>,
+    out: PathBuf,
 }
 
 /// The lock's file in a reserved folder.
@@ -1134,6 +1148,7 @@ impl Reserved {
         let reserved = Self {
             dir,
             lock: Some(lock),
+            out: out.to_path_buf(),
         };
         if reserved.clear() {
             log::info!(
@@ -1166,14 +1181,34 @@ impl Reserved {
         any
     }
 
+    /// The name held.
+    pub fn out(&self) -> &Path {
+        &self.out
+    }
+
     /// Where the file is written until its rename.
     fn part(&self) -> PathBuf {
         self.dir.join("merged.part")
     }
 
-    /// Where a file of the merge's own goes, `name` in the folder.
-    fn join(&self, name: &str) -> PathBuf {
+    /// Where a file of the merge's own goes, `name` in the folder: a
+    /// plain file's name, and none of the folder's own (the lock, the
+    /// part, a spilled frame's `<k>.frame`).
+    pub fn join(&self, name: &str) -> PathBuf {
+        debug_assert!(
+            name != LOCK && !name.contains(['/', '\\']),
+            "{name} is not a merge's own file"
+        );
         self.dir.join(name)
+    }
+
+    /// `file`, written in the folder, renamed onto the name held: the
+    /// one rename every merge ends with, over a file there only when
+    /// the name was settled to be written over.
+    pub fn promote(&self, file: &Path) -> Result<PathBuf> {
+        std::fs::rename(file, &self.out)
+            .with_context(|| format!("writing {}", self.out.display()))?;
+        Ok(self.out.clone())
     }
 }
 
@@ -1436,6 +1471,45 @@ mod tests {
             ]
         );
         report
+    }
+
+    /// A name held: refused when it is one of the frames, settled by
+    /// what is asked of a name that is there, refused to a second
+    /// holder while held, a file written under it promoted onto the
+    /// name, and the folder gone when it is let go.
+    #[test]
+    fn a_name_is_held_written_under_and_promoted() {
+        let (dir, files) = bracket("held", [0; 3]);
+        let sources = Files(&files);
+        let refused = hold(&sources, &files[1], OnExists::Overwrite)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            refused,
+            "IMG_1.dng is one of the frames: a merge is never written over its frames"
+        );
+        let out = dir.join("merged.dng");
+        std::fs::write(&out, b"there").unwrap();
+        assert!(hold(&sources, &out, OnExists::Skip).is_err());
+        let held = hold(&sources, &out, OnExists::Increment).unwrap();
+        assert_eq!(held.out(), dir.join("merged-1.dng"));
+        let held = {
+            drop(held);
+            hold(&sources, &out, OnExists::Overwrite).unwrap()
+        };
+        assert_eq!(held.out(), out);
+        assert!(hold(&sources, &out, OnExists::Overwrite).is_err());
+        let folder = dir.join(".merged.dng.merging");
+        let file = held.join("kept.dng");
+        assert_eq!(file.parent(), Some(folder.as_path()));
+        std::fs::write(&file, b"kept").unwrap();
+        std::fs::write(held.join("dropped.dng"), b"dropped").unwrap();
+        assert_eq!(held.promote(&file).unwrap(), out);
+        assert_eq!(std::fs::read(&out).unwrap(), b"kept");
+        drop(held);
+        assert!(!folder.exists());
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// The file lands beside the first frame as `<stem>-HDR.dng`, a

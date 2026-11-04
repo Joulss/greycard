@@ -310,6 +310,11 @@ fn step_line(step: Step) -> String {
     }
 }
 
+/// A panorama's first run, under the anchor's edit, and its second,
+/// under the reference's, as each is written under the name held.
+const FIRST: &str = "first.dng";
+const SECOND: &str = "second.dng";
+
 impl Merge {
     fn run(self, said: &dyn Fn(String)) -> Done {
         let frames = self.files.len();
@@ -350,31 +355,38 @@ impl Merge {
                     )
                 }
                 Kind::Pano => {
+                    // Each run is written under the name held and the
+                    // one kept renamed onto it, so a second run that
+                    // fails leaves the first to keep.
+                    let held = merge::hold(
+                        &merge::Files(&self.files),
+                        &pano::default_output(&self.files[0]),
+                        Default::default(),
+                    )?;
                     // Under `edit`, the learned denoiser on each frame
-                    // when it has it; `again`, walked from that frame
-                    // and written over that file.
-                    let run = |edit: &Edit, again: Option<(usize, PathBuf)>| {
+                    // when it has it, walked from frame `from` when
+                    // given, as file `name` under the folder.
+                    let run = |edit: &Edit, from: Option<usize>, name: &str| {
                         let denoiser = edit.noise.tier().and_then(greycard_ai::denoiser);
                         let options = pano::Options {
                             denoiser,
-                            reference: again.as_ref().map(|(k, _)| *k),
-                            on_exists: match again {
-                                Some(_) => greycard_core::output::OnExists::Overwrite,
-                                None => Default::default(),
-                            },
-                            out: again.map(|(_, out)| out),
+                            reference: from,
                             ..pano::Options::default()
                         };
                         match denoiser {
-                            Some(_) => pano::pano(
+                            Some(_) => pano::pano_under(
                                 &self.files,
+                                &held,
+                                name,
                                 edit,
                                 &options,
                                 &mut merge::DenoiseModels::new(),
                                 &progress,
                             ),
-                            None => pano::pano(
+                            None => pano::pano_under(
                                 &self.files,
+                                &held,
+                                name,
                                 edit,
                                 &options,
                                 &mut greycard_engine::walk::NoModels,
@@ -382,22 +394,44 @@ impl Merge {
                             ),
                         }
                     };
-                    let mut r = run(edit, None)?;
+                    let first = run(edit, None, FIRST)?;
                     // The reference is the middle of the turn, which the
                     // list's middle need not be. One frame walks the
                     // panorama and gives it its edit: when the two
                     // frames' edits walk differently, it is merged
-                    // again from the reference, under its edit.
-                    let mut theirs = None;
-                    if r.reference != reference {
-                        let other = edit_of(r.reference);
-                        if !pano::walks_alike(edit, &other) {
-                            r = run(&other, Some((r.reference, r.out.clone())))?;
+                    // again from the reference, under its edit. Should
+                    // that fail, the first is kept, with the anchor's.
+                    let (r, look) = if first.reference == reference {
+                        (first, edit.clone())
+                    } else {
+                        let other = edit_of(first.reference);
+                        if pano::walks_alike(edit, &other) {
+                            (first, other)
+                        } else {
+                            match run(&other, Some(first.reference), SECOND) {
+                                // The first goes with the folder.
+                                Ok(second) => (second, other),
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "merge: the panorama again from {}, under its edit, \
+                                         failed, so it keeps {}'s: {e:#}",
+                                        first.frames[first.reference],
+                                        first.frames[reference]
+                                    );
+                                    (first, edit.clone())
+                                }
+                            }
                         }
-                        theirs = Some(other);
-                    }
-                    let look = pano::edit_for_pano(theirs.as_ref().unwrap_or(edit));
-                    (r.out, r.headroom_stops, r.seconds, r.warnings, look)
+                    };
+                    let out = held.promote(&r.out)?;
+                    drop(held);
+                    (
+                        out,
+                        r.headroom_stops,
+                        r.seconds,
+                        r.warnings,
+                        pano::edit_for_pano(&look),
+                    )
                 }
             };
             for w in &warnings {
@@ -588,7 +622,14 @@ fn send_off(_st: &mut State, app: &App, _worker: &Worker, job: Job) {
 #[cfg(test)]
 fn send_off(st: &mut State, app: &App, _worker: &Worker, job: Job) {
     app.set_status(format!("merging frame 1 of {}", job.frames()).into());
-    let done = job.run(&|line| app.set_status(line.into()));
+    let done = job.run(&|line| {
+        HEARD.with(|h| {
+            if let Some(heard) = h.borrow_mut().as_mut() {
+                heard(&line);
+            }
+        });
+        app.set_status(line.into());
+    });
     LANDED.with(|l| l.borrow_mut().push(done));
     let _ = st;
     with_queue(|q| {
@@ -597,11 +638,17 @@ fn send_off(st: &mut State, app: &App, _worker: &Worker, job: Job) {
     app.set_merge_running(false);
 }
 
+/// What a test hears of a merge's progress lines.
+#[cfg(test)]
+type Hear = Box<dyn FnMut(&str)>;
+
 #[cfg(test)]
 thread_local! {
     /// What a test's merges made, for the test to land with the state
     /// let go.
     static LANDED: RefCell<Vec<Done>> = const { RefCell::new(Vec::new()) };
+    /// What a test hears of each progress line, as the merge says it.
+    static HEARD: RefCell<Option<Hear>> = const { RefCell::new(None) };
 }
 
 /// A merge done: the file given to the indexer and stacked on top of
@@ -1071,6 +1118,268 @@ mod tests {
         drop(app);
         drop(worker);
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Four frames shot right to left in uneven steps, IMG_0 to IMG_3:
+    /// the list's middle, walked first, is IMG_1, the turn's middle
+    /// and the reference IMG_2. Each frame given in `edits` has that
+    /// edit in its sidecar. Merged to a panorama on a window, what
+    /// `heard` makes of the shoot's folder told each progress line, and
+    /// what is left to look at.
+    struct Turned {
+        dir: PathBuf,
+        out: PathBuf,
+        folder: PathBuf,
+        writer: greycard_library::Library,
+        app: App,
+        state: Rc<Shared>,
+        worker: Rc<Worker>,
+    }
+
+    fn turned_merged(
+        name: &str,
+        edits: &[(usize, Edit)],
+        heard: impl FnOnce(&Path) -> Box<dyn FnMut(&str)>,
+    ) -> Turned {
+        use greycard_core::merge::testing::{mosaic_of, turned, write_dng_shot};
+        let dir = crate::testing::scratch_dir(name);
+        let root = dir.join("photos");
+        let shoot = root.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let (w, h) = (960, 640);
+        let files: Vec<PathBuf> = [0.5, 0.3, 0.0, -0.3]
+            .iter()
+            .enumerate()
+            .map(|(k, &yaw)| {
+                let p = shoot.join(format!("IMG_{k}.dng"));
+                let samples = mosaic_of(w, h, 1.0, Noise::ASSUMED, 70 + k as u64, |x, y, c| {
+                    turned(x, y, c, w, h, 800.0, yaw)
+                });
+                write_dng_shot(&p, samples, w, h, (1, 100), 100, "Pano", Some(30));
+                p
+            })
+            .collect();
+        for (k, edit) in edits {
+            Sidecar {
+                line: Line::of(edit.clone()),
+                ..Sidecar::default()
+            }
+            .save(&files[*k])
+            .unwrap();
+        }
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1400.0, 900.0));
+        app.set_grid_open(true);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.library.roots.add(&root).unwrap();
+            let collections = dir.join(crate::collections::DIR);
+            st.views.collections.dir = Some(collections.clone());
+            st.views.stacks =
+                crate::stacks::Store::load(greycard_library::stacks::dir_in(&collections));
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_sent(&state, &app, &worker);
+        let cells: Vec<usize> = {
+            let st = state.borrow();
+            files
+                .iter()
+                .map(|p| st.own_cell(st.file_by_path(p).unwrap()).unwrap())
+                .collect()
+        };
+        let row = crate::panel::browser::row_of(&state.borrow(), cells[0]).unwrap() as i32;
+        app.invoke_select(row);
+        state.borrow_mut().views.picked = cells;
+        let heard = heard(&shoot);
+        HEARD.with(|h| *h.borrow_mut() = Some(heard));
+        app.invoke_merge_pano();
+        HEARD.with(|h| *h.borrow_mut() = None);
+        Turned {
+            out: shoot.join("IMG_0-pano.dng"),
+            folder: shoot.join(".IMG_0-pano.dng.merging"),
+            dir,
+            writer,
+            app,
+            state,
+            worker,
+        }
+    }
+
+    impl Turned {
+        /// The merged file's sidecar edit, and the names its stack
+        /// holds, the file's first.
+        fn landed(&self) -> (Edit, Vec<String>) {
+            let sidecar = Sidecar::load(&self.out)
+                .unwrap()
+                .expect("a sidecar beside it");
+            let stacks = self.state.borrow().views.stacks.list.clone();
+            assert_eq!(stacks.len(), 1);
+            let names = stacks[0]
+                .refs
+                .iter()
+                .map(|r| {
+                    Path::new(&r.hint)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            (sidecar.current.clone(), names)
+        }
+
+        fn done(self) {
+            drop(self.writer);
+            drop(self.app);
+            drop(self.worker);
+            crate::testing::remove_scratch(self.state, &self.dir);
+        }
+    }
+
+    /// Each progress line heard, and at each what the merge's folder
+    /// held (sorted) and whether the name had a file.
+    type Heard = Rc<RefCell<Vec<(String, Vec<String>, bool)>>>;
+
+    fn listening(shoot: &Path, heard: &Heard) -> Box<dyn FnMut(&str)> {
+        let (folder, out) = (
+            shoot.join(".IMG_0-pano.dng.merging"),
+            shoot.join("IMG_0-pano.dng"),
+        );
+        let into = heard.clone();
+        Box::new(move |line: &str| {
+            let mut held: Vec<String> = std::fs::read_dir(&folder)
+                .map(|d| {
+                    d.flatten()
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            held.sort();
+            into.borrow_mut()
+                .push((line.to_string(), held, out.exists()));
+        })
+    }
+
+    fn writes(heard: &Heard) -> usize {
+        heard
+            .borrow()
+            .iter()
+            .filter(|(line, _, _)| line == "merging: writing the file")
+            .count()
+    }
+
+    /// The look the reference gives the file: a contrast, kept by a
+    /// merge, and with `apart` a demosaic, which walks the frames
+    /// differently from the anchor's.
+    fn reference_edit(apart: bool) -> Edit {
+        let mut edit = Edit::default();
+        edit.light.tone.contrast = 20.0;
+        if apart {
+            edit.demosaic = greycard_edit::Demosaic::Bilinear;
+        }
+        edit
+    }
+
+    const STACKED: [&str; 5] = [
+        "IMG_0-pano.dng",
+        "IMG_0.dng",
+        "IMG_1.dng",
+        "IMG_2.dng",
+        "IMG_3.dng",
+    ];
+
+    /// The reference's edit walks as the anchor's: the panorama is
+    /// written once, under the folder, and renamed onto the name, with
+    /// the reference's look.
+    #[test]
+    fn a_panorama_whose_edits_walk_alike_is_written_once() {
+        let heard = Heard::default();
+        let t = turned_merged("merge-pano-alike", &[(2, reference_edit(false))], |shoot| {
+            listening(shoot, &heard)
+        });
+        assert_eq!(t.app.get_status(), "merged 4 frames into IMG_0-pano.dng");
+        assert_eq!(writes(&heard), 1);
+        assert!(t.out.is_file());
+        assert!(!t.folder.exists());
+        let (look, stacked) = t.landed();
+        assert_eq!(look.light.tone.contrast, 20.0);
+        assert_eq!(stacked, STACKED);
+        t.done();
+    }
+
+    /// The reference's edit walks apart from the anchor's: the first
+    /// run is written under the folder, nothing at the name, then the
+    /// second beside it, and only the second is renamed onto the name,
+    /// with the reference's look; the folder is gone after.
+    #[test]
+    fn a_panorama_whose_edits_walk_apart_is_written_under_its_folder() {
+        let heard = Heard::default();
+        let t = turned_merged("merge-pano-apart", &[(2, reference_edit(true))], |shoot| {
+            listening(shoot, &heard)
+        });
+        assert_eq!(t.app.get_status(), "merged 4 frames into IMG_0-pano.dng");
+        assert_eq!(writes(&heard), 2);
+        // The second run's first line: the first file under the folder,
+        // the name still free.
+        let heard = heard.borrow();
+        let second = heard
+            .iter()
+            .position(|(line, _, _)| line == "merging: writing the file")
+            .map(|k| k + 1)
+            .unwrap();
+        let (line, held, at_name) = &heard[second];
+        assert_eq!(line, "merging frame 1 of 4");
+        assert!(held.iter().any(|n| n == FIRST), "{held:?}");
+        assert!(!at_name);
+        assert!(heard.iter().all(|(_, _, at_name)| !at_name));
+        assert!(t.out.is_file());
+        assert!(!t.folder.exists());
+        let tag = greycard_core::decode::merge_tag_path(&t.out)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tag.reference, 2);
+        let (look, stacked) = t.landed();
+        assert_eq!(look.light.tone.contrast, 20.0);
+        assert_eq!(look.demosaic, greycard_edit::Demosaic::Bilinear);
+        assert_eq!(stacked, STACKED);
+        t.done();
+    }
+
+    /// The second run fails (its file cannot be made: a folder stands
+    /// where it goes): the first is renamed onto the name instead,
+    /// with the anchor's look, the status says the merge as ever, and
+    /// the stack is made.
+    #[test]
+    fn a_panorama_whose_second_run_fails_keeps_its_first() {
+        let heard = Heard::default();
+        let t = turned_merged("merge-pano-fails", &[(2, reference_edit(true))], |shoot| {
+            let folder = shoot.join(".IMG_0-pano.dng.merging");
+            let mut hear = listening(shoot, &heard);
+            Box::new(move |line: &str| {
+                hear(line);
+                let _ = std::fs::create_dir(folder.join(SECOND));
+            })
+        });
+        assert_eq!(t.app.get_status(), "merged 4 frames into IMG_0-pano.dng");
+        assert_eq!(writes(&heard), 2);
+        assert!(t.out.is_file());
+        assert!(!t.folder.exists());
+        let (look, stacked) = t.landed();
+        assert_eq!(
+            look.light.tone.contrast,
+            Edit::default().light.tone.contrast
+        );
+        assert_eq!(look.demosaic, Edit::default().demosaic);
+        assert_eq!(stacked, STACKED);
+        t.done();
     }
 
     /// A bracket of three merged, its file and sidecar beside the

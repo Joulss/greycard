@@ -561,9 +561,8 @@ written as a float DNG with its headroom and a noise profile. The
 brackets and the panorama to shoot for testing are in
 `docs/test-frames.md`.
 
-- [ ] Next: the first merge of the window's second pass written under
-      the `.merging` folder; the re-merge's rename over an open file
-      tried on Windows (§541)
+- [ ] Next: the re-merge's rename over an open file tried on Windows
+      (§541; a bounded retry in `promote` if it fails there, §543)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
       the most voting tiles rather than the reference, measured on a
       real bracket with a clipped sky (§529); the Highlights pull's aim
