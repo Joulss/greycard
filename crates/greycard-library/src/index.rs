@@ -122,6 +122,9 @@ pub struct Report {
     /// time: rows from a library made before the tags were indexed.
     /// Counted among `unchanged` as well.
     pub styled: usize,
+    /// Frames whose preview was scored after the pass
+    /// ([`crate::score`]); a pass itself scores none.
+    pub scored: usize,
     /// Files back at a path the index had marked missing.
     pub returned: usize,
     /// Rows whose file, or whose whole folder, is gone.
@@ -184,6 +187,7 @@ impl Report {
         self.meta_refreshed += other.meta_refreshed;
         self.unchanged += other.unchanged;
         self.styled += other.styled;
+        self.scored += other.scored;
         self.returned += other.returned;
         self.missing += other.missing;
         self.unavailable.extend(other.unavailable);
@@ -1738,7 +1742,7 @@ fn update_file(
         "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
          camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
          taken = ?, maker = ?, style = ?, style_fixed = ?, peripheral = ?, style_read = 1, \
-         mosaic = ?, missing_since = NULL, whole_hash = NULL WHERE id = ?",
+         mosaic = ?, focus = NULL, missing_since = NULL, whole_hash = NULL WHERE id = ?",
     )?
     .execute(params![
         size as i64,
@@ -3996,6 +4000,194 @@ pub(crate) mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A checker of `contrast` either side of mid grey, `w` by `h`.
+    fn checker(path: &Path, contrast: u16) {
+        let (w, h) = (64u32, 48u32);
+        let data: Vec<u16> = (0..w * h * 3)
+            .map(|k| {
+                let (x, y) = ((k / 3) % w, (k / 3) / w);
+                if (x + y) % 2 == 0 {
+                    30000 + contrast
+                } else {
+                    30000 - contrast
+                }
+            })
+            .collect();
+        crate::fixture::write_frame_of(path, &crate::fixture::R5, w, h, &data);
+    }
+
+    /// Score what the passes left NULL, every frame at once.
+    fn score_all(lib: &mut Library) -> Report {
+        crate::score::score(lib, 2, &|| false, &mut |_| {}).unwrap()
+    }
+
+    /// The `focus` column itself, NULL included.
+    fn focus_column(lib: &Library, p: &Path) -> Option<f64> {
+        lib.conn
+            .query_row(
+                "SELECT focus FROM files WHERE path = ?",
+                params![path_bytes(p)],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// A pass writes its rows unscored and reads no preview; the scorer
+    /// after it scores each from its preview, and a raw with none is
+    /// read once and left unscored. A schema 13 library comes up with
+    /// the column NULL, the next pass reads nothing for it, and the
+    /// scorer scores those rows.
+    #[test]
+    fn each_frame_is_scored_after_its_pass_and_a_schema_13_library_too() {
+        let dir = scratch("focus");
+        let db = dir.join("library.sqlite");
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let (hard, soft) = (shoot.join("hard.tif"), shoot.join("soft.tif"));
+        checker(&hard, 24000);
+        checker(&soft, 3000);
+        let bare = shoot.join("bare.dng");
+        crate::fixture::write_mosaic_dng(&bare, "RGGB");
+        let focus = |lib: &Library, p: &Path| lib.by_path(p).unwrap().unwrap().exif.focus;
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot, &mut quiet()).unwrap();
+            assert_eq!(focus_column(&lib, &hard), None, "the pass scores nothing");
+            assert_eq!(score_all(&mut lib).scored, 3);
+            let (a, b) = (focus(&lib, &hard).unwrap(), focus(&lib, &soft).unwrap());
+            assert!(a > b && (0.0..=1.0).contains(&a), "{a} against {b}");
+            assert_eq!(focus(&lib, &bare), None, "no preview");
+            assert!(focus_column(&lib, &bare).is_some_and(|v| v < 0.0));
+            lib.index_folder(&shoot, &mut quiet()).unwrap();
+            assert_eq!(
+                score_all(&mut lib).scored,
+                0,
+                "the bare raw is not read again"
+            );
+            // A file changed is scored again.
+            checker(&soft, 2000);
+            let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+            std::fs::File::options()
+                .write(true)
+                .open(&soft)
+                .unwrap()
+                .set_modified(later)
+                .unwrap();
+            lib.index_folder(&shoot, &mut quiet()).unwrap();
+            assert_eq!(focus(&lib, &soft), None);
+            assert_eq!(score_all(&mut lib).scored, 1);
+            lib.conn
+                .execute_batch("ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 13;")
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(focus(&lib, &hard), None, "not scored yet");
+        let report = lib.index_folder(&shoot, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 3, "nothing read");
+        assert_eq!(score_all(&mut lib).scored, 3);
+        assert!(focus(&lib, &hard).unwrap() > focus(&lib, &soft).unwrap());
+        drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// On a network mount only a CR3's or a RAF's preview is read, from
+    /// the file's ends: a NEF stays unscored after the pass and the
+    /// scorer, and a CR3 is read (this one, a picture under a raw's
+    /// name, has no preview to find, and is stored so).
+    #[test]
+    fn on_a_network_mount_only_a_preview_from_the_ends_is_scored() {
+        let dir = scratch("focus-far");
+        let shoot = dir.join("share");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let (nef, cr3, tif) = (
+            shoot.join("a.NEF"),
+            shoot.join("b.CR3"),
+            shoot.join("c.tif"),
+        );
+        for p in [&nef, &cr3, &tif] {
+            checker(p, 20000);
+        }
+        let mut lib = Library::open(&dir.join("library.sqlite")).unwrap();
+        let on = shoot.clone();
+        lib.set_network(move |p| p.starts_with(&on), Default::default());
+        lib.index_folder(&shoot, &mut quiet()).unwrap();
+        let report = score_all(&mut lib);
+        assert_eq!(report.scored, 1, "{report:?}");
+        assert_eq!(focus_column(&lib, &nef), None, "left for good");
+        assert_eq!(focus_column(&lib, &tif), None, "a picture is read whole");
+        assert!(focus_column(&lib, &cr3).is_some(), "read from its ends");
+        // Asked again, nothing more.
+        assert_eq!(score_all(&mut lib).scored, 0);
+        drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A network read that does not answer holds its share: the next
+    /// sweep asks it nothing, the reader not called again, and once the
+    /// read comes back the sweep after scores the file.
+    #[test]
+    fn a_share_whose_score_read_hangs_is_asked_nothing_until_it_answers() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let dir = scratch("focus-hung");
+        let shoot = dir.join("share").join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let cr3 = shoot.join("a.CR3");
+        checker(&cr3, 20000);
+        let mut lib = Library::open(&dir.join("library.sqlite")).unwrap();
+        let on = dir.join("share");
+        lib.set_network(move |p| p.starts_with(&on), Default::default());
+        lib.index_folder(&shoot, &mut quiet()).unwrap();
+        let (held, calls) = (
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let reader: crate::score::Reader = {
+            let (held, calls) = (held.clone(), calls.clone());
+            Arc::new(move |_: &Path| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                while held.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Some(0.5)
+            })
+        };
+        let sweep = |lib: &mut Library| {
+            crate::score::score_with(
+                lib,
+                2,
+                &|| false,
+                &mut |_| {},
+                &reader,
+                Duration::from_millis(100),
+            )
+            .unwrap()
+            .scored
+        };
+        assert_eq!(sweep(&mut lib), 0, "given up on");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(sweep(&mut lib), 0, "held");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "the share asked nothing");
+        // Back: the next sweep asks it again and scores the file.
+        held.store(false, Ordering::SeqCst);
+        let mut scored = 0;
+        for _ in 0..200 {
+            scored = sweep(&mut lib);
+            if scored > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(scored, 1);
+        assert_eq!(focus_column(&lib, &cr3), Some(0.5));
+        drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A schema 11 library comes up with the shift's columns and its
     /// rows kept, and the next pass reads a shift a sidecar already
     /// carried.
@@ -4016,7 +4208,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "DROP INDEX files_taken_at;
                      ALTER TABLE files DROP COLUMN taken_at;
-                     ALTER TABLE files DROP COLUMN shift;
+                     ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus;
                      PRAGMA user_version = 11;",
                 )
                 .unwrap();
@@ -6306,7 +6498,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
                      ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at;
-                     ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift;
+                     ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus;
                      PRAGMA user_version = 2;",
                 )
                 .unwrap();
@@ -6607,7 +6799,7 @@ pub(crate) mod tests {
             assert_eq!(key_of(&mut lib, &plain), None, "no sidecar, no key");
             lib.conn_mut()
                 .execute_batch(
-                    "ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 8;",
+                    "ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 8;",
                 )
                 .unwrap();
         }
@@ -6770,7 +6962,7 @@ pub(crate) mod tests {
             let mut lib = Library::open(&db).unwrap();
             lib.index_folder(&dir, &mut quiet()).unwrap();
             lib.conn_mut()
-                .execute_batch("DROP TABLE versions; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 9;")
+                .execute_batch("DROP TABLE versions; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 9;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -6906,7 +7098,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 7;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 7;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -6969,7 +7161,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 3;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 3;",
                 )
                 .unwrap();
         }
@@ -7277,7 +7469,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "DROP TABLE pending; DROP TABLE archive_writes;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 5;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 5;",
                 )
                 .unwrap();
         }
@@ -7326,7 +7518,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 6;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 6;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -7574,7 +7766,7 @@ pub(crate) mod tests {
                 .unwrap();
             conn.execute_batch(
                 "ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at;
-                 ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift;",
+                 ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus;",
             )
             .unwrap();
             conn.pragma_update(None, "user_version", 5).unwrap();
@@ -7628,7 +7820,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; PRAGMA user_version = 4;",
+                     ALTER TABLE files DROP COLUMN mosaic; DROP INDEX files_taken_at; ALTER TABLE files DROP COLUMN taken_at; ALTER TABLE files DROP COLUMN shift; ALTER TABLE files DROP COLUMN focus; PRAGMA user_version = 4;",
                 )
                 .unwrap();
         }

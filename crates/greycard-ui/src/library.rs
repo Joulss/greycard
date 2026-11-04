@@ -116,6 +116,9 @@ enum Ask {
     /// out, since each is passed over as its own root, so a share there
     /// that hangs holds its own pass and not the local root's.
     LeftOut(Vec<PathBuf>),
+    /// The focus scorer wrote scores for rows in these folders: said
+    /// to the window from the indexer's thread ([`Told::Scored`]).
+    Scored(Vec<PathBuf>),
     /// The editor is leaving: wakes a thread waiting on the next
     /// ask, which the watcher's end of the channel would otherwise
     /// keep waiting.
@@ -190,6 +193,10 @@ pub(crate) enum Told {
     /// A pass in the background has got further under `path`, and
     /// has written what it found so far.
     BackgroundProgress { path: PathBuf },
+    /// The focus scorer has written scores for rows in these folders
+    /// (`greycard_library::score`): the rows are read again, so a list
+    /// by focus or a `focus` term fills in.
+    Scored(Vec<PathBuf>),
     /// A pass over `path` was not made, or was left partway: `root`
     /// did not answer the look before it, or stopped answering in the
     /// middle of it. Its rows are as they were, and the next pass over
@@ -224,6 +231,8 @@ pub(crate) struct Indexer {
     /// [`Indexer::set_lightroom_takes`].
     lightroom: Arc<Mutex<Option<greycard_edit::Placement>>>,
     thread: std::thread::JoinHandle<()>,
+    /// The focus scorer's thread ([`score_after`]).
+    scorer: Option<std::thread::JoinHandle<()>>,
 }
 
 /// Whether the indexer has anything in hand, for the window: while it
@@ -372,12 +381,26 @@ impl Indexer {
         let folders_waiting = Arc::new(AtomicBool::new(false));
         let busy = Arc::new(Busy::default());
         let lightroom = Arc::new(Mutex::new(None));
+        let (score, nudged) = mpsc::channel();
         let waits = Waits {
             wanted: wanted.clone(),
             files: files_waiting.clone(),
             folders: folders_waiting.clone(),
             busy: busy.clone(),
             lightroom: lightroom.clone(),
+            score,
+        };
+        let scorer = {
+            let (path, asker, wanted) = (
+                path.clone(),
+                Asker(asks.clone(), busy.clone()),
+                wanted.clone(),
+            );
+            std::thread::Builder::new()
+                .name("greycard focus scores".into())
+                .spawn(move || score_after(&path, &nudged, &asker, &wanted))
+                .map_err(|e| tracing::warn!("index: no thread for the focus scores: {e}"))
+                .ok()
         };
         let thread = std::thread::Builder::new()
             .name("greycard index".into())
@@ -390,6 +413,7 @@ impl Indexer {
             busy,
             lightroom,
             thread,
+            scorer,
         })
     }
 
@@ -509,6 +533,99 @@ impl Indexer {
         } else {
             tracing::warn!("index: still busy on the way out; leaving it");
         }
+        // The scorer's connection closed with it, for the same reason.
+        if let Some(scorer) = self.scorer {
+            while !scorer.is_finished() && asked.elapsed() < within {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if scorer.is_finished() {
+                let _ = scorer.join();
+            } else {
+                tracing::warn!(
+                    "index: the focus scores still reading on the way out; leaving them"
+                );
+            }
+        }
+    }
+}
+
+/// How often the scorer tells the window of the scores it wrote while
+/// a sweep goes on, besides once at its end.
+const SCORED_EVERY: Duration = Duration::from_secs(2);
+
+/// The focus scorer's body: woken after each pass (`nudged`), it scores
+/// the rows the passes left unscored (`greycard_library::score`), on a
+/// connection of its own opened at the first word, so the passes write
+/// their rows at their own speed and the scores land behind them. What
+/// it wrote goes to the window through the indexer (`Ask::Scored`).
+fn score_after(path: &Path, nudged: &mpsc::Receiver<()>, asker: &Asker, wanted: &AtomicU64) {
+    let leaving = || wanted.load(Ordering::SeqCst) == LEAVING;
+    let mut lib: Option<Library> = None;
+    loop {
+        match nudged.recv_timeout(Duration::from_millis(200)) {
+            Ok(()) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) if !leaving() => continue,
+            _ => return,
+        }
+        // Every word waiting is one sweep.
+        while nudged.try_recv().is_ok() {}
+        if leaving() {
+            return;
+        }
+        if lib.is_none() {
+            match Library::open(path) {
+                Ok(l) => {
+                    if let Err(e) = l.set_busy_handler(lane_busy) {
+                        tracing::debug!("index: the focus scores' busy handler: {e}");
+                    }
+                    let mut l = l;
+                    l.set_network(
+                        |p| greycard_ui::mounts::remote(p).is_some(),
+                        Default::default(),
+                    );
+                    lib = Some(l);
+                }
+                Err(e) => {
+                    tracing::warn!("index: no connection for the focus scores: {e}");
+                    continue;
+                }
+            }
+        }
+        let Some(lib) = lib.as_mut() else {
+            continue;
+        };
+        let started = Instant::now();
+        let mut said = Instant::now();
+        let mut unsaid: Vec<PathBuf> = Vec::new();
+        let mut landed = |folders: &[PathBuf]| {
+            for f in folders {
+                if !unsaid.contains(f) {
+                    unsaid.push(f.clone());
+                }
+            }
+            if said.elapsed() >= SCORED_EVERY {
+                said = Instant::now();
+                send(&asker.0, &asker.1, Ask::Scored(std::mem::take(&mut unsaid)));
+            }
+        };
+        let swept = greycard_library::score::score(
+            lib,
+            greycard_library::score::THREADS,
+            &leaving,
+            &mut landed,
+        );
+        if !unsaid.is_empty() {
+            send(&asker.0, &asker.1, Ask::Scored(unsaid));
+        }
+        match swept {
+            Ok(r) if r.scored > 0 => tracing::info!(
+                "index: {} focus score(s) in {:.2} s",
+                r.scored,
+                started.elapsed().as_secs_f64()
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!("index: focus scores: {e}"),
+        }
     }
 }
 
@@ -526,6 +643,8 @@ struct Waits {
     /// Where a pass writes the sidecar of a raw whose Lightroom develop
     /// it takes, as the editor's setting says; none takes nothing.
     lightroom: Arc<Mutex<Option<greycard_edit::Placement>>>,
+    /// Wakes the focus scorer: a pass wrote rows ([`score_after`]).
+    score: mpsc::Sender<()>,
 }
 
 impl Waits {
@@ -545,7 +664,19 @@ fn run(
     waits: Waits,
     guard: Guard,
 ) {
-    let told = &told;
+    // A pass done, or a save's rows in: the scorer is woken for the
+    // rows they left unscored.
+    let nudge = waits.score.clone();
+    let told = &|t: Told| {
+        let wrote = matches!(
+            t,
+            Told::Indexed { .. } | Told::Background { .. } | Told::FilesIndexed(_)
+        );
+        told(t);
+        if wrote {
+            let _ = nudge.send(());
+        }
+    };
     let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         serve(path, waiting, told, &waits, &guard)
     }));
@@ -1139,6 +1270,7 @@ fn serve(
                     }
                     left_out = points;
                 }
+                Ask::Scored(folders) => told(Told::Scored(folders)),
                 Ask::Leave => return,
             }
         }
@@ -2252,6 +2384,20 @@ pub(crate) fn told(app: &App, told: Told) {
                 }
             }
         }
+        Told::Scored(folders) => {
+            // Read as a pass that refreshed rows there: a list under one
+            // of them read again (a sort by focus), else the rows.
+            let some = Report {
+                meta_refreshed: 1,
+                ..Report::default()
+            };
+            let merged = folders
+                .iter()
+                .any(|f| crate::roots::background_done(&state, app, f, &some, false, false));
+            if !merged {
+                reread(&state, app, false);
+            }
+        }
         Told::BackgroundProgress { path } => {
             // Rows written since the last word: read as a pass that
             // added them.
@@ -2571,6 +2717,7 @@ mod tests {
             folders: Arc::new(AtomicBool::new(false)),
             lightroom: Arc::new(Mutex::new(None)),
             busy: Arc::new(Busy::default()),
+            score: mpsc::channel().0,
         };
         let pass = Pass {
             dirs: vec![renamed.clone()],
@@ -2639,6 +2786,7 @@ mod tests {
         let db = dir.join("index").join("library.sqlite");
         let mut writer = Library::open(&db).unwrap();
         writer.index_folder(dir, &mut |_| {}).unwrap();
+        greycard_library::score::score(&mut writer, 2, &|| false, &mut |_| {}).unwrap();
         // The fifth arrives after the pass: no row yet.
         write_frame(&files[4], &R6, 5);
         drop(writer);
@@ -2828,6 +2976,12 @@ mod tests {
         assert_eq!(shown(&st), [0]);
         st.views.filter.text = "iso>=3200 harbor".into();
         assert_eq!(shown(&st), [0]);
+        // The focus score is the index's: every frame it scored, and
+        // the one it has no row for, as for every term of the index.
+        st.views.filter.text = "focus>=0".into();
+        assert_eq!(shown(&st), [0, 1, 2, 3, 4]);
+        st.views.filter.text = "focus>=0 rating>=3".into();
+        assert_eq!(shown(&st), [0, 2]);
         // The sidecar's word, not the row's: a rating set in memory
         // counts before any index_file has run.
         st.sidecars[1].meta.rating = 5;
@@ -3222,6 +3376,15 @@ mod tests {
         }
         let reader = Library::open_read_only(&db).unwrap();
         assert_eq!(reader.by_path(&a).unwrap().unwrap().meta.rating, 0);
+        // The pass scored nothing; the scorer behind it scores both and
+        // says where.
+        match wait(&|t| matches!(t, Told::Scored(_))) {
+            Told::Scored(folders) => assert_eq!(folders.len(), 1, "{folders:?}"),
+            other => panic!("{other:?}"),
+        }
+        for p in [&a, &b] {
+            assert!(reader.by_path(p).unwrap().unwrap().exif.focus.is_some());
+        }
 
         // A rating saved, and the row follows once the indexer says so.
         let mut s = Sidecar::default();

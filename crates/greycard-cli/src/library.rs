@@ -53,10 +53,12 @@ pub(crate) enum LibraryAction {
               value_parser = ["collapsed", "expanded"])]
         stacks: String,
         /// The order, as the editor's grid has it over every root: by
-        /// `capture` time, `name`, `rating` or date `edited`, and
-        /// `-desc` after it for the other way up (`capture-desc` is the
-        /// newest first). Ties go by name, then path; a frame with no
-        /// capture time, or no develop for `edited`, comes last
+        /// `capture` time, `name`, `rating`, date `edited`, or `focus`
+        /// score, and `-desc` after it for the other way up
+        /// (`capture-desc` is the newest first, `focus-desc` the
+        /// sharpest). Ties go by name, then path; a frame with no
+        /// capture time, no develop for `edited`, or no score for
+        /// `focus` comes last
         #[arg(long, value_name = "ORDER", default_value = "capture",
               value_parser = clap::builder::PossibleValuesParser::new(SORT_KEYS))]
         sort: String,
@@ -312,7 +314,7 @@ pub(crate) fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> 
 
 /// The orders `library list --sort` takes: each of the grid's, and
 /// each the other way up.
-const SORT_KEYS: [&str; 8] = [
+const SORT_KEYS: [&str; 10] = [
     "capture",
     "capture-desc",
     "name",
@@ -321,6 +323,8 @@ const SORT_KEYS: [&str; 8] = [
     "rating-desc",
     "edited",
     "edited-desc",
+    "focus",
+    "focus-desc",
 ];
 
 /// The files that pass `filter`, in `order`, as the editor's grid lists

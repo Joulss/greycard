@@ -528,9 +528,9 @@ and a picture found across the library by a phrase or by a person.
 A model suggests; a flag, a rating or a keyword is only ever set by
 the user.
 
-- [ ] A focus score for every frame from its embedded preview, on the
-      subject where the Subject mask finds one and on the frame
-      otherwise; a sort, a `focus:` term, and the order inside a burst
+- [ ] The focus score taken on the subject where the Subject mask
+      finds one, on the frame otherwise (§559); the command line's
+      passes scoring too
 - [ ] Closed eyes said from the face parts the Parts mask already
       finds (§252), as a term and a mark on the tile, never a reject
 - [ ] Focus peaking in the lightbox: its tiles are Slint images, not

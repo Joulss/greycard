@@ -1,9 +1,10 @@
 //! The order a list of frames is read in: by when each was taken, by
-//! name, by rating, or by when its develop was last saved, either way
-//! up. One rule, in two spellings that agree: the `ORDER BY` a query
-//! of the index is listed by ([`Order::sql`]), and the comparison a
-//! list made elsewhere (a folder read from the disk, a collection's
-//! references found one by one) is sorted by ([`Order::compare`]).
+//! name, by rating, by when its develop was last saved, or by its
+//! focus score, either way up. One rule, in two spellings that agree:
+//! the `ORDER BY` a query of the index is listed by ([`Order::sql`]),
+//! and the comparison a list made elsewhere (a folder read from the
+//! disk, a collection's references found one by one) is sorted by
+//! ([`Order::compare`]).
 //!
 //! Ties break by the file's name, then its path, whichever way the
 //! order runs, so a burst taken within one second reads in the
@@ -29,10 +30,19 @@ pub enum SortBy {
     /// the index last saw it, for a frame whose sidecar holds a
     /// develop (the row's `edited` mark); none for one that holds none.
     Edited,
+    /// The focus score of its preview ([`crate::FOCUS_SQL`]); none for
+    /// a frame not scored yet or with no preview.
+    Focus,
 }
 
 impl SortBy {
-    pub const ALL: [SortBy; 4] = [SortBy::Taken, SortBy::Name, SortBy::Rating, SortBy::Edited];
+    pub const ALL: [SortBy; 5] = [
+        SortBy::Taken,
+        SortBy::Name,
+        SortBy::Rating,
+        SortBy::Edited,
+        SortBy::Focus,
+    ];
 
     /// The name a settings file, a command line and the editor's menu
     /// share.
@@ -42,6 +52,7 @@ impl SortBy {
             SortBy::Name => "name",
             SortBy::Rating => "rating",
             SortBy::Edited => "edited",
+            SortBy::Focus => "focus",
         }
     }
 
@@ -56,6 +67,7 @@ impl SortBy {
             SortBy::Name => "Name",
             SortBy::Rating => "Rating",
             SortBy::Edited => "Date edited",
+            SortBy::Focus => "Focus",
         }
     }
 }
@@ -78,6 +90,8 @@ pub struct SortKey<'a> {
     pub rating: u8,
     /// See [`SortBy::Edited`]: none for a frame with no develop.
     pub edited_at: Option<i64>,
+    /// See [`SortBy::Focus`].
+    pub focus: Option<f32>,
 }
 
 impl<'a> SortKey<'a> {
@@ -89,6 +103,7 @@ impl<'a> SortKey<'a> {
             taken: None,
             rating: 0,
             edited_at: None,
+            focus: None,
         }
     }
 }
@@ -134,6 +149,10 @@ impl Order {
             SortBy::Name => format!("files.name {dir}, files.path"),
             SortBy::Rating => format!("files.rating {dir}, files.name, files.path"),
             SortBy::Edited => format!("{EDITED_AT_SQL} {dir} NULLS LAST, files.name, files.path"),
+            SortBy::Focus => format!(
+                "{} {dir} NULLS LAST, files.name, files.path",
+                crate::FOCUS_SQL
+            ),
         }
     }
 
@@ -148,6 +167,8 @@ impl Order {
             SortBy::Name => way(name_of(a.path).cmp(&name_of(b.path)), self.descending),
             SortBy::Rating => way(a.rating.cmp(&b.rating), self.descending),
             SortBy::Edited => nulls_last(a.edited_at, b.edited_at, self.descending),
+            // As SQLite orders the column's reals; a score is never NaN.
+            SortBy::Focus => nulls_last_by(a.focus, b.focus, self.descending, f32::total_cmp),
         };
         first
             .then_with(|| name_of(a.path).cmp(&name_of(b.path)))
@@ -188,8 +209,18 @@ fn way(o: Ordering, descending: bool) -> Ordering {
 /// Two values that may be missing, the missing after every value
 /// whichever way the values run.
 fn nulls_last<T: Ord>(a: Option<T>, b: Option<T>, descending: bool) -> Ordering {
+    nulls_last_by(a, b, descending, |x, y| x.cmp(y))
+}
+
+/// [`nulls_last`] by a comparison of the caller's.
+fn nulls_last_by<T>(
+    a: Option<T>,
+    b: Option<T>,
+    descending: bool,
+    cmp: impl Fn(&T, &T) -> Ordering,
+) -> Ordering {
     match (a, b) {
-        (Some(x), Some(y)) => way(x.cmp(&y), descending),
+        (Some(x), Some(y)) => way(cmp(&x, &y), descending),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) => Ordering::Equal,
@@ -380,7 +411,82 @@ mod tests {
                 ),
             ],
         );
+        // Focus scores: a burst's three apart, a tie, a frame read and
+        // found with no preview, and the rest not scored yet.
+        lib.conn
+            .execute_batch(
+                "UPDATE files SET focus = 0.71 WHERE name = 'IMG_0004.CR3';
+                 UPDATE files SET focus = 0.64 WHERE name = 'IMG_0005.CR3';
+                 UPDATE files SET focus = 0.82 WHERE name = '_DSC0003.ARW';
+                 UPDATE files SET focus = 0.64 WHERE name = 'IMG_0003.CR3';
+                 UPDATE files SET focus = -1 WHERE name = 'scan.tif';",
+            )
+            .unwrap();
         lib
+    }
+
+    #[test]
+    fn focus_runs_sharpest_first_with_the_unscored_last_both_ways_up() {
+        let lib = fixture();
+        let roots = [std::path::PathBuf::from(sep("/p"))];
+        let sharpest = names(
+            &lib.rows_under_canonical(&roots, Order::new(SortBy::Focus, true))
+                .unwrap(),
+        );
+        assert_eq!(
+            &sharpest[..4],
+            [
+                "/p/b/_DSC0003.ARW",
+                "/p/a/IMG_0004.CR3",
+                "/p/a/IMG_0003.CR3",
+                "/p/a/IMG_0005.CR3",
+            ]
+        );
+        let softest = names(
+            &lib.rows_under_canonical(&roots, Order::new(SortBy::Focus, false))
+                .unwrap(),
+        );
+        assert_eq!(&softest[..2], ["/p/a/IMG_0003.CR3", "/p/a/IMG_0005.CR3"]);
+        // The unscored and the one with no preview by name, last.
+        for list in [&sharpest, &softest] {
+            assert_eq!(
+                list[4..],
+                [
+                    "/p/a/IMG_0001.CR3",
+                    "/p/b/IMG_0001.CR3",
+                    "/p/b/_DSC0001.ARW",
+                    "/p/b/_DSC0002.ARW",
+                    "/p/b/scan.tif",
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn a_focus_term_finds_the_scored_frames_past_it() {
+        let lib = fixture();
+        let found = |text: &str| {
+            let mut got: Vec<String> = lib
+                .query_sorted(&crate::Filter::parse(text).unwrap(), Order::NAME)
+                .unwrap()
+                .iter()
+                .map(|e| unsep(&e.path))
+                .collect();
+            got.sort();
+            got
+        };
+        assert_eq!(
+            found("focus>0.65"),
+            ["/p/a/IMG_0004.CR3", "/p/b/_DSC0003.ARW"]
+        );
+        assert_eq!(
+            found("focus:0.64"),
+            ["/p/a/IMG_0003.CR3", "/p/a/IMG_0005.CR3"]
+        );
+        // The unscored and the one with no preview pass no test, `<`
+        // and `!=` among them.
+        assert_eq!(found("focus<0.7").len(), 2);
+        assert_eq!(found("focus!=0.64").len(), 2);
     }
 
     fn names(rows: &[(std::path::PathBuf, crate::RowMeta)]) -> Vec<String> {

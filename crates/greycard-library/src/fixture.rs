@@ -25,6 +25,16 @@ pub struct Frame<'a> {
 /// A small TIFF carrying real EXIF, as an export writes one:
 /// a picture the probe reads the way it reads any JPEG's.
 pub fn write_frame(path: &Path, frame: &Frame<'_>, seed: u16) {
+    let (w, h) = (4u32, 3u32);
+    let data: Vec<u16> = (0..w * h * 3)
+        .map(|i| (i as u16).wrapping_mul(2654).wrapping_add(seed))
+        .collect();
+    write_frame_of(path, frame, w, h, &data);
+}
+
+/// [`write_frame`] with pixels of the caller's: `w` by `h`, sixteen
+/// bits a channel, row by row.
+pub fn write_frame_of(path: &Path, frame: &Frame<'_>, w: u32, h: u32, data: &[u16]) {
     let metadata = RawMetadata {
         exif: RawExif {
             exposure_time: Some(Rational::new(frame.shutter.0, frame.shutter.1)),
@@ -41,16 +51,12 @@ pub fn write_frame(path: &Path, frame: &Frame<'_>, seed: u16) {
         unique_image_id: None,
         rating: None,
     };
-    let (w, h) = (4u32, 3u32);
-    let data: Vec<u16> = (0..w * h * 3)
-        .map(|i| (i as u16).wrapping_mul(2654).wrapping_add(seed))
-        .collect();
     let mut file = std::io::Cursor::new(Vec::new());
     write_rgb16_tiff(
         &mut file,
         w,
         h,
-        &data,
+        data,
         None,
         Some(&Provenance {
             metadata: &metadata,

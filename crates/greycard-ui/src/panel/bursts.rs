@@ -324,7 +324,7 @@ mod tests {
     use super::*;
     use crate::roots::{View, land_sent, open_view};
     use crate::testing::{state_for, window};
-    use greycard_library::fixture::{Frame, R5, write_frame};
+    use greycard_library::fixture::{Frame, R5, write_frame_of};
     use slint::Model;
 
     /// A run that fails, panics, or sticks lets the next one start: a
@@ -416,7 +416,21 @@ mod tests {
             .enumerate()
             .map(|(i, taken)| {
                 let p = shoot.join(format!("x{i}.tif"));
-                write_frame(&p, &Frame { taken, ..R5 }, i as u16 + 1);
+                // A checker, x1's the hardest: the sharpest by the
+                // index's score, and alike by signature.
+                let contrast = if i == 1 { 24000 } else { 6000 + 500 * i as u16 };
+                let (w, h) = (64u32, 48u32);
+                let data: Vec<u16> = (0..w * h * 3)
+                    .map(|k| {
+                        let (x, y) = ((k / 3) % w, (k / 3) / w);
+                        if (x + y) % 2 == 0 {
+                            30000 + contrast
+                        } else {
+                            30000 - contrast
+                        }
+                    })
+                    .collect();
+                write_frame_of(&p, &Frame { taken, ..R5 }, w, h, &data);
                 p
             })
             .collect();
@@ -484,6 +498,7 @@ mod tests {
         assert_eq!(focus.len(), 4, "{focus:?}");
         assert!(!focus.contains_key("x3.tif") && !focus.contains_key("x4.tif"));
         assert!(stacks[0].iter().all(|n| focus[n] <= focus[&stacks[0][0]]));
+        assert_eq!(stacks[0][0], "x1.tif", "{focus:?}");
         // Closed: the grid shows the two tops and x5.
         assert_eq!(app.get_thumbs().row_count(), 3);
 

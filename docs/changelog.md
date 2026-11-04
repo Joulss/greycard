@@ -129,6 +129,10 @@ design note behind it.
 
 ### Library
 
+- Every frame has a focus score from its embedded preview: **Focus**
+  in the Sort menu puts the sharpest first, `focus>0.6` in the filter
+  finds them, and Stack bursts tops each burst with its sharpest
+  ([§559](https://github.com/jessolmstead/greycard/blob/master/docs/notes/559-a-focus-score-for-every-frame.md)).
 - Raws with Lightroom's XMP sidecars beside them now open with their
   Lightroom edit as one "Imported from Lightroom" step, and with
   Lightroom's rating, label, keywords, and title wherever you have set

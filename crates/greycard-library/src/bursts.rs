@@ -6,9 +6,10 @@
 //! camera's embedded preview (a picture's own pixels for a JPEG or a
 //! TIFF) and kept in the index's `looks` table beside the frame's row:
 //! a signature, the preview's grey at 16 by 16, which two frames of one
-//! burst share and two pictures of different things do not; and a focus
-//! score, the variance of the Laplacian over the preview's grey, which
-//! is higher the sharper the frame. A look is kept with the file's
+//! burst share and two pictures of different things do not; and its
+//! focus score (`greycard_core::sharpness::focus_score`), the one the
+//! index keeps in the frame's row and the sort reads, higher the
+//! sharper the frame. A look is kept with the file's
 //! mtime and read back only while the row's mtime is the same, so a
 //! file rewritten in place (a DNG's previews updated) is looked at
 //! again, and nothing the index's pass writes has to know of it.
@@ -46,13 +47,6 @@ pub const SIDE: usize = 16;
 /// minutes apart measured as little as 5.8: there the time parts them.
 pub const NEAR: f32 = 8.0;
 
-/// The longest edge the focus score is worked out at: the preview box
-/// downscaled by a whole factor to no more than this, so the score of
-/// a camera's full-size preview and of another's small one are of
-/// about the same scale, and the noise of a high ISO is averaged down
-/// before the Laplacian.
-const FOCUS_EDGE: u32 = 1024;
-
 /// A frame's grey at [`SIDE`] by [`SIDE`], row by row.
 pub type Signature = [u8; SIDE * SIDE];
 
@@ -60,9 +54,8 @@ pub type Signature = [u8; SIDE * SIDE];
 #[derive(Debug, Clone, PartialEq)]
 pub struct Look {
     pub signature: Signature,
-    /// The variance of the Laplacian of the preview's grey, in 8-bit
-    /// levels squared; higher is sharper. Comparable between frames of
-    /// one camera; across cameras only roughly.
+    /// The focus score, nought to one; higher is sharper. Comparable
+    /// between frames of one camera; across cameras only roughly.
     pub focus: f32,
 }
 
@@ -91,7 +84,7 @@ pub fn look_of(rgb: &image::RgbImage) -> Look {
     let grey: Vec<u8> = rgb.pixels().map(grey).collect();
     Look {
         signature: signature_of(&grey, w, h),
-        focus: focus_of(&grey, w, h),
+        focus: greycard_core::sharpness::focus_score(rgb.as_raw(), w, h).unwrap_or(0.0),
     }
 }
 
@@ -124,39 +117,6 @@ fn signature_of(grey: &[u8], w: usize, h: usize) -> Signature {
     out
 }
 
-/// The variance of the 4-neighbor Laplacian over the grey box
-/// downscaled to [`FOCUS_EDGE`]; 0 for a picture too small to have one.
-fn focus_of(grey: &[u8], w: usize, h: usize) -> f32 {
-    let f = w.max(h).div_ceil(FOCUS_EDGE as usize).max(1);
-    let (sw, sh) = (w / f, h / f);
-    if sw < 3 || sh < 3 {
-        return 0.0;
-    }
-    let mut small = vec![0f32; sw * sh];
-    for y in 0..sh * f {
-        let row = &grey[y * w..y * w + sw * f];
-        let out = &mut small[(y / f) * sw..(y / f + 1) * sw];
-        for (x, &v) in row.iter().enumerate() {
-            out[x / f] += f32::from(v);
-        }
-    }
-    let n = (f * f) as f32;
-    small.iter_mut().for_each(|v| *v /= n);
-    let (mut sum, mut sq) = (0f64, 0f64);
-    for y in 1..sh - 1 {
-        for x in 1..sw - 1 {
-            let at = y * sw + x;
-            let l =
-                4.0 * small[at] - small[at - 1] - small[at + 1] - small[at - sw] - small[at + sw];
-            sum += f64::from(l);
-            sq += f64::from(l) * f64::from(l);
-        }
-    }
-    let count = ((sw - 2) * (sh - 2)) as f64;
-    let mean = sum / count;
-    (sq / count - mean * mean).max(0.0) as f32
-}
-
 /// How far apart two signatures are: the mean absolute difference of
 /// their cells, each signature's mean taken out first. See [`NEAR`].
 pub fn distance(a: &Signature, b: &Signature) -> f32 {
@@ -182,7 +142,14 @@ pub fn near(a: &Signature, b: &Signature) -> bool {
 /// even when its orientation tag flips between frames, which a turn
 /// would make two different pictures.
 pub fn read_look(path: &Path) -> Option<Look> {
-    let rgb = if greycard_core::picture::is_picture_path(path) {
+    Some(look_of(&read_preview(path)?))
+}
+
+/// The camera's preview in a raw, the picture itself in a JPEG or a
+/// TIFF, as stored; none for a file with neither, or one that will not
+/// read.
+pub(crate) fn read_preview(path: &Path) -> Option<image::RgbImage> {
+    Some(if greycard_core::picture::is_picture_path(path) {
         image::ImageReader::open(path)
             .ok()?
             .with_guessed_format()
@@ -192,8 +159,7 @@ pub fn read_look(path: &Path) -> Option<Look> {
             .to_rgb8()
     } else {
         greycard_core::decode::preview_path(path).ok()??.0
-    };
-    Some(look_of(&rgb))
+    })
 }
 
 /// A frame as [`group`] takes it.
@@ -311,9 +277,10 @@ impl Library {
     pub fn burst_rows(&self, folder: &Path) -> Result<Vec<Row>> {
         let sql = format!(
             "SELECT files.path, files.hash, files.mtime, files.taken_at, looks.signature, \
-             looks.focus FROM files \
+             coalesce({}, looks.focus) FROM files \
              LEFT JOIN looks ON looks.file = files.id AND looks.mtime = files.mtime \
              WHERE files.folder = ?1 AND files.missing_since IS NULL{} ORDER BY files.name",
+            crate::FOCUS_SQL,
             self.frames_only_in_folder()
         );
         let mut stmt = self.conn.prepare_cached(&sql)?;
@@ -491,7 +458,7 @@ mod tests {
         let sharp = scene(600, 400, 0.0);
         let soft = blurred(&sharp, 2);
         let (a, b) = (look_of(&sharp), look_of(&soft));
-        assert!(a.focus > 2.0 * b.focus, "{} against {}", a.focus, b.focus);
+        assert!(a.focus > b.focus + 0.05, "{} against {}", a.focus, b.focus);
         let d = distance(&a.signature, &b.signature);
         assert!(d < 2.0, "{d}");
         assert!(near(&a.signature, &b.signature));
@@ -599,7 +566,10 @@ mod tests {
             let mut lib = Library::open(&db).unwrap();
             lib.index_tree(&shoot, &mut |_| {}).unwrap();
             lib.conn
-                .execute_batch("DROP TABLE looks; PRAGMA user_version = 12;")
+                .execute_batch(
+                    "DROP TABLE looks; ALTER TABLE files DROP COLUMN focus; \
+                     PRAGMA user_version = 12;",
+                )
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -699,5 +669,71 @@ mod tests {
         }
         drop(lib);
         greycard_core::testing::remove_dir_retry(&scratch);
+    }
+
+    /// What the focus score costs over a folder: a fresh pass, which
+    /// scores nothing; the scorer after it; and the bytes read, the
+    /// pass and the scorer apart, with the folder taken for a network
+    /// mount's. `GREYCARD_FOCUS_PASS=<folder> cargo test -p
+    /// greycard-library --release measure_focus_pass -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn measure_focus_pass() {
+        let Ok(dir) = std::env::var("GREYCARD_FOCUS_PASS") else {
+            return;
+        };
+        let dir = crate::canonical(Path::new(&dir)).unwrap();
+        // Bytes this process has read, cached or not.
+        let read = || -> u64 {
+            std::fs::read_to_string("/proc/self/io")
+                .unwrap()
+                .lines()
+                .find_map(|l| l.strip_prefix("rchar: "))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap()
+        };
+        for far in [false, true] {
+            let scratch = crate::index::tests::scratch("measure-focus-pass");
+            let mut lib = Library::open(&scratch.join("library.sqlite")).unwrap();
+            if far {
+                lib.set_network(|_| true, Default::default());
+            }
+            let (bytes, started) = (read(), std::time::Instant::now());
+            let report = lib.index_tree(&dir, &mut |_| {}).unwrap();
+            let pass = (started.elapsed().as_secs_f64(), read() - bytes);
+            let (bytes, started) = (read(), std::time::Instant::now());
+            let scored =
+                crate::score::score(&mut lib, crate::score::THREADS, &|| false, &mut |_| {})
+                    .unwrap()
+                    .scored;
+            let scoring = (started.elapsed().as_secs_f64(), read() - bytes);
+            println!(
+                "{}: pass {:.2} s, {} MB, {} added; scorer {:.2} s, {} MB, {scored} scored",
+                if far { "network" } else { "local" },
+                pass.0,
+                pass.1 >> 20,
+                report.added,
+                scoring.0,
+                scoring.1 >> 20,
+            );
+            if !far {
+                let mut stmt = lib
+                    .conn
+                    .prepare("SELECT name, focus FROM files ORDER BY focus DESC")
+                    .unwrap();
+                let rows = stmt
+                    .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))
+                    .unwrap();
+                for row in rows {
+                    let (name, focus) = row.unwrap();
+                    println!("{name}: {focus:.3}");
+                }
+            }
+            drop(lib);
+            greycard_core::testing::remove_dir_retry(&scratch);
+        }
     }
 }

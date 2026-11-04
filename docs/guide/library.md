@@ -293,6 +293,7 @@ You can also type tests, with no spaces inside them:
 | `keyword:` | Part of a keyword |
 | `iso`, `focal`, `aperture`, `shutter` | A number: `iso>=3200`, `focal<=35`, `aperture:1.8`, `shutter<1/60` |
 | `rating` | 0 to 5 stars: `rating>=3` |
+| `focus` | The [focus score](#sort-order), 0 to 1: `focus>0.6`; a frame on a network drive has one only if it is a CR3 or a RAF |
 | `date` | A year, month or day: `date:2026-09`, `date<=2026-09-21` |
 | `flag` | `pick`, `reject` or `none` |
 | `label` | `red`, `yellow`, `green`, `blue`, `purple` or `none` |
@@ -330,10 +331,13 @@ of it, as "Sort: Capture time, oldest first". The menu offers:
 - **Name**, the file's name;
 - **Rating**;
 - **Date edited**, when the frame's edit was last saved;
+- **Focus**, how sharp the sharpest part of the frame's embedded
+  preview is, from 0 to 1, the sharpest first; the index scores each
+  frame just after it lists it, and a frame not scored yet goes last;
 
 and under them which way up: **Oldest first** or **Newest first**
 (**A to Z** or **Z to A** for a name, **Lowest first** or **Highest
-first** for a rating).
+first** for a rating or focus).
 
 Each kind of view keeps its own order, and greycard remembers them
 when you quit:

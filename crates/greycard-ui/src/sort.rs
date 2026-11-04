@@ -191,18 +191,23 @@ pub(crate) fn way_words(by: SortBy) -> [&'static str; 2] {
     match by {
         SortBy::Taken | SortBy::Edited => ["Oldest first", "Newest first"],
         SortBy::Name => ["A to Z", "Z to A"],
-        SortBy::Rating => ["Lowest first", "Highest first"],
+        SortBy::Rating | SortBy::Focus => ["Lowest first", "Highest first"],
     }
 }
 
 /// The choice after the menu's entry `entry` is picked over `now`: an
 /// order keeps the way up it had, so a pick of the same order again
-/// changes nothing; "Hand order" lays the order aside.
+/// changes nothing; "Hand order" lays the order aside. Focus comes in
+/// the sharpest first, which is what it is picked for.
 pub(crate) fn picked(view: &View, now: Choice, entry: usize) -> Option<Choice> {
     let by = *entries(view).get(entry)?;
+    let was = now.order();
     Some(match by {
         None => Choice::Hand,
-        Some(by) => Choice::By(Order::new(by, now.order().is_some_and(|o| o.descending))),
+        Some(SortBy::Focus) if was.is_none_or(|o| o.by != SortBy::Focus) => {
+            Choice::By(Order::new(SortBy::Focus, true))
+        }
+        Some(by) => Choice::By(Order::new(by, was.is_some_and(|o| o.descending))),
     })
 }
 
@@ -300,8 +305,8 @@ mod tests {
 
     #[test]
     fn the_menu_offers_hand_order_first_in_a_collection_and_keeps_the_way_up() {
-        assert_eq!(entries(&View::Folder).len(), 4);
-        assert_eq!(entries(&collection("c")).len(), 5);
+        assert_eq!(entries(&View::Folder).len(), 5);
+        assert_eq!(entries(&collection("c")).len(), 6);
         assert_eq!(entries(&collection("c"))[0], None);
         let newest = Choice::By(Order::new(SortBy::Taken, true));
         // Name picked over capture time, newest first: Z to A.
@@ -320,5 +325,27 @@ mod tests {
             Choice::By(Order::new(SortBy::Name, true))
         );
         assert_eq!(turned(Choice::Hand, true), Choice::Hand);
+        // Focus comes in the sharpest first from any other order, and
+        // keeps its way up once in it.
+        let focus = entries(&View::Folder)
+            .iter()
+            .position(|e| *e == Some(SortBy::Focus))
+            .unwrap();
+        let sharpest = Choice::By(Order::new(SortBy::Focus, true));
+        assert_eq!(
+            picked(&View::Folder, Choice::By(Order::NAME), focus),
+            Some(sharpest)
+        );
+        assert_eq!(
+            picked(&collection("c"), Choice::Hand, focus + 1),
+            Some(sharpest)
+        );
+        let softest = Choice::By(Order::new(SortBy::Focus, false));
+        assert_eq!(picked(&View::Folder, softest, focus), Some(softest));
+        assert_eq!(
+            Choice::from_key(&sharpest.key()),
+            Some(sharpest),
+            "kept as focus-desc"
+        );
     }
 }

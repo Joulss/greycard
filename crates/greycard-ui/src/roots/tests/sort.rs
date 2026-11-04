@@ -104,7 +104,7 @@ fn every_root_reads_by_capture_time_and_a_sort_keeps_the_frame_on_screen() {
     assert!(!menu.descending);
     assert_eq!(
         menu.entries.iter().collect::<Vec<_>>(),
-        ["Capture time", "Name", "Rating", "Date edited"]
+        ["Capture time", "Name", "Rating", "Date edited", "Focus"]
     );
 
     // IMG_0001 chosen, then Name from the menu: the list read again in
@@ -176,6 +176,52 @@ fn every_root_reads_by_capture_time_and_a_sort_keeps_the_frame_on_screen() {
     // The strip's arrows outside culling walk it the same way.
     app.invoke_step(1, false);
     assert_eq!(on_screen(&state.borrow()).as_deref(), Some("_DSC0001.tif"));
+    teardown(&dir, state, writer);
+}
+
+/// Focus from the menu lists the frames by the index's score, the
+/// sharpest first whatever the way up before, and turned the softest.
+#[test]
+fn focus_from_the_menu_lists_the_sharpest_first() {
+    let dir = scratch("focus-sort");
+    let root = dir.join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    // A checker each, harder in contrast the sharper it scores.
+    for (name, contrast) in [("a.tif", 4000u16), ("b.tif", 24000), ("c.tif", 12000)] {
+        let (w, h) = (64u32, 48u32);
+        let data: Vec<u16> = (0..w * h * 3)
+            .map(|k| {
+                if ((k / 3) % w + (k / 3) / w) % 2 == 0 {
+                    30000 + contrast
+                } else {
+                    30000 - contrast
+                }
+            })
+            .collect();
+        greycard_library::fixture::write_frame_of(&root.join(name), &R5, w, h, &data);
+    }
+    let db = dir.join("index").join("library.sqlite");
+    let mut writer = greycard_library::Library::open(&db).unwrap();
+    writer.index_tree(&root, &mut |_| {}).unwrap();
+    greycard_library::score::score(&mut writer, 2, &|| false, &mut |_| {}).unwrap();
+    let (app, state, worker) = window_on(&dir, &root);
+    open_view(&state, &app, &worker, View::Roots(None));
+    land_all(&state, &app, &worker);
+    let focus = crate::sort::entries(&View::Roots(None))
+        .iter()
+        .position(|e| *e == Some(SortBy::Focus))
+        .unwrap();
+    app.invoke_sort_picked(focus as i32);
+    land_all(&state, &app, &worker);
+    assert_eq!(listed(&state.borrow()), ["b.tif", "c.tif", "a.tif"]);
+    let menu = app.get_sort_menu();
+    assert_eq!(menu.words, "Focus");
+    assert!(menu.descending);
+    assert_eq!(menu.tip, "Sort: Focus, highest first");
+    app.invoke_sort_turned(false);
+    land_all(&state, &app, &worker);
+    assert_eq!(listed(&state.borrow()), ["a.tif", "c.tif", "b.tif"]);
+    assert_eq!(state.borrow().views.sort.roots.as_deref(), Some("focus"));
     teardown(&dir, state, writer);
 }
 

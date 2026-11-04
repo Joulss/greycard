@@ -108,6 +108,7 @@ fn term_text(term: &Term) -> Option<String> {
                 NumberField::Aperture => "aperture",
                 NumberField::Shutter => "shutter",
                 NumberField::Rating => "rating",
+                NumberField::Focus => "focus",
             };
             format!("{field}{}{value}", cmp(*op))
         }

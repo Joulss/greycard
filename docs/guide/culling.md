@@ -276,7 +276,8 @@ top, until you open it.
   proof, so open a stack there by its badge on the filmstrip.
 - **Stack bursts** on the frame menu finds the bursts in the folders
   you are looking at, frames taken up to two seconds apart that look
-  alike, and stacks each one, closed, with its sharpest frame on top.
+  alike, and stacks each one, closed, with its sharpest frame on top,
+  by the same focus score the Sort menu's **Focus** sorts by.
   Frames already in a stack are left as they are. The first time it
   reads each frame's embedded preview, which takes about a minute for
   a card of raws, longer for Fuji's large previews; the index keeps

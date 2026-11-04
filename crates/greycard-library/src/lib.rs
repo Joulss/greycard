@@ -51,6 +51,7 @@ pub mod order;
 pub mod pairs;
 pub mod rawtherapee;
 pub mod roots;
+pub mod score;
 pub mod stacks;
 pub mod sync_note;
 pub mod thumbs;
@@ -103,7 +104,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 13;
+pub const SCHEMA_VERSION: i32 = 14;
 
 /// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
 /// schema 11 both: `taken` moved by `shift` seconds, worked out by
@@ -172,7 +173,13 @@ macro_rules! taken_at {
 /// machine, and indexed here by an older one that passed it over).
 /// Schema 13 adds the `looks` table, a frame's signature and focus
 /// score from its preview ([`bursts`]), made when the bursts are first
-/// asked for; a schema 12 library gains it empty.
+/// asked for; a schema 12 library gains it empty. Schema 14 adds the
+/// frame's focus score from its preview (`focus`,
+/// `greycard_core::sharpness::focus_score`), which the sort, the
+/// `focus` term, and a burst's order read; a schema 13 row has it
+/// NULL, and the scorer ([`score`]) reads its preview, the pass
+/// nothing. The looks kept go, since their focus was
+/// the variance of the Laplacian, and are made again with the score.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -233,6 +240,11 @@ const MIGRATIONS: &[(i32, &str)] = &[
         ),
     ),
     (12, bursts::LOOKS_SCHEMA),
+    (
+        13,
+        "ALTER TABLE files ADD COLUMN focus REAL;
+         DELETE FROM looks;",
+    ),
 ];
 
 /// The index's own facts about itself, by name: `develop_keys`, what
@@ -375,7 +387,8 @@ CREATE TABLE IF NOT EXISTS files (
     shift         INTEGER NOT NULL DEFAULT 0,
     taken_at      TEXT GENERATED ALWAYS AS (",
     taken_at!(),
-    ") VIRTUAL
+    ") VIRTUAL,
+    focus         REAL
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -469,7 +482,7 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
     files.rating, files.flag, files.label, files.keywords, files.missing_since, \
     files.maker, files.style, files.style_fixed, files.peripheral, files.edited, \
-    files.turns, files.exported, files.mosaic, files.taken_at, files.shift";
+    files.turns, files.exported, files.mosaic, files.taken_at, files.shift, files.focus";
 
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
@@ -478,7 +491,8 @@ const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, fil
     files.develop_key, \
     (SELECT json_group_array(json_array(v.version, v.name, v.made, v.edited, v.exported, \
      v.develop_key) ORDER BY v.position) FROM versions v WHERE v.file = files.id), \
-    files.taken_at, CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END, files.shift";
+    files.taken_at, CASE WHEN files.edited <> 0 THEN files.sidecar_mtime END, files.shift, \
+    files.focus";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -594,6 +608,30 @@ pub struct Exif {
     /// The file's kind of mosaic, read beside the EXIF; `None` when it
     /// would not say.
     pub mosaic: Option<FileMosaic>,
+    /// The focus score of its preview, scored after the pass
+    /// ([`FOCUS_SQL`]); `None` for a file not scored yet, one with no
+    /// preview, and one that would not read.
+    pub focus: Option<f32>,
+}
+
+/// A row's focus score in SQL, over a `files` row: nought to one, the
+/// sharper the higher (`greycard_core::sharpness::focus_score`). The
+/// column is NULL for a row not scored yet, which the scorer after a
+/// pass scores ([`score`]), and for a file on a network mount whose
+/// preview is not at the file's ends, which it leaves; and below nought
+/// for a file read and found with no preview, or one that would not
+/// read (a failed probe's among them), which is not read again until it
+/// changes. This is NULL for all of them.
+pub const FOCUS_SQL: &str = "CASE WHEN files.focus >= 0 THEN files.focus END";
+
+/// The `focus` column's value for a score: below nought for none.
+pub(crate) fn focus_column(focus: Option<f32>) -> f64 {
+    focus.map_or(-1.0, f64::from)
+}
+
+/// The `focus` column read back: none for NULL or below nought.
+pub(crate) fn focus_of_column(v: Option<f64>) -> Option<f32> {
+    v.filter(|v| *v >= 0.0).map(|v| v as f32)
 }
 
 /// What the index keeps of a file's mosaic, which decides the
@@ -679,6 +717,7 @@ impl Exif {
             taken: probe.taken.as_deref().and_then(normalize_taken),
             style: StyleTags::default(),
             mosaic: None,
+            focus: None,
         }
     }
 
@@ -786,6 +825,7 @@ impl Entry {
             taken: self.taken_at.as_deref(),
             rating: self.meta.rating,
             edited_at: self.sidecar_mtime.filter(|_| self.edited),
+            focus: self.exif.focus,
         }
     }
 
@@ -855,6 +895,9 @@ pub struct RowMeta {
     /// holds a develop; none when it holds none: what a list sorted by
     /// date edited reads ([`SortBy::Edited`]).
     pub edited_at: Option<i64>,
+    /// The focus score, none for a frame not scored or with no preview
+    /// ([`FOCUS_SQL`]): what a list sorted by focus reads.
+    pub focus: Option<f32>,
 }
 
 /// One version of a file as the index mirrors it from the sidecar: what
@@ -915,6 +958,7 @@ impl RowMeta {
             taken: self.taken.as_deref(),
             rating: self.meta.rating,
             edited_at: self.edited_at,
+            focus: self.focus,
         }
     }
 }
@@ -2831,6 +2875,7 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
                 .get::<_, Option<String>>(28)?
                 .as_deref()
                 .and_then(FileMosaic::from_text),
+            focus: focus_of_column(row.get(31)?),
         },
         meta,
         sidecar: row
@@ -2869,6 +2914,7 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         versions: version_rows(row.get(from + 13)?),
         taken: row.get(from + 14)?,
         edited_at: row.get(from + 15)?,
+        focus: focus_of_column(row.get(from + 17)?),
     })
 }
 

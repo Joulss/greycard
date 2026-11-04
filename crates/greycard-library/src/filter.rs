@@ -10,7 +10,7 @@
 //! ```text
 //! camera:"R6"  lens:RF  iso>=3200  focal<=35  aperture:1.8  shutter<1/60
 //! date:2026-09  rating>=3  flag:pick  label!=red  keyword:wedding
-//! name:IMG_00  folder:/shoots/skye  missing:yes  kind:raw
+//! name:IMG_00  folder:/shoots/skye  missing:yes  kind:raw  focus>0.6
 //! ```
 //!
 //! `:` on a text field is a case-insensitive substring, `=` the
@@ -18,7 +18,9 @@
 //! goes in double quotes. On a number `:` and `=` are equality and
 //! `<`, `<=`, `>`, `>=` compare; a shutter may be written `1/250`,
 //! a focal length `50mm`, an aperture `f/2.8`, and ISO and rating
-//! are whole numbers. A date is a prefix, `2026`, `2026-09` or
+//! are whole numbers; a focus score is nought to one, the index's own
+//! measure of how sharp the frame's preview is, and a frame not scored
+//! yet passes no `focus` test. A date is a prefix, `2026`, `2026-09` or
 //! `2026-09-21`, spelled with dashes or EXIF's colons, and every
 //! operator compares that much of the file's own date, so
 //! `date<=2026-09` is everything through September. A flag is
@@ -246,6 +248,8 @@ pub enum NumberField {
     Shutter,
     /// Stars, 0 to 5.
     Rating,
+    /// The focus score, 0 to 1 ([`crate::FOCUS_SQL`]).
+    Focus,
 }
 
 /// How a text test reads.
@@ -310,9 +314,9 @@ impl std::error::Error for ParseError {}
 
 /// The field names the language knows, for the error that lists
 /// them.
-const FIELDS: [&str; 18] = [
+const FIELDS: [&str; 19] = [
     "camera", "make", "model", "lens", "iso", "focal", "aperture", "shutter", "date", "rating",
-    "flag", "label", "keyword", "name", "folder", "missing", "has", "kind",
+    "flag", "label", "keyword", "name", "folder", "missing", "has", "kind", "focus",
 ];
 
 /// The kind [`kind_of`] gives a raw.
@@ -556,6 +560,7 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
         "aperture" | "f" => Some(NumberField::Aperture),
         "shutter" | "exposure" => Some(NumberField::Shutter),
         "rating" | "stars" => Some(NumberField::Rating),
+        "focus" => Some(NumberField::Focus),
         _ => None,
     };
     let cmp = match op {
@@ -572,6 +577,9 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
             .ok_or_else(|| err(format!("{name} wants a number, not {value:?}")))?;
         if field == NumberField::Rating && (value < 0.0 || value > f64::from(STARS)) {
             return Err(err(format!("a rating is 0 to {STARS} stars")));
+        }
+        if field == NumberField::Focus && value > 1.0 {
+            return Err(err("a focus score is 0 to 1".to_string()));
         }
         // A whole-number field takes a whole number: `rating>2.5`
         // rounded to `rating>3` would drop the three-star frames it
@@ -730,7 +738,7 @@ fn number(value: &str, field: NumberField) -> Option<f64> {
         NumberField::Aperture => v.strip_prefix("f/").or(v.strip_prefix('f')).unwrap_or(&v),
         NumberField::Shutter => v.strip_suffix('s').unwrap_or(&v),
         NumberField::Iso => v.strip_prefix("iso").unwrap_or(&v),
-        NumberField::Rating => &v,
+        NumberField::Rating | NumberField::Focus => &v,
     }
     .trim();
     let parsed = match v.split_once('/') {
@@ -825,6 +833,7 @@ impl NumberField {
             NumberField::Aperture => "files.aperture",
             NumberField::Shutter => "files.shutter",
             NumberField::Rating => "files.rating",
+            NumberField::Focus => crate::FOCUS_SQL,
         }
     }
 
@@ -842,6 +851,8 @@ impl NumberField {
     fn window(self, value: f64) -> (f64, f64) {
         match self {
             NumberField::Focal => (value - 0.05, value + 0.05),
+            // The score to two places, as it is spoken of.
+            NumberField::Focus => (value - 0.005, value + 0.005),
             _ => (value * 0.995, value * 1.005),
         }
     }
@@ -1205,6 +1216,26 @@ mod tests {
         assert!(sql.ends_with("substr(files.taken_at, 1, ?) = ?"), "{sql}");
         assert_eq!(sql.matches('?').count(), params.len(), "{sql}\n{params:?}");
         assert_eq!(params.len(), 7, "{params:?}");
+    }
+
+    #[test]
+    fn a_focus_score_compares_to_two_places_and_stays_in_its_scale() {
+        assert_eq!(
+            one("focus>0.6"),
+            Term::Number {
+                field: NumberField::Focus,
+                op: Cmp::Gt,
+                value: 0.6
+            }
+        );
+        let (sql, params) = Filter::parse("focus:0.5").unwrap().to_sql();
+        assert_eq!(
+            sql,
+            format!("({0} >= ? AND {0} <= ?)", crate::FOCUS_SQL),
+            "{params:?}"
+        );
+        assert!(Filter::parse("focus>1.5").is_err());
+        assert!(Filter::parse("focus>sharp").is_err());
     }
 
     #[test]

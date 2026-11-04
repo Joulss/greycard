@@ -571,3 +571,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§556. A sync's first read of unindexed frames, off the window](notes/556-a-syncs-first-read-of-unindexed-frames-off-the-window.md) (2026-11-05)
 - [§557. Constrained mask drags](notes/557-constrained-mask-drags.md) (2026-11-05)
 - [§558. A rename into place waits out a hold](notes/558-a-rename-into-place-waits-out-a-hold.md) (2026-11-05)
+- [§559. A focus score for every frame](notes/559-a-focus-score-for-every-frame.md) (2026-11-05)
