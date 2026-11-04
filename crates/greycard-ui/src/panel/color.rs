@@ -5,7 +5,7 @@ use greycard_core::CameraProfile;
 use greycard_core::color::{Matrix3, resolve_white_balance};
 use greycard_edit::grading::{Grading, Range, Wheel};
 use greycard_edit::mixer::BANDS;
-use greycard_edit::{LocalWhite, Tint, WhiteBalance, WhiteShift};
+use greycard_edit::{Edit, LocalWhite, Tint, WhiteBalance, WhiteShift};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::worker::Worker;
@@ -99,6 +99,84 @@ pub(crate) fn choose_grade_range(app: &App, i: usize) {
     show_grade_range(app);
     draw_wheels(app);
     app.window().request_redraw();
+}
+
+/// `wheel-hand` for the tint's ring; 0 to 2 are the grading wheels.
+pub(crate) const TINT_HAND: i32 = 3;
+
+/// How a press in a wheel holds its drag, as the `.slint` side reads
+/// the keys at the press.
+const HOLD_HUE: i32 = 1;
+const HOLD_AMOUNT: i32 = 2;
+
+/// A wheel's hue and amount after a press or a drag at `(x, y)`,
+/// from `(hue0, amount0)`, the wheel's at the press under a hold and
+/// as it stands under none: Shift's hold keeps the hue, Ctrl's the
+/// amount, and a free drag takes both from the pointer (the hue kept
+/// at the center, where there is none to read).
+pub(crate) fn held_pick(x: f32, y: f32, hold: i32, (hue0, amount0): (f32, f32)) -> (f32, f32) {
+    let (hue, amount) = wheel::pick(x, y);
+    match hold {
+        HOLD_HUE => (hue0, amount),
+        HOLD_AMOUNT => (hue.unwrap_or(hue0), amount0),
+        _ => (hue.unwrap_or(hue0), amount),
+    }
+}
+
+/// `edit` without the section of the wheel `hand`: its grading, or
+/// its tint, in the global look and every mask's.
+pub(crate) fn without_wheel(mut edit: Edit, hand: i32) -> Edit {
+    let clear = |grading: &mut Grading, tint: &mut Tint| {
+        if hand == TINT_HAND {
+            *tint = Tint::default();
+        } else {
+            *grading = Grading::default();
+        }
+    };
+    clear(&mut edit.grading, &mut edit.tint);
+    for a in &mut edit.adjustments {
+        clear(&mut a.look.grading, &mut a.look.tint);
+    }
+    edit
+}
+
+/// Wheel `hand` taken in hand by a press in it: ringed, and the rest
+/// of the panel's edit kept to tell when another section moves.
+fn take_wheel(st: &mut State, app: &App, hand: i32) {
+    let edit = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
+    st.develop.wheel_rest = Some(without_wheel(edit, hand));
+    app.set_wheel_hand(hand);
+}
+
+/// The wheel in hand put down if a control outside its section has
+/// moved the panel's edit since it was taken.
+pub(crate) fn keep_wheel(st: &mut State, app: &App) {
+    let hand = app.get_wheel_hand();
+    if hand < 0 {
+        return;
+    }
+    let edit = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
+    if st.develop.wheel_rest.as_ref() != Some(&without_wheel(edit, hand)) {
+        app.set_wheel_hand(-1);
+        st.develop.wheel_rest = None;
+    }
+}
+
+/// The wheel in hand turned to `hue` at its own amount, as a pick
+/// from the picture sets it: one change, one step of the history.
+pub(crate) fn set_hand_hue(app: &App, hand: i32, hue: f32) {
+    let hue = hue.rem_euclid(360.0);
+    if hand == TINT_HAND {
+        app.set_tint_hue(hue);
+        show_tint(app);
+    } else {
+        let i = (hand.max(0) as usize).min(2);
+        let mut hues = grade_values(app.get_grade_hues());
+        hues[i] = hue;
+        app.set_grade_hues(grade_model(&hues));
+        choose_grade_range(app, i);
+    }
+    app.invoke_view_changed();
 }
 
 /// The tint as the panel shows it: the section's switch, the hue
@@ -715,26 +793,51 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // Color grading: the sliders act on the chosen wheel. A press or
     // a drag in a wheel chooses it and sets its hue and strength from
     // the pointer; release records the edit.
+    // Shift held at the press keeps the wheel's hue for the drag, and
+    // Ctrl its strength; the press takes the wheel in hand.
     {
         let app_weak = app.as_weak();
-        let point = move |i: i32, x: f32, y: f32| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let i = (i.max(0) as usize).min(2);
-            let mut hues = grade_values(app.get_grade_hues());
-            let mut sats = grade_values(app.get_grade_saturations());
-            let (hue, strength) = wheel::pick(x, y);
-            if let Some(hue) = hue {
-                hues[i] = hue;
+        // The press's hold, and the wheel's hue and strength then.
+        let held = Rc::new(std::cell::Cell::new((0, 0.0, 0.0)));
+        let point = {
+            let held = held.clone();
+            move |app: &App, i: i32, x: f32, y: f32| {
+                let i = (i.max(0) as usize).min(2);
+                let mut hues = grade_values(app.get_grade_hues());
+                let mut sats = grade_values(app.get_grade_saturations());
+                let (hold, hue0, sat0) = held.get();
+                let from = if hold == 0 {
+                    (hues[i], sats[i])
+                } else {
+                    (hue0, sat0)
+                };
+                (hues[i], sats[i]) = held_pick(x, y, hold, from);
+                app.set_grade_hues(grade_model(&hues));
+                app.set_grade_saturations(grade_model(&sats));
+                choose_grade_range(app, i);
             }
-            sats[i] = strength;
-            app.set_grade_hues(grade_model(&hues));
-            app.set_grade_saturations(grade_model(&sats));
-            choose_grade_range(&app, i);
         };
-        app.on_grade_press(point.clone());
-        app.on_grade_move(point);
+        {
+            let (state, app_weak, point) = (state.clone(), app_weak.clone(), point.clone());
+            app.on_grade_press(move |i, x, y, hold| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                let w = (i.max(0) as usize).min(2);
+                held.set((
+                    hold,
+                    grade_values(app.get_grade_hues())[w],
+                    grade_values(app.get_grade_saturations())[w],
+                ));
+                take_wheel(&mut state.borrow_mut(), &app, w as i32);
+                point(&app, i, x, y);
+            });
+        }
+        app.on_grade_move(move |i, x, y| {
+            if let Some(app) = app_weak.upgrade() {
+                point(&app, i, x, y);
+            }
+        });
     }
     // A wheel's name: enlarging or shrinking it chooses it too, and
     // moves nothing in it, since nothing in it was touched.
@@ -818,22 +921,42 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // amount, and a drag says both at once. The picture follows the
     // pointer; release is the one history entry the drag leaves, as
     // a grading wheel's is. A double click is Reset: off.
+    // Shift and Ctrl hold the hue or the amount as the wheels' do.
     {
         let app_weak = app.as_weak();
-        let point = move |x: f32, y: f32| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            let (hue, amount) = wheel::pick(x, y);
-            if let Some(hue) = hue {
+        let held = Rc::new(std::cell::Cell::new((0, 0.0, 0.0)));
+        let point = {
+            let held = held.clone();
+            move |app: &App, x: f32, y: f32| {
+                let (hold, hue0, amount0) = held.get();
+                let from = if hold == 0 {
+                    (app.get_tint_hue(), app.get_tint_amount())
+                } else {
+                    (hue0, amount0)
+                };
+                let (hue, amount) = held_pick(x, y, hold, from);
                 app.set_tint_hue(hue);
+                app.set_tint_amount(amount);
+                show_tint(app);
+                app.window().request_redraw();
             }
-            app.set_tint_amount(amount);
-            show_tint(&app);
-            app.window().request_redraw();
         };
-        app.on_tint_press(point.clone());
-        app.on_tint_move(point);
+        {
+            let (state, app_weak, point) = (state.clone(), app_weak.clone(), point.clone());
+            app.on_tint_press(move |x, y, hold| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                held.set((hold, app.get_tint_hue(), app.get_tint_amount()));
+                take_wheel(&mut state.borrow_mut(), &app, TINT_HAND);
+                point(&app, x, y);
+            });
+        }
+        app.on_tint_move(move |x, y| {
+            if let Some(app) = app_weak.upgrade() {
+                point(&app, x, y);
+            }
+        });
     }
     {
         let app_weak = app.as_weak();
@@ -1123,6 +1246,98 @@ mod tests {
             describe(&off, &again, &[]),
             format!("{prefix}Color tint on")
         );
+    }
+
+    /// Shift held at the press keeps a wheel's hue for the drag and
+    /// moves its strength; Ctrl keeps the strength and moves the hue:
+    /// each against a plain drag on the same path from the same point,
+    /// in a grading wheel and in the tint's ring.
+    #[test]
+    fn shift_holds_a_wheels_hue_and_ctrl_its_strength() {
+        use crate::testing;
+        use slint::platform::{Key, WindowEvent};
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 3000.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        let key = |k: Key, down: bool| {
+            let text: slint::SharedString = k.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        let start = (200.0, 0.3);
+        // A drag on `path` from `start`, `held` down through it, and
+        // the wheel's hue and strength after.
+        let dragged = |path: &[(f32, f32)],
+                       held: Option<Key>,
+                       set: &dyn Fn(),
+                       read: &dyn Fn() -> (f32, f32)| {
+            set();
+            // Apart from the last drag, so its press is no double click.
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+            if let Some(k) = held {
+                key(k, true);
+            }
+            testing::drag(&app, path);
+            if let Some(k) = held {
+                key(k, false);
+            }
+            read()
+        };
+        let check = |path: &[(f32, f32)], set: &dyn Fn(), read: &dyn Fn() -> (f32, f32)| {
+            let plain = dragged(path, None, set, read);
+            assert!(
+                plain.0 != start.0 && plain.1 != start.1,
+                "a plain drag moves both: {plain:?}"
+            );
+            let shift = dragged(path, Some(Key::Shift), set, read);
+            assert_eq!(shift, (start.0, plain.1), "Shift holds the hue");
+            let ctrl = dragged(path, Some(Key::Control), set, read);
+            assert_eq!(ctrl, (plain.0, start.1), "Ctrl holds the strength");
+        };
+
+        // Scrolled into view, and measured where the scroll leaves it.
+        center(&app, "Shadows wheel");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(1));
+        let (x, y) = center(&app, "Shadows wheel");
+        check(
+            &[
+                (x + 20.0, y - 5.0),
+                (x + 25.0, y - 10.0),
+                (x + 25.0, y - 15.0),
+            ],
+            &|| {
+                app.set_grade_hues(grade_model(&[start.0; 3]));
+                app.set_grade_saturations(grade_model(&[start.1; 3]));
+            },
+            &|| (wheels(&app)[0].hue, wheels(&app)[0].saturation),
+        );
+        assert_eq!(app.get_wheel_hand(), 0, "the wheel pressed is in hand");
+
+        let ring =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "CurveEditor")
+                .find(|e| e.size().width == 176.0)
+                .expect("the tint ring is on screen");
+        let (at, size) = (ring.absolute_position(), ring.size());
+        let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        check(
+            &[
+                (x - 30.0, y + 10.0),
+                (x - 40.0, y + 20.0),
+                (x - 50.0, y + 25.0),
+            ],
+            &|| {
+                app.set_tint_hue(start.0);
+                app.set_tint_amount(start.1);
+            },
+            &|| (app.get_tint_hue(), app.get_tint_amount()),
+        );
+        assert_eq!(app.get_wheel_hand(), TINT_HAND);
     }
 
     /// A release with no press on the ring, as the click that closes a

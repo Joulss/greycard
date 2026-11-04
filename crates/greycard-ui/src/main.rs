@@ -982,6 +982,7 @@ impl State {
                 part_dismissed: Default::default(),
                 people_all: Default::default(),
                 picking: None,
+                wheel_rest: None,
                 mask_drag: None,
                 rasters: HashMap::new(),
                 refined: HashMap::new(),

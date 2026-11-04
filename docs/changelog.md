@@ -7,6 +7,11 @@ design note behind it.
 
 ### The window
 
+- The grading wheels and the tint's ring: Shift-drag keeps the hue and
+  Ctrl-drag the strength, and a Ctrl-click on the picture gives the
+  wheel last used that color's hue, Ctrl+Shift its opposite
+  (discussion 59)
+  ([§546](https://github.com/jessolmstead/greycard/blob/master/docs/notes/546-the-wheels-held-drags-and-the-pick-from-the-picture.md)).
 - Fixed: a crop as wide or as tall as the view can be dragged by its
   edge handles; the Hide panel and strip arrows move off them while
   the crop is in hand (discussion 59)

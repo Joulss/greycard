@@ -118,6 +118,10 @@ export component Viewport inherits Rectangle {
     // a picture pixel's side on the view.
     in property <int> range-sample: 5;
     in property <float> pick-scale: 1;
+    // A color wheel in hand: a Ctrl-click takes its hue from the
+    // picture, with Shift the complement, and does nothing else.
+    in property <bool> wheel-in-hand;
+    callback wheel-pick(length, length, bool);
     callback pick-pressed(length, length);
     callback pick-dragged(length, length);
     callback pick-released();
@@ -360,6 +364,13 @@ export component Viewport inherits Rectangle {
                     && e.button == PointerEventButton.left;
                 if (root.placeholder) {
                 } else if (self.hand-down) {
+                } else if (root.wheel-in-hand && e.modifiers.control && e.button == PointerEventButton.left
+                        && root.picking == "" && root.placing == "" && root.retouch-mode == ""
+                        && !root.level-mode && root.guide-mode == "") {
+                    // Held as a dropper's press is, so the release
+                    // and a drag after it do nothing more.
+                    self.picked-down = true;
+                    root.wheel-pick(self.mouse-x, self.mouse-y, e.modifiers.shift);
                 } else if (root.picking != "") {
                     self.picked-down = true;
                     if (e.button == PointerEventButton.left) {

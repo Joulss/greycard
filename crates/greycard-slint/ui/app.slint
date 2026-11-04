@@ -1275,6 +1275,11 @@ export component App inherits Window {
     // hue. A press on the view reads
     // the picture there; a drag moves what the press chose.
     in-out property <string> picking: "";
+    // The wheel in hand, the last pressed: 0 to 2 a grading wheel, 3
+    // the tint's, -1 none. A Ctrl-click on the picture sets its hue
+    // to the color there, Ctrl+Shift to its complement.
+    in-out property <int> wheel-hand: -1;
+    callback wheel-pick(length, length, bool);
     callback pick-started(string);
     callback pick-pressed(length, length);
     callback pick-dragged(length, length);
@@ -1484,7 +1489,9 @@ export component App inherits Window {
     // one is enlarged, none at -1.
     in property <[image]> grade-images: [];
     in-out property <int> grade-big: -1;
-    callback grade-press(int, float, float);
+    // The last, the hold: 0 free, 1 the hue held (Shift), 2 the
+    // amount held (Ctrl).
+    callback grade-press(int, float, float, int);
     callback grade-move(int, float, float);
     callback grade-release();
     callback grade-double(int);
@@ -1508,7 +1515,7 @@ export component App inherits Window {
     // Slint cannot hold a trailing zero.
     in property <image> tint-image;
     in property <string> tint-hue-text: "0.0\u{00b0}";
-    callback tint-press(float, float);
+    callback tint-press(float, float, int);
     callback tint-move(float, float);
     callback tint-release();
     property <brush> hue-circle: @linear-gradient(90deg,
@@ -2555,6 +2562,9 @@ export component App inherits Window {
             let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
                 e.modifiers.alt, e.modifiers.meta);
             if (chord == "") { return reject; }
+            // The wheel in hand put down, and Esc goes on to mean
+            // what else it means.
+            if (chord == "Esc") { root.wheel-hand = -1; }
             if (chord == "Esc" && root.keys-open) { root.keys-open = false; return accept; }
             // The settings sheet is declared last and so drawn over the
             // rest: Escape closes it first.
@@ -3122,6 +3132,8 @@ export component App inherits Window {
                 picking <=> root.picking;
                 range-sample: root.range-sample;
                 pick-scale: root.pick-scale;
+                wheel-in-hand: root.wheel-hand >= 0;
+                wheel-pick(a, b, c) => { root.wheel-pick(a, b, c); }
                 pick-pressed(a, b) => { root.pick-pressed(a, b); }
                 pick-dragged(a, b) => { root.pick-dragged(a, b); }
                 pick-released => { root.pick-released(); }
@@ -3702,7 +3714,8 @@ export component App inherits Window {
                             grade-balance <=> root.grade-balance;
                             grade-images: root.grade-images;
                             grade-big <=> root.grade-big;
-                            grade-press(a, b, c) => { root.grade-press(a, b, c); }
+                            wheel-hand: root.wheel-hand;
+                            grade-press(a, b, c, d) => { root.grade-press(a, b, c, d); }
                             grade-move(a, b, c) => { root.grade-move(a, b, c); }
                             grade-release => { root.grade-release(); }
                             grade-double(a) => { root.grade-double(a); }
@@ -3726,7 +3739,8 @@ export component App inherits Window {
                             tint-color: root.tint-color;
                             tint-image: root.tint-image;
                             tint-hue-text: root.tint-hue-text;
-                            tint-press(a, b) => { root.tint-press(a, b); }
+                            in-hand: root.wheel-hand == 3;
+                            tint-press(a, b, c) => { root.tint-press(a, b, c); }
                             tint-move(a, b) => { root.tint-move(a, b); }
                             tint-release => { root.tint-release(); }
                             hue-circle: root.hue-circle;

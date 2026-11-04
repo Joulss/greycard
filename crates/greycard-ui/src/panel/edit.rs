@@ -304,9 +304,11 @@ pub(crate) const SAVE_MS: u64 = 800;
 /// Write the current file's sidecar once the panel has rested.
 pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
     // The history's Reset to Original follows the panel at once, not
-    // the step the timer records.
+    // the step the timer records; and a wheel in hand is put down by
+    // a control of another section.
     if let Some(app) = app_weak.upgrade() {
         crate::panel::reset::show_panel_resettable(st, &app);
+        crate::panel::color::keep_wheel(st, &app);
     }
     let Some(state) = STATE.with(|s| s.borrow().clone()) else {
         return;
@@ -726,6 +728,8 @@ pub(crate) fn show_names(edit: &Edit, app: &App) {
 /// Put an edit on the panel, its look that of `target`. As-shot
 /// temperature and tint arrive with the frame and are filled in then.
 pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize>) {
+    // Another edit on the panel, or another target: no wheel in hand.
+    app.set_wheel_hand(-1);
     let look = edit.target_look(target);
     app.set_light_enabled(look.light.enabled);
     app.set_exposure(look.light.exposure);

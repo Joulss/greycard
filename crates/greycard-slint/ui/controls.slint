@@ -1302,6 +1302,9 @@ export component CurveEditor inherits Rectangle {
     callback moved(float, float);
     callback released();
     callback double-clicked(float, float);
+    // The keys held at the last press, for a caller that reads them
+    // in its `pressed`.
+    out property <KeyboardModifiers> press-modifiers;
     height: self.width;
     border-radius: Theme.radius-sm;
     clip: true;
@@ -1330,6 +1333,7 @@ export component CurveEditor inherits Rectangle {
                 if (e.kind == PointerEventKind.down) {
                     self.held = true;
                     Typing.close-all();
+                    root.press-modifiers = e.modifiers;
                     root.pressed(self.mouse-x / root.width, 1 - self.mouse-y / root.height);
                 } else if (e.kind == PointerEventKind.up && self.held) {
                     self.held = false;

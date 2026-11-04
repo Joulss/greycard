@@ -182,6 +182,10 @@ pub(crate) struct Develop {
     pub(crate) people_all: panel::parts_all::All,
     /// A dropper's press, while the pointer is down.
     pub(crate) picking: Option<Picking>,
+    /// The panel's edit as the wheel in hand was taken, its own
+    /// section left out (`color::without_wheel`): anything else
+    /// moving from this puts the wheel down.
+    pub(crate) wheel_rest: Option<Edit>,
     /// A shape's handle being dragged.
     pub(crate) mask_drag: Option<MaskDrag>,
     /// The brushes' rasters, by adjustment id and component index,

@@ -902,6 +902,10 @@ pub struct Picked {
     /// The encoded luminance, the master curve's x for it.
     pub luma: f32,
     pub lightness: f32,
+    /// Its Oklab hue last, after the color curves and whatever grading
+    /// `curves` was baked with: the wheels' and the tint's own hue
+    /// circle.
+    pub shown_hue: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -950,12 +954,19 @@ pub fn pick(
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
+    let shown = if curves.shaded {
+        shade_by(shaded, |l| color_shift(curves, l))
+    } else {
+        shaded
+    };
+    let lab = oklab(shown);
     Picked {
         hue,
         encoded,
         luma,
         lightness: oklab(shaded.map(|v| v * shade_fade(shaded[0].max(shaded[1]).max(shaded[2]))))
             [0],
+        shown_hue: lab[2].atan2(lab[1]).to_degrees().rem_euclid(360.0),
     }
 }
 

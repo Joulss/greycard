@@ -1111,10 +1111,6 @@ clears or a tester asks for it.
 - [ ] A fill's area painted over again after the fact: strokes added
       to an existing retouch and the fill made again (discussion 59,
       2026-11-04)
-- [ ] The grading and tint wheels: Shift-drag holds the hue and
-      Ctrl-drag the amount, and a click on the picture with a wheel
-      in hand takes that color or its complement (discussion 59,
-      2026-11-04)
 - [ ] A lens profile picked by hand for a file that names no lens:
       the Lens list should already show every LCP in the profile
       folder; check with the tester's CR3 and LCP (discussion 59,

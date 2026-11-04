@@ -815,10 +815,32 @@ pub(crate) fn sample_view_at(
 /// A sampled pixel taken to the panel's white and through the
 /// panel's look to the stages the droppers read.
 pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Picked {
+    let edit = read_edit(app, &st.develop.edit, st.develop.target);
+    pick_through(st, app, px, &edit)
+}
+
+/// What a wheel's pick reads: [`pick_stages`] with the grading and
+/// the tint out, the rest of the look in. A second pick on a cast the
+/// wheel already pushes still answers the cast's hue, not the pushed
+/// one, so the pick does not chase itself.
+pub(crate) fn wheel_pick_hue(st: &mut State, app: &App, px: [f32; 3]) -> f32 {
+    let edit = greycard_edit::Edit {
+        grading: Default::default(),
+        tint: greycard_edit::Tint::OFF,
+        ..read_edit(app, &st.develop.edit, st.develop.target)
+    };
+    pick_through(st, app, px, &edit).shown_hue
+}
+
+fn pick_through(
+    st: &mut State,
+    app: &App,
+    px: [f32; 3],
+    edit: &greycard_edit::Edit,
+) -> finish::Picked {
     let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
     let m = preview_white(st, key);
     let px: [f32; 3] = std::array::from_fn(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
-    let edit = read_edit(app, &st.develop.edit, st.develop.target);
     finish::pick(
         px,
         &edit.light.effective(),
@@ -2025,6 +2047,30 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
         });
     }
+    // A Ctrl-click on the picture with a wheel in hand: the wheel's
+    // hue from the color there, as the picture shows it, sampled as
+    // the color pick samples; with Shift, the complement.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_wheel_pick(move |x, y, complement| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let hand = app.get_wheel_hand();
+            let mut st = state.borrow_mut();
+            if hand < 0 || !dropper_reads_develop(&st) {
+                return;
+            }
+            let reach = sample_reach(app.get_range_sample());
+            let Some(px) = sample_view_at(&st, &app, x, y, reach) else {
+                return;
+            };
+            let hue = wheel_pick_hue(&mut st, &app, px);
+            drop(st);
+            let hue = if complement { hue + 180.0 } else { hue };
+            crate::panel::color::set_hand_hue(&app, hand, hue);
+        });
+    }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_pick_dragged(move |x, y| {
@@ -2647,6 +2693,133 @@ mod tests {
             st.develop.zoom = 0.0;
         }
         (app, state, worker)
+    }
+
+    /// A Ctrl-click on a frame of one color with a wheel in hand sets
+    /// that wheel's hue to the color's as shown, at its own strength,
+    /// and zooms nothing; Ctrl+Shift the complement. Esc puts the
+    /// wheel down, and so does a control of another section, and a
+    /// Ctrl-click then sets no hue. Skipped without a GPU to sample.
+    #[test]
+    fn a_ctrl_click_with_a_wheel_in_hand_takes_the_hue_there() {
+        use crate::render::Renderer;
+        use slint::platform::{Key, WindowEvent};
+        let Some((device, queue)) = greycard_viewport::testing::device("wheel_pick") else {
+            return;
+        };
+        let (app, state, _worker) = hover_frame(1.0);
+        let (w, h) = (192usize, 128usize);
+        let color = [0.30f32, 0.12, 0.05];
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&greycard_render::halves::Halves::from_image(
+            &greycard_core::image::WorkingImage {
+                width: w,
+                height: h,
+                data: color.repeat(w * h),
+            },
+            None,
+        ));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.renderer = Some(renderer);
+            st.develop.shown_size = (w as u32, h as u32);
+            st.develop.source_size = (w as u32, h as u32);
+            st.develop.image_size = (w as u32, h as u32);
+            st.develop.center = (w as f32 / 2.0, h as f32 / 2.0);
+        }
+        // The device goes with the test, even a failing one, not with
+        // the thread's last timer.
+        struct Unload(Rc<Shared>);
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                if let Ok(mut st) = self.0.try_borrow_mut() {
+                    st.develop.renderer = None;
+                }
+            }
+        }
+        let _unload = Unload(state.clone());
+        // The color's hue with the wheels out: the same however far
+        // the wheel in hand already pushes it.
+        let want = wheel_pick_hue(&mut state.borrow_mut(), &app, color);
+        let shown = || pick_stages(&mut state.borrow_mut(), &app, color).shown_hue;
+        // The view's middle, in the window.
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let (mx, my) = view_middle(&app);
+        let at = (base.x + mx, base.y + my);
+        let ctrl_click = |shift: bool| {
+            let key = |k: Key, down: bool| {
+                let text: slint::SharedString = k.into();
+                app.window().dispatch_event(if down {
+                    WindowEvent::KeyPressed { text }
+                } else {
+                    WindowEvent::KeyReleased { text }
+                });
+            };
+            key(Key::Control, true);
+            if shift {
+                key(Key::Shift, true);
+            }
+            click(&app, at.0, at.1);
+            if shift {
+                key(Key::Shift, false);
+            }
+            key(Key::Control, false);
+        };
+        let near = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs() < 1.0;
+        let wheel = |app: &App| {
+            let hues = crate::panel::color::grade_values(app.get_grade_hues());
+            let sats = crate::panel::color::grade_values(app.get_grade_saturations());
+            (hues[1], sats[1])
+        };
+
+        // The mid-tones wheel pressed right of its center: in hand, at
+        // a hue of 0 and some strength.
+        app.invoke_grade_press(1, 0.8, 0.5, 0);
+        app.invoke_grade_release();
+        assert_eq!(app.get_wheel_hand(), 1);
+        let (_, strength) = wheel(&app);
+        assert!(strength > 0.0);
+        assert!(!near(shown(), want), "the wheel pushes the color shown");
+        ctrl_click(false);
+        let (hue, kept) = wheel(&app);
+        assert!(near(hue, want), "{hue} for {want}");
+        assert_eq!(kept, strength, "at its own strength");
+        assert_eq!(state.borrow().develop.zoom, 0.0, "no zoom");
+        // Again on the same spot, the wheel now pushing toward it: the
+        // same hue, not the pushed one.
+        ctrl_click(false);
+        assert!(near(wheel(&app).0, want), "the pick does not chase itself");
+        ctrl_click(true);
+        let hue = wheel(&app).0;
+        assert!(near(hue, want + 180.0), "the complement: {hue} for {want}");
+
+        // The tint's ring likewise.
+        app.invoke_tint_press(0.8, 0.5, 0);
+        app.invoke_tint_release();
+        assert_eq!(app.get_wheel_hand(), crate::panel::color::TINT_HAND);
+        ctrl_click(false);
+        assert!(near(app.get_tint_hue(), want), "{want}");
+
+        // Esc puts it down: a Ctrl-click sets nothing.
+        crate::testing::press(&app, Key::Escape);
+        assert_eq!(app.get_wheel_hand(), -1);
+        let was = app.get_tint_hue();
+        app.set_tint_hue(10.0);
+        ctrl_click(false);
+        assert_eq!(app.get_tint_hue(), 10.0, "nothing in hand");
+        app.set_tint_hue(was);
+
+        // Another section's control puts it down too.
+        app.invoke_grade_press(1, 0.8, 0.5, 0);
+        app.invoke_grade_release();
+        assert_eq!(app.get_wheel_hand(), 1);
+        app.set_exposure(0.5);
+        app.invoke_view_changed();
+        assert_eq!(app.get_wheel_hand(), -1, "the exposure moved");
     }
 
     /// The view's middle, logical pixels.

@@ -412,13 +412,34 @@ export component BlackWhiteSection inherits Section {
     }
 }
 
+// How a press in a wheel holds its drag: 0 free, 1 the hue held
+// (Shift), 2 the amount held (Ctrl).
+global WheelHold {
+    public pure function of(m: KeyboardModifiers) -> int {
+        return m.shift ? 1 : m.control ? 2 : 0;
+    }
+}
+
+// The wheel in hand, the last pressed, for a Ctrl-click on the
+// picture to pick its hue: the accent ring at double weight, grown
+// inward over the gap, within the wheel's bounds, so nothing clips
+// it and nothing in the layout moves.
+component HandRing inherits Rectangle {
+    in property <bool> on;
+    border-radius: self.width / 2;
+    border-width: 4px;
+    border-color: root.on ? Theme.accent : transparent;
+    animate border-color { duration: Theme.quick; }
+}
+
 // A grading wheel, ringed in the accent while it is the one the
 // sliders act on.
 component GradeWheel inherits Rectangle {
     in property <image> picture;
     in property <bool> enabled: true;
     in property <bool> chosen;
-    callback pressed(float, float);
+    in property <bool> in-hand;
+    callback pressed(float, float, int);
     callback moved(float, float);
     callback released();
     callback double-clicked(float, float);
@@ -433,6 +454,13 @@ component GradeWheel inherits Rectangle {
         border-color: root.chosen ? Theme.accent : transparent;
         animate border-color { duration: Theme.quick; }
     }
+    HandRing {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: self.width;
+        on: root.in-hand;
+    }
     CurveEditor {
         x: 4px;
         y: 4px;
@@ -440,7 +468,7 @@ component GradeWheel inherits Rectangle {
         picture: root.picture;
         enabled: root.enabled;
         background: transparent;
-        pressed(x, y) => { root.pressed(x, y); }
+        pressed(x, y) => { root.pressed(x, y, WheelHold.of(self.press-modifiers)); }
         moved(x, y) => { root.moved(x, y); }
         released => { root.released(); }
         double-clicked(x, y) => { root.double-clicked(x, y); }
@@ -457,7 +485,10 @@ export component GradingSection inherits Section {
     in-out property <float> grade-balance;
     in property <[image]> grade-images;
     in-out property <int> grade-big;
-    callback grade-press(int, float, float);
+    // The wheel in hand: 0 to 2 a grading wheel, 3 the tint's, -1
+    // none.
+    in property <int> wheel-hand: -1;
+    callback grade-press(int, float, float, int);
     callback grade-move(int, float, float);
     callback grade-release();
     callback grade-double(int);
@@ -484,8 +515,9 @@ export component GradingSection inherits Section {
         picture: root.grade-images[root.grade-big];
         enabled: root.grading-enabled;
         chosen: root.grade-range == root.grade-big;
+        in-hand: root.wheel-hand == root.grade-big;
         accessible-label: "Enlarged wheel";
-        pressed(x, y) => { root.grade-press(root.grade-big, x, y); }
+        pressed(x, y, hold) => { root.grade-press(root.grade-big, x, y, hold); }
         moved(x, y) => { root.grade-move(root.grade-big, x, y); }
         released => { root.grade-release(); }
         double-clicked(x, y) => { root.grade-double(root.grade-big); }
@@ -499,8 +531,9 @@ export component GradingSection inherits Section {
                 picture: root.grade-images[i];
                 enabled: root.grading-enabled;
                 chosen: root.grade-range == i;
+                in-hand: root.wheel-hand == i;
                 accessible-label: name + " wheel";
-                pressed(x, y) => { root.grade-press(i, x, y); }
+                pressed(x, y, hold) => { root.grade-press(i, x, y, hold); }
                 moved(x, y) => { root.grade-move(i, x, y); }
                 released => { root.grade-release(); }
                 double-clicked(x, y) => { root.grade-double(i); }
@@ -599,9 +632,10 @@ export component TintSection inherits Section {
     in property <color> tint-color;
     in property <image> tint-image;
     in property <string> tint-hue-text;
-    callback tint-press(float, float);
+    callback tint-press(float, float, int);
     callback tint-move(float, float);
     callback tint-release();
+    in property <bool> in-hand;
     in property <brush> hue-circle;
     callback tint-changed();
     callback tint-reset();
@@ -628,16 +662,27 @@ export component TintSection inherits Section {
     // as the wheels' row is.
     if root.tint-image.width > 0: HorizontalLayout {
         alignment: center;
-        CurveEditor {
+        Rectangle {
             width: 176px;
-            picture: root.tint-image;
-            enabled: root.tint-enabled;
-            background: transparent;
-            pressed(x, y) => { root.tint-press(x, y); }
-            moved(x, y) => { root.tint-move(x, y); }
-            released => { root.tint-release(); }
-            // Off, which is what Reset is.
-            double-clicked(x, y) => { root.tint-reset(); }
+            height: self.width;
+            CurveEditor {
+                width: 176px;
+                picture: root.tint-image;
+                enabled: root.tint-enabled;
+                background: transparent;
+                pressed(x, y) => { root.tint-press(x, y, WheelHold.of(self.press-modifiers)); }
+                moved(x, y) => { root.tint-move(x, y); }
+                released => { root.tint-release(); }
+                // Off, which is what Reset is.
+                double-clicked(x, y) => { root.tint-reset(); }
+            }
+            HandRing {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: self.width;
+                on: root.in-hand;
+            }
         }
     }
     EditSlider {
