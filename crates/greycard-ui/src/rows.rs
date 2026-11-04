@@ -537,6 +537,181 @@ pub(crate) fn request_in(
     }
 }
 
+/// `action` on `frames` once `paths`' mosaics are known, for a request
+/// whose action is running and finds it needs them (a sync carrying a
+/// demosaic onto frames the library has not indexed yet). Run now when
+/// there are none to read; else queued at the front, ahead of every
+/// request behind the one running, the mosaics read on a thread of
+/// their own and kept for the session (`browser::learn_mosaic`), and
+/// the action run on the window's thread once they are in.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn after_mosaics(
+    state: &Rc<Shared>,
+    app: &App,
+    worker: &Rc<Worker>,
+    paths: Vec<PathBuf>,
+    frames: Vec<Key>,
+    scope: Scope,
+    what: &str,
+    action: Action,
+) {
+    // A test that does not hold the read has it here, in place.
+    #[cfg(test)]
+    let paths = if HOLD_MOSAICS.with(|h| h.get()) {
+        paths
+    } else {
+        let read = read_mosaics(paths);
+        let mut st = state.borrow_mut();
+        for (path, m) in read {
+            crate::panel::browser::learn_mosaic(&mut st, app, &path, m);
+        }
+        Vec::new()
+    };
+    if paths.is_empty() {
+        let at = resolve(&state.borrow(), &frames, scope);
+        action(state, app, worker, at);
+        return;
+    }
+    let mut st = state.borrow_mut();
+    st.views.loads.next += 1;
+    let id = st.views.loads.next;
+    st.views.loads.queue.push_front(Pending {
+        id,
+        frames,
+        scope,
+        action: Some(action),
+        what: what.to_string(),
+        pick: false,
+        landed: false,
+    });
+    app.set_status(format!("reading {} frames...", paths.len()).into());
+    #[cfg(test)]
+    {
+        MOSAICS_QUEUED.with(|q| q.borrow_mut().push((id, paths)));
+    }
+    #[cfg(not(test))]
+    {
+        let app_weak = app.as_weak();
+        let kept = paths.clone();
+        let spawned = std::thread::Builder::new()
+            .name("greycard mosaics read".into())
+            .spawn(move || {
+                let started = Instant::now();
+                let n = paths.len();
+                let results = read_mosaics(paths);
+                tracing::debug!(
+                    "{n} mosaic(s) read off the window's thread in {:.1} ms",
+                    started.elapsed().as_secs_f64() * 1e3
+                );
+                let _ = slint::invoke_from_event_loop(move || {
+                    let (Some(app), Some(state), Some(worker)) = (
+                        app_weak.upgrade(),
+                        crate::STATE.with(|s| s.borrow().clone()),
+                        crate::WORKER.with(|w| w.borrow().clone()),
+                    ) else {
+                        return;
+                    };
+                    mosaics_landed(&state, &app, &worker, id, results);
+                });
+            });
+        if let Err(e) = spawned {
+            // No thread to be had: read at the next turn, on the
+            // window's thread, as before; the caller holds the state.
+            tracing::warn!("{e}; the mosaics read on the window's thread");
+            let app_weak = app.as_weak();
+            slint::Timer::single_shot(Duration::ZERO, move || {
+                let (Some(app), Some(state), Some(worker)) = (
+                    app_weak.upgrade(),
+                    crate::STATE.with(|s| s.borrow().clone()),
+                    crate::WORKER.with(|w| w.borrow().clone()),
+                ) else {
+                    return;
+                };
+                mosaics_landed(&state, &app, &worker, id, read_mosaics(kept));
+            });
+        }
+    }
+}
+
+/// Each of `paths`' mosaics, read from its image description
+/// (`decode::mosaic_path`, a millisecond or two locally); a file that
+/// will not say is unreadable, said in the log.
+fn read_mosaics(paths: Vec<PathBuf>) -> Vec<(PathBuf, crate::panel::browser::OpenMosaic)> {
+    use crate::panel::browser::OpenMosaic;
+    paths
+        .into_iter()
+        .map(|path| {
+            let m = match greycard_core::decode::mosaic_path(&path) {
+                Ok(Some(m)) => OpenMosaic::Known(m),
+                Ok(None) => OpenMosaic::NotMosaic,
+                Err(e) => {
+                    tracing::warn!("{}: its mosaic: {e}", file_name(&path));
+                    OpenMosaic::Unreadable
+                }
+            };
+            (path, m)
+        })
+        .collect()
+}
+
+/// The mosaics read for request `id`, on the window's thread: kept,
+/// the request marked, and the requests ready run in order.
+fn mosaics_landed(
+    state: &Rc<Shared>,
+    app: &App,
+    worker: &Rc<Worker>,
+    id: u64,
+    results: Vec<(PathBuf, crate::panel::browser::OpenMosaic)>,
+) {
+    {
+        let mut st = state.borrow_mut();
+        for (path, m) in results {
+            crate::panel::browser::learn_mosaic(&mut st, app, &path, m);
+        }
+        match st.views.loads.queue.iter_mut().find(|p| p.id == id) {
+            Some(p) => p.landed = true,
+            None => tracing::debug!("a mosaics read came in for a request since dropped"),
+        }
+        // A sidecar read that landed while this was out left the bar
+        // to whoever landed last.
+        if !st.views.loads.reading() {
+            bar_done(&mut st, app);
+        }
+    }
+    run_ready(state, app, worker);
+}
+
+/// A held test's mosaic reads, each read in place, not yet landed.
+#[cfg(test)]
+pub(crate) type HeldMosaics = Vec<(u64, Vec<(PathBuf, crate::panel::browser::OpenMosaic)>)>;
+
+/// The mosaic reads a held test asked for, read here.
+#[cfg(test)]
+pub(crate) fn read_held_mosaics() -> HeldMosaics {
+    let held: Vec<(u64, Vec<PathBuf>)> =
+        MOSAICS_QUEUED.with(|q| q.borrow_mut().drain(..).collect());
+    held.into_iter()
+        .map(|(id, paths)| (id, read_mosaics(paths)))
+        .collect()
+}
+
+/// [`read_held_mosaics`]' reads landed, in order.
+#[cfg(test)]
+pub(crate) fn land_mosaics(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, read: HeldMosaics) {
+    for (id, results) in read {
+        mosaics_landed(state, app, worker, id, results);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether a test's mosaic reads wait for `land_pending`, as off
+    /// the window's thread they would; else they are read in place.
+    pub(crate) static HOLD_MOSAICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The mosaic reads a held test's requests asked for, by id.
+    static MOSAICS_QUEUED: std::cell::RefCell<Vec<(u64, Vec<PathBuf>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// A read a test's request asked for: the request's id, the list's
 /// generation, the paths to read, and whether sidecars are on.
 #[cfg(test)]
@@ -635,9 +810,12 @@ pub(crate) fn land_pending(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -
     let mut n = 0;
     loop {
         let reads: Vec<QueuedRead> = QUEUED.with(|q| q.borrow_mut().drain(..).collect());
-        if reads.is_empty() {
+        let mosaics = read_held_mosaics();
+        if reads.is_empty() && mosaics.is_empty() {
             break;
         }
+        n += mosaics.len();
+        land_mosaics(state, app, worker, mosaics);
         for (id, generation, to_read, write) in reads {
             let none = vec![None; to_read.len()];
             let held = bring(&to_read, &none, write, None);
@@ -843,7 +1021,11 @@ pub(crate) fn bar_tick(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, now: 
         let out = now.saturating_duration_since(since);
         let still = now.saturating_duration_since(st.views.loads.moved.unwrap_or(since));
         let settled = now.saturating_duration_since(st.views.loads.counted.unwrap_or(since));
-        if out > FRAMES_GIVE_UP && still > FRAMES_STALLED {
+        if st.views.loads.queue.is_empty() {
+            // Nothing left to wait on: the bar's work is done.
+            bar_done(&mut st, app);
+            false
+        } else if out > FRAMES_GIVE_UP && still > FRAMES_STALLED {
             // Every request is dropped, those waiting on the read and
             // those queued behind them alike, and said by name; a pick
             // among them is let go, the frame left as an offline one is

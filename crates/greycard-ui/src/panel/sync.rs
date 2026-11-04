@@ -562,6 +562,72 @@ pub(crate) fn sync_onto(
     (synced, shift)
 }
 
+/// The frames a sync of `choice` from `from` onto `targets` would read
+/// for their mosaics, the session and the library not knowing them:
+/// the source when the demosaic goes, the targets too when its method,
+/// resolved for the source's mosaic as [`sync_onto`] resolves it, is
+/// not every mosaic's ([`needs_mosaic`]). While the source's own is
+/// still to be read, every target is read with it. Each file once.
+fn mosaics_unread(
+    st: &mut State,
+    app: &App,
+    from: usize,
+    targets: &[usize],
+    choice: &Choice,
+) -> Vec<PathBuf> {
+    use crate::panel::browser::{OpenMosaic, known_mosaic};
+    let Some(from_edit) = source_edit(st, app, from) else {
+        return Vec::new();
+    };
+    let preset = Preset::between_frames(&from_edit, choice);
+    if !preset.sections.contains(&Section::Demosaic) {
+        return Vec::new();
+    }
+    let source = known_mosaic(st, from);
+    let resolved = Preset {
+        edit: as_source(preset.edit, source.kind()),
+        ..preset
+    };
+    let targets = if source == OpenMosaic::Unknown || needs_mosaic(&resolved) {
+        targets
+    } else {
+        &[]
+    };
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for &c in std::iter::once(&from).chain(targets) {
+        if known_mosaic(st, c) == OpenMosaic::Unknown
+            && let Some(p) = st.path_at(c)
+            && !paths.contains(p)
+        {
+            paths.push(p.clone());
+        }
+    }
+    paths
+}
+
+/// The sync the sheet asked for, run now on the window's thread, its
+/// words on the status line.
+fn sync_now(
+    state: &Rc<Shared>,
+    app: &App,
+    from: usize,
+    targets: &[usize],
+    choice: &Choice,
+    modes: SyncShift,
+) {
+    let profiles = greycard_edit_io::profiles::list();
+    let start = std::time::Instant::now();
+    let mut st = state.borrow_mut();
+    let (synced, shift) = sync_onto(&mut st, app, from, targets, choice, modes, &profiles, probe);
+    let took = start.elapsed();
+    let mut said = synced_words(&st, choice, targets.len(), &synced);
+    if !shift.is_none() && !synced.moved.is_empty() {
+        said.push_str(&format!(", each shifted {}", shift.words()));
+    }
+    tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
+    app.set_status(said.into());
+}
+
 /// What a shift moves each frame by: the source's difference from where
 /// a frame starts (its as-shot light for Temperature and Tint, 0 EV, the
 /// default edit's, for Exposure). Temperature in mired, positive
@@ -1776,25 +1842,45 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 paths,
                 crate::rows::Scope::Line,
                 "sync",
-                Box::new(move |state, app, _, at| {
+                Box::new(move |state, app, worker, at| {
                     let Some(from) = at.first().copied().flatten() else {
                         app.set_status("the frame to sync from is gone; nothing synced".into());
                         return;
                     };
                     let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
-                    let profiles = greycard_edit_io::profiles::list();
-                    let start = std::time::Instant::now();
-                    let mut st = state.borrow_mut();
-                    let (synced, shift) = sync_onto(
-                        &mut st, app, from, &targets, &choice, modes, &profiles, probe,
+                    // The mosaics the library does not know yet are read
+                    // off this thread first, and the sync runs when they
+                    // are in.
+                    let (unread, frames) = {
+                        let mut st = state.borrow_mut();
+                        let frames = std::iter::once(from)
+                            .chain(targets.iter().copied())
+                            .filter_map(|c| st.key_of(c))
+                            .collect();
+                        (
+                            mosaics_unread(&mut st, app, from, &targets, &choice),
+                            frames,
+                        )
+                    };
+                    crate::rows::after_mosaics(
+                        state,
+                        app,
+                        worker,
+                        unread,
+                        frames,
+                        crate::rows::Scope::Line,
+                        "sync",
+                        Box::new(move |state, app, _, at| {
+                            let Some(from) = at.first().copied().flatten() else {
+                                app.set_status(
+                                    "the frame to sync from is gone; nothing synced".into(),
+                                );
+                                return;
+                            };
+                            let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
+                            sync_now(state, app, from, &targets, &choice, modes);
+                        }),
                     );
-                    let took = start.elapsed();
-                    let mut said = synced_words(&st, &choice, targets.len(), &synced);
-                    if !shift.is_none() && !synced.moved.is_empty() {
-                        said.push_str(&format!(", each shifted {}", shift.words()));
-                    }
-                    tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
-                    app.set_status(said.into());
                 }),
             );
         });
@@ -1957,6 +2043,159 @@ mod tests {
         assert_eq!(state.borrow().current, Some(4));
         assert_eq!(chosen_frames(&state.borrow()), vec![4]);
         assert_eq!(app.get_set_count(), 1);
+    }
+
+    #[test]
+    fn a_sync_onto_unindexed_frames_reads_their_mosaics_off_the_window() {
+        let dir =
+            std::env::temp_dir().join(format!("greycard-sync-mosaics-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..4)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        for f in &files {
+            std::fs::write(f, b"not a raw").expect("a file");
+        }
+        let app = window(4);
+        let (state, worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.window.placement = greycard_edit::Placement::Folder;
+        }
+        crate::rows::HOLD_MOSAICS.with(|h| h.set(true));
+        app.invoke_select(0);
+        app.set_exposure(1.25);
+        state.borrow_mut().views.picked = vec![0, 1, 2, 3];
+        app.invoke_sync_open_asked();
+        app.invoke_sync_applied();
+        // The press returns with the reads out and nothing laid yet.
+        assert_eq!(app.get_status(), "reading 4 frames...");
+        assert!(
+            state.borrow().sidecars[1..]
+                .iter()
+                .all(|s| s.history.is_empty())
+        );
+        assert_eq!(state.borrow().views.loads.whats(), ["sync"]);
+        // In, the sync runs on what they said.
+        assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
+        assert_eq!(app.get_status(), "synced 17 sections onto 3 frames");
+        {
+            let st = state.borrow();
+            for s in &st.sidecars[1..] {
+                assert_eq!(s.current.light.exposure, 1.25);
+            }
+            assert!(st.views.loads.queue.is_empty());
+        }
+        for f in &files[1..] {
+            let back = Sidecar::load(f).unwrap().expect("the sidecar written");
+            assert_eq!(back.current.light.exposure, 1.25);
+        }
+        // Read once a session: the next sync runs at once.
+        app.set_exposure(-0.5);
+        app.invoke_sync_open_asked();
+        app.invoke_sync_applied();
+        assert_eq!(app.get_status(), "synced 17 sections onto 3 frames");
+        assert_eq!(crate::rows::land_pending(&state, &app, &worker), 0);
+        assert_eq!(state.borrow().sidecars[3].current.light.exposure, -0.5);
+        crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_sidecar_read_landing_under_a_mosaics_read_leaves_no_bar_behind() {
+        let dir = std::env::temp_dir().join(format!("greycard-sync-bar-{}", std::process::id()));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..3)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        for f in &files {
+            std::fs::write(f, b"not a raw").expect("a file");
+        }
+        let app = window(3);
+        let (state, worker) = state_for(&app, files.clone());
+        crate::rows::HOLD_MOSAICS.with(|h| h.set(true));
+        app.invoke_select(0);
+        app.set_exposure(1.25);
+        state.borrow_mut().views.picked = vec![0, 1];
+        // A frame standing in from its row, for a request behind the
+        // sync that reads its sidecar.
+        state.borrow_mut().from_row[2].read = false;
+        app.invoke_sync_open_asked();
+        app.invoke_sync_applied();
+        let ran = Rc::new(std::cell::Cell::new(false));
+        let r = ran.clone();
+        let key = state.borrow().key_of(2).unwrap();
+        crate::rows::request(
+            &state,
+            &app,
+            &worker,
+            vec![key],
+            crate::rows::Scope::File,
+            "rating key",
+            Box::new(move |_, _, _, _| r.set(true)),
+        );
+        assert_eq!(state.borrow().views.loads.whats(), ["sync", "rating key"]);
+        // The sidecar read lands first, the request waiting its turn;
+        // then the mosaics, and both run, the bar gone with them.
+        let mosaics = crate::rows::read_held_mosaics();
+        crate::rows::land_pending(&state, &app, &worker);
+        assert!(!ran.get());
+        crate::rows::land_mosaics(&state, &app, &worker, mosaics);
+        assert!(ran.get());
+        assert_eq!(app.get_status(), "synced 17 sections onto 1 frame");
+        assert!(state.borrow().views.loads.since.is_none());
+        let later = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        crate::rows::bar_tick(&state, &app, &worker, later);
+        assert!(!app.get_loading_shown());
+        assert_eq!(app.get_status(), "synced 17 sections onto 1 frame");
+        crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The window's longest stall over a sync from the first frame in
+    /// `GREYCARD_SYNC_FRAMES` onto the rest, unindexed: the press, and
+    /// the run once the mosaics are in, with the read in place (as
+    /// before) and held off the window.
+    #[test]
+    #[ignore]
+    fn measure_a_sync_onto_unindexed_frames() {
+        let dir = PathBuf::from(std::env::var("GREYCARD_SYNC_FRAMES").expect("a folder"));
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .expect("the folder")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "CR3"))
+            .collect();
+        files.sort();
+        for hold in [false, true, false, true] {
+            let app = window(files.len());
+            let (state, worker) = state_for(&app, files.clone());
+            crate::rows::HOLD_MOSAICS.with(|h| h.set(hold));
+            app.invoke_select(0);
+            app.set_exposure(0.5);
+            state.borrow_mut().views.picked = (0..files.len()).collect();
+            app.invoke_sync_open_asked();
+            let t = std::time::Instant::now();
+            app.invoke_sync_applied();
+            let press = t.elapsed();
+            let t = std::time::Instant::now();
+            let read = crate::rows::read_held_mosaics();
+            let off: usize = read.iter().map(|(_, r)| r.len()).sum();
+            let read_took = t.elapsed();
+            let t = std::time::Instant::now();
+            crate::rows::land_mosaics(&state, &app, &worker, read);
+            let run = t.elapsed();
+            eprintln!(
+                "hold {hold}: press {:.1} ms, {off} mosaics off the window {:.1} ms, run {:.1} ms; {}",
+                press.as_secs_f64() * 1e3,
+                read_took.as_secs_f64() * 1e3,
+                run.as_secs_f64() * 1e3,
+                app.get_status()
+            );
+        }
+        crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
     }
 
     #[test]

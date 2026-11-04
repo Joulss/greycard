@@ -211,6 +211,9 @@ design note behind it.
 
 ### Fixes
 
+- A sync onto frames the library has not indexed yet no longer holds
+  the window while it reads what kind of raw each one is
+  ([§556](https://github.com/jessolmstead/greycard/blob/master/docs/notes/556-a-syncs-first-read-of-unindexed-frames-off-the-window.md)).
 - A color window's edge and the mixer's hue in an export made smaller
   now match the viewport's
   ([§555](https://github.com/jessolmstead/greycard/blob/master/docs/notes/555-the-color-mean-at-a-fixed-scale.md)).

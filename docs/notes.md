@@ -568,3 +568,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§553. The viewport's half floats round to nearest](notes/553-the-viewports-half-floats-round-to-nearest.md) (2026-11-05)
 - [§554. The sharpen's threshold to 200](notes/554-the-sharpens-threshold-to-200.md) (2026-11-05)
 - [§555. The color mean at a fixed scale](notes/555-the-color-mean-at-a-fixed-scale.md) (2026-11-05)
+- [§556. A sync's first read of unindexed frames, off the window](notes/556-a-syncs-first-read-of-unindexed-frames-off-the-window.md) (2026-11-05)

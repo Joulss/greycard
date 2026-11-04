@@ -903,8 +903,6 @@ clears or a tester asks for it.
       CC0 set
 - [ ] A GPU X-Trans demosaic, if the CPU's 0.6 s on 40 MP becomes what
       a develop waits on (§322)
-- [ ] A sync's first read of frames the library has not indexed yet
-      runs on the window's thread, once a frame a session (§322)
 - [ ] Per-camera hot pixel defect map. Waits on a place for per-camera
       data and a way to take dark frames in (§13s)
 - [ ] A per-photo switch for the hot pixel repair in the edit schema,
