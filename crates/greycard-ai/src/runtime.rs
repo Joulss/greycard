@@ -792,7 +792,14 @@ fn init() -> std::result::Result<(), &'static Unavailable> {
             let started = std::time::Instant::now();
             match ort::init_from(path) {
                 Ok(builder) => {
-                    builder.with_name("greycard").commit();
+                    // Microsoft's own Windows builds carry an ETW
+                    // telemetry provider, on unless told otherwise, that
+                    // Windows' diagnostic data can forward: model file
+                    // names and hashes, providers, devices, run counts,
+                    // errors. The CPU-only fallback is one of those
+                    // builds. Off, on every library: nothing of what a
+                    // user runs leaves the machine.
+                    builder.with_name("greycard").with_telemetry(false).commit();
                     log::info!(
                         "ONNX Runtime loaded from {} in {:.0} ms",
                         path.display(),

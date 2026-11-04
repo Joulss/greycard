@@ -223,6 +223,10 @@ design note behind it.
 
 ### Fixes
 
+- On a Windows machine whose processor needs the CPU-only ONNX
+  Runtime, that runtime no longer logs the models you run to Windows'
+  diagnostic data; its telemetry is off on every path now
+  ([§563](https://github.com/jessolmstead/greycard/blob/master/docs/notes/563-onnx-runtimes-telemetry-off.md)).
 - Panasonic raws in the older split-block format (a Lumix GX9, among
   others) no longer show short blue dashes: one read a block crossed
   into the next block

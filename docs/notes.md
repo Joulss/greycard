@@ -575,3 +575,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§560. The range masks read the picture from before Detail](notes/560-the-range-masks-read-the-picture-from-before-detail.md) (2026-11-05)
 - [§561. The too_many_arguments allows, one by one](notes/561-the-too-many-arguments-allows-one-by-one.md) (2026-11-05)
 - [§562. A Panasonic v4 window read within its block](notes/562-a-panasonic-v4-window-read-within-its-block.md) (2026-11-04)
+- [§563. ONNX Runtime's telemetry, off](notes/563-onnx-runtimes-telemetry-off.md) (2026-11-04)

@@ -35,7 +35,10 @@ complete, battle-tested editor.
 - **Works across machines.** Cull a shoot on a NAS from local
   previews, and keep an archive drive in step with your edits.
 - **Local AI masks** for subjects, objects, skies and people, down to
-  eyes, lips, hair and clothing. All on your machine.
+  eyes, lips, hair and clothing. All on your machine, and nothing
+  phones home: the network is used to fetch a model or the lens
+  database when you first ask for one, and for the update check you
+  can turn off.
 - **Quick culling** from the camera's embedded previews, so getting
   through a shoot is smooth.
 - **Export from a script.** `greycard export IMG_0001.CR3 out.jpg`
