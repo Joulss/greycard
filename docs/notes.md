@@ -580,3 +580,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§565. A DNG's sample maps, applied](notes/565-a-dngs-sample-maps-applied.md) (2026-11-04)
 - [§566. A fill kept for the picture it was made from](notes/566-a-fill-kept-for-the-picture-it-was-made-from.md) (2026-11-04)
 - [§567. The learned blend's color, apart from its grain](notes/567-the-learned-blends-color-apart-from-its-grain.md) (2026-11-04)
+- [§568. A mask's switch, without its overlay](notes/568-a-masks-switch-without-its-overlay.md) (2026-11-04)

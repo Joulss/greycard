@@ -228,6 +228,9 @@ design note behind it.
 
 ### Fixes
 
+- Hovering a mask's on/off switch no longer lights the mask's red
+  overlay, so the switch shows what the adjustment does
+  ([§568](https://github.com/jessolmstead/greycard/blob/master/docs/notes/568-a-masks-switch-without-its-overlay.md)).
 - A Fill made before a white balance, denoise, or lens change is no
   longer shown over the changed picture until the file is reopened;
   it is made again for the new one. While several fills are being

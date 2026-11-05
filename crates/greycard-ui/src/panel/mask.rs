@@ -4342,10 +4342,15 @@ mod tests {
             assert_eq!(lit, (false, false));
         }
 
-        // The whole row counts: its switch, and the chosen row's bin.
+        // The chosen row's bin counts as the row. Its switch does not:
+        // the overlay goes down there, so a toggle shows the
+        // adjustment's effect alone, and comes back on the row.
         let (row, _) = crate::testing::labeled(&app, "Right");
         to(slint::LogicalPosition::new(row.x + 8.0 + 7.0, right.y));
-        assert_eq!(app.get_mask_lit(), 1, "on the switch");
+        assert_eq!(app.get_mask_lit(), -1, "on the switch");
+        assert_eq!(shown(), None, "the overlay down on the switch");
+        to(right);
+        assert_eq!(app.get_mask_lit(), 1, "back on the row");
         to(at("Remove Left"));
         assert_eq!(app.get_mask_lit(), 0, "on the bin");
         to(away);

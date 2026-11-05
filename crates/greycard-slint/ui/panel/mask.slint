@@ -148,17 +148,23 @@ export component AdjustmentsList inherits Section {
                     accessible-label: name;
                     property <bool> on: i == root.target;
                     property <bool> lit: i == 0 || root.adjustment-on[i - 1];
+                    // The pointer is on the row's switch: the row's
+                    // hover lights no mask there, whichever of the
+                    // two hovers moves first.
+                    property <bool> on-switch;
                     height: Theme.control-height;
                     border-radius: Theme.radius-sm;
                     background: on ? Theme.raised : (row.has-hover ? Theme.hover : transparent);
                     animate background { duration: Theme.quick; }
                     // The row's switch and bin inside it, so the row
-                    // keeps its hover over them.
+                    // keeps its hover over them; the switch takes the
+                    // mask's overlay down while the pointer is on it,
+                    // so a toggle shows the adjustment's effect alone.
                     row := TouchArea {
                         property <bool> skip;
                         mouse-cursor: MouseCursor.pointer;
                         changed has-hover => {
-                            if (self.has-hover) {
+                            if (self.has-hover && !on-switch) {
                                 root.mask-lit = i - 1;
                             } else if (root.mask-lit == i - 1) {
                                 root.mask-lit = -1;
@@ -202,6 +208,11 @@ export component AdjustmentsList inherits Section {
                                 }
                                 TouchArea {
                                     mouse-cursor: MouseCursor.pointer;
+                                    changed has-hover => {
+                                        on-switch = self.has-hover;
+                                        root.mask-lit = self.has-hover ? -1 : i - 1;
+                                        root.lit-changed();
+                                    }
                                     clicked => { root.adjustment-toggled(i - 1); }
                                 }
                             }
