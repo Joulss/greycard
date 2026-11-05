@@ -251,6 +251,9 @@ pub(super) struct WorkerModels<'a> {
     deliver: &'a Deliver,
     /// The job's generation, which its fills are said under.
     generation: u64,
+    /// How many fills the retouch had to make when it started, and how
+    /// many it has made since: the status says where the develop is.
+    ahead: (usize, usize),
     /// The edit and the turn the walk is of.
     pub edit: Edit,
     pub turn: u8,
@@ -277,6 +280,7 @@ impl<'a> WorkerModels<'a> {
             cache,
             deliver,
             generation,
+            ahead: (0, 0),
             edit: Edit::default(),
             turn: 0,
             learned: LearnedReport::Off,
@@ -325,18 +329,25 @@ impl crate::walk::Models for WorkerModels<'_> {
 
     fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>> {
         // A fill the model has to make is said so before it starts,
-        // since it takes a while.
-        let kept = self.ai.fill_kept(patch, region, picture);
-        if !kept && self.ai.engine(patch, region, picture).is_ok() {
-            (self.deliver)(Outcome::Filling {
-                generation: self.generation,
-                name: patch.name(),
-            });
-        }
+        // since it takes a while. The count is what the retouch had
+        // ahead when it began; a fill kept for the picture an earlier
+        // patch left is not in it, so the fill made is never past it.
+        let mut kept = true;
         let started = Instant::now();
-        match self.ai.fill(patch, region, picture) {
+        let (deliver, generation, (of, made)) = (self.deliver, self.generation, self.ahead);
+        let fill = self.ai.fill_or_run(patch, region, picture, |_| {
+            kept = false;
+            deliver(Outcome::Filling {
+                generation,
+                name: patch.name(),
+                made,
+                of: of.max(made + 1),
+            });
+        });
+        match fill {
             Ok((data, engine)) => {
                 if !kept {
+                    self.ahead.1 += 1;
                     self.fills.made.push(patch.name());
                     self.fills.seconds += started.elapsed().as_secs_f64();
                 }
@@ -360,6 +371,10 @@ impl crate::walk::Models for WorkerModels<'_> {
 
     fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool {
         self.run_unmade || self.ai.could_fill_more(retouch, picture)
+    }
+
+    fn fills_ahead(&mut self, retouch: &Retouch, picture: &WorkingImage) {
+        self.ahead = (self.ai.fills_unmade(retouch, picture), 0);
     }
 
     fn rasters(

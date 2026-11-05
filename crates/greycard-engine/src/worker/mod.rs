@@ -412,10 +412,13 @@ pub enum Outcome {
         mosaic: Option<greycard_core::raw::Mosaic>,
     },
     /// The fill model is at work on the patch named, for a develop
-    /// still on its way.
+    /// still on its way: `made` of the `of` fills the develop had to
+    /// make are done.
     Filling {
         generation: u64,
         name: String,
+        made: usize,
+        of: usize,
     },
     /// A frame's thumbnail, with the frame it was made for: the list
     /// may have changed under it, so the index alone is not enough.

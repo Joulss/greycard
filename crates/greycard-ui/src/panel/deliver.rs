@@ -847,11 +847,24 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let known = mosaic.map_or(OpenMosaic::NotMosaic, OpenMosaic::Known);
             crate::panel::browser::learn_mosaic(&mut state.borrow_mut(), app, &path, known);
         }
-        Outcome::Filling { generation, name } => {
+        Outcome::Filling {
+            generation,
+            name,
+            made,
+            of,
+        } => {
             // The outline on the viewport says where; this says why
-            // the picture has not moved yet.
+            // the picture has not moved yet, and how much of the wait
+            // is left when more than one fill is ahead.
             if generation == state.borrow().develop.generation {
-                app.set_status(format!("developing... the fill model is at work on {name}").into());
+                let count = if of > 1 {
+                    format!(", {} of {of}", made + 1)
+                } else {
+                    String::new()
+                };
+                app.set_status(
+                    format!("developing... the fill model is at work on {name}{count}").into(),
+                );
             }
         }
         Outcome::Failed {
@@ -2417,6 +2430,44 @@ mod tests {
         assert_eq!(app.get_status(), "saved the filter as Dusk");
         show_making(&app, &mut st, Making::Over);
         assert_eq!(app.get_status(), "saved the filter as Dusk");
+    }
+
+    /// The fill model's word on the status line: the patch alone when
+    /// it is the one fill ahead, with its place in the count when more
+    /// are; a word from a develop since left behind is not said.
+    #[test]
+    fn the_fill_models_word_counts_what_is_ahead() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let generation = state.borrow().develop.generation;
+        crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+        let filling = |name: &str, made: usize, of: usize, generation: u64| {
+            deliver(
+                &app,
+                Outcome::Filling {
+                    generation,
+                    name: name.into(),
+                    made,
+                    of,
+                },
+            );
+        };
+        filling("Fill 3", 0, 1, generation);
+        assert_eq!(
+            app.get_status(),
+            "developing... the fill model is at work on Fill 3"
+        );
+        filling("Fill 5", 3, 15, generation);
+        assert_eq!(
+            app.get_status(),
+            "developing... the fill model is at work on Fill 5, 4 of 15"
+        );
+        filling("Fill 9", 0, 2, generation + 1);
+        assert_eq!(
+            app.get_status(),
+            "developing... the fill model is at work on Fill 5, 4 of 15"
+        );
+        crate::STATE.with(|s| *s.borrow_mut() = None);
     }
 
     #[test]

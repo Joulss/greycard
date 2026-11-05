@@ -444,9 +444,10 @@ pub struct Ai {
     /// file for Core ML, which the store may yet fetch: loaded again
     /// once the file is here ([`Ai::denoiser`]).
     awaiting_fp16: Option<&'static str>,
-    /// Fills made, by patch id and seed, with the patch, the window
-    /// and the engine each was made for: a seed's fill is kept when
-    /// "Another" moves the patch on to the next, so undo is free. Each
+    /// Fills made, by patch id and seed, with the patch, the window,
+    /// the picture's print, and the engine each was made for: a seed's
+    /// fill is kept when "Another" moves the patch on to the next, so
+    /// undo is free. Each
     /// is kept on disk too (`fill_path`), so opening the file again
     /// does not run the model again; a failure is kept here alone.
     fills: HashMap<(u64, u32), FillMade>,
@@ -1023,9 +1024,10 @@ pub enum NoFill {
     Failed(String),
 }
 
-/// A fill made: the patch, window and engine it was made for, and the
-/// region's values.
-type FillMade = (Patch, Window, Engine, Vec<f32>);
+/// A fill made: the patch, window and engine it was made for, the
+/// print of the picture under the window ([`window_print`]) hashed, and
+/// the region's values.
+type FillMade = (Patch, Window, u64, Engine, Vec<f32>);
 
 /// Which model makes a Fill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1536,18 +1538,47 @@ impl Ai {
     /// Whether a Fill of `retouch` on `image` that is not kept could be
     /// made now, by either engine: a picture kept with fills left out
     /// is made again only then.
+    /// `image` is a kept picture past the retouch, not what any fill
+    /// was made from, so a fill in memory for the patch and window
+    /// counts as kept whatever picture it was made from.
     pub fn could_fill_more(&mut self, retouch: &Retouch, image: &WorkingImage) -> bool {
+        self.unmade(retouch, image, true) > 0
+    }
+
+    /// How many Fills of `retouch` on `image` are not kept and could be
+    /// made now, by either engine: what a develop has ahead of it,
+    /// asked on the picture before the retouch. A fill whose window
+    /// takes in an earlier patch's region was kept for the picture
+    /// that patch left, so it may be counted and then found kept; the
+    /// count can stop short of its total; the status line holds it
+    /// at least at the fill being made.
+    pub fn fills_unmade(&mut self, retouch: &Retouch, image: &WorkingImage) -> usize {
+        self.unmade(retouch, image, false)
+    }
+
+    /// The Fills of `retouch` on `image` not kept that could be made;
+    /// `any_print` takes one in memory for the patch and window as
+    /// kept whatever picture it was made from.
+    fn unmade(&mut self, retouch: &Retouch, image: &WorkingImage, any_print: bool) -> usize {
         retouch
             .patches
             .iter()
             .filter(|p| p.method == greycard_edit::retouch::Method::Fill)
-            .any(|p| {
+            .filter(|p| {
                 p.region(image.width, image.height).is_some_and(|region| {
-                    !self.fill_kept(p, &region, image)
+                    let (window, _) = self.window_of(p, &region, image);
+                    let in_memory = any_print
+                        && self
+                            .fills
+                            .get(&(p.id, p.seed))
+                            .is_some_and(|(kept, w, _, _, _)| same_fill(kept, p) && *w == window);
+                    !in_memory
+                        && !self.fill_kept(p, &region, image)
                         && self.failed_before(p, &region, image).is_none()
                         && self.engine(p, &region, image).is_ok()
                 })
             })
+            .count()
     }
 
     /// Why the patch's fill failed when its model last ran on it as it
@@ -1576,16 +1607,25 @@ impl Ai {
     /// for it costs nothing.
     pub fn fill_kept(&mut self, patch: &Patch, region: &Region, image: &WorkingImage) -> bool {
         let (window, _) = self.window_of(patch, region, image);
-        self.fill_in_memory(patch, window).is_some()
-            || self.fill_from_disk(patch, region, image, window)
+        let print = print_hash(image, region, window);
+        self.fill_in_memory(patch, window, print).is_some()
+            || self.fill_from_disk(patch, region, image, window, print)
     }
 
-    /// The patch's fill, as it is now, kept in memory.
-    fn fill_in_memory(&self, patch: &Patch, window: Window) -> Option<(Vec<f32>, Engine)> {
+    /// The patch's fill, as it is now, kept in memory: made for this
+    /// patch, this window, and this picture under it, so a fill made
+    /// under another white balance or noise setting is not served
+    /// after the base changes, as it is not from disk.
+    fn fill_in_memory(
+        &self,
+        patch: &Patch,
+        window: Window,
+        print: u64,
+    ) -> Option<(Vec<f32>, Engine)> {
         self.fills
             .get(&(patch.id, patch.seed))
-            .filter(|(p, w, _, _)| same_fill(p, patch) && *w == window)
-            .map(|(_, _, engine, data)| (data.clone(), *engine))
+            .filter(|(p, w, pr, _, _)| same_fill(p, patch) && *w == window && *pr == print)
+            .map(|(_, _, _, engine, data)| (data.clone(), *engine))
     }
 
     /// The patch's fill read from its slot on disk into memory, if it
@@ -1596,9 +1636,10 @@ impl Ai {
         region: &Region,
         image: &WorkingImage,
         window: Window,
+        print: u64,
     ) -> bool {
         let size = (image.width, image.height);
-        let Some(path) = self.fill_path(patch, region, image, window) else {
+        let Some(path) = self.fill_path(patch, region, image, window, print) else {
             return false;
         };
         let Some((engine, data)) = read_fill(
@@ -1618,7 +1659,7 @@ impl Ai {
         );
         self.fills.insert(
             (patch.id, patch.seed),
-            (patch.clone(), window, engine, data),
+            (patch.clone(), window, print, engine, data),
         );
         true
     }
@@ -1626,8 +1667,8 @@ impl Ai {
     /// Where the patch's fill on the open file lives on disk: beside
     /// the made rasters, named by a hash of the file, the patch as
     /// [`same_fill`] compares it, its seed, the picture's size, the
-    /// region, the window, both engines' models, and a print of the
-    /// window's known pixels ([`window_print`]): a fill made under
+    /// region, the window, both engines' models, and `print`, the
+    /// window's known pixels hashed ([`print_hash`]): a fill made under
     /// another white balance, lens, turn or virtual copy is another.
     fn fill_path(
         &self,
@@ -1635,6 +1676,7 @@ impl Ai {
         region: &Region,
         image: &WorkingImage,
         window: Window,
+        print: u64,
     ) -> Option<PathBuf> {
         let size = (image.width, image.height);
         if !self.disk {
@@ -1661,7 +1703,7 @@ impl Ai {
         greycard_ai::FILL.id.hash(&mut h);
         REMOVE.id.hash(&mut h);
         REMOVE_FAST.id.hash(&mut h);
-        window_print(image, region, window).hash(&mut h);
+        print.hash(&mut h);
         Some(root.join(format!("{:016x}.fill", h.finish())))
     }
 
@@ -1680,7 +1722,8 @@ impl Ai {
             *v = half::f16::from_f32(v.clamp(-65504.0, 65504.0)).to_f32();
         }
         let size = (image.width, image.height);
-        if let Some(path) = self.fill_path(patch, region, image, window) {
+        let print = print_hash(image, region, window);
+        if let Some(path) = self.fill_path(patch, region, image, window, print) {
             write_fill(
                 &path,
                 FILL_VERSION,
@@ -1693,7 +1736,7 @@ impl Ai {
         }
         self.fills.insert(
             (patch.id, patch.seed),
-            (patch.clone(), window, engine, data.clone()),
+            (patch.clone(), window, print, engine, data.clone()),
         );
         data
     }
@@ -1745,20 +1788,34 @@ impl Ai {
 
     /// The region's window made up from what is around it, in the
     /// picture's own values, and the engine that made it ([`Engine`],
-    /// [`engine_for`]); or why not. Kept by patch, seed and window, so
-    /// a slider elsewhere does not run the model again.
+    /// [`engine_for`]); or why not. Kept by patch, seed, window, and
+    /// the picture under the window, so a slider elsewhere does not run
+    /// the model again.
     pub fn fill(
         &mut self,
         patch: &Patch,
         region: &Region,
         image: &WorkingImage,
     ) -> Result<(Vec<f32>, Engine), NoFill> {
+        self.fill_or_run(patch, region, image, |_| {})
+    }
+
+    /// [`Ai::fill`], with `starting` told the engine when a fill not
+    /// kept is about to be made, since that takes a while.
+    pub fn fill_or_run(
+        &mut self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+        starting: impl FnOnce(Engine),
+    ) -> Result<(Vec<f32>, Engine), NoFill> {
         let (window, depth) = self.window_of(patch, region, image);
-        if let Some(kept) = self.fill_in_memory(patch, window) {
+        let print = print_hash(image, region, window);
+        if let Some(kept) = self.fill_in_memory(patch, window, print) {
             return Ok(kept);
         }
-        if self.fill_from_disk(patch, region, image, window)
-            && let Some(kept) = self.fill_in_memory(patch, window)
+        if self.fill_from_disk(patch, region, image, window, print)
+            && let Some(kept) = self.fill_in_memory(patch, window, print)
         {
             return Ok(kept);
         }
@@ -1770,6 +1827,7 @@ impl Ai {
             return Err(NoFill::Missing(&greycard_ai::FILL));
         }
         let engine = self.engine(patch, region, image)?;
+        starting(engine);
         let store = self.store.clone().expect("a store, asked above");
         if self.providers.is_empty() {
             self.providers = Provider::available();
@@ -4061,6 +4119,14 @@ const FILL_HEADER: usize = FILL_MAGIC.len() + 2 + 8 * 4;
 /// The side of the blocks [`window_print`] takes means over.
 const PRINT_BLOCK: usize = 16;
 
+/// [`window_print`] hashed: what a fill in memory and on disk is kept
+/// under, so the two agree on when the picture has changed.
+fn print_hash(image: &WorkingImage, region: &Region, window: Window) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    window_print(image, region, window).hash(&mut h);
+    h.finish()
+}
+
 /// A coarse print of the picture a fill is made from: the means of the
 /// window's pixels outside the hole over 16-pixel blocks, at half
 /// precision, a block with none of them marked empty. Whatever changes
@@ -5145,6 +5211,38 @@ mod tests {
         // And so is it on another file.
         ai.forget(None);
         assert!(ai.could_fill_more(&retouch(&patch), &image));
+        // What is ahead is counted a patch at a time: a failed one is
+        // not, nor one that is not a Fill.
+        let mut heal = bigger.clone();
+        heal.id = 8;
+        heal.method = greycard_edit::retouch::Method::Heal;
+        let both = Retouch {
+            enabled: true,
+            patches: vec![patch.clone(), bigger.clone(), heal],
+        };
+        assert_eq!(ai.fills_unmade(&both, &image), 2);
+        ai.remember_failure(&patch, window, "refused".into());
+        assert_eq!(ai.fills_unmade(&both, &image), 1);
+        // On a picture the fill was not made from, the fill is ahead
+        // of a develop (the count is asked before the retouch) but a
+        // kept point past the retouch is not refused for it: a fill
+        // in memory for the patch and window is kept there.
+        let bigger_region = bigger.region(image.width, image.height).unwrap();
+        let (bigger_window, _) = ai.window_of(&bigger, &bigger_region, &image);
+        ai.keep_fill(
+            &bigger,
+            &bigger_region,
+            &image,
+            bigger_window,
+            Engine::Lama,
+            vec![0.5; bigger_region.width * bigger_region.height * 3],
+        );
+        let mut later = image.clone();
+        later.data.iter_mut().for_each(|v| *v += 0.1);
+        assert!(!ai.fill_kept(&bigger, &bigger_region, &later));
+        assert_eq!(ai.fills_unmade(&both, &later), 1);
+        assert!(!ai.could_fill_more(&both, &later));
+        assert_eq!(ai.fills_unmade(&both, &image), 0);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -5186,8 +5284,9 @@ mod tests {
         for (k, m) in kept.iter().zip(&made) {
             assert!((k - m).abs() <= m * 1e-3, "{k} against {m}");
         }
+        let print = print_hash(&image, &region, window);
         let path = ai
-            .fill_path(&patch, &region, &image, window)
+            .fill_path(&patch, &region, &image, window, print)
             .expect("a slot");
         assert!(path.is_file());
 
@@ -5218,8 +5317,8 @@ mod tests {
         let mut fast = patch.clone();
         fast.set_fill_choice(FillChoice::Fast);
         assert_ne!(
-            ai.fill_path(&fast, &region, &image, window),
-            ai.fill_path(&patch, &region, &image, window)
+            ai.fill_path(&fast, &region, &image, window, print),
+            ai.fill_path(&patch, &region, &image, window, print)
         );
         assert!(!ai.fill_kept(&fast, &region, &image));
         let mut lama = patch.clone();
@@ -5227,7 +5326,7 @@ mod tests {
         assert!(!ai.fill_kept(&lama, &region, &image));
         ai.forget(Some(file.clone()));
         assert!(ai.fill_kept(&patch, &region, &image));
-        assert!(ai.fill_in_memory(&fast, window).is_none());
+        assert!(ai.fill_in_memory(&fast, window, print).is_none());
         ai.forget(Some(file.clone()));
         // So is the patch on the picture developed otherwise: another
         // white balance, or a virtual copy's, under the window.
@@ -5235,6 +5334,12 @@ mod tests {
         for px in warmer.data.as_chunks_mut::<3>().0 {
             px[0] = 0.3;
         }
+        assert!(!ai.fill_kept(&patch, &region, &warmer));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        // The fill now in memory is no more the warmer picture's than
+        // the slot was: the base changed under the window, the fill
+        // is made again.
+        assert!(ai.fill_in_memory(&patch, window, print).is_some());
         assert!(!ai.fill_kept(&patch, &region, &warmer));
         assert!(ai.fill_kept(&patch, &region, &image));
         // So is the patch on a picture of another size.
@@ -5273,7 +5378,11 @@ mod tests {
         // Off the disk, nothing is written.
         let mut memory = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
         memory.forget(Some(PathBuf::from("open.CR3")));
-        assert!(memory.fill_path(&patch, &region, &image, window).is_none());
+        assert!(
+            memory
+                .fill_path(&patch, &region, &image, window, print)
+                .is_none()
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 

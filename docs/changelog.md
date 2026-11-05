@@ -223,6 +223,11 @@ design note behind it.
 
 ### Fixes
 
+- A Fill made before a white balance, denoise, or lens change is no
+  longer shown over the changed picture until the file is reopened;
+  it is made again for the new one. While several fills are being
+  made the status line counts them, "Fill 5, 4 of 15"
+  ([§566](https://github.com/jessolmstead/greycard/blob/master/docs/notes/566-a-fill-kept-for-the-picture-it-was-made-from.md)).
 - A panorama or HDR merged in Lightroom Classic (a DNG 1.7 linear
   raw with `MapPolynomial` opcodes) no longer opens magenta and
   blown out; the file's own sample curves are applied, as its

@@ -310,6 +310,10 @@ pub trait Models {
     /// Whether a fill left unmade in `retouch` could be made now.
     fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool;
 
+    /// The retouch is about to ask for its fills, over `picture`: a
+    /// chance to count what is ahead before the first is asked.
+    fn fills_ahead(&mut self, _retouch: &Retouch, _picture: &WorkingImage) {}
+
     /// The learned masks' rasters, made on `base` (and on `patched`
     /// where a patch meets a shape) as `how` says.
     fn rasters(
@@ -1855,6 +1859,7 @@ fn cpu_op(
             walked.sources = applied.chosen_patches(&chosen);
             let mut picture = (*image).clone();
             let mut unmade = Vec::new();
+            models.fills_ahead(&applied, &picture);
             applied.apply_with(&mut picture, |patch, region, before| {
                 let made = match fills {
                     Fills::Run => models.fill(patch, region, before),
