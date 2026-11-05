@@ -63,6 +63,9 @@ pub(super) struct FrameKept {
     /// edit saved, and says nothing kept when it went without.
     pub developed_as: Option<(Edit, u8)>,
     pub left_out: Vec<String>,
+    /// The last develop left fills for the worker to make after it: its
+    /// picture is not yet the edit's.
+    pub filling: bool,
 }
 
 /// The refined masks' picture ([`greycard_render::refine::MaskPicture`])
@@ -105,6 +108,7 @@ impl FrameKept {
             mask_picture: None,
             developed_as: None,
             left_out: Vec::new(),
+            filling: false,
         }
     }
 
@@ -251,9 +255,16 @@ pub(super) struct WorkerModels<'a> {
     deliver: &'a Deliver,
     /// The job's generation, which its fills are said under.
     generation: u64,
-    /// How many fills the retouch had to make when it started, and how
-    /// many it has made since: the status says where the develop is.
-    ahead: (usize, usize),
+    /// How many fills the retouch had to make when the develop
+    /// started, and how many it has made since: the status says where
+    /// the develop is. A later round of the same develop carries it on.
+    pub ahead: (usize, usize),
+    /// How many fills the model may make in this walk, none for no
+    /// limit: one it may not make now is left for later
+    /// ([`FillReport::pending`]).
+    pub budget: Option<usize>,
+    /// The walk ran the retouch, and so asked for each of its fills.
+    retouched: bool,
     /// The edit and the turn the walk is of.
     pub edit: Edit,
     pub turn: u8,
@@ -281,6 +292,8 @@ impl<'a> WorkerModels<'a> {
             deliver,
             generation,
             ahead: (0, 0),
+            budget: None,
+            retouched: false,
             edit: Edit::default(),
             turn: 0,
             learned: LearnedReport::Off,
@@ -292,6 +305,33 @@ impl<'a> WorkerModels<'a> {
 }
 
 impl WorkerModels<'_> {
+    /// The fills still to make after a walk that did not run the
+    /// retouch but started past it: those its patched picture left
+    /// unmade that could be made on the base, by patch id. A walk that
+    /// ran it said each one as it was asked for.
+    pub(super) fn pending_after(&mut self, kept: &crate::walk::Kept) {
+        if self.retouched || self.budget.is_none() {
+            return;
+        }
+        let (Some(patched), Some(base)) = (kept.patched(), kept.picture(Keep::Base)) else {
+            return;
+        };
+        if patched.unmade.is_empty() {
+            return;
+        }
+        let left = Retouch {
+            patches: patched
+                .retouch
+                .patches
+                .iter()
+                .filter(|p| patched.unmade.contains(&p.id))
+                .cloned()
+                .collect(),
+            ..patched.retouch.clone()
+        };
+        self.fills.pending = self.ai.fills_unmade_ids(&left, base);
+    }
+
     /// The learned denoiser `model`, loaded now if it is not yet; why
     /// not when it cannot be.
     fn denoiser(
@@ -329,21 +369,43 @@ impl crate::walk::Models for WorkerModels<'_> {
 
     fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>> {
         // A fill the model has to make is said so before it starts,
-        // since it takes a while. The count is what the retouch had
-        // ahead when it began; a fill kept for the picture an earlier
-        // patch left is not in it, so the fill made is never past it.
+        // since it takes a while, unless the walk's budget is spent,
+        // when it is left for later. The count is what the retouch had
+        // ahead when the develop began; a fill kept for the picture an
+        // earlier patch left is not in it, so the fill made is never
+        // past it.
         let mut kept = true;
         let started = Instant::now();
         let (deliver, generation, (of, made)) = (self.deliver, self.generation, self.ahead);
-        let fill = self.ai.fill_or_run(patch, region, picture, |_| {
-            kept = false;
-            deliver(Outcome::Filling {
-                generation,
-                name: patch.name(),
-                made,
-                of: of.max(made + 1),
-            });
-        });
+        let budget = self.budget;
+        let fill = self.ai.fill_or_run(
+            patch,
+            region,
+            picture,
+            |_| {
+                if budget == Some(0) {
+                    return false;
+                }
+                kept = false;
+                deliver(Outcome::Filling {
+                    generation,
+                    name: patch.name(),
+                    made,
+                    of: of.max(made + 1),
+                });
+                true
+            },
+            &mut |step, of| {
+                deliver(Outcome::FillStep {
+                    generation,
+                    step,
+                    of,
+                })
+            },
+        );
+        if !kept && let Some(b) = self.budget.as_mut() {
+            *b = b.saturating_sub(1);
+        }
         match fill {
             Ok((data, engine)) => {
                 if !kept {
@@ -366,15 +428,27 @@ impl crate::walk::Models for WorkerModels<'_> {
                 self.fills.failed.push((patch.name(), why));
                 None
             }
+            Err(NoFill::Later) => {
+                self.fills.pending.push(patch.id);
+                None
+            }
         }
     }
 
+    /// A walk that may make a fill goes back over the retouch for the
+    /// fills a kept point left unmade: those left for later have no
+    /// fill in memory for the picture they are on, which a kept
+    /// picture past the retouch cannot tell.
     fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool {
-        self.run_unmade || self.ai.could_fill_more(retouch, picture)
+        self.run_unmade
+            || self.budget.is_some_and(|b| b > 0)
+            || self.ai.could_fill_more(retouch, picture)
     }
 
     fn fills_ahead(&mut self, retouch: &Retouch, picture: &WorkingImage) {
-        self.ahead = (self.ai.fills_unmade(retouch, picture), 0);
+        self.retouched = true;
+        let unmade = self.ai.fills_unmade(retouch, picture);
+        self.ahead.0 = self.ahead.0.max(self.ahead.1 + unmade);
     }
 
     fn rasters(

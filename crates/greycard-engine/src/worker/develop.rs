@@ -5,19 +5,10 @@ use super::*;
 use crate::stages::{Keep, LEARNED_DENOISER, Skip, Stage, Step};
 use crate::walk::{Buf, NoHold, NoLearned, Place, walk};
 
-/// Develop `edit` on the open frame at `turn`: a walk of the window's
-/// list ([`window_steps`]) from the last point `held` kept whose steps
-/// are this list's, with `ai`'s models. With `gpu`, every stage with a
-/// version on the device runs there: the CA and the lens one at a time
-/// on pictures in memory, the Detail section and the sharpen as one
-/// run with the picture before the sharpen kept on the device, ending
-/// at the viewport's texture, so a sharpen slider costs the sharpen
-/// alone. Without it (the export of the open frame), the reference's
-/// path from points the device never touched, and the picture comes
-/// back with its half floats. A device that declines a picture runs
-/// that run on the CPU with its context kept; any other device error
-/// lets the context go for the session.
+/// [`develop_round`] with every fill made in the one walk, as the
+/// tests develop.
 // The job, the frame kept, and each model, device, and channel, held apart.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn develop_job(
     input: &Input,
@@ -30,6 +21,89 @@ pub(super) fn develop_job(
     lenses: Option<&greycard_lens::Database>,
     gpu: &mut Option<greycard_gpu::Context>,
     deliver: &Deliver,
+) -> (Outcome, Option<Arc<WorkingImage>>) {
+    develop_round(
+        input,
+        edit,
+        turn,
+        generation,
+        held,
+        ai,
+        (cache, lenses),
+        gpu,
+        deliver,
+        &mut Round::all(),
+    )
+}
+
+/// How many of a develop's fills a walk of it makes, and how many the
+/// develop had ahead and has made: the window's develop delivers its
+/// picture with no fill made ([`Round::first`]), then the worker walks
+/// it again for each fill left ([`Round::next`]), so the picture comes
+/// first and each fill lands as it is made.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Round {
+    budget: Option<usize>,
+    pub ahead: (usize, usize),
+}
+
+impl Round {
+    /// Every fill made in the one walk, as an export makes them.
+    #[cfg(test)]
+    pub(super) fn all() -> Self {
+        Self {
+            budget: None,
+            ahead: (0, 0),
+        }
+    }
+
+    /// The window's develop: its picture with every fill kept in
+    /// place and none made.
+    pub(super) fn first() -> Self {
+        Self {
+            budget: Some(0),
+            ahead: (0, 0),
+        }
+    }
+
+    /// The next fill of a develop whose rounds so far left `ahead`.
+    pub(super) fn next(ahead: (usize, usize)) -> Self {
+        Self {
+            budget: Some(1),
+            ahead,
+        }
+    }
+}
+
+/// Develop `edit` on the open frame at `turn`: a walk of the window's
+/// list ([`window_steps`]) from the last point `held` kept whose steps
+/// are this list's, with `ai`'s models. With `gpu`, every stage with a
+/// version on the device runs there: the CA and the lens one at a time
+/// on pictures in memory, the Detail section and the sharpen as one
+/// run with the picture before the sharpen kept on the device, ending
+/// at the viewport's texture, so a sharpen slider costs the sharpen
+/// alone. Without it (the export of the open frame), the reference's
+/// path from points the device never touched, and the picture comes
+/// back with its half floats. A device that declines a picture runs
+/// that run on the CPU with its context kept; any other device error
+/// lets the context go for the session.
+/// The walk makes as many fills as `round` says and notes in it how
+/// far the develop's fills have got.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn develop_round(
+    input: &Input,
+    edit: &Edit,
+    turn: u8,
+    generation: u64,
+    held: &mut Option<FrameKept>,
+    ai: &mut Ai,
+    (cache, lenses): (
+        Option<&greycard_ai::DenoiseCache>,
+        Option<&greycard_lens::Database>,
+    ),
+    gpu: &mut Option<greycard_gpu::Context>,
+    deliver: &Deliver,
+    round: &mut Round,
 ) -> (Outcome, Option<Arc<WorkingImage>>) {
     let start = Instant::now();
     let walking = input.walked();
@@ -47,9 +121,21 @@ pub(super) fn develop_job(
     // a walk with a device ends at the viewport's texture.
     h.kept.take_working(Keep::Developed);
     let print = ai.base_print(edit, turn, crate::mask_base::Size::Full);
+    // A round whose base is not kept makes it again, the learned
+    // denoiser with it: not beside a UNet the queue held.
+    if round.budget.is_some_and(|b| b > 0) && !h.kept.holds(Keep::Base) {
+        ai.let_go_held_unet();
+    }
     let mut models = WorkerModels::new(ai, cache, deliver, generation);
     models.edit = edit.clone();
     models.turn = turn;
+    models.budget = round.budget;
+    models.ahead = round.ahead;
+    // A fill to make: the walk starts before the retouch, whatever a
+    // point past it would serve.
+    if round.budget.is_some_and(|b| b > 0) {
+        h.kept.drop_unmade();
+    }
     let walked = match walk(
         &steps,
         &plan,
@@ -223,7 +309,10 @@ pub(super) fn develop_job(
     for (name, why) in stood_down(&steps) {
         tracing::debug!("{name} stood down: {why}");
     }
+    models.pending_after(&h.kept);
+    round.ahead = models.ahead;
     let fills = std::mem::take(&mut models.fills);
+    h.filling = !fills.pending.is_empty();
     let mut stages: Stages = walked
         .seconds
         .iter()
@@ -410,6 +499,9 @@ pub(super) fn fill_parts(fills: &FillReport) -> Vec<String> {
     }
     if !fills.missing.is_empty() {
         parts.push(format!("{} fill(s) missing", fills.missing.len()));
+    }
+    if !fills.pending.is_empty() {
+        parts.push(format!("{} fill(s) to make after", fills.pending.len()));
     }
     parts
 }

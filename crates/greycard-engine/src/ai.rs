@@ -437,6 +437,9 @@ pub struct Ai {
     fill: Option<Fill>,
     /// The generative remove, loaded at the first Fill patch it makes.
     remove: Option<Remove>,
+    /// More fills of the open picture are queued behind the next one:
+    /// the remove keeps its UNet open across them ([`Ai::fills_queued`]).
+    fills_queued: bool,
     /// The learned denoiser loaded, by its model's id: one at a time,
     /// since each holds the GPU's memory.
     denoiser: Option<(&'static str, Denoiser)>,
@@ -534,6 +537,11 @@ pub struct Ai {
     /// one run.
     #[cfg(any(test, feature = "testing"))]
     pub scene_runs: usize,
+    /// A Fill made with no model, every value this one, by LaMa's
+    /// name: for a test of when the fills are made. Below nothing, each
+    /// fails as a model that will not load fails, not remembered.
+    #[cfg(any(test, feature = "testing"))]
+    pub fill_by_test: Option<f32>,
 }
 
 /// A raster made again on the retouched picture: the shape, the print
@@ -1022,6 +1030,10 @@ pub enum NoFill {
     NoGpu,
     /// It could not run.
     Failed(String),
+    /// Its model was to run and the caller said not now: a develop
+    /// shows its picture first and makes its fills after, one at a
+    /// time.
+    Later,
 }
 
 /// A fill made: the patch, window and engine it was made for, the
@@ -1319,6 +1331,7 @@ impl Ai {
             last_sky: None,
             fill: None,
             remove: None,
+            fills_queued: false,
             denoiser: None,
             fills: HashMap::new(),
             failed: HashMap::new(),
@@ -1350,6 +1363,8 @@ impl Ai {
             sams_edge_only: false,
             #[cfg(any(test, feature = "testing"))]
             scene_runs: 0,
+            #[cfg(any(test, feature = "testing"))]
+            fill_by_test: None,
         }
     }
 
@@ -1472,6 +1487,43 @@ impl Ai {
         self.other_side.parts_view = None;
     }
 
+    /// Whether more fills are queued behind the next one the remove
+    /// makes: while they are, it keeps its UNet open between them,
+    /// whatever its memory mode, at the sizes the machine's memory
+    /// allows ([`greycard_ai::remove::queued_up_to`]). The last of a
+    /// queue is made with `more` false and lets the UNet go after it.
+    pub fn fills_queued(&mut self, more: bool) {
+        self.fills_queued = more;
+    }
+
+    /// Whether a test makes the fills with no model ([`Ai::fill_by_test`]).
+    fn fills_by_test(&self) -> bool {
+        #[cfg(any(test, feature = "testing"))]
+        if self.fill_by_test.is_some() {
+            return true;
+        }
+        false
+    }
+
+    /// A UNet held for the queue goes now, the queue going on: a walk of
+    /// it is about to load another model (the learned denoiser of a
+    /// base made again). The next fill opens it again.
+    pub fn let_go_held_unet(&mut self) {
+        if let Some(r) = self.remove.as_mut() {
+            r.release_unet();
+        }
+    }
+
+    /// A queue of fills is over or given up, for another develop or
+    /// another model: a UNet held for it goes now, unless the memory
+    /// mode keeps it anyway.
+    pub fn release_fills(&mut self) {
+        self.fills_queued = false;
+        if let Some(r) = self.remove.as_mut() {
+            r.release_unet();
+        }
+    }
+
     /// The base's kept work for the retouched picture's, or back: the
     /// People model's encodings are not kept for both, at about 2 GB,
     /// and go at each change of side.
@@ -1542,7 +1594,7 @@ impl Ai {
     /// was made from, so a fill in memory for the patch and window
     /// counts as kept whatever picture it was made from.
     pub fn could_fill_more(&mut self, retouch: &Retouch, image: &WorkingImage) -> bool {
-        self.unmade(retouch, image, true) > 0
+        !self.unmade(retouch, image, true).is_empty()
     }
 
     /// How many Fills of `retouch` on `image` are not kept and could be
@@ -1553,13 +1605,18 @@ impl Ai {
     /// count can stop short of its total; the status line holds it
     /// at least at the fill being made.
     pub fn fills_unmade(&mut self, retouch: &Retouch, image: &WorkingImage) -> usize {
+        self.unmade(retouch, image, false).len()
+    }
+
+    /// [`Ai::fills_unmade`]'s Fills, by patch id.
+    pub fn fills_unmade_ids(&mut self, retouch: &Retouch, image: &WorkingImage) -> Vec<u64> {
         self.unmade(retouch, image, false)
     }
 
-    /// The Fills of `retouch` on `image` not kept that could be made;
-    /// `any_print` takes one in memory for the patch and window as
-    /// kept whatever picture it was made from.
-    fn unmade(&mut self, retouch: &Retouch, image: &WorkingImage, any_print: bool) -> usize {
+    /// The ids of the Fills of `retouch` on `image` not kept that could
+    /// be made; `any_print` takes one in memory for the patch and
+    /// window as kept whatever picture it was made from.
+    fn unmade(&mut self, retouch: &Retouch, image: &WorkingImage, any_print: bool) -> Vec<u64> {
         retouch
             .patches
             .iter()
@@ -1578,7 +1635,8 @@ impl Ai {
                         && self.engine(p, &region, image).is_ok()
                 })
             })
-            .count()
+            .map(|p| p.id)
+            .collect()
     }
 
     /// Why the patch's fill failed when its model last ran on it as it
@@ -1749,6 +1807,10 @@ impl Ai {
         region: &Region,
         image: &WorkingImage,
     ) -> Result<Engine, NoFill> {
+        #[cfg(any(test, feature = "testing"))]
+        if self.fill_by_test.is_some() {
+            return Ok(Engine::Lama);
+        }
         let (window, _) = self.window_of(patch, region, image);
         let has = |m: &Model| self.store.as_ref().is_some_and(|s| s.have(m));
         // A Fast one wants its own files too, and names them missing.
@@ -1797,17 +1859,21 @@ impl Ai {
         region: &Region,
         image: &WorkingImage,
     ) -> Result<(Vec<f32>, Engine), NoFill> {
-        self.fill_or_run(patch, region, image, |_| {})
+        self.fill_or_run(patch, region, image, |_| true, &mut |_, _| {})
     }
 
     /// [`Ai::fill`], with `starting` told the engine when a fill not
-    /// kept is about to be made, since that takes a while.
+    /// kept is about to be made, since that takes a while, and asked
+    /// whether to make it now: [`NoFill::Later`] when not, nothing
+    /// loaded. `told` is given the remove's UNet calls made, and of
+    /// how many, as it makes them; LaMa's one call tells nothing.
     pub fn fill_or_run(
         &mut self,
         patch: &Patch,
         region: &Region,
         image: &WorkingImage,
-        starting: impl FnOnce(Engine),
+        starting: impl FnOnce(Engine) -> bool,
+        told: &mut dyn FnMut(usize, usize),
     ) -> Result<(Vec<f32>, Engine), NoFill> {
         let (window, depth) = self.window_of(patch, region, image);
         let print = print_hash(image, region, window);
@@ -1822,12 +1888,25 @@ impl Ai {
         if let Some(why) = self.failed_before(patch, region, image) {
             return Err(NoFill::Failed(why));
         }
-        greycard_ai::runtime::status().map_err(|why| NoFill::Failed(why.to_string()))?;
+        if !self.fills_by_test() {
+            greycard_ai::runtime::status().map_err(|why| NoFill::Failed(why.to_string()))?;
+        }
         if self.store.is_none() {
             return Err(NoFill::Missing(&greycard_ai::FILL));
         }
         let engine = self.engine(patch, region, image)?;
-        starting(engine);
+        if !starting(engine) {
+            return Err(NoFill::Later);
+        }
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(v) = self.fill_by_test {
+            if v < 0.0 {
+                return Err(NoFill::Failed("the model would not load".into()));
+            }
+            let data = vec![v; region.width * region.height * 3];
+            let data = self.keep_fill(patch, region, image, window, engine, data);
+            return Ok((data, engine));
+        }
         let store = self.store.clone().expect("a store, asked above");
         if self.providers.is_empty() {
             self.providers = Provider::available();
@@ -1965,11 +2044,15 @@ impl Ai {
                 (made.image, made.scale)
             }
             Engine::Remove => {
+                // A queue of fills keeps the UNet open across them, at
+                // the sizes the machine's memory allows.
                 let remove = self.remove.as_mut().expect("the remove, loaded above");
+                remove.hold_unet(self.fills_queued);
                 if let Err(e) = remove.set_steps(steps_for(patch)) {
                     return Err(self.remember_failure(patch, window, e.to_string()));
                 }
-                let made = match remove.remove_window(&input, &hole, remove_seed(patch)) {
+                let made = match remove.remove_window_told(&input, &hole, remove_seed(patch), told)
+                {
                     Ok(f) => f,
                     Err(e) => {
                         tracing::debug!("remove: {e}");
@@ -5100,6 +5183,7 @@ mod tests {
                 NoFill::Missing(m) => m.id,
                 NoFill::NoGpu => "no GPU",
                 NoFill::Failed(why) => panic!("{why}"),
+                NoFill::Later => panic!("engine_for never defers"),
             })
         };
         assert_eq!(
@@ -7113,5 +7197,66 @@ mod tests {
         slots.sort();
         slots.dedup();
         assert_eq!(slots.len(), 5);
+    }
+
+    /// A fill whose model is to run is asked first whether to run now:
+    /// told not, it is left for later with nothing made or kept, and
+    /// asked again it is made and kept; a kept one is never asked.
+    #[test]
+    fn a_fill_told_not_now_is_left_for_later() {
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::Cpu]);
+        ai.fill_by_test = Some(0.25);
+        let image = WorkingImage::new(200, 100);
+        let patch = Patch {
+            id: 3,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.5]],
+            radius: 0.05,
+            ..Default::default()
+        };
+        let region = patch.region(image.width, image.height).unwrap();
+        let mut asked = 0;
+        let later = ai.fill_or_run(
+            &patch,
+            &region,
+            &image,
+            |_| {
+                asked += 1;
+                false
+            },
+            &mut |_, _| {},
+        );
+        assert!(matches!(later, Err(NoFill::Later)));
+        assert!(!ai.fill_kept(&patch, &region, &image));
+        let retouch = Retouch {
+            enabled: true,
+            patches: vec![patch.clone()],
+        };
+        assert_eq!(ai.fills_unmade_ids(&retouch, &image), [3]);
+        let (made, engine) = ai
+            .fill_or_run(
+                &patch,
+                &region,
+                &image,
+                |_| {
+                    asked += 1;
+                    true
+                },
+                &mut |_, _| {},
+            )
+            .expect("made");
+        assert_eq!(engine, Engine::Lama);
+        assert!(made.iter().all(|v| *v == 0.25));
+        assert!(ai.fill_kept(&patch, &region, &image));
+        assert!(ai.fills_unmade_ids(&retouch, &image).is_empty());
+        ai.fill_or_run(&patch, &region, &image, |_| panic!("kept"), &mut |_, _| {})
+            .expect("kept");
+        assert_eq!(asked, 2);
+        // The queue's hold is a flag until the remove is loaded, and
+        // let go with nothing to let go of.
+        ai.fills_queued(true);
+        assert!(ai.fills_queued);
+        ai.release_fills();
+        assert!(!ai.fills_queued);
     }
 }

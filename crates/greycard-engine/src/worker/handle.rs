@@ -186,7 +186,10 @@ impl Worker {
             if let Some(b) = &self.background {
                 b.pool.wake();
             }
-            let (_, cv) = &*self.queue;
+            // Told under the queue's lock, so a worker that has just
+            // found no frame open (its fills paused) is already waiting.
+            let (lock, cv) = &*self.queue;
+            let _q = lock.lock().expect("worker queue");
             cv.notify_one();
         }
     }
@@ -695,6 +698,14 @@ impl Worker {
         if let Some(pool) = self.pool() {
             pool.set_near(cells);
         }
+    }
+
+    /// The open frame's fills made with no model, every value `v`.
+    #[cfg(test)]
+    pub(super) fn fill_by_test(&self, v: f32) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").fill_by_test = Some(v);
+        cv.notify_one();
     }
 
     /// Make the local previews of these cells as well as the near ones

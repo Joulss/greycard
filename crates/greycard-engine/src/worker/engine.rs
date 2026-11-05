@@ -153,6 +153,11 @@ pub(super) fn run(
     let mut gpu_gone = false;
     // A job panicked with wgpu's words for a lost device.
     let mut lost_seen = false;
+    // The open frame's develop landed with fills still to make: its
+    // edit, turn, and generation, how far its fills have got, and how
+    // many are left. A develop asked for gives them up; leaving the
+    // editor pauses them.
+    let mut fills_due: Option<FillsDue> = None;
     loop {
         let mut device = None;
         // A lost device, found by the ops (a wait that failed, an op's
@@ -181,6 +186,10 @@ pub(super) fn run(
                 // that made them, before the process goes.
                 if q.stopping {
                     return;
+                }
+                #[cfg(test)]
+                if let Some(v) = q.fill_by_test.take() {
+                    ai.fill_by_test = Some(v);
                 }
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
@@ -224,6 +233,23 @@ pub(super) fn run(
                 }
                 if let Some(job) = q.mask_picture.take() {
                     break job;
+                }
+                // The open frame's next fill, before the masks, which a
+                // fill landing would ask for again; an export first, which
+                // makes its own fills in its one walk. Paused while the
+                // editor is left for the grid or the cull, what the remove
+                // held for them let go; the frame shown again wakes the
+                // queue, and they go on.
+                if let Some(due) = &fills_due {
+                    if edited.any_open() {
+                        if let Some(job) = q.exports.pop_front() {
+                            break job;
+                        }
+                        break Job::Fill {
+                            generation: due.generation,
+                        };
+                    }
+                    ai.release_fills();
                 }
                 // A new base's masks once the develops have settled.
                 settle_due(&mut q, Instant::now());
@@ -399,6 +425,15 @@ pub(super) fn run(
         if matches!(job, Job::Gpu) {
             continue;
         }
+        // A develop asked for gives up the fills of the last; any job
+        // but the next fill or a save lets go of what the remove held
+        // for them, so another model never loads beside it.
+        if matches!(job, Job::Open { .. } | Job::Develop { .. }) {
+            fills_due = None;
+        }
+        if !matches!(job, Job::Fill { .. } | Job::Keep { .. }) {
+            ai.release_fills();
+        }
         // A save of the open frame: its edit's pictures from the develop
         // in hand, or held for the develop still to land.
         if let Job::Keep {
@@ -466,7 +501,10 @@ pub(super) fn run(
         }
         // The texture goes before a develop makes the next, so the two are
         // never held at once.
-        if matches!(job, Job::Open { .. } | Job::Develop { .. }) {
+        if matches!(
+            job,
+            Job::Open { .. } | Job::Develop { .. } | Job::Fill { .. }
+        ) {
             shown = None;
         }
         // A person looked for on a frame of a run of "use this person on
@@ -645,7 +683,10 @@ pub(super) fn run(
         }
         // A develop has the machine: the thumbnails' threads are held
         // to what `during_develop` allows until it is done.
-        let developing = matches!(job, Job::Open { .. } | Job::Develop { .. });
+        let developing = matches!(
+            job,
+            Job::Open { .. } | Job::Develop { .. } | Job::Fill { .. }
+        );
         // A picture with no Part on it lets the People model go: it
         // holds about a gigabyte, and two with a picture's crops.
         if matches!(job, Job::Open { .. }) {
@@ -779,18 +820,21 @@ pub(super) fn run(
                         opened_path = Some(path);
                         opened_file = coming;
                         let opened = input.as_ref().expect("just set");
-                        let (outcome, _) = develop_job(
+                        let mut round = Round::first();
+                        let (mut outcome, _) = develop_round(
                             opened,
                             &edit,
                             turn,
                             generation,
                             &mut base,
                             &mut ai,
-                            cache.as_ref(),
-                            lenses.as_deref(),
+                            (cache.as_ref(), lenses.as_deref()),
                             &mut gpu,
                             &deliver,
+                            &mut round,
                         );
+                        fills_due =
+                            FillsDue::after(&mut outcome, &edit, turn, round, None, base.as_mut());
                         shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                         after_develop(
                             lock,
@@ -829,22 +873,70 @@ pub(super) fn run(
             } => {
                 if let Some(f) = &input {
                     turn = wanted % 4;
-                    let (outcome, _) = develop_job(
+                    let mut round = Round::first();
+                    let (mut outcome, _) = develop_round(
                         f,
                         &edit,
                         turn,
                         generation,
                         &mut base,
                         &mut ai,
-                        cache.as_ref(),
-                        lenses.as_deref(),
+                        (cache.as_ref(), lenses.as_deref()),
                         &mut gpu,
                         &deliver,
+                        &mut round,
                     );
+                    fills_due =
+                        FillsDue::after(&mut outcome, &edit, turn, round, None, base.as_mut());
                     shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                     after_develop(
                         lock,
                         masks::to_ask_again(&edit, base.as_ref(), &ai),
+                        Instant::now(),
+                    );
+                    developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
+                    deliver(outcome);
+                }
+            }
+            // The next of the open frame's fills: a develop of the same
+            // edit from before its retouch, the fill made, the rest left
+            // for the rounds after, and its picture delivered as the
+            // develop's own.
+            Job::Fill { generation } => {
+                if let (Some(due), Some(f)) = (fills_due.take(), &input)
+                    && due.generation == generation
+                {
+                    turn = due.turn;
+                    // The remove keeps its UNet for the fill after this.
+                    ai.fills_queued(due.left > 1);
+                    let mut round = Round::next(due.round.ahead);
+                    let (mut outcome, _) = develop_round(
+                        f,
+                        &due.edit,
+                        turn,
+                        generation,
+                        &mut base,
+                        &mut ai,
+                        (cache.as_ref(), lenses.as_deref()),
+                        &mut gpu,
+                        &deliver,
+                        &mut round,
+                    );
+                    fills_due = FillsDue::after(
+                        &mut outcome,
+                        &due.edit,
+                        turn,
+                        round,
+                        Some(due.left),
+                        base.as_mut(),
+                    );
+                    if fills_due.is_none() {
+                        ai.release_fills();
+                    }
+                    shown = ShownTexture::of(&due.edit, turn, &outcome, base.as_ref());
+                    after_develop(
+                        lock,
+                        masks::to_ask_again(&due.edit, base.as_ref(), &ai),
                         Instant::now(),
                     );
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
@@ -979,6 +1071,8 @@ pub(super) fn run(
             }
         }));
         if let Err(payload) = held {
+            fills_due = None;
+            ai.release_fills();
             lost_seen |= says_lost(&panic_message(payload.as_ref()));
             // The base in hand is not trusted; the shelf's stay, as
             // after a panic in a set's frame.
@@ -1012,6 +1106,72 @@ pub(super) fn run(
                 .unwrap_or(None);
             }
         }
+    }
+}
+
+/// The fills the open frame's develop left to make after its picture
+/// landed: what the next round walks.
+struct FillsDue {
+    edit: Edit,
+    turn: u8,
+    generation: u64,
+    round: Round,
+    /// How many are left to make.
+    left: usize,
+}
+
+impl FillsDue {
+    /// What a develop of `edit` at `turn` in `round` left to make, from
+    /// its `outcome`: none when it failed or left none, nor when it was
+    /// a fill's round, with `before` left before it, that made and
+    /// failed none or left no fewer, so the rounds always end (a model
+    /// that will not load fails the same fill each round). Rounds ended
+    /// with fills left say none to come, so the window drops their
+    /// outlines and its bar, and the frame's pictures are not kept for
+    /// the edit's without them.
+    fn after(
+        outcome: &mut Outcome,
+        edit: &Edit,
+        turn: u8,
+        round: Round,
+        before: Option<usize>,
+        base: Option<&mut FrameKept>,
+    ) -> Option<Self> {
+        let Outcome::Developed {
+            generation, fills, ..
+        } = outcome
+        else {
+            return None;
+        };
+        let moved = !fills.made.is_empty() || !fills.failed.is_empty();
+        let stuck = before.is_some_and(|left| !moved || fills.pending.len() >= left);
+        if stuck && !fills.pending.is_empty() {
+            let left: Vec<String> = edit
+                .retouch
+                .patches
+                .iter()
+                .filter(|p| fills.pending.contains(&p.id))
+                .map(|p| format!("fill {}: its rounds ended; left as it was", p.name()))
+                .collect();
+            for why in &left {
+                tracing::info!("{why}");
+            }
+            fills.pending.clear();
+            if let Some(h) = base {
+                h.filling = false;
+                h.left_out.extend(left);
+            }
+        }
+        if fills.pending.is_empty() {
+            return None;
+        }
+        Some(Self {
+            edit: edit.clone(),
+            turn,
+            generation: *generation,
+            round,
+            left: fills.pending.len(),
+        })
     }
 }
 

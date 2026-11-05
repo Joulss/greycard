@@ -1991,6 +1991,11 @@ export component App inherits Window {
     // begins, as a Path's commands; empty when there is none to show.
     in property <string> patch-outline: "";
     in property <string> patch-feather-outline: "";
+    // The edges of the Fill patches whose fills are still to come, on
+    // any tab; and how far the fill at work has got, 0 to 1, below
+    // nothing when none is.
+    in property <string> pending-outline: "";
+    in property <float> fill-fraction: -1;
     callback retouch-toggled(string);
     callback patch-changed(int);
     callback delete-patch();
@@ -3196,6 +3201,8 @@ export component App inherits Window {
                 patch-handles <=> root.patch-handles;
                 patch-outline: root.patch-outline;
                 patch-feather-outline: root.patch-feather-outline;
+                pending-outline: root.pending-outline;
+                fill-fraction: root.fill-fraction;
                 patch-changed(a) => { root.patch-changed(a); }
                 patch-edited => { root.patch-edited(); }
                 patch-grabbed(a) => { root.patch-grabbed(a); }

@@ -20,7 +20,7 @@ use crate::panel::curve::{PARAMETRIC, draw_curve};
 use crate::panel::deliver::{chosen_preset, deliver, read_sheet, show_presets_picker, show_sheet};
 use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_moves};
 use crate::panel::mask::{ask_for, bake_locals};
-use crate::panel::retouch::shown_outlines;
+use crate::panel::retouch::{pending_outlines, shown_outlines};
 use crate::panel::viewport::{
     display_key, drawn_kind, drawn_picture, effective_zoom, picture_up, proof_settings,
     schedule_snapshot, settle_source_size, show_crop_on_view, show_hover, show_source_shape,
@@ -1342,6 +1342,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let (edge, feather) = shown_outlines(st, &app, &edit);
                     if app.get_patch_outline() != edge {
                         app.set_patch_outline(edge.into());
+                    }
+                    // Those whose fills are still to come, on any tab.
+                    let waiting = pending_outlines(st, &app, &edit);
+                    if app.get_pending_outline() != waiting {
+                        app.set_pending_outline(waiting.into());
                     }
                     if app.get_patch_feather_outline() != feather {
                         app.set_patch_feather_outline(feather.into());

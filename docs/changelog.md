@@ -7,6 +7,12 @@ design note behind it.
 
 ### The window
 
+- A frame with many generative fills shows its picture as soon as it
+  develops; the fills land one by one after it, each still to come
+  outlined on the picture and the status line's bar counting the
+  fill's steps. The model is loaded once for a queue of small fills
+  on a card of 12 GB or more, and of large ones from 14 GB
+  ([§569](https://github.com/jessolmstead/greycard/blob/master/docs/notes/569-a-develops-fills-made-after-its-picture.md)).
 - A Luminance or Color mask no longer moves when you change Texture,
   Clarity, Structure, or Dehaze: it reads the picture from before them,
   and so does Refine edge

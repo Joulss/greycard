@@ -217,6 +217,11 @@ export component Viewport inherits Rectangle {
     in-out property <[Pt]> patch-handles;
     in property <string> patch-outline;
     in property <string> patch-feather-outline;
+    in property <string> pending-outline;
+    in property <float> fill-fraction: -1;
+    // The plate's bar counts the fill at work's steps, unless a
+    // develop is on its way.
+    property <bool> filling: root.fill-fraction >= 0 && !root.busy;
     callback patch-changed(int);
     callback patch-edited();
     callback patch-grabbed(int);
@@ -800,6 +805,20 @@ export component Viewport inherits Rectangle {
         stroke: #7fd0ffaa;
         stroke-width: 1px;
     }
+    // The Fill patches whose fills are still to come, on any tab: the
+    // chosen one's stroke, dimmed, where the picture still shows what
+    // they cover.
+    if root.pending-outline != "" && !root.placeholder: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        commands: root.pending-outline;
+        stroke: #7fd0ff55;
+        stroke-width: 1px;
+    }
     if root.panel-tab == "Retouch" && root.patch-feather-outline != "" && !root.placeholder: Path {
         width: 100%;
         height: 100%;
@@ -1197,7 +1216,7 @@ export component Viewport inherits Rectangle {
         visible: !root.plate-hidden;
         x: Theme.space-3;
         y: parent.height - self.height - Theme.space-3;
-        width: status-text.width + 2 * Theme.space-3 + (root.busy ? 72px : 0)
+        width: status-text.width + 2 * Theme.space-3 + (root.busy || root.filling ? 72px : 0)
             + (root.sync-note != "" ? sync-text.width + Theme.space-3 : 0);
         height: 24px;
         border-radius: Theme.radius-md;
@@ -1224,12 +1243,29 @@ export component Viewport inherits Rectangle {
                 background: Theme.accent;
             }
         }
+        // The fill's bar, the camera match's: filled to the steps made.
+        if root.filling: Rectangle {
+            x: Theme.space-3;
+            y: (parent.height - self.height) / 2;
+            width: 60px;
+            height: 3px;
+            border-radius: 1.5px;
+            background: Theme.over-track;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * clamp(root.fill-fraction, 0, 1);
+                height: 100%;
+                border-radius: 1.5px;
+                background: Theme.accent;
+            }
+        }
         status-text := Text {
             text: root.placeholder && root.placeholder-status != "" ? root.placeholder-status : root.status;
             color: Theme.over-text-secondary;
             font-size: Theme.font-xs;
             vertical-alignment: center;
-            x: Theme.space-3 + (root.busy ? 72px : 0);
+            x: Theme.space-3 + (root.busy || root.filling ? 72px : 0);
             height: 100%;
         }
         sync-text := Text {

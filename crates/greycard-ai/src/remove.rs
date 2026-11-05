@@ -158,6 +158,14 @@ impl Steps {
             Steps::Lcm4 => Lcm::new(LCM_STEPS, STRENGTH).timesteps.len(),
         }
     }
+
+    /// How many UNet calls a removal makes: what its progress counts.
+    pub fn calls(self) -> usize {
+        match self {
+            Steps::Euler25 => schedule(STEPS, STRENGTH).0.len(),
+            Steps::Lcm4 => Lcm::new(LCM_STEPS, STRENGTH).timesteps.len(),
+        }
+    }
 }
 
 /// How far, on average, the decoder's answer outside the hole may
@@ -226,6 +234,56 @@ impl Memory {
             Memory::UnetResident => part == Part::Unet,
             Memory::OneAtATime => false,
         }
+    }
+
+    /// [`Memory::keeps`], with the UNet kept as well after a removal at
+    /// `size` while more are queued behind it ([`Remove::hold_unet`]),
+    /// up to `up_to`, the largest square the machine holds a queue at
+    /// ([`queued_up_to`]): its load is paid once a queue, and the VAE's
+    /// two, which open in a tenth of a second, still come and go.
+    fn keeps_queued(self, part: Part, queued: bool, size: usize, up_to: usize) -> bool {
+        self.keeps(part) || (queued && part == Part::Unet && size <= up_to)
+    }
+}
+
+/// From how much memory, in GiB to the nearest, a queue of removals
+/// keeps its UNet open between them at 512, and at 1024 as well, on a
+/// discrete card and on unified memory, where the [`Memory`] mode would
+/// not. Measured on an RTX 5070 Ti, three removals of one window, the
+/// peak over the desktop: one at a time 5.8 GiB at 512 and 6.6 at 1024
+/// (8.6 with a denoiser run beside it); the UNet held between them 6.6
+/// at 512 (7.3 with the denoiser) and 9.9 at 1024. At 512 a held queue
+/// asks no more than one 1024 removal does, but beside a resident
+/// denoiser that is 7.3 GiB, which an 8 GB card with a desktop and the
+/// editor's textures has not got: 12; at 1024 it wants a card of 14.
+/// Unified memory holds the system and the editor too: 16 GB and 24 GB,
+/// as the policy's own bounds, where the mode keeps the UNet anyway.
+const QUEUE_512_CARD: u64 = 12;
+const QUEUE_1024_CARD: u64 = 14;
+const QUEUE_512_UNIFIED: u64 = UNET_FROM;
+const QUEUE_1024_UNIFIED: u64 = WHOLE_FROM;
+
+/// The largest square whose UNet a queue of removals keeps open on
+/// `machine` ([`Memory::keeps_queued`]): 1024, 512, or none (0) where
+/// its memory is not known or is under the bounds above.
+pub fn queued_up_to(machine: Option<Machine>) -> usize {
+    let Some(m) = machine else {
+        return 0;
+    };
+    let Some(gib) = m.memory.map(|b| b.saturating_add(1 << 29) >> 30) else {
+        return 0;
+    };
+    let (small, large) = match m.unified {
+        Some(true) => (QUEUE_512_UNIFIED, QUEUE_1024_UNIFIED),
+        Some(false) => (QUEUE_512_CARD, QUEUE_1024_CARD),
+        None => return 0,
+    };
+    if gib >= large {
+        1024
+    } else if gib >= small {
+        512
+    } else {
+        0
     }
 }
 
@@ -1348,6 +1406,11 @@ pub struct Remove {
     time_ids: [f32; 6],
     resident: Option<Resident>,
     times: Times,
+    /// More removals are queued behind this one: the UNet is kept
+    /// open between them whatever the [`Memory`] mode, at sizes up to
+    /// `queued_up_to` ([`queued_up_to`]).
+    queued: bool,
+    queued_up_to: usize,
 }
 
 impl Remove {
@@ -1386,8 +1449,9 @@ impl Remove {
         let resident = std::env::var("GREYCARD_REMOVE_RESIDENT").ok();
         let tiled = std::env::var("GREYCARD_REMOVE_TILED").ok();
         let Policy { memory, vae, why } = policy(machine, resident.as_deref(), tiled.as_deref());
+        let queued_up_to = queued_up_to(machine);
         log::info!(
-            "remove: {why}: {}, the decoder {} (GREYCARD_REMOVE_RESIDENT=1, unet, or 0 and GREYCARD_REMOVE_TILED=1 or 0 choose)",
+            "remove: {why}: {}, the decoder {}{} (GREYCARD_REMOVE_RESIDENT=1, unet, or 0 and GREYCARD_REMOVE_TILED=1 or 0 choose)",
             match memory {
                 Memory::Resident => "all three sessions kept open, about 12 GB held at 1024",
                 Memory::UnetResident => "the UNet kept open, 5.1 GB held",
@@ -1396,6 +1460,12 @@ impl Remove {
             match vae {
                 Vae::Tiled => "in 512 tiles",
                 Vae::Whole => "whole",
+            },
+            match (memory, queued_up_to) {
+                (Memory::OneAtATime, 0) => String::new(),
+                (Memory::OneAtATime, n) =>
+                    format!(", the UNet kept across a queue of fills up to {n}"),
+                _ => String::new(),
             }
         );
         Ok(Self {
@@ -1409,6 +1479,8 @@ impl Remove {
             time_ids,
             resident: None,
             times: Times::default(),
+            queued: false,
+            queued_up_to,
         })
     }
 
@@ -1452,6 +1524,24 @@ impl Remove {
         Ok(())
     }
 
+    /// Keep the UNet open after the next removal while `queued`, more
+    /// of them to come, though the [`Memory`] mode would drop it: a
+    /// queue of fills pays its load once. The last of the queue, not
+    /// `queued`, runs the UNet held and lets it go after.
+    pub fn hold_unet(&mut self, queued: bool) {
+        self.queued = queued;
+    }
+
+    /// The queue is over or given up: a UNet held for it that the
+    /// [`Memory`] mode does not keep is let go now, so the card holds
+    /// no more than the mode allows when another model loads.
+    pub fn release_unet(&mut self) {
+        self.queued = false;
+        if !self.memory.keeps(Part::Unet) && UNET.let_go_unless(|_| false) {
+            log::info!("remove: the UNet held for a queue of fills let go");
+        }
+    }
+
     /// Where it runs: WebGPU, always.
     pub fn provider(&self) -> Provider {
         Provider::WebGpu
@@ -1486,10 +1576,22 @@ impl Remove {
     /// hole alone ([`composite`]). The answer is in 0 to 1, and
     /// [`Error::Implausible`] when it cannot be right.
     pub fn remove(&mut self, image: &Rgbf, hole: &[f32], seed: u64) -> Result<Rgbf> {
+        self.remove_told(image, hole, seed, &mut |_, _| {})
+    }
+
+    /// [`Remove::remove`], with `told` the UNet calls made and of how
+    /// many as each is made, from none.
+    pub fn remove_told(
+        &mut self,
+        image: &Rgbf,
+        hole: &[f32],
+        seed: u64,
+        told: &mut dyn FnMut(usize, usize),
+    ) -> Result<Rgbf> {
         let size = self.check(image, hole)?;
         let l = size / 8;
         let noise = normals(self.steps.noises() * 4 * l * l, seed);
-        self.run(image, hole, &noise, Pool::Any)
+        self.run(image, hole, &noise, Pool::Any, told)
     }
 
     /// [`Remove::remove`] for a window of a side up to [`FACTOR`] times
@@ -1498,18 +1600,30 @@ impl Remove {
     /// ([`scaled`]); the drift and correlation checks are the run's, at
     /// the size it ran at, and [`Times::factor`] says how far.
     pub fn remove_window(&mut self, image: &Rgbf, hole: &[f32], seed: u64) -> Result<Rgbf> {
+        self.remove_window_told(image, hole, seed, &mut |_, _| {})
+    }
+
+    /// [`Remove::remove_window`], with `told` the UNet calls made and
+    /// of how many ([`Remove::remove_told`]).
+    pub fn remove_window_told(
+        &mut self,
+        image: &Rgbf,
+        hole: &[f32],
+        seed: u64,
+        told: &mut dyn FnMut(usize, usize),
+    ) -> Result<Rgbf> {
         let (w, h) = (image.width, image.height);
         match factor_for(w, h) {
             Some(f) if f > 1.0 => {
                 let total = Instant::now();
                 let out = scaled(image, hole, MAX, |small, small_hole| {
-                    self.remove(small, small_hole, seed)
+                    self.remove_told(small, small_hole, seed, told)
                 });
                 self.times.factor = f;
                 self.times.total = total.elapsed().as_secs_f64();
                 out
             }
-            Some(_) => self.remove(image, hole, seed),
+            Some(_) => self.remove_told(image, hole, seed, told),
             None => Err(Error::Shape(format!(
                 "remove wants a side of 1 to {}, got {w}x{h}",
                 FACTOR * MAX
@@ -1530,7 +1644,7 @@ impl Remove {
                 noise.len()
             )));
         }
-        self.run(image, hole, noise, Pool::TopLeft)
+        self.run(image, hole, noise, Pool::TopLeft, &mut |_, _| {})
     }
 
     /// The decoder's whole answer for [`Remove::remove_with_noise`],
@@ -1551,7 +1665,8 @@ impl Remove {
             )));
         }
         let total = Instant::now();
-        let (decoded, mut times) = self.generate(image, hole, noise, Pool::TopLeft)?;
+        let (decoded, mut times) =
+            self.generate(image, hole, noise, Pool::TopLeft, &mut |_, _| {})?;
         times.drift = drift(image, hole, &decoded);
         times.total = total.elapsed().as_secs_f64();
         self.times = times;
@@ -1647,13 +1762,21 @@ impl Remove {
         size: usize,
         f: impl FnOnce(&mut Session) -> Result<T>,
     ) -> Result<(T, f64)> {
-        let keep = self.memory.keeps(part);
+        let keep = self
+            .memory
+            .keeps_queued(part, self.queued, size, self.queued_up_to);
         let path = self.path(part, size);
-        if part == Part::Unet && keep {
+        // One held for a queue whose last removal this is runs it too,
+        // and is let go after.
+        if part == Part::Unet && (keep || UNET.holds(&path)) {
             let t = Instant::now();
             let mut lease = UNET.acquire(&path, || open_graph(&path))?;
             let load = t.elapsed().as_secs_f64();
             let out = f(lease.value());
+            drop(lease);
+            if !keep && UNET.let_go_unless(|_| false) {
+                log::info!("remove: the UNet held for a queue of fills let go after its last");
+            }
             return Ok((out?, load));
         }
         let kept = if keep {
@@ -1682,10 +1805,17 @@ impl Remove {
         Ok((out?, load))
     }
 
-    fn run(&mut self, image: &Rgbf, hole: &[f32], noise: &[f32], pool: Pool) -> Result<Rgbf> {
+    fn run(
+        &mut self,
+        image: &Rgbf,
+        hole: &[f32],
+        noise: &[f32],
+        pool: Pool,
+        told: &mut dyn FnMut(usize, usize),
+    ) -> Result<Rgbf> {
         let (w, h) = (image.width, image.height);
         let total = Instant::now();
-        let (decoded, mut times) = self.generate(image, hole, noise, pool)?;
+        let (decoded, mut times) = self.generate(image, hole, noise, pool, told)?;
         times.drift = drift(image, hole, &decoded);
         let out = leveled(image, hole, &decoded).map(|(out, level, under)| {
             times.level = level;
@@ -1725,10 +1855,20 @@ impl Remove {
         hole: &[f32],
         noise: &[f32],
         pool: Pool,
+        told: &mut dyn FnMut(usize, usize),
     ) -> Result<(Rgbf, Times)> {
         let (w, h) = (image.width, image.height);
         let size = self.check(image, hole)?;
         let l = size / 8;
+        // A UNet a queue held at another size or sampler goes before
+        // this removal's encoder opens, so it is never on the card
+        // beside this removal's parts.
+        if !self.memory.keeps(Part::Unet) {
+            let want = self.path(Part::Unet, size);
+            if UNET.let_go_unless(|p| p == want) {
+                log::info!("remove: the UNet held for a queue of fills let go for another size");
+            }
+        }
         let mut times = Times {
             size,
             factor: 1.0,
@@ -1767,6 +1907,8 @@ impl Remove {
         let latents: Vec<f32> = image_lat.iter().map(|z| z * SCALE).collect();
         let steps = self.steps;
         let mut calls = 0;
+        let of = steps.calls();
+        told(0, of);
         let t = Instant::now();
         let (x, load) = self.with(Part::Unet, size, |s| {
             sample(steps, &latents, noise, |input, timestep| {
@@ -1783,6 +1925,7 @@ impl Remove {
                     "time_ids" => Tensor::from_array(([1usize, 6], ids.clone()))?,
                 ])?;
                 let (_, eps) = out["out_sample"].try_extract_tensor::<f16>()?;
+                told(calls, of);
                 Ok(eps.iter().map(|e| e.to_f32()).collect())
             })
         })?;
@@ -2660,6 +2803,69 @@ mod tests {
         assert_eq!(kept(Memory::Resident), [true; 3]);
         assert_eq!(kept(Memory::UnetResident), [false, true, false]);
         assert_eq!(kept(Memory::OneAtATime), [false; 3]);
+        // A queue keeps the UNet in every mode up to its size, and
+        // nothing more.
+        let queued = |m: Memory, size| parts.map(|p| m.keeps_queued(p, true, size, 512));
+        assert_eq!(queued(Memory::Resident, 512), [true; 3]);
+        assert_eq!(queued(Memory::UnetResident, 512), [false, true, false]);
+        assert_eq!(queued(Memory::OneAtATime, 512), [false, true, false]);
+        assert_eq!(queued(Memory::OneAtATime, 1024), [false; 3]);
+        assert_eq!(queued(Memory::UnetResident, 1024), [false, true, false]);
+        let none = |size| parts.map(|p| Memory::OneAtATime.keeps_queued(p, true, size, 0));
+        assert_eq!(none(512), [false; 3]);
+        let all = |size| parts.map(|p| Memory::OneAtATime.keeps_queued(p, true, size, 1024));
+        assert_eq!(all(1024), [false, true, false]);
+        for m in [Memory::Resident, Memory::UnetResident, Memory::OneAtATime] {
+            for size in SIZES {
+                assert_eq!(parts.map(|p| m.keeps_queued(p, false, size, 1024)), kept(m));
+            }
+        }
+    }
+
+    /// A queue keeps the UNet at 512 from a card of 12 GB, at 1024 from
+    /// one of 14, on unified memory from 16 and 24 GB, and never where
+    /// the memory is not known.
+    #[test]
+    fn a_queue_holds_its_unet_by_the_machines_memory() {
+        assert_eq!(queued_up_to(machine(7.8, false)), 0);
+        assert_eq!(queued_up_to(machine(11.4, false)), 0);
+        assert_eq!(queued_up_to(machine(11.8, false)), 512);
+        assert_eq!(queued_up_to(machine(13.6, false)), 1024);
+        assert_eq!(queued_up_to(machine(15.9, false)), 1024);
+        assert_eq!(queued_up_to(machine(14.0, true)), 0);
+        assert_eq!(queued_up_to(machine(15.6, true)), 512);
+        assert_eq!(queued_up_to(machine(23.4, true)), 1024);
+        assert_eq!(queued_up_to(None), 0);
+        let unread = Some(Machine {
+            memory: None,
+            unified: Some(false),
+            source: None,
+        });
+        assert_eq!(queued_up_to(unread), 0);
+        let no_adapter = Some(Machine {
+            memory: Some(64 << 30),
+            unified: None,
+            source: None,
+        });
+        assert_eq!(queued_up_to(no_adapter), 0);
+    }
+
+    /// A removal's progress counts the UNet calls its sampler makes.
+    #[test]
+    fn the_calls_counted_are_the_samplers_own() {
+        for steps in [Steps::Euler25, Steps::Lcm4] {
+            let latents = vec![0.5f32; 16];
+            let noise = vec![0.1f32; 16 * steps.noises()];
+            let mut made = 0;
+            sample(steps, &latents, &noise, |x, _| {
+                made += 1;
+                Ok(vec![0.0; x.len()])
+            })
+            .unwrap();
+            assert_eq!(steps.calls(), made, "{steps:?}");
+        }
+        assert_eq!(Steps::Euler25.calls(), 24);
+        assert_eq!(Steps::Lcm4.calls(), 3);
     }
 
     #[test]

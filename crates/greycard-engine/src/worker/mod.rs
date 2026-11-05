@@ -36,10 +36,12 @@ mod thumbs;
 
 #[cfg(test)]
 use self::decode::open;
+#[cfg(test)]
+use self::develop::develop_job;
 use self::{
     base::{FrameKept, KeptMaskPicture, Stages, WorkerModels, timed, window_steps},
     decode::{lens_report, open_told, timed_open},
-    develop::develop_job,
+    develop::{Round, develop_round},
     engine::{left_out_of, left_out_words, run},
     export::{Written, export_open, export_other, seeded, walk_for_export},
     keep::keep_open,
@@ -123,6 +125,11 @@ pub enum Job {
         generation: u64,
         turn: u8,
     },
+    /// The next fill of the open frame's develop `generation`, which
+    /// landed with fills still to make: queued by the worker itself,
+    /// behind any develop asked for, which gives the rest up.
+    #[doc(hidden)]
+    Fill { generation: u64 },
     /// The picture of a frame (a file, and the version of it) for the
     /// list's cell `index`: the picture kept of its edit when one is,
     /// else the camera's, made and kept if need be.
@@ -266,6 +273,10 @@ pub struct FillReport {
     pub engines: Vec<(u64, crate::ai::Engine)>,
     /// Patches left as they were, and why: the model could not run.
     pub failed: Vec<(String, String)>,
+    /// Fill patches left as they were for now, by id: the picture is
+    /// delivered first, and the worker makes these after it, one a
+    /// develop of the same generation.
+    pub pending: Vec<u64>,
 }
 
 /// The white balance a develop used: camera gains and the camera to
@@ -418,6 +429,13 @@ pub enum Outcome {
         generation: u64,
         name: String,
         made: usize,
+        of: usize,
+    },
+    /// The fill at work for develop `generation` has made `step` of
+    /// its `of` steps: the generative remove's UNet calls.
+    FillStep {
+        generation: u64,
+        step: usize,
         of: usize,
     },
     /// A frame's thumbnail, with the frame it was made for: the list
@@ -638,6 +656,10 @@ struct Queue {
     /// now when the window has it: their shelved bases that no open
     /// would take are let go (`Worker::edit_changed`).
     edits_changed: Vec<(PathBuf, Option<FileNow>)>,
+    /// The open frame's fills made with no model, of this value
+    /// (`Ai::fill_by_test`): for a test of the rounds.
+    #[cfg(test)]
+    fill_by_test: Option<f32>,
 }
 
 pub type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
@@ -884,9 +906,9 @@ enum Blame {
 impl Blame {
     fn of(job: &Job) -> Self {
         match job {
-            Job::Open { generation, .. } | Job::Develop { generation, .. } => {
-                Blame::Develop(*generation)
-            }
+            Job::Open { generation, .. }
+            | Job::Develop { generation, .. }
+            | Job::Fill { generation } => Blame::Develop(*generation),
             // A frame of a set is caught where it runs, and counted
             // there as the set's failure.
             Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,

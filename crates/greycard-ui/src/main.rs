@@ -993,6 +993,8 @@ impl State {
                 patch_handles: Rc::new(VecModel::default()),
                 patch_shape: None,
                 lit_shape: None,
+                fills_pending: Vec::new(),
+                pending_shapes: HashMap::new(),
                 guiding: Guiding::default(),
                 guide_kept: Rc::new(VecModel::default()),
                 stances: HashMap::new(),

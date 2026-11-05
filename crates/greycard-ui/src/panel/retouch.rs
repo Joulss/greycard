@@ -88,6 +88,32 @@ pub(crate) fn shown_outlines(st: &mut State, app: &App, edit: &Edit) -> (String,
     (edge, feather)
 }
 
+/// The edges of the Fill patches whose fills the worker is still to
+/// make, on any tab, as a Path's commands: drawn dimmed where the
+/// picture still shows what they cover. Empty in the crop.
+pub(crate) fn pending_outlines(st: &mut State, app: &App, edit: &Edit) -> String {
+    if st.develop.fills_pending.is_empty() || app.get_crop_mode() {
+        st.develop.pending_shapes.clear();
+        return String::new();
+    }
+    let map = ViewMap::of(st, app);
+    let pending = st.develop.fills_pending.clone();
+    st.develop
+        .pending_shapes
+        .retain(|id, _| pending.contains(id));
+    let mut edge = String::new();
+    for p in edit
+        .retouch
+        .patches
+        .iter()
+        .filter(|p| pending.contains(&p.id))
+    {
+        let shape = st.develop.pending_shapes.entry(p.id).or_default();
+        edge.push_str(&patch_outlines(shape, p, &map).0);
+    }
+    edge
+}
+
 /// The patches' names on the panel, the chosen one's values on its
 /// sliders, and whether its row has "Another": a Fill the generative
 /// remove made, by what the last develop said ([`took_engines`]).
@@ -466,6 +492,18 @@ mod tests {
     /// A develop landing for the state developing now, with which
     /// engine made each Fill.
     fn land(app: &App, state: &Rc<Shared>, engines: Vec<(u64, Engine)>) {
+        land_with(
+            app,
+            state,
+            crate::worker::FillReport {
+                engines,
+                ..Default::default()
+            },
+        );
+    }
+
+    /// [`land`], with the develop's own word on its fills.
+    fn land_with(app: &App, state: &Rc<Shared>, fills: crate::worker::FillReport) {
         let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
             app,
@@ -489,10 +527,7 @@ mod tests {
                 dehaze: None,
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
-                fills: crate::worker::FillReport {
-                    engines,
-                    ..Default::default()
-                },
+                fills,
             },
         );
     }
@@ -1087,5 +1122,71 @@ mod tests {
             "left: the chosen one's alone"
         );
         assert_eq!(app.get_patch(), 0, "the chosen patch as it was");
+    }
+
+    /// A develop that leaves fills for the worker outlines them, dimmed,
+    /// on any tab, and readies the status line's bar, which the fill's
+    /// steps then fill; the develop that leaves none takes both off. A
+    /// step of a develop left behind moves nothing.
+    #[test]
+    fn fills_still_to_come_are_outlined_and_their_steps_counted() {
+        use crate::worker::{FillReport, Outcome};
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (400, 300);
+            st.develop.image_size = (400, 300);
+            st.develop.zoom = 1.0;
+            let fill = |id, u| Patch {
+                id,
+                method: RetouchMethod::Fill,
+                points: vec![[u, 0.4]],
+                radius: 0.05,
+                ..Default::default()
+            };
+            st.develop.edit.retouch.patches = vec![fill(1, 0.3), fill(2, 0.7)];
+        }
+        app.set_panel_tab("Color".into());
+        let waiting = || {
+            let mut st = state.borrow_mut();
+            let edit = st.develop.edit.clone();
+            super::pending_outlines(&mut st, &app, &edit)
+        };
+        assert_eq!(waiting(), "");
+        land_with(
+            &app,
+            &state,
+            FillReport {
+                pending: vec![2],
+                ..Default::default()
+            },
+        );
+        assert_eq!(app.get_fill_fraction(), 0.0);
+        let alone = {
+            let st = state.borrow();
+            let map = crate::panel::viewport::ViewMap::of(&st, &app);
+            super::patch_outlines(&mut None, &st.develop.edit.retouch.patches[1], &map).0
+        };
+        assert!(!alone.is_empty());
+        assert_eq!(waiting(), alone, "the one to come, off the Retouch tab");
+        let generation = state.borrow().develop.generation;
+        let step = |generation, step| {
+            crate::panel::deliver::deliver(
+                &app,
+                Outcome::FillStep {
+                    generation,
+                    step,
+                    of: 24,
+                },
+            )
+        };
+        step(generation, 12);
+        assert_eq!(app.get_fill_fraction(), 0.5);
+        step(generation + 1, 24);
+        assert_eq!(app.get_fill_fraction(), 0.5, "another develop's");
+        land_with(&app, &state, FillReport::default());
+        assert_eq!(app.get_fill_fraction(), -1.0);
+        assert_eq!(waiting(), "");
     }
 }

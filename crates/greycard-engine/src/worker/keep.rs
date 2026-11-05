@@ -69,6 +69,15 @@ pub(super) fn keep_open(
         }
         return Some(keep);
     };
+    // Its fills are still being made: the pictures wait for the last,
+    // as for a develop still to land.
+    if base.filling {
+        if leaving {
+            left(edited);
+            return None;
+        }
+        return Some(keep);
+    }
     let lenses = hand.lenses;
     let of_keep = |edit: &Edit, turn: u8| {
         turn == keep.turn

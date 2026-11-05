@@ -324,6 +324,13 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       measured across ISOs, and a frame where it binds
 - [ ] A removal harness: 20 to 30 cases through Lightroom's Generative
       Remove and through us, blind pairs, scored (§380)
+- [ ] A fill carried across a white balance change by the working
+      space's 3x3 map where the stages between commute with it, the
+      regrain drawn again; short of that, the mapped fill as the
+      stand-in a pending patch shows while its fill is made again
+      (§569)
+- [ ] A fill in hand stopped between UNet calls when a develop is
+      asked for, up to 36 s saved at 1024 (§569)
 - [ ] The Fast fill's files uploaded to greycard-rorem-fast (the
       registry already names them, §429), then its time on an M5,
       where Best is 70 s a fill; and whether a choice made on a

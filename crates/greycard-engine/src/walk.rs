@@ -744,6 +744,15 @@ impl Kept {
         Some(image)
     }
 
+    /// Let go of every point past a retouch that left a fill unmade,
+    /// on the device or not: the walk after starts before the retouch
+    /// and asks for those fills again.
+    pub fn drop_unmade(&mut self) {
+        self.points
+            .retain(|p| p.retouch.as_ref().is_none_or(|a| a.unmade.is_empty()));
+        self.drop_orphaned_upload();
+    }
+
     /// Let go of everything kept on the device: its context is gone.
     pub fn forget_device(&mut self) {
         self.points.retain(|p| !matches!(p.buf, KeptBuf::Device(_)));

@@ -212,6 +212,11 @@ pub(crate) struct Develop {
     pub(crate) patch_shape: Option<PatchShape>,
     /// The same for the patch whose row is under the pointer.
     pub(crate) lit_shape: Option<PatchShape>,
+    /// The Fill patches the last develop left for the worker to make
+    /// after it, by id, until a develop lands with none: their outlines
+    /// are drawn, dimmed, while they wait; and their rings, by id.
+    pub(crate) fills_pending: Vec<u64>,
+    pub(crate) pending_shapes: HashMap<u64, Option<PatchShape>>,
     /// The perspective guide's first stroke, while it waits for the
     /// second.
     pub(crate) guiding: Guiding,

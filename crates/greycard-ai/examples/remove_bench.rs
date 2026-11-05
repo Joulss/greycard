@@ -9,7 +9,11 @@
 //! sessions and the rest do not; `GREYCARD_REMOVE_TILED=0` or `1`
 //! runs the decoder whole or in tiles at 1024, and each run says which
 //! ran; `GREYCARD_REMOVE_STEPS=4` or `25` picks the sampler (25 when
-//! unset; 4 wants the 4-step UNet in the store). Prints the peak GPU
+//! unset; 4 wants the 4-step UNet in the store);
+//! `GREYCARD_BENCH_QUEUE=1` runs them as a queue of fills does
+//! (`Remove::hold_unet`), the UNet kept open between them and let go
+//! after the last, at the sizes the machine's memory allows
+//! (`remove::queued_up_to`). Prints the peak GPU
 //! memory over what was in use before, from `nvidia-smi` sampled in a
 //! thread, and the process's peak resident memory; with `OUT.png`
 //! writes the last answer.
@@ -120,7 +124,8 @@ fn main() {
         );
         net
     });
-    let mut remove = Remove::load(&store, &[Provider::WebGpu]).expect("load");
+    let machine = greycard_ai::remove::Machine::here();
+    let mut remove = Remove::load_on(&store, &[Provider::WebGpu], Some(machine)).expect("load");
     if let Some(steps) = Steps::from_env(std::env::var("GREYCARD_REMOVE_STEPS").ok().as_deref()) {
         remove.set_steps(steps).expect("the steps' UNet");
     }
@@ -130,8 +135,10 @@ fn main() {
         remove.vae(),
         remove.steps()
     );
+    let queue = std::env::var("GREYCARD_BENCH_QUEUE").is_ok_and(|v| v == "1");
     let mut out = None;
     for seed in 1..=runs {
+        remove.hold_unet(queue && seed < runs);
         let answer = remove.remove(&image, &hole, seed).expect("remove");
         let t = remove.times();
         println!(
@@ -149,6 +156,8 @@ fn main() {
         );
         out = Some(answer);
     }
+    remove.release_unet();
+    println!("after the last, the card at {} MiB", gpu_mb().unwrap_or(0));
     stop.store(true, Ordering::Relaxed);
     let _ = sampler.join();
     let p = peak.load(Ordering::Relaxed);

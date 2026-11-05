@@ -4563,3 +4563,359 @@ fn a_kept_sharpen_delta_does_not_outlive_its_picture() {
         "the old picture's delta is kept"
     );
 }
+
+/// A flat picture with three Fill patches apart, made with no model.
+fn three_fills() -> (Input, Edit, Ai) {
+    use greycard_edit::retouch::{Method, Patch};
+    let mut image = WorkingImage::new(256, 256);
+    image.data.fill(0.4);
+    let fill = |id, u: f32| Patch {
+        id,
+        method: Method::Fill,
+        points: vec![[u, u]],
+        radius: 0.04,
+        ..Default::default()
+    };
+    let edit = Edit {
+        retouch: Retouch {
+            enabled: true,
+            patches: vec![fill(1, 0.2), fill(2, 0.5), fill(3, 0.8)],
+        },
+        ..Default::default()
+    };
+    let mut ai = Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+    ai.fill_by_test = Some(0.9);
+    (picture_input(&Arc::new(image)), edit, ai)
+}
+
+/// The value at `(u, u)` of a developed picture.
+fn at(image: &WorkingImage, u: f32) -> f32 {
+    let x = (u * image.width as f32) as usize;
+    let y = (u * image.height as f32) as usize;
+    image.data[(y * image.width + x) * 3]
+}
+
+/// The window's develop delivers its picture before its fills, with
+/// each left as it was; each round after makes the next, says where
+/// the develop's count is, and delivers the picture with it in; the
+/// last leaves none, and a develop after keeps them all.
+#[test]
+fn a_develop_shows_its_picture_and_then_makes_its_fills_one_a_round() {
+    let (input, edit, mut ai) = three_fills();
+    let said = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let deliver: Deliver = {
+        let said = said.clone();
+        Arc::new(move |o| {
+            if let Outcome::Filling { name, made, of, .. } = o {
+                said.lock().unwrap().push((name, made, of));
+            }
+        })
+    };
+    let mut base = None;
+    let mut develop = |round: &mut Round, base: &mut Option<FrameKept>| {
+        let (outcome, image) = develop_round(
+            &input,
+            &edit,
+            0,
+            1,
+            base,
+            &mut ai,
+            (None, None),
+            &mut None,
+            &deliver,
+            round,
+        );
+        let Outcome::Developed { fills, .. } = outcome else {
+            panic!("developed");
+        };
+        (fills, image.expect("on the CPU"))
+    };
+    let mut round = Round::first();
+    let (fills, image) = develop(&mut round, &mut base);
+    assert!(fills.made.is_empty());
+    assert_eq!(fills.pending, [1, 2, 3]);
+    assert!(base.as_ref().unwrap().filling);
+    for u in [0.2, 0.5, 0.8] {
+        assert_eq!(at(&image, u), 0.4, "left as it was at {u}");
+    }
+    assert!(said.lock().unwrap().is_empty(), "no model ran");
+    assert_eq!(round.ahead, (3, 0));
+    for (k, left) in [(1, vec![2, 3]), (2, vec![3]), (3, vec![])] {
+        round = Round::next(round.ahead);
+        let (fills, image) = develop(&mut round, &mut base);
+        assert_eq!(fills.made, [format!("Fill {k}")]);
+        assert_eq!(fills.pending, left);
+        assert_eq!(round.ahead, (3, k));
+        for (i, u) in [0.2f32, 0.5, 0.8].into_iter().enumerate() {
+            let want = if i < k { 0.9 } else { 0.4 };
+            assert!((at(&image, u) - want).abs() < 5e-3, "round {k} at {u}");
+        }
+    }
+    assert!(!base.as_ref().unwrap().filling);
+    assert_eq!(
+        *said.lock().unwrap(),
+        [
+            ("Fill 1".to_string(), 0, 3),
+            ("Fill 2".to_string(), 1, 3),
+            ("Fill 3".to_string(), 2, 3)
+        ]
+    );
+    let mut again = Round::first();
+    let (fills, _) = develop(&mut again, &mut base);
+    assert!(fills.pending.is_empty() && fills.made.is_empty());
+}
+
+/// A develop that starts past its retouch, from a point that left fills
+/// for later, says them still to make: a sharpen moved between two
+/// rounds does not give the fills up.
+#[test]
+fn a_develop_past_its_retouch_still_has_its_fills_to_make() {
+    let (input, edit, mut ai) = three_fills();
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let mut develop = |edit: &Edit, round: &mut Round, base: &mut Option<FrameKept>| {
+        let (outcome, _) = develop_round(
+            &input,
+            edit,
+            0,
+            1,
+            base,
+            &mut ai,
+            (None, None),
+            &mut None,
+            &deliver,
+            round,
+        );
+        let Outcome::Developed { fills, .. } = outcome else {
+            panic!("developed");
+        };
+        fills
+    };
+    develop(&edit, &mut Round::first(), &mut base);
+    let mut round = Round::next((3, 0));
+    develop(&edit, &mut round, &mut base);
+    let mut sharper = edit.clone();
+    sharper.sharpen.iterations += 3;
+    let fills = develop(&sharper, &mut Round::first(), &mut base);
+    assert!(fills.made.is_empty());
+    assert_eq!(fills.pending, [2, 3]);
+}
+
+/// The worker delivers an open's picture with its fills still to make,
+/// then each fill as a develop of the same generation; a develop asked
+/// for while they are being made takes the rest over, so no fill is
+/// made for the develop it replaced after it is asked.
+#[test]
+fn the_worker_makes_a_develops_fills_after_it_and_a_new_develop_takes_them_over() {
+    let (dir, paths) = dngs("fill-rounds", &["fill-rounds.dng"], 128, 96);
+    let (_, edit, _) = three_fills();
+    // What the worker said, in order: each develop's generation and
+    // the fills it left, and each fill started, by generation.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    // Held by the first develop with fills left until the test has
+    // asked for the next develop.
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let go_rx = Mutex::new(Some(go_rx));
+    let worker = Worker::new(move |o| match o {
+        Outcome::Developed {
+            generation, fills, ..
+        } => {
+            let first = generation == 1 && fills.pending.len() == 3;
+            tx.lock()
+                .unwrap()
+                .send(format!("developed {generation}: {:?}", fills.pending))
+                .unwrap();
+            if first && let Some(go) = go_rx.lock().unwrap().take() {
+                go.recv().unwrap();
+            }
+        }
+        Outcome::Filling {
+            generation, name, ..
+        } => tx
+            .lock()
+            .unwrap()
+            .send(format!("filling {generation}: {name}"))
+            .unwrap(),
+        Outcome::Failed { message, .. } => panic!("{message}"),
+        _ => {}
+    });
+    worker.fill_by_test(0.9);
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: edit.clone(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    });
+    let wait = std::time::Duration::from_secs(60);
+    let next = || rx.recv_timeout(wait).expect("the worker says");
+    assert_eq!(next(), "developed 1: [1, 2, 3]");
+    worker.send(Job::Develop {
+        edit: edit.clone(),
+        generation: 2,
+        turn: 0,
+    });
+    go_tx.send(()).unwrap();
+    let said: Vec<String> = (0..7).map(|_| next()).collect();
+    assert_eq!(
+        said,
+        [
+            "developed 2: [1, 2, 3]",
+            "filling 2: Fill 1",
+            "developed 2: [2, 3]",
+            "filling 2: Fill 2",
+            "developed 2: [3]",
+            "filling 2: Fill 3",
+            "developed 2: []",
+        ]
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A worker on a raw with [`three_fills`]'s edit, its fills made with
+/// no model of `value`: what it says, in order (each develop's
+/// generation and the fills it left, each fill started, each mask
+/// answered), and a gate the first develop with fills left waits on
+/// before it lets the worker go on.
+fn fill_worker(
+    what: &str,
+    value: f32,
+) -> (
+    Worker,
+    PathBuf,
+    PathBuf,
+    std::sync::mpsc::Receiver<String>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (dir, paths) = dngs(what, &[&format!("{what}.dng")], 128, 96);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let go_rx = Mutex::new(Some(go_rx));
+    let worker = Worker::new(move |o| match o {
+        Outcome::Developed {
+            generation, fills, ..
+        } => {
+            let first = fills.pending.len() == 3;
+            tx.lock()
+                .unwrap()
+                .send(format!("developed {generation}: {:?}", fills.pending))
+                .unwrap();
+            if first && let Some(go) = go_rx.lock().unwrap().take() {
+                go.recv().unwrap();
+            }
+        }
+        Outcome::Filling {
+            generation, name, ..
+        } => tx
+            .lock()
+            .unwrap()
+            .send(format!("filling {generation}: {name}"))
+            .unwrap(),
+        Outcome::Mask { .. } | Outcome::MaskFailed { .. } => {
+            tx.lock().unwrap().send("mask".into()).unwrap()
+        }
+        Outcome::Failed { message, .. } => panic!("{message}"),
+        _ => {}
+    });
+    worker.fill_by_test(value);
+    (worker, dir, paths[0].clone(), rx, go_tx)
+}
+
+fn open_with_fills(path: &std::path::Path) -> Job {
+    Job::Open {
+        path: path.to_path_buf(),
+        version: None,
+        edit: three_fills().1,
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    }
+}
+
+/// A fill whose model will not load fails each round without being
+/// remembered: the rounds end once a round leaves no fewer to make,
+/// and the last develop says none to come.
+#[test]
+fn rounds_whose_fill_fails_each_time_end() {
+    let (worker, dir, path, rx, go) = fill_worker("fill-rounds-fail", -1.0);
+    go.send(()).unwrap();
+    worker.send(open_with_fills(&path));
+    let wait = std::time::Duration::from_secs(60);
+    let said: Vec<String> = (0..5)
+        .map(|_| rx.recv_timeout(wait).expect("the worker says"))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "developed 1: [1, 2, 3]",
+            "filling 1: Fill 1",
+            "developed 1: [2, 3]",
+            "filling 1: Fill 1",
+            "developed 1: []",
+        ]
+    );
+    // The queue is over: a mask, which waits behind it, is answered.
+    worker.send(Job::Mask {
+        key: (1, 0),
+        shape: Shape::Linear {
+            from: [0.2, 0.5],
+            to: [0.8, 0.5],
+        },
+        model: None,
+    });
+    assert_eq!(rx.recv_timeout(wait).expect("the mask"), "mask");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Leaving the editor pauses the open frame's fills: a mask asked for
+/// after it, which waits behind the fills, is answered with no fill
+/// made; the frame shown again, the rest are made.
+#[test]
+fn leaving_the_editor_pauses_the_fills() {
+    let (worker, dir, path, rx, go) = fill_worker("fill-rounds-leave", 0.9);
+    worker.send(open_with_fills(&path));
+    let wait = std::time::Duration::from_secs(60);
+    assert_eq!(
+        rx.recv_timeout(wait).expect("the open"),
+        "developed 1: [1, 2, 3]"
+    );
+    worker.edited().set_open(None);
+    worker.send(Job::Mask {
+        key: (1, 0),
+        shape: Shape::Linear {
+            from: [0.2, 0.5],
+            to: [0.8, 0.5],
+        },
+        model: None,
+    });
+    go.send(()).unwrap();
+    assert_eq!(rx.recv_timeout(wait).expect("the mask"), "mask");
+    worker.set_open_frame(Some(Frame {
+        path: path.clone(),
+        version: None,
+        name: None,
+    }));
+    let said: Vec<String> = (0..6)
+        .map(|_| rx.recv_timeout(wait).expect("the worker says"))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "filling 1: Fill 1",
+            "developed 1: [2, 3]",
+            "filling 1: Fill 2",
+            "developed 1: [3]",
+            "filling 1: Fill 3",
+            "developed 1: []",
+        ]
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}

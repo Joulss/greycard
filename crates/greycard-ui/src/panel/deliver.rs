@@ -438,6 +438,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if generation != st.develop.generation {
                 return;
             }
+            // The last file's fills to come are not this one's.
+            st.develop.fills_pending.clear();
+            app.set_fill_fraction(-1.0);
             // A fresh raw's learned-denoiser blend from its ISO: into
             // the open cell's line (and that line alone: a version at
             // its own strength keeps it, one still at the default waits
@@ -745,6 +748,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     offer_model(&mut st, app, model, false);
                 }
             }
+            // The fills the worker makes after this picture: outlined
+            // while they wait, the bar ready for the first of them.
+            st.develop.fills_pending = fills.pending.clone();
+            app.set_fill_fraction(if fills.pending.is_empty() { -1.0 } else { 0.0 });
             // Which engine made each Fill, for its row's "Another".
             if crate::panel::retouch::took_engines(&mut st, &fills.engines) {
                 crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
@@ -857,6 +864,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // the picture has not moved yet, and how much of the wait
             // is left when more than one fill is ahead.
             if generation == state.borrow().develop.generation {
+                app.set_fill_fraction(0.0);
                 let count = if of > 1 {
                     format!(", {} of {of}", made + 1)
                 } else {
@@ -865,6 +873,17 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.set_status(
                     format!("developing... the fill model is at work on {name}{count}").into(),
                 );
+            }
+        }
+        // The bar under way with the fill: how many of its steps are
+        // made.
+        Outcome::FillStep {
+            generation,
+            step,
+            of,
+        } => {
+            if generation == state.borrow().develop.generation {
+                app.set_fill_fraction((step as f32 / of.max(1) as f32).clamp(0.0, 1.0));
             }
         }
         Outcome::Failed {
@@ -878,6 +897,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if generation == st.develop.generation {
                 app.set_status(format!("failed: {message}").into());
                 app.set_busy(false);
+                // No fill of it is coming.
+                st.develop.fills_pending.clear();
+                app.set_fill_fraction(-1.0);
                 // An open that failed before anything said what the raw
                 // is: the demosaic menu stops waiting.
                 crate::panel::browser::mosaic_unreadable(&mut st, app);
