@@ -170,6 +170,7 @@ mod tests {
         e.color.saturation = -0.3;
         e.noise.learned = Learned::Balanced;
         e.noise.learned_strength = 0.6;
+        e.noise.learned_chroma_strength = 0.2;
         e.geometry.angle = 2.0;
         e
     }
@@ -277,6 +278,7 @@ mod tests {
         assert_eq!(out.geometry.angle, -4.0);
         assert_eq!(out.noise.learned, Learned::Balanced);
         assert_eq!(out.noise.learned_strength, 0.6);
+        assert_eq!(out.noise.learned_chroma_strength, 0.2);
         // What the frame on screen gets is what a target's sidecar
         // records, through the same bottom layer.
         let mut sidecars = vec![Sidecar::default()];

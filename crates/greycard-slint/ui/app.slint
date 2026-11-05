@@ -20,7 +20,7 @@ import { PresetsSection } from "panel/presets.slint";
 import { WhiteBalanceSection, ColorSection, MixerSection, BlackWhiteSection, GradingSection, TintSection } from "panel/color.slint";
 import { CurvesSection } from "panel/curve.slint";
 import { LightSection, NoiseSection, DetailSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
-export { DetailWords } from "panel/edit.slint";
+export { DetailWords, NoiseWords } from "panel/edit.slint";
 import { LensSection } from "panel/lens.slint";
 import { ProofSection, MonitorSection } from "panel/display.slint";
 import { CropSection, RotateSection, PerspectiveSection } from "panel/crop.slint";
@@ -1570,6 +1570,7 @@ export component App inherits Window {
     in-out property <string> denoise-learned: "off";
     in property <[string]> denoise-tiers;
     in-out property <float> denoise-learned-strength: 1.0;
+    in-out property <float> denoise-learned-chroma-strength: 1.0;
     // Local contrast: the section's switch and its sliders, -1 to 1,
     // shown as ±100.
     in-out property <bool> detail-enabled: true;
@@ -3788,6 +3789,7 @@ export component App inherits Window {
                             denoise-learned <=> root.denoise-learned;
                             denoise-tiers: root.denoise-tiers;
                             denoise-learned-strength <=> root.denoise-learned-strength;
+                            denoise-learned-chroma-strength <=> root.denoise-learned-chroma-strength;
                             unavailable: root.noise-unavailable;
                             learned-unavailable: root.learned-unavailable;
                             again-shown: root.merge-again-shown;

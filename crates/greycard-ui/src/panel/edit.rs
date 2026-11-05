@@ -647,6 +647,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     edit.noise.strength = app.get_denoise_strength();
     edit.noise.learned = Learned::from_name(app.get_denoise_learned().as_str()).unwrap_or_default();
     edit.noise.learned_strength = app.get_denoise_learned_strength();
+    edit.noise.learned_chroma_strength = app.get_denoise_learned_chroma_strength();
     edit.lens = greycard_edit::Lens {
         enabled: app.get_lens_enabled(),
         profile: app.get_lens_profile_on(),
@@ -791,6 +792,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_denoise_strength(edit.noise.strength);
     app.set_denoise_learned(edit.noise.learned.name().into());
     app.set_denoise_learned_strength(edit.noise.learned_strength);
+    app.set_denoise_learned_chroma_strength(edit.noise.learned_chroma_strength);
     app.set_curves_enabled(look.curves.enabled);
     set_panel_parametric(app, &look.curves.parametric);
     // The selected point outlives a showing of the same curve, not an
@@ -1186,6 +1188,29 @@ mod tests {
 
     use super::*;
     use crate::testing::window;
+
+    /// The learned blend's chroma slider has one name on both sides,
+    /// and the slider reads and writes the edit's field.
+    #[test]
+    fn the_learned_chroma_slider_has_one_name_and_carries_the_field() {
+        let app = window(1);
+        assert_eq!(
+            app.global::<crate::NoiseWords>().get_chroma(),
+            greycard_edit::LEARNED_CHROMA
+        );
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let mut edit = state.borrow().develop.edit.clone();
+        edit.noise.learned_strength = 0.4;
+        show_edit(&state.borrow(), &edit, &app, Some(0));
+        assert_eq!(app.get_denoise_learned_chroma_strength(), 1.0);
+        edit.noise.learned_chroma_strength = 0.3;
+        show_edit(&state.borrow(), &edit, &app, Some(0));
+        assert_eq!(app.get_denoise_learned_chroma_strength(), 0.3);
+        app.set_denoise_learned_chroma_strength(0.65);
+        let read = read_edit(&app, &edit, Some(0));
+        assert_eq!(read.noise.learned_chroma_strength, 0.65);
+    }
 
     /// The Detail section's widest band has one name on both sides:
     /// the Slint's slider reads its global, the history and the copy

@@ -408,8 +408,12 @@ pub enum Stage {
         profile: Option<ProfileRef>,
         orientation: Orientation,
     },
-    /// The learned pair blended by strength.
-    Blend(f32),
+    /// The learned pair blended by strength: the luminance's, then
+    /// the chroma's.
+    Blend {
+        luma: f32,
+        chroma: f32,
+    },
     /// A picture input's turn.
     Orient(Orientation),
     /// A picture input reduced by a whole factor, in place of the bin.
@@ -494,7 +498,7 @@ impl Stage {
             Stage::Denoise(_) => "denoise",
             Stage::Warp(_) => "the file's warp",
             Stage::IntoWorking { .. } => "move into the working space",
-            Stage::Blend(_) => "blend",
+            Stage::Blend { .. } => "blend",
             Stage::Orient(_) => "orient",
             Stage::Reduce(_) => "reduce",
             Stage::Lens(_) => "lens",
@@ -691,7 +695,7 @@ impl Steps {
                         p.settings.dual_contrast,
                     ));
                 }
-                Step::Keep(Keep::Pair) | Step::Op(Stage::Blend(_)) => {}
+                Step::Keep(Keep::Pair) | Step::Op(Stage::Blend { .. }) => {}
                 step => out.steps.push(step.clone()),
             }
         }
@@ -868,7 +872,10 @@ pub fn stages(
             });
             if learned.is_some() {
                 s.keep(Keep::Pair);
-                s.op(Stage::Blend(edit.noise.learned_strength));
+                s.op(Stage::Blend {
+                    luma: edit.noise.learned_strength,
+                    chroma: edit.noise.learned_chroma_strength,
+                });
             }
         }
         InputKind::Picture { .. } => {
@@ -1613,11 +1620,36 @@ mod tests {
         )));
     }
 
+    /// An edit from before the chroma blend, its blend seeded low from
+    /// the ISO: the chroma is brought up as that blend, so the mix is
+    /// the one it always was; the same edit written now blends the
+    /// chroma in full.
+    #[test]
+    fn an_edit_from_before_the_chroma_blend_blends_as_it_did() {
+        let old = r#"{"version": 6, "noise": {"learned": "best", "learned_strength": 0.35}}"#;
+        let edit = greycard_edit::Edit::from_json(old).unwrap();
+        let viewport = stages(&edit, &Purpose::Viewport, &raw(0), None);
+        assert!(viewport.ops().any(|o| *o
+            == Stage::Blend {
+                luma: 0.35,
+                chroma: 0.35
+            }));
+        let now = r#"{"version": 7, "noise": {"learned": "best", "learned_strength": 0.35}}"#;
+        let edit = greycard_edit::Edit::from_json(now).unwrap();
+        let viewport = stages(&edit, &Purpose::Viewport, &raw(0), None);
+        assert!(viewport.ops().any(|o| *o
+            == Stage::Blend {
+                luma: 0.35,
+                chroma: 1.0
+            }));
+    }
+
     #[test]
     fn a_learned_tier_makes_a_pair_and_blends_it() {
         let mut edit = everything();
         edit.noise.learned = greycard_edit::Learned::Best;
         edit.noise.learned_strength = 0.6;
+        edit.noise.learned_chroma_strength = 0.9;
         let viewport = stages(&edit, &Purpose::Viewport, &raw(0), None);
         assert_eq!(
             names(&viewport)[..7],
@@ -1631,7 +1663,11 @@ mod tests {
                 "defringe"
             ]
         );
-        assert!(viewport.ops().any(|o| *o == Stage::Blend(0.6)));
+        assert!(viewport.ops().any(|o| *o
+            == Stage::Blend {
+                luma: 0.6,
+                chroma: 0.9
+            }));
         // The learned tier measures the noise, and stands in for the
         // profiled denoise, which does not run.
         let Some(Stage::Prepare(p)) = viewport.ops().next() else {

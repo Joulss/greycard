@@ -235,6 +235,8 @@ fn noise(b: &Edit, a: &Edit) -> String {
             && (skip == "strength" || x.strength == y.strength)
             && (skip == "learned" || x.learned == y.learned)
             && (skip == "learned_strength" || x.learned_strength == y.learned_strength)
+            && (skip == "learned_chroma_strength"
+                || x.learned_chroma_strength == y.learned_chroma_strength)
     };
     if x.enabled != y.enabled && rest_same("enabled") {
         switched("Noise", y.enabled)
@@ -246,6 +248,14 @@ fn noise(b: &Edit, a: &Edit) -> String {
         format!("Learned denoise {}", y.learned.name())
     } else if x.learned_strength != y.learned_strength && rest_same("learned_strength") {
         format!("Learned denoise {:.0}%", y.learned_strength * 100.0)
+    } else if x.learned_chroma_strength != y.learned_chroma_strength
+        && rest_same("learned_chroma_strength")
+    {
+        format!(
+            "Learned denoise {} {:.0}%",
+            crate::LEARNED_CHROMA.to_lowercase(),
+            y.learned_chroma_strength * 100.0
+        )
     } else {
         "Noise".to_string()
     }
@@ -754,6 +764,10 @@ mod tests {
         let mut e = base.clone();
         e.noise.strength = 2.5;
         assert_eq!(describe(&base, &e, &[]), "Denoise 2.5");
+        let mut e = base.clone();
+        e.noise.learned_chroma_strength = 0.4;
+        assert_eq!(describe(&base, &e, &[]), "Learned denoise chroma 40%");
+        assert_eq!(describe(&e, &base, &[]), "Learned denoise chroma 100%");
         let mut e = base.clone();
         e.detail.texture = 0.5;
         assert_eq!(describe(&base, &e, &[]), "Texture +50");

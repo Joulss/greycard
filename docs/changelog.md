@@ -98,6 +98,11 @@ design note behind it.
 
 ### Color
 
+- The learned denoiser's Blend is now two sliders, Luma and Chroma:
+  the color noise goes at Chroma's full default while Luma keeps as
+  much grain as you like. An edit from before keeps the blend it had
+  for both
+  ([§567](https://github.com/jessolmstead/greycard/blob/master/docs/notes/567-the-learned-blends-color-apart-from-its-grain.md)).
 - A DNG that carries its own distortion correction or bad-pixel list
   is read with them, as Adobe's reader applies them, a phone's
   per-color CA correction included. The file's correction takes the

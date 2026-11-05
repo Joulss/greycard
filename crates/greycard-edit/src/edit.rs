@@ -829,6 +829,7 @@ mod tests {
             strength: 2.0,
             learned: Learned::Best,
             learned_strength: 0.8,
+            learned_chroma_strength: 0.25,
         };
         edit.demosaic = Demosaic::Rcd;
         let json = edit.to_json();

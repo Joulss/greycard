@@ -79,7 +79,8 @@ pub use line::{Exported, HISTORY, Line, Row, Snapshot, Step};
 pub use loader::{Loader, NoStores};
 pub use migration::migrate;
 pub use sections::{
-    Demosaic, Detail, DisplayCurve, Learned, Light, Noise, STRUCTURE, Sharpen, Tone, WhiteBalance,
+    Demosaic, Detail, DisplayCurve, LEARNED_CHROMA, Learned, Light, Noise, STRUCTURE, Sharpen,
+    Tone, WhiteBalance,
 };
 #[cfg(feature = "testing")]
 pub use sidecar::synced_writes;
@@ -89,7 +90,7 @@ pub use sidecar::{
 };
 
 /// The schema version this build writes.
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

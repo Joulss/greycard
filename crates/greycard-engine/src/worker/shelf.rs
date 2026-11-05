@@ -228,6 +228,7 @@ impl FileNow {
                 let mut as_made = now.clone();
                 if now.noise.tier().is_none() && edit.noise.tier().is_none() {
                     as_made.noise.learned_strength = edit.noise.learned_strength;
+                    as_made.noise.learned_chroma_strength = edit.noise.learned_chroma_strength;
                 }
                 crate::stages::same_base(edit, &as_made, &facts, lenses)
             })

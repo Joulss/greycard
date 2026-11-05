@@ -185,6 +185,22 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
                 light.insert("baseline".into(), f64::from(baseline::BEFORE_BODIES).into());
             }
         }
+        // Version 7 gave the learned blend a chroma strength of its
+        // own, full by default. An edit written before blended the
+        // chroma by the one strength it had, and keeps that blend
+        // where its learned tier is on; where it is off the blend
+        // does not run, and the field at its default is left out.
+        if version < 7
+            && let Some(noise) = obj.get_mut("noise").and_then(|n| n.as_object_mut())
+            && noise
+                .get("learned")
+                .and_then(|l| l.as_str())
+                .is_some_and(|l| l != "off")
+            && !noise.contains_key("learned_chroma_strength")
+            && let Some(blend) = noise.get("learned_strength").cloned()
+        {
+            noise.insert("learned_chroma_strength".into(), blend);
+        }
         // Version 4's step needs the frame's shape, which is not in
         // here: an edit that wants it stays at 3 until someone who
         // knows the frame calls `Edit::migrate_with_frame`. Only an
@@ -579,6 +595,34 @@ mod baselines {
         let mut v = edit.clone();
         v["version"] = 5.into();
         Edit::from_json(&v.to_string()).unwrap()
+    }
+
+    /// An edit from before the chroma blend had one strength for both:
+    /// with a learned tier on it keeps that blend for the chroma, so
+    /// it develops as it did; with the tier off the chroma is full,
+    /// the default, and the file is unchanged by it.
+    #[test]
+    fn an_edit_written_before_the_chroma_blend_keeps_its_blend() {
+        let v = |learned: &str| {
+            let mut v =
+                serde_json::json!({"noise": {"learned": learned, "learned_strength": 0.35}});
+            v["version"] = 6.into();
+            Edit::from_json(&v.to_string()).unwrap()
+        };
+        let on = v("best");
+        assert_eq!(on.noise.learned_strength, 0.35);
+        assert_eq!(on.noise.learned_chroma_strength, 0.35);
+        assert_eq!(on.version, VERSION);
+        assert_eq!(Edit::from_json(&on.to_json()).unwrap(), on);
+        let off = v("off");
+        assert_eq!(off.noise.learned_chroma_strength, 1.0);
+        let json: serde_json::Value = serde_json::from_str(&off.to_json()).unwrap();
+        assert!(json["noise"].get("learned_chroma_strength").is_none());
+        // Written at 7 with the field left out, it is full.
+        let mut v = serde_json::json!({"noise": {"learned": "best", "learned_strength": 0.35}});
+        v["version"] = 7.into();
+        let fresh = Edit::from_json(&v.to_string()).unwrap();
+        assert_eq!(fresh.noise.learned_chroma_strength, 1.0);
     }
 
     #[test]

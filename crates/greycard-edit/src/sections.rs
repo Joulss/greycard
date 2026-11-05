@@ -229,6 +229,11 @@ impl WhiteBalance {
     }
 }
 
+/// The panel's word for the learned blend's chroma slider, in one
+/// place so it is renamed in one place: the history's rows read it, as
+/// the panel's slider reads its constant in the Slint.
+pub const LEARNED_CHROMA: &str = "Chroma";
+
 /// Noise reduction: the engine's profiled denoiser, or the learned
 /// one in place of the demosaic and the profiled pass together.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -244,8 +249,16 @@ pub struct Noise {
     pub learned: Learned,
     /// How much of the learned answer shows, 0 to 1: it is blended
     /// with the plain demosaic of the same mosaic, so the slider does
-    /// not run the network again.
+    /// not run the network again. Since the chroma has a strength of
+    /// its own, this one is the luminance's.
     pub learned_strength: f32,
+    /// How much of the learned answer's color shows, 0 to 1: the
+    /// chroma's share of the same blend, so the color noise can go
+    /// while the grain stays. Full by default and left out of a
+    /// sidecar there; an edit from before it had the two strengths as
+    /// one, and schema version 7 writes it that edit's blend.
+    #[serde(skip_serializing_if = "is_one")]
+    pub learned_chroma_strength: f32,
 }
 
 impl Default for Noise {
@@ -256,6 +269,7 @@ impl Default for Noise {
             strength: 1.5,
             learned: Learned::Off,
             learned_strength: 1.0,
+            learned_chroma_strength: 1.0,
         }
     }
 }
@@ -400,6 +414,10 @@ impl Default for Detail {
 
 fn is_zero(v: &f32) -> bool {
     *v == 0.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl Detail {
@@ -702,6 +720,38 @@ mod tests {
         // A sidecar from a build before it reads as none.
         let old = r#"{"version": 3, "detail": {"texture": 0.2, "clarity": 0.1}}"#;
         assert_eq!(Edit::from_json(old).unwrap().detail.structure, 0.0);
+    }
+
+    /// The learned denoiser's chroma blend: full it is left out, so a
+    /// sidecar and a develop key at the default are what they were;
+    /// below full it is written and read back.
+    #[test]
+    fn the_learned_chroma_blend_is_in_the_sidecar_only_below_full() {
+        let mut e = Edit::default();
+        e.noise.learned = crate::Learned::Best;
+        e.noise.learned_strength = 0.4;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert!(
+            json["noise"].get("learned_chroma_strength").is_none(),
+            "{json}"
+        );
+        let before = e.develop_key_with(&[], None);
+        e.noise.learned_chroma_strength = 0.7;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert!(
+            json["noise"].get("learned_chroma_strength").is_some(),
+            "{json}"
+        );
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+        assert_ne!(e.develop_key_with(&[], None), before);
+        let fresh = r#"{"version": 7, "noise": {"learned": "best", "learned_strength": 0.4}}"#;
+        assert_eq!(
+            Edit::from_json(fresh)
+                .unwrap()
+                .noise
+                .learned_chroma_strength,
+            1.0
+        );
     }
 
     /// A mask's Sharpen in the sidecar: absent it reads as zero, at

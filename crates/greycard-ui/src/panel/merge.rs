@@ -1569,9 +1569,9 @@ mod tests {
         r.app.set_collapsed_noise(false);
         r.open(&r.out);
         assert!(r.app.get_merge_again_shown());
-        // On the panel, below the learned tier's Blend.
+        // On the panel, below the learned tier's sliders.
         let (at, _) = crate::testing::labeled(&r.app, row);
-        let (blend, _) = crate::testing::labeled(&r.app, "Blend");
+        let (blend, _) = crate::testing::labeled(&r.app, greycard_edit::LEARNED_CHROMA);
         assert!(at.y > blend.y, "{at:?} under {blend:?}");
 
         r.open(&r.old);

@@ -357,10 +357,12 @@ an Apple silicon Mac the model runs through Core ML, which is quicker
 than the graphics path it used before; the first run of each tier on
 a machine takes longer while Core ML prepares it.
 
-**Blend** mixes the denoised picture with the original, so a little
-grain stays. When you first open a raw, **Blend** is set from its ISO:
-35% at ISO 200 and below, up to 100% at ISO 3200 and above. Presets
-leave it alone.
+**Luma** and **Chroma** mix the denoised picture with the original,
+the brightness and the color on their own. **Luma** below 100% leaves
+a little grain; when you first open a raw it is set from its ISO, 35%
+at ISO 200 and below, up to 100% at ISO 3200 and above. **Chroma**
+starts at 100%, since color noise is rarely worth keeping. Presets
+leave both alone.
 
 The learned denoiser also does the demosaic (see
 [DEMOSAIC](#demosaic)), so while it is on, the **DEMOSAIC** choice and

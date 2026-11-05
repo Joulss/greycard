@@ -154,10 +154,11 @@ pub fn sync_into(
 }
 
 /// What a sync's Noise carries beyond a preset's: the learned
-/// denoiser's tier and its blend.
+/// denoiser's tier and its blends.
 pub fn sync_learned(from: &Edit, onto: &mut Edit) {
     onto.noise.learned = from.noise.learned;
     onto.noise.learned_strength = from.noise.learned_strength;
+    onto.noise.learned_chroma_strength = from.noise.learned_chroma_strength;
 }
 
 #[cfg(test)]
@@ -301,6 +302,7 @@ mod tests {
         learned.noise.strength = 0.8;
         learned.noise.learned = Learned::Balanced;
         learned.noise.learned_strength = 0.6;
+        learned.noise.learned_chroma_strength = 0.9;
         let moved = sync_into(&mut sidecars, &learned, &[3], &[Section::Noise], None);
         assert_eq!(moved, [3]);
         assert_eq!(sidecars[3].current.noise, learned.noise);

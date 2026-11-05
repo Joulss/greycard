@@ -1805,11 +1805,11 @@ fn cpu_op(
                 _ => unreachable!("the move into the working space is camera RGB's"),
             }
         }
-        Stage::Blend(strength) => {
+        Stage::Blend { luma, chroma } => {
             let Buf::Pair { model, plain } = take(&mut st.buf) else {
                 unreachable!("the blend is the pair's")
             };
-            st.buf = Buf::Working(blend(&model, &plain, *strength));
+            st.buf = Buf::Working(blend(&model, &plain, *luma, *chroma));
         }
         Stage::Orient(o) => {
             let image = working(&mut st.buf);
@@ -2168,24 +2168,62 @@ fn swaps(o: Orientation) -> bool {
     )
 }
 
-/// `plain` taken `strength` of the way to `model`, per sample: the two
-/// are one picture in one space, so the mix is that much of the
-/// denoise. At the ends no copy is made.
+/// Rec.2020's luminance weights, the working space's own: the
+/// luminance a pixel's change has in that space.
+const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
+
+/// `plain` taken toward `model`, the luminance `luma` of the way and
+/// the chroma `chroma` of the way: the two are one picture in one
+/// space, so the mix is that much of the denoise.
+///
+/// A pixel's change `d = model - plain` is split into its luminance,
+/// `Y = LUMA . d` laid on all three channels (a grey change, whose
+/// luminance is `Y` again since the weights sum to 1), and the rest,
+/// `d - Y`, which has no luminance and is the change's color. The
+/// working space is linear, so this split is exact and the two parts
+/// add back to `d`; it costs a dot product a pixel. The luminance
+/// is the working space's, not a perceptual one: what is kept at
+/// `chroma` 0 is the plain's color noise, measured where it is made.
+///
+/// With the two equal it is the per-sample mix it always was, bit for
+/// bit, and at the ends no copy is made.
 pub fn blend(
     model: &Arc<WorkingImage>,
     plain: &Arc<WorkingImage>,
-    strength: f32,
+    luma: f32,
+    chroma: f32,
 ) -> Arc<WorkingImage> {
-    let s = strength.clamp(0.0, 1.0);
-    if s >= 1.0 {
-        return model.clone();
+    let s = luma.clamp(0.0, 1.0);
+    let c = chroma.clamp(0.0, 1.0);
+    if s == c {
+        if s >= 1.0 {
+            return model.clone();
+        }
+        if s <= 0.0 {
+            return plain.clone();
+        }
+        let mut out = (**plain).clone();
+        for (o, m) in out.data.iter_mut().zip(&model.data) {
+            *o += (m - *o) * s;
+        }
+        return Arc::new(out);
     }
-    if s <= 0.0 {
-        return plain.clone();
-    }
+    // plain + c d + (s - c) Y: the chroma's share of the whole change,
+    // and the luminance's difference on top.
+    let k = s - c;
     let mut out = (**plain).clone();
-    for (o, m) in out.data.iter_mut().zip(&model.data) {
-        *o += (m - *o) * s;
+    for (o, m) in out
+        .data
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .zip(model.data.as_chunks::<3>().0)
+    {
+        let d = [m[0] - o[0], m[1] - o[1], m[2] - o[2]];
+        let y = k * (LUMA[0] * d[0] + LUMA[1] * d[1] + LUMA[2] * d[2]);
+        for (o, d) in o.iter_mut().zip(d) {
+            *o += c * d + y;
+        }
     }
     Arc::new(out)
 }
@@ -3207,8 +3245,11 @@ mod tests {
             KeptBuf::Pair { model, plain } => (model.clone(), plain.clone()),
             _ => panic!("a pair in memory"),
         };
+        // The two strengths as one, as an edit from before the chroma's
+        // is brought up: the ends share as they did.
         for strength in [0.0f32, 0.5, 1.0] {
             e.noise.learned_strength = strength;
+            e.noise.learned_chroma_strength = strength;
             let mut models = Fake {
                 there: true,
                 ..Fake::default()
@@ -3254,10 +3295,93 @@ mod tests {
     fn the_blend_is_linear_and_shares_at_the_ends() {
         let model = Arc::new(WorkingImage::from_data(2, 1, vec![1.0; 6]).unwrap());
         let plain = Arc::new(WorkingImage::from_data(2, 1, vec![0.0; 6]).unwrap());
-        assert!(Arc::ptr_eq(&blend(&model, &plain, 1.0), &model));
-        assert!(Arc::ptr_eq(&blend(&model, &plain, 0.0), &plain));
-        assert!(Arc::ptr_eq(&blend(&model, &plain, 2.0), &model));
-        let half = blend(&model, &plain, 0.25);
+        assert!(Arc::ptr_eq(&blend(&model, &plain, 1.0, 1.0), &model));
+        assert!(Arc::ptr_eq(&blend(&model, &plain, 0.0, 0.0), &plain));
+        assert!(Arc::ptr_eq(&blend(&model, &plain, 2.0, 2.0), &model));
+        let half = blend(&model, &plain, 0.25, 0.25);
         assert!(half.data.iter().all(|v| (*v - 0.25).abs() < 1e-6));
+    }
+
+    /// The per-sample mix the blend was before the chroma had a
+    /// strength of its own, its ends included.
+    fn one_strength(model: &WorkingImage, plain: &WorkingImage, s: f32) -> Vec<f32> {
+        if s >= 1.0 {
+            return model.data.clone();
+        }
+        let mut out = plain.data.clone();
+        for (o, m) in out.iter_mut().zip(&model.data) {
+            *o += (m - *o) * s;
+        }
+        out
+    }
+
+    /// A pair of noisy pictures, the same scene apart.
+    fn noisy_pair() -> (Arc<WorkingImage>, Arc<WorkingImage>) {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as f32 / u32::MAX as f32
+        };
+        let (w, h) = (16, 8);
+        let plain: Vec<f32> = (0..w * h * 3).map(|_| next()).collect();
+        let model: Vec<f32> = (0..w * h * 3).map(|_| next()).collect();
+        (
+            Arc::new(WorkingImage::from_data(w, h, model).unwrap()),
+            Arc::new(WorkingImage::from_data(w, h, plain).unwrap()),
+        )
+    }
+
+    #[test]
+    fn equal_strengths_blend_as_one_did_bit_for_bit() {
+        let (model, plain) = noisy_pair();
+        for s in [0.0f32, 0.05, 0.25, 0.41, 0.5, 0.9, 1.0] {
+            let both = blend(&model, &plain, s, s);
+            assert!(both.data == one_strength(&model, &plain, s), "strength {s}");
+        }
+    }
+
+    #[test]
+    fn the_chroma_and_the_luminance_blend_apart() {
+        let lum = |px: &[f32; 3]| LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
+        let (model, plain) = noisy_pair();
+        // Chroma whole, luminance at 0.41: each pixel's luminance is
+        // the plain's taken 0.41 of the way, its color the model's.
+        let out = blend(&model, &plain, 0.41, 1.0);
+        for ((o, m), p) in out
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(model.data.as_chunks::<3>().0)
+            .zip(plain.data.as_chunks::<3>().0)
+        {
+            let y = lum(p) + (lum(m) - lum(p)) * 0.41;
+            assert!((lum(o) - y).abs() < 1e-5);
+            for i in 0..3 {
+                assert!(((o[i] - lum(o)) - (m[i] - lum(m))).abs() < 1e-5);
+            }
+        }
+        // And the other way: the luminance whole, the plain's color.
+        let out = blend(&model, &plain, 1.0, 0.0);
+        for ((o, m), p) in out
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(model.data.as_chunks::<3>().0)
+            .zip(plain.data.as_chunks::<3>().0)
+        {
+            assert!((lum(o) - lum(m)).abs() < 1e-5);
+            for i in 0..3 {
+                assert!(((o[i] - lum(o)) - (p[i] - lum(p))).abs() < 1e-5);
+            }
+        }
+        // A grey change has no chroma: the chroma's strength leaves it.
+        let grey = Arc::new(WorkingImage::from_data(1, 1, vec![0.6; 3]).unwrap());
+        let dark = Arc::new(WorkingImage::from_data(1, 1, vec![0.2; 3]).unwrap());
+        let out = blend(&grey, &dark, 0.5, 0.0);
+        assert!(out.data.iter().all(|v| (*v - 0.4).abs() < 1e-6));
     }
 }

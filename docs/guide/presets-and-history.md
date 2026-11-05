@@ -321,7 +321,7 @@ own picture.
 - The crop, the straighten and the retouch are never copied.
 - A camera profile goes only to frames from the same camera. The status
   line names any frame it skipped.
-- **Noise** brings the learned denoiser and its blend along, unlike a
+- **Noise** brings the learned denoiser and its blends along, unlike a
   preset.
 - Each frame gets one history step, "Sync from" the open frame, so
   Ctrl+Z on that frame undoes it.
