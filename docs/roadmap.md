@@ -531,6 +531,16 @@ brackets and the panorama to shoot for testing are in
 
 - [ ] Next: the re-merge's rename over an open file tried on Windows
       with §558's retry in `promote` (§541, §543)
+- [ ] The focus stack's frames through the walk, so a stack can be
+      denoised per frame and merged again like a bracket (§573);
+      changes every stack the command line writes, so a decision of
+      its own
+- [ ] Progress inside a focus stack's merge: the status line sits on
+      "placing the frames" for the whole of it (§573)
+- [ ] A NoiseProfile on a focus stack's DNG, as the HDR merge writes
+      one (§573)
+- [ ] The focus stack's memory bound against available rather than
+      physical memory, once a reader exists (§573)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
       the most voting tiles rather than the reference, measured on a
       real bracket with a clipped sky (§529); the Highlights pull's aim
