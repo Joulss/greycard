@@ -25,6 +25,7 @@ export component LensSection inherits Section {
     in-out property <bool> lens-profile-on;
     in-out property <bool> lens-distortion;
     in-out property <bool> lens-ca;
+    in property <bool> lens-ca-measured;
     in-out property <bool> lens-vignetting;
     in-out property <float> lens-manual;
     in-out property <float> lens-ca-red;
@@ -117,7 +118,7 @@ export component LensSection inherits Section {
     }
     Toggle {
         label: "Chromatic aberration";
-        enabled: root.lens-available && root.lens-profile-on;
+        enabled: root.lens-available && root.lens-profile-on && !root.lens-ca-measured;
         checked <=> root.lens-ca;
         toggled => { root.develop-changed(); }
     }

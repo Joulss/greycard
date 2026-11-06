@@ -55,6 +55,18 @@ pub struct Tag {
     pub unread: Option<String>,
 }
 
+impl Tag {
+    /// Whether the frames' lateral aberration was measured and
+    /// corrected on their mosaics in the merge: the develop's lens
+    /// profile leaves it alone on such a file. A recipe that says
+    /// `off` did not; a file written before the recipe was kept ran
+    /// the fit once, the default. A merge whose lens was corrected
+    /// stands the profile down whole already.
+    pub fn ca_measured(&self) -> bool {
+        !self.lens_corrected && self.recipe.as_ref().is_none_or(|r| r.ca != "off")
+    }
+}
+
 /// What made a merge's picture: the options it ran with and the
 /// geometry it found.
 #[derive(Debug, Clone, PartialEq)]
@@ -667,6 +679,18 @@ impl Tag {
 mod tests {
     use super::super::pano::{IDENTITY, rotation};
     use super::*;
+
+    #[test]
+    fn a_merge_measured_its_ca_unless_its_recipe_says_off() {
+        let mut tag = hdr();
+        assert!(tag.ca_measured());
+        tag.recipe.as_mut().unwrap().ca = "off".into();
+        assert!(!tag.ca_measured());
+        tag.recipe = None;
+        assert!(tag.ca_measured());
+        tag.lens_corrected = true;
+        assert!(!tag.ca_measured());
+    }
 
     fn hdr() -> Tag {
         Tag {

@@ -1172,7 +1172,11 @@ fn lens_of(
     size: (usize, usize),
     db: Option<&greycard_lens::Database>,
 ) -> Vec<LensCorrection> {
-    let lens = edit.lens.over_file(Facts::raw(frame, 0).file_corrects());
+    let facts = Facts::raw(frame, 0);
+    let lens = edit
+        .lens
+        .over_file(facts.file_corrects())
+        .over_measured_ca(facts.measures_ca());
     let profile = crate::lens::profile_correction(
         size,
         Orientation::Normal,

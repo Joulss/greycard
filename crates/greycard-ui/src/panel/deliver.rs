@@ -481,6 +481,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 opened.push((path, size));
                 crate::panel::cull::size_opened(&mut st, app);
             }
+            // A mosaic's aberration is measured on it, and the
+            // profile's switch stands down.
+            app.set_lens_ca_measured(
+                frame
+                    .as_ref()
+                    .is_some_and(|f| greycard_engine::stages::Facts::raw(f, 0).measures_ca()),
+            );
             st.develop.frame = frame.zip(profile);
             // The camera the file names, and what the profile
             // directory holds for it: read on open, not on develop.

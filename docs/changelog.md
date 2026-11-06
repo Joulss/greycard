@@ -210,6 +210,10 @@ are refused by 0.9.x.
 - A panorama or HDR merged in Lightroom Classic no longer opens
   magenta and blown out
   ([§565](https://github.com/jessolmstead/greycard/blob/master/docs/notes/565-a-dngs-sample-maps-applied.md)).
+- The LENS section's Chromatic aberration switch no longer adds
+  fringing on a raw: the aberration measured on the mosaic has the
+  last word, and the profile's stands down to it (issue 77)
+  ([§581](https://github.com/jessolmstead/greycard/blob/master/docs/notes/581-the-measured-aberration-stands-the-profiles-down.md)).
 - A Canon frame on a third-party lens that shares its lens id with
   others now names the lens
   ([§564](https://github.com/jessolmstead/greycard/blob/master/docs/notes/564-lenses-sharing-an-id-told-apart.md)).

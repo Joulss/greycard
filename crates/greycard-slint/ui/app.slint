@@ -1652,6 +1652,9 @@ export component App inherits Window {
     in-out property <bool> lens-profile-on: true;
     in-out property <bool> lens-distortion: true;
     in-out property <bool> lens-ca: true;
+    // The frame's aberration is measured on its mosaic, and the
+    // profile's stands down: the switch has nothing to do.
+    in property <bool> lens-ca-measured: false;
     in-out property <bool> lens-vignetting: true;
     in-out property <float> lens-manual: 0;
     in-out property <float> lens-ca-red: 0;
@@ -3855,6 +3858,7 @@ export component App inherits Window {
                             lens-profile-on <=> root.lens-profile-on;
                             lens-distortion <=> root.lens-distortion;
                             lens-ca <=> root.lens-ca;
+                            lens-ca-measured: root.lens-ca-measured;
                             lens-vignetting <=> root.lens-vignetting;
                             lens-manual <=> root.lens-manual;
                             lens-ca-red <=> root.lens-ca-red;

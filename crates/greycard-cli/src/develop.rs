@@ -1048,9 +1048,12 @@ fn run_develop(
         None => develop(&frame, settings).map_err(anyhow::Error::from),
     }
     .with_context(|| format!("developing {}", file.display()))?;
-    // A DNG that corrects its own lens has the last word on it, as in
+    // A DNG that corrects its own lens has the last word on it, and
+    // the aberration measured on the mosaic over the profile's, as in
     // the editor.
-    let lens = &lens.over_file(greycard_edit::lens::FileCorrects::of(&frame.dng.warps));
+    let lens = &lens
+        .over_file(greycard_edit::lens::FileCorrects::of(&frame.dng.warps))
+        .over_measured_ca(developed.chromatic_aberration.is_some());
     let sharpened = correct_and_sharpen(
         &mut developed.image,
         (&frame.make, &frame.model, &frame.shot, true),

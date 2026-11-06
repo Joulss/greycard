@@ -172,6 +172,19 @@ impl Lens {
         out
     }
 
+    /// The section as it applies over a mosaic whose lateral
+    /// aberration the develop measures and corrects itself, the
+    /// automatic correction on the raw: the profile's aberration
+    /// stands down to it, whoever chose the lens. The measurement is
+    /// of this copy of the lens where the profile is of another, and
+    /// on top of it the profile would move red and blue a second
+    /// time, the other way. The aberration set by hand is kept.
+    pub fn over_measured_ca(&self, measured: bool) -> Lens {
+        let mut out = self.clone();
+        out.chromatic_aberration &= !measured;
+        out
+    }
+
     /// Whether the edit wants anything of a profile.
     pub fn wants_profile(&self) -> bool {
         self.enabled
@@ -337,7 +350,6 @@ mod tests {
         assert!(c[0].distortion.is_none() && c[0].chromatic_aberration.is_none());
         assert!(c[0].vignetting.is_some());
         assert_eq!(lens.over_file(FileCorrects::default()), lens);
-
         let manual = Lens {
             manual: -0.1,
             ..lens.clone()
@@ -349,6 +361,36 @@ mod tests {
             ..lens
         };
         assert_eq!(picked.over_file(both), picked);
+    }
+
+    /// Over a mosaic whose aberration the develop measures, the
+    /// profile's aberration stands down, a lens picked by hand too;
+    /// the rest of the profile and the aberration set by hand stay.
+    #[test]
+    fn a_measured_aberration_stands_the_profiles_down() {
+        let profile = LensCorrection {
+            distortion: Some(Distortion::Poly3 { k1: 0.02 }),
+            chromatic_aberration: Some(ChromaticAberration::IDENTITY.scaled(1.001, 0.999)),
+            vignetting: Some(Vignetting {
+                k: [-0.5, 0.0, 0.0],
+            }),
+            ..Default::default()
+        };
+        let picked = Lens {
+            chosen: LensChoice::Database("Hand 35mm".into()),
+            ..Lens::default()
+        };
+        for lens in [Lens::default(), picked] {
+            let c = lens.over_measured_ca(true).corrections(Some(profile));
+            assert_eq!(c.len(), 1);
+            assert!(c[0].distortion.is_some() && c[0].vignetting.is_some());
+            assert!(c[0].chromatic_aberration.is_none());
+            assert_eq!(lens.over_measured_ca(false), lens);
+            let mut by_hand = lens.clone();
+            by_hand.ca_red = 0.002;
+            let c = by_hand.over_measured_ca(true).corrections(Some(profile));
+            assert_eq!(c[0].chromatic_aberration, by_hand.manual_ca());
+        }
     }
 
     #[test]

@@ -222,6 +222,15 @@ impl Facts {
         }
     }
 
+    /// Whether the develop measures and corrects the mosaic's lateral
+    /// aberration itself when asked to: a mosaic the automatic
+    /// correction knows, and no warp of the file's that moves each
+    /// color.
+    pub fn measures_ca(&self) -> bool {
+        matches!(&self.input, InputKind::Raw { pattern: Some(p), .. } if ca::corrects(p))
+            && !self.file_corrects().chromatic_aberration
+    }
+
     /// The orientation the develop shows a raw in: the camera's tag
     /// with the frame's turns on it.
     pub fn orientation(&self) -> Option<Orientation> {
@@ -848,8 +857,7 @@ pub fn stages(
             s.op_if(
                 settings
                     .chromatic_aberration
-                    .filter(|_| pattern.as_ref().is_some_and(ca::corrects))
-                    .filter(|_| !facts.file_corrects().chromatic_aberration)
+                    .filter(|_| facts.measures_ca())
                     .map(Stage::Ca),
             );
             match (bin, learned) {
@@ -884,10 +892,15 @@ pub fn stages(
         }
     }
     let (w, h) = facts.binned(bin);
-    // A file that corrects its own lens has the last word on it; a
+    // A file that corrects its own lens has the last word on it, and
+    // the aberration measured on the mosaic over the profile's; a
     // panorama's lens was corrected in its merge, and no one frame's
     // profile fits its canvas.
-    let mut lens = edit.lens.over_file(facts.file_corrects());
+    let measured = settings.chromatic_aberration.is_some() && facts.measures_ca();
+    let mut lens = edit
+        .lens
+        .over_file(facts.file_corrects())
+        .over_measured_ca(measured);
     if matches!(
         facts.input,
         InputKind::Raw {
@@ -1027,8 +1040,7 @@ fn merge_input(edit: &Edit, merge: &MergeInput, facts: &Facts) -> Steps {
     s.op_if(
         settings
             .chromatic_aberration
-            .filter(|_| pattern.as_ref().is_some_and(ca::corrects))
-            .filter(|_| !facts.file_corrects().chromatic_aberration)
+            .filter(|_| facts.measures_ca())
             .and_then(|options| match &merge.ca {
                 MergeCa::Own => Some(Stage::Ca(options)),
                 MergeCa::Make => Some(Stage::CaFit(options)),
@@ -1551,16 +1563,31 @@ mod tests {
             (lens, s.ops().any(|o| matches!(o, Stage::Ca(_))))
         };
 
+        // The aberration measured on the mosaic stands the profile's
+        // down; a linear raw has no mosaic to measure, so the profile's
+        // runs.
         let (plain, ca) = lens_of(&with_shot(raw(0)));
         let plain = plain.expect("the profile's correction");
-        assert!(plain.distortion.is_some() && plain.chromatic_aberration.is_some());
+        assert!(plain.distortion.is_some() && plain.chromatic_aberration.is_none());
         assert!(ca, "the automatic CA");
+        let mut linear = with_shot(raw(0));
+        if let InputKind::Raw { pattern, .. } = &mut linear.input {
+            *pattern = None;
+        }
+        let (linear, ca) = lens_of(&linear);
+        assert!(
+            linear
+                .expect("the profile's correction")
+                .chromatic_aberration
+                .is_some()
+        );
+        assert!(!ca, "no mosaic to measure");
 
         let (warped, ca) = lens_of(&with_shot(phone()));
         let warped = warped.expect("the vignetting stays");
         assert!(warped.distortion.is_none());
-        assert!(warped.chromatic_aberration.is_some() && warped.vignetting.is_some());
-        assert!(ca, "a warp of one set leaves the CA");
+        assert!(warped.chromatic_aberration.is_none() && warped.vignetting.is_some());
+        assert!(ca, "a warp of one set leaves the CA to the measurement");
 
         let mut each = with_shot(phone());
         let InputKind::Raw { warp: Some(w), .. } = &mut each.input else {
