@@ -273,6 +273,10 @@ pub enum NoLearned {
     Missing(&'static greycard_ai::Model),
     /// It could not run.
     Failed(String),
+    /// The card had not the memory free for it
+    /// ([`crate::ai::CardShort`]): a develop stands in, an export or a
+    /// merge fails.
+    Short(String),
 }
 
 /// The picture with its retouch applied, beside the base the learned

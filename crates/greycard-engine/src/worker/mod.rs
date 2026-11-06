@@ -49,7 +49,7 @@ use self::{
     thumbs::{cached_thumbnail_noting, thumb_lookup},
 };
 
-pub(crate) use self::base::network;
+pub(crate) use self::base::{learned_failure, network};
 #[cfg(any(test, feature = "testing"))]
 pub use self::prefetch::{behind_prefetch, claim};
 pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
@@ -660,6 +660,17 @@ struct Queue {
     /// (`Ai::fill_by_test`): for a test of the rounds.
     #[cfg(test)]
     fill_by_test: Option<f32>,
+    /// The card's free memory, and what its sessions give back when
+    /// dropped, as a test has them (`Ai::free_memory_by_test`).
+    #[cfg(test)]
+    free_by_test: Option<(u64, u64)>,
+    /// What the worker's other models give back each time the card is
+    /// given back across them, as a test has it.
+    #[cfg(test)]
+    elsewhere_by_test: u64,
+    /// How many times the worker gave the card back, for a test.
+    #[cfg(test)]
+    gave_back_by_test: usize,
 }
 
 pub type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;

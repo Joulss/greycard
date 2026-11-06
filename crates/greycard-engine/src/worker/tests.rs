@@ -4791,7 +4791,22 @@ fn fill_worker(
     std::sync::mpsc::Receiver<String>,
     std::sync::mpsc::Sender<()>,
 ) {
-    let (dir, paths) = dngs(what, &[&format!("{what}.dng")], 128, 96);
+    fill_worker_at(what, value, (128, 96))
+}
+
+/// [`fill_worker`] on a frame of `size`.
+fn fill_worker_at(
+    what: &str,
+    value: f32,
+    (width, height): (usize, usize),
+) -> (
+    Worker,
+    PathBuf,
+    PathBuf,
+    std::sync::mpsc::Receiver<String>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (dir, paths) = dngs(what, &[&format!("{what}.dng")], width, height);
     let (tx, rx) = std::sync::mpsc::channel();
     let tx = Mutex::new(tx);
     let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
@@ -4916,6 +4931,371 @@ fn leaving_the_editor_pauses_the_fills() {
             "developed 1: []",
         ]
     );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The worker gives the card back once a queue of fills ends, once
+/// when a queue is given up for another job, and after an export
+/// frame whose fills ran a model; a model that ran nothing gives
+/// nothing back.
+#[test]
+fn the_worker_gives_the_card_back_when_its_fills_are_done() {
+    const GIB: u64 = 1 << 30;
+    // At the queue's end.
+    let (worker, dir, path, rx, go) = fill_worker("give-back-end", 0.9);
+    worker.free_by_test(12 * GIB, GIB, 0);
+    go.send(()).unwrap();
+    worker.send(open_with_fills(&path));
+    let wait = std::time::Duration::from_secs(60);
+    let next = || rx.recv_timeout(wait).expect("the worker says");
+    while next() != "developed 1: []" {}
+    // Delivered before the give-back: a mask behind it is answered
+    // after.
+    worker.send(Job::Mask {
+        key: (1, 0),
+        shape: Shape::Linear {
+            from: [0.2, 0.5],
+            to: [0.8, 0.5],
+        },
+        model: None,
+    });
+    assert_eq!(next(), "mask");
+    assert_eq!(worker.gave_back_by_test(), 1);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+
+    // Given up for another develop: once, before it.
+    let (worker, dir, path, rx, go) = fill_worker("give-back-change", 0.9);
+    worker.free_by_test(12 * GIB, GIB, 0);
+    go.send(()).unwrap();
+    worker.send(open_with_fills(&path));
+    let next = || rx.recv_timeout(wait).expect("the worker says");
+    while next() != "developed 1: [2, 3]" {}
+    worker.send(Job::Develop {
+        edit: three_fills().1,
+        generation: 2,
+        turn: 0,
+    });
+    while !next().starts_with("developed 2") {}
+    assert_eq!(worker.gave_back_by_test(), 1);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// An export whose fill the card stays short of fails its item, the
+/// card asked its tries; with room it is written. The rest of the walk
+/// does not wait again.
+#[test]
+fn an_export_fails_its_item_on_a_card_short_of_a_fill() {
+    let (input, mut edit, _) = three_fills();
+    for p in &mut edit.retouch.patches {
+        p.remove = true;
+    }
+    let mut ai = Ai::for_test(
+        greycard_ai::Store::at("no-store"),
+        vec![greycard_ai::Provider::WebGpu, greycard_ai::Provider::Cpu],
+    );
+    ai.fill_by_test = Some(0.9);
+    ai.free_memory_by_test = Some(1 << 30);
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = asked.clone();
+    ai.set_patience(Some(crate::ai::Patience {
+        tries: 3,
+        wait: std::time::Duration::ZERO,
+        canceled: Arc::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            false
+        }),
+    }));
+    let deliver: Deliver = Arc::new(|_| {});
+    let settings = greycard_render::export::Settings::default();
+    let why = super::export::walk_export(
+        input.clone(),
+        &edit,
+        0,
+        &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+        None,
+        &settings,
+    )
+    .err()
+    .expect("refused");
+    assert!(
+        why.contains("GiB free") && why.ends_with("not written"),
+        "{why}"
+    );
+    // Two waits for the first fill, none for the two after it.
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 2);
+    ai.free_memory_by_test = Some(16 << 30);
+    ai.set_patience(Some(crate::ai::Patience {
+        wait: std::time::Duration::ZERO,
+        ..crate::ai::Patience::of(3)
+    }));
+    super::export::walk_export(
+        input,
+        &edit,
+        0,
+        &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+        None,
+        &settings,
+    )
+    .expect("written");
+}
+
+/// A set met short is remembered by the set itself: not by another
+/// set, and not once it is done or canceled.
+#[test]
+fn a_set_met_short_is_remembered_by_itself_alone() {
+    let set = || {
+        Arc::new(crate::queue::Set::new(
+            2,
+            None,
+            greycard_render::export::Settings::default(),
+            greycard_render::export::OnExists::default(),
+        ))
+    };
+    let mut sets = super::engine::ShortSets::default();
+    let (a, b) = (set(), set());
+    sets.insert(&a);
+    assert!(sets.contains(&a) && !sets.contains(&b));
+    sets.remove(&a);
+    assert!(!sets.contains(&a));
+    sets.insert(&b);
+    b.cancel();
+    sets.insert(&a);
+    assert!(!sets.contains(&b), "a canceled set is forgotten");
+    drop(a);
+    let c = set();
+    assert!(!sets.contains(&c), "a new set is not an old one");
+}
+
+/// What a worker says of `edit`'s fills on a frame of `size`, up to its
+/// answer to a mask asked after them, with the card as
+/// [`Worker::free_by_test`] has it; and how often it gave the card back.
+/// The mask waits behind the fills in the worker's pick, so it is
+/// answered once they are done.
+fn fills_said(
+    what: &str,
+    size: (usize, usize),
+    edit: Edit,
+    card: (u64, u64, u64),
+) -> (Vec<String>, usize) {
+    let (said, gave) = fills_said_then(what, size, edit, card, None);
+    (said, gave[0])
+}
+
+/// [`fills_said`], and then what it says of `then` up to a mask asked
+/// after it; how often it gave the card back by each.
+fn fills_said_then(
+    what: &str,
+    size: (usize, usize),
+    edit: Edit,
+    (free, freed, elsewhere): (u64, u64, u64),
+    then: Option<Job>,
+) -> (Vec<String>, Vec<usize>) {
+    let (worker, dir, path, rx, go) = fill_worker_at(what, 0.9, size);
+    worker.free_by_test(free, freed, elsewhere);
+    go.send(()).unwrap();
+    worker.send(Job::Open {
+        path: path.to_path_buf(),
+        version: None,
+        edit,
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    });
+    let mask = || Job::Mask {
+        key: (1, 0),
+        shape: Shape::Linear {
+            from: [0.2, 0.5],
+            to: [0.8, 0.5],
+        },
+        model: None,
+    };
+    worker.send(mask());
+    let mut said = Vec::new();
+    let to_mask = |said: &mut Vec<String>| loop {
+        let s = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("the worker says");
+        if s == "mask" {
+            break;
+        }
+        said.push(s);
+    };
+    to_mask(&mut said);
+    let mut gave = vec![worker.gave_back_by_test()];
+    if let Some(job) = then {
+        said.push("mask".into());
+        worker.send(job);
+        worker.send(mask());
+        to_mask(&mut said);
+        gave.push(worker.gave_back_by_test());
+    }
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+    (said, gave)
+}
+
+/// [`three_fills`]' edit, each a removal.
+fn three_removes() -> Edit {
+    let mut edit = three_fills().1;
+    for p in &mut edit.retouch.patches {
+        p.remove = true;
+    }
+    edit
+}
+
+/// A fill the card is short of at its run, once its own models are
+/// given back, gives the card back across the worker's models and is
+/// asked for again, once: with the room it is made, and the fills
+/// after it; without, the fills are not asked again. Counting them
+/// gave nothing back.
+#[test]
+fn a_short_fill_is_asked_for_again_once_after_the_card_is_given_back() {
+    const GIB: u64 = 1 << 30;
+    // 1 GiB free, 1 more from the fills' own: a removal (6.3) is short
+    // at its run, its place in the round going to the next, short too;
+    // 8 more from the others' make the room, and the fills, asked for
+    // again, are all made.
+    let (said, gave) = fills_said(
+        "short-again",
+        (128, 96),
+        three_removes(),
+        (GIB, GIB, 8 * GIB),
+    );
+    assert_eq!(
+        said,
+        [
+            "developed 1: [1, 2, 3]",
+            "filling 1: Fill 1",
+            "filling 1: Fill 2",
+            "filling 1: Fill 3",
+            "developed 1: []",
+            "filling 1: Fill 1",
+            "developed 1: [2, 3]",
+            "filling 1: Fill 2",
+            "developed 1: [3]",
+            "filling 1: Fill 3",
+            "developed 1: []",
+        ]
+    );
+    assert_eq!(gave, 1);
+    // 1 more from the others is still short: asked again once, and no
+    // more after it.
+    let (said, gave) = fills_said("short-bound", (128, 96), three_removes(), (GIB, GIB, GIB));
+    assert_eq!(
+        said,
+        [
+            "developed 1: [1, 2, 3]",
+            "filling 1: Fill 1",
+            "filling 1: Fill 2",
+            "filling 1: Fill 3",
+            "developed 1: []",
+            "filling 1: Fill 1",
+            "filling 1: Fill 2",
+            "filling 1: Fill 3",
+            "developed 1: []",
+        ]
+    );
+    // Each refusal's round gave back across the models.
+    assert_eq!(gave, 2);
+}
+
+/// A big fill among small ones, the card short of it alone, gives its
+/// place in the round to the next: the small ones are made. Nothing
+/// given back since, the big one is not asked of the card again, and
+/// the queue ends; a develop after asks no fill round and gives
+/// nothing back.
+#[test]
+fn a_big_fill_the_card_is_short_of_lets_the_small_ones_by() {
+    const GIB: u64 = 1 << 30;
+    let mut edit = three_removes();
+    // A window past 512 runs at 1024 (7.1 GiB); the others at 512 (6.3).
+    edit.retouch.patches[1].radius = 0.25;
+    let then = Job::Develop {
+        edit: edit.clone(),
+        generation: 2,
+        turn: 0,
+    };
+    let (said, gave) = fills_said_then(
+        "short-big",
+        (1600, 1200),
+        edit,
+        (6 * GIB + GIB / 2, 0, 0),
+        Some(then),
+    );
+    assert_eq!(
+        said,
+        [
+            "developed 1: [1, 2, 3]",
+            "filling 1: Fill 1",
+            "developed 1: [2, 3]",
+            "filling 1: Fill 2",
+            "filling 1: Fill 3",
+            "developed 1: [2]",
+            "developed 1: []",
+            "mask",
+            "developed 2: []",
+        ]
+    );
+    assert_eq!(gave[0], gave[1], "nothing given back by the develop");
+}
+
+/// A set of two frames the card stays short of gives the card back
+/// across the worker's models once, for its first frame's second try;
+/// its second frame asks once and is not tried again.
+#[test]
+fn a_set_short_of_the_card_gives_it_back_once() {
+    const GIB: u64 = 1 << 30;
+    let (dir, paths) = dngs("short-set", &["short-set.dng"], 128, 96);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::SetFrameDone { done, .. } = o {
+            let failed = matches!(done, crate::queue::Done::Failed { .. });
+            tx.lock().unwrap().send(failed).unwrap();
+        }
+    });
+    worker.fill_by_test(0.9);
+    worker.free_by_test(GIB, GIB, GIB);
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: Edit::default(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    });
+    let set = Arc::new(crate::queue::Set::new(
+        2,
+        None,
+        greycard_render::export::Settings::default(),
+        greycard_render::export::OnExists::Overwrite,
+    ));
+    let frame = |i: usize| crate::queue::Frame {
+        source: paths[0].clone(),
+        edit: three_removes(),
+        version: None,
+        turn: 0,
+        time_shift: 0,
+        seed_blend: false,
+        out: dir.join(format!("short-set-{i}.jpg")),
+        moved_from: None,
+    };
+    worker.send(Job::ExportSet {
+        set,
+        frames: vec![frame(0), frame(1)],
+    });
+    for _ in 0..2 {
+        let failed = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("a frame done");
+        assert!(failed, "a frame the card is short of fails");
+    }
+    assert_eq!(worker.gave_back_by_test(), 1);
     worker.stop();
     crate::testing::remove_dir_retry(&dir);
 }

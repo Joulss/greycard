@@ -252,6 +252,41 @@ impl<T> Slot<T> {
         self.lock().as_ref().is_some_and(|e| e.path == path)
     }
 
+    /// Whether one is open at `path`, held or lent: not one still being
+    /// opened, whose weights are only partly on the card.
+    #[cfg(test)]
+    pub(crate) fn holds_open(&self, path: &Path) -> bool {
+        self.lock()
+            .as_ref()
+            .is_some_and(|e| e.path == path && !matches!(e.state, State::Opening))
+    }
+
+    /// [`Slot::holds_open`], once an open of `path` in flight has
+    /// finished, failed, or panicked, or `bound` has passed, when one
+    /// still opening counts as not open: a hung open never holds the
+    /// caller for good.
+    pub(crate) fn wait_open(&self, path: &Path, bound: std::time::Duration) -> bool {
+        let until = std::time::Instant::now() + bound;
+        let mut entry = self.lock();
+        while entry
+            .as_ref()
+            .is_some_and(|e| e.path == path && matches!(e.state, State::Opening))
+        {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            entry = self
+                .changed
+                .wait_timeout(entry, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        entry
+            .as_ref()
+            .is_some_and(|e| e.path == path && !matches!(e.state, State::Opening))
+    }
+
     /// The one held and free let go unless `keep` says its path is
     /// wanted: true when one went.
     pub(crate) fn let_go_unless(&self, keep: impl Fn(&Path) -> bool) -> bool {
@@ -434,5 +469,67 @@ mod tests {
             slot.prepare(Path::new("unet-512.onnx"), || Ok::<_, ()>(5)),
             Ok(true)
         );
+    }
+
+    /// A wait for an open in flight wakes when it lands, when it fails,
+    /// and when it panics, and gives up at its bound.
+    #[test]
+    fn a_wait_for_an_open_wakes_on_its_end_however_it_ends() {
+        use std::time::Duration;
+        let path = Path::new("unet-512.onnx");
+        let run = |open: Box<dyn FnOnce() -> Result<u32, ()> + Send>| -> bool {
+            let slot = Arc::new(Slot::<u32>::new());
+            let (started, go) = (
+                Arc::new(std::sync::Barrier::new(2)),
+                Arc::new(std::sync::Barrier::new(2)),
+            );
+            let opener = {
+                let (slot, started, go) = (slot.clone(), started.clone(), go.clone());
+                std::thread::spawn(move || {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        slot.prepare(path, || {
+                            started.wait();
+                            go.wait();
+                            open()
+                        })
+                    }));
+                })
+            };
+            started.wait();
+            assert!(!slot.holds_open(path), "not while opening");
+            let waiter = {
+                let slot = slot.clone();
+                std::thread::spawn(move || slot.wait_open(path, Duration::from_secs(30)))
+            };
+            go.wait();
+            let held = waiter.join().unwrap();
+            opener.join().unwrap();
+            held
+        };
+        assert!(run(Box::new(|| Ok(1))), "opened");
+        assert!(!run(Box::new(|| Err(()))), "failed");
+        assert!(
+            !run(Box::new(|| panic!("the provider fell over"))),
+            "panicked"
+        );
+        // Bounded: an open that never ends is not waited on for good.
+        let slot = Arc::new(Slot::<u32>::new());
+        let started = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let opener = {
+            let (slot, started, release) = (slot.clone(), started.clone(), release.clone());
+            std::thread::spawn(move || {
+                slot.prepare(path, || {
+                    started.wait();
+                    release.wait();
+                    Ok::<_, ()>(2)
+                })
+            })
+        };
+        started.wait();
+        assert!(!slot.wait_open(path, Duration::from_millis(50)));
+        release.wait();
+        opener.join().unwrap().unwrap();
+        assert!(slot.wait_open(path, Duration::from_millis(50)));
     }
 }

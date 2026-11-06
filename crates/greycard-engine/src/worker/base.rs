@@ -277,6 +277,12 @@ pub(super) struct WorkerModels<'a> {
     /// than go on past them: an export says what each fill went
     /// without, which only a run of the fill finds out.
     pub run_unmade: bool,
+    /// Ask the card again, a few seconds apart, for a model it was
+    /// short of, and fail on it rather than stand in: an export's.
+    pub patient: bool,
+    /// A model run the card stayed short of, in a patient walk
+    /// ([`crate::ai::CardShort`]): the export fails its item on it.
+    pub short: Option<String>,
 }
 
 impl<'a> WorkerModels<'a> {
@@ -300,6 +306,8 @@ impl<'a> WorkerModels<'a> {
             fills: FillReport::default(),
             masks: Vec::new(),
             run_unmade: false,
+            patient: false,
+            short: None,
         }
     }
 }
@@ -359,10 +367,37 @@ impl crate::walk::Models for WorkerModels<'_> {
         frame: &RawFrame,
         prepared: &Prepared,
     ) -> Result<Vec<f32>, NoLearned> {
+        // A patient walk stops asking at its first short.
+        if let Some(why) = &self.short {
+            return Err(NoLearned::Short(why.clone()));
+        }
         let cache = self.cache;
+        // The disk cache by the tier's tiling, kept when its session was
+        // dropped to give the card back: a hit loads nothing.
+        if self.ai.denoiser_tiling(model).is_none() {
+            self.denoiser(model)?;
+        }
+        if let (Some(c), Some(tiling)) = (cache, self.ai.denoiser_tiling(model)) {
+            let start = Instant::now();
+            let key = greycard_ai::DenoiseCache::key(model, tiling, prepared);
+            if let Some(rgb) = c.read(key, prepared) {
+                self.learned = LearnedReport::Cached {
+                    seconds: start.elapsed().as_secs_f64(),
+                };
+                return Ok(rgb);
+            }
+        }
+        self.denoiser(model)?;
+        if let Err(short) = self.ai.denoise_room_for(model) {
+            if self.patient {
+                self.short = Some(format!("the learned denoiser: {short}"));
+            }
+            return Err(NoLearned::Short(short.0));
+        }
+        // Loaded again when the card was given back on the way.
         let denoiser = self.denoiser(model)?;
-        let (rgb, report) = network(frame, prepared, model, denoiser, cache)
-            .map_err(|e| NoLearned::Failed(e.to_string()))?;
+        let (rgb, report) =
+            network(frame, prepared, model, denoiser, cache).map_err(|e| learned_failure(&e))?;
         self.learned = report;
         Ok(rgb)
     }
@@ -374,6 +409,13 @@ impl crate::walk::Models for WorkerModels<'_> {
         // ahead when the develop began; a fill kept for the picture an
         // earlier patch left is not in it, so the fill made is never
         // past it.
+        // A patient walk stops asking at its first short: the export
+        // fails on it.
+        if let Some(why) = &self.short {
+            self.fills.failed.push((patch.name(), why.clone()));
+            return None;
+        }
+        self.ai.take_short();
         let mut kept = true;
         let started = Instant::now();
         let (deliver, generation, (of, made)) = (self.deliver, self.generation, self.ahead);
@@ -403,7 +445,15 @@ impl crate::walk::Models for WorkerModels<'_> {
                 })
             },
         );
-        if !kept && let Some(b) = self.budget.as_mut() {
+        // A fill refused for the card's memory ran nothing: its place in
+        // the round goes to the next, which may fit.
+        let short = matches!(fill, Err(NoFill::Failed(_)))
+            .then(|| self.ai.take_short())
+            .flatten();
+        if !kept
+            && short.is_none()
+            && let Some(b) = self.budget.as_mut()
+        {
             *b = b.saturating_sub(1);
         }
         match fill {
@@ -425,6 +475,17 @@ impl crate::walk::Models for WorkerModels<'_> {
                 None
             }
             Err(NoFill::Failed(why)) => {
+                if let Some(short) = &short
+                    && self.patient
+                {
+                    self.short = Some(format!("fill {}: {short}", patch.name()));
+                }
+                // Refused for the card's memory, a develop's fill stays
+                // ahead: the worker gives the card back across its
+                // models and asks for it again, once (`ask_fills_again`).
+                if short.is_some() && !self.patient {
+                    self.fills.pending.push(patch.id);
+                }
                 self.fills.failed.push((patch.name(), why));
                 None
             }
@@ -469,25 +530,34 @@ impl crate::walk::Models for WorkerModels<'_> {
         let print = self
             .ai
             .base_print(&self.edit, self.turn, crate::mask_base::Size::Full);
-        let (rasters, left_out) = super::masks::learned_rasters(
-            &self.edit,
-            self.ai,
-            &super::masks::On {
-                base: crate::ai::Base {
-                    stamp: EXPORT_STAMP,
-                    print,
-                },
-                image: base,
-                retouched: patched.map(|p| crate::ai::Retouched {
-                    retouch: p.retouch,
-                    image: p.image,
-                    unmade: p.unmade,
-                }),
-                edit: &self.edit,
-                source: meta.source,
-                turn: self.turn,
+        let on = super::masks::On {
+            base: crate::ai::Base {
+                stamp: EXPORT_STAMP,
+                print,
             },
-        );
+            image: base,
+            retouched: patched.map(|p| crate::ai::Retouched {
+                retouch: p.retouch,
+                image: p.image,
+                unmade: p.unmade,
+            }),
+            edit: &self.edit,
+            source: meta.source,
+            turn: self.turn,
+        };
+        // A patient walk stops asking at its first short.
+        if self.short.is_some() {
+            return crate::walk::Rasters::new();
+        }
+        // A mask the card is short of waits as the Ai's patience says
+        // (an export's); still short, the export fails on it.
+        self.ai.take_short();
+        let (rasters, left_out) = super::masks::learned_rasters(&self.edit, self.ai, &on);
+        if let Some(why) = self.ai.take_short()
+            && self.patient
+        {
+            self.short = Some(format!("a learned mask: {why}"));
+        }
         self.masks = left_out;
         rasters
     }
@@ -503,8 +573,18 @@ fn bayer_only(frame: &RawFrame) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Why the learned denoiser failed, as the walk takes it: refused for
+/// the card's memory ([`crate::ai::CardShort`]) or otherwise.
+pub(crate) fn learned_failure(e: &anyhow::Error) -> NoLearned {
+    match e.downcast_ref::<crate::ai::CardShort>() {
+        Some(short) => NoLearned::Short(short.0.clone()),
+        None => NoLearned::Failed(e.to_string()),
+    }
+}
+
 /// The network's camera RGB of `prepared`: from the disk cache when
-/// it is there, else run and put there.
+/// it is there, else run and put there, once the card has the memory
+/// for it ([`crate::ai::denoise_room`]).
 pub(crate) fn network(
     frame: &RawFrame,
     prepared: &Prepared,
@@ -532,6 +612,12 @@ pub(crate) fn network(
             },
         ),
         None => {
+            // Not begun on a card short of the memory for it. Held
+            // loaded between develops, the denoiser's run, not its
+            // load, is what asks for the most.
+            if denoiser.provider() == greycard_ai::Provider::WebGpu {
+                crate::ai::denoise_room(tiling.tile)?;
+            }
             let rgb = denoiser.run(
                 &prepared.samples,
                 prepared.width,

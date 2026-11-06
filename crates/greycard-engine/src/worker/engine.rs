@@ -18,7 +18,9 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&FrameKept>) -> Vec<St
         .and_then(|b| b.meta.stood_in.as_ref())
         .map(|why| match why {
             crate::walk::NoLearned::Missing(model) => LearnedReport::Missing(model),
-            crate::walk::NoLearned::Failed(why) => LearnedReport::Failed(why.clone()),
+            crate::walk::NoLearned::Failed(why) | crate::walk::NoLearned::Short(why) => {
+                LearnedReport::Failed(why.clone())
+            }
         });
     let learned = match (learned, stood_in.as_ref()) {
         (LearnedReport::Kept, Some(stood_in)) => stood_in,
@@ -133,6 +135,11 @@ pub(super) fn run(
     // open file's own `ai` holds (its masks, its fills) is for it, and
     // a set run past it must not take that away.
     let mut set_ai: Option<Ai> = None;
+    // Sets whose frames met a short the card did not recover from: their
+    // later frames ask the card once, not three times.
+    let mut short_sets = ShortSets::default();
+    // A develop's fills asked for again after a short, once.
+    let mut asked_again = false;
     // A part's people were found and the part is not made yet: a
     // person is being picked, and the People model is wanted on the
     // click, whatever the edit says meanwhile.
@@ -190,6 +197,15 @@ pub(super) fn run(
                 #[cfg(test)]
                 if let Some(v) = q.fill_by_test.take() {
                     ai.fill_by_test = Some(v);
+                }
+                #[cfg(test)]
+                if let Some((free, freed)) = q.free_by_test.take() {
+                    ai.free_memory_by_test = Some(free);
+                    ai.freed_by_test = freed;
+                    ai.set_providers_by_test(vec![
+                        greycard_ai::Provider::WebGpu,
+                        greycard_ai::Provider::Cpu,
+                    ]);
                 }
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
@@ -250,6 +266,20 @@ pub(super) fn run(
                         };
                     }
                     ai.release_fills();
+                    // The card given back off the queue's lock: a
+                    // drop and a trim take a few hundred milliseconds,
+                    // and every send from the window waits on it.
+                    if give_back_due(&ai, [&people_ai, &set_ai, &masks_ai]) {
+                        drop(q);
+                        give_back(
+                            &mut ai,
+                            [&mut people_ai, &mut set_ai, &mut masks_ai],
+                            false,
+                            lock,
+                        );
+                        q = lock.lock().expect("worker queue");
+                        continue;
+                    }
                 }
                 // A new base's masks once the develops have settled.
                 settle_due(&mut q, Instant::now());
@@ -433,6 +463,15 @@ pub(super) fn run(
         }
         if !matches!(job, Job::Fill { .. } | Job::Keep { .. }) {
             ai.release_fills();
+            // The card given back before another model loads, once a
+            // fill's model ran: a develop after it loads the denoiser
+            // afresh rather than beside the remove's cached buffers.
+            give_back(
+                &mut ai,
+                [&mut people_ai, &mut set_ai, &mut masks_ai],
+                false,
+                lock,
+            );
         }
         // A save of the open frame: its edit's pictures from the develop
         // in hand, or held for the develop still to land.
@@ -559,6 +598,26 @@ pub(super) fn run(
         // done after its last; a panic in it is that frame's failure.
         if let Job::ExportFrame { set, index, frame } = job {
             let mut panicked = false;
+            // A short card is asked again a few seconds apart, the set's
+            // cancel looked at between, once only after the set met one.
+            let patience = crate::ai::Patience {
+                tries: if short_sets.contains(&set) {
+                    1
+                } else {
+                    crate::ai::PATIENT_TRIES
+                },
+                // A test's set asks again at once.
+                wait: if cfg!(test) {
+                    std::time::Duration::ZERO
+                } else {
+                    crate::ai::PATIENT_WAIT
+                },
+                canceled: {
+                    let set = set.clone();
+                    Arc::new(move || set.is_canceled())
+                },
+            };
+            ai.set_patience(Some(patience.clone()));
             // The edit the file was written under: the frame's, its
             // learned blend seeded from the ISO when it was still to
             // be, as a first open would have seeded it.
@@ -573,80 +632,110 @@ pub(super) fn run(
                         index,
                         name: file_label(resolved.path().unwrap_or(&frame.out)),
                     });
-                    let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let note = resolved.note();
-                        let Some(path) = resolved.path().map(std::path::Path::to_path_buf) else {
-                            return crate::queue::Done::Skipped {
-                                path: frame.out.clone(),
+                    // Short after its tries, the frame is tried once more
+                    // with the card given back across the worker's models:
+                    // the editor's own may hold what this frame wants.
+                    let mut tried_again = false;
+                    let held = loop {
+                        let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let note = resolved.note();
+                            let Some(path) = resolved.path().map(std::path::Path::to_path_buf)
+                            else {
+                                return crate::queue::Done::Skipped {
+                                    path: frame.out.clone(),
+                                };
                             };
-                        };
-                        // A subfolder is made as its first frame goes in; a
-                        // chosen folder is there, and one that is not (a
-                        // drive gone) is never made on the disk under it.
-                        if set.sub.is_some()
-                            && let Some(dir) = path.parent()
-                            && let Err(e) = std::fs::create_dir_all(dir)
-                        {
-                            return crate::queue::Done::Failed {
-                                message: format!("making {}: {e}", dir.display()),
+                            // A subfolder is made as its first frame goes in; a
+                            // chosen folder is there, and one that is not (a
+                            // drive gone) is never made on the disk under it.
+                            if set.sub.is_some()
+                                && let Some(dir) = path.parent()
+                                && let Err(e) = std::fs::create_dir_all(dir)
+                            {
+                                return crate::queue::Done::Failed {
+                                    message: format!("making {}: {e}", dir.display()),
+                                };
+                            }
+                            let start = Instant::now();
+                            // The frame on screen is the open file: walked from
+                            // what the window's walks kept, which it leaves as
+                            // they were. Any other is opened and developed on
+                            // the side, and the open file's state is left as
+                            // it was.
+                            let written = if opened_path.as_deref() == Some(frame.source.as_path())
+                            {
+                                let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
+                                rendered = edit.clone();
+                                export_open(
+                                    &edit,
+                                    frame.turn % 4,
+                                    input.as_ref(),
+                                    base.as_ref(),
+                                    // Its fills are said under the generation
+                                    // no develop has, as a set frame's are.
+                                    &mut WorkerModels::new(&mut ai, cache.as_ref(), &deliver, 0),
+                                    lenses.as_deref(),
+                                    Written {
+                                        settings: &set.settings,
+                                        path: &path,
+                                        source: opened_path.as_deref(),
+                                        metadata: metadata.as_deref(),
+                                        time_shift: frame.time_shift,
+                                    },
+                                )
+                            } else {
+                                // The editor's People model, lent for the
+                                // frame rather than a second one loaded.
+                                let other = set_ai.get_or_insert_with(Ai::new);
+                                other.set_patience(Some(patience.clone()));
+                                ai.lend_parts(other);
+                                let written = export_other(
+                                    &frame,
+                                    other,
+                                    cache.as_ref(),
+                                    lenses.as_deref(),
+                                    &deliver,
+                                    &set.settings,
+                                    &path,
+                                );
+                                other.lend_parts(&mut ai);
+                                written.map(|(edit, left_out)| {
+                                    rendered = edit;
+                                    left_out
+                                })
                             };
-                        }
-                        let start = Instant::now();
-                        // The frame on screen is the open file: walked from
-                        // what the window's walks kept, which it leaves as
-                        // they were. Any other is opened and developed on
-                        // the side, and the open file's state is left as
-                        // it was.
-                        let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
-                            let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
-                            rendered = edit.clone();
-                            export_open(
-                                &edit,
-                                frame.turn % 4,
-                                input.as_ref(),
-                                base.as_ref(),
-                                // Its fills are said under the generation
-                                // no develop has, as a set frame's are.
-                                &mut WorkerModels::new(&mut ai, cache.as_ref(), &deliver, 0),
-                                lenses.as_deref(),
-                                Written {
-                                    settings: &set.settings,
-                                    path: &path,
-                                    source: opened_path.as_deref(),
-                                    metadata: metadata.as_deref(),
-                                    time_shift: frame.time_shift,
+                            match written {
+                                Ok(left_out) => crate::queue::Done::Exported {
+                                    path,
+                                    seconds: start.elapsed().as_secs_f64(),
+                                    note,
+                                    left_out,
                                 },
+                                Err(message) => crate::queue::Done::Failed { message },
+                            }
+                        }));
+                        let short = ai.hit_short() || set_ai.as_ref().is_some_and(Ai::hit_short);
+                        if !tried_again
+                            && !short_sets.contains(&set)
+                            && short
+                            && matches!(held, Ok(crate::queue::Done::Failed { .. }))
+                            && give_back(
+                                &mut ai,
+                                [&mut people_ai, &mut set_ai, &mut masks_ai],
+                                true,
+                                lock,
                             )
-                        } else {
-                            // The editor's People model, lent for the
-                            // frame rather than a second one loaded.
-                            let other = set_ai.get_or_insert_with(Ai::new);
-                            ai.lend_parts(other);
-                            let written = export_other(
-                                &frame,
-                                other,
-                                cache.as_ref(),
-                                lenses.as_deref(),
-                                &deliver,
-                                &set.settings,
-                                &path,
-                            );
-                            other.lend_parts(&mut ai);
-                            written.map(|(edit, left_out)| {
-                                rendered = edit;
-                                left_out
-                            })
-                        };
-                        match written {
-                            Ok(left_out) => crate::queue::Done::Exported {
-                                path,
-                                seconds: start.elapsed().as_secs_f64(),
-                                note,
-                                left_out,
-                            },
-                            Err(message) => crate::queue::Done::Failed { message },
+                        {
+                            tried_again = true;
+                            ai.retry_patiently();
+                            if let Some(o) = set_ai.as_mut() {
+                                o.retry_patiently();
+                            }
+                            tracing::info!("the card given back; the frame tried again");
+                            continue;
                         }
-                    }));
+                        break held;
+                    };
                     held.unwrap_or_else(|payload| {
                         panicked = true;
                         crate::queue::Done::Failed {
@@ -657,6 +746,17 @@ pub(super) fn run(
                         }
                     })
                 });
+            let hit = ai.hit_short() || set_ai.as_ref().is_some_and(Ai::hit_short);
+            ai.set_patience(None);
+            if let Some(o) = set_ai.as_mut() {
+                o.set_patience(None);
+            }
+            if hit {
+                short_sets.insert(&set);
+            }
+            if finished {
+                short_sets.remove(&set);
+            }
             if panicked {
                 // The base in hand may be half made; the shelf's were
                 // finished before they were put there and no job
@@ -673,6 +773,14 @@ pub(super) fn run(
                 version: frame.version.map(|v| v.id),
                 done,
             });
+            // A frame whose fills ran a model gives the card back
+            // before the next frame loads its denoiser.
+            give_back(
+                &mut ai,
+                [&mut people_ai, &mut set_ai, &mut masks_ai],
+                false,
+                lock,
+            );
             if finished {
                 // The set's own models go with it.
                 set_ai = None;
@@ -821,6 +929,8 @@ pub(super) fn run(
                         opened_file = coming;
                         let opened = input.as_ref().expect("just set");
                         let mut round = Round::first();
+                        ai.clear_shorts();
+                        asked_again = false;
                         let (mut outcome, _) = develop_round(
                             opened,
                             &edit,
@@ -846,6 +956,9 @@ pub(super) fn run(
                             matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                         lock.lock().expect("worker queue").landed =
                             landed.map(|g| (g, opened_path.clone().unwrap_or_default()));
+                        // A first round makes no fill (its budget is
+                        // none), so none is refused here: the fills'
+                        // own rounds ask the card.
                         deliver(outcome);
                         // After the picture: the frames' heads are read
                         // (their whole files where two share a head).
@@ -874,6 +987,8 @@ pub(super) fn run(
                 if let Some(f) = &input {
                     turn = wanted % 4;
                     let mut round = Round::first();
+                    ai.clear_shorts();
+                    asked_again = false;
                     let (mut outcome, _) = develop_round(
                         f,
                         &edit,
@@ -895,6 +1010,7 @@ pub(super) fn run(
                         Instant::now(),
                     );
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
+                    // No fill refused in a first round (see Open).
                     deliver(outcome);
                 }
             }
@@ -910,6 +1026,7 @@ pub(super) fn run(
                     // The remove keeps its UNet for the fill after this.
                     ai.fills_queued(due.left > 1);
                     let mut round = Round::next(due.round.ahead);
+                    ai.clear_shorts();
                     let (mut outcome, _) = develop_round(
                         f,
                         &due.edit,
@@ -922,6 +1039,12 @@ pub(super) fn run(
                         &deliver,
                         &mut round,
                     );
+                    // The fills still ahead, before a queue that ends
+                    // stuck lets them go: what one asked again has left.
+                    let ahead = match &outcome {
+                        Outcome::Developed { fills, .. } => fills.pending.len(),
+                        _ => 0,
+                    };
                     fills_due = FillsDue::after(
                         &mut outcome,
                         &due.edit,
@@ -930,7 +1053,8 @@ pub(super) fn run(
                         Some(due.left),
                         base.as_mut(),
                     );
-                    if fills_due.is_none() {
+                    let ended = fills_due.is_none();
+                    if ended {
                         ai.release_fills();
                     }
                     shown = ShownTexture::of(&due.edit, turn, &outcome, base.as_ref());
@@ -941,9 +1065,35 @@ pub(super) fn run(
                     );
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                     deliver(outcome);
+                    // The last fill's picture is on its way: the card
+                    // given back, a queue of one included, or across the
+                    // worker's models after a fill it was short of.
+                    let gave = ask_fills_again(
+                        &mut ai,
+                        [&mut people_ai, &mut set_ai, &mut masks_ai],
+                        lock,
+                        &mut asked_again,
+                        &mut fills_due,
+                        FillsDue {
+                            edit: due.edit.clone(),
+                            turn,
+                            generation,
+                            round: Round::next(round.ahead),
+                            left: ahead.max(1),
+                        },
+                    );
+                    if !gave && ended {
+                        give_back(
+                            &mut ai,
+                            [&mut people_ai, &mut set_ai, &mut masks_ai],
+                            false,
+                            lock,
+                        );
+                    }
                 }
             }
             Job::Mask { key, shape, model } => {
+                ai.clear_shorts();
                 if matches!(shape, Shape::Part { .. }) {
                     picking = false;
                 }
@@ -982,6 +1132,16 @@ pub(super) fn run(
                     },
                 };
                 deliver(outcome);
+                // A mask the card was short of: given back across the
+                // worker's models, so the next run finds the room.
+                if ai.take_mask_short() {
+                    give_back(
+                        &mut ai,
+                        [&mut people_ai, &mut set_ai, &mut masks_ai],
+                        true,
+                        lock,
+                    );
+                }
             }
             Job::MasksFor(frame) => {
                 let ai = masks_ai.get_or_insert_with(Ai::new);
@@ -1073,6 +1233,12 @@ pub(super) fn run(
         if let Err(payload) = held {
             fills_due = None;
             ai.release_fills();
+            give_back(
+                &mut ai,
+                [&mut people_ai, &mut set_ai, &mut masks_ai],
+                false,
+                lock,
+            );
             lost_seen |= says_lost(&panic_message(payload.as_ref()));
             // The base in hand is not trusted; the shelf's stay, as
             // after a panic in a set's frame.
@@ -1393,4 +1559,92 @@ pub(super) fn ask_again(
             q.masks.push_back((key, shape, model));
         }
     }
+}
+
+/// [`crate::ai::give_back_card`] over the worker's models: its own and
+/// those it keeps for People, an export's other frames, and the masks
+/// of frames not open, which share ONNX Runtime's one WebGPU context.
+fn give_back(ai: &mut Ai, others: [&mut Option<Ai>; 3], force: bool, lock: &Mutex<Queue>) -> bool {
+    let mut all: Vec<&mut Ai> = vec![ai];
+    all.extend(others.into_iter().filter_map(Option::as_mut));
+    #[allow(unused_mut)]
+    let mut gave = crate::ai::give_back_card(&mut all, force);
+    #[cfg(test)]
+    {
+        let mut q = lock.lock().expect("worker queue");
+        let elsewhere = if force { q.elsewhere_by_test } else { 0 };
+        if elsewhere > 0
+            && let Some(free) = all[0].free_memory_by_test.as_mut()
+        {
+            *free += elsewhere;
+            gave = true;
+        }
+        if gave {
+            q.gave_back_by_test += 1;
+        }
+    }
+    #[cfg(not(test))]
+    let _ = lock;
+    gave
+}
+
+/// Sets whose frames met a short the card did not recover from, whose
+/// later frames ask once: held weakly and matched by the set itself, so
+/// one let go or canceled is forgotten and never mistaken for a new
+/// set made where it was.
+#[derive(Default)]
+pub(super) struct ShortSets(Vec<std::sync::Weak<crate::queue::Set>>);
+
+impl ShortSets {
+    pub(super) fn contains(&self, set: &Arc<crate::queue::Set>) -> bool {
+        self.0
+            .iter()
+            .any(|w| w.upgrade().is_some_and(|s| Arc::ptr_eq(&s, set)))
+    }
+
+    pub(super) fn insert(&mut self, set: &Arc<crate::queue::Set>) {
+        self.0
+            .retain(|w| w.upgrade().is_some_and(|s| !s.is_canceled()));
+        if !self.contains(set) {
+            self.0.push(Arc::downgrade(set));
+        }
+    }
+
+    pub(super) fn remove(&mut self, set: &Arc<crate::queue::Set>) {
+        self.0.retain(|w| {
+            w.upgrade()
+                .is_some_and(|s| !Arc::ptr_eq(&s, set) && !s.is_canceled())
+        });
+    }
+}
+
+/// After a develop round: a fill the card was short of gives the card
+/// back across the worker's models, and when that let anything go the
+/// fills are asked for again with `again`, once a develop. True when
+/// the card was given back.
+fn ask_fills_again(
+    ai: &mut Ai,
+    others: [&mut Option<Ai>; 3],
+    lock: &Mutex<Queue>,
+    asked_again: &mut bool,
+    fills_due: &mut Option<FillsDue>,
+    again: FillsDue,
+) -> bool {
+    if !ai.take_fill_short() {
+        return false;
+    }
+    let gave = give_back(ai, others, true, lock);
+    if gave && fills_due.is_none() && !*asked_again {
+        *asked_again = true;
+        *fills_due = Some(again);
+    }
+    gave
+}
+
+/// Whether [`give_back`] would let anything go now
+/// ([`crate::ai::give_back_due`]).
+fn give_back_due(ai: &Ai, others: [&Option<Ai>; 3]) -> bool {
+    let mut all: Vec<&Ai> = vec![ai];
+    all.extend(others.into_iter().filter_map(Option::as_ref));
+    crate::ai::give_back_due(&all)
 }

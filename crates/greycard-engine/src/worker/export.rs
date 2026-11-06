@@ -182,6 +182,8 @@ pub(super) fn walk_for_export(
     models.edit = edit.clone();
     models.turn = turn;
     models.run_unmade = true;
+    models.patient = true;
+    models.short = None;
     let purpose = Purpose::Export(Box::new(settings.clone()));
     let mut steps = stages(edit, &purpose, &input.facts(turn), lenses);
     // Nothing is kept for a later walk: each kept point holds a picture
@@ -207,6 +209,14 @@ pub(super) fn walk_for_export(
         walk(&steps, &plan, &input, kept, models, &mut None, &NoHold).map_err(|e| e.to_string())?;
     drop(input);
     debug_assert!(walked.without.is_empty(), "an export runs its fills");
+    // A model the card stayed short of fails the item, rather than
+    // write a picture without what the edit asks for.
+    if let Some(why) = models.short.take() {
+        return Err(format!("{why}; not written"));
+    }
+    if let Some(NoLearned::Short(why)) = &walked.meta.stood_in {
+        return Err(format!("{why}; not written"));
+    }
     let fills = std::mem::take(&mut models.fills);
     let masks = std::mem::take(&mut models.masks);
     let learned = std::mem::replace(&mut models.learned, LearnedReport::Off);
@@ -221,7 +231,9 @@ pub(super) fn walk_for_export(
     }
     let learned = match (&walked.meta.stood_in, unavailable) {
         (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
-        (Some(NoLearned::Failed(why)), _) => LearnedReport::Failed(why.clone()),
+        (Some(NoLearned::Failed(why) | NoLearned::Short(why)), _) => {
+            LearnedReport::Failed(why.clone())
+        }
         (None, Some(why)) => LearnedReport::Unavailable(why),
         (None, None) => learned,
     };

@@ -424,6 +424,11 @@ fn walk_loaded(
     .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
     drop(input);
     drop(kept);
+    // A frame the card had not the memory to denoise, asked a few
+    // times, would mix the engine's denoise into a learned merge.
+    if let Some(crate::walk::NoLearned::Short(why)) = &walked.meta.stood_in {
+        bail!("{name}: {why}, and nothing was made");
+    }
     let learned = steps.ops().any(|s| matches!(s, Stage::Learned(_)));
     let stood_in = walked.meta.stood_in.as_ref().map(|w| format!("{w:?}"));
     let (prepared, rgb, plain) = match walked.buf {
@@ -1018,10 +1023,12 @@ pub fn again(
                 Err(crate::walk::NoLearned::Missing(_)) => bail!(
                     "the learned denoiser's {t} tier is not fetched, and nothing was made again"
                 ),
-                Err(crate::walk::NoLearned::Failed(why)) => bail!(
-                    "the learned denoiser's {t} tier cannot run ({why}), and nothing was made \
+                Err(crate::walk::NoLearned::Failed(why) | crate::walk::NoLearned::Short(why)) => {
+                    bail!(
+                        "the learned denoiser's {t} tier cannot run ({why}), and nothing was made \
                      again"
-                ),
+                    )
+                }
             }
             Some(model)
         }
@@ -1317,14 +1324,25 @@ fn resample(f: &mut Walked, shift: &register::Transform, w: usize, h: usize) {
 /// The models a merge runs from the command line or the window's merge
 /// thread: the learned denoiser alone, from the user's model store.
 pub struct DenoiseModels {
+    /// Dropped before `_running`, by field order, so the merge's own
+    /// sessions are gone before a give-back may begin.
     ai: crate::ai::Ai,
+    /// No session is dropped to give the card back while this lives,
+    /// the merge's own included: a merge's room check never gives back,
+    /// only waits.
+    _running: crate::ai::MergeRunning,
 }
 
 impl DenoiseModels {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
+        let mut ai = crate::ai::Ai::new();
+        // A frame the card is short for is asked for again as an
+        // export's is, then the merge fails.
+        ai.set_patience(Some(crate::ai::Patience::of(crate::ai::PATIENT_TRIES)));
         Self {
-            ai: crate::ai::Ai::new(),
+            ai,
+            _running: crate::ai::MergeRunning::new(),
         }
     }
 }
@@ -1355,9 +1373,13 @@ impl Models for DenoiseModels {
         frame: &RawFrame,
         prepared: &greycard_core::develop::Prepared,
     ) -> std::result::Result<Vec<f32>, crate::walk::NoLearned> {
+        self.ai.denoiser(model).map_err(|e| no_learned(e, model))?;
+        self.ai
+            .denoise_room_for(model)
+            .map_err(|short| crate::walk::NoLearned::Short(short.0))?;
         let denoiser = self.ai.denoiser(model).map_err(|e| no_learned(e, model))?;
         let (rgb, report) = crate::worker::network(frame, prepared, model, denoiser, None)
-            .map_err(|e| crate::walk::NoLearned::Failed(e.to_string()))?;
+            .map_err(|e| crate::worker::learned_failure(&e))?;
         log::info!("merge: the learned denoiser: {report:?}");
         Ok(rgb)
     }
@@ -1728,6 +1750,79 @@ mod tests {
         );
         assert!(steps.into_inner().is_empty());
         assert_eq!(std::fs::read(&report.out).unwrap(), before);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A frame the card stays short of denoising fails the merge, rather
+    /// than mix the engine's denoise into a learned merge.
+    #[test]
+    fn a_frame_the_card_is_short_for_fails_the_merge() {
+        /// The learned denoiser had, but every frame refused for the
+        /// card's memory, as the merge's own models refuse after their
+        /// tries.
+        struct Short;
+        impl Models for Short {
+            fn can_denoise(
+                &mut self,
+                _: &'static greycard_ai::Model,
+            ) -> Result<(), crate::walk::NoLearned> {
+                Ok(())
+            }
+            fn denoise(
+                &mut self,
+                _: &'static greycard_ai::Model,
+                _: &RawFrame,
+                _: &greycard_core::develop::Prepared,
+            ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+                Err(crate::walk::NoLearned::Short(
+                    "the card has 1.0 GiB free".into(),
+                ))
+            }
+            fn fill(
+                &mut self,
+                _: &greycard_edit::retouch::Patch,
+                _: &greycard_core::develop::retouch::Region,
+                _: &greycard_core::image::WorkingImage,
+            ) -> Option<Vec<f32>> {
+                None
+            }
+            fn could_fill_more(
+                &mut self,
+                _: &greycard_edit::retouch::Retouch,
+                _: &greycard_core::image::WorkingImage,
+            ) -> bool {
+                false
+            }
+            fn rasters(
+                &mut self,
+                _: crate::stages::Masks,
+                _: &std::sync::Arc<greycard_core::image::WorkingImage>,
+                _: Option<crate::walk::Patched<'_>>,
+                _: &crate::walk::Meta,
+            ) -> crate::walk::Rasters {
+                crate::walk::Rasters::new()
+            }
+        }
+        let (dir, files) = bracket("short-card", [0; 3]);
+        let options = Options {
+            denoiser: Some(&greycard_ai::DENOISE_BEST),
+            ..Options::default()
+        };
+        let e = hdr(
+            &files,
+            &Edit::default(),
+            &options,
+            &mut Short,
+            &|_: Step| {},
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.contains("1.0 GiB free") && e.contains("nothing was made"),
+            "{e}"
+        );
+        assert!(!dir.join("IMG_0-HDR.dng").exists());
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

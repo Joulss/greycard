@@ -412,7 +412,9 @@ fn learned_report(
     match (&walked.meta.stood_in, unavailable) {
         (_, Some(why)) => LearnedReport::Unavailable(why),
         (Some(NoLearned::Missing(model)), _) => LearnedReport::Missing(model),
-        (Some(NoLearned::Failed(why)), _) => LearnedReport::Failed(why.clone()),
+        (Some(NoLearned::Failed(why) | NoLearned::Short(why)), _) => {
+            LearnedReport::Failed(why.clone())
+        }
         (None, None) => ran,
     }
 }

@@ -475,9 +475,80 @@ pub fn webgpu_memory_read() -> Option<(u64, &'static str)> {
     }
 }
 
+/// The bytes of the WebGPU adapter's own memory free now, and what
+/// said so: on Vulkan the budget less this process's use of the
+/// largest device-local heap (`VK_EXT_memory_budget`), on DX12 DXGI's
+/// budget less the current use of the local segment. Both budgets are
+/// the driver's estimate of what this process may have, other
+/// processes' use taken out. Read from the backend at each call, not
+/// kept; a query of the physical device, no device made. `None` when
+/// no adapter answers, on unified memory (an integrated GPU's
+/// device-local heap is the firmware's carve-out, not what it can
+/// reach, and a Mac's is Metal's), on a CPU adapter (lavapipe), and
+/// where the backend will not say. The first answer goes to the log.
+pub fn webgpu_free_memory() -> Option<(u64, &'static str)> {
+    #[cfg(webgpu_ep)]
+    {
+        if webgpu_unified() == Some(true) {
+            return None;
+        }
+        let a = webgpu_adapter()?;
+        if matches!(a.device_type, wgpu::DeviceType::Cpu) {
+            return None;
+        }
+        let free = adapter_free_memory(&a.adapter);
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| match free {
+            Some((bytes, from)) => log::info!(
+                "{}: {:.2} GiB free, from {from}",
+                a.name,
+                bytes as f64 / (1u64 << 30) as f64
+            ),
+            None => log::info!("{}: its free memory not known", a.name),
+        });
+        free
+    }
+    #[cfg(not(webgpu_ep))]
+    {
+        None
+    }
+}
+
+/// The heap the allocator keeps after the models' sessions are dropped
+/// given back to the system: on Linux with glibc, `malloc_trim(0)`,
+/// which took a process from 3.65 GiB resident to 0.18 after a removal
+/// (glibc keeps what ONNX Runtime freed on the host). Elsewhere it does
+/// nothing.
+pub fn trim_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: `malloc_trim` only returns free memory at the heap's top
+    // and in its free lists to the system; it touches nothing in use.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+/// The WebGPU adapter's name, as wgpu reports it, for words that name
+/// the card. `None` when no adapter answers.
+pub fn webgpu_name() -> Option<String> {
+    #[cfg(webgpu_ep)]
+    {
+        webgpu_adapter().map(|a| a.name.clone())
+    }
+    #[cfg(not(webgpu_ep))]
+    {
+        None
+    }
+}
+
 /// What the WebGPU probe learned of the adapter.
 #[cfg(webgpu_ep)]
 struct Adapter {
+    /// The adapter itself, kept so its free memory can be asked of the
+    /// backend each time ([`webgpu_free_memory`]). It and its instance
+    /// live for the process: on a laptop with two GPUs that may keep the
+    /// discrete one's device nodes open, and so keep it awake.
+    adapter: wgpu::Adapter,
     /// Name, backend, and driver.
     identity: String,
     /// The adapter's name alone.
@@ -536,6 +607,80 @@ fn adapter_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
     None
 }
 
+/// The bytes of `adapter`'s own memory free now ([`webgpu_free_memory`]).
+#[cfg(webgpu_ep)]
+fn adapter_free_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+    {
+        use ash::{ext, khr, vk};
+        // SAFETY: as in `adapter_memory`: only read.
+        if let Some(vk) = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() } {
+            // wgpu leaves the extension out where a driver's answer is
+            // known to be wrong (RADV), and enables
+            // VK_KHR_get_physical_device_properties2 on its instance
+            // wherever the loader has it; without either, not known.
+            if !vk
+                .physical_device_capabilities()
+                .supports_extension(ext::memory_budget::NAME)
+            {
+                return None;
+            }
+            let shared = vk.shared_instance();
+            if !shared
+                .extensions()
+                .contains(&khr::get_physical_device_properties2::NAME)
+            {
+                return None;
+            }
+            let props2 = khr::get_physical_device_properties2::Instance::new(
+                shared.entry(),
+                shared.raw_instance(),
+            );
+            let mut budget = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+            let mut props = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut budget);
+            // SAFETY: the physical device is the live one the adapter
+            // wraps, the instance enabled the extension the function is
+            // loaded from, and the device supports the chained struct.
+            unsafe {
+                props2.get_physical_device_memory_properties2(vk.raw_physical_device(), &mut props)
+            };
+            // The largest device-local heap: a card's VRAM. A second one,
+            // the 256 MB BAR window (NVIDIA's, AMD's with resizable BAR),
+            // is a view into the same memory, and summed would count it
+            // twice.
+            let heaps = props.memory_properties;
+            let count = (heaps.memory_heap_count as usize).min(heaps.memory_heaps.len());
+            let largest = (0..count)
+                .filter(|&i| {
+                    heaps.memory_heaps[i]
+                        .flags
+                        .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
+                })
+                .max_by_key(|&i| heaps.memory_heaps[i].size)?;
+            let (budget, used) = (budget.heap_budget[largest], budget.heap_usage[largest]);
+            return (budget > 0).then_some((budget.saturating_sub(used), "Vulkan's memory budget"));
+        }
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: as above; the DXGI adapter is only asked.
+        if let Some(dx) = unsafe { adapter.as_hal::<wgpu::hal::api::Dx12>() } {
+            // The default segment group is the local one, the card's
+            // own memory.
+            let info = dx
+                .raw_adapter()
+                .query_video_memory_info(Default::default())
+                .ok()?;
+            return (info.Budget > 0).then_some((
+                info.Budget.saturating_sub(info.CurrentUsage),
+                "DXGI's local video memory budget",
+            ));
+        }
+    }
+    let _ = adapter;
+    None
+}
+
 /// The adapter's identity, type, and memory, asked once a process and
 /// kept.
 #[cfg(webgpu_ep)]
@@ -579,6 +724,7 @@ fn webgpu_adapter() -> Option<&'static Adapter> {
                 device_type: info.device_type,
                 shader_f16: adapter.features().contains(wgpu::Features::SHADER_F16),
                 memory: adapter_memory(&adapter),
+                adapter,
             })
         })
         .as_ref()
@@ -647,6 +793,9 @@ pub enum Error {
     /// the CPU to be worth running there, say.
     #[error("{0}")]
     Unsupported(&'static str),
+    /// Not begun: the card had not the memory free for it.
+    #[error("{0}")]
+    Short(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -1501,6 +1650,28 @@ fn first_line(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The card's free memory, where the backend says it, is no more
+    /// than its whole memory; unified memory, a CPU adapter (lavapipe),
+    /// and no adapter say nothing. Only the physical device is asked:
+    /// no device is made.
+    #[test]
+    fn the_free_memory_is_within_the_cards() {
+        let first = webgpu_free_memory();
+        let second = webgpu_free_memory();
+        eprintln!(
+            "free: {first:?}, then {second:?}; whole: {:?}",
+            webgpu_memory_read()
+        );
+        if let Some((free, _)) = first {
+            let whole = webgpu_memory().expect("a card that says what is free says its size");
+            assert!(free <= whole, "{free} free of {whole}");
+        }
+        assert_eq!(first.is_some(), second.is_some());
+        if webgpu_unified() == Some(true) {
+            assert!(first.is_none());
+        }
+    }
 
     #[test]
     fn cpu_is_always_offered_last() {

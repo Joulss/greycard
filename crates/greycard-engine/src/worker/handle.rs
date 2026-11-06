@@ -700,6 +700,25 @@ impl Worker {
         }
     }
 
+    /// The card as a test has it: `free` bytes free, `freed` more once
+    /// the fills' sessions are dropped, and `elsewhere` more each time
+    /// the card is given back across the worker's models.
+    #[cfg(test)]
+    pub(super) fn free_by_test(&self, free: u64, freed: u64, elsewhere: u64) {
+        let (lock, cv) = &*self.queue;
+        let mut q = lock.lock().expect("worker queue");
+        q.free_by_test = Some((free, freed));
+        q.elsewhere_by_test = elsewhere;
+        cv.notify_one();
+    }
+
+    /// How many times the worker has given the card back.
+    #[cfg(test)]
+    pub(super) fn gave_back_by_test(&self) -> usize {
+        let (lock, _) = &*self.queue;
+        lock.lock().expect("worker queue").gave_back_by_test
+    }
+
     /// The open frame's fills made with no model, every value `v`.
     #[cfg(test)]
     pub(super) fn fill_by_test(&self, v: f32) {

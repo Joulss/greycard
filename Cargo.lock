@@ -1962,6 +1962,7 @@ dependencies = [
 name = "greycard-ai"
 version = "0.9.1"
 dependencies = [
+ "ash",
  "dirs 7.0.0",
  "flate2",
  "greycard-core",

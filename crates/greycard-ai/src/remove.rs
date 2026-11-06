@@ -247,25 +247,29 @@ impl Memory {
 }
 
 /// From how much memory, in GiB to the nearest, a queue of removals
-/// keeps its UNet open between them at 512, and at 1024 as well, on a
-/// discrete card and on unified memory, where the [`Memory`] mode would
-/// not. Measured on an RTX 5070 Ti, three removals of one window, the
-/// peak over the desktop: one at a time 5.8 GiB at 512 and 6.6 at 1024
-/// (8.6 with a denoiser run beside it); the UNet held between them 6.6
-/// at 512 (7.3 with the denoiser) and 9.9 at 1024. At 512 a held queue
-/// asks no more than one 1024 removal does, but beside a resident
-/// denoiser that is 7.3 GiB, which an 8 GB card with a desktop and the
-/// editor's textures has not got: 12; at 1024 it wants a card of 14.
-/// Unified memory holds the system and the editor too: 16 GB and 24 GB,
-/// as the policy's own bounds, where the mode keeps the UNet anyway.
+/// keeps its UNet open between them at 512, and at 1024 as well, where
+/// the [`Memory`] mode would not. Measured on an RTX 5070 Ti, three
+/// removals of one window, the peak over the desktop: one at a time
+/// 5.8 GiB at 512 and 6.6 at 1024 (8.6 with a denoiser run beside it);
+/// the UNet held between them 6.6 at 512 (7.3 with the denoiser) and
+/// 9.9 at 1024. At 512 a held queue asks no more than one 1024 removal
+/// does, but beside a resident denoiser that is 7.3 GiB, which an 8 GB
+/// card with a desktop and the editor's textures has not got: 12. A
+/// discrete card never holds the 1024 UNet for a queue: held, it is
+/// the largest single thing the editor keeps on the card, and the card
+/// is shared with other processes, which can take the rest at any
+/// moment and leave the next removal short (a driver's crash under
+/// ONNX Runtime, not an error). Unified memory holds the system and
+/// the editor too: 16 GB and 24 GB, as the policy's own bounds, where
+/// the mode keeps the UNet anyway.
 const QUEUE_512_CARD: u64 = 12;
-const QUEUE_1024_CARD: u64 = 14;
 const QUEUE_512_UNIFIED: u64 = UNET_FROM;
 const QUEUE_1024_UNIFIED: u64 = WHOLE_FROM;
 
 /// The largest square whose UNet a queue of removals keeps open on
-/// `machine` ([`Memory::keeps_queued`]): 1024, 512, or none (0) where
-/// its memory is not known or is under the bounds above.
+/// `machine` ([`Memory::keeps_queued`]): 1024 on unified memory only,
+/// 512, or none (0) where its memory is not known or is under the
+/// bounds above.
 pub fn queued_up_to(machine: Option<Machine>) -> usize {
     let Some(m) = machine else {
         return 0;
@@ -274,11 +278,11 @@ pub fn queued_up_to(machine: Option<Machine>) -> usize {
         return 0;
     };
     let (small, large) = match m.unified {
-        Some(true) => (QUEUE_512_UNIFIED, QUEUE_1024_UNIFIED),
-        Some(false) => (QUEUE_512_CARD, QUEUE_1024_CARD),
+        Some(true) => (QUEUE_512_UNIFIED, Some(QUEUE_1024_UNIFIED)),
+        Some(false) => (QUEUE_512_CARD, None),
         None => return 0,
     };
-    if gib >= large {
+    if large.is_some_and(|l| gib >= l) {
         1024
     } else if gib >= small {
         512
@@ -286,6 +290,60 @@ pub fn queued_up_to(machine: Option<Machine>) -> usize {
         0
     }
 }
+
+/// The square a window of `width` × `height` is run at, taken down to
+/// [`MAX`] past it ([`factor_for`]): `None` past [`FACTOR`] times
+/// [`MAX`] or for nothing.
+pub fn run_size(width: usize, height: usize) -> Option<usize> {
+    factor_for(width, height)?;
+    size_for(width.min(MAX), height.min(MAX))
+}
+
+/// How long a removal about to run waits for its UNet being opened
+/// ahead ([`prepare`]) to land before it counts it as not open: a Mac's
+/// WebGPU takes tens of seconds, and a hung open never holds the worker.
+const OPEN_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Whether the UNet for a removal by `steps` at `size`, about to run,
+/// is open now, held for a queue or by the [`Memory`] mode: its weights
+/// are on the card already. One being opened ahead ([`prepare`]) is
+/// waited for first, up to a bound.
+pub fn unet_held(store: &Store, steps: Steps, size: usize) -> bool {
+    UNET.wait_open(&unet_path(store, steps, size), OPEN_WAIT)
+}
+
+/// A UNet opened ahead of a removal since this was last asked: the
+/// card is given back after it as after a fill, so one opened for a
+/// fill then undone does not stay held.
+static OPENED_AHEAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a UNet was opened ahead since this was last asked, taken.
+pub fn take_prepared() -> bool {
+    OPENED_AHEAD.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The UNet held open between removals let go, whatever the [`Memory`]
+/// mode: for giving the card back once a queue of fills is done. True
+/// when one went.
+/// Whether a UNet for removals by `steps` at a size other than `size`
+/// is held or being opened: a queue's, which a removal at `size` does
+/// not run.
+pub fn unet_held_elsewhere(store: &Store, steps: Steps, size: usize) -> bool {
+    SIZES
+        .into_iter()
+        .filter(|&s| s != size)
+        .any(|s| UNET.holds(&unet_path(store, steps, s)))
+}
+
+pub fn let_go_unet() -> bool {
+    UNET.let_go_unless(|_| false)
+}
+
+/// The UNet's weights on the card, 5.1 GB.
+pub const UNET_ON_CARD: u64 = 47 * (1 << 30) / 10;
+
+/// Room kept over what a model asks of the card before it is begun.
+pub const CARD_MARGIN: u64 = (1 << 30) / 2;
 
 /// What the remove knows of the machine it runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1370,8 +1428,24 @@ pub fn prepare(store: &Store, steps: Steps) {
                 );
                 return;
             }
+            // Not opened on a card without the room for its weights:
+            // the removal itself is checked again before it begins.
+            if let Some((free, _)) = runtime::webgpu_free_memory()
+                && free < UNET_ON_CARD + CARD_MARGIN
+            {
+                log::info!(
+                    "remove: the UNet not opened ahead: {:.1} GiB free, short of its {:.1}",
+                    free as f64 / (1u64 << 30) as f64,
+                    (UNET_ON_CARD + CARD_MARGIN) as f64 / (1u64 << 30) as f64
+                );
+                return;
+            }
             let t = Instant::now();
-            match UNET.prepare(&path, || open_graph(&path)) {
+            let prepared = UNET.prepare(&path, || open_graph(&path));
+            if matches!(prepared, Ok(true)) {
+                OPENED_AHEAD.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            match prepared {
                 Ok(true) => log::info!(
                     "remove: the {} UNet opened ahead of the removal in {:.2}s",
                     match steps {
@@ -2201,6 +2275,11 @@ mod tests {
         assert_eq!(size_for(1024, 1024), Some(1024));
         assert_eq!(size_for(1025, 10), None);
         assert_eq!(size_for(0, 10), None);
+        assert_eq!(run_size(300, 200), Some(512));
+        assert_eq!(run_size(600, 200), Some(1024));
+        assert_eq!(run_size(1800, 900), Some(1024));
+        assert_eq!(run_size(FACTOR * MAX + 1, 10), None);
+        assert_eq!(run_size(0, 10), None);
     }
 
     #[test]
@@ -2822,16 +2901,18 @@ mod tests {
         }
     }
 
-    /// A queue keeps the UNet at 512 from a card of 12 GB, at 1024 from
-    /// one of 14, on unified memory from 16 and 24 GB, and never where
-    /// the memory is not known.
+    /// A queue keeps the UNet at 512 from a card of 12 GB and never at
+    /// 1024 on a card, however large; on unified memory at 512 from 16
+    /// GB and at 1024 from 24; and never where the memory is not known.
     #[test]
     fn a_queue_holds_its_unet_by_the_machines_memory() {
         assert_eq!(queued_up_to(machine(7.8, false)), 0);
         assert_eq!(queued_up_to(machine(11.4, false)), 0);
         assert_eq!(queued_up_to(machine(11.8, false)), 512);
-        assert_eq!(queued_up_to(machine(13.6, false)), 1024);
-        assert_eq!(queued_up_to(machine(15.9, false)), 1024);
+        assert_eq!(queued_up_to(machine(13.6, false)), 512);
+        assert_eq!(queued_up_to(machine(15.9, false)), 512);
+        assert_eq!(queued_up_to(machine(31.5, false)), 512);
+        assert_eq!(queued_up_to(machine(47.5, false)), 512);
         assert_eq!(queued_up_to(machine(14.0, true)), 0);
         assert_eq!(queued_up_to(machine(15.6, true)), 512);
         assert_eq!(queued_up_to(machine(23.4, true)), 1024);

@@ -148,6 +148,14 @@ design note behind it.
 
 ### Fills
 
+- A fill, the learned denoiser, or a learned mask is no longer begun
+  when the graphics card has not the memory left for it, which could
+  crash the editor while another program used the card: the fill is
+  left as it was, the engine's own denoise stands in, the mask is left
+  out, and the status says what was free and what was needed. An
+  export waits a few seconds, asks again, then fails that file. Once a
+  run of fills is done the card's memory is given back
+  ([§578](https://github.com/jessolmstead/greycard/blob/master/docs/notes/578-a-model-run-the-card-cannot-hold.md)).
 - A frame with many fills shows its picture as soon as it develops;
   the fills land one by one after it, each still to come outlined,
   and the status line's bar counts the fill's steps. The model is
