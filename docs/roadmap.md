@@ -58,9 +58,6 @@ the reasoning lives in `docs/notes.md`.
       frame's own noise under the learned denoiser (issue 63,
       2026-11-04); wants the raw. Harness in
       target/captures-2026-10-26/fill-grain
-- [ ] The crop rectangle's side handles sit under the Hide panel
-      buttons when the rectangle is full width, so they cannot be
-      grabbed (discussion 59, 2026-11-04)
 
 ## Tracks
 
@@ -613,6 +610,7 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] While rotating the photo overlay a tight grid to help with alignment
 - [ ] Failures as a dialog queue, not a status line: a failed outcome
       today becomes "failed: {message}" in the status bar
       (deliver.rs); a queue of typed errors with a kind, the frame it
@@ -1081,24 +1079,8 @@ clears or a tester asks for it.
 - [ ] A fill's area painted over again after the fact: strokes added
       to an existing retouch and the fill made again (discussion 59,
       2026-11-04)
-- [ ] A section opened under "One section open at a time" scrolled
-      into view, and Crop's rows folding under it like the rest
-      (discussion 59, 2026-10-30)
-- [ ] The folder tree's fold kept for the Library and the Loupe
-      separately (discussion 59, 2026-11-02)
-- [ ] Reset to Original from the Library, on the selection
-      (discussion 59, 2026-11-02)
-- [ ] A mask or a retouch lit in the picture while its row is under
-      the pointer (discussion 59, 2026-11-04)
-- [ ] A shape's handles put down with Esc, as the brush is, so they
-      do not sit over the picture while its adjustments are made
-      (discussion 59, 2026-11-04)
-- [ ] On the Tint and Grading wheels, Ctrl-drag holds the hue and
-      moves the amount, Shift-drag holds the amount and moves the
-      hue; Ctrl-click on the picture picks its color onto the wheel
-      and Shift-click its complement (discussion 59, 2026-11-04)
-- [ ] Deleting a mask's only shape, which has no x until a second
-      shape is added (discussion 59, 2026-11-04)
+- [ ] Crop's rows folding under "One section open at a time" like
+      the rest (discussion 59, 2026-10-30)
 - [ ] Fit and 100% in one click both ways: the Fit button and the
       navigator go back to the last scale, and a click on the picture
       toggles under every tool (discussion 59, 2026-11-04)
