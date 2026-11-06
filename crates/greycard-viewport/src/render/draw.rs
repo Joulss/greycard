@@ -126,6 +126,9 @@ struct Params {
     /// In x whether the range masks read their own picture, the one
     /// from before the Detail section, rather than the source.
     range_sample: [f32; 4],
+    /// In x the taps a side the shader averages over a pixel
+    /// (`minify::taps`).
+    minify: [f32; 4],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -393,6 +396,12 @@ impl Renderer {
             white: [display.white, display.stops, display.gain, agx[4]],
             agx: [agx[0], agx[1], agx[2], agx[3]],
             range_sample: [if self.has_sample() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+            minify: [
+                minify::taps_at_most(v.zoom, self.most_taps) as f32,
+                0.0,
+                0.0,
+                0.0,
+            ],
         };
         // Each draw has its own uniform buffer, since two draws share a
         // submission.

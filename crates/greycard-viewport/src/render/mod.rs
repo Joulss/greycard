@@ -20,6 +20,7 @@ use greycard_render::finish::{Local, MAX_LOCALS, RasterRef, Source};
 mod draw;
 mod inputs;
 mod locals;
+pub(crate) mod minify;
 mod peaking;
 mod sample;
 mod scopes;
@@ -315,6 +316,10 @@ pub struct Renderer {
     peaking: Option<peaking::Peaking>,
     /// The display table carries the proof's gamut marks.
     gamut_marks: bool,
+    /// The most taps a side the view averages over a pixel below 1:1
+    /// (`minify::MOST_TAPS`); one draws the single tap at its center
+    /// at every zoom, which the tests compare against.
+    most_taps: u32,
 }
 
 /// The scopes: the whole image drawn small through the same shader,
@@ -606,6 +611,7 @@ impl Renderer {
             redraw: true,
             peaking: None,
             gamut_marks: false,
+            most_taps: minify::MOST_TAPS,
             device: device.clone(),
             queue: queue.clone(),
             pipeline,

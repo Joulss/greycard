@@ -2877,7 +2877,7 @@ fn both_sides_with(
 }
 
 /// A mask's Detail timed on the GPU at 24 and 45 MP: the planes'
-/// upload, and a 2560 by 1440 draw of the whole frame with and
+/// upload, and a 2000 by 1333 draw of the whole frame with and
 /// without a mask asking, each read back so the time is the
 /// device's. A measurement, so ignored.
 #[test]
@@ -2921,6 +2921,13 @@ fn a_masks_detail_timed_on_the_gpu() {
             },
         });
         let mut renderer = Renderer::new(&device, &queue);
+        // Another cap on the taps below 1:1, to measure one.
+        if let Some(most) = std::env::var("GREYCARD_MOST_TAPS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            renderer.most_taps = most;
+        }
         renderer.upload(&Halves::from_image(&image, None));
         let look = Look {
             detail: greycard_edit::Detail {
@@ -2940,7 +2947,7 @@ fn a_masks_detail_timed_on_the_gpu() {
             .iter()
             .map(|a| Local::of(a, vec![None], None))
             .collect();
-        let (vw, vh) = (2560u32, 1440u32);
+        let (vw, vh) = (2000u32, 1333u32);
         let view = View {
             center: (w as f32 / 2.0, h as f32 / 2.0),
             plane: (w as f32, h as f32),
@@ -2968,9 +2975,10 @@ fn a_masks_detail_timed_on_the_gpu() {
         let upload = started.elapsed().as_secs_f64();
         let with = draw(&mut renderer);
         eprintln!(
-            "{w}x{h}: the planes up in {:.0} ms; a {vw}x{vh} draw {:.1} ms without them, \
+            "{w}x{h}: the planes up in {:.0} ms; a {vw}x{vh} draw at {:.3} {:.1} ms without them, \
              {:.1} ms with a mask's five",
             upload * 1e3,
+            view.zoom,
             without * 1e3,
             with * 1e3
         );
@@ -4221,6 +4229,525 @@ fn timing_of_peaking() {
         println!(
             "{name}: a frame {plain:.2} ms, with the clipping paint {clipping:.2} ms, \
              with peaking {peaking:.2} ms, with both {both:.2} ms (medians of 30)"
+        );
+    }
+}
+
+/// A one-pixel checkerboard of two levels, `w` by `h`.
+fn checkerboard(w: usize, h: usize, a: f32, b: f32) -> WorkingImage {
+    WorkingImage {
+        width: w,
+        height: h,
+        data: (0..w * h)
+            .map(|i| (i % w + i / w).is_multiple_of(2))
+            .flat_map(|even| [if even { a } else { b }; 3])
+            .collect(),
+    }
+}
+
+/// The whole of `image` drawn at `zoom` with `view`'s look into a
+/// target its size times the zoom, read back as RGB bytes; `view`'s
+/// center is an offset from the picture's.
+fn drawn_at(renderer: &mut Renderer, image: &WorkingImage, zoom: f32, view: &View) -> Vec<u8> {
+    let (w, h) = (image.width as f32, image.height as f32);
+    let (tw, th) = ((w * zoom).round() as u32, (h * zoom).round() as u32);
+    let v = View {
+        zoom,
+        center: (w / 2.0 + view.center.0, h / 2.0 + view.center.1),
+        plane: (w, h),
+        frame_size: (w, h),
+        ..view.clone()
+    };
+    renderer.redraw = true;
+    let target = renderer.render(tw, th, &v).0;
+    let shown = renderer.read_back(&target).expect("read back");
+    shown.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect()
+}
+
+/// The largest difference of two RGB pictures `width` across, in
+/// levels, their last column and row left out.
+fn worst_inside(a: &[u8], b: &[u8], width: usize) -> u8 {
+    assert_eq!(a.len(), b.len());
+    let rows = a.len() / (3 * width);
+    (0..a.len())
+        .filter(|i| i / 3 % width < width - 1 && i / (3 * width) < rows - 1)
+        .map(|i| a[i].abs_diff(b[i]))
+        .max()
+        .unwrap_or(0)
+}
+
+/// A one-pixel checkerboard drawn at a quarter is its flat mean: the
+/// picture, and the sharpen's plane beside it. One tap a pixel, as
+/// the view drew it before, is a pixel of the board.
+#[test]
+fn a_checkerboard_at_a_quarter_is_its_flat_mean() {
+    let Some((device, queue)) = device("the quarter's checkerboard") else {
+        return;
+    };
+    let (w, h) = (256usize, 192usize);
+    let board = checkerboard(w, h, 0.05, 0.45);
+    let flat = WorkingImage {
+        width: w,
+        height: h,
+        data: vec![0.25; w * h * 3],
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    // A quarter of a source pixel off: on the board's corners each
+    // bilinear tap would read a 2x2 mean by itself, and taps in the
+    // wrong places would pass. Off them each tap weighs its four
+    // pixels 9, 3, 3, and 1, and only the taps' spread makes the mean.
+    // The last column and row reach past the edge, which clamps, so
+    // they are left out.
+    let view = View {
+        center: (0.25, 0.25),
+        ..View::blank()
+    };
+    renderer.upload(&Halves::from_image(&flat, None));
+    let mean = drawn_at(&mut renderer, &flat, 0.25, &view);
+    renderer.upload(&Halves::from_image(&board, None));
+    let shown = drawn_at(&mut renderer, &board, 0.25, &view);
+    let worst = worst_inside(&shown, &mean, w / 4);
+    eprintln!("the board at a quarter: at most {worst} levels from its mean");
+    assert!(
+        worst <= 1,
+        "the board at a quarter is {worst} levels off its mean"
+    );
+    renderer.most_taps = 1;
+    let one = drawn_at(&mut renderer, &board, 0.25, &view);
+    assert!(
+        worst_inside(&one, &mean, w / 4) > 8,
+        "one tap a pixel is the mean too"
+    );
+    renderer.most_taps = minify::MOST_TAPS;
+    // The sharpen's delta as a board of plus and minus a stop: its
+    // mean is nothing, so a mask's Sharpen at a quarter leaves the
+    // flat picture as it is.
+    renderer.upload(&Halves::from_image(&flat, None));
+    let delta = greycard_render::detail::sharpen_delta(
+        &(0..w * h)
+            .map(|i| if (i % w + i / w) % 2 == 0 { 1.0 } else { -1.0 })
+            .collect::<Vec<_>>(),
+    );
+    let planes = Arc::new(greycard_render::detail::DetailPlanes::sharpen_only(
+        w, h, 1.0, delta,
+    ));
+    renderer.set_detail(Some(&planes));
+    let mut edit = greycard_edit::Edit::default();
+    edit.adjustments.push(everywhere(Look {
+        detail: greycard_edit::Detail {
+            sharpen: 1.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    let locals: Vec<Local> = edit
+        .adjustments
+        .iter()
+        .map(|a| Local::of(a, vec![None], None))
+        .collect();
+    let sharpened = View {
+        locals,
+        center: (0.25, 0.25),
+        ..View::with_look(&edit)
+    };
+    let shown = drawn_at(&mut renderer, &flat, 0.25, &sharpened);
+    renderer.most_taps = 1;
+    let one = drawn_at(&mut renderer, &flat, 0.25, &sharpened);
+    renderer.set_detail(None);
+    let none = drawn_at(&mut renderer, &flat, 0.25, &sharpened);
+    let worst = worst_inside(&shown, &none, w / 4);
+    eprintln!("the sharpen's board at a quarter: at most {worst} levels from none");
+    assert!(
+        worst <= 1,
+        "the sharpen's board at a quarter is {worst} levels off"
+    );
+    assert!(
+        worst_inside(&one, &none, w / 4) > 4,
+        "one tap of the plane is its mean too"
+    );
+}
+
+/// A picture of fine noise over a ramp, `w` by `h`: detail at every
+/// pixel for the taps to average.
+fn fine_noise(w: usize, h: usize) -> WorkingImage {
+    let hash = |x: usize, y: usize, c: usize| {
+        let mut z = (x as u64) << 32 | (y as u64) << 8 | c as u64;
+        z = (z ^ (z >> 33)).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+        z = (z ^ (z >> 33)).wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+        ((z ^ (z >> 33)) >> 40) as f32 / (1u64 << 24) as f32
+    };
+    WorkingImage {
+        width: w,
+        height: h,
+        data: (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                let base = 0.05 + 0.4 * x as f32 / w as f32;
+                [0, 1, 2].map(|c| base * (0.3 + 1.4 * hash(x, y, c)))
+            })
+            .collect(),
+    }
+}
+
+/// A position, x and y.
+type Point = (f32, f32);
+
+/// The view's map from a target position to a position of the
+/// texture, as the shader's `frame_at`, `source_of`, and `texel_at`
+/// make it, for a `target` of that size; and the position in the
+/// view's source, before the texture's turn, beside it.
+fn texture_map(
+    view: &View,
+    target: (u32, u32),
+    texture: (usize, usize),
+) -> impl Fn(Point) -> (Point, Point) {
+    let v = view.clone();
+    let (tw, th) = (texture.0 as f32, texture.1 as f32);
+    let image = if v.source_turn % 2 == 1 {
+        (th, tw)
+    } else {
+        (tw, th)
+    };
+    move |(x, y)| {
+        let q = (
+            (x - target.0 as f32 / 2.0) / v.zoom + v.center.0,
+            (y - target.1 as f32 / 2.0) / v.zoom + v.center.1,
+        );
+        let r0 = (
+            v.frame_origin.0 + q.0 - v.plane.0 / 2.0,
+            v.frame_origin.1 + q.1 - v.plane.1 / 2.0,
+        );
+        let d = (1.0 + v.persp[0] * r0.0 + v.persp[1] * r0.1).max(1e-4);
+        let r = (r0.0 / d, r0.1 / d);
+        let [m0, m1] = v.matrix;
+        let at = (
+            image.0 / 2.0 + m0[0] * r.0 + m0[1] * r.1,
+            image.1 / 2.0 + m1[0] * r.0 + m1[1] * r.1,
+        );
+        let tex = match v.source_turn % 4 {
+            1 => (at.1, image.0 - at.0),
+            2 => (image.0 - at.0, image.1 - at.1),
+            3 => (image.1 - at.1, at.0),
+            _ => at,
+        };
+        (tex, at)
+    }
+}
+
+/// How far the shader's draw of `image` through `view` into a
+/// `target` is from the reference's: `minify::footprint_mean` of the
+/// picture as the GPU holds it, at the taps the zoom takes, drawn at
+/// 1:1 with `look`, which must read each pixel alone (no mixer, no
+/// range mask, no vignette), so the difference is the sampling's.
+/// Over the pixels whose footprint is well inside the source: the
+/// largest difference in levels, the mean, one tap's mean for scale,
+/// and how many pixels.
+fn against_reference(
+    renderer: &mut Renderer,
+    image: &WorkingImage,
+    view: &View,
+    look: &View,
+    target: (u32, u32),
+) -> (u8, f64, f64, usize) {
+    let (tw, th) = target;
+    renderer.upload(&Halves::from_image(image, None));
+    renderer.most_taps = minify::MOST_TAPS;
+    renderer.redraw = true;
+    let t = renderer.render(tw, th, view).0;
+    let shown = renderer.read_back(&t).expect("read back");
+    renderer.most_taps = 1;
+    renderer.redraw = true;
+    let t = renderer.render(tw, th, view).0;
+    let one = renderer.read_back(&t).expect("read back");
+    renderer.most_taps = minify::MOST_TAPS;
+    let seen = WorkingImage {
+        width: image.width,
+        height: image.height,
+        data: image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect(),
+    };
+    let map = texture_map(view, target, (image.width, image.height));
+    let n = minify::taps(view.zoom);
+    let mean = WorkingImage {
+        width: tw as usize,
+        height: th as usize,
+        data: (0..tw * th)
+            .flat_map(|i| {
+                let at = ((i % tw) as f32 + 0.5, (i / tw) as f32 + 0.5);
+                minify::footprint_mean(&seen, at, n, |p| map(p).0)
+            })
+            .collect(),
+    };
+    renderer.upload(&Halves::from_image(&mean, None));
+    let reference = drawn_at(renderer, &mean, 1.0, look);
+    let (sw, sh) = if view.source_turn % 2 == 1 {
+        (image.height as f32, image.width as f32)
+    } else {
+        (image.width as f32, image.height as f32)
+    };
+    // Generous: a perspective stretches the footprint on one side.
+    let reach = 1.0 / view.zoom.min(1.0) + 2.0;
+    let (mut worst, mut sum, mut one_sum, mut pixels) = (0u8, 0u64, 0u64, 0usize);
+    for y in 0..th {
+        for x in 0..tw {
+            let (_, (sx, sy)) = map((x as f32 + 0.5, y as f32 + 0.5));
+            if sx < reach || sy < reach || sx > sw - reach || sy > sh - reach {
+                continue;
+            }
+            pixels += 1;
+            for k in 0..3 {
+                let r = reference[(y * tw + x) as usize * 3 + k];
+                let d = shown.get_pixel(x, y)[k].abs_diff(r);
+                worst = worst.max(d);
+                sum += u64::from(d);
+                one_sum += u64::from(one.get_pixel(x, y)[k].abs_diff(r));
+            }
+        }
+    }
+    let channels = 3.0 * pixels as f64;
+    (
+        worst,
+        sum as f64 / channels,
+        one_sum as f64 / channels,
+        pixels,
+    )
+}
+
+/// The look the reference checks draw with: exposure, contrast, and
+/// the curve, all read per pixel.
+fn per_pixel_look() -> View {
+    let mut look = View::blank();
+    look.light.exposure = 0.7;
+    look.light.tone.contrast = 1.3;
+    look
+}
+
+/// At 1:1 and above the view is the single bilinear tap at the
+/// pixel's center, against the reference's one tap there: straight at
+/// 1:1, where the tap lands on a texel's center and the two are the
+/// same bytes, and at 1:1 and at 2 turned between pixels. Turned, a
+/// card's sampler weighs the tap with 8-bit sub-texel precision, so
+/// one tap between two texels of contrasting value can land 11 levels
+/// from the CPU's float tap (measured on a GeForce; lavapipe is within
+/// one), and the bound there is the sampler's, with the mean tight.
+#[test]
+fn at_1_to_1_and_above_the_view_is_the_single_tap() {
+    let Some((device, queue)) = device("the single tap at 1:1") else {
+        return;
+    };
+    let image = fine_noise(480, 320);
+    let (w, h) = (image.width as f32, image.height as f32);
+    let look = per_pixel_look();
+    let mut renderer = Renderer::new(&device, &queue);
+    for (zoom, turn, target) in [
+        (1.0f32, 0.0f32, (480u32, 320u32)),
+        (1.0, 0.1, (400, 260)),
+        (2.0, 0.2, (400, 260)),
+    ] {
+        assert_eq!(minify::taps(zoom), 1);
+        let (s, c) = turn.sin_cos();
+        let view = View {
+            zoom,
+            center: (w / 2.0, h / 2.0),
+            plane: (w, h),
+            frame_size: (w, h),
+            matrix: [[c, -s], [s, c]],
+            ..look.clone()
+        };
+        let (worst, mean, _, pixels) =
+            against_reference(&mut renderer, &image, &view, &look, target);
+        eprintln!(
+            "one tap at {zoom}, turned {turn}: at most {worst} levels from the reference, \
+             {mean:.3} on average, over {pixels} pixels"
+        );
+        assert!(
+            pixels > (target.0 * target.1 / 2) as usize,
+            "too few pixels inside"
+        );
+        if turn == 0.0 {
+            assert_eq!(worst, 0, "straight at 1:1 the tap is not the texel");
+        }
+        assert!(worst <= 16, "{worst} levels off at {zoom}, turned {turn}");
+        assert!(
+            mean < 0.3,
+            "{mean} levels off on average at {zoom}, turned {turn}"
+        );
+    }
+}
+
+/// Below 1:1 the shader is its reference, `minify::footprint_mean`:
+/// fine noise at 0.3 turned a little between pixels, and again with a
+/// perspective and the texture a quarter turn behind, against the
+/// reference's mean of it drawn at 1:1 with the same look.
+#[test]
+fn below_1_to_1_the_shader_is_its_reference() {
+    let Some((device, queue)) = device("the taps' reference check") else {
+        return;
+    };
+    let image = fine_noise(480, 320);
+    let look = per_pixel_look();
+    let mut renderer = Renderer::new(&device, &queue);
+    let zoom = 0.3f32;
+    let (s, c) = 0.05f32.sin_cos();
+    // The view's source is the texture stood on end for the lagging
+    // turn.
+    let cases = [
+        (
+            "turned",
+            0u8,
+            [0.0f32, 0.0f32],
+            (480.0f32, 320.0f32),
+            (144u32, 96u32),
+        ),
+        (
+            "in perspective, a quarter behind",
+            1,
+            [3e-4, -2e-4],
+            (320.0, 480.0),
+            (96, 144),
+        ),
+        (
+            "in perspective, three quarters behind",
+            3,
+            [-2e-4, 3e-4],
+            (320.0, 480.0),
+            (96, 144),
+        ),
+    ];
+    for (what, lag, persp, (w, h), target) in cases {
+        let view = View {
+            zoom,
+            center: (w / 2.0, h / 2.0),
+            plane: (w, h),
+            frame_size: (w, h),
+            matrix: [[c, -s], [s, c]],
+            persp,
+            source_turn: lag,
+            ..look.clone()
+        };
+        let (worst, mean, one, pixels) =
+            against_reference(&mut renderer, &image, &view, &look, target);
+        let n = minify::taps(zoom);
+        eprintln!(
+            "{n} taps a side at {zoom}, {what}: at most {worst} levels from the reference, \
+             {mean:.3} on average; one tap {one:.2} on average; {pixels} pixels"
+        );
+        assert!(
+            pixels > (target.0 * target.1 / 2) as usize,
+            "{what}: too few pixels inside"
+        );
+        assert!(
+            worst <= 2,
+            "{what}: the taps are {worst} levels off their reference"
+        );
+        assert!(
+            mean < 0.3,
+            "{what}: the taps are {mean} levels off on average"
+        );
+        assert!(
+            one > 4.0 * mean.max(0.25),
+            "{what}: one tap is as near: {one}"
+        );
+    }
+}
+
+/// How much softer the view's mean is than the export's Lanczos3, at
+/// a quarter and a third: what each keeps of a grating at half the
+/// view's own limit, and how far apart the two are on fine noise, in
+/// encoded levels. Printed, for the notes.
+#[test]
+#[ignore = "a measurement"]
+fn the_taps_against_the_exports_resize() {
+    let encode = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        let e = if v <= 0.003_130_8 {
+            12.92 * v
+        } else {
+            1.055 * v.powf(1.0 / 2.4) - 0.055
+        };
+        e * 255.0
+    };
+    for (w, out) in [(1024usize, 256usize), (1200, 396)] {
+        let zoom = out as f32 / w as f32;
+        let n = minify::taps(zoom);
+        let to_source = |(x, y): (f32, f32)| (x / zoom, y / zoom);
+        let h = w / 2;
+        let oh = (h as f32 * zoom).round() as usize;
+        let ours = |image: &WorkingImage| -> Vec<f32> {
+            (0..out * oh)
+                .map(|i| {
+                    let at = ((i % out) as f32 + 0.5, (i / out) as f32 + 0.5);
+                    minify::footprint_mean(image, at, n, to_source)[0]
+                })
+                .collect()
+        };
+        let theirs = |image: &WorkingImage| -> Vec<f32> {
+            greycard_render::export::fit_exact(image, out as u32, oh as u32)
+                .expect("a resize")
+                .data
+                .chunks(3)
+                .map(|p| p[0])
+                .collect()
+        };
+        // A grating at half the view's limit, a quarter cycle a target
+        // pixel: the swing each keeps, away from the edges.
+        let f = zoom / 4.0;
+        let grating = WorkingImage {
+            width: w,
+            height: h,
+            data: (0..w * h)
+                .flat_map(|i| {
+                    let x = (i % w) as f32;
+                    [0.5 + 0.4 * (std::f32::consts::TAU * f * x).cos(); 3]
+                })
+                .collect(),
+        };
+        let swing = |v: &[f32]| {
+            let row = &v[(oh / 2) * out + 8..(oh / 2) * out + out - 8];
+            let (lo, hi) = row
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), x| {
+                    (l.min(*x), h.max(*x))
+                });
+            (hi - lo) / 0.8
+        };
+        let (kept_ours, kept_theirs) = (swing(&ours(&grating)), swing(&theirs(&grating)));
+        // Fine noise: the mean difference, and each one's own spread
+        // about its local level, in encoded levels.
+        let noise = fine_noise(w, h);
+        let (a, b) = (ours(&noise), theirs(&noise));
+        let inside = |i: &usize| {
+            let (x, y) = (i % out, i / out);
+            x >= 4 && y >= 4 && x < out - 4 && y < oh - 4
+        };
+        let idx: Vec<usize> = (0..out * oh).filter(inside).collect();
+        let apart = idx
+            .iter()
+            .map(|&i| (encode(a[i]) - encode(b[i])).abs() as f64)
+            .sum::<f64>()
+            / idx.len() as f64;
+        let spread = |v: &[f32]| {
+            idx.iter()
+                .map(|&i| {
+                    let local = (v[i - 1] + v[i + 1] + v[i - out] + v[i + out]) / 4.0;
+                    (encode(v[i]) - encode(local)).powi(2) as f64
+                })
+                .sum::<f64>()
+                .sqrt()
+                / (idx.len() as f64).sqrt()
+        };
+        eprintln!(
+            "at {zoom:.3} ({n} taps a side): a grating at half the view's limit keeps {:.0}% \
+             through the taps, {:.0}% through Lanczos3; on fine noise the two are {apart:.2} \
+             levels apart on average, the detail {:.2} against {:.2} levels (RMS about the \
+             local mean)",
+            100.0 * kept_ours,
+            100.0 * kept_theirs,
+            spread(&a),
+            spread(&b)
         );
     }
 }

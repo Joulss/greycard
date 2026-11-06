@@ -7,6 +7,11 @@ design note behind it.
 
 ### The window
 
+- The picture at Fit, and at any zoom under 1:1, no longer shimmers on
+  foliage and fine texture: each screen pixel averages its share of
+  the picture, as an export does. Isolated clipped specks no longer
+  show at Fit, either
+  ([§576](https://github.com/jessolmstead/greycard/blob/master/docs/notes/576-the-view-below-1-to-1-averages-its-footprint.md)).
 - **Shift+J** in the Loupe paints the sharpest parts of the picture
   green, so 1:1 finds a missed focus that Fit hides (discussion 62)
   ([§542](https://github.com/jessolmstead/greycard/blob/master/docs/notes/542-focus-peaking.md)).

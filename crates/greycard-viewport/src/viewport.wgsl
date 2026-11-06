@@ -185,6 +185,10 @@ struct Params {
     // In x whether the range masks read `range_src` rather than the
     // source.
     range_sample: vec4<f32>,
+    // In x the taps a side `footprint_mean` averages over a target
+    // pixel below 1:1 (`minify::taps`); one, the single tap at the
+    // pixel's center, at 1:1 and above.
+    minify: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -356,15 +360,17 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Frame pixel under this target pixel, then the source pixel under
     // that through the turn, as `to_source` in the edit crate.
-    let q = (pos.xy - p.tile.xy - p.view * 0.5) / p.zoom + p.center;
+    let q = frame_at(pos.xy);
     if (q.x < 0.0 || q.y < 0.0 || q.x >= p.frame_size.x || q.y >= p.frame_size.y) {
         return vec4<f32>(p.canvas.rgb, select(1.0, 0.0, p.range.w > 0.5));
     }
-    // The perspective first, its divisor held above the horizon as
-    // `to_source` holds it, then the turn.
-    let r0 = p.frame_origin + q - p.plane * 0.5;
-    let r = r0 / max(1.0 + dot(p.persp.xy, r0), 1e-4);
-    let at = p.image * 0.5 + vec2<f32>(dot(p.turn0, r), dot(p.turn1, r));
+    let at = source_of(q);
+    // Below 1:1 the pixel covers a square of source pixels, and the
+    // picture and the planes are its mean (`footprint_mean`); the
+    // masks are read once, at its center, as the export reads them
+    // once a pixel of its resized picture.
+    let taps = u32(p.minify.x + 0.5);
+    let minified = taps > 1u;
     if (at.x < 0.0 || at.y < 0.0 || at.x >= p.image.x || at.y >= p.image.y) {
         // Nothing of the source is here, so nothing of a mask either:
         // the canvas, as outside the frame (the turned source's
@@ -376,7 +382,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // else, the masks among it, is in the source's own positions.
     let tex_at = texel_at(at);
     var t4: vec4<f32>;
-    if (p.cubic.x < 0.5) {
+    if (minified) {
+        t4 = footprint_mean(src, pos.xy, taps);
+    } else if (p.cubic.x < 0.5) {
         t4 = textureSampleLevel(src, samp, tex_at / vec2<f32>(textureDimensions(src)), 0.0);
     } else {
         t4 = sample_cubic(src, tex_at);
@@ -438,7 +446,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let own = p.range_sample.x > 0.5 && all(textureDimensions(range_src) == textureDimensions(src));
         var ts = t;
         if (own) {
-            if (p.cubic.x < 0.5) {
+            if (minified) {
+                ts = footprint_mean(range_src, pos.xy, taps).rgb;
+            } else if (p.cubic.x < 0.5) {
                 ts = textureSampleLevel(range_src, samp, tex_at / vec2<f32>(textureDimensions(range_src)), 0.0).rgb;
             } else {
                 ts = sample_cubic(range_src, tex_at).rgb;
@@ -537,7 +547,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let pedestal = abs(p.detail_clip.w);
     if (detail_s != 0.0 && pedestal > 0.0 && all(textureDimensions(sharpen_plane) == textureDimensions(src))) {
         var d: f32;
-        if (p.cubic.x < 0.5) {
+        if (minified) {
+            d = footprint_mean(sharpen_plane, pos.xy, taps).r;
+        } else if (p.cubic.x < 0.5) {
             d = planes_at(sharpen_plane, tex_at).r;
         } else {
             d = sample_cubic(sharpen_plane, tex_at).r;
@@ -548,7 +560,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
     if (detailed && p.detail.w > 0.5 && all(textureDimensions(detail_planes) == textureDimensions(src))) {
         var bands: vec4<f32>;
-        if (p.cubic.x < 0.5) {
+        if (minified) {
+            bands = footprint_mean(detail_planes, pos.xy, taps);
+        } else if (p.cubic.x < 0.5) {
             bands = planes_at(detail_planes, tex_at);
         } else {
             bands = sample_cubic(detail_planes, tex_at);
@@ -1201,6 +1215,44 @@ fn texel_at(at: vec2<f32>) -> vec2<f32> {
         return vec2<f32>(p.image.y - at.y, at.x);
     }
     return at;
+}
+
+// The frame pixel under a target position, as `to_source` in the edit
+// crate begins.
+fn frame_at(pt: vec2<f32>) -> vec2<f32> {
+    return (pt - p.tile.xy - p.view * 0.5) / p.zoom + p.center;
+}
+
+// The source position under a frame position: the perspective first,
+// its divisor held above the horizon as `to_source` holds it, then
+// the turn.
+fn source_of(q: vec2<f32>) -> vec2<f32> {
+    let r0 = p.frame_origin + q - p.plane * 0.5;
+    let r = r0 / max(1.0 + dot(p.persp.xy, r0), 1e-4);
+    return p.image * 0.5 + vec2<f32>(dot(p.turn0, r), dot(p.turn1, r));
+}
+
+// A texture of the source's size averaged over the target pixel
+// centered at `pt`: `n` by `n` taps, one at the middle of each of as
+// many equal cells of the pixel, each taken through the view to the
+// source, read through the turn, and read by the sampler's bilinear.
+// The planes too: `planes_at`'s exact weights matter where one tap is
+// all a pixel shows, a stop's step seen magnified, and are lost in the
+// mean of many, at four loads a tap. `minify::footprint_mean` is its
+// reference. A tap past the source's edge reads the edge, as the
+// sampler clamps.
+fn footprint_mean(tex: texture_2d<f32>, pt: vec2<f32>, n: u32) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(tex));
+    let cell = 1.0 / f32(n);
+    var acc = vec4<f32>(0.0);
+    for (var j = 0u; j < n; j = j + 1u) {
+        for (var i = 0u; i < n; i = i + 1u) {
+            let off = (vec2<f32>(f32(i), f32(j)) + 0.5) * cell - 0.5;
+            let s = texel_at(source_of(frame_at(pt + off)));
+            acc = acc + textureSampleLevel(tex, samp, s / size, 0.0);
+        }
+    }
+    return acc / f32(n * n);
 }
 
 // The mean Oklab a and b of the texture about a position, a 5x5 box
