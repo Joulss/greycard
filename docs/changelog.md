@@ -7,387 +7,294 @@ design note behind it.
 
 ### The window
 
-- A frame with many generative fills shows its picture as soon as it
-  develops; the fills land one by one after it, each still to come
-  outlined on the picture and the status line's bar counting the
-  fill's steps. The model is loaded once for a queue of small fills
-  on a card of 12 GB or more, and of large ones from 14 GB
-  ([§569](https://github.com/jessolmstead/greycard/blob/master/docs/notes/569-a-develops-fills-made-after-its-picture.md)).
-- A star at the end of a preset's row makes it a favorite: it is
-  listed again under Favorites at the top of PRESETS, and kept from
-  one session to the next (issue 72)
-  ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).
-- Presets sort into groups, each a section of the list that folds
-  away. Right-click a preset to move it into a group, a new one, or
-  out of any, and a group's heading to rename it. An imported
-  Lightroom preset keeps its Lightroom group, and `greycard presets
-  --import` takes a preset folder as a group (issue 72)
-  ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).
-- A Luminance or Color mask no longer moves when you change Texture,
-  Clarity, Structure, or Dehaze: it reads the picture from before them,
-  and so does Refine edge
-  ([§560](https://github.com/jessolmstead/greycard/blob/master/docs/notes/560-the-range-masks-read-the-picture-from-before-detail.md)).
-- Hold Shift as you start dragging a Linear mask to keep its angle to
-  15-degree steps, or a Radial to keep it a circle. Space still moves
-  the picture
-  ([§557](https://github.com/jessolmstead/greycard/blob/master/docs/notes/557-constrained-mask-drags.md)).
-- The Sharpen's Threshold runs to 200%, RawTherapee's range, for a
-  picture whose flat areas still sharpen at 50% (pixls)
-  ([§554](https://github.com/jessolmstead/greycard/blob/master/docs/notes/554-the-sharpens-threshold-to-200.md)).
-- The pointer on a mask's row paints that mask red over the picture,
-  and on a repair's row draws its outline, so the one to fix is found
-  among many (discussion 59)
-  ([§552](https://github.com/jessolmstead/greycard/blob/master/docs/notes/552-a-mask-or-a-retouch-lit-while-its-row-is-hovered.md)).
-- A mask's DETAIL has Sharpen: -100 takes the Develop tab's Sharpen off
-  under the mask, +100 puts it on once more; with the Develop tab's
-  Sharpen off, a positive amount sharpens inside the mask alone (pixls,
-  discussion 59)
-  ([§548](https://github.com/jessolmstead/greycard/blob/master/docs/notes/548-sharpen-in-a-masks-detail.md)).
-- The grading wheels and the tint's ring: Shift-drag keeps the hue and
-  Ctrl-drag the strength, and a Ctrl-click on the picture gives the
-  wheel last used that color's hue, Ctrl+Shift its opposite
-  (discussion 59)
-  ([§546](https://github.com/jessolmstead/greycard/blob/master/docs/notes/546-the-wheels-held-drags-and-the-pick-from-the-picture.md)).
-- Fixed: a crop as wide or as tall as the view can be dragged by its
-  edge handles; the Hide panel and strip arrows move off them while
-  the crop is in hand (discussion 59)
-  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
-- A mask's only shape has its **×** too; the mask stays, empty, and
-  one undo brings the shape back (discussion 59)
-  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
-- **Esc** with no tool in hand hides a Linear or Radial shape's
-  handles; a click on its row or the shape brings them back
-  (discussion 59)
-  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
-- A line under **New mask** shows the sections going under the
-  pinned mask list (discussion 59)
-  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
-- **Reset to Original**, in the HISTORY section's head and in the
-  frame menu for a selection, puts each frame's edit back to its
-  Original as one step that Ctrl+Z takes back (discussion 59)
-  ([§544](https://github.com/jessolmstead/greycard/blob/master/docs/notes/544-reset-to-original.md)).
-- **Shift+J** in the Loupe, in Cull or Develop, paints the sharpest
-  parts of the picture green, measured on the picture as shown, so 1:1
-  finds a missed focus that Fit hides (discussion 62)
+- **Shift+J** in the Loupe paints the sharpest parts of the picture
+  green, so 1:1 finds a missed focus that Fit hides (discussion 62)
   ([§542](https://github.com/jessolmstead/greycard/blob/master/docs/notes/542-focus-peaking.md)).
-- FOLDERS keeps its fold in each view, so it can stay open in the
-  Library and folded in the Loupe (discussion 59)
-  ([§538](https://github.com/jessolmstead/greycard/blob/master/docs/notes/538-the-folders-fold-kept-per-view.md)).
-- The canvas behind the picture can be White, beside Black and the
-  three greys
+- The filmstrip's cells take their pictures' shapes, so about twice as
+  many frames fit on screen
+  ([§518](https://github.com/jessolmstead/greycard/blob/master/docs/notes/518-the-strips-cells-sized-to-their-pictures.md)).
+- A rating, flag, or label key in the develop view shows the badge
+  over the picture for two seconds
+  ([§519](https://github.com/jessolmstead/greycard/blob/master/docs/notes/519-the-badge-over-the-picture-in-develop.md)).
+- The canvas behind the picture can be White
   ([§534](https://github.com/jessolmstead/greycard/blob/master/docs/notes/534-a-white-canvas.md)).
-- The frame menu's Edit in... hands the frame to the app chosen on
-  Settings as a 16-bit TIFF beside the raw, and the app's save comes
-  back stacked with the raw
-  ([§499](https://github.com/jessolmstead/greycard/blob/master/docs/notes/499-edit-in-another-editor.md)).
-- The export sheet's Name field takes a pattern of {name}, {seq},
-  {date}, and {camera}, kept with the preset
-  ([§494](https://github.com/jessolmstead/greycard/blob/master/docs/notes/494-exports-named-by-a-pattern.md)).
-- A right-click on a mask offers Duplicate mask, Copy mask, and
-  Paste mask, the last onto the selection too
-  ([§492](https://github.com/jessolmstead/greycard/blob/master/docs/notes/492-one-mask-copied-and-the-picks-sample.md)).
-- The Color shape's pick takes a Sample size of 5 to 41 pixels and
-  shows its square at the pointer
-  ([§492](https://github.com/jessolmstead/greycard/blob/master/docs/notes/492-one-mask-copied-and-the-picks-sample.md)).
+- FOLDERS keeps its fold in each view (discussion 59)
+  ([§538](https://github.com/jessolmstead/greycard/blob/master/docs/notes/538-the-folders-fold-kept-per-view.md)).
 - Settings' Start in offers the Library as well as the Loupe
   ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
-- A mask's name heads its sections as typed, not in capitals
-  ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
-- With the brush in hand, Shift+[ and Shift+] step its feather and
-  Ctrl+[ and Ctrl+] its flow; O shows and hides the chosen mask
-  ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
-- A new mask's name field takes the keys, so it can be named at once
+- Edit in... on the frame menu hands the frame to the app on Settings
+  as a 16-bit TIFF, and the app's save comes back stacked with the raw
+  ([§499](https://github.com/jessolmstead/greycard/blob/master/docs/notes/499-edit-in-another-editor.md)).
+- A drag with Space or Shift held pans the picture with the heal
+  brush, the fill, or a mask's shape in hand
   ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
 - Under One section open at a time, a section opened out of sight
-  scrolls into view ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
-- With the heal brush, the fill, or a mask's shape in hand, a drag
-  with Space or Shift held pans the picture ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
-- Ctrl+E exports the selection with the last settings into the last
-  folder, no sheet; the sheet the first time ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
-- The filmstrip's cells take their pictures' shapes, a portrait narrow
-  and a landscape wide, with a small gap between: about twice as many
-  frames on screen, and the strip a little shorter
-  ([§518](https://github.com/jessolmstead/greycard/blob/master/docs/notes/518-the-strips-cells-sized-to-their-pictures.md)).
-- In the develop view a rating, flag, or label key shows the frame's
-  badge over the picture for two seconds, and it stays while the strip
-  is hidden ([§519](https://github.com/jessolmstead/greycard/blob/master/docs/notes/519-the-badge-over-the-picture-in-develop.md)).
+  scrolls into view
+  ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- A crop as wide or as tall as the view can be dragged by its edge
+  handles (discussion 59)
+  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
+- Escape puts Level, a perspective guide, or Draw down right after its
+  button is clicked
+  ([§550](https://github.com/jessolmstead/greycard/blob/master/docs/notes/550-the-keys-after-level-a-guide-or-draw.md)).
+- A straightened frame opened with a Linear mask shown, or with Heal
+  or Clone in hand, no longer crashes at startup
+  ([§572](https://github.com/jessolmstead/greycard/blob/master/docs/notes/572-no-outline-before-the-frame-has-a-size.md)).
+- The window opens inside the Dock's or the task bar's work area
+  ([§500](https://github.com/jessolmstead/greycard/blob/master/docs/notes/500-the-window-fit-to-the-work-area.md)).
+- A slider under a touchpad set to natural scrolling moves with the
+  fingers
+  ([§483](https://github.com/jessolmstead/greycard/blob/master/docs/notes/483-natural-scrolling-on-windows-and-gnome.md)).
+- The Keys sheet and the camera match sheet reach their last rows by
+  the wheel
+  ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).
+- The status line says "preparing..." while a model loads
+  ([§490](https://github.com/jessolmstead/greycard/blob/master/docs/notes/490-a-word-while-a-model-loads.md)).
+- The last three runs' logs are kept as greycard-ui-1.log to -3.log,
+  and the folder paths on Settings' About open in the file manager
+  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
+- A settings file that will not parse is kept as `settings.json.bad`
+  rather than written over
+  ([§520](https://github.com/jessolmstead/greycard/blob/master/docs/notes/520-a-settings-file-that-will-not-parse-is-kept-aside.md)).
+- On Linux, Help and Report a problem open in the desktop's default
+  browser (issue 60)
+  ([§533](https://github.com/jessolmstead/greycard/blob/master/docs/notes/533-help-asks-the-desktop-for-its-browser.md)).
+
+### Presets
+
+- A star on a preset's row makes it a favorite, listed under Favorites
+  at the top of PRESETS (issue 72)
+  ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).
+- Presets sort into groups that fold away: right-click a preset to
+  move it, a group's heading to rename it. A Lightroom import keeps
+  its group, and `greycard presets --import` takes a folder as one
+  (issue 72)
+  ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).
+- **Reset to Original**, in HISTORY's head and in the frame menu for a
+  selection, is one step that Ctrl+Z takes back (discussion 59)
+  ([§544](https://github.com/jessolmstead/greycard/blob/master/docs/notes/544-reset-to-original.md)).
 
 ### Develop
 
-- The learned denoiser's Blend is now two sliders, Luma and Chroma:
-  the color noise goes at Chroma's full default while Luma keeps as
-  much grain as you like. An edit from before keeps the blend it had
-  for both
+- The learned denoiser's Blend is two sliders, Luma and Chroma: the
+  color noise goes at Chroma's full default while Luma keeps the grain
+  you like. An older edit keeps its blend for both
   ([§567](https://github.com/jessolmstead/greycard/blob/master/docs/notes/567-the-learned-blends-color-apart-from-its-grain.md)).
-- Detail gains Structure under Clarity, in the global section and in
-  a mask: a local contrast about three times wider than Clarity and
-  soft, so shapes separate across a face or a landscape without halos
+- Detail gains Structure under Clarity, globally and in a mask: a
+  local contrast about three times wider than Clarity and soft
   ([§507](https://github.com/jessolmstead/greycard/blob/master/docs/notes/507-structure-a-wider-softer-local-contrast.md)).
-- A mask gains Refine edge, under Show mask and Invert: its edge is
-  fitted to the picture's, so a brush's or an AI mask's edge follows
-  the subject's and two masks meet without a seam
-  ([§503](https://github.com/jessolmstead/greycard/blob/master/docs/notes/503-refine-edge-on-a-mask.md)).
+- The Sharpen's Threshold runs to 200% (pixls)
+  ([§554](https://github.com/jessolmstead/greycard/blob/master/docs/notes/554-the-sharpens-threshold-to-200.md)).
+- The grading wheels: Shift-drag keeps the hue, Ctrl-drag the
+  strength, and Ctrl-click on the picture gives the wheel that color's
+  hue, Ctrl+Shift its opposite (discussion 59)
+  ([§546](https://github.com/jessolmstead/greycard/blob/master/docs/notes/546-the-wheels-held-drags-and-the-pick-from-the-picture.md)).
+- The curve and mixer droppers read a picked pixel as the picture is
+  drawn, so a point lands where Highlights or Whites put it
+  ([§528](https://github.com/jessolmstead/greycard/blob/master/docs/notes/528-highlights-reaches-what-a-merge-keeps.md)).
 - A library-wide camera match no longer writes a table that would tint
-  greys its frames never showed, and says so; a camera's own cast on
-  its greys is kept, and a group from one folder gets no table of its
-  own
+  greys its frames never showed, and says so
   ([§517](https://github.com/jessolmstead/greycard/blob/master/docs/notes/517-the-camera-match-holds-unseen-greys.md)).
+- The profiled denoise is a quarter quicker, about a second off a
+  45 MP develop
+  ([§551](https://github.com/jessolmstead/greycard/blob/master/docs/notes/551-the-non-local-means-each-pair-of-offsets-once.md)).
+
+### Masks
+
+- A mask gains Refine edge: its edge is fitted to the picture's, so a
+  brush's or an AI mask's edge follows the subject's
+  ([§503](https://github.com/jessolmstead/greycard/blob/master/docs/notes/503-refine-edge-on-a-mask.md)).
+- A mask's DETAIL has Sharpen: -100 takes the global Sharpen off under
+  the mask, a positive amount sharpens inside it alone (pixls,
+  discussion 59)
+  ([§548](https://github.com/jessolmstead/greycard/blob/master/docs/notes/548-sharpen-in-a-masks-detail.md)).
+- A Luminance or Color mask no longer moves when Texture, Clarity,
+  Structure, or Dehaze change, and nor does Refine edge
+  ([§560](https://github.com/jessolmstead/greycard/blob/master/docs/notes/560-the-range-masks-read-the-picture-from-before-detail.md)).
+- Shift as a Linear mask's drag starts holds its angle to 15-degree
+  steps, a Radial's to a circle
+  ([§557](https://github.com/jessolmstead/greycard/blob/master/docs/notes/557-constrained-mask-drags.md)).
+- The pointer on a mask's row paints it red over the picture, on a
+  repair's row draws its outline (discussion 59)
+  ([§552](https://github.com/jessolmstead/greycard/blob/master/docs/notes/552-a-mask-or-a-retouch-lit-while-its-row-is-hovered.md)).
+- Hovering a mask's on/off switch no longer lights its red overlay
+  ([§568](https://github.com/jessolmstead/greycard/blob/master/docs/notes/568-a-masks-switch-without-its-overlay.md)).
+- A right-click on a mask offers Duplicate, Copy, and Paste mask, the
+  last onto the selection too; the Color shape's pick takes a Sample
+  size of 5 to 41 pixels
+  ([§492](https://github.com/jessolmstead/greycard/blob/master/docs/notes/492-one-mask-copied-and-the-picks-sample.md)).
+- A mask's only shape has its **×** too, and **Esc** with no tool in
+  hand hides a shape's handles (discussion 59)
+  ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
+- A new mask's name field takes the keys at once
+  ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- A mask's name heads its sections as typed; with the brush in hand
+  Shift+[ and Shift+] step its feather, Ctrl+[ and Ctrl+] its flow,
+  and O shows and hides the mask
+  ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
+- A first Subtract or Erase stroke with a new brush cuts the brush out
+  of a mask that already has shapes
+  ([§531](https://github.com/jessolmstead/greycard/blob/master/docs/notes/531-a-first-subtract-or-erase-stroke-cuts-a-new-brush-out.md)).
+- A Sky, Subject, or other learned mask is made again after a white
+  balance, lens, or noise change
+  ([§522](https://github.com/jessolmstead/greycard/blob/master/docs/notes/522-the-learned-masks-kept-by-their-base.md)).
+
+### Fills
+
+- A frame with many fills shows its picture as soon as it develops;
+  the fills land one by one after it, each still to come outlined,
+  and the status line's bar counts the fill's steps. The model is
+  loaded once for a queue of small fills on a card of 12 GB or more
+  ([§569](https://github.com/jessolmstead/greycard/blob/master/docs/notes/569-a-develops-fills-made-after-its-picture.md)).
+- A Fill made before a white balance, denoise, or lens change is made
+  again for the new picture, and the status line counts the fills
+  being made
+  ([§566](https://github.com/jessolmstead/greycard/blob/master/docs/notes/566-a-fill-kept-for-the-picture-it-was-made-from.md)).
+- A big fill over lettering or other strong texture no longer comes
+  back far grainier than the picture; fills kept on disk are made
+  again once
+  ([§574](https://github.com/jessolmstead/greycard/blob/master/docs/notes/574-the-grains-line-drawn-past-the-texture.md)).
+- On a GPU whose shaders cannot run 16-bit floats (an NVIDIA card
+  before the GTX 16 and RTX 20 series) a Fast or Best fill says so in
+  plain words; Patch still works there
+  ([§570](https://github.com/jessolmstead/greycard/blob/master/docs/notes/570-the-remove-refused-plainly-without-16-bit-floats.md)).
 
 ### Lens and DNG
 
-- LENS offers a Lens picker: the database's lenses for the body when
-  the file names none, and Adobe lens profiles (.lcp) placed beside
-  the camera profiles
+- LENS offers a Lens picker: the database's lenses for the body, and
+  Adobe lens profiles (.lcp) placed beside the camera profiles
   ([§497](https://github.com/jessolmstead/greycard/blob/master/docs/notes/497-a-lens-picked-by-hand-and-adobe-lens-profiles.md)).
-- LENS gains a Maker row above Lens, with a Find a lens field beside
-  it, to narrow the picker's few hundred lenses to one maker's or to
-  those whose name or maker holds the words typed
+- A Maker row and a Find a lens field narrow the picker
   ([§516](https://github.com/jessolmstead/greycard/blob/master/docs/notes/516-the-lens-picker-by-maker-and-a-filter.md)).
 - A DNG that carries its own distortion correction or bad-pixel list
-  is read with them, as Adobe's reader applies them, a phone's
-  per-color CA correction included. The file's correction takes the
-  place of the lens profile's distortion, and of the CA correction
-  where it corrects each color. Crops, spots, and brushes already
-  placed on such a DNG move with the picture, up to about 96 px at a
-  Pixel ultra-wide's corners plus a 4 % zoom
+  is read with them, as Adobe's reader applies them; crops and masks
+  already placed move with the picture
   ([§513](https://github.com/jessolmstead/greycard/blob/master/docs/notes/513-a-dngs-own-lens-correction-and-bad-pixels.md)).
-- A phone's DNG opens without its dark corners: the gain maps and the
-  forward matrices in the file are applied
-  ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md)).
+- A phone's DNG opens without its dark corners, and at the white
+  balance the camera recorded
+  ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md))
+  ([§524](https://github.com/jessolmstead/greycard/blob/master/docs/notes/524-rawler-at-the-forks-float-deflate-pin.md)).
+- A panorama or HDR merged in Lightroom Classic no longer opens
+  magenta and blown out
+  ([§565](https://github.com/jessolmstead/greycard/blob/master/docs/notes/565-a-dngs-sample-maps-applied.md)).
+- A Canon frame on a third-party lens that shares its lens id with
+  others now names the lens
+  ([§564](https://github.com/jessolmstead/greycard/blob/master/docs/notes/564-lenses-sharing-an-id-told-apart.md)).
+- Panasonic raws in the older split-block format (a Lumix GX9, among
+  others) no longer show short blue dashes
+  ([§562](https://github.com/jessolmstead/greycard/blob/master/docs/notes/562-a-panasonic-v4-window-read-within-its-block.md)).
 
 ### Library
 
-- Every frame has a focus score from its embedded preview: **Focus**
-  in the Sort menu puts the sharpest first, `focus>0.6` in the filter
-  finds them, and Stack bursts tops each burst with its sharpest
+- Every frame has a focus score: **Focus** in the Sort menu puts the
+  sharpest first, `focus>0.6` in the filter finds them, and Stack
+  bursts tops each burst with its sharpest
   ([§559](https://github.com/jessolmstead/greycard/blob/master/docs/notes/559-a-focus-score-for-every-frame.md)).
-- Raws with Lightroom's XMP sidecars beside them now open with their
-  Lightroom edit as one "Imported from Lightroom" step, and with
-  Lightroom's rating, label, keywords, and title wherever you have set
-  none here; a frame edited here is left alone, and a card import
-  counts them (issue 61,
-  [§535](https://github.com/jessolmstead/greycard/blob/master/docs/notes/535-a-lightroom-xmp-beside-a-raw-taken-on-its-first-open.md)).
-- `greycard export IMG_0001.CR3 out.jpg` writes frames under their
-  saved edits from the command line, with the export sheet and presets
-  the editor keeps; several frames or a folder go into a folder
-  ([§514](https://github.com/jessolmstead/greycard/blob/master/docs/notes/514-the-engine-part-four-greycard-export.md)).
-- The editor's `--export` still works for this release, as another
-  name for `greycard export`, and goes in the next
-  ([§514](https://github.com/jessolmstead/greycard/blob/master/docs/notes/514-the-engine-part-four-greycard-export.md)).
-- A file or folder opened while greycard runs opens in the running
-  window rather than a second one, on Linux, macOS, and Windows
-  ([§504](https://github.com/jessolmstead/greycard/blob/master/docs/notes/504-one-instance.md)).
-- The previews behind the Library's thumbnails are made for the
-  frames near the screen and around the one being culled, not for
-  the whole root at its first open; a frame shown before the list
-  finished growing gets its preview too
-  ([§495](https://github.com/jessolmstead/greycard/blob/master/docs/notes/495-previews-near-the-screen-and-around-the-cull.md)).
-- Collections, smart collections, and stacks travel with their frames
-  through a backup or an archive and join on another machine, a
-  conflict kept as both
-  ([§493](https://github.com/jessolmstead/greycard/blob/master/docs/notes/493-collections-and-stacks-carried-beside-their-frames.md)).
-- A first index pass reads a raw's metadata alone, about 200 KB a
-  file instead of its head and tail or the whole file, so a network
-  root indexes in a quarter of the time
-  ([§491](https://github.com/jessolmstead/greycard/blob/master/docs/notes/491-a-first-index-pass-reads-the-metadata-alone.md)).
-- A folder renamed under a root keeps its stacks, with the editor
-  open or closed
-  ([§486](https://github.com/jessolmstead/greycard/blob/master/docs/notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md)).
-- Shift+[ and Shift+] move the frame up or down in its stack, and an
-  open stack's tiles sit on a band
-  ([§486](https://github.com/jessolmstead/greycard/blob/master/docs/notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md)).
-- Ctrl+click (Cmd on a Mac) on a filter chip holds it out, drawn in
-  red, so everything but the rejects is one click
-  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
 - Stack bursts, in the frame menu, puts frames seconds apart that
-  look alike into one stack with the sharpest on top
+  look alike into one stack
   ([§473](https://github.com/jessolmstead/greycard/blob/master/docs/notes/473-bursts-into-stacks.md)).
-- A root added while the machine is busy is indexed in the same pass,
-  and a sleeping network share costs a pass one timeout instead of
-  holding it
+- Raws with Lightroom's XMP sidecars open with the Lightroom edit as
+  one step, and its rating, label, keywords, and title where you have
+  set none (issue 61)
+  ([§535](https://github.com/jessolmstead/greycard/blob/master/docs/notes/535-a-lightroom-xmp-beside-a-raw-taken-on-its-first-open.md)).
+- A file or folder opened while greycard runs opens in the running
+  window
+  ([§504](https://github.com/jessolmstead/greycard/blob/master/docs/notes/504-one-instance.md)).
+- Thumbnails and previews are made for the frames near the screen,
+  not for the whole root at its first open
+  ([§495](https://github.com/jessolmstead/greycard/blob/master/docs/notes/495-previews-near-the-screen-and-around-the-cull.md))
+  ([§512](https://github.com/jessolmstead/greycard/blob/master/docs/notes/512-camera-thumbnails-near-the-screen.md)).
+- A first index pass reads a raw's metadata alone, so a network root
+  indexes in a quarter of the time; a root added while the machine is
+  busy joins the pass
+  ([§491](https://github.com/jessolmstead/greycard/blob/master/docs/notes/491-a-first-index-pass-reads-the-metadata-alone.md))
   ([§472](https://github.com/jessolmstead/greycard/blob/master/docs/notes/472-the-library-over-a-network.md)).
+- Collections, smart collections, and stacks travel with their frames
+  through a backup or an archive
+  ([§493](https://github.com/jessolmstead/greycard/blob/master/docs/notes/493-collections-and-stacks-carried-beside-their-frames.md)).
+- A folder renamed under a root keeps its stacks; Shift+[ and Shift+]
+  move the frame in its stack
+  ([§486](https://github.com/jessolmstead/greycard/blob/master/docs/notes/486-a-renamed-folders-stacks-and-the-stack-in-the-grid.md)).
+- Ctrl+click (Cmd on a Mac) on a filter chip holds it out, so
+  everything but the rejects is one click
+  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
+- A collection or stack whose frame left a folder now gone is no
+  longer written there every minute
+  ([§571](https://github.com/jessolmstead/greycard/blob/master/docs/notes/571-a-carried-set-and-a-folder-that-is-gone.md)).
+- A collection's late write to a slow share is taken out of a folder
+  its frames leave, and a frame moved back under another name keeps
+  its edit and its stack
+  ([§511](https://github.com/jessolmstead/greycard/blob/master/docs/notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md)).
+- A sync onto unindexed frames, or a paste or preset over hundreds of
+  frames, no longer holds the window
+  ([§556](https://github.com/jessolmstead/greycard/blob/master/docs/notes/556-a-syncs-first-read-of-unindexed-frames-off-the-window.md))
+  ([§498](https://github.com/jessolmstead/greycard/blob/master/docs/notes/498-many-sidecars-saved-off-the-windows-thread.md)).
+- On Windows a sidecar save waits up to 1.8 s for a scanner or a sync
+  client holding the old file
+  ([§558](https://github.com/jessolmstead/greycard/blob/master/docs/notes/558-a-rename-into-place-waits-out-a-hold.md)).
+- A camera profile saved under two file names lists once
+  ([§470](https://github.com/jessolmstead/greycard/blob/master/docs/notes/470-one-profile-under-two-file-names.md)).
+
+### Export
+
+- `greycard export IMG_0001.CR3 out.jpg` writes frames under their
+  saved edits from the command line; the editor's `--export` still
+  works for this release
+  ([§514](https://github.com/jessolmstead/greycard/blob/master/docs/notes/514-the-engine-part-four-greycard-export.md)).
+- The export sheet's Name field takes a pattern of {name}, {seq},
+  {date}, and {camera}
+  ([§494](https://github.com/jessolmstead/greycard/blob/master/docs/notes/494-exports-named-by-a-pattern.md)).
+- Ctrl+E exports the selection with the last settings into the last
+  folder, no sheet
+  ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- A color window's edge and the mixer's hue in an export made smaller
+  match the viewport's
+  ([§555](https://github.com/jessolmstead/greycard/blob/master/docs/notes/555-the-color-mean-at-a-fixed-scale.md)).
+- An export no longer differs by one level at its tile edges between
+  machines
+  ([§510](https://github.com/jessolmstead/greycard/blob/master/docs/notes/510-the-same-export-at-any-thread-count.md)).
 
 ### Merge
 
 - **Merge to HDR** on the frame menu merges a tripod bracket into one
-  compact float DNG beside its first frame: the shadows of the
-  brightest frame and the highlights of the darkest, looking as the
-  middle frame did and with its edit. `greycard merge hdr` does the
-  same from the command line
+  float DNG beside its first frame, looking as the middle frame did;
+  `greycard merge hdr` from the command line
   ([§525](https://github.com/jessolmstead/greycard/blob/master/docs/notes/525-the-tripod-hdr-merge.md)).
-- **Merge to Focus stack** on the frame menu merges frames shot at
-  several focus distances into one DNG beside the first frame, sharp
-  everywhere, with the middle frame's edit: the same merge as
-  `greycard stack`, which now refuses to write over a frame
+- **Merge to Focus stack** merges frames shot at several focus
+  distances into one DNG, sharp everywhere; `greycard stack` no
+  longer writes over a frame
   ([§573](https://github.com/jessolmstead/greycard/blob/master/docs/notes/573-merge-to-focus-stack.md)).
-- **Merge to Panorama** on the frame menu stitches frames shot turning
-  the camera into one float DNG beside the first: the lens corrected
-  first, flat up to about 90 degrees and on a cylinder past it, the
-  seams led around what moved, and the middle frame's look.
-  `greycard merge pano` does the same from the command line
+- **Merge to Panorama** stitches frames shot turning the camera into
+  one float DNG, the seams led around what moved; `greycard merge
+  pano` from the command line
   ([§530](https://github.com/jessolmstead/greycard/blob/master/docs/notes/530-the-panorama.md)).
-- `greycard merge again <file> --denoise <tier>` makes a merged file
-  again from its frames with the learned denoiser on each, every pixel
-  where it was, so its edit and masks still fit; a panorama now takes
-  the frame in the middle of the turn as its reference, whatever order
-  the frames were shot in
+- **Denoise the frames and merge again** in the Noise section makes a
+  merged file again with each frame denoised, its edit kept; so does
+  `greycard merge again <file> --denoise <tier>`
+  ([§541](https://github.com/jessolmstead/greycard/blob/master/docs/notes/541-making-a-merge-again-from-the-noise-section.md))
   ([§537](https://github.com/jessolmstead/greycard/blob/master/docs/notes/537-the-recipe-kept-and-the-merge-made-again.md)).
-- A merged file whose frames are beside it shows **Denoise the frames
-  and merge again** in the Noise section: pick a tier in its row,
-  press it, and the merge is made again in place with each frame
-  denoised, its edit kept
-  ([§541](https://github.com/jessolmstead/greycard/blob/master/docs/notes/541-making-a-merge-again-from-the-noise-section.md)).
 
 ### Mac
 
 - An Intel Mac package, `x86_64-macos.dmg`, new and tentative: nobody
-  has run it on an Intel Mac yet; the denoiser and Sky run through
-  Core ML, the other models on the CPU, and the generative remove is
-  not available
+  has run it on an Intel Mac yet, and the generative remove is not
+  available
   ([§547](https://github.com/jessolmstead/greycard/blob/master/docs/notes/547-an-intel-mac-package.md)).
-- The learned denoise runs 1.4 to 2.5 times as fast on Apple silicon:
-  Core ML takes each tier's fp16 copy, fetched with the tier, or in the
-  background for a tier already fetched
+- The learned denoise runs 1.4 to 2.5 times as fast on Apple silicon
+  through Core ML
   ([§508](https://github.com/jessolmstead/greycard/blob/master/docs/notes/508-the-fp16-denoisers-on-core-ml.md)).
-
-### Fixes
-
-- On a GPU whose shaders cannot run 16-bit floats (an NVIDIA card
-  before the GTX 16 and RTX 20 series) a Fast or Best fill now says so
-  in plain words instead of failing inside the model; Patch still
-  works there
-  ([§570](https://github.com/jessolmstead/greycard/blob/master/docs/notes/570-the-remove-refused-plainly-without-16-bit-floats.md)).
-- A big generative fill over lettering or other strong texture no
-  longer comes back far grainier than the picture round it; fills
-  kept on disk are made again once
-  ([§574](https://github.com/jessolmstead/greycard/blob/master/docs/notes/574-the-grains-line-drawn-past-the-texture.md)).
-- A straightened frame opened with a Linear mask shown, or arrowed
-  to with Heal or Clone in hand, no longer crashes at startup
-  ([§572](https://github.com/jessolmstead/greycard/blob/master/docs/notes/572-no-outline-before-the-frame-has-a-size.md)).
-- A collection or stack whose frame moved out of a folder that is now
-  gone is no longer written to that folder again every minute
-  ([§571](https://github.com/jessolmstead/greycard/blob/master/docs/notes/571-a-carried-set-and-a-folder-that-is-gone.md)).
-- Hovering a mask's on/off switch no longer lights the mask's red
-  overlay, so the switch shows what the adjustment does
-  ([§568](https://github.com/jessolmstead/greycard/blob/master/docs/notes/568-a-masks-switch-without-its-overlay.md)).
-- A Fill made before a white balance, denoise, or lens change is no
-  longer shown over the changed picture until the file is reopened;
-  it is made again for the new one. While several fills are being
-  made the status line counts them, "Fill 5, 4 of 15"
-  ([§566](https://github.com/jessolmstead/greycard/blob/master/docs/notes/566-a-fill-kept-for-the-picture-it-was-made-from.md)).
-- A panorama or HDR merged in Lightroom Classic (a DNG 1.7 linear
-  raw with `MapPolynomial` opcodes) no longer opens magenta and
-  blown out; the file's own sample curves are applied, as its
-  `MapTable` opcodes would be
-  ([§565](https://github.com/jessolmstead/greycard/blob/master/docs/notes/565-a-dngs-sample-maps-applied.md)).
-- A Canon frame on a third-party lens that shares its lens id with
-  others (a Sigma 17-70mm on a Rebel T8i, among many) now names the
-  lens, from the focal range the file carries, instead of "not
-  recorded"
-  ([§564](https://github.com/jessolmstead/greycard/blob/master/docs/notes/564-lenses-sharing-an-id-told-apart.md)).
-- On a Windows machine whose processor needs the CPU-only ONNX
-  Runtime, that runtime no longer logs the models you run to Windows'
-  diagnostic data; its telemetry is off on every path now
-  ([§563](https://github.com/jessolmstead/greycard/blob/master/docs/notes/563-onnx-runtimes-telemetry-off.md)).
-- Panasonic raws in the older split-block format (a Lumix GX9, among
-  others) no longer show short blue dashes: one read a block crossed
-  into the next block
-  ([§562](https://github.com/jessolmstead/greycard/blob/master/docs/notes/562-a-panasonic-v4-window-read-within-its-block.md)).
-- On Windows a sidecar save waits up to 1.8 s for a scanner or a sync
-  client holding the old file, instead of failing at once
-  ([§558](https://github.com/jessolmstead/greycard/blob/master/docs/notes/558-a-rename-into-place-waits-out-a-hold.md)).
-- A sync onto frames the library has not indexed yet no longer holds
-  the window while it reads what kind of raw each one is
-  ([§556](https://github.com/jessolmstead/greycard/blob/master/docs/notes/556-a-syncs-first-read-of-unindexed-frames-off-the-window.md)).
-- A color window's edge and the mixer's hue in an export made smaller
-  now match the viewport's
-  ([§555](https://github.com/jessolmstead/greycard/blob/master/docs/notes/555-the-color-mean-at-a-fixed-scale.md)).
-- The profiled denoise's non-local means are a quarter quicker: each
-  pair of search offsets is weighed once, about a second off a 45 MP
-  develop at six threads
-  ([§551](https://github.com/jessolmstead/greycard/blob/master/docs/notes/551-the-non-local-means-each-pair-of-offsets-once.md)).
-- Escape puts Level, a perspective guide, or Draw down right after
-  its button is clicked, wherever the pointer is
-  ([§550](https://github.com/jessolmstead/greycard/blob/master/docs/notes/550-the-keys-after-level-a-guide-or-draw.md)).
-- On Linux, Help, Report a problem, and the release page open in the
-  desktop's default browser, not the one a shell's `BROWSER` names
-  (issue 60)
-  ([§533](https://github.com/jessolmstead/greycard/blob/master/docs/notes/533-help-asks-the-desktop-for-its-browser.md)).
-- A first Subtract or Erase stroke with a new brush, in a mask that
-  already has shapes, cuts the brush out of the mask; it used to do
-  nothing, or empty the whole mask when the shape was added as
-  Intersect
-  ([§531](https://github.com/jessolmstead/greycard/blob/master/docs/notes/531-a-first-subtract-or-erase-stroke-cuts-a-new-brush-out.md)).
-- The curve and mixer droppers read a picked pixel by the frame's own
-  range, as the picture is drawn, so a point lands where Highlights
-  or Whites put it rather than a little off
-  ([§528](https://github.com/jessolmstead/greycard/blob/master/docs/notes/528-highlights-reaches-what-a-merge-keeps.md)).
-- A phone's DNG (a Pixel's, say) opens at the white balance the camera
-  recorded. Its matrix and its as-shot white used to disagree by up to
-  a few hundred kelvin
-  ([§524](https://github.com/jessolmstead/greycard/blob/master/docs/notes/524-rawler-at-the-forks-float-deflate-pin.md)).
-- A Sky, Subject, or other learned mask is made again after a white
-  balance, lens, or noise change, so it no longer keeps the outline
-  from before a distortion correction, in the viewport or an export
-  ([§522](https://github.com/jessolmstead/greycard/blob/master/docs/notes/522-the-learned-masks-kept-by-their-base.md)).
-- A settings file that will not parse, a hand edit with a typo say, is
-  kept as `settings.json.bad` rather than written over with the
-  defaults
-  ([§520](https://github.com/jessolmstead/greycard/blob/master/docs/notes/520-a-settings-file-that-will-not-parse-is-kept-aside.md)).
-- The Library's camera thumbnails are made for the frames near the
-  screen and around the one being culled, not for the whole root at
-  its first open; the rest come in as a scroll reaches them
-  ([§512](https://github.com/jessolmstead/greycard/blob/master/docs/notes/512-camera-thumbnails-near-the-screen.md)).
-- A collection or stack whose write to a slow share finished after
-  its time is taken out of a folder its frames leave, and a deletion
-  reaches it; part files a write left, and deletion files older than
-  half a year, are cleared from `.greycard/sets`
-  ([§511](https://github.com/jessolmstead/greycard/blob/master/docs/notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md)).
-- A frame moved out of the library and back into its folder under
-  another name, after the folder itself was renamed meanwhile, keeps
-  its edit and its place in its stack
-  ([§511](https://github.com/jessolmstead/greycard/blob/master/docs/notes/511-carried-leftovers-and-a-file-away-while-its-folder-is-renamed.md)).
-- An export could differ by one level at the right and bottom tile
-  edges between machines or thread counts
-  ([§510](https://github.com/jessolmstead/greycard/blob/master/docs/notes/510-the-same-export-at-any-thread-count.md)).
-- The window opens inside the Dock's, the task bar's, or the panel's
-  work area where the platform reports one, so a large or side Dock
-  narrows it rather than putting its foot under the Dock
-  ([§500](https://github.com/jessolmstead/greycard/blob/master/docs/notes/500-the-window-fit-to-the-work-area.md)).
-- A paste, a sync, or a preset over hundreds of frames no longer holds
-  the window while the sidecars are written: 299 frames took 1.6 s
-  here, now about 10 ms, and a file either lands whole or keeps its
-  old sidecar
-  ([§498](https://github.com/jessolmstead/greycard/blob/master/docs/notes/498-many-sidecars-saved-off-the-windows-thread.md)).
-- The status line says "preparing..." while a model loads, and the
-  remove's model starts loading when the Fill is taken in hand where
-  the machine keeps it open
-  ([§490](https://github.com/jessolmstead/greycard/blob/master/docs/notes/490-a-word-while-a-model-loads.md)).
-- The last three runs' logs are kept as greycard-ui-1.log to -3.log,
-  names GitHub's issue form takes
-  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
-- The folder paths on Settings' About open in the file manager
-  ([§484](https://github.com/jessolmstead/greycard/blob/master/docs/notes/484-three-asks-the-log-held-out-chips-and-the-folders.md)).
-- A slider under a Windows precision touchpad or a GNOME touchpad set
-  to natural scrolling moves with the fingers, as on a Mac
-  ([§483](https://github.com/jessolmstead/greycard/blob/master/docs/notes/483-natural-scrolling-on-windows-and-gnome.md)).
-- The Keys sheet reaches its last row, and the camera match sheet's
-  group list its last group, by the wheel
-  ([§465](https://github.com/jessolmstead/greycard/blob/master/docs/notes/465-the-wrapped-line-the-layout-does-not-see.md)).
-- A fill's models load in about 2 s on an M5 rather than 10 to 14:
-  a Fast fill at 512 takes 6.4 s, not 17.8
-  ([§482](https://github.com/jessolmstead/greycard/blob/master/docs/notes/482-a-models-weights-mapped-once.md)).
-- On a Mac, Texture and Clarity themselves run about ten times
-  quicker, and a Clarity move on a 102 MP frame shows in 2.2 s
-  rather than 3.9 s
+- Texture and Clarity run about ten times quicker
   ([§480](https://github.com/jessolmstead/greycard/blob/master/docs/notes/480-workgroup-memory-left-unzeroed.md)).
-- On a Mac, the first Sky mask no longer waits about 27 seconds for
-  Core ML, nor 4.5 at each launch after; the Sky model and the
-  learned denoiser open in under half a second once they have run
+- A fill's models load in about 2 s on an M5 rather than 10 to 14
+  ([§482](https://github.com/jessolmstead/greycard/blob/master/docs/notes/482-a-models-weights-mapped-once.md)).
+- The first Sky mask no longer waits about 27 seconds for Core ML
   ([§466](https://github.com/jessolmstead/greycard/blob/master/docs/notes/466-sky-on-core-ml-without-its-weights-as-text.md)).
-- A camera profile saved under two file names lists once, and two
-  profiles with one name show their file names
-  ([§470](https://github.com/jessolmstead/greycard/blob/master/docs/notes/470-one-profile-under-two-file-names.md)).
+
+### Windows
+
+- On a processor that needs the CPU-only ONNX Runtime, that runtime
+  no longer logs the models you run to Windows' diagnostic data
+  ([§563](https://github.com/jessolmstead/greycard/blob/master/docs/notes/563-onnx-runtimes-telemetry-off.md)).
 
 ## 0.9.1, 2026-10-29
 
