@@ -1,15 +1,7 @@
 # Roadmap
 
-The list to glance at and add to. Next is the tag about to be cut: one
-sentence a tester can verify and the short list that makes it true,
-chosen from the tracks. A tag with fixes only moves the patch number;
-one with new features moves the minor. A track is a theme with a
-sentence of its own as the test of when it is done, and a track's
-sentence coming true is one reason for a minor bump. Everything
-else waits in the pool by theme, and an item's "waits on" line decides
-when it can join. Bugs sit at the top and belong to Next. Ticked items
-move to `docs/changelog.md` under their version, so this file only
-holds what is not done. One line an item, the notes section in
+Ticked items move to `docs/changelog.md` under their version, so this
+file only holds what is not done. One line an item, the notes section in
 brackets, and for a blocked item what it waits on and nothing more;
 the reasoning lives in `docs/notes.md`.
 
@@ -1004,6 +996,13 @@ clears or a tester asks for it.
 - [ ] A default preset applied to every frame on its first open, so
       the tools a user never wants start off (pixls, 2026-10-24;
       asked again as a saved baseline, discussion 59, 2026-10-30)
+- [ ] Preset favorites: a star on each preset's row, the starred in
+      a Favorites section at the top of the list, kept in the
+      settings, native and imported alike (issue 72, 2026-11-05)
+- [ ] Preset groups: a subfolder of the preset directory is a
+      collapsible section, an ungrouped preset in the default one, a
+      group made, renamed, and a preset moved from the panel; an XMP
+      import keeps Lightroom's group folder as the group (issue 72)
 - [ ] The brush's Flow is what other apps call Opacity: one stroke
       lays down at most its amount, and strokes build on each other.
       Decide whether to rename it or add a Flow that builds within a
