@@ -591,3 +591,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§576. The view below 1:1 averages its footprint](notes/576-the-view-below-1-to-1-averages-its-footprint.md) (2026-11-05)
 - [§577. Edit in, several apps](notes/577-edit-in-several-apps.md) (2026-11-05)
 - [§578. A model run the card cannot hold is not begun, and the card given back](notes/578-a-model-run-the-card-cannot-hold.md) (2026-11-06)
+- [§579. A double-click inside the crop is Done](notes/579-a-double-click-inside-the-crop-is-done.md) (2026-11-06)

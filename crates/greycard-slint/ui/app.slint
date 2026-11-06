@@ -3210,6 +3210,7 @@ export component App inherits Window {
                 crop-draw-pressed(a, b) => { root.crop-draw-pressed(a, b); }
                 crop-draw-dragged(a, b) => { root.crop-draw-dragged(a, b); }
                 crop-draw-released => { root.crop-draw-released(); }
+                crop-done => { if (root.crop-mode) { root.crop-in-or-out(); } }
                 crop-draw-armed <=> root.crop-draw-armed;
                 level-end(a, b, c, d) => { root.level-end(a, b, c, d); }
                 guide-stroke(a, b, c, d) => { root.guide-stroke(a, b, c, d); }

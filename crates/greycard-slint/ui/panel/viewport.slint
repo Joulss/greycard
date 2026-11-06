@@ -188,6 +188,9 @@ export component Viewport inherits Rectangle {
     callback crop-draw-pressed(length, length);
     callback crop-draw-dragged(length, length);
     callback crop-draw-released();
+    // A double-click inside the crop, as in Lightroom: the crop is
+    // done, as the CROP section's button would make it (issue 74).
+    callback crop-done();
     // Draw in hand (the CROP section's button): the crop's handles
     // stand aside, so the next press anywhere on the picture, inside
     // the crop too, reaches the picture's own area and a drag there
@@ -930,6 +933,7 @@ export component Viewport inherits Rectangle {
             }
             dragged(i, dx, dy) => { root.crop-moved(i, dx, dy); }
             dropped => { root.crop-dropped(); }
+            double-clicked => { root.crop-done(); }
         }
         Rectangle { x: cl; y: ct; width: cw; height: ch; border-width: 1px; border-color: #ffffffcc; }
         Rectangle { x: cl + cw / 3; y: ct; width: 1px; height: ch; background: #ffffff40; }

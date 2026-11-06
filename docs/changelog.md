@@ -50,6 +50,8 @@ are refused by 0.9.x.
 - Under One section open at a time, a section opened out of sight
   scrolls into view
   ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).
+- A double-click inside the crop is Done (issue 74)
+  ([§579](https://github.com/jessolmstead/greycard/blob/master/docs/notes/579-a-double-click-inside-the-crop-is-done.md)).
 - A crop as wide or as tall as the view can be dragged by its edge
   handles (discussion 59)
   ([§545](https://github.com/jessolmstead/greycard/blob/master/docs/notes/545-four-small-asks-from-discussion-59.md)).
