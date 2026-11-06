@@ -19,12 +19,12 @@ use crate::panel::cull::{cull_frame, develop_landed, show_filter, standing_in};
 use crate::panel::curve::{PARAMETRIC, draw_curve};
 use crate::panel::deliver::{chosen_preset, deliver, read_sheet, show_presets_picker, show_sheet};
 use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_moves};
-use crate::panel::mask::{ask_for, bake_locals};
-use crate::panel::retouch::{pending_outlines, shown_outlines};
+use crate::panel::mask::{ask_for, bake_locals, chosen_shape, show_shape};
+use crate::panel::retouch::{patch_handles, pending_outlines, shown_outlines};
 use crate::panel::viewport::{
     display_key, drawn_kind, drawn_picture, effective_zoom, picture_up, proof_settings,
     schedule_snapshot, settle_source_size, show_crop_on_view, show_hover, show_source_shape,
-    source_to_view, sync_display, write_screenshot, zoom_label,
+    source_known, source_to_view, sync_display, write_screenshot, zoom_label,
 };
 use crate::render::{Renderer, View};
 use crate::worker::{Job, WhiteBase, Worker};
@@ -1227,28 +1227,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // A row under the pointer shows its state instead.
                     let panel = read_edit(&app, &st.develop.edit, st.develop.target);
                     let edit = view_edit(st, &panel);
-                    // The chosen patch's handles: its center, and its source.
-                    let selected = usize::try_from(app.get_patch())
-                        .ok()
-                        .and_then(|i| edit.retouch.patches.get(i));
-                    let handles: Vec<Pt> = match (st.develop.retouching, selected) {
-                        (Some(_), Some(p)) => {
-                            let c = p.center();
-                            let mut v = vec![source_to_view(st, &app, c[0], c[1])];
-                            if let Some(s) = p.source {
-                                v.push(source_to_view(st, &app, c[0] + s[0], c[1] + s[1]));
-                            }
-                            v.into_iter().map(|(x, y)| Pt { x, y }).collect()
-                        }
-                        _ => Vec::new(),
-                    };
+                    let handles = patch_handles(st, &app, &edit);
                     sync_rows(&st.develop.patch_handles, handles);
                     // The guide's kept stroke follows the view: it is
                     // held in source pixels and mapped here, so a zoom
                     // or a pan between the two strokes moves the line
                     // with the picture.
                     let kept: Vec<Pt> = match st.develop.guiding.first {
-                        Some(ends) if !app.get_guide_mode().is_empty() => {
+                        Some(ends) if !app.get_guide_mode().is_empty() && source_known(st) => {
                             let sw = st.develop.source_size.0 as f32;
                             ends.iter()
                                 .map(|&(x, y)| {
@@ -1323,14 +1309,6 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if app.get_zoom_text() != label {
                         app.set_zoom_text(label);
                     }
-                    // The chosen shape's handles and outline on the view.
-                    let chosen = st
-                        .develop
-                        .target
-                        .filter(|_| !app.get_crop_mode() && st.develop.placing.is_none())
-                        .and_then(|i| edit.adjustments.get(i))
-                        .and_then(|a| a.mask.components.get(app.get_component().max(0) as usize))
-                        .cloned();
                     // The brush's size on the view, per unit of the width.
                     app.set_brush_scale(sw * zoom / app.window().scale_factor());
                     // A picture pixel's side on the view, for the color
@@ -1351,48 +1329,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if app.get_patch_feather_outline() != feather {
                         app.set_patch_feather_outline(feather.into());
                     }
-                    match &chosen {
-                        Some(component) => {
-                            let handles: Vec<Pt> = component
-                                .shape
-                                .handles()
-                                .into_iter()
-                                .map(|(u, v)| {
-                                    let (x, y) = source_to_view(st, &app, u, v);
-                                    Pt { x, y }
-                                })
-                                .collect();
-                            match component.shape {
-                                Shape::Linear { .. } => {
-                                    let (dx, dy) =
-                                        (handles[2].x - handles[1].x, handles[2].y - handles[1].y);
-                                    app.set_mask_angle(dy.atan2(dx).to_degrees() + 90.0);
-                                }
-                                Shape::Radial { feather, .. } => {
-                                    let (cx, cy) = (handles[0].x, handles[0].y);
-                                    let (ax, ay) = (handles[1].x - cx, handles[1].y - cy);
-                                    let (bx, by) = (handles[3].x - cx, handles[3].y - cy);
-                                    app.set_mask_angle(ay.atan2(ax).to_degrees());
-                                    app.set_mask_rx((ax * ax + ay * ay).sqrt());
-                                    app.set_mask_ry((bx * bx + by * by).sqrt());
-                                    app.set_mask_feather_scale(1.0 - feather.clamp(0.0, 1.0));
-                                }
-                                Shape::Brush { .. }
-                                | Shape::Subject {}
-                                | Shape::Background {}
-                                | Shape::Sky { .. }
-                                | Shape::Landscape { .. }
-                                | Shape::Object { .. }
-                                | Shape::Part { .. }
-                                | Shape::Luminance { .. }
-                                | Shape::Color { .. }
-                                | Shape::Unknown => {}
-                            }
-                            sync_rows(&st.develop.mask_handles, handles);
-                            app.set_mask_kind(component.shape.name().into());
-                        }
-                        None => app.set_mask_kind("".into()),
-                    }
+                    show_shape(st, &app, &edit);
+                    let chosen = chosen_shape(st, &app, &edit);
                     // An object's boxes and picks, or a sky's picks:
                     // the chosen one's, or, with the tool in hand, the
                     // one it adds to.
@@ -1404,6 +1342,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }),
                         None => chosen.as_ref(),
                     }
+                    .filter(|_| source_known(st))
                     .and_then(|c| match &c.shape {
                         Shape::Object { picks, boxes } => Some((picks, boxes.as_slice())),
                         Shape::Sky { picks } => Some((picks, &[][..])),

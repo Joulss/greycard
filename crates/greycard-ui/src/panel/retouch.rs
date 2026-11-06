@@ -7,7 +7,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use crate::ai::FillHaves;
 use crate::panel::assets::offer_model;
 use crate::panel::edit::develop_soon;
-use crate::panel::viewport::{ViewMap, source_to_view, view_to_source};
+use crate::panel::viewport::{ViewMap, source_known, source_to_view, view_to_source};
 use crate::worker::Worker;
 use crate::{App, Shared, State, outline};
 
@@ -63,11 +63,32 @@ pub(crate) fn patch_outlines(
     (mapped(&shape.edge), mapped(&shape.feather))
 }
 
+/// The chosen patch's handles on the view, with a tool in hand: its
+/// center, and its source. None until the frame's size is known
+/// ([`source_known`]).
+pub(crate) fn patch_handles(st: &State, app: &App, edit: &Edit) -> Vec<crate::Pt> {
+    let selected = usize::try_from(app.get_patch())
+        .ok()
+        .and_then(|i| edit.retouch.patches.get(i));
+    match (st.develop.retouching, selected) {
+        (Some(_), Some(p)) if source_known(st) => {
+            let map = ViewMap::of(st, app);
+            let c = p.center();
+            let mut v = vec![map.to_view(c[0], c[1])];
+            if let Some(s) = p.source {
+                v.push(map.to_view(c[0] + s[0], c[1] + s[1]));
+            }
+            v.into_iter().map(|(x, y)| crate::Pt { x, y }).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// The patches' outlines on the view while the Retouch tab shows: the
 /// chosen one's, and beside it the one's whose row is under the
 /// pointer, drawn the same way.
 pub(crate) fn shown_outlines(st: &mut State, app: &App, edit: &Edit) -> (String, String) {
-    if app.get_panel_tab() != "Retouch" {
+    if app.get_panel_tab() != "Retouch" || !source_known(st) {
         return (String::new(), String::new());
     }
     let map = ViewMap::of(st, app);
@@ -92,7 +113,7 @@ pub(crate) fn shown_outlines(st: &mut State, app: &App, edit: &Edit) -> (String,
 /// make, on any tab, as a Path's commands: drawn dimmed where the
 /// picture still shows what they cover. Empty in the crop.
 pub(crate) fn pending_outlines(st: &mut State, app: &App, edit: &Edit) -> String {
-    if st.develop.fills_pending.is_empty() || app.get_crop_mode() {
+    if st.develop.fills_pending.is_empty() || app.get_crop_mode() || !source_known(st) {
         st.develop.pending_shapes.clear();
         return String::new();
     }
@@ -1051,6 +1072,55 @@ mod tests {
         }
         crate::ai::set_test_webgpu(None);
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A straightened frame with Clone in hand and a sourced patch
+    /// chosen: before its develop lands the source has no size, and
+    /// the patch's handles and outlines are not drawn rather than
+    /// drawn through NaN; once it has one, they are, and finite.
+    #[test]
+    fn a_straightened_frames_patch_handles_wait_for_its_size() {
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (0, 0);
+            st.develop.zoom = 1.0;
+            st.develop.edit.geometry.angle = 3.0;
+            st.develop.retouching = Some(RetouchMethod::Clone);
+            st.develop.edit.retouch.patches = vec![Patch {
+                id: 1,
+                method: RetouchMethod::Clone,
+                points: vec![[0.4, 0.4]],
+                source: Some([0.1, 0.05]),
+                radius: 0.05,
+                feather: 0.3,
+                ..Default::default()
+            }];
+            crate::panel::edit::show_edit(&st, &st.develop.edit, &app, None);
+            super::show_patches(&st, &st.develop.edit, &app);
+        }
+        assert_eq!(app.get_geo_angle(), 3.0);
+        app.set_panel_tab("Retouch".into());
+        app.set_patch(0);
+        let drawn = || {
+            let mut st = state.borrow_mut();
+            let edit = st.develop.edit.clone();
+            let handles = super::patch_handles(&st, &app, &edit);
+            (handles, super::shown_outlines(&mut st, &app, &edit))
+        };
+        let (handles, (edge, feather)) = drawn();
+        assert!(handles.is_empty(), "no handles on a source of no size");
+        assert!(edge.is_empty() && feather.is_empty());
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (400, 300);
+            st.develop.image_size = (400, 300);
+        }
+        let (handles, (edge, _)) = drawn();
+        assert_eq!(handles.len(), 2, "its center and its source");
+        assert!(handles.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
+        assert!(!edge.is_empty() && !edge.contains("NaN"));
     }
 
     /// A patch's row under the pointer draws that patch's outline as

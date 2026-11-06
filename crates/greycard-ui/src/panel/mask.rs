@@ -16,13 +16,96 @@ use crate::panel::assets::offer_model;
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{develop_soon, read_edit, show_edit, show_names};
 use crate::panel::retouch::show_patches;
-use crate::panel::viewport::{ViewMap, source_to_view, view_on_picture, view_to_source};
+use crate::panel::viewport::{
+    ViewMap, source_known, source_to_view, view_on_picture, view_to_source,
+};
 use crate::worker::{Job, Worker};
-use crate::{App, Shared, State, WORKER};
+use crate::{App, Pt, Shared, State, WORKER};
 
 // What to do for a learned shape wanted, decided in the engine so an
 // export with no window picks the same file.
 pub(crate) use greycard_engine::ai::{Step, edge_offer, step};
+
+/// The chosen shape's handles and outline on the view, at every frame.
+///
+/// None until the open frame's size is known ([`source_known`]).
+pub(crate) fn show_shape(st: &State, app: &App, edit: &Edit) {
+    let known = source_known(st);
+    let Some(component) = chosen_shape(st, app, edit).filter(|_| known) else {
+        app.set_mask_kind("".into());
+        return;
+    };
+    let map = ViewMap::of(st, app);
+    let handles: Vec<Pt> = component
+        .shape
+        .handles()
+        .into_iter()
+        .map(|(u, v)| {
+            let (x, y) = map.to_view(u, v);
+            Pt { x, y }
+        })
+        .collect();
+    let (mut angle, mut rx, mut ry) = (0.0f32, 0.0f32, 0.0f32);
+    match component.shape {
+        Shape::Linear { .. } => {
+            let (dx, dy) = (handles[2].x - handles[1].x, handles[2].y - handles[1].y);
+            angle = dy.atan2(dx).to_degrees() + 90.0;
+        }
+        Shape::Radial { .. } => {
+            let (cx, cy) = (handles[0].x, handles[0].y);
+            let (ax, ay) = (handles[1].x - cx, handles[1].y - cy);
+            let (bx, by) = (handles[3].x - cx, handles[3].y - cy);
+            angle = ay.atan2(ax).to_degrees();
+            rx = (ax * ax + ay * ay).sqrt();
+            ry = (bx * bx + by * by).sqrt();
+        }
+        Shape::Brush { .. }
+        | Shape::Subject {}
+        | Shape::Background {}
+        | Shape::Sky { .. }
+        | Shape::Landscape { .. }
+        | Shape::Object { .. }
+        | Shape::Part { .. }
+        | Shape::Luminance { .. }
+        | Shape::Color { .. }
+        | Shape::Unknown => {}
+    }
+    // A point off the plane reaching a path panics in the renderer:
+    // whatever else brings one, the outline sits this frame out. Said
+    // at debug, since it is said at every frame drawn.
+    let finite = handles.iter().all(|p| p.x.is_finite() && p.y.is_finite())
+        && [angle, rx, ry].iter().all(|v| v.is_finite());
+    if !finite {
+        tracing::debug!(
+            "mask: the chosen {} shape maps off the view; its outline is left out",
+            component.shape.name()
+        );
+        app.set_mask_kind("".into());
+        return;
+    }
+    match component.shape {
+        Shape::Linear { .. } => app.set_mask_angle(angle),
+        Shape::Radial { feather, .. } => {
+            app.set_mask_angle(angle);
+            app.set_mask_rx(rx);
+            app.set_mask_ry(ry);
+            app.set_mask_feather_scale(1.0 - feather.clamp(0.0, 1.0));
+        }
+        _ => {}
+    }
+    crate::panel::startup::sync_rows(&st.develop.mask_handles, handles);
+    app.set_mask_kind(component.shape.name().into());
+}
+
+/// The shape the panel has chosen, while no crop or placing hides it.
+pub(crate) fn chosen_shape(st: &State, app: &App, edit: &Edit) -> Option<Component> {
+    st.develop
+        .target
+        .filter(|_| !app.get_crop_mode() && st.develop.placing.is_none())
+        .and_then(|i| edit.adjustments.get(i))
+        .and_then(|a| a.mask.components.get(app.get_component().max(0) as usize))
+        .cloned()
+}
 
 /// Zoom to use for a view of `vw` by `vh`: the state's, or fit.
 /// A shape being drawn: what kind, where the press was in the
@@ -4180,6 +4263,46 @@ mod tests {
         let st = state.borrow();
         assert_eq!(st.develop.edit.adjustments.len(), 1);
         assert_eq!(st.develop.edit.adjustments[0].mask.components.len(), 1);
+    }
+
+    /// A straightened frame opened with a linear chosen: before its
+    /// develop lands the source has no size, and the shape is not
+    /// drawn rather than drawn through NaN; once it has one, the
+    /// outline is drawn and every point of it is finite.
+    #[test]
+    fn a_straightened_frame_draws_its_linear_only_once_its_size_is_known() {
+        let linear = Shape::Linear {
+            from: [0.5, 0.3],
+            to: [0.5, 0.45],
+        };
+        let (app, state, _worker, _base) = body_setup(linear);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.edit.geometry.angle = 3.0;
+            st.develop.source_size = (0, 0);
+        }
+        {
+            let st = state.borrow();
+            show_edit(&st, &st.develop.edit, &app, st.develop.target);
+            assert_eq!(app.get_geo_angle(), 3.0);
+            show_shape(&st, &app, &st.develop.edit);
+        }
+        assert_eq!(
+            app.get_mask_kind(),
+            "",
+            "nothing drawn on a source of no size"
+        );
+        state.borrow_mut().develop.source_size = (400, 300);
+        {
+            let st = state.borrow();
+            show_shape(&st, &app, &st.develop.edit);
+        }
+        assert_eq!(app.get_mask_kind(), "Linear");
+        assert!(app.get_mask_angle().is_finite());
+        let handles = state.borrow().develop.mask_handles.clone();
+        assert_eq!(handles.row_count(), 3);
+        assert!(handles.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
+        rest();
     }
 
     /// Esc with nothing in hand puts a placed linear's handles down,

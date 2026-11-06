@@ -39,10 +39,6 @@ the reasoning lives in `docs/notes.md`.
       Windows (issue 44): waits on the reporter's log
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
-- [ ] A straightened frame opened with a Linear mask shown panics at
-      startup in lyon (`p.x.is_finite()`, through a Slint Path in
-      femtovg's draw_path); the same sidecar unstraightened draws
-      fine (found 2026-11-05 reviewing the constrained drags)
 - [ ] A fill on a denoised frame still gets more grain than its
       surround after §434 (1.3x at every distance on an overcast sky
       with the learned denoiser, the amount not the shape): the

@@ -451,6 +451,15 @@ pub(crate) fn picking_hint(kind: &str) -> &'static str {
     }
 }
 
+/// Whether the open frame's size is known, which the view's mapping
+/// needs: until its first develop lands it has none, and the crop's
+/// fit on a source of no size is 0/0 (its aspect, its keystone), so a
+/// straightened frame maps every point to NaN. An outline drawn
+/// through that panics in the renderer's tessellator; it waits.
+pub(crate) fn source_known(st: &State) -> bool {
+    st.develop.source_size.0 > 0 && st.develop.source_size.1 > 0
+}
+
 pub(crate) fn source_to_view(st: &State, app: &App, u: f32, v: f32) -> (f32, f32) {
     ViewMap::of(st, app).to_view(u, v)
 }

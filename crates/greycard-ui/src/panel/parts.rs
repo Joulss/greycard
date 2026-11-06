@@ -19,7 +19,7 @@ use crate::ai::{Ask, Asking, Candidate, Key};
 use crate::panel::assets::offer_model;
 use crate::panel::edit::{read_edit, show_edit};
 use crate::panel::mask::{Step, name_first_shape, step};
-use crate::panel::viewport::{source_to_view, view_to_source};
+use crate::panel::viewport::{source_known, source_to_view, view_to_source};
 use crate::worker::Job;
 use crate::{App, PersonBox, Shared, State, WORKER};
 
@@ -447,7 +447,7 @@ pub(crate) fn rearm(st: &mut State, app: &App) {
 
 /// The people's outlines on the view while one is to be picked.
 pub(crate) fn boxes(st: &State, app: &App) -> Vec<PersonBox> {
-    let Some(choosing) = &st.develop.choosing else {
+    let Some(choosing) = st.develop.choosing.as_ref().filter(|_| source_known(st)) else {
         return Vec::new();
     };
     choosing
