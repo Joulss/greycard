@@ -464,6 +464,23 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.develop.edit.noise.learned_strength = b;
                 app.set_denoise_learned_strength(b);
             }
+            // The size its develop lands at, for the edit's picture
+            // standing in for that develop, which goes up now if it
+            // was waiting on it.
+            if let Some(c) = st.current {
+                let size = frame.as_ref().map(|f| {
+                    let (w, h) = greycard_engine::stages::Facts::raw(f, 0).full();
+                    (w as u32, h as u32)
+                });
+                let path = st.path_of(c).clone();
+                let opened = &mut st.develop.opened_sizes;
+                opened.retain(|(p, _)| *p != path);
+                if opened.len() >= 8 {
+                    opened.remove(0);
+                }
+                opened.push((path, size));
+                crate::panel::cull::size_opened(&mut st, app);
+            }
             st.develop.frame = frame.zip(profile);
             // The camera the file names, and what the profile
             // directory holds for it: read on open, not on develop.

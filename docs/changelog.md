@@ -58,6 +58,10 @@ are refused by 0.9.x.
 - Escape puts Level, a perspective guide, or Draw down right after its
   button is clicked
   ([§550](https://github.com/jessolmstead/greycard/blob/master/docs/notes/550-the-keys-after-level-a-guide-or-draw.md)).
+- An edited frame opened on a screen wider than 2K no longer comes up
+  small and snaps out to fill the view when its develop lands (issue
+  76)
+  ([§580](https://github.com/jessolmstead/greycard/blob/master/docs/notes/580-the-edits-stand-in-fits-as-the-develop-will.md)).
 - A straightened frame opened with a Linear mask shown, or with Heal
   or Clone in hand, no longer crashes at startup
   ([§572](https://github.com/jessolmstead/greycard/blob/master/docs/notes/572-no-outline-before-the-frame-has-a-size.md)).

@@ -2386,7 +2386,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::cell::Cell;
     use std::sync::Arc;
@@ -3384,7 +3384,7 @@ mod tests {
     /// A raw of a camera that is Rec.2020 itself, calibrated under
     /// D65, its as-shot gains a daylight's: enough of a frame for the
     /// white balance to resolve against.
-    fn daylight_frame() -> RawFrame {
+    pub(crate) fn daylight_frame() -> RawFrame {
         use greycard_core::raw::{Calibration, CfaPattern, LevelPattern, Levels, Samples};
         let m = greycard_core::color::WORKING_SPACE
             .from_xyz_matrix()

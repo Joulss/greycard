@@ -947,6 +947,7 @@ impl State {
                 debounce: slint::Timer::default(),
                 save_timer: slint::Timer::default(),
                 image_size: (1, 1),
+                opened_sizes: Vec::new(),
                 zoom: 0.0,
                 mat: false,
                 center: (0.0, 0.0),

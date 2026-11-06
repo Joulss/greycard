@@ -976,6 +976,17 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         // here would stand nothing in, and the last frame's develop,
         // or the camera picture the last wait was showing, would stay
         // on screen under this frame's line for the whole develop.
+        // The edit's picture may wait for its frame's size instead.
+        if waits_for_size(st, app, cell) {
+            let showing = st.culling.placeholder.as_ref().and_then(|w| w.showing);
+            st.culling.placeholder = Some(placeholder::Wait::asked(
+                cell,
+                st.develop.generation,
+                showing,
+            ));
+            show_overlays(st, app, standing_in(st).is_some());
+            return;
+        }
         st.culling.placeholder = Some(placeholder::Wait::in_hand(cell, st.develop.generation));
         placeholder_arrived(st, app, cell);
         return;
@@ -1053,8 +1064,18 @@ fn placeholder_arrived(st: &mut State, app: &App, cell: usize) {
         ..Geometry::default()
     }
     .plane_size(preview.source.0 as f32, preview.source.1 as f32);
-    let shown = (plane.0.round() as u32, plane.1.round() as u32);
     let (small, local, own) = (preview.small(), preview.origin(), preview.own_size());
+    // The edit's picture says the frame's size, as `cull_frame` will.
+    let shown = match stands_for(st, app, cell) {
+        Some(s) => Geometry {
+            turns,
+            flip,
+            ..Geometry::default()
+        }
+        .plane_size(s.0 as f32, s.1 as f32),
+        None => plane,
+    };
+    let shown = (shown.0.round() as u32, shown.1.round() as u32);
     if !st.launch.zoom_stands {
         st.develop.zoom = 0.0;
     }
@@ -1062,6 +1083,121 @@ fn placeholder_arrived(st: &mut State, app: &App, cell: usize) {
     say_placeholder(app, shown, small, local, (st.develop.zoom, own));
     show_overlays(st, app, true);
     app.window().request_redraw();
+}
+
+/// The size the edit's picture of `cell` stands for, in that
+/// picture's own orientation: the frame as its develop lands, cut by
+/// its edit, once the worker's open has said the frame's size. The
+/// copy is kept at a 2048 px long edge with the crop in it; drawn as
+/// the frame, it is fitted as the develop will be and 1:1 is the
+/// frame's, so the develop lands where it stood. None for any other
+/// picture, which is its own size, and in Cull, where the copy is the
+/// picture.
+fn stands_for(st: &State, app: &App, cell: usize) -> Option<(u32, u32)> {
+    edit_copy(st, cell)?;
+    let (w, h) = opened_size(st, cell)??;
+    let sidecar = st.sidecar(cell);
+    let panel = st.current == Some(cell);
+    let geometry = if panel {
+        read_geometry(app)
+    } else {
+        let version = st.cells[cell].version.as_deref();
+        let line = sidecar.line(version).unwrap_or(&sidecar.line);
+        line.current.geometry.clone()
+    };
+    let (w, h) = if sidecar.turn % 2 == 1 {
+        (h, w)
+    } else {
+        (w, h)
+    };
+    let frame = geometry.frame(w as f32, h as f32).size;
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, panel);
+    let (fw, fh) = Geometry {
+        turns,
+        flip,
+        ..Geometry::default()
+    }
+    .plane_size(frame.0, frame.1);
+    Some((fw as u32, fh as u32))
+}
+
+/// The edit's picture of `cell` standing in, which is drawn as the
+/// frame it is a copy of: never in Cull, where the copy is the
+/// picture, nor for a frame standing in from its row, which has no
+/// edit read to cut the frame by.
+fn edit_copy(st: &State, cell: usize) -> Option<&Arc<cull::Preview>> {
+    let preview = st.culling.hold.as_ref()?.cache.best(cell)?;
+    let from_row = st
+        .from_row
+        .get(st.cells[cell].file)
+        .is_some_and(|f| !f.read);
+    (st.culling.cull.is_none() && preview.origin() == cull::Origin::Edit && !from_row)
+        .then_some(preview)
+}
+
+/// What the worker's open of `cell`'s file said of its size, once it
+/// has: `Some(None)` for a picture that is not a raw.
+fn opened_size(st: &State, cell: usize) -> Option<Option<(u32, u32)>> {
+    let path = st.path_of(cell);
+    let opened = &st.develop.opened_sizes;
+    opened
+        .iter()
+        .rev()
+        .find(|(p, _)| p == path)
+        .map(|(_, s)| *s)
+}
+
+/// The edit's picture of the selected `cell` waits for the open to say
+/// the frame's size before it goes up, when the view has room for more
+/// than the copy, or at a zoom that stands into it: up at once it
+/// would stand at its own 2048 px and grow when the size came. The
+/// picture on screen stays meanwhile, as it does for a decode.
+fn waits_for_size(st: &State, app: &App, cell: usize) -> bool {
+    let Some(preview) = edit_copy(st, cell) else {
+        return false;
+    };
+    if opened_size(st, cell).is_some() {
+        return false;
+    }
+    // A zoom other than the fit is let go as the picture goes up,
+    // unless it stands (`placeholder_arrived`).
+    if st.launch.zoom_stands && st.develop.zoom > 0.0 {
+        return true;
+    }
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, true);
+    let (cw, ch) = Geometry {
+        turns,
+        flip,
+        ..Geometry::default()
+    }
+    .plane_size(preview.width as f32, preview.height as f32);
+    let view = (
+        app.get_view_width().max(1) as u32,
+        app.get_view_height().max(1) as u32,
+    );
+    let room = if st.develop.mat {
+        crate::zoom::matted(view)
+    } else {
+        view
+    };
+    (room.0 as f32 / cw).min(room.1 as f32 / ch) > 1.0
+}
+
+/// The worker's open has said the selected frame's size: the edit's
+/// picture waiting on it goes up.
+pub(crate) fn size_opened(st: &mut State, app: &App) {
+    let Some(cell) = st.current else {
+        return;
+    };
+    if edit_copy(st, cell).is_some()
+        && st
+            .culling
+            .placeholder
+            .as_mut()
+            .is_some_and(|w| w.arrived(cell))
+    {
+        placeholder_arrived(st, app, cell);
+    }
 }
 
 /// What the camera's picture is, in the culling loupe's words.
@@ -1278,11 +1414,13 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     // The develop view: the frame still waited on puts its picture
     // up, and a frame with no camera JPEG in it gives up the wait,
     // leaving the picture on screen where it is until the develop.
+    // The edit's picture may wait for its frame's size.
+    let waits = made && waits_for_size(st, app, file);
     if st
         .culling
         .placeholder
         .as_mut()
-        .is_some_and(|w| made && w.arrived(file))
+        .is_some_and(|w| made && !waits && w.arrived(file))
     {
         placeholder_arrived(st, app, file);
     } else if !made
@@ -1367,6 +1505,8 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
     let from_panel = |file: usize| holding && Some(file) == st.current;
     // `--cull-develop` is about to leave: no capture of this picture.
     let leave_next = st.launch.cull_develop;
+    // The edit's picture standing in is drawn as the frame it stands for.
+    let stand_in = stands_for(st, app, c);
     let Some(cull) = st.culling.cull.as_mut().or(st.culling.hold.as_mut()) else {
         return;
     };
@@ -1388,6 +1528,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
     let rects = cull::tile_rects(vw, vh, rows.len().max(1));
     // The current frame's picture, which the others' centers follow.
     let current_full = cull.cache.best(c).map(|p| {
+        let source = stand_in.unwrap_or(p.source);
         let (turns, flip) =
             thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, from_panel(c));
         Geometry {
@@ -1395,7 +1536,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
             flip,
             ..Geometry::default()
         }
-        .plane_size(p.source.0 as f32, p.source.1 as f32)
+        .plane_size(source.0 as f32, source.1 as f32)
     });
     // A new frame, or a fit view, is centered; a zoomed view of the
     // same frame keeps its place.
@@ -1473,8 +1614,10 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
             ..Geometry::default()
         };
         let (tw, th) = (preview.width as f32, preview.height as f32);
-        let (fw, fh) = (preview.source.0 as f32, preview.source.1 as f32);
-        // The zoom and the center are in the JPEG's own pixels, so
+        let source = stand_in.filter(|_| file == c).unwrap_or(preview.source);
+        let (fw, fh) = (source.0 as f32, source.1 as f32);
+        // The zoom and the center are in the JPEG's own pixels (the
+        // frame's, for the edit's picture standing in for it), so
         // 1:1 means 1:1 whichever copy is on the GPU; the shader
         // works in the copy's, so the zoom (display pixels per pixel)
         // grows by the copy's scale and the center shrinks by it.
@@ -3990,6 +4133,163 @@ mod tests {
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
         assert_eq!(standing_in(&state.borrow()), Some(1));
+    }
+
+    /// The edit's picture standing in is a 2048 px copy of the frame
+    /// with the crop in it: drawn as the frame its develop lands as,
+    /// once the open has said that frame's size, so a view wider than
+    /// the copy fits it as it will fit the develop (issue 76). Until
+    /// the open says, it waits and the picture on screen stays. A
+    /// frame cropped smaller than the view is drawn at 1:1 of the
+    /// frame, never enlarged; the camera's picture, the frame's own
+    /// size, fits as it did. Skipped without a GPU for the stand-in's
+    /// frame to draw through.
+    #[test]
+    fn an_edits_stand_in_fits_the_view_as_the_develop_will() {
+        use crate::panel::viewport::{drawn_picture, effective_zoom};
+        let Some((device, queue)) = greycard_viewport::testing::device("edit_stand_in") else {
+            return;
+        };
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(4));
+        // The device goes with the test, even a failing one, not with
+        // the thread's last timer.
+        struct Unload(Rc<Shared>);
+        impl Drop for Unload {
+            fn drop(&mut self) {
+                if let Ok(mut st) = self.0.try_borrow_mut() {
+                    st.develop.renderer = None;
+                }
+            }
+        }
+        let _unload = Unload(state.clone());
+        let generation = |state: &Rc<Shared>| state.borrow().develop.generation;
+        {
+            let mut st = state.borrow_mut();
+            st.develop.renderer = Some(crate::render::Renderer::new(&device, &queue));
+            let mut edit = Edit::default();
+            edit.bw.enabled = true;
+            st.sidecars[1].record(edit.clone());
+            // Frame 2 cropped to the middle half each way.
+            edit.geometry.crop = Some(greycard_edit::geometry::Crop {
+                x: 0.25,
+                y: 0.25,
+                w: 0.5,
+                h: 0.5,
+            });
+            st.sidecars[2].record(edit);
+        }
+        // A frame as the window draws one: the stand-in's draw only
+        // while the loupe's picture is what is up.
+        let frame = |state: &Rc<Shared>| {
+            let mut st = state.borrow_mut();
+            if crate::panel::startup::land_pending(&mut st, &app).loupe {
+                cull_frame(&mut st, &app, state);
+            }
+        };
+        // The edit's picture of `file`: 8 by 6, its own size.
+        let edit_picture = |file: usize| {
+            let cull::Loaded::Ok {
+                file,
+                frame: key,
+                size,
+                preview,
+            } = camera_picture(&state.borrow(), file, (8, 6))
+            else {
+                unreachable!()
+            };
+            let preview = Arc::new(cull::Preview {
+                edited: true,
+                ..Arc::into_inner(preview).unwrap()
+            });
+            cull::Loaded::Ok {
+                file,
+                frame: key,
+                size,
+                preview,
+            }
+        };
+        // The worker's open of a raw of `size`.
+        let open = |state: &Rc<Shared>, size: (usize, usize)| {
+            let mut outcome = opened(generation(state), crate::worker::SourceKind::Raw);
+            if let crate::worker::Outcome::Opened { frame, .. } = &mut outcome {
+                *frame = Some(Arc::new(greycard_core::raw::RawFrame {
+                    width: size.0,
+                    height: size.1,
+                    ..crate::panel::viewport::tests::daylight_frame()
+                }));
+            }
+            crate::panel::deliver::deliver(&app, outcome);
+        };
+        assert!(app.get_view_width() > 8 && app.get_view_height() > 6);
+        app.invoke_select(1);
+        deliver_preview(&app, edit_picture(1));
+        frame(&state);
+        assert_eq!(standing_in(&state.borrow()), None);
+        // The open says 60 by 40: up, as that frame, fitted below 1:1.
+        open(&state, (60, 40));
+        frame(&state);
+        {
+            let st = state.borrow();
+            assert_eq!(standing_in(&st), Some(1));
+            assert_eq!(st.develop.image_size, (60, 40));
+            assert!((effective_zoom(&st, 30, 20) - 0.5).abs() < 1e-6);
+        }
+        // The develop lands at the size the stand-in had, with pixels,
+        // since the renderer takes it up.
+        let mut developed = developed(generation(&state), (60, 40));
+        if let crate::worker::Outcome::Developed { image, .. } = &mut developed {
+            *image = crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
+                width: 60,
+                height: 40,
+                pixels: vec![Default::default(); 60 * 40 * 4],
+            }));
+        }
+        crate::panel::deliver::deliver(&app, developed);
+        frame(&state);
+        {
+            let st = state.borrow();
+            assert_eq!(standing_in(&st), None);
+            assert_eq!(drawn_picture(&st).0, (60, 40));
+        }
+        // Frame 2's edit's picture in hand before it is chosen; its
+        // open says 40 by 30, cropped to 20 by 15: smaller than the
+        // view, so 1:1 of the frame and not enlarged to fill it.
+        deliver_preview(&app, edit_picture(2));
+        app.invoke_select(2);
+        frame(&state);
+        assert_eq!(standing_in(&state.borrow()), None);
+        open(&state, (40, 30));
+        // The line says the frame's size from the first, not the copy's.
+        assert!(
+            app.get_placeholder_status()
+                .contains("the edit, 20 \u{d7} 15")
+        );
+        frame(&state);
+        {
+            let st = state.borrow();
+            assert_eq!(standing_in(&st), Some(2));
+            assert_eq!(st.develop.image_size, (20, 15));
+            assert_eq!(effective_zoom(&st, 30, 20), 1.0);
+            // Frame 1's open is still known, for its picture if it
+            // were still on screen.
+            assert_eq!(opened_size(&st, 1), Some(Some((60, 40))));
+        }
+        // The camera's picture is the frame's own size, up at once,
+        // and what the open says does not change it.
+        app.invoke_select(3);
+        let loaded = camera_picture(&state.borrow(), 3, (8, 6));
+        deliver_preview(&app, loaded);
+        frame(&state);
+        assert_eq!(standing_in(&state.borrow()), Some(3));
+        open(&state, (60, 40));
+        frame(&state);
+        let st = state.borrow();
+        assert_eq!(standing_in(&st), Some(3));
+        assert_eq!(st.develop.image_size, (8, 6));
+        assert_eq!(effective_zoom(&st, 30, 20), 1.0);
     }
 
     /// A frame whose camera picture is kept, chosen while another

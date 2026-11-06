@@ -592,3 +592,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§577. Edit in, several apps](notes/577-edit-in-several-apps.md) (2026-11-05)
 - [§578. A model run the card cannot hold is not begun, and the card given back](notes/578-a-model-run-the-card-cannot-hold.md) (2026-11-06)
 - [§579. A double-click inside the crop is Done](notes/579-a-double-click-inside-the-crop-is-done.md) (2026-11-06)
+- [§580. The edit's stand-in fits as the develop will](notes/580-the-edits-stand-in-fits-as-the-develop-will.md) (2026-11-06)

@@ -82,6 +82,13 @@ pub(crate) struct Develop {
     pub(crate) save_timer: slint::Timer,
     /// The image the viewport shows, in pixels, for fit and zoom.
     pub(crate) image_size: (u32, u32),
+    /// The size each of the last few files opened develops at before
+    /// its turn, as the worker's open said, newest last: none for a
+    /// picture that is not a raw, whose open does not say. What the
+    /// edit's picture, a 2048 px copy, stands in for (`cull_frame`);
+    /// more than one, so a frame still on screen while the next opens
+    /// keeps its size.
+    pub(crate) opened_sizes: Vec<(PathBuf, Option<(u32, u32)>)>,
     /// Display pixels per image pixel; 0 means fit to the view.
     pub(crate) zoom: f32,
     /// The mat: a band of the canvas around the fitted picture, by
