@@ -1,19 +1,17 @@
-//! Focus stacking: `greycard stack` develops every frame the short
-//! way, merges them in camera space, and writes the merge as a linear
-//! DNG or a TIFF, beside the sources or where `-o` says.
+//! Focus stacking: `greycard stack` merges the frames by the engine's
+//! focus stack (the one the window's Merge to Focus stack runs), and
+//! writes the merge as a linear DNG or a TIFF, beside the sources or
+//! where `-o` says.
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use greycard_core::decode::RawlerDecoder;
-use greycard_core::dng::{Compression, LinearDngOptions, write_linear_dng};
+use anyhow::Result;
 use greycard_core::output::OnExists;
-use greycard_core::stack::{self, Reference};
-use greycard_core::{
-    CameraImage, DemosaicMethod, DevelopSettings, HighlightMode, RawFrame, WorkingImage, demosaic,
-};
+use greycard_core::stack::Reference;
+use greycard_core::{CameraImage, WorkingImage};
+use greycard_engine::merge::focus::{self, Stacked};
 
-use crate::common::{SOFTWARE, srgb_preview, write_linear_tiff};
+use crate::common::{SOFTWARE, write_linear_tiff};
 
 /// `--reference`, as the command line spells it.
 pub(crate) fn stack_reference(name: &str) -> Result<Reference, String> {
@@ -54,32 +52,18 @@ fn stack_format(path: &std::path::Path) -> Result<StackFormat> {
     }
 }
 
-/// `<first frame> stack.dng`, beside the first frame.
-fn stack_default_output(first: &std::path::Path) -> PathBuf {
-    let stem = first
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "stack".into());
-    let name = format!("{stem} stack.dng");
-    match first.parent() {
-        Some(dir) => dir.join(name),
-        None => PathBuf::from(name),
-    }
-}
-
 /// Merge a focus stack and write it beside the sources.
 ///
-/// The frames go through the same short develop `register` uses —
-/// bilinear, hot pixel repair on, no chromatic aberration correction,
-/// highlights clipped rather than reconstructed (§119) — but stop one
-/// step earlier, at [`demosaic`], which leaves camera-space samples
-/// with no white balance and no matrix on them. That is the space the
-/// merge belongs in and the space a linear DNG stores, so the result
-/// is a file every editor treats as it would the originals, which is
-/// what §71 asked the output of every stack to be. A merge taken all
-/// the way to the working space could not be written as one: the DNG's
-/// `ColorMatrix` and `AsShotNeutral` describe samples the matrix has
-/// not been applied to, and a reader would apply it a second time.
+/// The frames go through the engine's focus stack ([`focus::frames`]):
+/// the short develop `register` uses, stopped at the demosaic, which
+/// leaves camera-space samples with no white balance and no matrix on
+/// them. That is the space the merge belongs in and the space a linear
+/// DNG stores, so the result is a file every editor treats as it would
+/// the originals.
+///
+/// A DNG is written by the engine's [`focus::stack`], as the window
+/// writes it: under a hidden name and renamed at the end, and never
+/// over one of the frames. A TIFF is written here.
 ///
 /// The color tags and the EXIF come from the frame the merge was
 /// registered onto, since the result is in its geometry and at its
@@ -100,7 +84,7 @@ pub(crate) fn stack_files(
     // decoded, so a run that would write nothing does nothing.
     let wanted = match output {
         Some(path) => path.to_path_buf(),
-        None => stack_default_output(&files[0]),
+        None => focus::default_output(&files[0]),
     };
     let format = stack_format(&wanted)?;
     let resolved = on_exists.resolve(&wanted);
@@ -111,57 +95,54 @@ pub(crate) fn stack_files(
         return Ok(());
     };
 
-    let settings = DevelopSettings {
-        demosaic: DemosaicMethod::Bilinear,
-        highlights: HighlightMode::Clip,
-        chromatic_aberration: None,
-        ..Default::default()
-    };
-
-    let developing = std::time::Instant::now();
-    let mut sources = Vec::with_capacity(files.len());
-    let mut images = Vec::with_capacity(files.len());
-    for file in files {
-        if greycard_core::picture::is_picture_path(file) {
-            anyhow::bail!(
-                "{} is not a RAW file: a stack is merged in camera space, before white \
-                 balance and the matrix, and a developed picture is past both",
-                file.display()
-            );
-        }
-        let (frame, metadata) = RawlerDecoder
-            .decode_path_with_metadata(file)
-            .with_context(|| format!("decoding {}", file.display()))?;
-        let demosaiced = demosaic(&frame, &settings)
-            .with_context(|| format!("developing {}", file.display()))?;
-        images.push(demosaiced.image);
-        sources.push((frame, metadata, demosaiced.white_balance));
-    }
-    let developing = developing.elapsed();
-
-    let options = stack::Options {
+    let options = focus::Options {
         reference,
         selectivity,
         max_residual,
+        uncompressed,
+        out: Some(wanted),
+        on_exists,
         ..Default::default()
     };
-    let merging = std::time::Instant::now();
-    let (merged, report) = stack::stack_camera(&images, &options)?;
-    let merging = merging.elapsed();
-    drop(images);
-
-    let name = |i: usize| {
-        files[i]
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| files[i].display().to_string())
+    let quiet = |_: greycard_engine::merge::Step| {};
+    let out_path = match format {
+        StackFormat::Dng => {
+            let r = focus::stack(files, &options, &quiet)?;
+            let second = |n: &str| r.seconds.iter().find(|(k, _)| *k == n).map_or(0.0, |s| s.1);
+            print_report(&r.stack, &r.names, second("develop"), second("merge"));
+            r.out
+        }
+        StackFormat::Tiff => {
+            let stacked = focus::frames(files, &options, &quiet)?;
+            print_report(
+                &stacked.report,
+                &stacked.names,
+                stacked.developing,
+                stacked.merging,
+            );
+            let source_name = stacked.names[stacked.report.reference].clone();
+            write_tiff(stacked, &out_path, Some(&source_name))?;
+            out_path
+        }
     };
+    println!("wrote         {}", out_path.display());
+    Ok(())
+}
+
+/// What the merge did, frame by frame, as `greycard stack` prints it.
+fn print_report(
+    report: &greycard_core::stack::StackReport,
+    names: &[String],
+    developing: f64,
+    merging: f64,
+) {
+    let name = |i: usize| names[i].clone();
     println!(
         "frames        {} at {}x{}, developed in {:.1} s",
-        files.len(),
+        names.len(),
         report.width,
         report.height,
-        developing.as_secs_f64()
+        developing
     );
     println!(
         "reference     frame {} ({})",
@@ -170,10 +151,10 @@ pub(crate) fn stack_files(
     );
     println!(
         "merge         {:.1} s, {} pyramid levels, {} of {} frames used",
-        merging.as_secs_f64(),
+        merging,
         report.levels,
         report.used(),
-        files.len()
+        names.len()
     );
     println!(
         "coverage      every frame reached {:.1}% of the picture",
@@ -216,33 +197,18 @@ pub(crate) fn stack_files(
             None => println!(),
         }
     }
-    if report.used() < files.len() {
+    if report.used() < names.len() {
         println!(
             "left out      {} frame(s); the merge is of the rest",
-            files.len() - report.used()
+            names.len() - report.used()
         );
     }
-
-    let (frame, metadata, balance) = &sources[report.reference];
-    let source_name = files[report.reference]
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned());
-    write_stack(
-        merged,
-        (frame, metadata, balance),
-        format,
-        &out_path,
-        source_name.as_deref(),
-        uncompressed,
-    )?;
-    println!("wrote         {}", out_path.display());
-    Ok(())
 }
 
 /// The merge taken into the working space: the white balance gains
 /// first, then the camera matrix.
 ///
-/// The gains are the half that is easy to forget. [`demosaic`] applies
+/// The gains are the half that is easy to forget. The demosaic applies
 /// them before the demosaic and divides them back out afterwards,
 /// because a linear DNG stores camera-native samples and says what
 /// neutralizes them in `AsShotNeutral` rather than baking it in. So
@@ -260,121 +226,49 @@ fn stack_to_working(
     Ok(working)
 }
 
-/// A small sRGB rendering of the merge for the DNG's embedded preview,
-/// in sensor orientation as the merge is, which is the orientation a
-/// DNG's preview wants.
-///
-/// The samples are averaged down to at most `max_width` *before* the
-/// color, so a 45-megapixel merge never allocates a second
-/// full-resolution float image and a full-resolution 8-bit one on top
-/// of it just to end up 1024 pixels wide.
-fn stack_preview(
-    merged: &CameraImage,
-    balance: &greycard_core::WhiteBalance,
-    max_width: usize,
-) -> Result<image::RgbImage> {
-    let step = merged.width.div_ceil(max_width.max(1)).max(1);
-    let (w, h) = (merged.width.div_ceil(step), merged.height.div_ceil(step));
-    let mut small = Vec::with_capacity(w * h * CameraImage::CHANNELS);
-    for y in 0..h {
-        for x in 0..w {
-            let mut sum = [0.0f64; CameraImage::CHANNELS];
-            let mut n = 0u32;
-            for sy in y * step..((y + 1) * step).min(merged.height) {
-                for sx in x * step..((x + 1) * step).min(merged.width) {
-                    let px = merged.pixel(sx, sy);
-                    for (a, v) in sum.iter_mut().zip(px) {
-                        *a += v as f64;
-                    }
-                    n += 1;
-                }
-            }
-            let n = n.max(1) as f64;
-            small.extend(sum.iter().map(|v| (v / n) as f32));
-        }
-    }
-    let small = CameraImage::from_data(w, h, small)?;
-    srgb_preview(&stack_to_working(small, balance)?, 0.0)
-}
-
-/// Write a merged stack, as a linear DNG or as a 16-bit linear TIFF.
+/// Write a merged stack as a 16-bit linear TIFF.
 ///
 /// Split out of [`stack_files`] so that a test can drive it without a
-/// RAW file on disk, since what it does — the gains, the matrix, the
-/// tags — is the part with something to get wrong.
-///
-/// The frame the merge was registered onto comes with its metadata
-/// and its white balance, as `stack_files` read them.
-fn write_stack(
-    merged: CameraImage,
-    (frame, metadata, balance): (
-        &RawFrame,
-        &greycard_core::decode::rawler_backend::RawMetadata,
-        &greycard_core::WhiteBalance,
-    ),
-    format: StackFormat,
+/// RAW file on disk, since what it does — the gains and the matrix —
+/// is the part with something to get wrong.
+fn write_tiff(
+    stacked: Stacked,
     out_path: &std::path::Path,
     source_name: Option<&str>,
-    uncompressed: bool,
 ) -> Result<()> {
-    match format {
-        StackFormat::Dng => {
-            let preview = stack_preview(&merged, balance, 1024)?;
-            let options = LinearDngOptions {
-                compression: if uncompressed {
-                    Compression::Uncompressed
-                } else {
-                    Compression::Lossless
-                },
-                metadata: Some(metadata),
-                preview: Some(&preview),
-                software: Some(SOFTWARE),
-                headroom: None,
-            };
-            // Nothing is created until there is something to write
-            // into it: a run that fails at the color must not leave an
-            // empty file where the merge was asked for.
-            let file = std::fs::File::create(out_path)
-                .with_context(|| format!("creating {}", out_path.display()))?;
-            let mut writer = std::io::BufWriter::new(file);
-            write_linear_dng(
-                &mut writer,
-                frame,
-                &merged,
-                balance.coefficients_f32(),
-                &options,
-            )
-            .with_context(|| format!("writing {}", out_path.display()))?;
-            std::io::Write::flush(&mut writer)
-                .with_context(|| format!("writing {}", out_path.display()))?;
-        }
-        StackFormat::Tiff => {
-            let working = stack_to_working(merged, balance)?;
-            let working = greycard_core::develop::orient(working, frame.orientation);
-            let (w, h) = (working.width as u32, working.height as u32);
-            let provenance = greycard_core::exif::Provenance {
-                metadata,
-                software: SOFTWARE,
-                width: w,
-                height: h,
-                srgb: false,
-                written: Some(std::time::SystemTime::now()),
-                source_name,
-                output: None,
-                edit: None,
-            };
-            write_linear_tiff(&working, out_path, &provenance)?;
-        }
-    }
-    Ok(())
+    let Stacked {
+        merged,
+        frame,
+        metadata,
+        balance,
+        ..
+    } = stacked;
+    let working = stack_to_working(merged, &balance)?;
+    let working = greycard_core::develop::orient(working, frame.orientation);
+    let (w, h) = (working.width as u32, working.height as u32);
+    let provenance = greycard_core::exif::Provenance {
+        metadata: &metadata,
+        software: SOFTWARE,
+        width: w,
+        height: h,
+        srgb: false,
+        written: Some(std::time::SystemTime::now()),
+        source_name,
+        output: None,
+        edit: None,
+    };
+    write_linear_tiff(&working, out_path, &provenance)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use greycard_core::color::WORKING_SPACE;
-    use greycard_core::raw::Orientation;
-    use greycard_core::{decode, develop};
+    use greycard_core::raw::{Orientation, RawFrame};
+    use greycard_core::stack;
+    use greycard_core::{
+        DemosaicMethod, DevelopSettings, HighlightMode, decode, demosaic, develop,
+    };
 
     #[test]
     fn the_output_name_says_the_format() {
@@ -393,11 +287,11 @@ mod tests {
     #[test]
     fn without_a_name_the_merge_goes_beside_the_first_frame() {
         assert_eq!(
-            stack_default_output(std::path::Path::new("/photos/DSC_0001.NEF")),
+            focus::default_output(std::path::Path::new("/photos/DSC_0001.NEF")),
             PathBuf::from("/photos/DSC_0001 stack.dng")
         );
         assert_eq!(
-            stack_default_output(std::path::Path::new("DSC_0001.NEF")),
+            focus::default_output(std::path::Path::new("DSC_0001.NEF")),
             PathBuf::from("DSC_0001 stack.dng")
         );
     }
@@ -563,20 +457,24 @@ mod tests {
         }
 
         let balance = &demosaiced.white_balance;
-        let metadata = greycard_core::decode::rawler_backend::RawMetadata::default();
+        let stacked = || Stacked {
+            merged: merged.clone(),
+            frame: frame.clone(),
+            metadata: greycard_core::decode::rawler_backend::RawMetadata::default(),
+            balance: *balance,
+            report: report.clone(),
+            names: vec!["a".into(), "b".into()],
+            developing: 0.0,
+            merging: 0.0,
+        };
 
         // The DNG: written, decoded again, developed, and its means
         // compared with the develop of the original.
         let dng = dir.join("stack.dng");
-        write_stack(
-            merged.clone(),
-            (&frame, &metadata, balance),
-            StackFormat::Dng,
-            &dng,
-            None,
-            true,
-        )
-        .expect("writing the dng");
+        {
+            let mut file = std::fs::File::create(&dng).expect("a dng file");
+            focus::write_dng(&mut file, &stacked(), true).expect("writing the dng");
+        }
         let back = decode::decode_path(&dng).expect("decoding the dng");
         let developed = develop(&back, &settings).expect("developing the dng");
         let dng_means = channel_means(developed.image.data.iter().copied());
@@ -590,15 +488,7 @@ mod tests {
 
         // The TIFF: the same picture, written straight.
         let tiff = dir.join("stack.tif");
-        write_stack(
-            merged.clone(),
-            (&frame, &metadata, balance),
-            StackFormat::Tiff,
-            &tiff,
-            None,
-            false,
-        )
-        .expect("writing the tiff");
+        write_tiff(stacked(), &tiff, None).expect("writing the tiff");
         let got = image::open(&tiff).expect("reading the tiff").into_rgb16();
         let tiff_means = channel_means(got.as_raw().iter().map(|v| *v as f32 / 65535.0));
         println!("   tiff {tiff_means:?}");
@@ -611,7 +501,7 @@ mod tests {
 
         // And the embedded preview, which is its own path into the
         // working space and was the one that was wrong.
-        let preview = stack_preview(&merged, balance, 32).expect("a preview");
+        let preview = greycard_core::merge::preview(&merged, balance, 32).expect("a preview");
         assert!(preview.width() <= 32 && preview.width() > 8, "{preview:?}");
         let preview_means = channel_means(preview.as_raw().iter().map(|v| {
             let v = *v as f32 / 255.0;
@@ -656,6 +546,44 @@ mod tests {
             std::fs::read(&there).expect("the file is still there"),
             b"not to be touched"
         );
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A DNG named as one of the frames is refused, whatever
+    /// `--on-exists` says, and the frame is left as it was.
+    #[test]
+    fn a_frame_is_never_written_over() {
+        use greycard_core::merge::Noise;
+        use greycard_core::merge::testing::{mosaic, write_dng};
+        let dir = std::env::temp_dir().join(format!("greycard-stack-over-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..2)
+            .map(|k| {
+                let p = dir.join(format!("IMG_{k}.dng"));
+                write_dng(
+                    &p,
+                    mosaic(96, 64, 0.25, Noise::ASSUMED, k),
+                    96,
+                    64,
+                    (1, 100),
+                    "Stack",
+                );
+                p
+            })
+            .collect();
+        let before = std::fs::read(&files[0]).expect("the frame");
+        let e = stack_files(
+            &files,
+            Some(&files[0]),
+            Reference::Middle,
+            2.0,
+            0.6,
+            false,
+            OnExists::Overwrite,
+        )
+        .expect_err("a frame as the output");
+        assert!(e.to_string().contains("one of the frames"), "{e}");
+        assert_eq!(std::fs::read(&files[0]).expect("the frame"), before);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

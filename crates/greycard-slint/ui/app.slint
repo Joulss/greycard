@@ -230,6 +230,8 @@ export component App inherits Window {
     callback merge-hdr();
     /// Merge to Panorama: the frames chosen stitched into one.
     callback merge-pano();
+    /// Merge to Focus stack: the frames chosen merged sharp everywhere.
+    callback merge-focus();
     /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
     /// copies the frame on screen.
     callback menu-copy();
@@ -5366,6 +5368,7 @@ export component App inherits Window {
         stack-bursts => { root.stack-bursts(); root.menu-done(); }
         merge-hdr => { root.merge-hdr(); root.menu-done(); }
         merge-pano => { root.merge-pano(); root.menu-done(); }
+        merge-focus => { root.merge-focus(); root.menu-done(); }
     }
 
     // Recently opened: one list for the window, opened below the

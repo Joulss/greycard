@@ -202,6 +202,11 @@ design note behind it.
   middle frame did and with its edit. `greycard merge hdr` does the
   same from the command line
   ([§525](https://github.com/jessolmstead/greycard/blob/master/docs/notes/525-the-tripod-hdr-merge.md)).
+- **Merge to Focus stack** on the frame menu merges frames shot at
+  several focus distances into one DNG beside the first frame, sharp
+  everywhere, with the middle frame's edit: the same merge as
+  `greycard stack`, which now refuses to write over a frame
+  ([§573](https://github.com/jessolmstead/greycard/blob/master/docs/notes/573-merge-to-focus-stack.md)).
 - **Merge to Panorama** on the frame menu stitches frames shot turning
   the camera into one float DNG beside the first: the lens corrected
   first, flat up to about 90 degrees and on a cylinder past it, the

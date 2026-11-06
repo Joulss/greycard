@@ -116,6 +116,8 @@ export component FrameMenu inherits Rectangle {
     callback merge-hdr();
     /// Merge to Panorama, the same.
     callback merge-pano();
+    /// Merge to Focus stack, the same.
+    callback merge-focus();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -225,6 +227,10 @@ export component FrameMenu inherits Rectangle {
             if !root.queue && root.count > 1: MenuItem {
                 title: "Merge to Panorama";
                 activated => { root.merge-pano(); }
+            }
+            if !root.queue && root.count > 1: MenuItem {
+                title: "Merge to Focus stack";
+                activated => { root.merge-focus(); }
             }
             if root.can-stack || root.stack > 0 || !root.queue: MenuSeparator { }
             MenuItem {

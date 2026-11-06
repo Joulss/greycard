@@ -116,7 +116,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections by content, surviving a move |
 | Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
 | Tethering | basic | the reference | none | gphoto2 | none | planned |
-| Stacking | HDR, panorama | none | none | none | none | HDR, panorama, and focus, to a linear DNG |
+| Stacking | HDR, panorama | none | none | none | none | HDR, panorama, and focus, each to a linear DNG from the frame menu |
 | License | subscription | subscription or perpetual | perpetual | GPL | GPL | GPL-3.0-or-later |
 | Linux | no | no | no | yes | yes | yes, first |
 | Windows and macOS | yes | yes | yes | yes | yes | yes |

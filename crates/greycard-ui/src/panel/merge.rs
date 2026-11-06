@@ -1,14 +1,15 @@
-//! Merge to HDR and Merge to Panorama, in the frame menu beside Stack
-//! bursts: the frames chosen, a tripod bracket or a panorama's frames,
-//! merged by the engine's merge (the one `greycard merge hdr` or
-//! `greycard merge pano` runs) into a linear DNG beside the first of
-//! them, `<first>-HDR.dng` or `<first>-pano.dng`.
+//! Merge to HDR, Merge to Panorama, and Merge to Focus stack, in the
+//! frame menu beside Stack bursts: the frames chosen, a tripod bracket,
+//! a panorama's frames, or a focus stack, merged by the engine's merge
+//! (the one `greycard merge hdr`, `greycard merge pano`, or `greycard
+//! stack` runs) into a linear DNG beside the first of them,
+//! `<first>-HDR.dng`, `<first>-pano.dng`, or `<first> stack.dng`.
 //!
 //! The merge reads every frame whole, seconds a frame, so it runs on a
 //! thread of its own, saying each frame as it comes in the status line;
 //! a second ask waits for the first and then runs. What it made lands on
 //! the window's thread: the file given to the indexer, its edit the
-//! reference frame's less the exposure, and the file on top of a stack
+//! reference frame's less the exposure (a focus stack keeps it), and the file on top of a stack
 //! with its sources when they are of one folder, as a stack is. A
 //! session that writes no sidecars holds the merged file's edit in
 //! memory, as it holds an edit made there, until the window is closed.
@@ -26,7 +27,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use greycard_edit::{Edit, Learned, Line, Placement, Sidecar};
-use greycard_engine::merge::{self, Options, Step, pano};
+use greycard_engine::merge::{self, Options, Step, focus, pano};
 use greycard_library::Rehash;
 use greycard_library::collections::Reference;
 use slint::ComponentHandle;
@@ -67,6 +68,8 @@ fn with_queue<R>(f: impl FnOnce(&mut Queue) -> R) -> R {
 pub(crate) enum Kind {
     Hdr,
     Pano,
+    /// A focus stack: the CLI's defaults, as `focus::Options` has them.
+    Focus,
 }
 
 /// One merge asked: of frames chosen, or a merged file made again.
@@ -148,8 +151,8 @@ struct Made {
     edit: Option<Edit>,
 }
 
-/// The frame menu's Merge to HDR or Merge to Panorama: the frames
-/// chosen, each file once.
+/// The frame menu's Merge to HDR, Merge to Panorama, or Merge to Focus
+/// stack: the frames chosen, each file once.
 pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker, kind: Kind) {
     let mut cells: Vec<usize> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -319,10 +322,6 @@ impl Merge {
     fn run(self, said: &dyn Fn(String)) -> Done {
         let frames = self.files.len();
         let made = (|| -> anyhow::Result<Made> {
-            let reference = match self.kind {
-                Kind::Hdr => merge::reference_of(&self.files, None)?,
-                Kind::Pano => pano::reference_of(self.files.len(), None)?,
-            };
             let edit_of = |k: usize| {
                 self.edits[k].clone().unwrap_or_else(|| {
                     if self.write_sidecars {
@@ -335,10 +334,34 @@ impl Merge {
                     }
                 })
             };
-            let edit = &edit_of(reference);
             let progress = |step: Step| said(step_line(step));
             let (out, headroom_stops, seconds, warnings, merged_edit) = match self.kind {
+                Kind::Focus => {
+                    // The stack finds its own reference: its edit is
+                    // taken after.
+                    let r = focus::stack(&self.files, &focus::Options::default(), &progress)?;
+                    let left_out = r
+                        .stack
+                        .frames
+                        .iter()
+                        .filter_map(|f| {
+                            let why = f.dropped.as_ref()?;
+                            Some(format!(
+                                "{} was left out of the stack: {why}",
+                                r.names[f.index]
+                            ))
+                        })
+                        .collect();
+                    (
+                        r.out,
+                        0.0,
+                        r.seconds,
+                        left_out,
+                        focus::edit_for_stack(&edit_of(r.stack.reference)),
+                    )
+                }
                 Kind::Hdr => {
+                    let edit = &edit_of(merge::reference_of(&self.files, None)?);
                     let r = merge::hdr(
                         &self.files,
                         edit,
@@ -355,6 +378,8 @@ impl Merge {
                     )
                 }
                 Kind::Pano => {
+                    let reference = pano::reference_of(self.files.len(), None)?;
+                    let edit = &edit_of(reference);
                     // Each run is written under the name held and the
                     // one kept renamed onto it, so a second run that
                     // fails leaves the first to keep.
@@ -807,7 +832,7 @@ pub(crate) fn indexed(state: &Rc<Shared>, app: &App) {
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
-    for kind in [Kind::Hdr, Kind::Pano] {
+    for kind in [Kind::Hdr, Kind::Pano, Kind::Focus] {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app_weak.clone());
         let asked = move || {
             let Some(app) = app_weak.upgrade() else {
@@ -822,6 +847,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
         match kind {
             Kind::Hdr => app.on_merge_hdr(asked),
             Kind::Pano => app.on_merge_pano(asked),
+            Kind::Focus => app.on_merge_focus(asked),
         }
     }
     app.on_merge_again(move || {
@@ -1019,6 +1045,132 @@ mod tests {
             greycard_edit::Demosaic::Vng4
         );
         drop(st);
+
+        drop(writer);
+        drop(app);
+        drop(worker);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Two frames of one subject: Merge to Focus stack is offered only
+    /// with more than one frame chosen, refuses one, and with two
+    /// writes `<first> stack.dng` beside them, on top of a stack of
+    /// them, with the reference's edit less the learned denoiser.
+    #[test]
+    fn a_focus_stack_is_merged_named_stacked_and_given_its_reference_edit() {
+        // The item, guarded as the other merges are.
+        let menu =
+            std::fs::read_to_string(Path::new(greycard_slint::PANEL_DIR).join("frame-menu.slint"))
+                .unwrap();
+        let item = menu
+            .split("MenuItem {")
+            .zip(menu.split("MenuItem {").skip(1))
+            .find(|(_, body)| body.contains("root.merge-focus()"))
+            .map(|(guard, _)| guard.rsplit('\n').next().unwrap().to_string())
+            .expect("the item");
+        assert!(item.contains("!root.queue && root.count > 1"), "{item}");
+
+        let dir = crate::testing::scratch_dir("merge-focus");
+        let root = dir.join("photos");
+        let shoot = root.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        let (w, h) = (192, 128);
+        let files: Vec<PathBuf> = (0..2)
+            .map(|k| {
+                let p = shoot.join(format!("IMG_{k}.dng"));
+                write_dng(
+                    &p,
+                    mosaic(w, h, 0.25, Noise::ASSUMED, 30 + k as u64),
+                    w,
+                    h,
+                    (1, 100),
+                    "Focus",
+                );
+                p
+            })
+            .collect();
+        let mut edited = Edit::default();
+        edited.light.exposure = 0.5;
+        edited.noise.learned = Learned::Fast;
+        for f in &files {
+            Sidecar {
+                line: Line::of(edited.clone()),
+                ..Sidecar::default()
+            }
+            .save(f)
+            .unwrap();
+        }
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1400.0, 900.0));
+        app.set_grid_open(true);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.library.roots.add(&root).unwrap();
+            let collections = dir.join(crate::collections::DIR);
+            st.views.collections.dir = Some(collections.clone());
+            st.views.stacks =
+                crate::stacks::Store::load(greycard_library::stacks::dir_in(&collections));
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_sent(&state, &app, &worker);
+        assert_eq!(app.get_thumbs().row_count(), 2);
+        let cell = |i: usize| {
+            let st = state.borrow();
+            let f = st.file_by_path(&files[i]).unwrap();
+            st.own_cell(f).unwrap()
+        };
+
+        let row = |c: usize| crate::panel::browser::row_of(&state.borrow(), c).unwrap() as i32;
+
+        // One frame chosen is no stack.
+        app.invoke_select(row(cell(0)));
+        state.borrow_mut().views.picked = vec![cell(0)];
+        app.invoke_merge_focus();
+        assert_eq!(app.get_status(), "choose two frames or more to merge");
+        let out = shoot.join("IMG_0 stack.dng");
+        assert!(!out.exists());
+
+        // Both: each frame said as it is read, the file written.
+        let heard = Rc::new(RefCell::new(Vec::<String>::new()));
+        let into = heard.clone();
+        HEARD.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move |line: &str| {
+                into.borrow_mut().push(line.to_string())
+            }))
+        });
+        state.borrow_mut().views.picked = vec![cell(0), cell(1)];
+        app.invoke_merge_focus();
+        HEARD.with(|h| *h.borrow_mut() = None);
+        assert_eq!(app.get_status(), "merged 2 frames into IMG_0 stack.dng");
+        assert!(out.is_file());
+        assert_eq!(
+            heard.borrow()[..2],
+            ["merging frame 1 of 2", "merging frame 2 of 2"]
+        );
+        assert_eq!(
+            heard.borrow().last().map(String::as_str),
+            Some("merging: writing the file")
+        );
+
+        // Its edit: the reference's, its exposure kept, no learned
+        // denoiser.
+        let sidecar = Sidecar::load(&out).unwrap().expect("a sidecar beside it");
+        assert_eq!(sidecar.current.light.exposure, 0.5);
+        assert_eq!(sidecar.current.noise.learned, Learned::Off);
+
+        // On top of a stack of its sources.
+        let stacks = state.borrow().views.stacks.list.clone();
+        assert_eq!(stacks.len(), 1);
+        assert_eq!(stacks[0].refs.len(), 3);
+        assert!(stacks[0].refs[0].hint.ends_with("IMG_0 stack.dng"));
 
         drop(writer);
         drop(app);

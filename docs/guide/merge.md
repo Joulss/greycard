@@ -72,6 +72,34 @@ turned onto (counting from 0), `--out` to name the file, and
 `--on-exists` for when that name is taken. A second merge to a file
 that one is still writing is refused.
 
+# Merge to Focus stack
+
+Frames of one subject shot at several focus distances can be merged
+into one frame that is sharp everywhere.
+
+- Select the frames, two or more, of one camera and one size, in focus
+  order, and choose **Merge to Focus stack** on the frame menu. The
+  status line says each frame as it is read. Every frame is held in
+  memory at once, about a gigabyte a frame at 24 megapixels, and a
+  stack the computer's memory will not hold is refused: stack fewer
+  frames at a time.
+- The frames are put onto the middle one, scale included, since a lens
+  breathes as it focuses. A frame that cannot be lined up is left out,
+  and the log says which and why.
+- The merge is a DNG beside the first frame, named after it:
+  `IMG_0001 stack.dng`, numbered when the name is taken, and on top of
+  a stack with its frames, as a merge to HDR is. It opens with the
+  middle frame's edit, its exposure kept, less the learned denoiser.
+- A focus stack keeps no recipe, so it is not made again from the
+  Noise section: merge its frames again instead.
+
+From the command line: `greycard stack IMG_0001.CR3 IMG_0002.CR3
+IMG_0003.CR3`, with `--reference` to pick the frame the others are put
+on (`middle`, `sharpest`, or a number counting from 0),
+`--selectivity` and `--max-residual` to tune the merge, `-o` to name
+the file (a `.tif` writes a 16-bit linear TIFF instead),
+`--uncompressed`, and `--on-exists` for when that name is taken.
+
 # Making a merge again
 
 A merged file keeps its recipe: its frames' names with a check of

@@ -13,8 +13,9 @@
 //!
 //! The command line's `greycard merge hdr` and the window's Merge to
 //! HDR both run [`hdr`]; neither has a merge of its own. The panorama
-//! is [`pano`]'s.
+//! is [`pano`]'s, and the focus stack [`focus`]'s.
 
+pub mod focus;
 pub mod pano;
 
 use std::path::{Path, PathBuf};
