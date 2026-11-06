@@ -607,8 +607,8 @@ clears or a tester asks for it.
       review, 2026-11-02)
 - [ ] Translations: the window's strings through Slint's `@tr` and a
       gettext catalog, English the source, the first languages the
-      ones testers offer; the guide and the release notes stay English
-      (an outside review, 2026-11-02)
+      ones testers offer (issue 75 offers French); the guide and the
+      release notes stay English (an outside review, 2026-11-02)
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it
@@ -740,7 +740,8 @@ clears or a tester asks for it.
       panel's move out of app.slint, since that is the same rewiring
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
-      most, each kept in the settings; first see what a viewport
+      most, each kept in the settings (pixls: a 1366 × 768 laptop
+      has little room left for the picture); first see what a viewport
       resize costs per pointer move, and hold the redraw to the drop
       if it is a develop (hiding landed, §178; the strip stays fixed)
 - [ ] A software GPU when there is none: the worker and greycard-gpu
