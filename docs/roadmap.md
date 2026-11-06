@@ -24,22 +24,14 @@ the reasoning lives in `docs/notes.md`.
       2.3x, discussion 51, 2026-10-29); the same path here draws
       nothing at rest at that scale. The log says since 9680ffd4 when
       the window keeps drawing, with what was on. A Windows log decides
-- [ ] A Fast fill on a Windows GeForce RTX 3080 Ti reloads the models
-      every fill (5 s each) and takes 11 to 19 s for 24 UNet calls
-      against under 3 s here, and once lost the device after a 76 s
-      model load, which the watchdog restarted on CPU ops (issue 54,
-      2026-10-29); the slow path is still to find. The policy holds
-      a discrete card to one at a time since the card's memory was
-      not read; it is read now and logged. Tiers for a card are parked
-      on the branch card-memory (12 GB UNet open, 20 GB decoder whole,
-      24 GB all three): measured 2026-10-29 on a 16 GB card, the UNet
-      kept open peaked at 13.1 GB over idle and held 11.5 GB after,
-      since ORT's buffer cache on the shared context lives as long as
-      the held UNet, so 12 GB cannot take it. Wants an A/B against one
-      at a time with and without the learned denoiser, and the cache
-      released or the held UNet dropped when another model loads; and
-      the UNet is kept for one size only, so Fast fills of mixed sizes
-      reload anyway
+- [ ] A Fast fill on a Windows GeForce RTX 3080 Ti takes 11 to 19 s
+      for 24 UNet calls against under 3 s here, and once lost the
+      device after a 76 s model load, which the watchdog restarted on
+      CPU ops (issue 54, 2026-10-29); the slow path is still to find.
+      The UNet is held across a queue since §569, by the card's memory;
+      the branch card-memory's tiers (20 GB decoder whole, 24 GB all
+      three) are not taken up, and the UNet is kept for one size only,
+      so fills of mixed sizes reload anyway
 - [ ] System and File display profiles differ with the same profile
       picked (issue 53): waits on the reporter's profile; a table-based
       monitor profile is the lead

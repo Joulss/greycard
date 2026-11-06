@@ -116,7 +116,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections by content, surviving a move |
 | Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
 | Tethering | basic | the reference | none | gphoto2 | none | planned |
-| Stacking | HDR, panorama | none | none | none | none | focus, from the command line; HDR and panorama planned |
+| Stacking | HDR, panorama | none | none | none | none | HDR, panorama, and focus, to a linear DNG |
 | License | subscription | subscription or perpetual | perpetual | GPL | GPL | GPL-3.0-or-later |
 | Linux | no | no | no | yes | yes | yes, first |
 | Windows and macOS | yes | yes | yes | yes | yes | yes |
@@ -179,13 +179,15 @@ Built, as of 0.9.0:
   with a way back, delete to the trash.
 - **Export.** Embedded profiles and EXIF, Adobe RGB beside sRGB,
   Display P3 and Rec.2020, presets, watermark, border,
-  a queue that survives a restart, a headless `--export`. Focus
-  stacking to a linear DNG from the command line.
+  a queue that survives a restart, a headless `--export`.
+- **Merge.** A tripod bracket to HDR, frames shot turning to a
+  panorama, and a focus stack, each to a linear DNG that edits as a
+  raw, with the frames denoised first if asked.
 - **Around it.** Packages for Linux, macOS and Windows. A Report a
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off.
 
-Planned, in order: HDR merge and panoramas; tethering. The learned denoiser for X-Trans alongside these.
+Planned, in order: tethering, and the learned denoiser for X-Trans.
 
 The reasoning behind every choice is in `docs/notes/`, one numbered
 section a file with `docs/notes.md` as the index, and the plan is

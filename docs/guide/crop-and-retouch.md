@@ -221,6 +221,12 @@ machine without it, or without a GPU, left as it was.
 Every fill takes on the photo's grain, measured around the area, so
 it does not stand out as a smooth patch.
 
+A frame with several generative fills to make shows its picture as
+soon as it develops, each fill still to come outlined faintly where it
+will go, and the fills land one by one after it. The status line
+counts them ("Fill 5, 4 of 15") and its bar shows the one being made.
+Leaving for the Library pauses them; coming back goes on.
+
 A fill the generative remove made has **Another** on its row in the
 list: each press makes a new version of it, and undo takes you back to
 the last one.
