@@ -234,6 +234,11 @@ design note behind it.
 
 ### Fixes
 
+- On a GPU whose shaders cannot run 16-bit floats (an NVIDIA card
+  before the GTX 16 and RTX 20 series) a Fast or Best fill now says so
+  in plain words instead of failing inside the model; Patch still
+  works there
+  ([§570](https://github.com/jessolmstead/greycard/blob/master/docs/notes/570-the-remove-refused-plainly-without-16-bit-floats.md)).
 - Hovering a mask's on/off switch no longer lights the mask's red
   overlay, so the switch shows what the adjustment does
   ([§568](https://github.com/jessolmstead/greycard/blob/master/docs/notes/568-a-masks-switch-without-its-overlay.md)).

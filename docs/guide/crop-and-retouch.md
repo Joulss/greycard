@@ -207,8 +207,11 @@ line says "preparing..." while it lasts, as it does whenever a model
 takes more than a moment to load. Choosing one whose model is not
 downloaded offers the download; choose it again once it is here. On a
 machine without a GPU the two removes are greyed, and the tooltip says
-why. A Fill drawn before a model arrived keeps what made it until you
-choose again.
+why. The generative remove's models are 16-bit, so the GPU must run
+16-bit floats in its shaders: NVIDIA cards before the GTX 16 and RTX
+20 series (a GTX 1080, say) cannot, and a fill asked of them fails at
+once with the log saying so; **Patch** still works there. A Fill drawn
+before a model arrived keeps what made it until you choose again.
 
 The generative remove is a second download, 5.5 GB under the CreativeML
 Open RAIL++-M license, offered once the first time you choose **Fill**

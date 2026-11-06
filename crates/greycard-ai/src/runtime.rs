@@ -434,6 +434,22 @@ pub fn webgpu_unified() -> Option<bool> {
     }
 }
 
+/// Whether the WebGPU adapter's shaders take 16-bit floats, with its
+/// name: the remove's models are fp16 through and through, and ONNX
+/// Runtime's WebGPU provider refuses them on a card without (an
+/// NVIDIA card before Turing). `None` when no adapter answers. Same
+/// adapter, and same guess, as [`webgpu_unified`].
+pub fn webgpu_shader_f16() -> Option<(bool, String)> {
+    #[cfg(webgpu_ep)]
+    {
+        webgpu_adapter().map(|a| (a.shader_f16, a.name.clone()))
+    }
+    #[cfg(not(webgpu_ep))]
+    {
+        None
+    }
+}
+
 /// The bytes of the WebGPU adapter's own memory: the sum of its
 /// device-local heaps on Vulkan, its dedicated video memory on DX12.
 /// `None` when no adapter answers, on Metal (a Mac's GPU has the
@@ -464,7 +480,12 @@ pub fn webgpu_memory_read() -> Option<(u64, &'static str)> {
 struct Adapter {
     /// Name, backend, and driver.
     identity: String,
+    /// The adapter's name alone.
+    name: String,
     device_type: wgpu::DeviceType,
+    /// Whether its shaders take 16-bit floats, which the remove's
+    /// models are made of.
+    shader_f16: bool,
     /// The bytes of its own memory, and what said so
     /// ([`webgpu_memory_read`]).
     memory: Option<(u64, &'static str)>,
@@ -554,7 +575,9 @@ fn webgpu_adapter() -> Option<&'static Adapter> {
                     "{}|{:?}|{} {}",
                     info.name, info.backend, info.driver, info.driver_info
                 ),
+                name: info.name.clone(),
                 device_type: info.device_type,
+                shader_f16: adapter.features().contains(wgpu::Features::SHADER_F16),
                 memory: adapter_memory(&adapter),
             })
         })

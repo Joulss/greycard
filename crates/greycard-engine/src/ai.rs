@@ -1829,6 +1829,16 @@ impl Ai {
         if engine == Engine::Lama && !self.fill_available() {
             return Err(NoFill::Missing(&greycard_ai::FILL));
         }
+        // Said plainly before any model is asked for: the chain's
+        // first model fails on such a card with the shader compiler's
+        // words, and a failure here is not counted as a fill ahead.
+        if engine == Engine::Remove
+            && let Some((false, name)) = greycard_ai::runtime::webgpu_shader_f16()
+        {
+            return Err(NoFill::Failed(format!(
+                "the generative remove needs 16-bit floats in shaders, which {name} has none of"
+            )));
+        }
         Ok(engine)
     }
 
