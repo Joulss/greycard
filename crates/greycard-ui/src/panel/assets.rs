@@ -354,6 +354,7 @@ pub(crate) fn show_presets(st: &State, app: &App) {
             .map(|e| slint::SharedString::from(e.preset.name.as_str()))
             .collect::<Vec<_>>(),
     )));
+    crate::panel::preset_list::show(st, app);
 }
 
 /// List the store again and show it.
@@ -364,6 +365,7 @@ pub(crate) fn refresh_presets(st: &mut State, app: &App) {
         .as_ref()
         .map(|s| s.list())
         .unwrap_or_default();
+    crate::panel::preset_list::prune(st);
     show_presets(st, app);
     show_presets_missing(st, app);
 }
@@ -436,17 +438,23 @@ pub(crate) fn import_presets(st: &mut State, app: &App, paths: &[PathBuf]) {
         app.set_status("no configuration directory to keep presets in".into());
         return;
     };
-    let brought: Vec<Brought> = paths.iter().map(|p| bring(store, p)).collect();
+    // A folder is its preset files, each with the group it gives them
+    // (`greycard_edit_io::preset::gather`).
+    let brought: Vec<Brought> = greycard_edit_io::preset::gather(paths)
+        .iter()
+        .map(|(p, folder)| bring(store, p, folder.as_deref()))
+        .collect();
     refresh_presets(st, app);
     show_import_report(app, import_report(&brought));
 }
 
-/// One file into the store, and what it came to.
-fn bring(store: &preset::Store, path: &Path) -> Brought {
+/// One file into the store, into `folder`'s group unless it names its
+/// own, and what it came to.
+fn bring(store: &preset::Store, path: &Path, folder: Option<&str>) -> Brought {
     let file = file_name(path);
     // Never over a preset the list has: its bin is the way to a new
     // copy, and a refusal here says so.
-    match greycard_edit_io::preset::import_into(store, path, false) {
+    match greycard_edit_io::preset::import_into_group(store, path, false, folder) {
         Ok((written, imported)) => {
             let preset = &imported.preset;
             tracing::info!(
@@ -1476,8 +1484,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(entry) = st.develop.presets.get(i as usize).cloned() else {
                 return;
             };
+            // Its key while it has one: a favorite goes with it.
+            let key = st
+                .develop
+                .preset_store
+                .as_ref()
+                .and_then(|s| s.key_of(&entry.path));
             match st.develop.preset_store.as_ref().map(|s| s.remove(&entry)) {
                 Some(Ok(())) => {
+                    if let Some(key) = &key {
+                        crate::panel::preset_list::forget(&mut st, key);
+                    }
                     let name = &entry.preset.name;
                     // Promised only when the Restore would bring one
                     // of that name back: the shipped one, which need

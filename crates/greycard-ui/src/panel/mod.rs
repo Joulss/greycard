@@ -28,6 +28,7 @@ pub(crate) mod merge;
 pub(crate) mod parts;
 pub(crate) mod parts_all;
 pub(crate) mod prefs;
+pub(crate) mod preset_list;
 pub(crate) mod queue_view;
 pub(crate) mod rawtherapee;
 pub(crate) mod recent;

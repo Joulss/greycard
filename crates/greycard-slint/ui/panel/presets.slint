@@ -3,35 +3,98 @@
 // one (asked once more first), and the ways to add one. It sat at the top of the develop
 // panel's scroll until the left pane had room for it; where Lightroom
 // keeps its presets is where a hand looks for them.
+//
+// The list is in sections: the favorites first, under a header of
+// their own, then the presets in no group, under none, then each
+// group under its name. A header's click folds its section. A star on
+// a preset's row makes it a favorite, and a right-click on the row
+// moves it into a group or out; one on a group's header renames it.
 
 import { Theme } from "../theme.slint";
 import { Tips, TipArea, Section, PanelButton, ScrollPane } from "../controls.slint";
+import { PresetRow } from "../structs.slint";
+
+// The list's new words, in one place for their review. The group
+// sheet's verbs are the app's own Create and Rename, set from
+// `panel::preset_list`, and its refusals are the store's, said on the
+// sheet or the status line.
+export global PresetWords {
+    out property <string> favorites: "Favorites";
+    out property <string> add-favorite: "Add to favorites";
+    out property <string> remove-favorite: "Remove from favorites";
+    out property <string> move-to-group: "Move to group";
+    out property <string> new-group: "New group...";
+    out property <string> rename-group: "Rename group...";
+    out property <string> remove-from-group: "Remove from group";
+    out property <string> group-name: "Group name";
+}
+
+// A star: Lucide's outline, the one the badges draw filled.
+component Star inherits Path {
+    in property <bool> filled;
+    in property <brush> color;
+    commands: "M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z";
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.5px;
+    fill: root.filled ? root.color : transparent;
+}
 
 export component PresetsSection inherits Section {
-    in-out property <int> selected;
+    in property <int> selected;
     in-out property <bool> collapsed-presets;
+    /// Every preset's name, in the store's order: what a row's `index`
+    /// and `confirm-remove` point into.
     in-out property <[string]> preset-names;
+    /// The list as shown, headers and presets ([`PresetRow`]).
+    in property <[PresetRow]> rows;
+    /// The groups there are, for the Move to group menu.
+    in property <[string]> groups;
     callback preset-applied(int);
     callback preset-deleted(int);
     callback preset-import();
     callback preset-save-open();
+    /// A preset's star clicked, or its menu's favorite item: by its
+    /// place in `preset-names`.
+    callback favorite-toggled(int);
+    /// A header clicked: its section folded or opened, by its key.
+    callback fold-toggled(string);
+    /// A preset into a group, by the group's place in `groups`; -1
+    /// for a new one, whose name a sheet asks.
+    callback moved(int, int);
+    /// A preset out of its group.
+    callback ungrouped(int);
+    /// A group's rename asked, by its name.
+    callback group-rename(string);
     /// How many frames the browser's selection holds.
     in property <int> set-count;
     callback sync-open-asked();
+    in property <bool> ctrl-click-menu;
+    callback focus-keys();
+    callback menu-done();
+    pure callback menu-shown() -> bool;
     /// The row whose bin was clicked and not yet confirmed; -1 for
     /// none. A click on a bin removes nothing by itself: a line names
     /// the preset and the Import and Save row turns into Cancel and
     /// Remove, as the settings sheet's sidecar move asks first.
     in-out property <int> confirm-remove: -1;
 
+    // The row the menu is for.
+    property <int> menu-index: -1;
+    property <string> menu-group;
+    property <bool> menu-favorite;
+    property <bool> menu-header;
+
     title: "PRESETS";
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
+
     // The list: a click lays the preset over the edit, as one step;
     // the bin at the row's end asks to remove it from the store. A
     // long list scrolls in its own box, as the history does, so the
     // pane below it keeps its place.
-    if root.preset-names.length > 0: Rectangle {
+    if root.preset-names.length > 0: box := Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
@@ -43,45 +106,164 @@ export component PresetsSection inherits Section {
         preferred-height: min(preset-list.preferred-height, 200px);
         max-height: self.preferred-height;
         vertical-stretch: 1;
+        menu := ContextMenuArea {
+            width: 0px;
+            height: 0px;
+            enabled: false;
+            Menu {
+                if root.menu-header: MenuItem {
+                    title: PresetWords.rename-group;
+                    activated => { root.group-rename(root.menu-group); }
+                }
+                if !root.menu-header: MenuItem {
+                    title: root.menu-favorite ? PresetWords.remove-favorite : PresetWords.add-favorite;
+                    activated => { root.favorite-toggled(root.menu-index); root.menu-done(); }
+                }
+                if !root.menu-header: Menu {
+                    title: PresetWords.move-to-group;
+                    for g[gi] in root.groups: MenuItem {
+                        title: g;
+                        checkable: true;
+                        checked: g == root.menu-group;
+                        activated => { root.moved(root.menu-index, gi); }
+                    }
+                    if root.groups.length > 0: MenuSeparator { }
+                    MenuItem {
+                        title: PresetWords.new-group;
+                        activated => { root.moved(root.menu-index, -1); }
+                    }
+                }
+                if !root.menu-header && root.menu-group != "": MenuItem {
+                    title: PresetWords.remove-from-group;
+                    activated => { root.ungrouped(root.menu-index); root.menu-done(); }
+                }
+            }
+        }
         ScrollPane {
             // A row scrolled from under a resting pointer takes its word along.
             changed content-y => { Tips.show("", 0, 0); }
             preset-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
-                for name[i] in root.preset-names: Rectangle {
+                for row in root.rows: Rectangle {
                     height: Theme.control-height - 6px;
                     border-radius: Theme.radius-sm;
-                    background: preset-row.has-hover || root.confirm-remove == i ? Theme.hover : transparent;
+                    background: !row.header && (preset-row.has-hover || root.confirm-remove == row.index)
+                        ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
                     preset-row := TouchArea {
-                        mouse-cursor: MouseCursor.pointer;
-                        enabled: root.selected >= 0;
-                        clicked => { root.preset-applied(i); }
+                        property <bool> skip;
+                        // With no frame a preset row is not laid over
+                        // anything, and still has its menu and star.
+                        mouse-cursor: row.header || root.selected >= 0 ? MouseCursor.pointer : MouseCursor.default;
+                        pointer-event(e) => {
+                            if (e.kind != PointerEventKind.down) { return; }
+                            // As a collection's row: the press that
+                            // closes a menu is nothing more, and a
+                            // right-click asks for the row's own.
+                            let closing = root.menu-shown();
+                            let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
+                                && e.modifiers.meta;
+                            let asks = e.button == PointerEventButton.right || ctrl-menu;
+                            self.skip = closing || asks || e.button != PointerEventButton.left;
+                            // Favorites's header has nothing to offer.
+                            if (asks && !(row.header && row.group == "")) {
+                                root.focus-keys();
+                                root.menu-index = row.index;
+                                root.menu-group = row.group;
+                                root.menu-favorite = row.favorite;
+                                root.menu-header = row.header;
+                                menu.show({
+                                    x: self.absolute-position.x + self.mouse-x - box.absolute-position.x,
+                                    y: self.absolute-position.y + self.mouse-y - box.absolute-position.y,
+                                });
+                            }
+                        }
+                        clicked => {
+                            if (self.skip) { return; }
+                            if (row.header) {
+                                root.fold-toggled(row.key);
+                            } else if (root.selected >= 0) {
+                                root.preset-applied(row.index);
+                            }
+                        }
                     }
-                    HorizontalLayout {
-                        padding-left: Theme.space-2;
+                    if row.header: HorizontalLayout {
+                        padding-left: Theme.space-1;
+                        padding-right: Theme.space-1 + Theme.scrollbar-band;
+                        spacing: Theme.space-1;
+                        Image {
+                            source: @image-url("../icons/chevron-down.svg");
+                            colorize: preset-row.has-hover ? Theme.text : Theme.text-muted;
+                            width: Theme.icon;
+                            height: Theme.icon;
+                            y: (parent.height - self.height) / 2;
+                            transform-rotation: row.folded ? -90deg : 0deg;
+                        }
+                        Text {
+                            text: row.group == "" ? PresetWords.favorites : row.text;
+                            color: preset-row.has-hover ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                    }
+                    if !row.header: HorizontalLayout {
+                        padding-left: row.under ? Theme.space-2 + Theme.icon : Theme.space-2;
                         // Clears the scroll bar's band so an
                         // overflowing list never lets the bin's hit
                         // area sit under it.
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
-                        spacing: Theme.space-2;
+                        spacing: Theme.space-1;
                         Text {
-                            text: name;
+                            text: row.text;
                             color: preset-row.has-hover ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
+                        // The star: filled for a favorite, outlined
+                        // under the pointer otherwise, and a click
+                        // either way.
                         Rectangle {
                             width: Theme.control-height - 6px;
                             accessible-role: button;
-                            accessible-label: "Remove " + name;
-                            accessible-action-default => { root.confirm-remove = i; }
+                            accessible-label: row.favorite ? PresetWords.remove-favorite : PresetWords.add-favorite;
+                            accessible-checkable: true;
+                            accessible-checked: row.favorite;
+                            accessible-action-default => { root.favorite-toggled(row.index); }
+                            Star {
+                                visible: row.favorite || preset-row.has-hover || star.has-hover;
+                                filled: row.favorite;
+                                color: star.has-hover ? Theme.text
+                                    : row.favorite ? Theme.text-secondary : Theme.text-muted;
+                                width: Theme.icon;
+                                height: Theme.icon;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            // The icon alone: the rest of the strip is the
+                            // row's, whose click lays the preset over.
+                            star := TouchArea {
+                                width: Theme.icon;
+                                height: Theme.icon;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => { root.favorite-toggled(row.index); }
+                            }
+                        }
+                        Rectangle {
+                            width: Theme.control-height - 6px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + row.text;
+                            accessible-action-default => { root.confirm-remove = row.index; }
                             Image {
                                 source: @image-url("../icons/trash-2.svg");
-                                colorize: preset-bin.has-hover || root.confirm-remove == i ? Theme.text : Theme.text-muted;
+                                colorize: preset-bin.has-hover || root.confirm-remove == row.index ? Theme.text : Theme.text-muted;
                                 width: Theme.icon;
                                 height: Theme.icon;
                                 x: (parent.width - self.width) / 2;
@@ -90,7 +272,7 @@ export component PresetsSection inherits Section {
                             preset-bin := TipArea {
                                 words: "Remove";
                                 mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.confirm-remove = i; }
+                                clicked => { root.confirm-remove = row.index; }
                             }
                         }
                     }

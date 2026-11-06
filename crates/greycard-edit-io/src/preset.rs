@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use greycard_edit::preset::{EXTENSION, Preset, Store, plain, slug, stem_name};
+use greycard_edit::preset::{EXTENSION, Preset, Store, group_folder, plain, slug, stem_name};
 use greycard_edit::{Error, Result};
 
 use crate::lightroom::{self, Imported};
@@ -26,6 +26,7 @@ pub fn import(path: &Path) -> Result<Imported> {
         preset,
         unmapped: Vec::new(),
         offset: 0.0,
+        group: None,
     })
 }
 
@@ -75,6 +76,19 @@ pub fn import_into(
     path: &Path,
     replace: bool,
 ) -> std::result::Result<(PathBuf, crate::lightroom::Imported), ImportError> {
+    import_into_group(store, path, replace, None)
+}
+
+/// [`import_into`], a new preset going into a group: the one its
+/// Lightroom file names (`crs:Group`), else `folder`, the group
+/// [`gather`] found for the file, else none. A preset replaced stays
+/// in its own file, wherever that is.
+pub fn import_into_group(
+    store: &Store,
+    path: &Path,
+    replace: bool,
+    folder: Option<&str>,
+) -> std::result::Result<(PathBuf, crate::lightroom::Imported), ImportError> {
     let imported = import(path).map_err(|e| match e {
         Error::Io(e) => ImportError::Unreadable(e),
         Error::Newer(v) => ImportError::Newer(v),
@@ -101,9 +115,40 @@ pub fn import_into(
         Some(entry) if replace => entry.path,
         Some(entry) => return Err(ImportError::Taken(entry.preset.name)),
         None => {
+            let group = imported
+                .group
+                .as_deref()
+                .or(folder)
+                .and_then(group_folder)
+                .map(|g| {
+                    // A group there already in another case is that one.
+                    let wanted = g.to_lowercase();
+                    store
+                        .groups()
+                        .into_iter()
+                        .find(|h| h.to_lowercase() == wanted)
+                        .unwrap_or(g)
+                });
+            // A group no folder can be made for (a device name on
+            // Windows, CON or NUL) is no group: the preset comes in
+            // outside any rather than not at all.
+            let mut dir = store.group_dir(group.as_deref());
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                if group.is_none() {
+                    return Err(ImportError::Unsaved(name.to_string(), e.into()));
+                }
+                log::warn!(
+                    "preset group {}: {e}; {name} put in no group",
+                    dir.display()
+                );
+                dir = store.group_dir(None);
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| ImportError::Unsaved(name.to_string(), e.into()))?;
+            }
             let slug = slug(name);
-            std::iter::once(store.path_for(name))
-                .chain((2..).map(|n| store.dir().join(format!("{slug}-{n}.{EXTENSION}"))))
+            std::iter::once(format!("{slug}.{EXTENSION}"))
+                .chain((2..).map(|n| format!("{slug}-{n}.{EXTENSION}")))
+                .map(|file| dir.join(file))
                 .find(|p| !p.exists())
                 .expect("a free file name")
         }
@@ -112,6 +157,73 @@ pub fn import_into(
         .save_to(&written)
         .map_err(|e| ImportError::Unsaved(name.to_string(), e))?;
     Ok((written, imported))
+}
+
+/// Whether a path names a preset file of either kind, by its
+/// extension, case aside.
+fn is_preset_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| x.eq_ignore_ascii_case("xmp") || x.eq_ignore_ascii_case(EXTENSION))
+}
+
+/// The files an import of `paths` brings in, each with the group its
+/// folder gives it; a preset's own `crs:Group` comes before that
+/// ([`import_into_group`]).
+///
+/// A folder named is a Lightroom preset folder: its preset files go
+/// into a group of the folder's name, and each folder in it, as
+/// Lightroom's own `Settings` folder holds one a group, into a group
+/// of that folder's name; no deeper. A file named is itself, in no
+/// group: files picked from a downloads folder are no pack. In the
+/// order named, a folder's files by name.
+pub fn gather(paths: &[PathBuf]) -> Vec<(PathBuf, Option<String>)> {
+    let name_of = |dir: &Path| {
+        dir.file_name()
+            .and_then(|n| n.to_str())
+            .and_then(group_folder)
+    };
+    let files_in = |dir: &Path| {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+            .unwrap_or_default();
+        files.sort();
+        files
+    };
+    let mut out = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            let group = name_of(path);
+            let listed = files_in(path);
+            out.extend(
+                listed
+                    .iter()
+                    .filter(|p| is_preset_file(p))
+                    .map(|p| (p.clone(), group.clone())),
+            );
+            for sub in listed.iter().filter(|p| p.is_dir()) {
+                if sub
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with('.'))
+                {
+                    continue;
+                }
+                let group = name_of(sub);
+                out.extend(
+                    files_in(sub)
+                        .into_iter()
+                        .filter(|p| is_preset_file(p))
+                        .map(|p| (p, group.clone())),
+                );
+            }
+            continue;
+        }
+        out.push((path.clone(), None));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -270,6 +382,91 @@ mod tests {
             before
         );
         assert_eq!(store.list().len(), 2);
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
+    /// A Lightroom file with the exposure at `ev`, and a `crs:Group`
+    /// when `group` names one.
+    fn lightroom(ev: &str, group: Option<&str>) -> String {
+        let group = group
+            .map(|g| format!(r#"<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">{g}</rdf:li></rdf:Alt></crs:Group>"#))
+            .unwrap_or_default();
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="{ev}">{group}</rdf:Description></rdf:RDF></x:xmpmeta>"#
+        )
+    }
+
+    /// A Lightroom preset folder imported is a group of its name, and
+    /// each folder in it one of that folder's; a file's own
+    /// `crs:Group` comes first. Files picked from one folder are its
+    /// group when two or more are Lightroom's; one alone is in none.
+    #[test]
+    fn a_folder_imported_is_a_group() {
+        let d = dir("folder-import");
+        let pack = d.join("Film Pack");
+        std::fs::create_dir_all(pack.join("Mono")).unwrap();
+        std::fs::create_dir_all(pack.join(".hidden")).unwrap();
+        std::fs::write(pack.join("warm.xmp"), lightroom("+0.5", None)).unwrap();
+        std::fs::write(pack.join("cool.XMP"), lightroom("-0.5", Some("Cold Ones"))).unwrap();
+        std::fs::write(pack.join("readme.txt"), "not a preset").unwrap();
+        std::fs::write(pack.join("Mono").join("tri-x.xmp"), lightroom("+1", None)).unwrap();
+        std::fs::write(pack.join(".hidden").join("no.xmp"), lightroom("+1", None)).unwrap();
+        let gathered = gather(std::slice::from_ref(&pack));
+        let g = |s: &str| Some(s.to_string());
+        assert_eq!(
+            gathered,
+            [
+                (pack.join("cool.XMP"), g("Film Pack")),
+                (pack.join("warm.xmp"), g("Film Pack")),
+                (pack.join("Mono").join("tri-x.xmp"), g("Mono")),
+            ]
+        );
+        let store = Store::at(d.join("store"));
+        for (path, folder) in &gathered {
+            import_into_group(&store, path, false, folder.as_deref()).unwrap();
+        }
+        let listed: Vec<(Option<String>, String)> = store
+            .list()
+            .into_iter()
+            .map(|e| (store.group_of(&e.path), e.preset.name))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (g("Cold Ones"), "cool".to_string()),
+                (g("Film Pack"), "warm".into()),
+                (g("Mono"), "tri-x".into()),
+            ]
+        );
+
+        // Picked as files, from one folder or not: in no group.
+        let loose = d.join("Downloads");
+        std::fs::create_dir_all(&loose).unwrap();
+        let (a, b, c) = (
+            loose.join("a.xmp"),
+            loose.join("b.xmp"),
+            loose.join("c.gcp"),
+        );
+        let picked = gather(&[a.clone(), b.clone(), c.clone()]);
+        assert_eq!(picked, [(a.clone(), None), (b, None), (c, None)]);
+        assert_eq!(gather(std::slice::from_ref(&a)), [(a, None)]);
+        // Adobe's localized group: its English.
+        std::fs::write(
+            loose.join("adobe.xmp"),
+            lightroom("+0.1", Some("$$$/AgSettingNames/Group=Portraits")),
+        )
+        .unwrap();
+        let (written, got) =
+            import_into_group(&store, &loose.join("adobe.xmp"), false, None).unwrap();
+        assert_eq!(got.group.as_deref(), Some("Portraits"));
+        assert_eq!(written, store.dir().join("Portraits").join("adobe.gcp"));
+        // A group there in another case is that group.
+        let other = d.join("Other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("soft.xmp"), lightroom("+0.2", Some("mono"))).unwrap();
+        let (written, _) = import_into_group(&store, &other.join("soft.xmp"), false, None).unwrap();
+        assert_eq!(written, store.dir().join("Mono").join("soft.gcp"));
         greycard_core::testing::remove_dir_retry(&d);
     }
 }

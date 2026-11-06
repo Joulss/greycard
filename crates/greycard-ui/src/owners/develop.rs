@@ -318,6 +318,12 @@ pub(crate) struct Develop {
     /// The presets, as the store lists them, and the store.
     pub(crate) presets: Vec<Entry>,
     pub(crate) preset_store: Option<preset::Store>,
+    /// The favorite presets and the list's folded sections, as the
+    /// settings keep them (`panel::preset_list`).
+    pub(crate) preset_favorites: Vec<String>,
+    pub(crate) preset_folds: Vec<String>,
+    /// What the group sheet up is asking for.
+    pub(crate) preset_group_asked: Option<crate::panel::preset_list::GroupAsked>,
     /// A preset click's own words ("Muted Slide onto 3 frames"),
     /// waiting for the current frame's develop (its generation) to
     /// land: the develop's own line would otherwise stand alone,

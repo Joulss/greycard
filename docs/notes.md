@@ -587,3 +587,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§572. No outline before the frame has a size](notes/572-no-outline-before-the-frame-has-a-size.md) (2026-11-05)
 - [§573. Merge to Focus stack](notes/573-merge-to-focus-stack.md) (2026-11-05)
 - [§574. The grain's line drawn past the texture](notes/574-the-grains-line-drawn-past-the-texture.md) (2026-11-05)
+- [§575. Preset favorites and groups](notes/575-preset-favorites-and-groups.md) (2026-11-05)

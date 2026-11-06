@@ -41,6 +41,9 @@ pub struct Imported {
     /// The stops added to the Exposure slider for the body the settings
     /// are read for ([`body_offset`]); zero for a preset.
     pub offset: f32,
+    /// The group Lightroom kept the preset in (`crs:Group`), when
+    /// the file names one; none for a picture's settings.
+    pub group: Option<String>,
 }
 
 /// The scales the mapper lays Lightroom's sliders onto this engine's
@@ -242,20 +245,28 @@ pub fn read_for(xml: &str, fallback: &str, camera: Option<&str>) -> Result<Impor
 /// [`read`] under `scales` with `offset` stops added to the Exposure
 /// slider.
 pub fn read_with(xml: &str, fallback: &str, scales: &Scales, offset: f32) -> Result<Imported> {
-    let Settings { keys, curves, name } = settings_in(xml)?;
+    let Settings {
+        keys,
+        curves,
+        name,
+        group,
+    } = settings_in(xml)?;
     let name = name
         .filter(|n| !n.trim().is_empty())
         .unwrap_or_else(|| fallback.to_string());
-    Ok(map(name, &keys, &curves, scales, offset))
+    let mut imported = map(name, &keys, &curves, scales, offset);
+    imported.group = group.filter(|g| !g.trim().is_empty());
+    Ok(imported)
 }
 
 /// The `crs:` settings of an XMP as written: the keys with their
 /// values (a structure as its key alone), the point curves, and the
-/// preset's name when it has one.
+/// preset's name and group when it has them.
 struct Settings {
     keys: BTreeMap<String, String>,
     curves: BTreeMap<String, Vec<Point>>,
     name: Option<String>,
+    group: Option<String>,
 }
 
 /// The settings an XMP holds; an error when it holds none.
@@ -264,6 +275,7 @@ fn settings_in(xml: &str) -> Result<Settings> {
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
     let mut curves: BTreeMap<String, Vec<Point>> = BTreeMap::new();
     let mut name = None;
+    let mut group = None;
     // The top-level descriptions only: a profile's look (`crs:Look`)
     // carries the profile's own settings in a description of its own,
     // its tone curve and its `CameraProfile` among them, which are not
@@ -278,8 +290,11 @@ fn settings_in(xml: &str) -> Result<Settings> {
         {
             let key = child.tag_name().name();
             if key == "Name" || key == "Group" {
+                let text = alt_text(&child).map(localized);
                 if key == "Name" {
-                    name = alt_text(&child).map(str::to_string);
+                    name = text;
+                } else {
+                    group = text;
                 }
             } else if key.starts_with("ToneCurve") && !key.ends_with("Name") {
                 curves.insert(key.to_string(), seq_points(&child));
@@ -303,7 +318,12 @@ fn settings_in(xml: &str) -> Result<Settings> {
     if keys.is_empty() && curves.is_empty() {
         return Err(Error::Preset("no Camera Raw settings in the file".into()));
     }
-    Ok(Settings { keys, curves, name })
+    Ok(Settings {
+        keys,
+        curves,
+        name,
+        group,
+    })
 }
 
 /// Read the develop settings a Lightroom catalog keeps for an image:
@@ -625,6 +645,21 @@ fn alt_text<'a>(node: &roxmltree::Node<'a, 'a>) -> Option<&'a str> {
         .or(items.first())
         .and_then(|n| n.text())
         .map(str::trim)
+}
+
+/// A name or a group as Adobe writes a shipped one, a localization key
+/// with its English after the last `=` (`$$$/AgPresets/Group=Portraits`):
+/// the English alone, or nothing for a key without one. Any other
+/// text as it is.
+fn localized(text: &str) -> String {
+    match text.strip_prefix("$$$/") {
+        Some(key) => key
+            .rsplit_once('=')
+            .map_or("", |(_, t)| t)
+            .trim()
+            .to_string(),
+        None => text.to_string(),
+    }
 }
 
 /// The points of an `rdf:Seq` of "x, y" pairs on 0..255.
@@ -999,6 +1034,7 @@ fn map(
         preset,
         unmapped,
         offset,
+        group: None,
     }
 }
 
@@ -1129,6 +1165,13 @@ mod tests {
             preset, unmapped, ..
         } = read(SAMPLE, "file").unwrap();
         assert_eq!(preset.name, "Warm Film");
+        assert_eq!(read(SAMPLE, "file").unwrap().group.as_deref(), Some("Mine"));
+        assert_eq!(
+            localized("$$$/AgSettingNames/Name=Soft Portrait"),
+            "Soft Portrait"
+        );
+        assert_eq!(localized("$$$/NoEnglish"), "");
+        assert_eq!(localized("Mine"), "Mine");
         assert_eq!(
             preset.sections,
             vec![

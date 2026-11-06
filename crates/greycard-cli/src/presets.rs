@@ -43,14 +43,29 @@ pub(crate) fn presets(
     // Every file tried, as the window tries them: a refusal is said
     // where it falls and the rest still come in, and the run fails at
     // the end if any was refused.
+    // A folder is its preset files, each with the group it gives them.
+    let gathered = greycard_edit_io::preset::gather(import);
+    for dir in import.iter().filter(|p| p.is_dir()) {
+        if !gathered.iter().any(|(p, _)| p.starts_with(dir)) {
+            eprintln!(
+                "no presets    {}: no .xmp or .gcp files in it",
+                dir.display()
+            );
+        }
+    }
     let mut refused = 0;
-    for path in import {
+    for (path, folder) in &gathered {
         let (
             written,
             greycard_edit_io::lightroom::Imported {
                 preset, unmapped, ..
             },
-        ) = match greycard_edit_io::preset::import_into(&store, path, replace) {
+        ) = match greycard_edit_io::preset::import_into_group(
+            &store,
+            path,
+            replace,
+            folder.as_deref(),
+        ) {
             Ok(got) => got,
             Err(e) => {
                 eprintln!("{}", not_imported(path, &e));
@@ -69,7 +84,7 @@ pub(crate) fn presets(
         }
     }
     if refused > 0 {
-        anyhow::bail!("{refused} of {} preset files not imported", import.len());
+        anyhow::bail!("{refused} of {} preset files not imported", gathered.len());
     }
     if let Some(name) = apply {
         let entry = store

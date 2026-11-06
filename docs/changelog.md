@@ -13,6 +13,16 @@ design note behind it.
   fill's steps. The model is loaded once for a queue of small fills
   on a card of 12 GB or more, and of large ones from 14 GB
   ([§569](https://github.com/jessolmstead/greycard/blob/master/docs/notes/569-a-develops-fills-made-after-its-picture.md)).
+- A star at the end of a preset's row makes it a favorite: it is
+  listed again under Favorites at the top of PRESETS, and kept from
+  one session to the next (issue 72)
+  ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).
+- Presets sort into groups, each a section of the list that folds
+  away. Right-click a preset to move it into a group, a new one, or
+  out of any, and a group's heading to rename it. An imported
+  Lightroom preset keeps its Lightroom group, and `greycard presets
+  --import` takes a preset folder as a group (issue 72)
+  ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).
 - A Luminance or Color mask no longer moves when you change Texture,
   Clarity, Structure, or Dehaze: it reads the picture from before them,
   and so does Refine edge

@@ -92,8 +92,9 @@ enum Command {
         /// no --apply, the versions each sidecar holds are listed
         files: Vec<PathBuf>,
         /// Preset files to bring into the store, Lightroom's .xmp or
-        /// this engine's .gcp; a name the store has already is refused
-        /// without --replace
+        /// this engine's .gcp, or a Lightroom preset folder, which
+        /// becomes a group of its name; a name the store has already
+        /// is refused without --replace
         #[arg(long, value_name = "FILE", num_args = 1..)]
         import: Vec<PathBuf>,
         /// With --import, write over a preset of the same name rather

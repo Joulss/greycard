@@ -1027,6 +1027,9 @@ impl State {
                 encoded_lut_for: None,
                 presets: Vec::new(),
                 preset_store: None,
+                preset_favorites: Vec::new(),
+                preset_folds: Vec::new(),
+                preset_group_asked: None,
                 status_after_develop: None,
                 hint: None,
                 peek: None,
@@ -1090,6 +1093,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::queue_view::install(app, &state, &worker);
     panel::edit::install(app, &state, &worker);
     panel::assets::install(app, &state, &worker);
+    panel::preset_list::install(app, &state);
     panel::crop::install(app, &state, &worker);
     panel::curve::install(app, &state, &worker);
     panel::history::install(app, &state, &worker);

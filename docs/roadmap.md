@@ -975,13 +975,6 @@ clears or a tester asks for it.
 - [ ] A default preset applied to every frame on its first open, so
       the tools a user never wants start off (pixls, 2026-10-24;
       asked again as a saved baseline, discussion 59, 2026-10-30)
-- [ ] Preset favorites: a star on each preset's row, the starred in
-      a Favorites section at the top of the list, kept in the
-      settings, native and imported alike (issue 72, 2026-11-05)
-- [ ] Preset groups: a subfolder of the preset directory is a
-      collapsible section, an ungrouped preset in the default one, a
-      group made, renamed, and a preset moved from the panel; an XMP
-      import keeps Lightroom's group folder as the group (issue 72)
 - [ ] The brush's Flow is what other apps call Opacity: one stroke
       lays down at most its amount, and strokes build on each other.
       Decide whether to rename it or add a Flow that builds within a

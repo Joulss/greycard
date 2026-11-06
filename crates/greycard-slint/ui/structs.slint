@@ -43,6 +43,31 @@ export struct CarryRow {
     sub: int,
 }
 
+/// A row of the PRESETS list (`panel::preset_list`): a section's
+/// header, Favorites's or a group's, or a preset. The presets outside
+/// any group sit under no header. Rust lays the list out, leaving a
+/// folded section's presets out.
+export struct PresetRow {
+    header: bool,
+    /// A group's name, or a preset's; empty for Favorites's header,
+    /// whose word is `PresetWords.favorites`.
+    text: string,
+    /// The preset's place in the names the list is indexed by; -1
+    /// for a header.
+    index: int,
+    /// The group the preset or the header is; empty for none, and for
+    /// Favorites's header.
+    group: string,
+    /// The preset is a favorite: its star is filled.
+    favorite: bool,
+    /// The header's section is folded.
+    folded: bool,
+    /// What the header's fold is kept under.
+    key: string,
+    /// The preset sits under a header, and is set in from it.
+    under: bool,
+}
+
 /// A root of a Lightroom catalog on the import sheet: its folder's
 /// name, the catalog's path to it, the line under the name (where it
 /// was taken, and the catalog's path when another root goes by the

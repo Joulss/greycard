@@ -120,6 +120,46 @@ when it cannot be read, or when the list already has a preset of that
 name. To bring in a new copy of a preset you have, remove the old one
 first.
 
+A Lightroom preset keeps its Lightroom group: it goes into a group of
+that name in **PRESETS**. One without a group stays out of any
+group. From the command line, `greycard presets --import` also takes
+a folder: its presets go into a group of the folder's name, and the
+presets in each folder inside it into a group of that folder's name.
+
+### Favorites and groups
+
+Rest the pointer on a preset and a star shows at the end of its row.
+Click it to make the preset a favorite: the star stays filled, and the
+preset is listed under **Favorites** at the top of **PRESETS** as well
+as in its own place. Click the star again to take it off. Favorites
+are remembered from one session to the next.
+
+Presets can be sorted into groups, each a section of the list under
+its name. The presets in no group come first, after the favorites,
+with no heading. Click a heading to fold its section away or open it
+again; **Favorites** folds too.
+
+Right-click a preset for:
+
+- **Add to favorites** or **Remove from favorites**, as the star does.
+- **Move to group**: one of the groups, or **New group...**, which asks
+  for the new group's name.
+- **Remove from group**, which puts it back among the presets in no
+  group.
+
+Right-click a group's heading and choose **Rename group...** to give
+it another name. A group that has no presets left in it goes away.
+
+A preset's name is still its own across all the groups: saving or
+importing under a name the list has finds that preset wherever it is.
+Applying a preset by name, from the command line or an import's
+**Preset**, finds it in whichever group holds it.
+
+Each group is a folder inside the presets folder (below), so you can
+also make, rename, or fill one in your file manager. A preset moved
+from one group to another keeps its star; one moved there by hand,
+outside greycard, loses it.
+
 ### Removing a preset
 
 Click the bin at the end of its row, then **Remove**. To get back a

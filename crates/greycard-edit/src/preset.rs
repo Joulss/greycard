@@ -1042,6 +1042,25 @@ pub fn slug(name: &str) -> String {
     out
 }
 
+/// A group's name as a folder can have it on every platform: a slash,
+/// a backslash, a control character, and any of `<>:"|?*` made a dash,
+/// with spaces and dots trimmed from either end (a folder starting with
+/// a dot is not read as a group). None for nothing left.
+pub fn group_folder(name: &str) -> Option<String> {
+    let made: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let made = made.trim_matches(|c: char| c.is_whitespace() || c == '.');
+    (!made.is_empty()).then(|| made.to_string())
+}
+
 /// A preset as found in the store.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
@@ -1049,7 +1068,18 @@ pub struct Entry {
     pub preset: Preset,
 }
 
-/// Where the presets live: a directory of `.gcp` files.
+/// Where the presets live: a directory of `.gcp` files, and its
+/// subfolders, one a group.
+///
+/// A group is a folder and nothing more: no record names it, so a
+/// folder made or renamed by hand is a group made or renamed, and the
+/// presets in it are found as they are. Groups are one level deep; a
+/// folder in a group, and a folder whose name starts with a dot, are
+/// not read. A name is meant to be one preset's across the groups, as
+/// [`Store::save`] and the import keep it; two files that hold the
+/// same name are both listed, and a lookup by name takes the first in
+/// [`Store::list`]'s order: outside any group first, then the groups
+/// alphabetically.
 #[derive(Debug, Clone)]
 pub struct Store {
     dir: PathBuf,
@@ -1081,32 +1111,169 @@ impl Store {
         self.dir.join(format!("{}.{EXTENSION}", slug(name)))
     }
 
-    /// Every preset in the store, by name; a file that will not read
-    /// is passed over with a word on stderr.
+    /// Every preset in the store: those outside any group first, then
+    /// each group's, the groups alphabetically, and by name within
+    /// each; a file that will not read is passed over with a word in
+    /// the log.
     pub fn list(&self) -> Vec<Entry> {
+        let mut out = Vec::new();
+        for group in std::iter::once(None).chain(self.groups().into_iter().map(Some)) {
+            let Ok(dir) = std::fs::read_dir(self.group_dir(group.as_deref())) else {
+                continue;
+            };
+            let mut these: Vec<Entry> = dir
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == EXTENSION) && p.is_file())
+                .filter_map(|path| match Preset::load(&path) {
+                    Ok(preset) => Some(Entry { path, preset }),
+                    Err(e) => {
+                        log::warn!("preset {}: {e}", path.display());
+                        None
+                    }
+                })
+                .collect();
+            these.sort_by(|a, b| {
+                a.preset
+                    .name
+                    .to_lowercase()
+                    .cmp(&b.preset.name.to_lowercase())
+                    .then_with(|| a.path.cmp(&b.path))
+            });
+            out.extend(these);
+        }
+        out
+    }
+
+    /// The groups: the store's subfolders, by name, alphabetically,
+    /// case aside. An empty one is a group too, until a preset moved
+    /// or removed takes it away ([`Store::move_to`]).
+    pub fn groups(&self) -> Vec<String> {
         let Ok(dir) = std::fs::read_dir(&self.dir) else {
             return Vec::new();
         };
-        let mut out: Vec<Entry> = dir
+        let mut out: Vec<String> = dir
             .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == EXTENSION))
-            .filter_map(|path| match Preset::load(&path) {
-                Ok(preset) => Some(Entry { path, preset }),
-                Err(e) => {
-                    log::warn!("preset {}: {e}", path.display());
-                    None
-                }
-            })
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .filter(|n| !n.starts_with('.'))
             .collect();
-        out.sort_by(|a, b| {
-            a.preset
-                .name
-                .to_lowercase()
-                .cmp(&b.preset.name.to_lowercase())
-                .then_with(|| a.path.cmp(&b.path))
-        });
+        out.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
         out
+    }
+
+    /// The folder a group's presets are kept in; the store's own for
+    /// none.
+    pub fn group_dir(&self, group: Option<&str>) -> PathBuf {
+        match group {
+            Some(g) => self.dir.join(g),
+            None => self.dir.clone(),
+        }
+    }
+
+    /// The group a preset's file is in: the folder under the store's
+    /// it sits in, or none for one in the store's own.
+    pub fn group_of(&self, path: &Path) -> Option<String> {
+        let parent = path.parent()?;
+        if parent == self.dir || parent.parent() != Some(self.dir.as_path()) {
+            return None;
+        }
+        parent.file_name()?.to_str().map(str::to_string)
+    }
+
+    /// A preset's file as a key the settings can keep: its path under
+    /// the store, a slash between group and file whatever the
+    /// platform's separator. None for a file outside the store.
+    pub fn key_of(&self, path: &Path) -> Option<String> {
+        let file = path.file_name()?.to_str()?;
+        if path.parent()? == self.dir {
+            return Some(file.to_string());
+        }
+        Some(format!("{}/{file}", self.group_of(path)?))
+    }
+
+    /// A group of this name already there, case aside, or the name as
+    /// a folder can have it ([`group_folder`]); none for a name that is
+    /// nothing once made one.
+    fn group_named(&self, name: &str) -> Option<String> {
+        let folder = group_folder(name)?;
+        let wanted = folder.to_lowercase();
+        Some(
+            self.groups()
+                .into_iter()
+                .find(|g| g.to_lowercase() == wanted)
+                .unwrap_or(folder),
+        )
+    }
+
+    /// Move a preset into `group`, made if it is not there, or out of
+    /// any for none, and say where its file is now. The file is moved
+    /// as it is, so the preset keeps its name and what it holds; it
+    /// keeps its file name too, unless the group has a file of that
+    /// name already, when it takes the first free `stem-2`, `stem-3`.
+    /// A group left empty is taken away.
+    pub fn move_to(&self, entry: &Entry, group: Option<&str>) -> Result<PathBuf> {
+        let group = match group {
+            Some(name) => Some(
+                self.group_named(name)
+                    .ok_or_else(|| Error::Preset("a group needs a name".into()))?,
+            ),
+            None => None,
+        };
+        let from = self.group_of(&entry.path);
+        if from == group {
+            return Ok(entry.path.clone());
+        }
+        let dir = self.group_dir(group.as_deref());
+        std::fs::create_dir_all(&dir)?;
+        let stem = entry
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| slug(&entry.preset.name));
+        let to = std::iter::once(format!("{stem}.{EXTENSION}"))
+            .chain((2..).map(|n| format!("{stem}-{n}.{EXTENSION}")))
+            .map(|file| dir.join(file))
+            .find(|p| !p.exists())
+            .expect("a free file name");
+        std::fs::rename(&entry.path, &to)?;
+        self.prune(from.as_deref());
+        Ok(to)
+    }
+
+    /// Rename a group's folder, and say the name it has now: the new
+    /// name as a folder can have it. Refused for a group that is not
+    /// there, a name that is nothing once made a folder's, and a name
+    /// another group has, case aside.
+    pub fn rename_group(&self, old: &str, new: &str) -> Result<String> {
+        let new = group_folder(new).ok_or_else(|| Error::Preset("a group needs a name".into()))?;
+        let groups = self.groups();
+        if !groups.iter().any(|g| g == old) {
+            return Err(Error::Preset(format!("there is no group called \"{old}\"")));
+        }
+        if new == old {
+            return Ok(new);
+        }
+        let wanted = new.to_lowercase();
+        if let Some(taken) = groups
+            .into_iter()
+            .find(|g| g != old && g.to_lowercase() == wanted)
+        {
+            return Err(Error::Preset(format!(
+                "there is a group called \"{taken}\" already"
+            )));
+        }
+        std::fs::rename(self.group_dir(Some(old)), self.group_dir(Some(&new)))?;
+        Ok(new)
+    }
+
+    /// Take a group's folder away once nothing is in it: a folder with
+    /// anything in it, a file of the user's or a preset that will not
+    /// read, stays.
+    fn prune(&self, group: Option<&str>) {
+        if let Some(g) = group {
+            let _ = std::fs::remove_dir(self.group_dir(Some(g)));
+        }
     }
 
     /// The preset called `name`, case aside; or, for a path that is a
@@ -1141,8 +1308,12 @@ impl Store {
         Ok(path)
     }
 
+    /// Remove a preset's file, and its group's folder with it when
+    /// that was the last thing in it.
     pub fn remove(&self, entry: &Entry) -> Result<()> {
-        Ok(std::fs::remove_file(&entry.path)?)
+        std::fs::remove_file(&entry.path)?;
+        self.prune(self.group_of(&entry.path).as_deref());
+        Ok(())
     }
 
     /// Put the film presets this build ships in the store, each one
@@ -2278,5 +2449,144 @@ mod tests {
         store.remove(&entry).unwrap();
         assert_eq!(store.list().len(), 2);
         greycard_core::testing::remove_dir_retry(store.dir());
+    }
+
+    /// The presets outside any group come first, then each group's,
+    /// the groups alphabetically and case aside, by name within each.
+    /// A folder in a group and a hidden folder are not groups. A name
+    /// is found in whichever group holds it, and two files of one name
+    /// give the first in that order.
+    #[test]
+    fn the_store_lists_groups_after_the_ungrouped_in_order() {
+        let store = Store::at(dir("groups"));
+        let save_in = |group: Option<&str>, name: &str| {
+            let d = store.group_dir(group);
+            std::fs::create_dir_all(&d).unwrap();
+            Preset::from_edit(name, &Edit::default(), &[Section::Light])
+                .save_to(&d.join(format!("{}.{EXTENSION}", slug(name))))
+                .unwrap();
+        };
+        save_in(None, "Zed");
+        save_in(None, "alpha");
+        save_in(Some("film"), "Portra");
+        save_in(Some("film"), "Ektar");
+        save_in(Some("Black and white"), "Tri-X");
+        save_in(Some(".hidden"), "Hidden");
+        save_in(Some("film/deeper"), "Deeper");
+        save_in(Some("Black and white"), "alpha");
+        let listed: Vec<(Option<String>, String)> = store
+            .list()
+            .into_iter()
+            .map(|e| (store.group_of(&e.path), e.preset.name))
+            .collect();
+        let g = |s: &str| Some(s.to_string());
+        assert_eq!(
+            listed,
+            [
+                (None, "alpha".to_string()),
+                (None, "Zed".into()),
+                (g("Black and white"), "alpha".into()),
+                (g("Black and white"), "Tri-X".into()),
+                (g("film"), "Ektar".into()),
+                (g("film"), "Portra".into()),
+            ]
+        );
+        assert_eq!(store.groups(), ["Black and white", "film"]);
+        assert_eq!(
+            store.group_of(&store.find("ektar").unwrap().path),
+            g("film")
+        );
+        assert_eq!(store.group_of(&store.find("alpha").unwrap().path), None);
+        let key = store.key_of(&store.find("Tri-X").unwrap().path).unwrap();
+        assert_eq!(key, "Black and white/tri-x.gcp");
+        assert_eq!(
+            store.key_of(&store.find("Zed").unwrap().path).unwrap(),
+            "zed.gcp"
+        );
+        // A save of a grouped name is written where it is.
+        let path = store.find("Portra").unwrap().path;
+        let again = Preset::from_edit("portra", &Edit::default(), &[Section::Grain]);
+        assert_eq!(store.save(&again).unwrap(), path);
+        greycard_core::testing::remove_dir_retry(store.dir());
+    }
+
+    /// A preset moved into a group, between groups, and out again
+    /// keeps its name and what it holds. A file name the group has
+    /// takes the next free one; a name typed in another case finds the
+    /// group there; the group a move or a removal empties goes.
+    /// Renamed, a group keeps its presets; a name another group has,
+    /// and one that is nothing as a folder's, are refused.
+    #[test]
+    fn a_preset_moved_between_groups_keeps_its_name_and_content() {
+        let store = Store::at(dir("move"));
+        let mut edit = Edit::default();
+        edit.grain.amount = 0.4;
+        let grain = Preset::from_edit("Grain", &edit, &[Section::Grain]);
+        let path = store.save(&grain).unwrap();
+        let entry = |name: &str| store.find(name).unwrap();
+
+        let moved = store.move_to(&entry("Grain"), Some("Film")).unwrap();
+        assert_eq!(moved, store.dir().join("Film").join("grain.gcp"));
+        assert!(!path.exists());
+        assert_eq!(entry("Grain").preset, grain);
+        assert_eq!(
+            store.group_of(&entry("Grain").path).as_deref(),
+            Some("Film")
+        );
+
+        // Into another group, typed in another case, which holds a file
+        // of that name already.
+        std::fs::create_dir_all(store.dir().join("Mono")).unwrap();
+        Preset::from_edit("Other", &Edit::default(), &[Section::Light])
+            .save_to(&store.dir().join("Mono").join("grain.gcp"))
+            .unwrap();
+        let moved = store.move_to(&entry("Grain"), Some(" mono ")).unwrap();
+        assert_eq!(moved, store.dir().join("Mono").join("grain-2.gcp"));
+        assert_eq!(entry("Grain").preset, grain);
+        assert!(!store.dir().join("Film").exists(), "the empty group goes");
+        assert_eq!(store.groups(), ["Mono"]);
+        // Where it is already: nothing moves.
+        assert_eq!(store.move_to(&entry("Grain"), Some("Mono")).unwrap(), moved);
+
+        // Renamed: the presets go with it.
+        assert!(store.rename_group("Mono", "  ").is_err());
+        assert!(store.rename_group("Gone", "New").is_err());
+        std::fs::create_dir_all(store.dir().join("Taken")).unwrap();
+        let e = store.rename_group("Mono", "taken").unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "preset: there is a group called \"Taken\" already"
+        );
+        assert_eq!(
+            store.rename_group("Mono", "Black/White").unwrap(),
+            "Black-White"
+        );
+        assert_eq!(
+            store.group_of(&entry("Grain").path).as_deref(),
+            Some("Black-White")
+        );
+
+        // Out of any group: the store's own folder, under its file
+        // name again, and the group it leaves holds the other preset.
+        let moved = store.move_to(&entry("Grain"), None).unwrap();
+        assert_eq!(moved, store.dir().join("grain-2.gcp"));
+        assert_eq!(entry("Grain").preset, grain);
+        assert!(store.dir().join("Black-White").exists());
+        store.remove(&entry("Other")).unwrap();
+        assert!(
+            !store.dir().join("Black-White").exists(),
+            "a removal empties it"
+        );
+        assert!(store.move_to(&entry("Grain"), Some("..")).is_err());
+        greycard_core::testing::remove_dir_retry(store.dir());
+    }
+
+    #[test]
+    fn a_group_name_is_made_a_folder_s() {
+        assert_eq!(group_folder("Film: Kodak").as_deref(), Some("Film- Kodak"));
+        assert_eq!(group_folder(" .hidden. ").as_deref(), Some("hidden"));
+        assert_eq!(group_folder("a/b\\c").as_deref(), Some("a-b-c"));
+        assert_eq!(group_folder(" .. "), None);
+        assert_eq!(group_folder(""), None);
     }
 }

@@ -116,6 +116,14 @@ pub struct Settings {
     /// it would take the folder's new sidecars from then on. Written as
     /// the offer is answered.
     pub rawtherapee_answered: Vec<String>,
+    /// The favorite presets, each by its file's path under the preset
+    /// store, a slash between group and file (`preset::Store::key_of`):
+    /// a preset keeps its star as long as it keeps its folder. Written
+    /// as a star is set or cleared.
+    pub preset_favorites: Vec<String>,
+    /// The PRESETS list's sections folded away, by their keys
+    /// (`panel::preset_list`). Written as a section folds.
+    pub preset_folds: Vec<String>,
     /// The folders opened, the most recent first and at most
     /// [`RECENT_FOLDERS`] of them, each by its canonical path and
     /// once: a folder opened again moves to the front. Written as a
@@ -590,6 +598,8 @@ impl Default for Settings {
             cull_developed: false,
             lenses_declined: false,
             rawtherapee_answered: Vec::new(),
+            preset_favorites: Vec::new(),
+            preset_folds: Vec::new(),
             recent_folders: Vec::new(),
             start_folder: String::new(),
             start_view: START_VIEWS[0].into(),
@@ -1002,6 +1012,8 @@ mod tests {
             cull_developed: true,
             lenses_declined: true,
             rawtherapee_answered: vec!["/home/x/Pictures/rt".into()],
+            preset_favorites: vec!["warm.gcp".into(), "Film/portra.gcp".into()],
+            preset_folds: vec!["group:Film".into()],
             export_last_folder: "/home/x/Pictures/out".into(),
             exported: true,
             edit_in: "/Applications/Photoshop.app".into(),
@@ -1097,6 +1109,9 @@ mod tests {
         assert!(read.recent_folders.is_empty());
         // And from before the RawTherapee offer, nothing answered.
         assert!(read.rawtherapee_answered.is_empty());
+        // And from before the favorites, none and nothing folded.
+        assert!(read.preset_favorites.is_empty());
+        assert!(read.preset_folds.is_empty());
         // And from before the folder tree, a folder's own frames.
         assert!(!read.folder_tree_subfolders);
         // And from before the previews' own cap, 8 GB of them.

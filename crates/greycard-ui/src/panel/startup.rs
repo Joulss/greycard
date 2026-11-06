@@ -765,6 +765,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.develop.monitors = monitors;
         st.develop.presets = presets;
         st.develop.preset_store = preset_store;
+        st.develop.preset_favorites = remembered.preset_favorites.clone();
+        st.develop.preset_folds = remembered.preset_folds.clone();
+        crate::panel::preset_list::prune(&mut st);
         crate::panel::crop::take_settings(&mut st, &remembered);
         st.develop.fill_choice =
             greycard_edit::retouch::FillChoice::from_name(&remembered.fill_choice);
@@ -2270,6 +2273,8 @@ fn merged(
     settings.sort = kept.sort;
     settings.lenses_declined = kept.lenses_declined;
     settings.rawtherapee_answered = kept.rawtherapee_answered;
+    settings.preset_favorites = kept.preset_favorites;
+    settings.preset_folds = kept.preset_folds;
     settings.thumb_cache_mb = kept.thumb_cache_mb;
     settings.preview_cache_mb = kept.preview_cache_mb;
     settings.network_poll_minutes = kept.network_poll_minutes;
@@ -2449,6 +2454,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         lenses_declined: false,
         // Written as the RawTherapee offer is answered.
         rawtherapee_answered: Vec::new(),
+        // Written as a star or a fold changes; the caller keeps the file's.
+        preset_favorites: Vec::new(),
+        preset_folds: Vec::new(),
         // Written as each folder opens.
         recent_folders: Vec::new(),
         // Written as the Settings sheet's rows are chosen.

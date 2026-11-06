@@ -12,11 +12,12 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
-import { PresetsSection } from "panel/presets.slint";
+import { PresetsSection, PresetWords } from "panel/presets.slint";
+export { PresetWords }
 import { WhiteBalanceSection, ColorSection, MixerSection, BlackWhiteSection, GradingSection, TintSection } from "panel/color.slint";
 import { CurvesSection } from "panel/curve.slint";
 import { LightSection, NoiseSection, DetailSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
@@ -1198,6 +1199,24 @@ export component App inherits Window {
     /// The row whose bin was clicked, waiting on the Remove that
     /// names it; -1 for none. Nothing is removed until then.
     in-out property <int> preset-confirm-remove: -1;
+    /// The list as shown: Favorites, the presets in no group, and each
+    /// group, headers among the presets (`panel::preset_list`).
+    in property <[PresetRow]> preset-list-rows: [];
+    in property <[string]> preset-groups: [];
+    callback preset-favorite-toggled(int);
+    callback preset-fold-toggled(string);
+    /// A preset into a group by its place in `preset-groups`, or into
+    /// a new one (-1), whose name the group sheet asks.
+    callback preset-moved(int, int);
+    callback preset-ungrouped(int);
+    callback preset-group-rename(string);
+    /// The group sheet: a new group's name, or a group's new name.
+    in-out property <bool> preset-group-sheet-open: false;
+    in-out property <string> preset-group-sheet-name;
+    in property <string> preset-group-sheet-verb: "Create";
+    /// Why the name typed was refused; empty for none.
+    in property <string> preset-group-sheet-note;
+    callback preset-group-sheet-done();
     callback preset-import();
     /// The import's report, when the status line is too short for it:
     /// what came in, what each passed over, and the files refused.
@@ -2475,7 +2494,7 @@ export component App inherits Window {
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.time-shift-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
-            || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open
+            || root.root-sheet-open || root.collection-sheet-open || root.preset-group-sheet-open || root.preset-report-open
             || root.lr-open || root.rt-open || root.keys-open;
     }
 
@@ -2515,6 +2534,9 @@ export component App inherits Window {
     }
     changed collection-sheet-open => {
         if (!root.collection-sheet-open && !root.sheet-open()) { keys.focus(); }
+    }
+    changed preset-group-sheet-open => {
+        if (!root.preset-group-sheet-open && !root.sheet-open()) { keys.focus(); }
     }
     changed preset-report-open => {
         if (!root.preset-report-open && !root.sheet-open()) { keys.focus(); }
@@ -2602,6 +2624,7 @@ export component App inherits Window {
             }
             if (chord == "Esc" && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (chord == "Esc" && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
+            if (chord == "Esc" && root.preset-group-sheet-open) { root.preset-group-sheet-open = false; return accept; }
             if (chord == "Esc" && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (chord == "Esc" && root.delete-open) { root.delete-answered(0); return accept; }
             if (chord == "Esc" && root.look-remove-open) { root.look-remove-answered(0); return accept; }
@@ -4663,6 +4686,27 @@ export component App inherits Window {
                     selected <=> root.selected;
                     collapsed-presets <=> root.collapsed-presets;
                     preset-names <=> root.preset-names;
+                    rows: root.preset-list-rows;
+                    groups: root.preset-groups;
+                    ctrl-click-menu: root.ctrl-click-menu;
+                    favorite-toggled(i) => { root.preset-favorite-toggled(i); }
+                    fold-toggled(k) => { root.preset-fold-toggled(k); }
+                    // A pick from the Move to group sub-menu, New group...
+                    // too, as the frame menu's New collection...: two
+                    // popups close at once, and `menu-done` gives the keys
+                    // back.
+                    moved(i, g) => { root.preset-moved(i, g); root.menu-done(); }
+                    ungrouped(i) => { root.preset-ungrouped(i); }
+                    // Rename group... is the top menu's: its sheet takes
+                    // the focus itself, which `menu-done`'s timer would
+                    // take back.
+                    group-rename(g) => {
+                        root.preset-group-rename(g);
+                        if (!root.preset-group-sheet-open) { root.menu-done(); }
+                    }
+                    focus-keys => { keys.focus(); }
+                    menu-done => { root.menu-done(); }
+                    menu-shown => { return root.menu-shown(); }
                     confirm-remove <=> root.preset-confirm-remove;
                     preset-applied(a) => { root.preset-applied(a); }
                     preset-deleted(a) => { root.preset-deleted(a); }
@@ -5062,6 +5106,17 @@ export component App inherits Window {
         name <=> root.collection-sheet-name;
         placeholder: root.collection-sheet-placeholder;
         done => { root.collection-sheet-done(); }
+    }
+    // The group sheet: the collection sheet's card, asking a preset
+    // group's name.
+    if root.preset-group-sheet-open: CollectionSheet {
+        open <=> root.preset-group-sheet-open;
+        title: PresetWords.group-name;
+        note: root.preset-group-sheet-note;
+        verb: root.preset-group-sheet-verb;
+        name <=> root.preset-group-sheet-name;
+        placeholder: "";
+        done => { root.preset-group-sheet-done(); }
     }
     // The root sheet: a root's name, from its row's menu.
     if root.root-sheet-open: RootSheet {
