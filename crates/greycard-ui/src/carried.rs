@@ -390,6 +390,17 @@ impl Worker {
                     );
                     done.push(t.folder);
                 }
+                // A folder that is not there is a ref's stale hint,
+                // a frame moved on since: the set's next revision
+                // names where it went. Written nowhere, and not asked
+                // again every minute.
+                Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::info!(
+                        "carried set {id} not written to {}: {e}; not tried again",
+                        t.folder.display()
+                    );
+                    done.push(t.folder);
+                }
                 Some(Err(e)) => {
                     failed = true;
                     tracing::info!(

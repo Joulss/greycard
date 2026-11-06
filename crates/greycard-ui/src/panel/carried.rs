@@ -491,6 +491,57 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A set whose frame's hint names a folder that is not there (the
+    /// frame moved on since) is written nowhere for that folder and
+    /// not asked again: the folder counts as done in the kept state,
+    /// not as a write to try every minute.
+    #[test]
+    fn a_folder_that_is_gone_is_not_tried_again() {
+        let dir = crate::testing::scratch_dir("carried-gone-folder");
+        let mut laptop = machine(&dir.join("laptop-data"));
+        let gone_dir = dir.join("gone");
+        let mut picks = crate::collections::Collection::new("Picks");
+        picks.refs = vec![r(0, &gone_dir.join("IMG_0000.CR3"))];
+        let id = picks.id.clone();
+        laptop.collections.list.push(picks);
+        laptop.collections.save(&id);
+        assert!(
+            laptop
+                .collections
+                .carrier
+                .as_ref()
+                .unwrap()
+                .wait(std::time::Duration::from_secs(5))
+        );
+        fn find(dir: &Path, name: &str) -> Option<PathBuf> {
+            for e in std::fs::read_dir(dir).ok()?.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if let Some(f) = find(&p, name) {
+                        return Some(f);
+                    }
+                } else if p.file_name().is_some_and(|n| n == name) {
+                    return Some(p);
+                }
+            }
+            None
+        }
+        let state = find(&dir.join("laptop-data"), "state.json").expect("the kept state");
+        let state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(state).unwrap()).unwrap();
+        let written = &state["written"][&id];
+        assert_eq!(
+            written["folders"].as_array().map(Vec::len),
+            Some(1),
+            "the folder counts as done: {state}"
+        );
+        assert!(
+            written["late"].as_array().is_none_or(Vec::is_empty),
+            "nothing to try again: {state}"
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     #[test]
     fn a_deletion_is_carried_and_an_older_copy_does_not_bring_it_back() {
         let dir = crate::testing::scratch_dir("carried-gone");

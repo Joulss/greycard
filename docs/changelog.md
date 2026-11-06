@@ -239,6 +239,9 @@ design note behind it.
   in plain words instead of failing inside the model; Patch still
   works there
   ([§570](https://github.com/jessolmstead/greycard/blob/master/docs/notes/570-the-remove-refused-plainly-without-16-bit-floats.md)).
+- A collection or stack whose frame moved out of a folder that is now
+  gone is no longer written to that folder again every minute
+  ([§571](https://github.com/jessolmstead/greycard/blob/master/docs/notes/571-a-carried-set-and-a-folder-that-is-gone.md)).
 - Hovering a mask's on/off switch no longer lights the mask's red
   overlay, so the switch shows what the adjustment does
   ([§568](https://github.com/jessolmstead/greycard/blob/master/docs/notes/568-a-masks-switch-without-its-overlay.md)).

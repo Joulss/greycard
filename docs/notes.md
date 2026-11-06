@@ -583,3 +583,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§568. A mask's switch, without its overlay](notes/568-a-masks-switch-without-its-overlay.md) (2026-11-04)
 - [§569. A develop's fills made after its picture](notes/569-a-develops-fills-made-after-its-picture.md) (2026-11-04)
 - [§570. The remove refused plainly without 16-bit floats](notes/570-the-remove-refused-plainly-without-16-bit-floats.md) (2026-11-05)
+- [§571. A carried set and a folder that is gone](notes/571-a-carried-set-and-a-folder-that-is-gone.md) (2026-11-05)
