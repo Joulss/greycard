@@ -239,8 +239,9 @@ sheet's **Color** row.
 
 #### Edit in
 
-The app the frame menu's **Edit in...** opens a frame in. **Choose...**
-picks it; the row shows its name. See
+The apps the frame menu's **Edit in** opens a frame in, one a row by
+name, in the order you added them. **Add...** picks another; **×**
+takes one off. See
 [Edit in another app](export.md#edit-in-another-app).
 
 ## Keys

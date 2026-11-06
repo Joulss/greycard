@@ -306,17 +306,20 @@ queued twice shows twice.
 
 ## Edit in another app
 
-To finish a frame in another editor, pick its app once under
-**Settings > Editing > Export > Edit in**: an application on a Mac, a
-program on Windows, and a program or its desktop entry (`.desktop`)
-on Linux. The frame menu then offers **Edit in...**.
+To finish a frame in another editor, add its app once with **Add...**
+under **Settings > Editing > Export > Edit in**: an application on a
+Mac, a program on Windows, and a program or its desktop entry
+(`.desktop`) on Linux. The frame menu then offers **Edit in...**; with
+two or more apps, **Edit in** opens a submenu of them by name. An app
+no longer on the disk is left out of the menu but stays on the list
+until you take it off with **×**.
 
-**Edit in...** exports the frame right-clicked, with its edit (a
-version as itself), as a 16-bit TIFF at full size in the color space
-the Export sheet holds. The file goes beside the raw, named after it
-with `-edit`, such as `IMG_0001-edit.greycard.tif`, or
-`IMG_0001-edit.greycard-1.tif` when that is taken. greycard then
-opens it in the app.
+**Edit in...**, or an app in the submenu, exports the frame
+right-clicked, with its edit (a version as itself), as a 16-bit TIFF
+at full size in the color space the Export sheet holds. The file goes
+beside the raw, named after it with `-edit`, such as
+`IMG_0001-edit.greycard.tif`, or `IMG_0001-edit.greycard-1.tif` when
+that is taken. greycard then opens it in the app.
 
 When the app saves the file, greycard indexes it and shows it beside
 the raw as a frame of its own, in the raw's stack if it has one or in

@@ -27,9 +27,11 @@ design note behind it.
   ([§538](https://github.com/jessolmstead/greycard/blob/master/docs/notes/538-the-folders-fold-kept-per-view.md)).
 - Settings' Start in offers the Library as well as the Loupe
   ([§487](https://github.com/jessolmstead/greycard/blob/master/docs/notes/487-start-in-the-library-names-as-typed-and-brush-keys.md)).
-- Edit in... on the frame menu hands the frame to the app on Settings
-  as a 16-bit TIFF, and the app's save comes back stacked with the raw
-  ([§499](https://github.com/jessolmstead/greycard/blob/master/docs/notes/499-edit-in-another-editor.md)).
+- Edit in... on the frame menu hands the frame to an app on Settings
+  as a 16-bit TIFF, and the app's save comes back stacked with the raw.
+  Settings takes several apps, and the menu then offers each by name
+  ([§499](https://github.com/jessolmstead/greycard/blob/master/docs/notes/499-edit-in-another-editor.md))
+  ([§577](https://github.com/jessolmstead/greycard/blob/master/docs/notes/577-edit-in-several-apps.md)).
 - A drag with Space or Shift held pans the picture with the heal
   brush, the fill, or a mask's shape in hand
   ([§475](https://github.com/jessolmstead/greycard/blob/master/docs/notes/475-four-small-asks-from-the-testers.md)).

@@ -227,6 +227,7 @@ pub(crate) fn menu_asked(state: &Rc<Shared>, app: &App, row: i32) {
     app.set_menu_label(shared(metas.iter().map(|m| m.label.code())));
     crate::panel::archive::menu_asked(&st, app);
     crate::panel::cull::show_back(&st, app);
+    crate::panel::edit_in::offer(app, &mut st.work.edit_in);
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {

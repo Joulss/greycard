@@ -1,6 +1,6 @@
 //! Edit in another editor, as Lightroom hands a frame to one: the
-//! command that gives an exported file to the app chosen on the
-//! Settings sheet, the name the sheet shows for that app, and the
+//! command that gives an exported file to an app on the
+//! Settings sheet's list, the name the sheet shows for that app, and the
 //! stamp a written file is watched by. Nothing here starts a process
 //! or needs a window; the window's side is `panel::edit_in`.
 //!
@@ -116,6 +116,15 @@ pub fn desktop_name(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether `a` and `b` are the same app: the same file once both
+/// resolve, links and `..` followed, else the same path as written.
+pub fn same_app(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// The name the Settings sheet shows for `app`: a desktop entry's own

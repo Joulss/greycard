@@ -919,11 +919,10 @@ clears or a tester asks for it.
       paths, so `immich upload` (or any other tool) takes the developed
       picture; the destination folder for a watched library is the
       pool's naming-and-destination item. Waits on the XMP check (§195)
-- [ ] Edit in, the rest of it (§499): a list of editors found once
-      rather than one chosen app; a raw-first tool (PureRAW, Photo AI)
-      given the raw and its DNG offered in place; the edited TIFF's
-      watch kept while the file is listed rather than an hour. Try
-      the Mac and Windows launches on the machines first
+- [ ] Edit in, the rest of it (§499, §577): a raw-first tool (PureRAW,
+      Photo AI) given the raw and its DNG offered in place; the edited
+      TIFF's watch kept while the file is listed rather than an hour.
+      Try the Mac and Windows launches on the machines first
 - [ ] A plugin protocol, after 1.0 and only on demand: an executable
       given a rendered file or a mask over JSON on stdin and stdout, a
       process boundary rather than in-process code, so a plugin's

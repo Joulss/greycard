@@ -13,7 +13,7 @@
 // the window's own properties so a change in either place shows in
 // both; the aspect an uncropped frame's crop opens at; the shipped
 // presets put back; the export sheet's format and color space,
-// bound the same way; and the app Edit in hands a frame to. Keys:
+// bound the same way; and the apps Edit in hands a frame to. Keys:
 // each rebindable action of the key table (`keys.rs`), a click on its
 // chord to press a new one, Escape to keep the old. About: the check
 // for a newer release, the version, and where greycard keeps its
@@ -119,10 +119,11 @@ export component SettingsSheet inherits Rectangle {
     /// keeps as each changes.
     in-out property <string> export-format;
     in-out property <string> export-space;
-    /// The app Edit in hands a frame to, by name, empty for none, and
-    /// the chooser that picks it.
-    in property <string> edit-in-app;
-    callback edit-in-choose();
+    /// The apps Edit in hands a frame to, by name, in the order added;
+    /// the chooser that adds one, and the × that takes one off.
+    in property <[string]> edit-in-list;
+    callback edit-in-add();
+    callback edit-in-remove(int);
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
@@ -926,18 +927,39 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Edit in"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Text {
-                                    text: root.edit-in-app;
-                                    font-size: Theme.font-xs;
-                                    color: Theme.text-secondary;
+                                    text: "Edit in";
+                                    width: 68px;
+                                    height: Theme.control-height;
+                                    color: Theme.text;
+                                    font-size: Theme.font-sm;
                                     vertical-alignment: center;
-                                    wrap: char-wrap;
-                                    horizontal-stretch: 1;
                                 }
-                                PanelButton {
-                                    text: "Choose...";
-                                    clicked => { root.edit-in-choose(); }
+                                VerticalLayout {
+                                    spacing: Theme.space-1;
+                                    horizontal-stretch: 1;
+                                    for name[i] in root.edit-in-list: HorizontalLayout {
+                                        spacing: Theme.space-2;
+                                        Text {
+                                            text: name;
+                                            font-size: Theme.font-xs;
+                                            color: Theme.text-secondary;
+                                            vertical-alignment: center;
+                                            wrap: char-wrap;
+                                            horizontal-stretch: 1;
+                                        }
+                                        PanelButton {
+                                            text: "×";
+                                            clicked => { root.edit-in-remove(i); }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        PanelButton {
+                                            text: "Add...";
+                                            clicked => { root.edit-in-add(); }
+                                        }
+                                    }
                                 }
                             }
                         }

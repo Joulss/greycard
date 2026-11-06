@@ -58,10 +58,10 @@ export component FrameMenu inherits Rectangle {
     callback time-shift();
     callback reveal();
     callback export();
-    /// The app Edit in hands the frame to, by name; empty for none,
-    /// and the item is not offered.
-    in property <string> edit-in-app;
-    callback edit-in();
+    /// The apps Edit in hands the frame to, by name: one is an item of
+    /// its own, more a submenu of them, and none leaves it out.
+    in property <[string]> edit-in-apps;
+    callback edit-in(int);
     /// The sync sheet over the selection, from the frame on screen:
     /// offered with more than one frame chosen, as Ctrl+Shift+S is.
     callback sync();
@@ -317,10 +317,18 @@ export component FrameMenu inherits Rectangle {
                 enabled: root.can-export;
                 activated => { root.export(); }
             }
-            if root.edit-in-app != "": MenuItem {
+            if root.edit-in-apps.length == 1: MenuItem {
                 title: "Edit in...";
                 enabled: root.can-export;
-                activated => { root.edit-in(); }
+                activated => { root.edit-in(0); }
+            }
+            if root.edit-in-apps.length > 1: Menu {
+                title: "Edit in";
+                for name[i] in root.edit-in-apps: MenuItem {
+                    title: name;
+                    enabled: root.can-export;
+                    activated => { root.edit-in(i); }
+                }
             }
             if root.back-count > 0: MenuItem {
                 title: (root.back-count > 1 ? "Move " + root.back-count + " frames back to " : "Move back to ")

@@ -173,16 +173,19 @@ export component App inherits Window {
     callback menu-meta(string, int);
     /// The frame right-clicked, shown in the desktop's file manager.
     callback menu-reveal();
-    /// The app Edit in hands a frame to, by name, as the Settings
-    /// sheet shows it; empty while none is chosen, and the frame menu
-    /// then offers no Edit in.
-    in property <string> edit-in-app: "";
-    /// The frame right-clicked, exported and handed to that app.
-    callback menu-edit-in();
+    /// The apps the frame menu's Edit in offers, by name: those of the
+    /// Settings sheet's list still on the disk. None offers no Edit in.
+    in property <[string]> edit-in-apps: [];
+    /// The frame right-clicked, exported and handed to the app at that
+    /// place of `edit-in-apps`.
+    callback menu-edit-in(int);
     /// The frame menu's Reset to Original, over the selection.
     callback menu-reset();
-    /// The Settings sheet's Edit in row: the app asked for.
-    callback edit-in-choose();
+    /// The Settings sheet's Edit in list, every app added, by name;
+    /// its Add..., and its × on the app at a place.
+    in property <[string]> edit-in-list: [];
+    callback edit-in-add();
+    callback edit-in-remove(int);
     /// Whether a Control+click is a right-click: a Mac's.
     in property <bool> ctrl-click-menu: false;
     /// The name of the frame right-clicked, whose settings the menu's
@@ -5271,8 +5274,9 @@ export component App inherits Window {
         choose-proof-file => { root.choose-proof-file(); }
         export-format <=> root.export-format;
         export-space <=> root.export-space;
-        edit-in-app: root.edit-in-app;
-        edit-in-choose => { root.edit-in-choose(); }
+        edit-in-list: root.edit-in-list;
+        edit-in-add => { root.edit-in-add(); }
+        edit-in-remove(i) => { root.edit-in-remove(i); }
         ui-scale <=> root.ui-scale;
         ui-scale-percent: root.ui-scale-percent;
         ui-scale-started: root.ui-scale-started;
@@ -5372,8 +5376,8 @@ export component App inherits Window {
             if (!root.time-shift-open) { root.menu-done(); }
         }
         reveal => { root.menu-reveal(); root.menu-done(); }
-        edit-in-app: root.edit-in-app;
-        edit-in => { root.menu-edit-in(); root.menu-done(); }
+        edit-in-apps: root.edit-in-apps;
+        edit-in(i) => { root.menu-edit-in(i); root.menu-done(); }
         reset => { root.menu-reset(); root.menu-done(); }
         // The sheet takes the focus itself, as the time shift's does.
         export => {

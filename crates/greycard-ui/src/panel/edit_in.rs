@@ -1,8 +1,8 @@
 //! Edit in another editor, from the frame menu, as Lightroom hands a
 //! frame to one: the frame exported with its edit as a 16-bit TIFF
 //! beside its file, under its name and "-edit", through the export's
-//! own path as a set of one; the file handed to the app chosen on the
-//! Settings sheet (`crate::edit_in` builds the command); and the file
+//! own path as a set of one; the file handed to the app picked from the
+//! Settings sheet's list (`crate::edit_in` builds the command); and the file
 //! watched, so that once the app has written it the index has it and
 //! the list shows it beside its raw, stacked with it.
 //!
@@ -56,12 +56,17 @@ pub(crate) const SUFFIX: &str = "-edit";
 /// Edit in as the window holds it.
 #[derive(Default)]
 pub(crate) struct EditIn {
-    /// The app chosen on the Settings sheet; none offers no Edit in.
-    pub(crate) app: Option<PathBuf>,
-    /// The set exporting a frame for the app, until its frame is done,
-    /// and that frame: its file and its version's id.
+    /// The apps added on the Settings sheet, in the order added, each
+    /// with its name, worked out as it is added or read; none offers
+    /// no Edit in.
+    pub(crate) apps: Vec<(PathBuf, String)>,
+    /// Those of them the frame menu offers, by place: the ones on the
+    /// disk when it was last built.
+    offered: Vec<PathBuf>,
+    /// The set exporting a frame for an app, until its frame is done,
+    /// and that frame: its file, its version's id, and the app.
     set: Option<Arc<queue::Set>>,
-    frame: Option<(PathBuf, Option<String>)>,
+    frame: Option<(PathBuf, Option<String>, PathBuf)>,
     /// The files handed to the app, one a name, shared with the
     /// thread that watches them; it lets go when this does.
     pub(crate) watches: Arc<Mutex<Vec<Watch>>>,
@@ -184,19 +189,46 @@ pub(crate) fn look(watches: &Mutex<Vec<Watch>>) -> Vec<Changed> {
         .collect()
 }
 
-/// The app's name, on the Settings sheet's row and the frame menu's
-/// condition; empty for none, and for one no longer there, so the menu
-/// does not offer it.
-pub(crate) fn show_app(app: &App, chosen: Option<&Path>) {
-    let name = chosen
-        .filter(|p| p.exists())
-        .map_or_else(String::new, |path| {
-            let entry = how::is_desktop_entry(path)
-                .then(|| std::fs::read_to_string(path).ok())
-                .flatten();
-            how::app_name(path, entry.as_deref())
-        });
-    app.set_edit_in_app(name.into());
+/// The name `path` is shown by: a desktop entry's own when it reads.
+fn name_of(path: &Path) -> String {
+    let entry = how::is_desktop_entry(path)
+        .then(|| std::fs::read_to_string(path).ok())
+        .flatten();
+    how::app_name(path, entry.as_deref())
+}
+
+/// The apps `paths`, in order, each named once here: the Settings
+/// sheet's list, and the frame menu's offer.
+pub(crate) fn set_apps(app: &App, edit_in: &mut EditIn, paths: Vec<PathBuf>) {
+    edit_in.apps = paths
+        .into_iter()
+        .map(|p| {
+            let name = name_of(&p);
+            (p, name)
+        })
+        .collect();
+    show_list(app, edit_in);
+    offer(app, edit_in);
+}
+
+/// The Settings sheet's list: every app, by name.
+fn show_list(app: &App, edit_in: &EditIn) {
+    let list: Vec<slint::SharedString> = edit_in.apps.iter().map(|(_, n)| n.into()).collect();
+    app.set_edit_in_list(Rc::new(slint::VecModel::from(list)).into());
+}
+
+/// The frame menu's apps, as it is built: only those still on the
+/// disk, so a stale one is never offered but stays on the list until
+/// it is taken off. A stat an app; the names were worked out before.
+pub(crate) fn offer(app: &App, edit_in: &mut EditIn) {
+    let (paths, names): (Vec<PathBuf>, Vec<slint::SharedString>) = edit_in
+        .apps
+        .iter()
+        .filter(|(p, _)| p.exists())
+        .map(|(p, n)| (p.clone(), n.into()))
+        .unzip();
+    edit_in.offered = paths;
+    app.set_edit_in_apps(Rc::new(slint::VecModel::from(names)).into());
 }
 
 /// The export Edit in writes: the sheet's defaults as TIFF 16-bit, in
@@ -237,22 +269,24 @@ pub(crate) fn out_of(source: &Path, version: Option<&str>) -> PathBuf {
     .unwrap_or_default()
 }
 
-/// The frame menu's Edit in: the frame right-clicked exported, once its
-/// sidecar is in hand.
-pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
-    let key = {
-        let st = state.borrow();
-        let Some(chosen) = &st.work.edit_in.app else {
+/// The frame menu's Edit in with the app at `which` of those it
+/// offers: the frame right-clicked exported, once its sidecar is in
+/// hand.
+pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, which: usize) {
+    let (key, chosen) = {
+        let mut held = state.borrow_mut();
+        let st: &mut State = &mut held;
+        let Some(chosen) = st.work.edit_in.offered.get(which).cloned() else {
             return;
         };
-        // Gone since it was chosen: nothing written for it, and the menu
-        // offers it no more.
+        // Gone since the menu was built: nothing written for it, and the
+        // menu offers it no more.
         if !chosen.exists() {
             tracing::warn!(
                 "edit in: {} is not there; nothing exported",
                 chosen.display()
             );
-            show_app(app, Some(chosen));
+            offer(app, &mut st.work.edit_in);
             return;
         }
         if st.work.exporting.is_some() || st.work.export_choosing {
@@ -262,7 +296,7 @@ pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
         let Some(key) = st.views.menu_file.or(st.current).and_then(|c| st.key_of(c)) else {
             return;
         };
-        key
+        (key, chosen)
     };
     crate::rows::request(
         state,
@@ -273,13 +307,19 @@ pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
         "export",
         Box::new(move |state, app, _, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
-            start(state, app, &key, &frames);
+            start(state, app, &key, &frames, chosen);
         }),
     );
 }
 
-/// The export of the frame `pressed`, its sidecar in hand.
-fn start(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, frames: &[usize]) {
+/// The export of the frame `pressed` for `chosen`, its sidecar in hand.
+fn start(
+    state: &Rc<Shared>,
+    app: &App,
+    pressed: &crate::versions::Key,
+    frames: &[usize],
+    chosen: PathBuf,
+) {
     {
         let st = state.borrow();
         if st.work.exporting.is_some() || st.work.export_choosing {
@@ -313,7 +353,9 @@ fn start(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, frames: 
         },
         OnExists::Increment,
     );
-    st.work.edit_in.frame = set.is_some().then(|| (source, version.map(|v| v.id)));
+    st.work.edit_in.frame = set
+        .is_some()
+        .then(|| (source, version.map(|v| v.id), chosen));
     st.work.edit_in.set = set;
 }
 
@@ -325,12 +367,9 @@ pub(crate) fn frame_done(st: &mut State, app: &App, set: &Arc<queue::Set>, done:
         return;
     }
     edit_in.set = None;
-    let (Some((source, version)), queue::Done::Exported { path, .. }) =
+    let (Some((source, version, chosen)), queue::Done::Exported { path, .. }) =
         (edit_in.frame.take(), done)
     else {
-        return;
-    };
-    let Some(chosen) = edit_in.app.clone() else {
         return;
     };
     {
@@ -509,16 +548,17 @@ thread_local! {
     pub(crate) static CHOSEN_IN_TEST: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
-/// The Settings sheet's Edit in row: the app asked of the desktop's
-/// file chooser, opening where the one chosen is or where the platform
-/// keeps its apps, and kept when one is picked.
+/// The Settings sheet's Edit in list's Add...: an app asked of the
+/// desktop's file chooser, opening where the last one added is or
+/// where the platform keeps its apps, and added when one is picked.
 fn choose(state: &Rc<Shared>, app: &App) {
     let start = state
         .borrow()
         .work
         .edit_in
-        .app
-        .as_deref()
+        .apps
+        .last()
+        .map(|(p, _)| p.as_path())
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| how::apps_folder(Platform::this()));
@@ -546,17 +586,41 @@ fn choose(state: &Rc<Shared>, app: &App) {
     }
 }
 
-/// The chooser's answer: an app taken, shown, and written to the
-/// settings; a cancel leaves the row as it was.
+/// The apps as the list now holds them: shown, and written to the
+/// settings.
+fn kept(st: &mut State, app: &App) {
+    show_list(app, &st.work.edit_in);
+    offer(app, &mut st.work.edit_in);
+    let kept: Vec<String> = st
+        .work
+        .edit_in
+        .apps
+        .iter()
+        .map(|(p, _)| p.to_string_lossy().into_owned())
+        .collect();
+    crate::panel::crop::keep_in_file(st, |s| s.edit_in = kept);
+}
+
+/// The chooser's answer: an app added at the list's end, shown, and
+/// written to the settings; one on the list already stays where it is;
+/// a cancel leaves the list as it was.
 fn chosen(state: &Rc<Shared>, app: &App, picked: anyhow::Result<Option<PathBuf>>) {
     match picked {
         Ok(Some(path)) => {
             let mut st = state.borrow_mut();
-            tracing::info!("edit in: {}", path.display());
-            show_app(app, Some(&path));
-            let kept = path.to_string_lossy().into_owned();
-            crate::panel::crop::keep_in_file(&st, |s| s.edit_in = kept);
-            st.work.edit_in.app = Some(path);
+            if st
+                .work
+                .edit_in
+                .apps
+                .iter()
+                .any(|(p, _)| how::same_app(p, &path))
+            {
+                return;
+            }
+            tracing::info!("edit in: {} added", path.display());
+            let name = name_of(&path);
+            st.work.edit_in.apps.push((path, name));
+            kept(&mut st, app);
         }
         Ok(None) => {}
         Err(e) => {
@@ -566,20 +630,39 @@ fn chosen(state: &Rc<Shared>, app: &App, picked: anyhow::Result<Option<PathBuf>>
     }
 }
 
+/// The list's × on the app at `at`: taken off, shown, and written.
+fn remove(state: &Rc<Shared>, app: &App, at: usize) {
+    let mut st = state.borrow_mut();
+    if at >= st.work.edit_in.apps.len() {
+        return;
+    }
+    let (gone, _) = st.work.edit_in.apps.remove(at);
+    tracing::info!("edit in: {} taken off", gone.display());
+    kept(&mut st, app);
+}
+
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
-        app.on_menu_edit_in(move || {
-            if let Some(app) = app_weak.upgrade() {
-                asked(&state, &app, &worker);
+        app.on_menu_edit_in(move |which| {
+            if let (Some(app), Ok(which)) = (app_weak.upgrade(), usize::try_from(which)) {
+                asked(&state, &app, &worker, which);
             }
         });
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_edit_in_choose(move || {
+        app.on_edit_in_add(move || {
             if let Some(app) = app_weak.upgrade() {
                 choose(&state, &app);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_edit_in_remove(move |at| {
+            if let (Some(app), Ok(at)) = (app_weak.upgrade(), usize::try_from(at)) {
+                remove(&state, &app, at);
             }
         });
     }
@@ -596,15 +679,29 @@ mod tests {
     use slint::Model;
     use slint::platform::{PointerEventButton, WindowEvent};
 
-    /// An app named `name` made in `dir`, and chosen.
+    /// An app named `name` made in `dir`, and added.
     fn choose_app(state: &Rc<Shared>, app: &App, dir: &Path, name: &str) -> PathBuf {
         std::fs::create_dir_all(dir).unwrap();
         let path = dir.join(name);
         std::fs::write(&path, b"").unwrap();
         CHOSEN_IN_TEST.with(|c| *c.borrow_mut() = Some(path.clone()));
-        app.invoke_edit_in_choose();
-        assert_eq!(state.borrow().work.edit_in.app.as_deref(), Some(&*path));
+        app.invoke_edit_in_add();
+        assert_eq!(apps(state).last(), Some(&path));
         path
+    }
+
+    fn apps(state: &Rc<Shared>) -> Vec<PathBuf> {
+        let st = state.borrow();
+        st.work
+            .edit_in
+            .apps
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect()
+    }
+
+    fn names(list: slint::ModelRc<slint::SharedString>) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
     }
 
     fn watches(state: &Rc<Shared>) -> Vec<(PathBuf, PathBuf)> {
@@ -639,12 +736,14 @@ mod tests {
         n
     }
 
-    /// Edit in is not offered until an app is chosen on the Settings
-    /// sheet, whose row then names it; a cancel leaves it as it was. An
-    /// app gone since is offered no more, and nothing is exported for
-    /// it.
+    /// Edit in is not offered until an app is added on the Settings
+    /// sheet, whose list then names it; a cancel leaves it as it was.
+    /// One app on the disk is Edit in... of its own; two are a submenu
+    /// of their names, each handing the frame to its own. An app gone
+    /// since is offered no more, and nothing is exported for it, but
+    /// stays on the list; none left on the disk offers no Edit in.
     #[test]
-    fn the_menu_offers_edit_in_once_an_app_is_chosen() {
+    fn the_menu_offers_edit_in_once_an_app_is_added() {
         let dir = crate::testing::scratch_dir("edit-in-menu");
         let app = window(2);
         app.window()
@@ -652,26 +751,126 @@ mod tests {
         let (state, _worker) = state_for(&app, folder(2));
         app.invoke_select(0);
         app.set_busy(false);
-        assert_eq!(app.get_edit_in_app(), "");
+        assert!(names(app.get_edit_in_apps()).is_empty());
         assert_eq!(menu_items(&app, "Edit in..."), 0);
+        assert_eq!(menu_items(&app, "Edit in"), 0);
         // Pressed with no app: nothing exported.
-        app.invoke_menu_edit_in();
+        app.invoke_menu_edit_in(0);
         assert!(state.borrow().work.exporting.is_none());
 
-        let chosen = choose_app(&state, &app, &dir, "Photoshop.app");
-        assert_eq!(app.get_edit_in_app(), "Photoshop");
+        // One app: Edit in... as an item of its own.
+        let photoshop = choose_app(&state, &app, &dir, "Photoshop.app");
+        assert_eq!(names(app.get_edit_in_list()), ["Photoshop"]);
+        assert_eq!(names(app.get_edit_in_apps()), ["Photoshop"]);
         assert_eq!(menu_items(&app, "Edit in..."), 1);
-        // A cancel keeps the app.
+        assert_eq!(menu_items(&app, "Edit in"), 0);
+        // A cancel keeps the list.
         CHOSEN_IN_TEST.with(|c| *c.borrow_mut() = None);
-        app.invoke_edit_in_choose();
-        assert_eq!(app.get_edit_in_app(), "Photoshop");
+        app.invoke_edit_in_add();
+        assert_eq!(names(app.get_edit_in_list()), ["Photoshop"]);
 
-        // Uninstalled since: refused, and offered no more.
-        std::fs::remove_file(&chosen).unwrap();
-        app.invoke_menu_edit_in();
-        assert!(state.borrow().work.exporting.is_none());
-        assert_eq!(app.get_edit_in_app(), "");
+        // Two apps: a submenu of their names, in the order added.
+        let gimp = choose_app(&state, &app, &dir, "gimp");
+        assert_eq!(names(app.get_edit_in_apps()), ["Photoshop", "gimp"]);
         assert_eq!(menu_items(&app, "Edit in..."), 0);
+        assert_eq!(menu_items(&app, "Edit in"), 1);
+        // A menu entry pressed: the app its export is handed to, the
+        // export then ended.
+        let handed = |which: i32| {
+            app.invoke_menu_edit_in(which);
+            let set = state.borrow().work.exporting.clone().expect("the set");
+            let to = state
+                .borrow()
+                .work
+                .edit_in
+                .frame
+                .as_ref()
+                .unwrap()
+                .2
+                .clone();
+            let tally = queue::Tally::default();
+            crate::panel::deliver::deliver(&app, Outcome::SetDone { set, tally });
+            assert!(state.borrow().work.exporting.is_none());
+            to
+        };
+        assert_eq!(handed(1), gimp);
+        assert_eq!(handed(0), photoshop);
+
+        // The first gone from the disk: the menu's places are those on
+        // the disk, so its first entry is the second app on the list
+        // and its second the third.
+        let krita = choose_app(&state, &app, &dir, "krita");
+        std::fs::remove_file(&photoshop).unwrap();
+        assert_eq!(menu_items(&app, "Edit in"), 1);
+        assert_eq!(names(app.get_edit_in_apps()), ["gimp", "krita"]);
+        assert_eq!(handed(0), gimp);
+        assert_eq!(handed(1), krita);
+
+        // Uninstalled since the menu was built: refused, offered no
+        // more, still listed.
+        std::fs::remove_file(&gimp).unwrap();
+        app.invoke_menu_edit_in(0);
+        assert!(state.borrow().work.exporting.is_none());
+        assert_eq!(
+            names(app.get_edit_in_list()),
+            ["Photoshop", "gimp", "krita"]
+        );
+        assert_eq!(names(app.get_edit_in_apps()), ["krita"]);
+        assert_eq!(menu_items(&app, "Edit in..."), 1);
+        assert_eq!(menu_items(&app, "Edit in"), 0);
+        // Gone while the menu is down: the menu, built again, has none.
+        std::fs::remove_file(&krita).unwrap();
+        assert_eq!(menu_items(&app, "Edit in..."), 0);
+        assert_eq!(menu_items(&app, "Edit in"), 0);
+        assert!(names(app.get_edit_in_apps()).is_empty());
+        assert_eq!(names(app.get_edit_in_list()).len(), 3);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The Settings sheet's list: Add... puts an app at its end, once;
+    /// × takes the one at its place off; each change is written to the
+    /// settings file as a list.
+    #[test]
+    fn the_settings_list_adds_and_takes_off_apps() {
+        let dir = crate::testing::scratch_dir("edit-in-list");
+        let file = dir.join("settings.json");
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        state.borrow_mut().window.settings_file = Some(file.clone());
+        let written = || crate::settings::Settings::load_from(&file).edit_in;
+        let photoshop = choose_app(&state, &app, &dir, "Photoshop.app");
+        let gimp = choose_app(&state, &app, &dir, "gimp");
+        let krita = choose_app(&state, &app, &dir, "krita.desktop");
+        let path = |p: &PathBuf| p.to_string_lossy().into_owned();
+        assert_eq!(
+            names(app.get_edit_in_list()),
+            ["Photoshop", "gimp", "krita"]
+        );
+        assert_eq!(written(), [path(&photoshop), path(&gimp), path(&krita)]);
+        // One on the list already stays where it is, by another path
+        // to the same file too.
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        for again in [photoshop.clone(), dir.join("sub").join("..").join("gimp")] {
+            CHOSEN_IN_TEST.with(|c| *c.borrow_mut() = Some(again));
+            app.invoke_edit_in_add();
+            assert_eq!(
+                names(app.get_edit_in_list()),
+                ["Photoshop", "gimp", "krita"]
+            );
+        }
+
+        app.invoke_edit_in_remove(1);
+        assert_eq!(names(app.get_edit_in_list()), ["Photoshop", "krita"]);
+        assert_eq!(names(app.get_edit_in_apps()), ["Photoshop", "krita"]);
+        assert_eq!(written(), [path(&photoshop), path(&krita)]);
+        // A place past the end takes nothing off.
+        app.invoke_edit_in_remove(5);
+        assert_eq!(apps(&state), [photoshop.clone(), krita]);
+        app.invoke_edit_in_remove(1);
+        app.invoke_edit_in_remove(0);
+        assert!(names(app.get_edit_in_list()).is_empty());
+        assert!(names(app.get_edit_in_apps()).is_empty());
+        assert!(written().is_empty());
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -689,7 +888,7 @@ mod tests {
         app.set_export_space("Display P3".into());
         app.set_export_format("JPEG".into());
         let gimp = choose_app(&state, &app, &dir, "gimp");
-        app.invoke_menu_edit_in();
+        app.invoke_menu_edit_in(0);
         let set = state.borrow().work.exporting.clone().expect("the set");
         assert_eq!(set.total, 1);
         assert_eq!(set.settings.format, Format::Tiff);
@@ -709,10 +908,10 @@ mod tests {
         );
         assert_eq!(
             state.borrow().work.edit_in.frame,
-            Some((source.clone(), None))
+            Some((source.clone(), None, gimp.clone()))
         );
         // A second press while it runs exports nothing more.
-        app.invoke_menu_edit_in();
+        app.invoke_menu_edit_in(0);
         assert!(Arc::ptr_eq(
             state.borrow().work.exporting.as_ref().unwrap(),
             &set
@@ -754,7 +953,7 @@ mod tests {
         );
 
         // The file deleted and Edit in again: the same name, one watch.
-        app.invoke_menu_edit_in();
+        app.invoke_menu_edit_in(0);
         let set = state
             .borrow()
             .work
@@ -878,7 +1077,7 @@ mod tests {
         };
         let row = crate::panel::browser::row_of(&s.state.borrow(), c).unwrap() as i32;
         s.app.invoke_select(row);
-        s.app.invoke_menu_edit_in();
+        s.app.invoke_menu_edit_in(0);
         crate::rows::land_pending(&s.state, &s.app, &s.worker);
         let set = s.state.borrow().work.exporting.clone().expect("the set");
         // The test's worker writes nothing: the file is the test's.

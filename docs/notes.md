@@ -589,3 +589,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§574. The grain's line drawn past the texture](notes/574-the-grains-line-drawn-past-the-texture.md) (2026-11-05)
 - [§575. Preset favorites and groups](notes/575-preset-favorites-and-groups.md) (2026-11-05)
 - [§576. The view below 1:1 averages its footprint](notes/576-the-view-below-1-to-1-averages-its-footprint.md) (2026-11-05)
+- [§577. Edit in, several apps](notes/577-edit-in-several-apps.md) (2026-11-05)

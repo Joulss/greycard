@@ -742,9 +742,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.sheets.lenses_declined = lenses_declined;
         st.work.export_presets = export_presets;
         st.work.export_last_folder = export_last_folder;
-        st.work.edit_in.app =
-            (!remembered.edit_in.is_empty()).then(|| PathBuf::from(&remembered.edit_in));
-        crate::panel::edit_in::show_app(&app, st.work.edit_in.app.as_deref());
+        let apps = remembered.edit_in.iter().map(PathBuf::from).collect();
+        crate::panel::edit_in::set_apps(&app, &mut st.work.edit_in, apps);
         st.culling.cull_move_on = cull_move_on;
         crate::panel::cull::take_remembered_mode(&mut st, loupe_cull, show_developed);
         // `--cull-developed`, over whatever the last run left.
@@ -2402,8 +2401,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         export_last_folder: String::new(),
         // Written as the first export starts; the caller keeps the file's.
         exported: false,
-        // Written as the app is chosen; the caller keeps the file's.
-        edit_in: String::new(),
+        // Written as an app is added or taken off; the caller keeps the
+        // file's.
+        edit_in: Vec::new(),
         scope: app.get_scope().into(),
         curve_mode: app.get_curve_mode().into(),
         warn_shadows: app.get_warn_shadows(),

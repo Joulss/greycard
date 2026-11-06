@@ -36,11 +36,13 @@ pub struct Settings {
     /// stands, with no sheet, and before it opens the sheet. Written
     /// as the first export starts.
     pub exported: bool,
-    /// The app Edit in hands a frame to, as chosen on the Settings
-    /// sheet: an application bundle, a program, or a desktop entry.
-    /// Empty for none, and the frame menu then offers no Edit in.
-    #[serde(deserialize_with = "string_leniently")]
-    pub edit_in: String,
+    /// The apps Edit in hands a frame to, as added on the Settings
+    /// sheet and in that order: application bundles, programs, or
+    /// desktop entries. Empty for none, and the frame menu then offers
+    /// no Edit in. An earlier build's one app, a string, reads as a
+    /// list of it and is written as a list from then on.
+    #[serde(deserialize_with = "apps_leniently")]
+    pub edit_in: Vec<String>,
     pub scope: String,
     /// Which curve the CURVES section shows: "Parametric" or "Point".
     pub curve_mode: String,
@@ -374,6 +376,44 @@ where
     }
 }
 
+/// The Edit in apps of a file edited by hand or written by an earlier
+/// build: a list's strings kept in order, each app once (by
+/// `edit_in::same_app`), anything else in it left out; one string, the single app those builds kept, a list of it,
+/// and an empty one none; anything else none.
+fn apps_leniently<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) if s.is_empty() => Ok(Vec::new()),
+        serde_json::Value::String(s) => Ok(vec![s]),
+        serde_json::Value::Array(list) => {
+            let mut apps: Vec<String> = Vec::new();
+            for v in list {
+                match v {
+                    serde_json::Value::String(s) if !s.is_empty() => {
+                        let same = |a: &String| {
+                            crate::edit_in::same_app(std::path::Path::new(a), s.as_ref())
+                        };
+                        if apps.iter().any(same) {
+                            tracing::warn!("settings: edit_in: {s} twice; once");
+                        } else {
+                            apps.push(s);
+                        }
+                    }
+                    other => tracing::warn!("settings: edit_in: {other} is not an app; left out"),
+                }
+            }
+            Ok(apps)
+        }
+        serde_json::Value::Null => Ok(Vec::new()),
+        other => {
+            tracing::warn!("settings: edit_in is {other}, not a list of apps; none");
+            Ok(Vec::new())
+        }
+    }
+}
+
 /// A switch that is on by default, from a file edited by hand:
 /// anything but `true` or `false` reads as on.
 fn bool_on_leniently<'de, D>(d: D) -> Result<bool, D::Error>
@@ -571,7 +611,7 @@ impl Default for Settings {
             shared: Shared::default(),
             export_last_folder: String::new(),
             exported: false,
-            edit_in: String::new(),
+            edit_in: Vec::new(),
             scope: crate::scope::Scope::default().name().into(),
             curve_mode: "Point".into(),
             warn_shadows: false,
@@ -1016,7 +1056,10 @@ mod tests {
             preset_folds: vec!["group:Film".into()],
             export_last_folder: "/home/x/Pictures/out".into(),
             exported: true,
-            edit_in: "/Applications/Photoshop.app".into(),
+            edit_in: vec![
+                "/Applications/Photoshop.app".into(),
+                "/usr/share/applications/gimp.desktop".into(),
+            ],
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             start_folder: "~/Pictures/start".into(),
             start_view: "Library".into(),
@@ -1269,6 +1312,53 @@ mod tests {
         assert!(!opens_on_library(false, "Library", true, false));
         assert!(!opens_on_library(false, "Library", false, true));
         assert!(opens_on_library(true, "Loupe", true, false));
+    }
+
+    /// The Edit in apps: an earlier build's one app, a string, reads
+    /// as a list of it and is written back as a list; an empty string
+    /// is none; a list keeps its order; anything else is none, or left
+    /// out of a list, at no cost to the rest of the file.
+    #[test]
+    fn the_edit_in_apps_are_read_from_one_app_or_a_list() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert!(read.edit_in.is_empty());
+        let old = r#"{"ui_scale": 150, "edit_in": "/Applications/Photoshop.app"}"#;
+        let read: Settings = serde_json::from_str(old).unwrap();
+        assert_eq!(read.edit_in, ["/Applications/Photoshop.app"]);
+        let written = serde_json::to_value(&read).unwrap();
+        assert_eq!(
+            written["edit_in"],
+            serde_json::json!(["/Applications/Photoshop.app"])
+        );
+        let read: Settings = serde_json::from_str(r#"{"edit_in": ""}"#).unwrap();
+        assert!(read.edit_in.is_empty());
+        let read: Settings =
+            serde_json::from_str(r#"{"edit_in": ["/b/gimp", 3, "", "/a/krita", "/b/gimp"]}"#)
+                .unwrap();
+        assert_eq!(read.edit_in, ["/b/gimp", "/a/krita"]);
+        for text in [
+            r#"{"ui_scale": 150, "edit_in": 3}"#,
+            r#"{"ui_scale": 150, "edit_in": null}"#,
+            r#"{"ui_scale": 150, "edit_in": {"app": "/b/gimp"}}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert!(read.edit_in.is_empty(), "{text}");
+        }
+    }
+
+    /// An earlier build's file with its one app: the next change
+    /// writes it as a list of that app.
+    #[test]
+    fn an_old_edit_in_is_written_as_a_list_at_the_next_change() {
+        let dir = crate::testing::scratch_dir("settings-edit-in");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, r#"{"edit_in": "/opt/gimp"}"#).unwrap();
+        Settings::change_at(&path, |s| s.mat = true);
+        let text: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(text["edit_in"], serde_json::json!(["/opt/gimp"]));
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The wheel's switch: a file without it, or with a value of the
