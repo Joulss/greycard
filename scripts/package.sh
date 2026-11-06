@@ -130,18 +130,19 @@ for l in $libs; do
     fi
 done
 
-# A signature with a secure timestamp asks Apple's timestamp server,
-# which is down now and then ("The timestamp service is not
-# available"); the signing is tried three times, a minute apart.
-sign() {
+# A command tried three times, a minute apart. A signature with a
+# secure timestamp asks Apple's timestamp server, which is down now
+# and then ("The timestamp service is not available"), and hdiutil
+# on a hosted Mac runner fails one image in a few with the disk busy.
+tried() {
     try=1
-    while ! codesign "$@"; do
+    while ! "$@"; do
         if [ "$try" -ge 3 ]; then
-            echo "package.sh: codesign failed $try times" >&2
+            echo "package.sh: $1 failed $try times" >&2
             exit 1
         fi
         try=$((try + 1))
-        echo "codesign failed; trying again in a minute" >&2
+        echo "$1 failed; trying again in a minute" >&2
         sleep 60
     done
 }
@@ -260,10 +261,10 @@ if [ "$os" = macos ]; then
     # stopped by Gatekeeper.
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
         for f in $libs greycard; do
-            sign --force --options runtime --timestamp \
+            tried codesign --force --options runtime --timestamp \
                 --sign "$MACOS_SIGN_IDENTITY" "$app/MacOS/$f"
         done
-        sign --force --options runtime --timestamp \
+        tried codesign --force --options runtime --timestamp \
             --sign "$MACOS_SIGN_IDENTITY" "$stage/greycard.app"
         codesign --verify --strict --deep "$stage/greycard.app"
     else
@@ -487,12 +488,12 @@ if [ "$os" = macos ]; then
     ln -s /Applications "$dmgroot/Applications"
     cp packaging/dmg/background.tiff "$dmgroot/.background/background.tiff"
     cp packaging/dmg/DS_Store "$dmgroot/.DS_Store"
-    hdiutil create -quiet -volname greycard -srcfolder "$dmgroot" \
+    tried hdiutil create -ov -volname greycard -srcfolder "$dmgroot" \
         -fs HFS+ -format UDZO -imagekey zlib-level=9 \
         "target/dist/$name.dmg"
     rm -rf "$dmgroot"
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
-        sign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" \
+        tried codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" \
             "target/dist/$name.dmg"
     fi
     if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
