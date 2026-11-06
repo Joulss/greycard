@@ -28,7 +28,7 @@ name="onnxruntime-$version-x86_64-macos-coreml"
 url="https://github.com/jessolmstead/greycard/releases/download/onnxruntime-$version-x86_64-macos/$name.tar.gz"
 # What onnxruntime-intel-mac.yml printed for the archive attached to
 # the release. Empty until that build has been run and attached.
-sha256=
+sha256=a6862c380be3a4d5812c97596bd59a6570baaee9d8d6ebfa3defb050f83057b9
 
 host=$(rustc -vV | sed -n 's/^host: //p')
 if [ "$host" != x86_64-apple-darwin ]; then
