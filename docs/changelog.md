@@ -112,21 +112,13 @@ design note behind it.
   badge over the picture for two seconds, and it stays while the strip
   is hidden ([§519](https://github.com/jessolmstead/greycard/blob/master/docs/notes/519-the-badge-over-the-picture-in-develop.md)).
 
-### Color
+### Develop
 
 - The learned denoiser's Blend is now two sliders, Luma and Chroma:
   the color noise goes at Chroma's full default while Luma keeps as
   much grain as you like. An edit from before keeps the blend it had
   for both
   ([§567](https://github.com/jessolmstead/greycard/blob/master/docs/notes/567-the-learned-blends-color-apart-from-its-grain.md)).
-- A DNG that carries its own distortion correction or bad-pixel list
-  is read with them, as Adobe's reader applies them, a phone's
-  per-color CA correction included. The file's correction takes the
-  place of the lens profile's distortion, and of the CA correction
-  where it corrects each color. Crops, spots, and brushes already
-  placed on such a DNG move with the picture, up to about 96 px at a
-  Pixel ultra-wide's corners plus a 4 % zoom
-  ([§513](https://github.com/jessolmstead/greycard/blob/master/docs/notes/513-a-dngs-own-lens-correction-and-bad-pixels.md)).
 - Detail gains Structure under Clarity, in the global section and in
   a mask: a local contrast about three times wider than Clarity and
   soft, so shapes separate across a face or a landscape without halos
@@ -135,6 +127,14 @@ design note behind it.
   fitted to the picture's, so a brush's or an AI mask's edge follows
   the subject's and two masks meet without a seam
   ([§503](https://github.com/jessolmstead/greycard/blob/master/docs/notes/503-refine-edge-on-a-mask.md)).
+- A library-wide camera match no longer writes a table that would tint
+  greys its frames never showed, and says so; a camera's own cast on
+  its greys is kept, and a group from one folder gets no table of its
+  own
+  ([§517](https://github.com/jessolmstead/greycard/blob/master/docs/notes/517-the-camera-match-holds-unseen-greys.md)).
+
+### Lens and DNG
+
 - LENS offers a Lens picker: the database's lenses for the body when
   the file names none, and Adobe lens profiles (.lcp) placed beside
   the camera profiles
@@ -143,11 +143,14 @@ design note behind it.
   it, to narrow the picker's few hundred lenses to one maker's or to
   those whose name or maker holds the words typed
   ([§516](https://github.com/jessolmstead/greycard/blob/master/docs/notes/516-the-lens-picker-by-maker-and-a-filter.md)).
-- A library-wide camera match no longer writes a table that would tint
-  greys its frames never showed, and says so; a camera's own cast on
-  its greys is kept, and a group from one folder gets no table of its
-  own
-  ([§517](https://github.com/jessolmstead/greycard/blob/master/docs/notes/517-the-camera-match-holds-unseen-greys.md)).
+- A DNG that carries its own distortion correction or bad-pixel list
+  is read with them, as Adobe's reader applies them, a phone's
+  per-color CA correction included. The file's correction takes the
+  place of the lens profile's distortion, and of the CA correction
+  where it corrects each color. Crops, spots, and brushes already
+  placed on such a DNG move with the picture, up to about 96 px at a
+  Pixel ultra-wide's corners plus a 4 % zoom
+  ([§513](https://github.com/jessolmstead/greycard/blob/master/docs/notes/513-a-dngs-own-lens-correction-and-bad-pixels.md)).
 - A phone's DNG opens without its dark corners: the gain maps and the
   forward matrices in the file are applied
   ([§474](https://github.com/jessolmstead/greycard/blob/master/docs/notes/474-a-phone-dng-read-as-the-phone-meant-it.md)).
