@@ -4199,8 +4199,11 @@ fn evict_other_bases(path: &Path) {
 
 /// The fills kept on disk's format: bumped when a change to either
 /// engine, or to how a fill is put together, makes another fill of the
-/// same patch, so the old ones are made again.
-const FILL_VERSION: u8 = 3;
+/// same patch, so the old ones are made again. The frame's grain is
+/// kept in the fill ([`regrain`]), so a change to how it is measured or
+/// drawn counts: 4, the surround's line drawn to its bins' relative
+/// error, without the bins of texture.
+const FILL_VERSION: u8 = 4;
 
 /// The first bytes of a fill kept on disk.
 const FILL_MAGIC: &[u8; 6] = b"GCFILL";
@@ -5451,7 +5454,9 @@ mod tests {
         assert!(read_fill(&path, FILL_VERSION, size, window, dims).is_some());
         assert!(read_fill(&path, FILL_VERSION + 1, size, window, dims).is_none());
         assert!(read_fill(&path, FILL_VERSION, (201, 100), window, dims).is_none());
-        // Written at an old version, the slot misses where it stands.
+        // Written at an old version (the grain measured before its line
+        // left texture out, say), the slot misses where it stands, and
+        // the fill is made again in the same slot.
         write_fill(
             &path,
             FILL_VERSION - 1,

@@ -586,3 +586,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§571. A carried set and a folder that is gone](notes/571-a-carried-set-and-a-folder-that-is-gone.md) (2026-11-05)
 - [§572. No outline before the frame has a size](notes/572-no-outline-before-the-frame-has-a-size.md) (2026-11-05)
 - [§573. Merge to Focus stack](notes/573-merge-to-focus-stack.md) (2026-11-05)
+- [§574. The grain's line drawn past the texture](notes/574-the-grains-line-drawn-past-the-texture.md) (2026-11-05)

@@ -39,42 +39,14 @@ the reasoning lives in `docs/notes.md`.
       Windows (issue 44): waits on the reporter's log
 - [ ] The Slint pin dropped once a release carries
       slint-ui/slint#14324 (§377)
-- [ ] A fill on a denoised frame still gets more grain than its
-      surround after §434 (1.3x at every distance on an overcast sky
-      with the learned denoiser, the amount not the shape): the
-      estimate reads texture at the hole's level as noise once the
-      real noise is below it. Cap it by the develop's mosaic noise
-      model carried through the gains and the matrix, which the base
-      does not carry today (§398). A wide draw is held to the
-      shortfall's variance since §438; measuring the surround's
-      variance within its quiet blocks, per level bin, would let a
-      truly wide grain be drawn in full. And a fill whose own grain
-      exceeds the surround's (3x with the profiled denoise) wants
-      smoothing, not grain. A Windows tester sees the fill keep the
-      frame's own noise under the learned denoiser (issue 63,
-      2026-11-04); wants the raw. Harness in
-      target/captures-2026-10-26/fill-grain
-
-## Tracks
-
-A track is done when its sentence is true. None is ordered before
-another; the feel track's measured items come first within it.
-
-### The feel
-
-The default develop matches the camera JPEG's brightness and the
-sliders feel like the ones people learned on.
-
-Three of these are measurements with a target and go first: the
-baseline exposure per body, the default brightness against the
-embedded JPEG, and the slider response fitted to the reference set.
-The rest are taste, and taste is not decided alone: each ships both
-ways behind a switch, testers say which they keep, and then the
-switch goes and the default follows. "Feels like Lightroom" means the
-same direction and a similar size in the first third of the travel,
-within a tenth of a stop; past that it is a look, and looks are the
-Look section's job.
-
+- [ ] A fill on a denoised frame still gets a little more grain than
+      its surround (1.2x at two blocks on an overcast sky after §574,
+      where the window's bins mix sea and rock with the sky): the
+      quiet quarter of a mixed bin reads high on a denoised frame.
+      The mosaic noise cap built on the branch fill-grain-cap (§398)
+      is parked; a fill whose own grain exceeds the surround's (3x
+      with the profiled denoise) wants smoothing, not grain. Harness
+      in target/captures-2026-10-26/fill-grain
 - [ ] A file opened from the Finder opens in the editor: the delegate's
       `application:openURLs:` is written but has not run on a Mac;
       try a double-click, Open With and a Dock drop, at launch and

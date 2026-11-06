@@ -161,7 +161,7 @@ pub fn estimate_noise(
             r * r * scale
         })
     };
-    Ok(fit_bins(rows))
+    Ok(fit_bins(rows, Line::Counts))
 }
 
 /// The noise of a developed picture, on the denoiser's luma and two
@@ -333,7 +333,10 @@ impl PictureNoise {
 /// Estimate the noise of a picture of three interleaved channels a
 /// pixel, a demosaiced one in its own linear values, from the pixels
 /// `known` marks, on the axes of [`PictureNoise`]. The same blocks,
-/// residual, and fit as [`estimate_noise`]; the neighbors are two
+/// residual, and quiet quarter of each bin as [`estimate_noise`], the
+/// line through the bins drawn to their relative error and without
+/// the bins of texture ([`Line::Relative`]): a fill's window may hold
+/// no plain stretch at some levels; the neighbors are two
 /// pixels away, as a mosaic's same-color ones are, past most of the
 /// correlation a demosaic leaves between neighbors, so what is
 /// measured is the noise's variance at high frequency. The residuals
@@ -461,7 +464,7 @@ pub fn estimate_picture_noise(
             out
         })
         .collect();
-    let fit = |keep: &dyn Fn(usize, f32, f32, bool) -> bool| {
+    let fit = |keep: &dyn Fn(usize, f32, f32, bool) -> bool, line: Line| {
         let mut bins: Bins = std::array::from_fn(|_| vec![Vec::new(); BINS]);
         let mut counts = [0usize; 3];
         for &(level, var, .., high) in &blocks {
@@ -473,17 +476,20 @@ pub fn estimate_picture_noise(
                 }
             }
         }
-        fit_bins(vec![(bins, counts)]).model
+        fit_bins(vec![(bins, counts)], line).model
     };
     // The floor is for made-up highlights, so it is held only where a
     // block reaches toward a channel's peak: below that, a picture all
     // texture lifts the first fit, and a dark bin's true quiet blocks
-    // would fall under it.
-    let first = fit(&|_, _, _, _| true);
+    // would fall under it. The first line is weighted by blocks, so
+    // made-up highlights, a few bins far under the grain, cannot hold
+    // it down to their own; the second by relative error, so a few
+    // bins of texture far over it cannot lift it.
+    let first = fit(&|_, _, _, _| true, Line::Counts);
     let kept = |k: usize, level: f32, var: f32, high: bool| {
         !high || var * QUIET_FLOOR >= first.variance(k, level.max(0.0))
     };
-    let axes = fit(&kept);
+    let axes = fit(&kept, Line::Relative);
     // The shape from the blocks the second fit keeps that lie near
     // it, since texture reads coarser than grain, binned by level as
     // the fit is, so it is read where the hole is ([`ShapeBins::at`]):
@@ -749,10 +755,33 @@ fn block_rows(
         .collect()
 }
 
+/// How [`fit_bins`] draws its line through the bins' quiet variances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Line {
+    /// Least squares weighted by each bin's blocks: a mosaic's.
+    Counts,
+    /// Weighted by each bin's blocks over the square of its variance,
+    /// since a variance read from blocks scatters in proportion to
+    /// itself, and fitted again without the bins past
+    /// [`TEXTURE_BIN`] times the line: a picture's
+    /// ([`estimate_picture_noise`]). A bin all texture, each of its
+    /// blocks lettering or leaves, reads tens to thousands of times
+    /// the grain; weighted by its blocks alone, one such bin tilts the
+    /// line until it reads texture at every level.
+    Relative,
+}
+
+/// A bin whose quiet variance is past this many times the line is
+/// texture, not grain, and is left out of a [`Line::Relative`] fit.
+const TEXTURE_BIN: f64 = 3.0;
+/// A [`Line::Relative`] fit's first weights treat no bin as quieter
+/// than the bins' median over this.
+const START_FLOOR: f64 = 16.0;
+
 /// The model from the blocks: the rows' bins merged in order, then per
-/// channel the quietest quarter of each bin and a weighted line through
-/// the bins.
-fn fit_bins(rows: BlockRows) -> NoiseEstimate {
+/// channel the quietest quarter of each bin and a line through the
+/// bins, drawn as `line` says.
+fn fit_bins(rows: BlockRows, line: Line) -> NoiseEstimate {
     let mut model = NoiseModel::default();
     let mut blocks = [0usize; 3];
     let mut bins_used = [0usize; 3];
@@ -767,9 +796,9 @@ fn fit_bins(rows: BlockRows) -> NoiseEstimate {
     }
 
     for c in 0..3 {
-        // Weighted least squares of variance on level over the bins.
-        let (mut sw, mut swx, mut swy, mut swxx, mut swxy) =
-            (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        // Per bin: its quiet blocks' mean level and variance, and how
+        // many blocks it holds.
+        let mut points = Vec::new();
         for bin in bins[c].iter_mut() {
             if bin.len() < MIN_BLOCKS_PER_BIN {
                 continue;
@@ -784,35 +813,16 @@ fn fit_bins(rows: BlockRows) -> NoiseEstimate {
             // relative spread sqrt(2/n) averages 1 - 1.271 sqrt(2/n) of
             // the truth (the mean of a normal's lowest quartile).
             let bias = 1.0 - 1.271 * (2.0 / n).sqrt();
-            let var = var / bias.max(0.5);
-            let w = bin.len() as f64;
-            sw += w;
-            swx += w * mean;
-            swy += w * var;
-            swxx += w * mean * mean;
-            swxy += w * mean * var;
-            bins_used[c] += 1;
+            points.push((mean, var / bias.max(0.5), bin.len() as f64));
         }
-        if bins_used[c] == 0 {
+        bins_used[c] = points.len();
+        if points.is_empty() {
             continue;
         }
-        let det = sw * swxx - swx * swx;
-        let (mut a, mut b) = if bins_used[c] >= 2 && det.abs() > 1e-18 {
-            (
-                (sw * swxy - swx * swy) / det,
-                (swxx * swy - swx * swxy) / det,
-            )
-        } else {
-            (0.0, swy / sw)
+        let (a, b) = match line {
+            Line::Counts => weighted_line(&points),
+            Line::Relative => relative_line(&points),
         };
-        if a < 0.0 {
-            a = 0.0;
-            b = swy / sw;
-        }
-        if b < 0.0 {
-            b = 0.0;
-            a = if swxx > 0.0 { swxy / swxx } else { 0.0 };
-        }
         model.a[c] = a as f32;
         model.b[c] = b as f32;
     }
@@ -822,6 +832,95 @@ fn fit_bins(rows: BlockRows) -> NoiseEstimate {
         blocks,
         bins: bins_used,
     }
+}
+
+/// Least squares of variance on level through `points`, each (level,
+/// variance, weight), held to a slope and a foot of 0 or more.
+fn weighted_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
+    let (mut sw, mut swx, mut swy, mut swxx, mut swxy) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    for &(x, y, w) in points {
+        sw += w;
+        swx += w * x;
+        swy += w * y;
+        swxx += w * x * x;
+        swxy += w * x * y;
+    }
+    if sw <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let det = sw * swxx - swx * swx;
+    let (mut a, mut b) = if points.len() >= 2 && det.abs() > 1e-18 {
+        (
+            (sw * swxy - swx * swy) / det,
+            (swxx * swy - swx * swxy) / det,
+        )
+    } else {
+        (0.0, swy / sw)
+    };
+    if a < 0.0 {
+        a = 0.0;
+        b = swy / sw;
+    }
+    if b < 0.0 {
+        b = 0.0;
+        a = if swxx > 0.0 { swxy / swxx } else { 0.0 };
+    }
+    (a, b)
+}
+
+/// [`Line::Relative`]'s line through `points`, each (level, variance,
+/// blocks): weighted first by the blocks over the bin's own variance
+/// squared, then, a few times over or until the bins kept stop
+/// changing, by the blocks over the line's, without the bins past
+/// [`TEXTURE_BIN`] times the line or under it over [`QUIET_FLOOR`]:
+/// crushed or clipped shadows, which relative error would let hold
+/// the line's foot down. The weights are scaled to a mean of 1, which
+/// moves no line, so the test for a line through one level reads as
+/// it does weighted by blocks.
+fn relative_line(points: &[(f64, f64, f64)]) -> (f64, f64) {
+    const TINY: f64 = 1e-30;
+    let weigh = |mut p: Vec<(f64, f64, f64)>| {
+        let mean = p.iter().map(|q| q.2).sum::<f64>() / p.len().max(1) as f64;
+        if mean > 0.0 {
+            for q in &mut p {
+                q.2 /= mean;
+            }
+        }
+        p
+    };
+    // A bin far under the others, smooth where the rest have grain,
+    // weighs no more at first than one at [`START_FLOOR`] under their
+    // median (the upper one, for an even count).
+    let mut ys: Vec<f64> = points.iter().map(|p| p.1).collect();
+    ys.sort_by(f64::total_cmp);
+    let low = (ys[ys.len() / 2] / START_FLOOR).max(TINY);
+    let first = weigh(
+        points
+            .iter()
+            .map(|&(x, y, n)| (x, y, n / y.max(low).powi(2)))
+            .collect(),
+    );
+    let (mut a, mut b) = weighted_line(&first);
+    let mut was: Vec<bool> = Vec::new();
+    for _ in 0..4 {
+        let at = |x: f64| (a * x + b).max(TINY);
+        let keep: Vec<bool> = points
+            .iter()
+            .map(|&(x, y, _)| y <= TEXTURE_BIN * at(x) && y * f64::from(QUIET_FLOOR) >= at(x))
+            .collect();
+        if keep == was || !keep.contains(&true) {
+            break;
+        }
+        let kept: Vec<_> = points
+            .iter()
+            .zip(&keep)
+            .filter(|(_, k)| **k)
+            .map(|(&(x, y, n), _)| (x, y, n / at(x).powi(2)))
+            .collect();
+        (a, b) = weighted_line(&weigh(kept));
+        was = keep;
+    }
+    (a, b)
 }
 
 #[cfg(test)]
@@ -1468,6 +1567,92 @@ pub(crate) mod tests {
         for k in 1..3 {
             let (got, want) = (est.axes.sigma(k, 0.05), truth.axes.sigma(k, 0.05));
             assert!((got / want - 1.0).abs() < 0.1, "axis {k}: {got} vs {want}");
+        }
+    }
+
+    /// A window as a fill's over lettering has it: plain grain in the
+    /// shadows, and above them bins of nothing but strong texture. The
+    /// grain comes back at the shadows' levels as it does with no
+    /// texture at all; weighted by blocks, the texture's bins tilted
+    /// the line to several times the grain there. A clean tile is
+    /// silent.
+    #[test]
+    fn bins_of_texture_leave_the_grain_alone() {
+        let (w, h) = (384, 256);
+        let truth = picture_truth();
+        let plain = |x: usize| 0.01 + 0.14 * x as f32 / (2 * w / 3) as f32;
+        let level: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if x < 2 * w / 3 {
+                    plain(x)
+                } else {
+                    // Strokes two pixels wide, from 0.25 to 0.9 and
+                    // half again as bright on every other stroke.
+                    let base = 0.25 + 0.4 * (x - 2 * w / 3) as f32 / (w / 3) as f32;
+                    let stroke = ((x / 2) + (y / 3)) % 2 == 0;
+                    if stroke { base * 1.5 } else { base }
+                }
+            })
+            .collect();
+        let only_grain: Vec<f32> = (0..w * h)
+            .map(|i| 0.01 + 0.14 * (i % w) as f32 / w as f32)
+            .collect();
+        let all = vec![true; w * h];
+        let textured = estimate_picture_noise(&noisy_picture(&level, &truth, 41), w, h, &all);
+        let grain = estimate_picture_noise(&noisy_picture(&only_grain, &truth, 41), w, h, &all);
+        for k in 0..3 {
+            for at in [0.03, 0.08, 0.13] {
+                let want = truth.axes.sigma(k, at);
+                for (what, est) in [("textured", &textured), ("grain", &grain)] {
+                    let got = est.axes.sigma(k, at);
+                    assert!(
+                        (got / want - 1.0).abs() < 0.15,
+                        "{what}, axis {k} at {at}: sigma {got} vs {want}; {est:?}"
+                    );
+                }
+            }
+        }
+        let clean: Vec<f32> = only_grain.iter().flat_map(|&v| [v; 3]).collect();
+        assert!(estimate_picture_noise(&clean, w, h, &all).is_silent());
+    }
+
+    /// Crushed shadows, a third of the window at the bottom of the
+    /// range with a twentieth of the grain, far under the line where
+    /// the rest has its grain: weighted by relative error the line's
+    /// foot would follow them down, and a fill in the shadows above
+    /// them would get too little grain.
+    #[test]
+    fn crushed_shadows_leave_the_grain_alone() {
+        let (w, h) = (384, 256);
+        let truth = picture_truth();
+        let level: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let x = i % w;
+                if x < w / 3 {
+                    0.003
+                } else {
+                    0.02 + 0.28 * (x - w / 3) as f32 / (2 * w / 3) as f32
+                }
+            })
+            .collect();
+        let mut data = noisy_picture(&level, &truth, 43);
+        for (i, &v) in level.iter().enumerate() {
+            if i % w < w / 3 {
+                for c in 0..3 {
+                    data[i * 3 + c] = v + 0.05 * (data[i * 3 + c] - v);
+                }
+            }
+        }
+        let est = estimate_picture_noise(&data, w, h, &vec![true; w * h]);
+        for k in 0..3 {
+            for at in [0.03, 0.1, 0.25] {
+                let (got, want) = (est.axes.sigma(k, at), truth.axes.sigma(k, at));
+                assert!(
+                    (got / want - 1.0).abs() < 0.15,
+                    "axis {k} at {at}: sigma {got} vs {want}; {est:?}"
+                );
+            }
         }
     }
 }

@@ -244,6 +244,10 @@ design note behind it.
   in plain words instead of failing inside the model; Patch still
   works there
   ([§570](https://github.com/jessolmstead/greycard/blob/master/docs/notes/570-the-remove-refused-plainly-without-16-bit-floats.md)).
+- A big generative fill over lettering or other strong texture no
+  longer comes back far grainier than the picture round it; fills
+  kept on disk are made again once
+  ([§574](https://github.com/jessolmstead/greycard/blob/master/docs/notes/574-the-grains-line-drawn-past-the-texture.md)).
 - A straightened frame opened with a Linear mask shown, or arrowed
   to with Heal or Clone in hand, no longer crashes at startup
   ([§572](https://github.com/jessolmstead/greycard/blob/master/docs/notes/572-no-outline-before-the-frame-has-a-size.md)).
