@@ -130,6 +130,22 @@ for l in $libs; do
     fi
 done
 
+# A signature with a secure timestamp asks Apple's timestamp server,
+# which is down now and then ("The timestamp service is not
+# available"); the signing is tried three times, a minute apart.
+sign() {
+    try=1
+    while ! codesign "$@"; do
+        if [ "$try" -ge 3 ]; then
+            echo "package.sh: codesign failed $try times" >&2
+            exit 1
+        fi
+        try=$((try + 1))
+        echo "codesign failed; trying again in a minute" >&2
+        sleep 60
+    done
+}
+
 # Notarization, with MACOS_NOTARY_PROFILE naming a notarytool keychain
 # profile (xcrun notarytool store-credentials), and
 # MACOS_NOTARY_KEYCHAIN the keychain it is in when that is not the
@@ -244,10 +260,10 @@ if [ "$os" = macos ]; then
     # stopped by Gatekeeper.
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
         for f in $libs greycard; do
-            codesign --force --options runtime --timestamp \
+            sign --force --options runtime --timestamp \
                 --sign "$MACOS_SIGN_IDENTITY" "$app/MacOS/$f"
         done
-        codesign --force --options runtime --timestamp \
+        sign --force --options runtime --timestamp \
             --sign "$MACOS_SIGN_IDENTITY" "$stage/greycard.app"
         codesign --verify --strict --deep "$stage/greycard.app"
     else
@@ -476,7 +492,7 @@ if [ "$os" = macos ]; then
         "target/dist/$name.dmg"
     rm -rf "$dmgroot"
     if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
-        codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" \
+        sign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" \
             "target/dist/$name.dmg"
     fi
     if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
