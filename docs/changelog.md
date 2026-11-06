@@ -5,6 +5,18 @@ design note behind it.
 
 ## 0.10.0
 
+Merges: HDR, panorama, and focus stack from the frame menu, each a
+DNG beside its first frame. Fills land one by one after the picture,
+and a fill, the denoiser, or a mask the graphics card has no memory
+for is refused rather than crashing the editor. The learned denoise
+blends luma and chroma apart, Structure under Clarity, Refine edge
+on a mask, a lens picker with Adobe profiles, a DNG's own
+corrections read, Lightroom's XMP edits opened, a focus score for
+every frame, preset favorites and groups, Edit in to several apps,
+the view at Fit without shimmer, a tentative Intel Mac package, and
+a round of fixes from the testers. Sidecars written by this build
+are refused by 0.9.x.
+
 ### The window
 
 - The picture at Fit, and at any zoom under 1:1, no longer shimmers on
