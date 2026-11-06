@@ -32,6 +32,17 @@ the reasoning lives in `docs/notes.md`.
       the branch card-memory's tiers (20 GB decoder whole, 24 GB all
       three) are not taken up, and the UNet is kept for one size only,
       so fills of mixed sizes reload anyway
+- [ ] The editor's host memory grew to 14 GB plus 10 GB of swap in a
+      33-minute session of fills and the learned denoiser on 24 MP
+      frames (2026-11-05, the run that ended in the abort below);
+      find the growth: the fill rounds' kept points, the shelf, or
+      ONNX Runtime's host-side copies
+- [ ] The editor dies after a Vulkan out-of-device-memory inside ONNX
+      Runtime: a segfault in the driver under Dawn's submit, or an
+      abort in the allocator thirty seconds later (2026-11-05, twice;
+      issue 73 is the same class). The free-memory check before a
+      model run is the defense being built; what stays resident after
+      the held UNet is let go (12 GiB seen) is to find
 - [ ] System and File display profiles differ with the same profile
       picked (issue 53): waits on the reporter's profile; a table-based
       monitor profile is the lead
