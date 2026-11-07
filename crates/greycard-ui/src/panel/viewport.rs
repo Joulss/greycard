@@ -2169,6 +2169,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.develop.center.0 += px / old - px / new;
             st.develop.center.1 += py / old - py / new;
             st.develop.zoom = new;
+            st.develop.zoom_back = None;
             app.window().request_redraw();
         });
     }
@@ -2183,6 +2184,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
+            st.develop.zoom_back = None;
             if level <= 0.0 {
                 st.develop.zoom = 0.0;
                 let (iw, ih) = st.develop.image_size;
@@ -2251,6 +2253,68 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let fitted = st.develop.zoom == 0.0;
             drop(st);
             zoom_to2(if fitted { 1.0 } else { 0.0 }, x, y);
+        });
+        // A middle click: 200% at the point, and at 200% back to the
+        // zoom and the place it came from, or to fit when that was
+        // another picture's. Not over the canvas, nor in the compare
+        // view, where a click chooses a tile.
+        let (state, app_weak) = (outer.clone(), app.as_weak());
+        let zoom_to3 = zoom_to.clone();
+        app.on_toggle_zoom_200(move |x, y| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let scale = app.window().scale_factor();
+            let (vw, vh) = (
+                app.get_view_width().max(1) as u32,
+                app.get_view_height().max(1) as u32,
+            );
+            if compared(&st) > 1 {
+                return;
+            }
+            let (iw, ih) = st.develop.image_size;
+            if iw == 0 || ih == 0 {
+                return;
+            }
+            let zoom = effective_zoom(&st, vw, vh);
+            if !zoom::on_picture(
+                (x * scale, y * scale),
+                (vw, vh),
+                zoom,
+                st.develop.center,
+                (iw, ih),
+            ) {
+                return;
+            }
+            let frame = st.current.and_then(|c| st.key_of(c)).map(|k| (k, (iw, ih)));
+            if (st.develop.zoom - 2.0).abs() < 1e-3 {
+                // Kept only while nothing else has moved the zoom; a
+                // pan at 200% keeps it, as the look round is the point.
+                match st.develop.zoom_back.take() {
+                    Some(back) if back.frame == frame => {
+                        tracing::info!("middle click: back from 200% to {}", back.zoom);
+                        st.develop.zoom = back.zoom;
+                        st.develop.center = back.center;
+                        app.window().request_redraw();
+                    }
+                    _ => {
+                        tracing::info!("middle click: back from 200% to fit");
+                        drop(st);
+                        zoom_to3(0.0, x, y);
+                    }
+                }
+            } else {
+                let back = crate::owners::ZoomBack {
+                    frame,
+                    zoom: st.develop.zoom,
+                    center: st.develop.center,
+                };
+                tracing::info!("middle click: 200% from {}", st.develop.zoom);
+                drop(st);
+                zoom_to3(2.0, x, y);
+                state.borrow_mut().develop.zoom_back = Some(back);
+            }
         });
         let (state, app_weak) = (outer.clone(), app.as_weak());
         app.on_mat_key(move || {
@@ -2927,6 +2991,560 @@ pub(crate) mod tests {
         };
         let a = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
         assert!((a - 15.0).abs() < 1e-3, "on the step: {a}");
+    }
+
+    /// The middle button pans whatever is in hand: with a mask's
+    /// brush, or the heal brush, a middle drag pans and lays down
+    /// nothing, the tool still in hand and painting again after; a
+    /// left press while the middle pans is nothing either.
+    #[test]
+    fn a_middle_drag_pans_under_a_brush_and_leaves_it_in_hand() {
+        use crate::testing::{drag, drag_with};
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let (app, state, _worker) = hover_frame(1.0);
+        state.borrow_mut().develop.zoom = 1.0;
+        let middle = PointerEventButton::Middle;
+        let center = || state.borrow().develop.center;
+        let path = [(600.0, 400.0), (620.0, 400.0), (680.0, 420.0)];
+        let strokes = || {
+            let st = state.borrow();
+            st.develop.edit.adjustments.first().map_or(0, |a| {
+                a.mask
+                    .components
+                    .iter()
+                    .map(|c| match &c.shape {
+                        greycard_edit::mask::Shape::Brush { strokes } => strokes.len(),
+                        _ => 0,
+                    })
+                    .sum()
+            })
+        };
+
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Brush");
+        let before = center();
+        drag_with(&app, middle, &path);
+        assert_ne!(center(), before, "the middle drag panned");
+        assert_eq!(strokes(), 0, "and laid no stroke");
+        assert_eq!(app.get_placing(), "Brush", "the brush is still in hand");
+        let before = center();
+        drag(&app, &path);
+        assert_eq!(strokes(), 1, "the left drag paints");
+        assert_eq!(center(), before, "and pans nothing");
+
+        // A left press and release while the middle pans: no stroke,
+        // no point on the last one, and the pan the middle's alone,
+        // ended by the left release, which takes the window's hold.
+        let points = || {
+            let st = state.borrow();
+            st.develop.edit.adjustments[0]
+                .mask
+                .components
+                .iter()
+                .map(|c| match &c.shape {
+                    greycard_edit::mask::Shape::Brush { strokes } => {
+                        strokes.iter().map(|s| s.points.len()).sum::<usize>()
+                    }
+                    _ => 0,
+                })
+                .sum::<usize>()
+        };
+        let (was, before) = (points(), center());
+        let at = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
+        let left = PointerEventButton::Left;
+        for event in [
+            WindowEvent::PointerMoved {
+                position: at(path[0]),
+            },
+            WindowEvent::PointerPressed {
+                position: at(path[0]),
+                button: middle,
+            },
+            WindowEvent::PointerMoved {
+                position: at(path[1]),
+            },
+            WindowEvent::PointerPressed {
+                position: at(path[1]),
+                button: left,
+            },
+            WindowEvent::PointerMoved {
+                position: at(path[2]),
+            },
+            WindowEvent::PointerReleased {
+                position: at(path[2]),
+                button: left,
+            },
+            WindowEvent::PointerReleased {
+                position: at(path[2]),
+                button: middle,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert_eq!(strokes(), 1, "the left press in a middle pan painted");
+        assert_eq!(points(), was, "nor did it add to the last stroke");
+        let moved = (path[2].0 - path[0].0, path[2].1 - path[0].1);
+        assert_eq!(
+            center(),
+            (before.0 - moved.0, before.1 - moved.1),
+            "the middle's pan alone"
+        );
+        app.invoke_stop_placing();
+
+        let patches = || state.borrow().develop.edit.retouch.patches.len();
+        app.invoke_retouch_toggled("Heal".into());
+        let before = center();
+        drag_with(&app, middle, &path);
+        assert_ne!(center(), before, "the middle drag panned");
+        assert_eq!(patches(), 0, "no repair under the middle");
+        assert_eq!(app.get_retouch_mode(), "Heal");
+        drag(&app, &path);
+        assert_eq!(patches(), 1, "the left drag repairs");
+    }
+
+    /// A middle click on the picture goes to 200% there and a second
+    /// one back to the zoom and the place it came from, fit or not; a
+    /// middle drag pans and zooms nothing; a left click is still 1:1.
+    #[test]
+    fn a_middle_click_toggles_200_percent_and_a_middle_drag_does_not() {
+        use crate::testing::{click, click_with, drag_with};
+        use slint::platform::PointerEventButton;
+        let (app, state, _worker) = hover_frame(1.0);
+        let middle = PointerEventButton::Middle;
+        let zoom = || state.borrow().develop.zoom;
+        let center = || state.borrow().develop.center;
+        let (x, y) = view_middle(&app);
+        let (x, y) = (x + 100.0, y + 50.0);
+
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 2.0, "fit to 200%");
+        assert_ne!(center(), (3000.0, 2000.0), "about the point clicked");
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 0.0, "back to fit");
+        assert_eq!(center(), (3000.0, 2000.0));
+
+        // From 1:1 somewhere off the middle, and back there.
+        {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 1.0;
+            st.develop.center = (2000.0, 1500.0);
+        }
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 2.0);
+        click_with(&app, middle, x, y);
+        assert_eq!(
+            (zoom(), center()),
+            (1.0, (2000.0, 1500.0)),
+            "back to 1:1 there"
+        );
+
+        // A middle drag pans, and its release zooms nothing.
+        let before = center();
+        drag_with(&app, middle, &[(x, y), (x + 10.0, y), (x + 60.0, y + 20.0)]);
+        assert_eq!(zoom(), 1.0, "no toggle after a drag");
+        assert_ne!(center(), before);
+
+        // The left click's own toggle is as it was.
+        state.borrow_mut().develop.zoom = 0.0;
+        click(&app, x, y);
+        assert_eq!(zoom(), 1.0);
+    }
+
+    /// The middle button held in a left drag holds the line: a linear
+    /// lands on Shift's step, and a brush's stroke is one straight
+    /// segment from its press to the release, however the pointer
+    /// wandered. Released first, the middle ends the stroke there,
+    /// and the left release after lays nothing more. A later plain
+    /// stroke is free again.
+    #[test]
+    fn the_middle_held_in_a_drag_holds_a_gradient_and_a_stroke_straight() {
+        use crate::testing::press;
+        use greycard_edit::mask::Shape;
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let (app, state, _worker) = hover_frame(1.0);
+        let (left, middle) = (PointerEventButton::Left, PointerEventButton::Middle);
+        let at = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
+        let send = |events: &[(char, (f32, f32), PointerEventButton)]| {
+            for &(kind, p, button) in events {
+                let position = at(p);
+                app.window().dispatch_event(match kind {
+                    'm' => WindowEvent::PointerMoved { position },
+                    'p' => WindowEvent::PointerPressed { position, button },
+                    _ => WindowEvent::PointerReleased { position, button },
+                });
+            }
+        };
+        let (a, b, c, d) = (
+            (600.0, 400.0),
+            (640.0, 380.0),
+            (700.0, 450.0),
+            (800.0, 437.0),
+        );
+
+        // A linear from M: the middle pressed partway, the release
+        // off any step.
+        press(&app, "m");
+        assert_eq!(app.get_placing(), "Linear");
+        send(&[
+            ('m', a, left),
+            ('p', a, left),
+            ('m', b, left),
+            ('p', b, middle),
+            ('m', d, left),
+            ('r', d, left),
+            ('r', d, middle),
+        ]);
+        assert!(!app.get_place_line(), "let go with the gesture");
+        let shape = |k: usize| {
+            state.borrow().develop.edit.adjustments[0].mask.components[k]
+                .shape
+                .clone()
+        };
+        let Shape::Linear { from, to } = shape(0) else {
+            panic!("a linear placed")
+        };
+        let angle = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
+        let r = angle.rem_euclid(15.0);
+        assert!(r.min(15.0 - r) < 1e-3, "on Shift's step: {angle}");
+
+        // Another linear, the middle let go first: placed where the
+        // middle's release was, on the step, and the left release
+        // after it places nothing more.
+        press(&app, "m");
+        send(&[
+            ('m', a, left),
+            ('p', a, left),
+            ('m', b, left),
+            ('p', b, middle),
+            ('m', d, left),
+            ('r', d, middle),
+            ('m', c, left),
+            ('r', c, left),
+        ]);
+        assert_eq!(app.get_placing(), "", "placed and put down");
+        let linears: Vec<([f32; 2], [f32; 2])> = state
+            .borrow()
+            .develop
+            .edit
+            .adjustments
+            .iter()
+            .flat_map(|a| a.mask.components.iter())
+            .filter_map(|c| match c.shape {
+                Shape::Linear { from, to } => Some((from, to)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(linears.len(), 2, "one more, and only one");
+        let (from, to) = linears[1];
+        let angle = (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees();
+        let r = angle.rem_euclid(15.0);
+        assert!(r.min(15.0 - r) < 1e-3, "on Shift's step: {angle}");
+
+        // A brush: a wandering stroke, the middle pressed partway.
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Brush");
+        send(&[
+            ('m', a, left),
+            ('p', a, left),
+            ('m', b, left),
+            ('m', c, left),
+            ('p', c, middle),
+            ('m', b, left),
+            ('m', d, left),
+            ('r', d, left),
+            ('r', d, middle),
+        ]);
+        // The brush placed: the last Brush shape of any mask.
+        let strokes = |_: usize| {
+            state
+                .borrow()
+                .develop
+                .edit
+                .adjustments
+                .iter()
+                .flat_map(|a| a.mask.components.iter())
+                .filter_map(|c| match &c.shape {
+                    Shape::Brush { strokes } => Some(strokes.clone()),
+                    _ => None,
+                })
+                .next_back()
+                .expect("a brush")
+        };
+        let points = |k: usize| strokes(k).last().unwrap().points.clone();
+        let view = |p: [f32; 2]| {
+            let st = state.borrow();
+            source_to_view(&st, &app, p[0], p[1])
+        };
+        // The view's points are its own; the events', the window's.
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let near = |p: [f32; 2], q: (f32, f32)| {
+            let v = view(p);
+            (v.0 + base.x - q.0).abs() < 0.5 && (v.1 + base.y - q.1).abs() < 0.5
+        };
+        let line = points(1);
+        assert_eq!(line.len(), 2, "one straight segment: {line:?}");
+        assert!(near(line[0], a) && near(line[1], d), "{line:?}");
+
+        // The middle let go first: the stroke ends where it was, and
+        // the moves and the left release after it add nothing.
+        send(&[
+            ('m', a, left),
+            ('p', a, left),
+            ('m', b, left),
+            ('p', b, middle),
+            ('m', c, left),
+            ('r', c, middle),
+            ('m', d, left),
+            ('r', d, left),
+        ]);
+        assert_eq!(strokes(1).len(), 2);
+        let line = points(1);
+        assert_eq!(line.len(), 2, "{line:?}");
+        assert!(
+            near(line[0], a) && near(line[1], c),
+            "ended at the middle's release: {line:?}"
+        );
+        assert!(!app.get_place_line());
+
+        // A plain stroke after: free, every point kept.
+        send(&[
+            ('m', a, left),
+            ('p', a, left),
+            ('m', b, left),
+            ('m', c, left),
+            ('m', d, left),
+            ('r', d, left),
+        ]);
+        assert_eq!(strokes(1).len(), 3);
+        assert!(points(1).len() > 2, "a free stroke");
+        assert_eq!(app.get_placing(), "Brush", "the brush stays in hand");
+    }
+
+    /// With nothing in hand, a left press made while the middle pans
+    /// drives nothing: the pan is the middle's alone, however the
+    /// pointer goes after the left press.
+    #[test]
+    fn a_left_press_in_a_middle_pan_drives_nothing() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let (app, state, _worker) = hover_frame(1.0);
+        state.borrow_mut().develop.zoom = 1.0;
+        let (left, middle) = (PointerEventButton::Left, PointerEventButton::Middle);
+        let at = |x: f32| slint::LogicalPosition::new(x, 400.0);
+        let before = state.borrow().develop.center;
+        for event in [
+            WindowEvent::PointerMoved {
+                position: at(600.0),
+            },
+            WindowEvent::PointerPressed {
+                position: at(600.0),
+                button: middle,
+            },
+            WindowEvent::PointerMoved {
+                position: at(610.0),
+            },
+            WindowEvent::PointerPressed {
+                position: at(610.0),
+                button: left,
+            },
+            WindowEvent::PointerMoved {
+                position: at(620.0),
+            },
+            WindowEvent::PointerReleased {
+                position: at(620.0),
+                button: left,
+            },
+            WindowEvent::PointerMoved {
+                position: at(700.0),
+            },
+            WindowEvent::PointerReleased {
+                position: at(700.0),
+                button: middle,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        let after = state.borrow().develop.center;
+        assert_eq!(
+            after,
+            (before.0 - 20.0, before.1),
+            "20 px of the middle's pan"
+        );
+        assert_eq!(state.borrow().develop.zoom, 1.0, "and no click's zoom");
+    }
+
+    /// A middle drag pans from a mask's handle, a repair's handle, the
+    /// level, and the guide, and none of them takes the press as its
+    /// own; a pan whose area goes away mid-drag (a key put the level
+    /// down) ends, and a hover after it pans nothing.
+    #[test]
+    fn a_middle_drag_pans_from_a_handle_the_level_and_the_guide() {
+        use crate::Pt;
+        use crate::testing::{click, drag_with};
+        use slint::platform::{PointerEventButton, WindowEvent};
+        use std::cell::Cell;
+        let (app, state, _worker) = hover_frame(1.0);
+        state.borrow_mut().develop.zoom = 1.0;
+        let middle = PointerEventButton::Middle;
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let center = || state.borrow().develop.center;
+        let p = (base.x + 500.0, base.y + 300.0);
+        let pans = || {
+            let before = center();
+            drag_with(
+                &app,
+                middle,
+                &[p, (p.0 + 10.0, p.1), (p.0 + 40.0, p.1 + 20.0)],
+            );
+            center() == (before.0 - 40.0, before.1 - 20.0)
+        };
+        let took = Rc::new(Cell::new(false));
+        let handles = || ModelRc::new(VecModel::from(vec![Pt { x: 500.0, y: 300.0 }]));
+
+        app.set_mask_kind("Linear".into());
+        app.set_mask_handles(handles());
+        let t = took.clone();
+        app.on_mask_grabbed(move |_, _| t.set(true));
+        assert!(pans(), "from a mask's handle");
+        assert!(!took.get());
+        click(&app, p.0, p.1);
+        assert!(took.get(), "the handle is there to press");
+        app.set_mask_kind("".into());
+
+        took.set(false);
+        app.set_retouch_mode("Heal".into());
+        app.set_patch_handles(ModelRc::new(VecModel::from(vec![
+            Pt { x: 500.0, y: 300.0 },
+            Pt { x: 700.0, y: 300.0 },
+        ])));
+        let t = took.clone();
+        app.on_patch_grabbed(move |_| t.set(true));
+        assert!(pans(), "from a repair's handle");
+        assert!(!took.get());
+        click(&app, p.0, p.1);
+        assert!(took.get(), "the handle is there to press");
+        app.set_retouch_mode("".into());
+
+        took.set(false);
+        let t = took.clone();
+        app.on_level_end(move |_, _, _, _| t.set(true));
+        app.set_level_mode(true);
+        assert!(pans(), "from the level");
+        assert!(!took.get(), "no level drawn");
+        let t = took.clone();
+        app.on_guide_stroke(move |_, _, _, _| t.set(true));
+        app.set_level_mode(false);
+        app.set_guide_mode("Vertical".into());
+        assert!(pans(), "from the guide");
+        assert!(!took.get(), "no guide drawn");
+        app.set_guide_mode("".into());
+
+        // The level taken away mid-pan: its release never comes.
+        app.set_level_mode(true);
+        let at = |x: f32| slint::LogicalPosition::new(x, p.1);
+        for event in [
+            WindowEvent::PointerMoved { position: at(p.0) },
+            WindowEvent::PointerPressed {
+                position: at(p.0),
+                button: middle,
+            },
+            WindowEvent::PointerMoved {
+                position: at(p.0 + 20.0),
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        app.set_level_mode(false);
+        let before = center();
+        for x in [p.0 + 40.0, p.0 + 80.0] {
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position: at(x) });
+        }
+        assert_eq!(center(), before, "a hover after pans nothing");
+    }
+
+    /// The 200% click is the picture's: on the canvas round a fitted
+    /// picture, or in the compare view, it does nothing. Its memory is
+    /// the frame's: back on another frame it fits, and any other zoom
+    /// change between forgets it.
+    #[test]
+    fn the_200_percent_click_is_the_pictures_and_its_memory_the_frames() {
+        use crate::testing::click_with;
+        use slint::platform::PointerEventButton;
+        let app = window(2);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let set = |zoom: f32, center: (f32, f32)| {
+            let mut st = state.borrow_mut();
+            st.develop.image_size = (6000, 4000);
+            st.develop.zoom = zoom;
+            st.develop.center = center;
+        };
+        set(0.0, (3000.0, 2000.0));
+        let middle = PointerEventButton::Middle;
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let zoom = || state.borrow().develop.zoom;
+        let center = || state.borrow().develop.center;
+        let (mx, my) = view_middle(&app);
+        let (x, y) = (base.x + mx, base.y + my);
+
+        click_with(&app, middle, base.x + 2.0, base.y + 2.0);
+        assert_eq!(zoom(), 0.0, "the canvas takes none");
+
+        // From 1:1 on the first frame, 200%; on the second frame, back
+        // fits rather than land on the first frame's place.
+        set(1.0, (2000.0, 1500.0));
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 2.0);
+        app.invoke_select(1);
+        set(2.0, (3000.0, 2000.0));
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 0.0, "another frame's memory fits");
+
+        // Any other zoom change forgets it: the wheel at 200% and back.
+        set(1.0, (2000.0, 1500.0));
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 2.0);
+        app.invoke_zoom(1.25, x - base.x, y - base.y);
+        app.invoke_zoom(0.8, x - base.x, y - base.y);
+        assert!((zoom() - 2.0).abs() < 1e-3);
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 0.0, "forgotten: fit");
+        // A pan at 200% keeps it.
+        set(1.0, (2000.0, 1500.0));
+        click_with(&app, middle, x, y);
+        crate::testing::drag_with(&app, middle, &[(x, y), (x + 10.0, y), (x + 60.0, y)]);
+        click_with(&app, middle, x, y);
+        assert_eq!((zoom(), center()), (1.0, (2000.0, 1500.0)));
+        // A turn between swaps the picture's size: back fits.
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 2.0);
+        state.borrow_mut().develop.image_size = (4000, 6000);
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 0.0, "a turned picture's memory fits");
+        set(1.0, (2000.0, 1500.0));
+
+        // In the compare view a click is nobody's zoom.
+        let mut cull = crate::panel::cull::Cull::new("".into(), 2048);
+        cull.compare = 2;
+        state.borrow_mut().culling.hold = Some(cull);
+        click_with(&app, middle, x, y);
+        assert_eq!(zoom(), 1.0, "the compare view takes none");
     }
 
     /// Under a Straighten, a Shift drag placing a Linear steps its

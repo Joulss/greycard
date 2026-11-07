@@ -96,6 +96,8 @@ export component App inherits Window {
     callback zoom-to(float, length, length);
     /// Fit if zoomed, else 1:1 at the point.
     callback toggle-zoom(length, length);
+    /// A middle click: 200% at the point, else back to the zoom before.
+    callback toggle-zoom-200(length, length);
     /// Fit if at this level, else this level about the view's center.
     callback zoom-key(float);
     /// The mat around the fitted picture, on or off.
@@ -129,6 +131,9 @@ export component App inherits Window {
     callback set-collapsed();
     /// Ctrl+Shift+S, or the presets' Sync button: the sync sheet.
     callback sync-open-asked();
+    /// A middle click on the panel's Sync button: the sync without the
+    /// sheet, on the last sync's or paste's choice.
+    callback sync-quick-asked();
     // The sync sheet: the current frame's sections, parts and masks,
     // checked, to lay over the rest of the set (`carry.rs`).
     in-out property <bool> sync-open: false;
@@ -1390,6 +1395,8 @@ export component App inherits Window {
     callback place-released();
     // Shift at the press placing a shape (`Viewport.place-shift`).
     in-out property <bool> place-shift;
+    // The middle button held while placing (`Viewport.place-line`).
+    in-out property <bool> place-line;
     // The chosen shape on the view: its kind, its handles (the whole
     // first), and for a radial its outline; for a linear the angle of
     // its lines.
@@ -3194,6 +3201,7 @@ export component App inherits Window {
                 picture-at(a, b) => { return root.picture-at(a, b); }
                 wheel-pan(a, b) => { root.wheel-pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
+                toggle-zoom-200(a, b) => { root.toggle-zoom-200(a, b); }
                 hovered(a, b, c) => { root.view-hovered(a, b, c); }
                 hand: root.hand-key || (root.shift-held && !self.shift-holds);
                 hand-panned <=> root.hand-panned;
@@ -3231,6 +3239,7 @@ export component App inherits Window {
                 place-dragged(a, b) => { root.place-dragged(a, b); }
                 place-released => { root.place-released(); }
                 place-shift <=> root.place-shift;
+                place-line <=> root.place-line;
                 mask-kind <=> root.mask-kind;
                 mask-handles <=> root.mask-handles;
                 handles-down <=> root.handles-down;
@@ -3337,6 +3346,9 @@ export component App inherits Window {
                     redo => { root.redo(); }
                     set-count: root.set-count;
                     sync-asked => { root.sync-open-asked(); }
+                    sync-now-asked => {
+                        if (!root.sheet-open()) { root.sync-quick-asked(); }
+                    }
                 }
                 // The panel in the order a photo is developed; the
                 // masks and the retouch on tabs of their own. The bar

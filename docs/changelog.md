@@ -43,6 +43,15 @@ design note behind it.
   frames carries every mask, and you can uncheck one on the sheet
   ([§597](https://github.com/jessolmstead/greycard/blob/master/docs/notes/597-copy-masks-on-a-mask-rows-menu.md)).
 
+### The window
+
+- The middle button: a middle drag moves the picture under any tool,
+  a middle click zooms to 200% there and back, held during a
+  gradient's or a brush's drag it keeps the line straight, and a
+  middle click on the panel's Sync button syncs on your last choice
+  without the sheet
+  ([§599](https://github.com/jessolmstead/greycard/blob/master/docs/notes/599-the-middle-button.md)).
+
 ## 0.10.1
 
 ### Fixes

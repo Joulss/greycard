@@ -45,11 +45,15 @@ export component TipArea inherits TouchArea {
     }
     /// A press of any button, after the tip is taken down.
     callback down(PointerEvent);
+    /// A release of any button.
+    callback up(PointerEvent);
     changed has-hover => { if (!root.has-hover) { root.untip(); } }
     pointer-event(e) => {
         if (e.kind == PointerEventKind.down) {
             root.untip();
             root.down(e);
+        } else if (e.kind == PointerEventKind.up) {
+            root.up(e);
         }
     }
 }
@@ -1194,6 +1198,10 @@ export component PanelButton inherits Rectangle {
     /// opens it from, as a right-click anywhere on the button does.
     in property <bool> has-menu: false;
     callback clicked();
+    /// A click of the middle button: for a button with a second way to
+    /// do what it does, nothing otherwise.
+    callback middle-clicked();
+    property <bool> middle-in;
     /// The menu asked for, at a point of the button.
     callback menu(length, length);
     /// Whether the keys are the button's: a sheet that keeps Tab
@@ -1271,7 +1279,17 @@ export component PanelButton inherits Rectangle {
         words: root.words;
         enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        up(e) => {
+            if (e.button == PointerEventButton.middle && root.middle-in) {
+                root.middle-in = false;
+                if (self.mouse-x >= 0 && self.mouse-x < self.width
+                        && self.mouse-y >= 0 && self.mouse-y < self.height) {
+                    root.middle-clicked();
+                }
+            }
+        }
         down(e) => {
+            root.middle-in = e.button == PointerEventButton.middle;
             if (root.has-menu && e.button == PointerEventButton.right) {
                 root.clicked-in = true;
                 fs.focus();
@@ -1450,13 +1468,64 @@ export component CropHandle inherits TouchArea {
     out property <KeyboardModifiers> press-modifiers;
     property <length> press-x;
     property <length> press-y;
-    mouse-cursor: root.cursor;
+    /// The middle button's press, its moves, and its release, at the
+    /// point in the window: the view's, which pans or zooms by them
+    /// under a handle as anywhere else on the picture.
+    callback middle(PointerEvent, length, length);
+    // A middle press not in a drag of the handle, whose moves and
+    // release are the view's; and a left press while it is held,
+    // which is neither a grab nor a drop.
+    property <bool> middle-held;
+    property <bool> left-ignored;
+    mouse-cursor: self.middle-held ? MouseCursor.grabbing : root.cursor;
     pointer-event(e) => {
         self.alt = e.modifiers.alt;
+        if (e.button == PointerEventButton.middle) {
+            if (e.kind == PointerEventKind.down && !self.pressed) {
+                self.middle-held = true;
+                root.middle(e, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            } else if (e.kind == PointerEventKind.up && self.middle-held) {
+                self.middle-held = false;
+                root.middle(e, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            } else if (e.kind == PointerEventKind.up && self.pressed && !self.left-ignored) {
+                // In a drag of the handle, its release takes the
+                // window's hold on the drag with it: the drag ends
+                // here, and the left release, if it comes, is none.
+                self.left-ignored = true;
+                root.dropped();
+            }
+            return;
+        }
+        if (self.middle-held && e.kind == PointerEventKind.move) {
+            root.middle(e, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            return;
+        }
+        if (self.middle-held && e.kind == PointerEventKind.cancel) {
+            self.middle-held = false;
+            root.middle(e, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+            if (self.middle-held) {
+                self.left-ignored = true;
+                return;
+            }
+            // Whatever an earlier ignored press left behind.
+            self.left-ignored = false;
+        }
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up && self.left-ignored) {
+            self.left-ignored = false;
+            // Its release takes the window's hold on the pan too.
+            if (self.middle-held) {
+                self.middle-held = false;
+                root.middle(e, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            return;
+        }
         // Cancel carries button `other`, always, so it is read ahead
         // of the left-button filter below or a grab the window took
         // back mid-drag would never call `dropped`.
         if (e.kind == PointerEventKind.cancel) {
+            self.left-ignored = false;
             root.dropped();
             return;
         }
@@ -1471,7 +1540,7 @@ export component CropHandle inherits TouchArea {
         }
     }
     moved => {
-        if (self.pressed) {
+        if (self.pressed && !self.left-ignored) {
             root.dragged(root.id, self.absolute-position.x + self.mouse-x - self.press-x, self.absolute-position.y + self.mouse-y - self.press-y);
         }
     }

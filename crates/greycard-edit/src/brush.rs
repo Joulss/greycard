@@ -278,6 +278,33 @@ impl Raster {
     /// Whether anything changed.
     pub fn update(&mut self, strokes: &[Stroke]) -> bool {
         let n = self.done.len();
+        // Only the stroke under way changed, other than by growing (a
+        // stroke held straight, its end moved): the finished strokes
+        // are kept in `base`, so it alone is painted again over them.
+        let redone = n > 0
+            && n == strokes.len()
+            && self.done[..n - 1] == strokes[..n - 1]
+            && !self.done[n - 1].continues(&strokes[n - 1]);
+        if redone {
+            self.data.copy_from_slice(&self.base);
+            if self.cut.len() == self.cut_base.len() {
+                self.cut.copy_from_slice(&self.cut_base);
+            }
+            // The cut made by the stroke's old self alone, and the new
+            // one makes none: no cut, as painting from nothing gives.
+            if strokes[n - 1].op != Op::Subtract && self.cut_base.iter().all(|&t| t == 0) {
+                self.cut.clear();
+                self.cut_base.clear();
+            }
+            self.cover.fill(0);
+            self.carry = 0.0;
+            if !strokes[n - 1].points.is_empty() {
+                self.stamp_from(&strokes[n - 1], 0);
+            }
+            self.done = strokes.to_vec();
+            self.version += 1;
+            return true;
+        }
         let continues = n <= strokes.len()
             && self.done[..n.saturating_sub(1)] == strokes[..n.saturating_sub(1)]
             && (n == 0 || self.done[n - 1].continues(&strokes[n - 1]));
@@ -637,5 +664,43 @@ mod tests {
         assert_eq!(step.version, v);
         assert!(step.update(std::slice::from_ref(&a)));
         assert_eq!(step.data(), Raster::of(&[a], aspect).data());
+    }
+
+    /// The stroke under way replaced rather than grown, as one held
+    /// straight is on every move: what is painted is what painting
+    /// the strokes from nothing gives, the cut too.
+    #[test]
+    fn the_last_stroke_replaced_matches_painting_at_once() {
+        let aspect = 0.75;
+        let a = Stroke {
+            points: vec![[0.1, 0.1], [0.3, 0.2], [0.35, 0.4]],
+            ..Stroke::new(Op::Add, 0.03, 0.3, 0.7)
+        };
+        for op in [Op::Add, Op::Subtract] {
+            let line = |end: Pos| Stroke {
+                points: vec![[0.2, 0.3], end],
+                ..Stroke::new(op, 0.05, 0.2, 0.6)
+            };
+            let mut step = Raster::of(&[a.clone(), line([0.2, 0.3])], aspect);
+            let v = step.version;
+            for end in [[0.6, 0.5], [0.4, 0.2], [0.7, 0.3]] {
+                assert!(step.update(&[a.clone(), line(end)]));
+            }
+            assert!(step.version > v);
+            let whole = Raster::of(&[a.clone(), line([0.7, 0.3])], aspect);
+            assert_eq!(step.data(), whole.data(), "{op:?}");
+            assert_eq!(step.cut(), whole.cut(), "{op:?}");
+        }
+        // A Subtract replaced by an Add over Adds alone: no cut left.
+        let line = |op: Op| Stroke {
+            points: vec![[0.2, 0.3], [0.6, 0.5]],
+            ..Stroke::new(op, 0.05, 0.2, 0.6)
+        };
+        let mut step = Raster::of(&[a.clone(), line(Op::Subtract)], aspect);
+        assert!(step.cut().is_some());
+        assert!(step.update(&[a.clone(), line(Op::Add)]));
+        let whole = Raster::of(&[a.clone(), line(Op::Add)], aspect);
+        assert_eq!(step.cut(), None);
+        assert_eq!(step.data(), whole.data());
     }
 }

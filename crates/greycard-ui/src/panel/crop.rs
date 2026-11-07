@@ -1144,6 +1144,115 @@ mod tests {
         assert_eq!(app.get_geo_crop_w(), 0.2);
     }
 
+    /// Under the crop tool a middle drag pans, from the crop's body as
+    /// from outside it: the crop is neither moved nor drawn anew, and
+    /// the tool stays up.
+    #[test]
+    fn a_middle_drag_pans_under_the_crop() {
+        use slint::platform::PointerEventButton;
+        let app = window(1);
+        let (state, base) = draw_setup(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.image_size = (SW as u32, SH as u32);
+            st.develop.center = (SW / 2.0, SH / 2.0);
+        }
+        let middle = PointerEventButton::Middle;
+        let center = || state.borrow().develop.center;
+        for f in [(0.5, 0.5), (0.05, 0.05)] {
+            let (x, y) = at(&app, base, f);
+            let before = center();
+            crate::testing::drag_with(&app, middle, &[(x, y), (x + 10.0, y), (x + 40.0, y + 20.0)]);
+            assert_ne!(center(), before, "a middle drag from {f:?} panned");
+            assert!(app.get_crop_mode(), "the crop is still up");
+            assert_eq!(
+                (app.get_geo_crop_x(), app.get_geo_crop_w()),
+                (0.4, 0.2),
+                "and untouched"
+            );
+            assert!(state.borrow().develop.crop_draw.is_none(), "nothing drawn");
+        }
+        // A left press while the middle pans outside the crop draws
+        // nothing, its release or not.
+        let (x, y) = at(&app, base, (0.05, 0.05));
+        let p = |dx: f32| slint::LogicalPosition::new(x + dx, y);
+        let left = PointerEventButton::Left;
+        use slint::platform::WindowEvent;
+        for event in [
+            WindowEvent::PointerMoved { position: p(0.0) },
+            WindowEvent::PointerPressed {
+                position: p(0.0),
+                button: middle,
+            },
+            WindowEvent::PointerMoved { position: p(10.0) },
+            WindowEvent::PointerPressed {
+                position: p(10.0),
+                button: left,
+            },
+            WindowEvent::PointerMoved { position: p(60.0) },
+            WindowEvent::PointerReleased {
+                position: p(60.0),
+                button: left,
+            },
+            WindowEvent::PointerReleased {
+                position: p(60.0),
+                button: middle,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert!(state.borrow().develop.crop_draw.is_none(), "nothing drawn");
+        assert_eq!((app.get_geo_crop_x(), app.get_geo_crop_w()), (0.4, 0.2));
+        // A middle click on the crop's body: 200% there.
+        let (x, y) = at(&app, base, (0.5, 0.5));
+        crate::testing::click_with(&app, middle, x, y);
+        assert_eq!(state.borrow().develop.zoom, 2.0);
+        assert_eq!(app.get_geo_crop_x(), 0.4, "the crop untouched");
+    }
+
+    /// A middle click during a left drag of the crop's body takes the
+    /// window's hold on the drag with it: the drag ends there, and the
+    /// next left drag of the body moves the crop again.
+    #[test]
+    fn a_middle_click_in_a_crop_drag_ends_it() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let app = window(1);
+        let (state, base) = draw_setup(&app);
+        let (left, middle) = (PointerEventButton::Left, PointerEventButton::Middle);
+        let (x, y) = at(&app, base, (0.5, 0.5));
+        let p = |dx: f32| slint::LogicalPosition::new(x + dx, y);
+        for event in [
+            WindowEvent::PointerMoved { position: p(0.0) },
+            WindowEvent::PointerPressed {
+                position: p(0.0),
+                button: left,
+            },
+            WindowEvent::PointerMoved { position: p(20.0) },
+            WindowEvent::PointerPressed {
+                position: p(20.0),
+                button: middle,
+            },
+            WindowEvent::PointerReleased {
+                position: p(20.0),
+                button: middle,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert!(state.borrow().develop.crop_drag.is_none(), "the drag ended");
+        let moved = app.get_geo_crop_x();
+        assert!(moved > 0.4, "it moved first: {moved}");
+        // Off the window and released there: nothing reaches the body.
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position: p(400.0),
+            button: left,
+        });
+        let (x, y) = at(&app, base, (moved + 0.1, 0.5));
+        crate::testing::drag(&app, &[(x, y), (x + 10.0, y), (x + 20.0, y)]);
+        assert!(app.get_geo_crop_x() > moved, "the next drag moves it");
+        assert!(state.borrow().develop.crop_drag.is_none());
+    }
+
     #[test]
     fn a_right_click_outside_the_crop_still_opens_the_frame_menu() {
         let app = window(1);

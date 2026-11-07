@@ -96,6 +96,9 @@ pub(crate) struct Develop {
     pub(crate) mat: bool,
     /// The image pixel at the view's center.
     pub(crate) center: (f32, f32),
+    /// Where a middle click's 200% came from, until any other change
+    /// of the zoom.
+    pub(crate) zoom_back: Option<ZoomBack>,
     pub(crate) renderer: Option<Renderer>,
     /// The viewport's adapter as the log names it, for a report; none
     /// until the rendering setup has run.
@@ -377,4 +380,15 @@ pub(crate) struct Develop {
     /// them to be sent again once when what they are moves
     /// (`browser::neighbors_moved`).
     pub(crate) neighbors_sent: Option<crate::panel::browser::NeighborsSent>,
+}
+
+/// Where a middle click's 200% came from: the zoom (0 for fit) and the
+/// image pixel at the view's center, on which frame (the version, not
+/// only the file) at which size (a turn swaps it), so a middle click
+/// back anywhere else fits rather than land on a place in this one.
+#[derive(Clone)]
+pub(crate) struct ZoomBack {
+    pub(crate) frame: Option<(crate::versions::Key, (u32, u32))>,
+    pub(crate) zoom: f32,
+    pub(crate) center: (f32, f32),
 }

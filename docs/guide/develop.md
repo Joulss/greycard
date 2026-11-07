@@ -18,6 +18,8 @@ pan and zoom straight away.
 
 - A **click** on the picture zooms to 1:1 there, and another goes
   back to fit. **Space** does the same, and **Z** zooms to 3:1.
+- A **middle click** on the picture zooms to 200% there, and another
+  goes back to where you were.
 - The **Fit** button at the panel's foot fits the picture; its chevron,
   or a right-click on it, offers Fit, 25%, 33%, 50%, 100%, 200%, and
   400%; under them, **Full screen** (**F11**).
@@ -26,7 +28,9 @@ pan and zoom straight away.
   for its drag), hold **Space** and drag (**Shift** too, except with a
   Linear or Radial waiting, where Shift holds the shape): the pointer
   is a hand, the picture moves, and nothing is drawn. A tap of **Space**
-  still zooms.
+  still zooms. A **middle drag** moves the picture whatever is in hand,
+  the tool left as it was, and a middle click during any other drag
+  ends that drag where the pointer is.
 - A **mouse wheel** zooms a step in or out about the pointer with each
   click. A tilted wheel moves the picture sideways.
 - A **two-finger scroll** on a touchpad moves the picture, in the

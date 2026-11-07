@@ -1556,6 +1556,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             else {
                 return;
             };
+            // The middle button held in the drag: a gradient held as
+            // Shift holds it, a stroke straight from its press.
+            let line = app.get_place_line();
+            let held = held || line;
             // Shift's step, measured on the view.
             let stepped = if held {
                 on_view_step(&st, &app, from, at)
@@ -1587,8 +1591,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     *radius = if held { [r[0].max(r[1]); 2] } else { r };
                 }
                 Shape::Brush { strokes } => {
+                    // Straight: the press and here, stamped between
+                    // at the brush's spacing as any two points are.
+                    if line {
+                        if let Some(stroke) = strokes.last_mut() {
+                            stroke.points.truncate(1);
+                            stroke.points.push([at.0, at.1]);
+                        }
                     // A point once the pointer has moved a texel.
-                    if let Some(stroke) = strokes.last_mut()
+                    } else if let Some(stroke) = strokes.last_mut()
                         && stroke
                             .points
                             .last()

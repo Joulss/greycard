@@ -1663,6 +1663,49 @@ fn lay_paste(
     synced
 }
 
+/// The sync sheet's ask, ready to apply: the frame and the targets it
+/// names, the source as it stands, and the checks: the sheet's
+/// defaults, or with `last` the choice the last sync or paste took
+/// (the defaults before there was one). False, with words on the
+/// status line where there are any, when there is nothing to sync.
+fn sync_ready(st: &mut State, app: &App, last: bool) -> bool {
+    if crate::panel::queue_view::refused(st, "a sync") {
+        return false;
+    }
+    if tool_in_hand(app) {
+        app.set_status("put the tool down first (Esc), then sync".into());
+        return false;
+    }
+    let (Some(c), targets) = (st.current, sync_targets(st)) else {
+        return false;
+    };
+    if targets.is_empty() {
+        app.set_status("choose the frames to sync onto: Ctrl+click or Shift+click".into());
+        return false;
+    }
+    st.sheets.sync_asked = Some((c, targets));
+    st.sheets.paste_asked = None;
+    app.set_sync_paste(false);
+    let shown = edit_shown(st, app, c);
+    let shot = if shown.white_balance == WhiteBalance::AsShot {
+        None
+    } else {
+        frame_shot(st, c, &shown.camera)
+    };
+    st.sheets.sync_source = Some((shown.clone(), shot));
+    let masks = carry::masks_of(&shown);
+    st.sheets.sync_checks = match &st.sheets.sync_last {
+        Some(kept) if last => kept.with_masks(masks),
+        _ => carry::Checks::new(masks, Section::syncs_by_default),
+    };
+    if curveless(st.path_at(c).map(PathBuf::as_path)) {
+        st.sheets
+            .sync_checks
+            .set_section(Section::DisplayCurve, false);
+    }
+    true
+}
+
 /// Whether a viewport tool is in hand, as the window's
 /// `tool-in-hand` has it: the sheet is not opened over one.
 fn tool_in_hand(app: &App) -> bool {
@@ -1754,40 +1797,27 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
-            if crate::panel::queue_view::refused(&st, "a sync") {
+            if !sync_ready(&mut st, &app, false) {
                 return;
-            }
-            if tool_in_hand(&app) {
-                app.set_status("put the tool down first (Esc), then sync".into());
-                return;
-            }
-            let (Some(c), targets) = (st.current, sync_targets(&st)) else {
-                return;
-            };
-            if targets.is_empty() {
-                app.set_status("choose the frames to sync onto: Ctrl+click or Shift+click".into());
-                return;
-            }
-            st.sheets.sync_asked = Some((c, targets));
-            st.sheets.paste_asked = None;
-            app.set_sync_paste(false);
-            let shown = edit_shown(&st, &app, c);
-            let shot = if shown.white_balance == WhiteBalance::AsShot {
-                None
-            } else {
-                frame_shot(&st, c, &shown.camera)
-            };
-            st.sheets.sync_source = Some((shown.clone(), shot));
-            let masks = carry::masks_of(&shown);
-            st.sheets.sync_checks = carry::Checks::new(masks, Section::syncs_by_default);
-            if curveless(st.path_at(c).map(PathBuf::as_path)) {
-                st.sheets
-                    .sync_checks
-                    .set_section(Section::DisplayCurve, false);
             }
             show_sync_checks(&mut st, &app);
             app.set_sync_text(sync_words(&st).into());
             app.set_sync_open(true);
+        });
+    }
+    // A middle click on the panel's Sync button: the sheet's sync
+    // without the sheet, on the choice the last sync or paste took.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_sync_quick_asked(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if !sync_ready(&mut state.borrow_mut(), &app, true) {
+                return;
+            }
+            tracing::info!("sync without the sheet, on the last choice");
+            app.invoke_sync_applied();
         });
     }
     // A shift chosen or set back.
@@ -5326,6 +5356,56 @@ mod tests {
         app.invoke_frame_menu_asked(-1);
         assert_eq!(app.get_menu_count(), 3);
         assert_eq!(app.get_menu_paste_count(), 0, "nothing copied");
+    }
+
+    /// A middle click on the panel's Sync button syncs at once, the
+    /// sheet never up, on the choice the last sync took (here Light
+    /// alone, so the color stays); a left click still opens the sheet.
+    #[test]
+    fn a_middle_click_on_the_panels_sync_syncs_without_the_sheet() {
+        use slint::platform::PointerEventButton;
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = state_for(&app, folder(6));
+        let (x, y) = strip_cell(&app, 1);
+        click(&app, x, y);
+        with_modifier(&app, Key::Control, || {
+            let (x, y) = strip_cell(&app, 3);
+            click(&app, x, y);
+            let (x, y) = strip_cell(&app, 4);
+            click(&app, x, y);
+        });
+        assert_eq!(chosen_frames(&state.borrow()), vec![1, 3, 4]);
+        app.set_exposure(0.6);
+        app.set_vibrance(0.3);
+        app.invoke_view_changed();
+        app.invoke_sync_open_asked();
+        choose(&app, |s| s == Section::Light);
+        app.invoke_sync_applied();
+        crate::rows::land_pending(&state, &app, &worker);
+        let edits = || {
+            let st = state.borrow();
+            [3, 4].map(|f| {
+                let e = &st.sidecars[f].current;
+                (e.light.exposure, e.color.vibrance)
+            })
+        };
+        assert_eq!(edits(), [(0.6, 0.0); 2], "the sheet's sync, Light alone");
+
+        app.set_exposure(-0.4);
+        app.invoke_view_changed();
+        let (at, size) = crate::testing::labeled(&app, "Sync");
+        let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::click_with(&app, PointerEventButton::Middle, x, y);
+        assert!(!app.get_sync_open(), "no sheet");
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(edits(), [(-0.4, 0.0); 2], "Light again, and only Light");
+        assert_eq!(app.get_status(), "synced 1 section onto 2 frames");
+
+        // The left click is the sheet's, as before.
+        click(&app, x, y);
+        assert!(app.get_sync_open());
     }
 
     /// The window's hold for a paste onto 300 frames, timed: the frames

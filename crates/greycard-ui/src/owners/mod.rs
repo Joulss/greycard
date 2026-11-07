@@ -14,4 +14,4 @@ pub(crate) use culling::Culling;
 mod views;
 pub(crate) use views::Views;
 mod develop;
-pub(crate) use develop::Develop;
+pub(crate) use develop::{Develop, ZoomBack};

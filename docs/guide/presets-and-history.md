@@ -348,6 +348,10 @@ Sync copies the open frame's edit onto the other selected frames.
    **Ctrl+Shift+S**.
 4. Check the sections to copy, and press **Apply**.
 
+A **middle click** on the Sync button at the top of the develop panel
+syncs straight away, without the sheet, on the sections your last sync
+or paste took (every section but Masks before there was one).
+
 Every section starts checked except **Masks**, because masks are drawn
 around one picture's subject. The sheet lists what a preset's does: a
 heading a section, its parts under it, the open frame's masks by

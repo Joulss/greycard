@@ -98,6 +98,9 @@ export component Viewport inherits Rectangle {
     /// at its edges, and still where it fits the view.
     callback wheel-pan(length, length);
     callback toggle-zoom(length, length);
+    /// A middle click on the picture: 200% there, or back to the zoom
+    /// it came from.
+    callback toggle-zoom-200(length, length);
     /// The pointer over the view, and where, for the color under it
     /// on the scopes; false when it leaves.
     callback hovered(bool, length, length);
@@ -149,6 +152,11 @@ export component Viewport inherits Rectangle {
     // Shift at the press that places a shape: a linear held to steps
     // of its angle, a radial to a circle.
     in-out property <bool> place-shift;
+    // The middle button held in a left drag placing a gradient or a
+    // brush: a linear or a radial held as Shift holds it, a brush's
+    // stroke a straight line from its press. Read on every drag.
+    in-out property <bool> place-line;
+    property <bool> line-tool: root.placing == "Linear" || root.placing == "Radial" || root.placing == "Brush";
     // Whether Shift holds the shape in hand, and so is not the hand.
     out property <bool> shift-holds: root.placing == "Linear" || root.placing == "Radial";
     in-out property <string> mask-kind;
@@ -269,6 +277,71 @@ export component Viewport inherits Rectangle {
     /// zooms, a hold that panned does not.
     in-out property <bool> hand-panned;
     property <bool> hand-tool: !root.placeholder && (root.placing != "" || root.retouch-mode != "");
+    // The middle button pans the picture whatever is in hand, the tool
+    // left as it is: a drag of it from wherever on the view had its
+    // press, the picture's own area, a handle, the crop, the level, or
+    // the guide. As a left drag does, it pans only from a press on the
+    // picture.
+    property <bool> mid-down;
+    property <bool> mid-dragged;
+    property <bool> mid-canvas;
+    property <length> mid-x;
+    property <length> mid-y;
+    property <length> mid-last-x;
+    property <length> mid-last-y;
+    // Whether the picture's own area had the press, rather than an
+    // area over it, which a key can take away mid-pan with no word.
+    property <bool> mid-view;
+    // A middle press, a move while it is held, its release, or the
+    // window letting go of it, at a point in the view's own
+    // coordinates, from the picture's own area (`view`) or another.
+    // Another button's release while it pans takes the window's hold
+    // on the pan with it, and ends it.
+    function middle-event(e: PointerEvent, x: length, y: length, view: bool) {
+        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.middle) {
+            root.focus-keys();
+            root.mid-down = true;
+            root.mid-view = view;
+            root.mid-dragged = false;
+            root.mid-canvas = !root.picture-at(x, y);
+            root.mid-x = x;
+            root.mid-y = y;
+            root.mid-last-x = x;
+            root.mid-last-y = y;
+        } else if (e.kind == PointerEventKind.move && root.mid-down) {
+            if (abs(x - root.mid-x) > 4px || abs(y - root.mid-y) > 4px) {
+                root.mid-dragged = true;
+            }
+            if (root.mid-dragged && !root.mid-canvas) {
+                root.pan(x - root.mid-last-x, y - root.mid-last-y);
+            }
+            root.mid-last-x = x;
+            root.mid-last-y = y;
+        } else if (e.kind == PointerEventKind.up && e.button == PointerEventButton.middle && root.mid-down) {
+            root.mid-down = false;
+            // A click that did not drag: 200% here, or back.
+            if (!root.mid-dragged && !root.mid-canvas) {
+                root.toggle-zoom-200(x, y);
+            }
+        } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+            root.mid-down = false;
+        }
+    }
+    // A handle's middle events, at their point in the window.
+    function middle-at(e: PointerEvent, x: length, y: length) {
+        root.middle-event(e, x - ta.absolute-position.x, y - ta.absolute-position.y, false);
+    }
+    // The area over the picture that had a middle press going away
+    // takes its release with it: the pan ends.
+    function middle-area-gone() {
+        if (!root.mid-view) { root.mid-down = false; }
+    }
+    changed crop-mode => { root.middle-area-gone(); }
+    changed level-mode => { root.middle-area-gone(); }
+    changed guide-mode => { root.middle-area-gone(); }
+    changed mask-kind => { root.middle-area-gone(); }
+    changed handles-down => { root.middle-area-gone(); }
+    changed placeholder => { root.middle-area-gone(); }
     // The engine's texture, bound by App's `texture` through this
     // component's id as it was bound to the Image before.
     in property <image> source <=> view.source;
@@ -287,6 +360,7 @@ export component Viewport inherits Rectangle {
     }
     changed retouch-mode => {
         ta.size-acc = 0;
+        root.middle-area-gone();
     }
 
     ta := TouchArea {
@@ -339,7 +413,8 @@ export component Viewport inherits Rectangle {
         // Whether the press was the hand's (`hand`): the tool stays
         // up, and the drag pans.
         property <bool> hand-down;
-        mouse-cursor: self.hand-down ? MouseCursor.grabbing
+        mouse-cursor: root.mid-down ? (root.mid-canvas ? MouseCursor.default : MouseCursor.grabbing)
+            : self.hand-down ? MouseCursor.grabbing
             : root.hand && root.hand-tool && !self.pressed ? MouseCursor.grab
             : root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
@@ -358,12 +433,88 @@ export component Viewport inherits Rectangle {
         changed has-hover => {
             if (self.has-hover && !root.typing) { root.focus-keys(); }
             root.hovered(self.has-hover, self.mouse-x, self.mouse-y);
+            // Left without the window's hold: its pan's release went
+            // elsewhere.
+            if (!self.has-hover && root.mid-view) { root.mid-down = false; }
         }
         // The pointer's place as one value, so a diagonal move, which
         // changes both, is one report and not two.
         property <{x: length, y: length}> pointer-at: { x: self.mouse-x, y: self.mouse-y };
         changed pointer-at => { root.hovered(self.has-hover, self.mouse-x, self.mouse-y); }
+        // The press ends: by its own release, a left one a `click`,
+        // or by a middle release taking the window's hold on it.
+        function end-press(click: bool) {
+            if (!ta.held) {
+                // The release of a press that closed a menu.
+            } else if (ta.menu-down) {
+                ta.menu-down = false;
+            } else if (ta.hand-down) {
+                // The hand's: neither a stroke nor a click's zoom.
+            } else if (ta.body-moving) {
+                root.mask-dropped();
+            } else if (ta.picked-down) {
+                root.pick-released();
+            } else if (ta.placed-down || root.placing != "" || root.retouch-mode != "") {
+                root.place-released();
+            } else if (ta.crop-drawing) {
+                root.crop-draw-released();
+                root.crop-draw-armed = false;
+            } else if (root.crop-draw-armed) {
+                // Draw in hand and nothing drawn: put down, the
+                // crop left as it was and no zoom either.
+                root.crop-draw-armed = false;
+            } else if (!ta.dragged && click) {
+                // A click on the empty picture lets go
+                // of a chosen repair, as Esc does.
+                if (root.patch != -1) { root.patch-changed(-1); }
+                // A click that did not drag: zoom in here, or back out.
+                root.toggle-zoom(ta.mouse-x, ta.mouse-y);
+            }
+            // The gesture is over: the cursor goes back to what
+            // is under it.
+            ta.held = false;
+            ta.body-down = false;
+            ta.body-moving = false;
+            ta.hand-down = false;
+            ta.placed-down = false;
+            ta.picked-down = false;
+            ta.crop-drawing = false;
+            root.place-line = false;
+        }
         pointer-event(e) => {
+            // The middle button's, unless a left gesture is under way
+            // (`middle-event`); a press of another button while it pans
+            // is nothing, and its release then finds no press.
+            if (e.button == PointerEventButton.middle) {
+                if (!self.held) {
+                    root.middle-event(e, self.mouse-x, self.mouse-y, true);
+                } else if (self.placed-down && root.line-tool && e.kind == PointerEventKind.down) {
+                    root.place-line = true;
+                    root.place-dragged(self.mouse-x, self.mouse-y);
+                } else if (e.kind == PointerEventKind.up) {
+                    // Its release takes the window's hold on the left
+                    // press with it: whatever the press was doing ends
+                    // here, a held line where the pointer is.
+                    if (root.place-line) { root.place-dragged(self.mouse-x, self.mouse-y); }
+                    self.end-press(false);
+                }
+                return;
+            }
+            if (e.kind == PointerEventKind.move) {
+                // Only the picture's own pan comes here; another
+                // area's coming here means that area is gone.
+                if (root.mid-down && root.mid-view) {
+                    root.middle-event(e, self.mouse-x, self.mouse-y, true);
+                } else if (root.mid-down) {
+                    root.mid-down = false;
+                }
+                return;
+            }
+            if (e.kind == PointerEventKind.cancel) { root.middle-event(e, self.mouse-x, self.mouse-y, true); }
+            if (root.mid-down && (e.kind == PointerEventKind.down || e.kind == PointerEventKind.up)) {
+                if (e.kind == PointerEventKind.up) { root.middle-event(e, self.mouse-x, self.mouse-y, true); }
+                return;
+            }
             if (e.kind == PointerEventKind.down) {
                 self.held = true;
                 root.focus-keys();
@@ -428,38 +579,7 @@ export component Viewport inherits Rectangle {
                     && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key);
                 if (self.body-down) { root.handles-down = false; }
             } else if (e.kind == PointerEventKind.up) {
-                if (!self.held) {
-                    // The release of a press that closed a menu.
-                } else if (self.menu-down) {
-                    self.menu-down = false;
-                } else if (self.hand-down) {
-                    // The hand's: neither a stroke nor a click's zoom.
-                } else if (self.body-moving) {
-                    root.mask-dropped();
-                } else if (self.picked-down) {
-                    root.pick-released();
-                } else if (self.placed-down || root.placing != "" || root.retouch-mode != "") {
-                    root.place-released();
-                } else if (self.crop-drawing) {
-                    root.crop-draw-released();
-                    root.crop-draw-armed = false;
-                } else if (root.crop-draw-armed && e.button == PointerEventButton.left) {
-                    // Draw in hand and nothing drawn: put down, the
-                    // crop left as it was and no zoom either.
-                    root.crop-draw-armed = false;
-                } else if (!self.dragged && e.button == PointerEventButton.left) {
-                    // A click on the empty picture lets go
-                    // of a chosen repair, as Esc does.
-                    if (root.patch != -1) { root.patch-changed(-1); }
-                    // A click that did not drag: zoom in here, or back out.
-                    root.toggle-zoom(self.mouse-x, self.mouse-y);
-                }
-                // The gesture is over: the cursor goes back to what
-                // is under it.
-                self.held = false;
-                self.body-down = false;
-                self.body-moving = false;
-                self.hand-down = false;
+                self.end-press(e.button == PointerEventButton.left);
             } else if (e.kind == PointerEventKind.cancel) {
                 // The window let go of the gesture rather than this
                 // press ending it (focus lost, the platform taking
@@ -483,10 +603,13 @@ export component Viewport inherits Rectangle {
                 self.crop-drawing = false;
                 self.canvas-down = false;
                 self.hand-down = false;
+                root.place-line = false;
             }
         }
         moved => {
-            if (self.pressed && !self.menu-down) {
+            // A press not held (one made while the middle pans) is
+            // nothing, though the window still marks it pressed.
+            if (self.pressed && self.held && !self.menu-down) {
                 if (abs(self.mouse-x - self.down-x) > 4px || abs(self.mouse-y - self.down-y) > 4px) {
                     self.dragged = true;
                 }
@@ -604,7 +727,7 @@ export component Viewport inherits Rectangle {
     }
     // The brush under the pointer: its radius, and where
     // its feather begins.
-    if root.placing == "Brush" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down: Rectangle {
+    if root.placing == "Brush" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
         for s[k] in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Ring {
             stroke: s == 1.0 ? (root.brush-op == "Erase" ? #ff6060cc : root.brush-op == "Subtract" ? #ffb860cc : #ffffffcc) : #ffffff50;
             halo: k == 0;
@@ -803,7 +926,7 @@ export component Viewport inherits Rectangle {
         }
     }
     // The repair tool under the pointer: its radius and feather.
-    if root.retouch-mode != "" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down: Rectangle {
+    if root.retouch-mode != "" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
         for s[k] in [1.0, 1.0 - root.patch-feather]: Ring {
             stroke: s == 1.0 ? #7fd0ffcc : #7fd0ff50;
             halo: k == 0;
@@ -887,6 +1010,7 @@ export component Viewport inherits Rectangle {
             grabbed(k) => { root.patch-grabbed(k); }
             dragged(k, dx, dy) => { root.patch-dragged(k, dx, dy); }
             dropped => { root.patch-dropped(); }
+            middle(e, x, y) => { root.middle-at(e, x, y); }
         }
     }
     // Alt and a press on the crop, its body or a handle: a fresh crop
@@ -954,6 +1078,7 @@ export component Viewport inherits Rectangle {
             }
             dragged(i, dx, dy) => { root.crop-moved(i, dx, dy); }
             dropped => { root.crop-dropped(); }
+            middle(e, x, y) => { root.middle-at(e, x, y); }
             double-clicked => { root.crop-done(); }
         }
         Rectangle { x: cl; y: ct; width: cw; height: ch; border-width: 1px; border-color: #ffffffcc; }
@@ -991,6 +1116,7 @@ export component Viewport inherits Rectangle {
             }
             dragged(i, dx, dy) => { root.crop-moved(i, dx, dy); }
             dropped => { root.crop-dropped(); }
+            middle(e, x, y) => { root.middle-at(e, x, y); }
         }
     }
     // The grid while the angle is set: over the crop in crop mode,
@@ -1106,6 +1232,7 @@ export component Viewport inherits Rectangle {
             grabbed(k) => { root.mask-grabbed(k, self.press-modifiers.shift); }
             dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy, self.alt); }
             dropped => { root.mask-dropped(); }
+            middle(e, x, y) => { root.middle-at(e, x, y); }
         }
     }
     // The level tool: drag along a line that should be
@@ -1117,8 +1244,14 @@ export component Viewport inherits Rectangle {
         property <length> y1;
         property <bool> dragging: false;
         level := TouchArea {
-            mouse-cursor: MouseCursor.crosshair;
+            mouse-cursor: root.mid-down ? MouseCursor.grabbing : MouseCursor.crosshair;
             pointer-event(e) => {
+                // The middle button's pan, as on the picture.
+                if ((e.button == PointerEventButton.middle && !self.pressed) || root.mid-down) {
+                    root.middle-at(e, self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                    return;
+                }
                 // Cancel carries button `other`: read ahead of the
                 // filter, it drops the stroke, so a later lone release
                 // finds none to end.
@@ -1126,7 +1259,12 @@ export component Viewport inherits Rectangle {
                     leveler.dragging = false;
                     return;
                 }
-                if (e.button != PointerEventButton.left) { return; }
+                // A middle release in the stroke takes the window's hold
+                // on it: the stroke ends there, as at its own release.
+                if (e.button != PointerEventButton.left
+                        && !(e.button == PointerEventButton.middle && e.kind == PointerEventKind.up)) {
+                    return;
+                }
                 if (e.kind == PointerEventKind.down) {
                     leveler.x0 = self.mouse-x; leveler.y0 = self.mouse-y;
                     leveler.x1 = self.mouse-x; leveler.y1 = self.mouse-y;
@@ -1169,11 +1307,17 @@ export component Viewport inherits Rectangle {
         property <length> y1;
         property <bool> dragging: false;
         guide := TouchArea {
-            mouse-cursor: MouseCursor.crosshair;
+            mouse-cursor: root.mid-down ? MouseCursor.grabbing : MouseCursor.crosshair;
             changed has-hover => {
                 if (self.has-hover && !root.typing) { root.focus-keys(); }
             }
             pointer-event(e) => {
+                // The middle button's pan, as on the picture.
+                if ((e.button == PointerEventButton.middle && !self.pressed) || root.mid-down) {
+                    root.middle-at(e, self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                    return;
+                }
                 // Cancel carries button `other`: read ahead of the
                 // filter, it drops the stroke, so a later lone release
                 // finds none to end.
@@ -1181,7 +1325,11 @@ export component Viewport inherits Rectangle {
                     guider.dragging = false;
                     return;
                 }
-                if (e.button != PointerEventButton.left) { return; }
+                // A middle release in the stroke ends it, as the level's.
+                if (e.button != PointerEventButton.left
+                        && !(e.button == PointerEventButton.middle && e.kind == PointerEventKind.up)) {
+                    return;
+                }
                 if (e.kind == PointerEventKind.down) {
                     root.focus-keys();
                     guider.x0 = self.mouse-x; guider.y0 = self.mouse-y;

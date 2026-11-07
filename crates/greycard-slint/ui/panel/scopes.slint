@@ -52,6 +52,8 @@ export component PanelHead inherits VerticalLayout {
     /// over one, the Sync button, Ctrl+Shift+S's sheet.
     in property <int> set-count;
     callback sync-asked();
+    /// A middle click on the Sync button: the sync at once.
+    callback sync-now-asked();
 
     // While the vectorscope shows, the shot's lines fold away to make
     // room for its circle; the file's name and the undo buttons stay.
@@ -151,6 +153,7 @@ export component PanelHead inherits VerticalLayout {
         accessible-label: "Sync";
         accessible-action-default => { root.sync-asked(); }
         clicked => { root.sync-asked(); }
+        middle-clicked => { root.sync-now-asked(); }
     }
     // The scopes read the develop; in culling
     // there is none, and they are not shown.

@@ -88,8 +88,12 @@ pub(crate) fn window(count: usize) -> App {
 /// A press and a release at a point of the window, logical pixels
 /// from its top left: what a click on whatever is there does.
 pub(crate) fn click(app: &App, x: f32, y: f32) {
+    click_with(app, slint::platform::PointerEventButton::Left, x, y);
+}
+
+/// [`click`] with another button.
+pub(crate) fn click_with(app: &App, button: slint::platform::PointerEventButton, x: f32, y: f32) {
     let position = slint::LogicalPosition::new(x, y);
-    let button = slint::platform::PointerEventButton::Left;
     for event in [
         WindowEvent::PointerMoved { position },
         WindowEvent::PointerPressed { position, button },
@@ -105,8 +109,16 @@ pub(crate) fn click(app: &App, x: f32, y: f32) {
 /// `PointerMoved`, so a caller after a click-versus-drag threshold
 /// gets to decide, on the way through, which side of it a step lands.
 pub(crate) fn drag(app: &App, path: &[(f32, f32)]) {
+    drag_with(app, slint::platform::PointerEventButton::Left, path);
+}
+
+/// [`drag`] with another button.
+pub(crate) fn drag_with(
+    app: &App,
+    button: slint::platform::PointerEventButton,
+    path: &[(f32, f32)],
+) {
     let at = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
-    let button = slint::platform::PointerEventButton::Left;
     app.window().dispatch_event(WindowEvent::PointerMoved {
         position: at(path[0]),
     });

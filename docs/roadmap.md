@@ -185,10 +185,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Resizeable panes and panels inside them (issue 79), and the
       Develop panel's sections told apart (issue 80)
 - [ ] i18n (issue 75)
-- [ ] The middle button: drag the picture under any tool, 200% on the
-      picture, a straight or square-angled line for a gradient or a
-      brush, and sync onto the selection without the sheet
-      (discussion 59, 2026-11-06)
 - [ ] Handheld HDR and focus stacking
 
 ### Speed

@@ -127,6 +127,7 @@ line to turn and stretch it about the middle. Hold **Alt** while
 dragging an end line to move that end alone. A drag outside the band
 moves the picture. Hold **Shift** as you start the drag, placing it or
 moving an end, to keep its angle to steps of 15 degrees.
+Pressing the **middle button** during the drag does the same.
 
 ### Radial
 
@@ -137,6 +138,7 @@ that radius and turn the ellipse. **Feather** (50% to start) is how
 much of the ellipse fades out toward its edge. Hold **Shift** as you
 start the drag, placing it or moving an axis handle, to keep it a
 circle.
+Pressing the **middle button** during the drag does the same.
 
 ### Brush
 
@@ -156,6 +158,9 @@ Subject, or Luminance shape cuts it. **Erase** clears only the brush's
 own strokes, added or subtracted. Choosing **Subtract** in **Add a
 shape** for a new brush puts this row on **Subtract** until the brush
 is put down.
+
+Press the **middle button** during a stroke to make it a straight
+line from where it began to where you let go.
 
 With the brush in hand, **Shift+[** and **Shift+]** take the feather
 down or up a tenth, and **Ctrl+[** and **Ctrl+]** the flow.
