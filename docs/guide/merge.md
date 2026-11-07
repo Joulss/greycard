@@ -1,4 +1,10 @@
-# Merge to HDR
+# Merging frames
+
+Several frames of one scene can be merged into one: a bracket into an
+HDR, a turn of the camera into a panorama, or a run of focus distances
+into a focus stack. Each merge is a DNG you edit like any other frame.
+
+## Merge to HDR
 
 A bracket shot on a tripod, the same picture at several exposures, can
 be merged into one frame that holds the shadows of the brightest frame
@@ -32,7 +38,7 @@ IMG_0003.CR3`, with `--reference` to pick the frame the others are put
 on (counting from 0), `--out` to name the file, and `--on-exists` for
 when that name is taken.
 
-# Merge to Panorama
+## Merge to Panorama
 
 Frames shot turning the camera, each overlapping the next, can be
 stitched into one wide frame.
@@ -72,7 +78,7 @@ turned onto (counting from 0), `--out` to name the file, and
 `--on-exists` for when that name is taken. A second merge to a file
 that one is still writing is refused.
 
-# Merge to Focus stack
+## Merge to Focus stack
 
 Frames of one subject shot at several focus distances can be merged
 into one frame that is sharp everywhere.
@@ -100,7 +106,7 @@ on (`middle`, `sharpest`, or a number counting from 0),
 the file (a `.tif` writes a 16-bit linear TIFF instead),
 `--uncompressed`, and `--on-exists` for when that name is taken.
 
-# Making a merge again
+## Making a merge again
 
 A merged file keeps its recipe: its frames' names with a check of
 each, the merge's options, and where every frame was placed. While the
