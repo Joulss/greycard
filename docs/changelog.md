@@ -3,6 +3,16 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.10.1
+
+### Fixes
+
+- Canon EOS R8 Mark II raws open
+  ([§586](https://github.com/jessolmstead/greycard/blob/master/docs/notes/586-the-canon-eos-r8-mark-ii.md)).
+- On Linux the window carries an app id, so GNOME's dock pins it to
+  its desktop entry and shows its icon (issue 86)
+  ([§587](https://github.com/jessolmstead/greycard/blob/master/docs/notes/587-the-windows-app-id.md)).
+
 ## 0.10.0, 2026-11-06
 
 HDR, panorama, and focus stack merges, a lens picker with Adobe

@@ -347,6 +347,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     #[cfg(target_os = "macos")]
     finder::install();
 
+    // The window's app id, which Wayland's app_id and X11's WM_CLASS
+    // carry, and the desktop entry greycard.desktop is matched by: a
+    // dock pins the window to its entry and shows its icon. Set before
+    // the window is built, which is when winit reads it; off Linux it
+    // does nothing.
+    if let Err(e) = slint::set_xdg_app_id("greycard") {
+        tracing::warn!("the window's app id was not set: {e}");
+    }
     let app = App::new()?;
     // A size asked for on the command line, for a capture, in place of
     // the layout's preferred one; the screen's fit still applies.

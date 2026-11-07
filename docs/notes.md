@@ -598,3 +598,5 @@ in its section; the roadmap and the changelog only point at it.
 - [§583. A grid while the angle is set](notes/583-a-grid-while-the-angle-is-set.md) (2026-11-06)
 - [§584. A color look carries Black and white, off](notes/584-a-color-look-carries-black-and-white-off.md) (2026-11-06)
 - [§585. A crop fitted into an unknown frame](notes/585-a-crop-fitted-into-an-unknown-frame.md) (2026-11-06)
+- [§586. The Canon EOS R8 Mark II](notes/586-the-canon-eos-r8-mark-ii.md) (2026-11-07)
+- [§587. The window's app id](notes/587-the-windows-app-id.md) (2026-11-07)

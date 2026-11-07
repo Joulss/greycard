@@ -166,6 +166,23 @@ the reasoning lives in `docs/notes.md`.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
+- [ ] The Paste sheet from the keyboard: Paste focused on open so
+      Enter takes the checks as they stand, Tab through every check
+      and both buttons, Space on a check; today Tab reaches only
+      Check all and Uncheck all (issue 78, 2026-11-07)
+- [ ] The strip jumps on a delete: the frame chosen next lands at the
+      right edge where the rule is the least scroll that shows it
+      (`strip::reveal`); the delete path reveals from a fresh layout
+      where it should hold (`strip::held`, panel/browser.rs). Reproduce
+      first (issues 83 and 84, 2026-11-07)
+
+## Next
+
+- [ ] Proper signed Windows installer
+- [ ] White balance (and maybe other adjustments) still available on JPG
+- [ ] Resizeable panes and panels inside them (issue 79)
+- [ ] i18n
+- [ ] Forward/back button navigation
 
 ### Speed
 
@@ -747,6 +764,23 @@ clears or a tester asks for it.
       has little room left for the picture); first see what a viewport
       resize costs per pointer move, and hold the redraw to the drop
       if it is a develop (hiding landed, §178; the strip stays fixed)
+- [ ] The left pane's sections sharing its height: a drag between
+      Folders, Presets, Snapshots, and History sets their shares, a
+      collapsed section's share goes to the open ones, each section's
+      list scrolls on its own, the shares kept in the settings
+      (issue 79, 2026-11-07)
+- [ ] The Navigator at a fixed height, the picture fitted inside at
+      its own shape, so the sections under it stay put between frames
+      and between portrait and landscape; today it follows the
+      picture and collapses while the next frame loads (issue 81,
+      2026-11-07)
+- [ ] The display curve (Per channel, AgX) as a part of Copy and
+      Paste settings, its own check in the Paste sheet; today
+      `preset::Part` has no entry for it, so it never travels
+      (issue 82, 2026-11-07)
+- [ ] The develop panel's sections told apart at a glance: a header
+      shade, a little more room between sections, without losing the
+      compact look (issue 80's Lightroom comparison, 2026-11-07)
 - [ ] A software GPU when there is none: the worker and greycard-gpu
       ask wgpu for a high-performance adapter and stop when there is
       no adapter at all (a headless box, a VM, a remote desktop), so

@@ -1202,7 +1202,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3903,7 +3903,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4832,7 +4832,7 @@ checksum = "1839c82df8c23135a69c027587efada55602a7311af4b5849313062f831630ca"
 [[package]]
 name = "rawler"
 version = "0.8.0"
-source = "git+https://github.com/jessolmstead/dnglab?rev=5271c4790b467cd2104d508929df8068d41e4c09#5271c4790b467cd2104d508929df8068d41e4c09"
+source = "git+https://github.com/jessolmstead/dnglab?rev=eb997fb7a99b09c0eaab8e378574d8f11a7d58c3#eb997fb7a99b09c0eaab8e378574d8f11a7d58c3"
 dependencies = [
  "backtrace",
  "bitstream-io",
