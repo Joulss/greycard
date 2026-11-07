@@ -460,7 +460,9 @@ fn fallback_font(c: char) -> Option<Arc<Face>> {
         None => {
             let face = {
                 let mut col = collection().lock().unwrap_or_else(|e| e.into_inner());
-                let key = fontique::Script::from_str_unchecked(script);
+                // ISO 15924 short names are four ASCII letters.
+                let raw: [u8; 4] = script.as_bytes().try_into().expect("a four-letter script");
+                let key = fontique::Script::from_bytes(raw);
                 let ids: Vec<_> = col.fallback_families(key).collect();
                 ids.into_iter()
                     .find_map(|id| load_family(&mut col, id))
