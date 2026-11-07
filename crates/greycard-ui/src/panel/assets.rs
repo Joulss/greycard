@@ -1445,7 +1445,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 read_edit(&app, &st.develop.edit, st.develop.target),
                 st.open_mosaic().kind(),
             );
-            let preset = Preset::from_choice(&name, &edit, &choice);
+            // A picture's display curve is no choice to keep.
+            let mut preset = Preset::from_choice(&name, &edit, &choice);
+            if let Some(path) = st.current.and_then(|c| st.path_at(c)) {
+                preset = crate::preset_fit::curve_fitted(&preset, path);
+            }
+            if preset.is_empty() {
+                app.set_status("choose what the preset carries".into());
+                return;
+            }
             app.set_preset_open(false);
             match st.develop.preset_store.as_ref().map(|s| s.save(&preset)) {
                 Some(Ok(path)) => {
@@ -1453,7 +1461,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         format!(
                             "saved {} ({}) to {}",
                             preset.name,
-                            choice.words(),
+                            preset::carried_words(preset.sections.len(), preset.parts.len()),
                             path.display()
                         )
                         .into(),

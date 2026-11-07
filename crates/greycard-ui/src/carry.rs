@@ -148,6 +148,13 @@ impl Checks {
         }
     }
 
+    /// Check or uncheck section `s` whole.
+    pub(crate) fn set_section(&mut self, s: Section, on: bool) {
+        if let Some(i) = Section::ALL.iter().position(|x| *x == s) {
+            self.on[i].fill(on);
+        }
+    }
+
     /// Check or uncheck everything: every section, every part, every
     /// mask.
     pub(crate) fn set_all(&mut self, on: bool) {

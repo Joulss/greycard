@@ -11,12 +11,12 @@ table, with the white balance at 0x69, the per-channel black level at
 0x17f, and the white levels at 0x294 and 0x295. The version joins
 that arm, and the camera gets its file.
 
-The color matrix is the EOS R8's. None for this body is published
-yet, in Adobe's converter, libraw, or rawspeed, and the sensor is the
-same 24 MP 6000x4000. The tester's craw frame at ISO 1600 decodes
+The color matrix is the EOS R8's, which is also the one Adobe
+publishes for this body (libopenraw carries the same, to the digit);
+the sensor is the same 24 MP 6000x4000. The tester's craw frame at
+ISO 1600 decodes
 with a black level of 2048, a white level of 14888, and a 6000x4000
-crop, and its white balance and color match the camera's JPEG. When
-a matrix is published the camera file takes it, upstream.
+crop, and its white balance and color match the camera's JPEG.
 
 Both are in rawler (dnglab/dnglab#937, on the fork's pinned branch
 until a release carries it). The sample stays with the tester; they

@@ -86,9 +86,14 @@ impl Clipboard {
     /// What `choice` picks of the copied edit, as the preset a paste
     /// lays over each frame: `Preset::between_frames`, as a sync builds
     /// its own, so a section, a part or a mask means the same thing
-    /// either way, and the exposure's zero goes with the exposure.
+    /// either way, and the exposure's zero goes with the exposure. A
+    /// picture's display curve, which no switch shows, stays behind
+    /// (`preset_fit::curve_fitted`).
     pub(crate) fn preset(&self, choice: &Choice) -> Preset {
-        Preset::between_frames(&self.edit, choice)
+        crate::preset_fit::curve_fitted(
+            &Preset::between_frames(&self.edit, choice),
+            &self.from.path,
+        )
     }
 
     /// The source a paste's Noise carries the learned denoiser from,

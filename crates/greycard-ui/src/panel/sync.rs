@@ -58,6 +58,32 @@ use crate::{App, Shared, State, carry, selection};
 // asks, off the window, in the library.
 pub(crate) use crate::preset_fit::{preset_fitted, probed_body, profile_fits};
 
+/// `preset` as it reaches or leaves cell `c`: without the display
+/// curve when the cell's file is a picture, which shows no switch for
+/// it ([`crate::preset_fit::curve_fitted`]).
+pub(crate) fn preset_for_curve(st: &State, preset: &Preset, c: usize) -> Preset {
+    match st.path_at(c) {
+        Some(path) => crate::preset_fit::curve_fitted(preset, path),
+        None => preset.clone(),
+    }
+}
+
+/// Whether `file` is a picture, whose display curve no switch shows
+/// and nothing carries.
+fn curveless(file: Option<&std::path::Path>) -> bool {
+    file.is_some_and(greycard_core::picture::is_picture_path)
+}
+
+/// `choice` as it leaves `file`: without the display curve from a
+/// picture, so the status line counts what went.
+fn choice_leaving(choice: &Choice, file: Option<&std::path::Path>) -> Choice {
+    let mut out = choice.clone();
+    if curveless(file) {
+        out.sections.retain(|s| *s != Section::DisplayCurve);
+    }
+    out
+}
+
 /// The frames a sync goes onto: the set, less the frame it comes
 /// from.
 pub(crate) fn sync_targets(st: &State) -> Vec<usize> {
@@ -410,7 +436,7 @@ fn lay_shifted_over_targets(
                     let shot = whites.get(&c).copied().flatten();
                     Some(shifted(preset, s, &current, shot))
                 });
-                let preset = own.as_ref().unwrap_or(preset);
+                let preset = &preset_for_curve(st, own.as_ref().unwrap_or(preset), c);
                 st.line_mut(c).is_some_and(|line| {
                     greycard_edit::apply_preset_to_line(line, preset, learned_from, label)
                 })
@@ -521,7 +547,8 @@ pub(crate) fn sync_onto(
     let Some(from_edit) = source_edit(st, app, from) else {
         return (Synced::default(), Shift::default());
     };
-    let preset = Preset::between_frames(&from_edit, choice);
+    // A picture's curve is no choice to carry.
+    let preset = preset_for_curve(st, &Preset::between_frames(&from_edit, choice), from);
     // The source's frame is read for its mosaic only when the demosaic
     // goes.
     let preset = if preset.sections.contains(&Section::Demosaic) {
@@ -623,7 +650,8 @@ fn sync_now(
     let mut st = state.borrow_mut();
     let (synced, shift) = sync_onto(&mut st, app, from, targets, choice, modes, &profiles, probe);
     let took = start.elapsed();
-    let mut said = synced_words(&st, choice, targets.len(), &synced);
+    let went = choice_leaving(choice, st.path_at(from).map(PathBuf::as_path));
+    let mut said = synced_words(&st, &went, targets.len(), &synced);
     if !shift.is_none() && !synced.moved.is_empty() {
         said.push_str(&format!(", each shifted {}", shift.words()));
     }
@@ -1004,7 +1032,8 @@ pub(crate) fn apply_preset_to(
     // set. A profile left off this way is still there to choose by
     // hand from the CAMERA PROFILE section, which warns "Made for X,
     // not Y" rather than refusing it.
-    let (current_preset, current_left_off) = preset_for_body(st, preset, c, profiles, &probe);
+    let own = preset_for_curve(st, preset, c);
+    let (current_preset, current_left_off) = preset_for_body(st, &own, c, profiles, &probe);
     let (current_preset, current_demosaic_off) = preset_for_mosaic(st, &current_preset, c);
     // The same tail a set's report gives a left-off frame
     // (`preset_onto_words`, through `profile_left_off_words`), built
@@ -1317,10 +1346,15 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
 /// checks by default.
 fn paste_checks(st: &State, clip: &Clipboard) -> carry::Checks {
     let masks = carry::masks_of(&clip.edit);
-    match &st.sheets.sync_last {
+    let mut checks = match &st.sheets.sync_last {
         Some(last) => last.with_masks(masks),
         None => carry::Checks::new(masks, Section::syncs_by_default),
+    };
+    // A picture's curve does not go: its row says so.
+    if curveless(Some(&clip.from.path)) {
+        checks.set_section(Section::DisplayCurve, false);
     }
+    checks
 }
 
 /// What the paste sheet says it will do: onto which frames, and the
@@ -1402,7 +1436,11 @@ pub(crate) fn paste_onto(
         learned_from: clip.learned_from(&preset),
         preset: &preset,
         label: clip.label(),
-        what: format!("{} from {}", choice.words(), clip.name()),
+        what: format!(
+            "{} from {}",
+            choice_leaving(choice, Some(&clip.from.path)).words(),
+            clip.name()
+        ),
     };
     lay_paste(st, app, worker, &targets, &pasted, profiles, probe)
 }
@@ -1492,7 +1530,8 @@ fn lay_paste(
     let mut current_left_off = false;
     let mut current_demosaic_off = false;
     if let Some(c) = panel_frame {
-        let (fits, left_off) = preset_for_body(st, preset, c, profiles, &probe);
+        let fits = preset_for_curve(st, preset, c);
+        let (fits, left_off) = preset_for_body(st, &fits, c, profiles, &probe);
         let (fits, demosaic_off) = preset_for_mosaic(st, &fits, c);
         current_left_off = left_off;
         current_demosaic_off = demosaic_off;
@@ -1686,6 +1725,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.sheets.sync_source = Some((shown.clone(), shot));
             let masks = carry::masks_of(&shown);
             st.sheets.sync_checks = carry::Checks::new(masks, Section::syncs_by_default);
+            if curveless(st.path_at(c).map(PathBuf::as_path)) {
+                st.sheets
+                    .sync_checks
+                    .set_section(Section::DisplayCurve, false);
+            }
             show_sync_checks(&mut st, &app);
             app.set_sync_text(sync_words(&st).into());
             app.set_sync_open(true);
@@ -2080,7 +2124,7 @@ mod tests {
         assert_eq!(state.borrow().views.loads.whats(), ["sync"]);
         // In, the sync runs on what they said.
         assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
-        assert_eq!(app.get_status(), "synced 17 sections onto 3 frames");
+        assert_eq!(app.get_status(), "synced 18 sections onto 3 frames");
         {
             let st = state.borrow();
             for s in &st.sidecars[1..] {
@@ -2096,7 +2140,7 @@ mod tests {
         app.set_exposure(-0.5);
         app.invoke_sync_open_asked();
         app.invoke_sync_applied();
-        assert_eq!(app.get_status(), "synced 17 sections onto 3 frames");
+        assert_eq!(app.get_status(), "synced 18 sections onto 3 frames");
         assert_eq!(crate::rows::land_pending(&state, &app, &worker), 0);
         assert_eq!(state.borrow().sidecars[3].current.light.exposure, -0.5);
         crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
@@ -2145,12 +2189,12 @@ mod tests {
         assert!(!ran.get());
         crate::rows::land_mosaics(&state, &app, &worker, mosaics);
         assert!(ran.get());
-        assert_eq!(app.get_status(), "synced 17 sections onto 1 frame");
+        assert_eq!(app.get_status(), "synced 18 sections onto 1 frame");
         assert!(state.borrow().views.loads.since.is_none());
         let later = std::time::Instant::now() + std::time::Duration::from_secs(90);
         crate::rows::bar_tick(&state, &app, &worker, later);
         assert!(!app.get_loading_shown());
-        assert_eq!(app.get_status(), "synced 17 sections onto 1 frame");
+        assert_eq!(app.get_status(), "synced 18 sections onto 1 frame");
         crate::rows::HOLD_MOSAICS.with(|h| h.set(false));
         crate::testing::remove_dir_retry(&dir);
     }
@@ -2235,7 +2279,7 @@ mod tests {
         assert!(app.get_sync_open());
         app.invoke_sync_applied();
         assert!(!app.get_sync_open());
-        assert_eq!(app.get_status(), "synced 17 sections onto 1 frame");
+        assert_eq!(app.get_status(), "synced 18 sections onto 1 frame");
 
         let st = state.borrow();
         // The frame synced from kept what it had and recorded the
@@ -3552,6 +3596,169 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// Four frames, the third a JPEG: the display curve's switch shows
+    /// only on a raw, so a paste never lays a curve on a picture nor
+    /// takes one from it.
+    fn frames_with_a_jpeg() -> Vec<PathBuf> {
+        let mut files = folder(4);
+        files[2] = PathBuf::from("/nowhere/IMG_0002.JPG");
+        files
+    }
+
+    /// The display curve is a row of the paste sheet, on by default:
+    /// left on, the source's curve lands on each raw, one step each
+    /// under the paste's label, and a JPEG keeps its default; turned
+    /// off, each frame keeps its own.
+    #[test]
+    fn a_paste_carries_the_display_curve_when_its_row_is_on() {
+        use greycard_edit::DisplayCurve;
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, frames_with_a_jpeg());
+        // Frame 3 per channel, frame 0 AgX: each its own.
+        state.borrow_mut().sidecars[0].record(Edit {
+            display_curve: DisplayCurve::Agx,
+            ..Edit::default()
+        });
+        // Frame 1 under AgX, a touch brighter, copied.
+        app.invoke_select(1);
+        app.set_display_curve(DisplayCurve::Agx.name().into());
+        app.set_exposure(0.4);
+        with_control(&app, || press(&app, "c"));
+        with_control(&app, || {
+            let (x, y) = strip_cell(&app, 2);
+            click(&app, x, y);
+            let (x, y) = strip_cell(&app, 3);
+            click(&app, x, y);
+        });
+        assert_eq!(chosen_frames(&state.borrow()), vec![1, 2, 3]);
+
+        // The row is there, under its panel name, beside Light, and on.
+        with_control(&app, || press(&app, "v"));
+        assert!(app.get_sync_paste());
+        let heads = headings(&app);
+        let at = heads
+            .iter()
+            .position(|(name, _)| name == "Display curve")
+            .expect("a Display curve row");
+        assert_eq!(heads[at - 1].0, "Light");
+        assert_eq!(heads[at].1, 2);
+        // Light alone: frame 3 keeps per channel.
+        choose(&app, |s| s == Section::Light);
+        app.invoke_sync_applied();
+        {
+            let st = state.borrow();
+            let s = &st.sidecars[3];
+            assert_eq!(s.current.light.exposure, 0.4);
+            assert_eq!(s.current.display_curve, DisplayCurve::Channels);
+        }
+
+        // Light and the curve: frame 3 takes AgX, in one more step
+        // under the paste's label; the JPEG takes the light alone.
+        with_control(&app, || press(&app, "v"));
+        choose(&app, |s| s == Section::Light || s == Section::DisplayCurve);
+        app.invoke_sync_applied();
+        let st = state.borrow();
+        let s = &st.sidecars[3];
+        assert_eq!(s.current.display_curve, DisplayCurve::Agx);
+        assert_eq!(s.current.light.exposure, 0.4);
+        assert_eq!(s.current_label.as_deref(), Some("Paste from IMG_0001.CR3"));
+        assert_eq!(s.history.len(), 2);
+        let jpeg = &st.sidecars[2];
+        assert_eq!(jpeg.current.light.exposure, 0.4);
+        assert_eq!(jpeg.current.display_curve, DisplayCurve::Channels);
+        // Frame 0, outside the set, is as it was.
+        assert_eq!(st.sidecars[0].current.display_curve, DisplayCurve::Agx);
+        assert_eq!(st.sidecars[0].current.light.exposure, 0.0);
+    }
+
+    /// Pasted onto the frame on screen, the curve reaches the panel's
+    /// switch, and is undone as any step is; copied from a JPEG, there
+    /// is no curve to carry, and an AgX raw keeps AgX.
+    #[test]
+    fn a_pasted_display_curve_shows_on_the_frame_on_screen() {
+        use greycard_edit::DisplayCurve;
+        let app = window(4);
+        let (_state, _worker) = state_for(&app, frames_with_a_jpeg());
+        let agx = DisplayCurve::Agx.name();
+        let channels = DisplayCurve::Channels.name();
+        app.invoke_select(1);
+        app.set_display_curve(agx.into());
+        app.invoke_copy_asked();
+        app.invoke_select(3);
+        assert_eq!(app.get_display_curve(), channels);
+        app.invoke_paste_asked();
+        assert_eq!(app.get_sync_text(), "Onto IMG_0003.CR3.");
+        app.invoke_sync_applied();
+        assert_eq!(app.get_display_curve(), agx);
+        assert_eq!(history_rows(&app), ["Paste from IMG_0001.CR3", "Original"]);
+        app.invoke_undo();
+        assert_eq!(app.get_display_curve(), channels);
+        app.invoke_redo();
+        assert_eq!(app.get_display_curve(), agx);
+
+        // From the JPEG, the last paste's checks, all on: the curve's
+        // row is off, the status counts what went, and frame 3 stays
+        // AgX.
+        app.invoke_select(2);
+        app.set_exposure(0.3);
+        app.invoke_copy_asked();
+        app.invoke_select(3);
+        app.invoke_paste_asked();
+        let heads = headings(&app);
+        assert!(
+            heads.contains(&("Display curve".to_string(), 0)),
+            "{heads:?}"
+        );
+        assert!(heads.contains(&("Light".to_string(), 2)), "{heads:?}");
+        app.invoke_sync_applied();
+        assert_eq!(app.get_exposure(), 0.3);
+        assert_eq!(app.get_display_curve(), agx);
+        assert!(
+            app.get_status()
+                .starts_with("pasted 17 sections from IMG_0002.JPG"),
+            "{}",
+            app.get_status()
+        );
+        // The row checked by hand: still nothing goes.
+        app.invoke_paste_asked();
+        app.invoke_sync_all(true);
+        app.invoke_sync_applied();
+        assert_eq!(app.get_display_curve(), agx);
+    }
+
+    /// A preset saved from a JPEG, every row checked, does not name
+    /// the display curve, which would set an AgX raw back to per
+    /// channel.
+    #[test]
+    fn a_preset_saved_from_a_picture_carries_no_display_curve() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, frames_with_a_jpeg());
+        let dir = crate::testing::scratch_dir("preset-curve");
+        state.borrow_mut().develop.preset_store = Some(preset::Store::at(dir.clone()));
+        app.invoke_select(2);
+        app.set_exposure(0.3);
+        app.invoke_preset_save_open();
+        app.invoke_preset_all(true);
+        app.set_preset_name("Bright".into());
+        app.invoke_preset_saved();
+        assert!(
+            app.get_status().starts_with("saved Bright (18 sections)"),
+            "{}",
+            app.get_status()
+        );
+        let saved = preset::Store::at(dir.clone())
+            .find("Bright")
+            .expect("saved")
+            .preset;
+        assert!(!saved.sections.contains(&Section::DisplayCurve));
+        assert!(saved.sections.contains(&Section::Light));
+        let text = std::fs::read_to_string(dir.join("bright.gcp")).expect("the file");
+        assert!(!text.contains("display-curve"), "{text}");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     #[test]
     fn a_paste_onto_the_frame_on_screen_goes_through_the_panel_and_undoes() {
         let app = window(3);
@@ -3776,10 +3983,13 @@ mod tests {
             .map(|i| rows.row_data(i).unwrap())
             .filter(|r| r.kind != 2)
             .collect();
-        // The lowest check: the foot of the longer column.
+        // The lowest part's check, near the foot of the longer column:
+        // a part's label names its section too, so no tab or heading
+        // elsewhere in the window shares it.
         let (at, low) = checks
             .iter()
             .enumerate()
+            .filter(|(_, r)| r.kind == 1)
             .max_by_key(|(_, r)| r.line)
             .unwrap();
         let low = low.a11y.to_string();

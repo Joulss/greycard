@@ -179,6 +179,7 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Resizeable panes and panels inside them (issue 79)
 - [ ] i18n
 - [ ] Forward/back button navigation
+- [ ] Add a Contribution policy/guide
 
 ### Speed
 
@@ -765,10 +766,6 @@ clears or a tester asks for it.
       collapsed section's share goes to the open ones, each section's
       list scrolls on its own, the shares kept in the settings
       (issue 79, 2026-11-07)
-- [ ] The display curve (Per channel, AgX) as a part of Copy and
-      Paste settings, its own check in the Paste sheet; today
-      `preset::Part` has no entry for it, so it never travels
-      (issue 82, 2026-11-07)
 - [ ] The develop panel's sections told apart at a glance: a header
       shade, a little more room between sections, without losing the
       compact look (issue 80's Lightroom comparison, 2026-11-07)

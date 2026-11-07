@@ -21,6 +21,9 @@ use crate::{Edit, Error, Result, VERSION, migrate};
 #[serde(rename_all = "kebab-case")]
 pub enum Section {
     Light,
+    /// The display curve, per channel or AgX: one switch for the whole
+    /// rendering, shown under Light in the panel.
+    DisplayCurve,
     WhiteBalance,
     Noise,
     /// The Detail section: Texture, Clarity, Structure, and Dehaze.
@@ -50,6 +53,7 @@ impl Section {
         Section::Look,
         Section::WhiteBalance,
         Section::Light,
+        Section::DisplayCurve,
         Section::Color,
         Section::Curves,
         Section::Mixer,
@@ -71,6 +75,7 @@ impl Section {
     pub fn name(self) -> &'static str {
         match self {
             Section::Light => "light",
+            Section::DisplayCurve => "display-curve",
             Section::WhiteBalance => "white-balance",
             Section::Noise => "noise",
             Section::Detail => "detail",
@@ -95,6 +100,7 @@ impl Section {
     pub fn title(self) -> &'static str {
         match self {
             Section::Light => "Light",
+            Section::DisplayCurve => "Display curve",
             Section::WhiteBalance => "White balance",
             Section::Noise => "Noise",
             Section::Detail => "Detail",
@@ -148,12 +154,14 @@ impl Section {
     /// Lay this section of `from` over `onto`.
     pub fn copy(self, from: &Edit, onto: &mut Edit) {
         match self {
-            // Not the display curve's switch: a sidecar leaves it out at
-            // its default, so a preset made before it and one made from
-            // a picture per channel read alike, and carrying it would
-            // turn the switch off on every picture such a preset is
-            // laid on. The switch is the picture's.
+            // Not the display curve's switch, which is a section of its
+            // own: a sidecar leaves it out at its default, so a preset
+            // of Light made before the switch and one made from a
+            // picture per channel read alike, and carrying it with
+            // Light would turn AgX off on every picture such a preset is
+            // laid on.
             Section::Light => onto.light = from.light,
+            Section::DisplayCurve => onto.display_curve = from.display_curve,
             Section::WhiteBalance => onto.white_balance = from.white_balance.clone(),
             // The profiled denoiser only: `learned` and
             // `learned_strength` are the file's own, defaulted from
@@ -204,6 +212,7 @@ impl Section {
                 (a.baseline, b.baseline) = (None, None);
                 a == b
             }
+            Section::DisplayCurve => a.display_curve == b.display_curve,
             Section::WhiteBalance => a.white_balance == b.white_balance,
             // As `copy`: the learned tier and its blend are not part
             // of what a preset carries or compares.
@@ -2200,6 +2209,7 @@ mod tests {
             vec![
                 Section::Look,
                 Section::WhiteBalance,
+                Section::DisplayCurve,
                 Section::Tint,
                 Section::Noise,
                 Section::Sharpen,
@@ -2453,6 +2463,46 @@ mod tests {
         assert_eq!(carried_words(2, 4), "2 sections and 4 parts");
     }
 
+    /// The display curve is a section of its own: checked, a paste
+    /// lays the source's curve on the target; unchecked, or with Light
+    /// alone, the target keeps its own; and a preset written before the
+    /// section, which cannot name it, leaves every picture's as it is.
+    #[test]
+    fn the_display_curve_goes_as_a_section_of_its_own() {
+        use crate::DisplayCurve;
+        let mut agx = Edit {
+            display_curve: DisplayCurve::Agx,
+            ..Edit::default()
+        };
+        agx.light.exposure = 0.5;
+        let channels = Edit::default();
+        let with = Preset::between_frames(
+            &agx,
+            &Choice::whole(&[Section::Light, Section::DisplayCurve]),
+        );
+        assert_eq!(with.applied(&channels).display_curve, DisplayCurve::Agx);
+        assert!(with.is_applied(&with.applied(&channels)));
+        // Back the other way: per channel is laid too, not passed over
+        // as a default.
+        let back = Preset::between_frames(&channels, &Choice::whole(&[Section::DisplayCurve]));
+        assert_eq!(back.applied(&agx).display_curve, DisplayCurve::Channels);
+        assert!(!back.is_applied(&agx));
+        // Unchecked: the light goes, the target's curve stays.
+        let without = Preset::between_frames(&agx, &Choice::whole(&[Section::Light]));
+        let out = without.applied(&channels);
+        assert_eq!(out.light.exposure, 0.5);
+        assert_eq!(out.display_curve, DisplayCurve::Channels);
+        assert_eq!(without.applied(&agx).display_curve, DisplayCurve::Agx);
+        // A file round trip keeps it, and an older file without it
+        // reads and carries none.
+        let read = Preset::from_json(&with.to_json()).unwrap();
+        assert_eq!(read.sections, vec![Section::Light, Section::DisplayCurve]);
+        assert_eq!(read.applied(&channels).display_curve, DisplayCurve::Agx);
+        let old = r#"{"name": "Old", "sections": ["light"], "edit": {}}"#;
+        let old = Preset::from_json(old).unwrap();
+        assert_eq!(old.applied(&agx).display_curve, DisplayCurve::Agx);
+    }
+
     #[test]
     fn section_names_round_trip() {
         for s in Section::ALL {
@@ -2463,7 +2513,7 @@ mod tests {
             );
         }
         let on: Vec<_> = Section::ALL.iter().filter(|s| s.by_default()).collect();
-        assert_eq!(on.len(), 13);
+        assert_eq!(on.len(), 14);
         // A film preset is a look and a strength, so the look comes
         // across by default as the rest of the look does.
         assert!(on.contains(&&Section::Look));

@@ -61,6 +61,20 @@ pub fn preset_fitted(
     }
 }
 
+/// `preset` as it reaches or leaves `file`: itself on a raw, and
+/// without the display curve on a picture (a JPEG, a TIFF). A picture
+/// shows no switch for the curve, and its own is the default, so a
+/// curve laid on one could not be seen or set back (yet a fitted look
+/// would still go by it), and one taken from one is no choice anybody
+/// made.
+pub fn curve_fitted(preset: &Preset, file: &Path) -> Preset {
+    let mut out = preset.clone();
+    if greycard_core::picture::is_picture_path(file) {
+        out.sections.retain(|s| *s != Section::DisplayCurve);
+    }
+    out
+}
+
 /// `--preset`: lay `preset` over `file`'s edit as one step named for
 /// it, and write the sidecar where `placement` says (`None`: the run
 /// writes no sidecars). Written here and not left to the quit's
@@ -83,6 +97,7 @@ pub fn preset_at_start(
     preset: &Preset,
     placement: Option<greycard_edit::Placement>,
 ) -> bool {
+    let preset = &curve_fitted(preset, file);
     let Some(line) = sidecar.line_mut(version) else {
         return false;
     };
@@ -109,5 +124,32 @@ pub fn preset_at_start(
             false
         }
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use greycard_edit::preset::Choice;
+
+    #[test]
+    fn a_picture_neither_takes_nor_gives_a_display_curve() {
+        let preset = Preset::from_choice(
+            "p",
+            &greycard_edit::Edit::default(),
+            &Choice::whole(&[Section::Light, Section::DisplayCurve]),
+        );
+        for raw in ["/a/IMG_0001.CR3", "/a/PXL_0001.dng"] {
+            assert_eq!(
+                curve_fitted(&preset, Path::new(raw)).sections,
+                preset.sections
+            );
+        }
+        for picture in ["/a/IMG_0001.JPG", "/a/scan.tif"] {
+            assert_eq!(
+                curve_fitted(&preset, Path::new(picture)).sections,
+                [Section::Light]
+            );
+        }
     }
 }

@@ -59,13 +59,13 @@ check, **Space** or **Return** turns the one with the focus ring, and
 
 The parts are each section's sliders, or the few settings that make
 one control: a curve's channel, one band of the color mixer, one
-grading wheel. **White balance**, **Tint**, **Look**, **Noise**,
-**Sharpen**, **Demosaic** and **Camera profile** have no parts; each
-goes whole.
+grading wheel. **White balance**, **Display curve**, **Color tint**,
+**Look**, **Noise**, **Sharpen**, **Demosaic**, and **Camera profile**
+have no parts; each goes whole.
 
 Some sections are never checked for you, because they belong to one
 picture more than to a look: **White balance**, **Lens**,
-**Demosaic**, **Camera profile** and **Masks**. Check them yourself if
+**Demosaic**, **Camera profile**, and **Masks**. Check them yourself if
 you want them. Under **Masks** each of the frame's masks is listed by
 name, so a preset can carry one mask alone, and **Replace masks** or
 **Add to masks** says whether the preset's masks take the place of a
@@ -74,8 +74,9 @@ twice.
 
 A slider carried alone leaves the rest of its section, and the
 section's switch, as the frame has them. A preset never carries the
-crop, the straighten or the retouch, and never the **Display curve**
-switch.
+crop, the straighten, or the retouch. **Display curve** is a section
+of its own, not part of **Light**, so a **Light** preset leaves each
+frame's curve as it is.
 
 A preset's **Noise** carries the noise reduction but not the learned
 denoiser, which each frame sets from its own ISO.

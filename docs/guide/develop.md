@@ -213,9 +213,11 @@ chooses how the picture's tones and colors are fitted to the screen:
   keeps their hue. Neon, stage lights and deep blue skies often look
   more natural.
 
-The choice belongs to the picture. Presets, sync and paste leave it
-alone. A fitted look is made for one display curve; see
-[LOOK](#look).
+Sync and paste carry it as a section of its own, **Display curve**,
+checked by default beside **Light**; a preset carries it when saved
+from an AgX picture. Uncheck it to leave each picture's own. A JPEG
+or TIFF, which has no switch, neither takes a curve nor gives one. A
+fitted look is made for one display curve; see [LOOK](#look).
 
 ## Color
 
