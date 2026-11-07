@@ -869,6 +869,9 @@ struct SidecarNow {
     json: Option<Vec<u8>>,
     /// The XMP beside the frame, as `xmp::path_of` picks it.
     xmp: Option<PathBuf>,
+    /// A culling tool's `IMG.xmp` the raw shares with its JPEG, read
+    /// and parsed once here for the summary's adoption to reuse.
+    shared: Option<greycard_edit_io::xmp::Shared>,
 }
 
 /// A raw found moved from `old` to `new` with no sidecar at the new
@@ -952,6 +955,9 @@ fn move_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
 /// looked at for one, and a row from a pass that did not look (one
 /// that takes nothing, or a build before the take) is read again once.
 const LOOKED: &[u8] = b"an XMP looked at for a Lightroom develop";
+/// What goes into a row's hash before a culling tool's shared XMP, so
+/// its bytes are never taken for the frame's own.
+const SHARED: &[u8] = b"a culling tool's XMP shared with a JPEG";
 
 /// A sidecar is small and is read whole: its hash is what says
 /// whether it changed, since a save that changes one digit of a
@@ -962,18 +968,19 @@ const LOOKED: &[u8] = b"an XMP looked at for a Lightroom develop";
 fn sidecar_of(raw: &Path, looks: bool) -> Option<SidecarNow> {
     disk_call();
     let path = Sidecar::find(raw);
-    let xmp = greycard_edit_io::xmp::path_of(raw);
-    if path.is_none() && xmp.is_none() {
+    let greycard_edit_io::xmp::Beside { own: xmp, shared } = greycard_edit_io::xmp::beside(raw);
+    if path.is_none() && xmp.is_none() && shared.is_none() {
         return None;
     }
     let json = path.as_deref().and_then(|p| std::fs::read(p).ok());
     let xmp_bytes = xmp.as_deref().and_then(|p| std::fs::read(p).ok());
-    if json.is_none() && xmp_bytes.is_none() {
+    if json.is_none() && xmp_bytes.is_none() && shared.is_none() {
         return None;
     }
     let mtime = path
         .as_deref()
         .or(xmp.as_deref())
+        .or(shared.as_ref().map(|s| s.path.as_path()))
         .and_then(|p| std::fs::metadata(p).ok())
         .map(|m| mtime_of(&m))
         .unwrap_or(0);
@@ -990,12 +997,20 @@ fn sidecar_of(raw: &Path, looks: bool) -> Option<SidecarNow> {
         hasher.update(&(x.len() as u64).to_le_bytes());
         hasher.update(x);
     }
+    // A culling tool's shared XMP after both, marked, so a rating
+    // given there is seen too.
+    if let Some(s) = &shared {
+        hasher.update(SHARED);
+        hasher.update(&(s.bytes.len() as u64).to_le_bytes());
+        hasher.update(&s.bytes);
+    }
     Some(SidecarNow {
         path,
         hash: hasher.finalize().to_hex().to_string(),
         mtime,
         json,
         xmp,
+        shared,
     })
 }
 
@@ -2346,6 +2361,8 @@ struct Parsed {
     /// What the sidecar last took from an XMP, so the same XMP is not
     /// taken again.
     mark: Option<greycard_edit_io::xmp::Adopted>,
+    /// The same for a culling tool's `IMG.xmp` shared with a JPEG.
+    shared_mark: Option<greycard_edit_io::xmp::Culled>,
     /// The edit, brought up to this build's shape; none when there is
     /// no `current` in the file.
     current: Option<greycard_edit::Edit>,
@@ -2463,6 +2480,10 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
         .get("xmp")
         .cloned()
         .and_then(|m| serde_json::from_value(m).ok());
+    let shared_mark: Option<greycard_edit_io::xmp::Culled> = value
+        .get("xmp_shared")
+        .cloned()
+        .and_then(|m| serde_json::from_value(m).ok());
     let count = |key: &str| {
         value
             .get(key)
@@ -2477,6 +2498,7 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
             .and_then(|t| t.as_u64())
             .map_or(0, |t| (t % 4) as u8),
         mark,
+        shared_mark,
         current,
         stepped: count("snapshots") > 0,
         exported: records_export(&value),
@@ -2535,12 +2557,19 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         meta: p.meta,
         turn: p.turn,
         xmp: p.mark,
+        xmp_shared: p.shared_mark,
         ..Sidecar::default()
     };
-    if now.xmp.is_some() {
+    if now.xmp.is_some() || now.shared.is_some() {
         // The camera's tag is asked for only when the packet says
-        // something about the orientation, as the editor asks.
-        greycard_edit_io::xmp::adopt(raw, &mut sidecar, || {
+        // something about the orientation, as the editor asks. What
+        // the pass found beside the frame is the adoption's, so the
+        // shared XMP is not read and parsed twice.
+        let found = greycard_edit_io::xmp::Beside {
+            own: now.xmp.clone(),
+            shared: now.shared.clone(),
+        };
+        greycard_edit_io::xmp::adopt_beside(&found, &mut sidecar, || {
             disk_call();
             greycard_core::decode::orientation_path(raw)
                 .inspect_err(|e| log::warn!("{}: orientation: {e}", raw.display()))
@@ -2609,6 +2638,7 @@ pub(crate) fn summary_from_json(json: &[u8], sidecar: &Path, raw: Option<&Path>)
         mtime: 0,
         json: Some(json.to_vec()),
         xmp: None,
+        shared: None,
     };
     summary_of(Some(&now), raw.unwrap_or(Path::new("frame.cr3")))
 }
@@ -7386,6 +7416,48 @@ pub(crate) mod tests {
         // The `.gcd` has no mark, so the XMP is taken over it, as the
         // editor would take it on opening.
         assert_eq!(row(&lib, &only).meta.rating, 5);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A culling tool's `IMG.xmp` beside a raw and its JPEG rates the
+    /// raw's row, and the JPEG's row reads nothing of it.
+    #[test]
+    fn a_culling_tools_shared_xmp_rates_the_raw_and_not_its_jpeg() {
+        use greycard_edit_io::xmp;
+        let dir = scratch("culled");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let jpeg = dir.join("IMG_0001.JPG");
+        image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+            .save(&jpeg)
+            .unwrap();
+        let packet = |rating: i32| {
+            format!(
+                r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF
+                xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description
+                rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+                xmp:Rating="{rating}" xmp:Label="Red"/></rdf:RDF></x:xmpmeta>"#
+            )
+        };
+        std::fs::write(xmp::short_path(&raw), packet(4)).unwrap();
+
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let row = |lib: &Library, p: &Path| lib.by_path(p).unwrap().unwrap();
+        let e = row(&lib, &raw);
+        assert_eq!((e.meta.rating, e.meta.label), (4, Label::Red));
+        let e = row(&lib, &jpeg);
+        assert_eq!((e.meta.rating, e.meta.label), (0, Label::None));
+
+        // Rated again there: the next pass sees it.
+        std::fs::write(xmp::short_path(&raw), packet(5)).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 1, "{report:?}");
+        assert_eq!(row(&lib, &raw).meta.rating, 5);
+        assert_eq!(row(&lib, &jpeg).meta.rating, 0);
+        // Reading wrote nothing into the folder.
+        assert!(Sidecar::find(&raw).is_none());
+        assert!(!xmp::long_path(&raw).exists());
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

@@ -45,3 +45,19 @@ impl Adopted {
         }
     }
 }
+
+/// What was last taken from a culling tool's `IMG.xmp` that a raw
+/// shares with its JPEG: each field as the file said it, none where
+/// it was silent. A field is taken again only when the file says
+/// something else for it, so a tool that rewrites its file for a
+/// field of its own (a tag, a color class) or for the label alone
+/// does not put back a rating given here since.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Culled {
+    /// The rating as the file gave it, `-1` for a reject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<i8>,
+    /// The label's name as the file gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}

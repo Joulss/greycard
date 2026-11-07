@@ -462,6 +462,7 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     let mut joined = Sidecar {
         line: join_line(&newer.line, &older.line, host.as_deref(), seen),
         xmp: newer.xmp.clone().or(older.xmp.clone()),
+        xmp_shared: newer.xmp_shared.clone().or(older.xmp_shared.clone()),
         // What a Lightroom import laid, the newer copy's first, field by
         // field; a field is Lightroom's only while the joined meta still
         // holds the value laid, so the older's record can only say less.

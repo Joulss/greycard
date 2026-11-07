@@ -91,7 +91,7 @@ use std::path::{Path, PathBuf};
 use greycard_core::raw::Orientation;
 
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
-pub use greycard_edit::xmp::Adopted;
+pub use greycard_edit::xmp::{Adopted, Culled};
 use greycard_edit::{Error, Result};
 
 /// The XMP basic namespace: `xmp:Rating` and `xmp:Label`.
@@ -387,11 +387,16 @@ impl Packet {
 /// build does not know costs that field and nothing else.
 pub fn read(xml: &str) -> Result<Packet> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| Error::Xmp(e.to_string()))?;
+    Ok(read_doc(&doc))
+}
+
+/// [`read`] over a packet already parsed.
+fn read_doc(doc: &roxmltree::Document<'_>) -> Packet {
     let mut packet = Packet::default();
     // `greycard:Flag` is the whole truth about the flag, so a -1
     // rating does not set it back to a reject once it is read.
     let mut flag_is_ours = false;
-    for desc in descriptions(&doc) {
+    for desc in descriptions(doc) {
         for a in desc.attributes() {
             if let Some(prop) = prop_of(a.namespace(), a.name()) {
                 put(&mut packet, prop, a.value(), &mut flag_is_ours);
@@ -431,7 +436,7 @@ pub fn read(xml: &str) -> Result<Packet> {
             }
         }
     }
-    Ok(packet)
+    packet
 }
 
 /// One value into the packet, read loosely: what makes no sense here
@@ -1104,24 +1109,48 @@ pub fn long_path(frame: &Path) -> PathBuf {
 /// one is its own. `IMG.CR3.xmp` is always this frame's; `IMG.xmp`
 /// is only when nothing else in the folder answers to `IMG`, since a
 /// raw and a JPEG of one shot would otherwise be handed one sidecar
-/// between them and each would write over the other.
+/// between them and each would write over the other. What a frame
+/// owns is what it reads and writes, and what it takes with it when
+/// it moves.
+///
+/// One shared `IMG.xmp` is read without being owned: a culling
+/// tool's beside a raw and its JPEGs ([`beside`], [`culled_for`]).
 ///
 /// The folder is only read when the answer can matter: when the
 /// short name is already there, or when a file is about to be made.
 fn owned(frame: &Path, making: bool) -> (PathBuf, Option<PathBuf>) {
-    let short = short_path(frame);
-    let ask = making || short.exists();
-    (
-        long_path(frame),
-        (ask && !shares_stem(frame)).then_some(short),
-    )
+    let short = match short_of(frame, making) {
+        Short::Ours(p) => Some(p),
+        Short::Shared(..) | Short::Unasked => None,
+    };
+    (long_path(frame), short)
 }
 
-/// Every XMP beside `frame` that is this frame's and is there: one
-/// name usually, both when a folder has been through both tools.
-/// What a frame takes with it when it moves.
-pub fn paths_of(frame: &Path) -> Vec<PathBuf> {
-    let (long, short) = owned(frame, false);
+/// What the short name is to a frame.
+enum Short {
+    /// Not there, and nothing about to be made: the folder unread.
+    Unasked,
+    /// The frame's own: nothing else in the folder has its stem.
+    Ours(PathBuf),
+    /// Other files have the stem; they are named.
+    Shared(PathBuf, Vec<PathBuf>),
+}
+
+fn short_of(frame: &Path, making: bool) -> Short {
+    let short = short_path(frame);
+    if !making && !short.exists() {
+        return Short::Unasked;
+    }
+    let others = stem_sharers(frame);
+    if others.is_empty() {
+        Short::Ours(short)
+    } else {
+        Short::Shared(short, others)
+    }
+}
+
+/// The names given that are there, the long one first.
+fn there(long: PathBuf, short: Option<PathBuf>) -> Vec<PathBuf> {
     let mut all = Vec::new();
     if long.exists() {
         all.push(long);
@@ -1132,19 +1161,170 @@ pub fn paths_of(frame: &Path) -> Vec<PathBuf> {
     all
 }
 
+/// The newer of the files given, the first of them on a tie: whichever
+/// wrote last is the one with something to say.
+fn newest(all: Vec<PathBuf>) -> Option<PathBuf> {
+    let mut best: Option<(Option<std::time::SystemTime>, PathBuf)> = None;
+    for p in all {
+        let when = modified(&p);
+        if best.as_ref().is_none_or(|(b, _)| when > *b) {
+            best = Some((when, p));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// Every XMP beside `frame` that is this frame's and is there: one
+/// name usually, both when a folder has been through both tools.
+/// What a frame takes with it when it moves.
+pub fn paths_of(frame: &Path) -> Vec<PathBuf> {
+    let (long, short) = owned(frame, false);
+    there(long, short)
+}
+
 /// The XMP beside `frame` that is this frame's, for reading and for
 /// writing both, so the two cannot drift apart. When both names are
-/// ours and both are there, the newer: whichever wrote last is the
-/// one with something to say.
+/// ours and both are there, the newer, the long name on a tie.
+///
+/// A culling tool's shared `IMG.xmp` is not among them; [`beside`]
+/// finds it as well.
 pub fn path_of(frame: &Path) -> Option<PathBuf> {
-    let mut all = paths_of(frame);
-    all.sort_by_key(|p| modified(p));
-    all.pop()
+    newest(paths_of(frame))
+}
+
+/// What is beside a frame to read: its own XMP ([`path_of`]), and a
+/// culling tool's `IMG.xmp` it shares with its JPEGs when there is one
+/// ([`culled_for`]), read and parsed. One listing of the folder at
+/// most, and only when the short name is there.
+#[derive(Debug, Clone, Default)]
+pub struct Beside {
+    pub own: Option<PathBuf>,
+    pub shared: Option<Shared>,
+}
+
+/// A culling tool's `IMG.xmp` shared by a raw and its JPEGs, as read.
+#[derive(Debug, Clone)]
+pub struct Shared {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+    packet: Packet,
+}
+
+impl Shared {
+    /// What the file says now, as its mark keeps it.
+    pub fn culled(&self) -> Culled {
+        let p = &self.packet;
+        Culled {
+            rating: p.has(Prop::Rating).then(|| {
+                if p.has(Prop::Flag) && p.meta.flag == Flag::Reject {
+                    -1
+                } else {
+                    p.meta.rating as i8
+                }
+            }),
+            label: p.has(Prop::Label).then(|| p.meta.label.name().to_string()),
+        }
+    }
+}
+
+/// What [`Beside`] says is beside `frame`.
+pub fn beside(frame: &Path) -> Beside {
+    let (short, shared) = match short_of(frame, false) {
+        Short::Ours(p) => (Some(p), None),
+        Short::Shared(p, others) => (None, culled_for(frame, p, &others)),
+        Short::Unasked => (None, None),
+    };
+    Beside {
+        own: newest(there(long_path(frame), short)),
+        shared,
+    }
+}
+
+/// The shared `short` beside `frame`, read, when it is read as the
+/// frame's: the frame is a raw, every other file of its stem is a JPEG
+/// (a raw and its camera's JPEGs, as the pairs have it), and the file
+/// is a culling tool's ([`culled_only`]). Two raws of one stem share
+/// nothing, since either could be the one the rating was for, and any
+/// other file of the stem (a `.THM`, a `.WAV`, a TIFF) refuses too,
+/// which costs a read and never a write.
+fn culled_for(frame: &Path, short: PathBuf, others: &[PathBuf]) -> Option<Shared> {
+    let jpeg = |p: &PathBuf| {
+        p.extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| matches!(x.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
+    };
+    if !greycard_core::decode::is_raw_path(frame) || !others.iter().all(jpeg) {
+        return None;
+    }
+    let bytes = std::fs::read(&short).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let doc = roxmltree::Document::parse(&text).ok()?;
+    let extension = frame.extension().and_then(|x| x.to_str()).unwrap_or("");
+    if !culled_only(&doc, extension) {
+        return None;
+    }
+    let packet = read_doc(&doc);
+    drop(doc);
+    Some(Shared {
+        path: short,
+        bytes,
+        packet,
+    })
+}
+
+/// The XMP namespace's media management, for the file's identity.
+const XMP_MM: &str = "http://ns.adobe.com/xap/1.0/mm/";
+/// Photo Mechanic's own, for its color class and tag.
+const PHOTO_MECHANIC: &str = "http://ns.camerabits.com/photomechanic/1.0/";
+
+/// Whether a packet is a culling tool's, as FastRawViewer and Photo
+/// Mechanic write one: an `xmp:Rating` or an `xmp:Label`, and beside
+/// them nothing but the tool's bookkeeping and the shot's facts, which
+/// are `xmp:`'s `MetadataDate`, `ModifyDate`, `CreateDate`, and
+/// `CreatorTool`, `xmpMM:`'s `DocumentID`, `InstanceID`, and
+/// `OriginalDocumentID`, `tiff:Orientation` (a turn FastRawViewer
+/// writes, which is not taken), and Photo Mechanic's `ColorClass`,
+/// `Tagged`, `Prefs`, and `PMVersion`; `dc:format` unless it is
+/// `image/jpeg`; and `photoshop:SidecarForExtension` when it names
+/// `extension`, the raw's. Anything else (a `crs:` develop, a keyword,
+/// a caption, a field of ours, or a file that names the JPEG) and it
+/// is not: a file that says more than a rating could be about the
+/// JPEG, and is nobody's to read.
+fn culled_only(doc: &roxmltree::Document<'_>, extension: &str) -> bool {
+    let mut says = false;
+    for desc in descriptions(doc) {
+        let attributes = desc
+            .attributes()
+            .filter(|a| a.namespace() != Some(RDF))
+            .map(|a| (a.namespace(), a.name(), Some(a.value())));
+        let children = desc
+            .children()
+            .filter(|n| n.is_element())
+            .map(|n| (n.tag_name().namespace(), n.tag_name().name(), n.text()));
+        for (ns, name, value) in attributes.chain(children) {
+            match (ns, name) {
+                (Some(XMP), "Rating" | "Label") => says = true,
+                (Some(XMP), "MetadataDate" | "ModifyDate" | "CreateDate" | "CreatorTool")
+                | (Some(XMP_MM), "DocumentID" | "InstanceID" | "OriginalDocumentID")
+                | (Some(TIFF), "Orientation")
+                | (Some(PHOTO_MECHANIC), "ColorClass" | "Tagged" | "Prefs" | "PMVersion") => {}
+                // The one fact that says outright the file is the JPEG's.
+                (Some(DC), "format")
+                    if value.is_none_or(|v| !v.trim().eq_ignore_ascii_case("image/jpeg")) => {}
+                (Some(PHOTOSHOP), "SidecarForExtension")
+                    if value.is_some_and(|v| v.trim().eq_ignore_ascii_case(extension)) => {}
+                _ => return false,
+            }
+        }
+    }
+    says
 }
 
 /// The XMP beside `frame` to write: the one that is there, so a
 /// darktable folder keeps darktable's naming, and otherwise the name
-/// [`owned`] says is this frame's.
+/// [`owned`] says is this frame's. Never a culling tool's `IMG.xmp`
+/// shared with a JPEG: the raw and the JPEG would write over each
+/// other in it.
 ///
 /// None when `create` is false and there is nothing there: a frame
 /// with no meta to say never has an XMP made for it.
@@ -1159,31 +1339,37 @@ pub fn write_path(frame: &Path, create: bool) -> Option<PathBuf> {
     Some(short.unwrap_or(long))
 }
 
-/// Whether another picture in the folder has this frame's stem: the
-/// raw-plus-JPEG pair, and nothing else, since a sidecar of ours is
-/// not a picture. Names only, so the folder is read and nothing in
-/// it is stat'ed.
-fn shares_stem(frame: &Path) -> bool {
+/// The other files in the folder with this frame's stem, compared
+/// without case as the pairs compare them: the raw-plus-JPEG pair,
+/// and nothing else, since a sidecar of ours is not a picture. Names
+/// only, so the folder is read and nothing in it is stat'ed.
+fn stem_sharers(frame: &Path) -> Vec<PathBuf> {
     let (Some(dir), Some(stem), Some(name)) =
         (frame.parent(), frame.file_stem(), frame.file_name())
     else {
-        return false;
+        return Vec::new();
     };
+    let stem = stem.to_string_lossy().to_lowercase();
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+        return Vec::new();
     };
-    entries.flatten().any(|e| {
-        let entry = e.file_name();
-        if entry == name {
-            return false;
-        }
-        let entry = Path::new(&entry);
-        let sidecar = entry
-            .extension()
-            .and_then(|x| x.to_str())
-            .is_some_and(|x| matches!(x.to_ascii_lowercase().as_str(), "xmp" | "gcd" | "tmp"));
-        !sidecar && entry.file_stem() == Some(stem)
-    })
+    entries
+        .flatten()
+        .map(|e| PathBuf::from(e.file_name()))
+        .filter(|entry| {
+            if entry.as_os_str() == name {
+                return false;
+            }
+            let sidecar = entry
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| matches!(x.to_ascii_lowercase().as_str(), "xmp" | "gcd" | "tmp"));
+            !sidecar
+                && entry
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem)
+        })
+        .collect()
 }
 
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
@@ -1234,20 +1420,112 @@ pub fn adopt(
     sidecar: &mut greycard_edit::Sidecar,
     camera: impl FnOnce() -> Option<Orientation>,
 ) -> Adoption {
+    adopt_beside(&beside(frame), sidecar, camera)
+}
+
+/// [`adopt`] from what [`beside`] found, for a caller that has it.
+///
+/// The frame's own XMP first, then a culling tool's shared `IMG.xmp`,
+/// each against its own mark ([`greycard_edit::Sidecar::xmp`] and
+/// [`greycard_edit::Sidecar::xmp_shared`]), so their clocks are never
+/// compared: the shared file's rating, and its label, are each taken
+/// only when the file says something else for it than when last
+/// taken, whatever its time and whatever else in it changed, and a
+/// rating given here stands until the culling tool changes its own.
+/// A field the file drops is a field cleared. Its turn, when it has
+/// one, is not taken. A shared file that is gone leaves its mark, so
+/// one that comes back unchanged (a raw moved away and back) is not
+/// taken again.
+///
+/// With no mark (a `.gcd` from before the mark, one an older build
+/// wrote over, or none at all beside our own XMP) a field is taken
+/// only where the frame's is still empty, and every field is marked,
+/// so a rating given here is never put back by a file it never met.
+pub fn adopt_beside(
+    found: &Beside,
+    sidecar: &mut greycard_edit::Sidecar,
+    camera: impl FnOnce() -> Option<Orientation>,
+) -> Adoption {
+    let mut took = adopt_own(found.own.as_deref(), sidecar, camera);
+    if let Some(shared) = &found.shared {
+        let now = shared.culled();
+        let was = sidecar.xmp_shared.take();
+        let meta = taken_over(&sidecar.meta, &shared.packet, &now, was.as_ref());
+        sidecar.xmp_shared = Some(now);
+        if meta != sidecar.meta {
+            sidecar.meta = meta;
+            took.meta = true;
+        }
+    }
+    took
+}
+
+/// `meta` with what a culling tool's packet `said` taken over it, by
+/// [`adopt_beside`]'s rule: `now` is the packet's fields, `was` the
+/// mark of what was last taken, none when nothing was.
+fn taken_over(meta: &Meta, said: &Packet, now: &Culled, was: Option<&Culled>) -> Meta {
+    let mut out = meta.clone();
+    let (rating, label) = match was {
+        Some(was) => (
+            (now.rating != was.rating).then_some(was.rating),
+            now.label != was.label,
+        ),
+        None => (
+            (now.rating.is_some() && meta.rating == 0 && meta.flag != Flag::Reject).then_some(None),
+            now.label.is_some() && meta.label == Label::None,
+        ),
+    };
+    // `rating` is Some(what the mark said) when the rating moves.
+    if let Some(before) = rating {
+        let unrejected = before == Some(-1) && out.flag == Flag::Reject;
+        match now.rating {
+            Some(-1) => {
+                out.rating = 0;
+                out.flag = Flag::Reject;
+            }
+            Some(_) => {
+                out.rating = said.meta.rating;
+                if unrejected {
+                    out.flag = Flag::None;
+                }
+            }
+            None => {
+                out.rating = 0;
+                if unrejected {
+                    out.flag = Flag::None;
+                }
+            }
+        }
+    }
+    if label {
+        out.label = if now.label.is_some() {
+            said.meta.label
+        } else {
+            Label::None
+        };
+    }
+    out
+}
+
+fn adopt_own(
+    path: Option<&Path>,
+    sidecar: &mut greycard_edit::Sidecar,
+    camera: impl FnOnce() -> Option<Orientation>,
+) -> Adoption {
     let mut took = Adoption::default();
-    let Some(path) = path_of(frame) else {
+    let Some(path) = path else {
         // Nothing there to have a mark about.
         sidecar.xmp = None;
         return took;
     };
-    let bytes = match std::fs::read(&path) {
+    let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {
             log::warn!("{}: {e}", path.display());
             return took;
         }
     };
-    let mark = Adopted::of(&path, &bytes);
+    let mark = Adopted::of(path, &bytes);
     if sidecar.xmp.as_ref() == Some(&mark) {
         return took;
     }
@@ -2027,6 +2305,255 @@ mod tests {
         assert_eq!(paths_of(&frame), Vec::<PathBuf>::new());
         assert_eq!(path_of(&frame), None);
         assert_eq!(write_path(&frame, true), Some(short_path(&frame)));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A culling tool's packet: a rating, a label, and its bookkeeping.
+    fn culled(extra: &str) -> String {
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="a culling tool">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
+    xmlns:photomechanic="http://ns.camerabits.com/photomechanic/1.0/"
+    xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:tiff="http://ns.adobe.com/tiff/1.0/"
+    xmp:Rating="4"
+    xmp:MetadataDate="2026-11-07T10:00:00"
+    xmpMM:InstanceID="xmp.iid:0001"
+    photomechanic:ColorClass="2"{extra}>
+   <xmp:Label>Red</xmp:Label>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#
+        )
+    }
+
+    /// A raw and its camera's JPEG, and a culling tool's `IMG.xmp`.
+    fn culled_pair(name: &str, extra: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let dir = tempdir(name);
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        std::fs::write(dir.join("IMG_0001.jpg"), b"jpeg").unwrap();
+        let bare = short_path(&raw);
+        std::fs::write(&bare, culled(extra)).unwrap();
+        (dir, raw, bare)
+    }
+
+    fn shared_of(frame: &Path) -> Option<PathBuf> {
+        beside(frame).shared.map(|s| s.path)
+    }
+
+    /// The shared `IMG.xmp`'s rating and label are read as the raw's;
+    /// nothing here writes into it, and it stays the pair's on a move.
+    #[test]
+    fn a_culling_tools_xmp_beside_a_raw_and_its_jpeg_is_the_raws_to_read() {
+        let (dir, raw, bare) = culled_pair("culled", "");
+        let jpeg = dir.join("IMG_0001.jpg");
+        assert_eq!(shared_of(&raw), Some(bare.clone()));
+        assert_eq!(path_of(&raw), None, "read, not owned");
+        assert_eq!(paths_of(&raw), Vec::<PathBuf>::new());
+        assert_eq!(shared_of(&jpeg), None, "the raw's, not the JPEG's");
+        assert_eq!(path_of(&jpeg), None);
+
+        let mut sidecar = greycard_edit::Sidecar::default();
+        assert!(adopt(&raw, &mut sidecar, || None).meta);
+        assert_eq!((sidecar.meta.rating, sidecar.meta.label), (4, Label::Red));
+        assert!(!adopt(&raw, &mut sidecar, || None).moved(), "taken once");
+
+        // A save goes to the long name and leaves the shared one be.
+        assert_eq!(write_path(&raw, true), Some(long_path(&raw)));
+        sidecar.meta.rating = 2;
+        sidecar.xmp = save(&raw, &sidecar.meta, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&bare).unwrap(), culled(""));
+        assert_eq!(
+            meta_of(&std::fs::read_to_string(long_path(&raw)).unwrap()).rating,
+            2
+        );
+        assert!(!adopt(&raw, &mut sidecar, || None).moved());
+
+        // Rated again in the culling tool: taken.
+        std::fs::write(&bare, culled("").replace(r#"Rating="4""#, r#"Rating="5""#)).unwrap();
+        assert!(adopt(&raw, &mut sidecar, || None).meta);
+        assert_eq!(sidecar.meta.rating, 5);
+        // Rejected there: -1 is a reject here too.
+        std::fs::write(&bare, culled("").replace(r#"Rating="4""#, r#"Rating="-1""#)).unwrap();
+        adopt(&raw, &mut sidecar, || None);
+        assert_eq!(sidecar.meta.flag, Flag::Reject);
+        // And taken back there: the reject goes with it.
+        std::fs::write(&bare, culled("").replace(r#"Rating="4""#, r#"Rating="3""#)).unwrap();
+        adopt(&raw, &mut sidecar, || None);
+        assert_eq!((sidecar.meta.rating, sidecar.meta.flag), (3, Flag::None));
+        // A field the tool drops is cleared here: the label, then the
+        // rating.
+        std::fs::write(
+            &bare,
+            culled("")
+                .replace(r#"Rating="4""#, r#"Rating="3""#)
+                .replace("<xmp:Label>Red</xmp:Label>", ""),
+        )
+        .unwrap();
+        assert!(adopt(&raw, &mut sidecar, || None).meta);
+        assert_eq!((sidecar.meta.rating, sidecar.meta.label), (3, Label::None));
+        std::fs::write(&bare, culled("").replace(r#"xmp:Rating="4""#, "")).unwrap();
+        assert!(adopt(&raw, &mut sidecar, || None).meta);
+        assert_eq!((sidecar.meta.rating, sidecar.meta.label), (0, Label::Red));
+
+        // The tool's marker for the raw is a culling tool's; one for
+        // the JPEG is not the raw's.
+        std::fs::write(&bare, culled(r#" photoshop:SidecarForExtension="cr3""#)).unwrap();
+        assert_eq!(shared_of(&raw), Some(bare.clone()));
+        std::fs::write(&bare, culled(r#" photoshop:SidecarForExtension="JPG""#)).unwrap();
+        assert_eq!(shared_of(&raw), None);
+        // A JPEG of the stem in another case is the pair's all the same.
+        std::fs::write(&bare, culled("")).unwrap();
+        std::fs::rename(&jpeg, dir.join("img_0001.JPG")).unwrap();
+        assert_eq!(shared_of(&raw), Some(bare.clone()));
+        assert_eq!(write_path(&raw, true), Some(long_path(&raw)));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The shared file's clock is never weighed against ours: a tie, a
+    /// copy that resets times, or a file newer for a field of the
+    /// tool's own, and a rating given here stands.
+    #[test]
+    fn a_rating_given_here_stands_until_the_culling_tool_changes_its_own() {
+        let (dir, raw, bare) = culled_pair("stands", "");
+        let mut sidecar = greycard_edit::Sidecar::default();
+        adopt(&raw, &mut sidecar, || None);
+        sidecar.meta.rating = 1;
+        sidecar.xmp = save(&raw, &sidecar.meta, None).unwrap();
+
+        // Both files to the same second, and the shared one newer.
+        touch(&bare, 1_000_000_000);
+        touch(&long_path(&raw), 1_000_000_000);
+        assert_eq!(path_of(&raw), Some(long_path(&raw)));
+        assert!(!adopt(&raw, &mut sidecar, || None).moved());
+        touch(&bare, 2_000_000_000);
+        assert!(!adopt(&raw, &mut sidecar, || None).moved());
+        assert_eq!(sidecar.meta.rating, 1);
+
+        // Rewritten for Photo Mechanic's tag alone: the rating stands.
+        std::fs::write(&bare, culled(r#" photomechanic:Tagged="True""#)).unwrap();
+        assert!(!adopt(&raw, &mut sidecar, || None).moved());
+        assert_eq!(sidecar.meta.rating, 1);
+        // Rewritten for the label alone: the label is taken, the
+        // rating stands.
+        sidecar.meta.label = Label::None;
+        std::fs::write(
+            &bare,
+            culled("").replace("<xmp:Label>Red</xmp:Label>", "<xmp:Label>Green</xmp:Label>"),
+        )
+        .unwrap();
+        assert!(adopt(&raw, &mut sidecar, || None).meta);
+        assert_eq!((sidecar.meta.rating, sidecar.meta.label), (1, Label::Green));
+
+        // The mark rides in the `.gcd` and back.
+        sidecar.save(&raw).unwrap();
+        let mut back = greycard_edit::Sidecar::load(&raw)
+            .unwrap()
+            .expect("a sidecar");
+        assert_eq!(back.xmp_shared, sidecar.xmp_shared);
+        assert!(!adopt(&raw, &mut back, || None).moved());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A frame meeting the shared file with no mark (a `.gcd` from
+    /// before it, or one an older build wrote over) keeps a rating
+    /// given here and takes only what it has not got; so does a frame
+    /// with our own XMP and no `.gcd`, on every read.
+    #[test]
+    fn a_shared_xmp_met_first_fills_only_what_the_frame_has_not_got() {
+        let (dir, raw, _bare) = culled_pair("first", "");
+        let mut sidecar = greycard_edit::Sidecar::default();
+        sidecar.meta.rating = 2;
+        assert!(adopt(&raw, &mut sidecar, || None).meta);
+        assert_eq!((sidecar.meta.rating, sidecar.meta.label), (2, Label::Red));
+        assert!(sidecar.xmp_shared.is_some(), "marked, every field");
+        assert!(!adopt(&raw, &mut sidecar, || None).moved());
+        // A reject here is a rating given here.
+        let mut rejected = greycard_edit::Sidecar::default();
+        rejected.meta.flag = Flag::Reject;
+        adopt(&raw, &mut rejected, || None);
+        assert_eq!(
+            (rejected.meta.rating, rejected.meta.flag),
+            (0, Flag::Reject)
+        );
+
+        // Our own XMP and no `.gcd`: read afresh each time, and the
+        // shared file never goes over it.
+        let two = Meta {
+            rating: 2,
+            ..Meta::default()
+        };
+        save(&raw, &two, None).unwrap();
+        for _ in 0..2 {
+            let mut fresh = greycard_edit::Sidecar::default();
+            adopt(&raw, &mut fresh, || None);
+            assert_eq!((fresh.meta.rating, fresh.meta.label), (2, Label::Red));
+        }
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// Anything past a rating and a label keeps the older rule: a
+    /// shared `IMG.xmp` is nobody's to read or to write.
+    #[test]
+    fn a_shared_xmp_that_says_more_than_a_rating_is_nobodys() {
+        let (dir, raw, bare) = culled_pair("shared", "");
+        // What a culling tool may carry besides, and still be one.
+        for extra in [
+            r#" tiff:Orientation="6""#,
+            r#" dc:format="image/x-canon-cr3""#,
+            r#" xmp:CreateDate="2026-11-07T10:00:00""#,
+        ] {
+            std::fs::write(&bare, culled(extra)).unwrap();
+            assert_eq!(shared_of(&raw), Some(bare.clone()), "{extra}");
+        }
+        for extra in [
+            // A develop: Lightroom's, which its own take reads, or a
+            // JPEG's from Camera Raw.
+            r#" crs:Exposure2012="+0.50""#,
+            // The JPEG's, said outright.
+            r#" dc:format="image/jpeg""#,
+            r#" dc:creator="someone""#,
+            r#" photoshop:DateCreated="2026-11-07""#,
+            r#" xmpMM:History="saved""#,
+            r#" photomechanic:Something="new""#,
+            r#" greycard:Flag="pick" xmlns:greycard="https://greycard.org/ns/1.0/""#,
+        ] {
+            let packet = culled(extra);
+            std::fs::write(&bare, &packet).unwrap();
+            assert_eq!(shared_of(&raw), None, "{extra}");
+            let mut sidecar = greycard_edit::Sidecar::default();
+            assert!(!adopt(&raw, &mut sidecar, || None).moved(), "{extra}");
+            assert_eq!(write_path(&raw, true), Some(long_path(&raw)), "{extra}");
+            save(&raw, &full(), None).unwrap();
+            assert_eq!(std::fs::read_to_string(&bare).unwrap(), packet, "{extra}");
+            std::fs::remove_file(long_path(&raw)).unwrap();
+        }
+        // Nothing to say but bookkeeping is not a culling.
+        std::fs::write(
+            &bare,
+            culled("")
+                .replace(r#"xmp:Rating="4""#, "")
+                .replace("<xmp:Label>Red</xmp:Label>", ""),
+        )
+        .unwrap();
+        assert_eq!(shared_of(&raw), None);
+        // A packet that will not parse.
+        std::fs::write(&bare, "<x:xmpmeta><half of a").unwrap();
+        assert_eq!(shared_of(&raw), None);
+        // Two raws of the stem: either could be the one rated.
+        std::fs::write(&bare, culled("")).unwrap();
+        std::fs::write(dir.join("IMG_0001.DNG"), b"raw").unwrap();
+        assert_eq!(shared_of(&raw), None);
+        // Nor any other file of the stem.
+        std::fs::remove_file(dir.join("IMG_0001.DNG")).unwrap();
+        std::fs::write(dir.join("IMG_0001.THM"), b"thumb").unwrap();
+        assert_eq!(shared_of(&raw), None);
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

@@ -32,6 +32,11 @@ design note behind it.
   only when the frame chosen next would be off screen, and then by
   the least (issues 83 and 84)
   ([§592](https://github.com/jessolmstead/greycard/blob/master/docs/notes/592-the-strip-holds-still-under-a-delete.md)).
+- A rating and a label from FastRawViewer or Photo Mechanic in a bare
+  `IMG.xmp` beside a raw and its JPEG now show on the raw; greycard
+  never writes into that shared file, and a rating given here stands
+  until the culling tool changes its own (issue 31)
+  ([§593](https://github.com/jessolmstead/greycard/blob/master/docs/notes/593-a-culling-tools-xmp-beside-a-raw-and-its-jpeg.md)).
 
 ## 0.10.0, 2026-11-06
 

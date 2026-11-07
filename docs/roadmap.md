@@ -1042,12 +1042,6 @@ clears or a tester asks for it.
       Intersect (discussion 59, 2026-10-30)
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
-- [ ] A bare `IMG.xmp` beside a raw and a JPEG of one shot read as the
-      raw's when it holds only a rating and a label, as FastRawViewer
-      and Photo Mechanic write it; one with Lightroom's develop settings
-      is read since §535, a culling tool's still falls under §124's
-      rule and the folder's ratings never show (issue 31, 2026-10-22);
-      the write keeps its guard against the two writing over each other
 - [ ] The mouse's back and forward buttons as the folders visited, as
       a browser has them: back to the folder a subfolder was opened
       from in the grid, forward again; the frame step they do today

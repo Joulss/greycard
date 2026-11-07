@@ -99,6 +99,17 @@ pub struct Sidecar {
         deserialize_with = "meta::loose"
     )]
     pub xmp: Option<xmp::Adopted>,
+    /// What was last taken from a culling tool's `IMG.xmp` that the
+    /// raw shares with its JPEG and reads but never writes: see
+    /// [`xmp::Culled`]. Kept apart from [`Sidecar::xmp`] so the two
+    /// files' clocks are never compared. Read loosely, and left out
+    /// when there is nothing to say.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub xmp_shared: Option<xmp::Culled>,
     /// The meta a Lightroom import laid, at the values it laid: see
     /// [`meta::Laid`]. Left out when empty, and read loosely.
     #[serde(
@@ -184,6 +195,7 @@ impl PartialEq for Sidecar {
             modified: _,
             turn,
             xmp,
+            xmp_shared,
             lightroom,
             saved,
             revisions,
@@ -195,6 +207,7 @@ impl PartialEq for Sidecar {
             && *meta_at == other.meta_at
             && *turn == other.turn
             && *xmp == other.xmp
+            && *xmp_shared == other.xmp_shared
             && *lightroom == other.lightroom
             && *saved == other.saved
             && *revisions == other.revisions
