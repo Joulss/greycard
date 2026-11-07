@@ -166,10 +166,6 @@ the reasoning lives in `docs/notes.md`.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
-- [ ] The Paste sheet from the keyboard: Paste focused on open so
-      Enter takes the checks as they stand, Tab through every check
-      and both buttons, Space on a check; today Tab reaches only
-      Check all and Uncheck all (issue 78, 2026-11-07)
 - [ ] The strip jumps on a delete: the frame chosen next lands at the
       right edge where the rule is the least scroll that shows it
       (`strip::reveal`); the delete path reveals from a fresh layout

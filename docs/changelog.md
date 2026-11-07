@@ -16,6 +16,11 @@ design note behind it.
   sections under it no longer jump while a frame loads or between
   portrait and landscape (issue 81)
   ([§588](https://github.com/jessolmstead/greycard/blob/master/docs/notes/588-the-navigator-keeps-one-height.md)).
+- The Paste settings sheet works from the keyboard: Paste has the
+  focus as it opens, so Enter pastes the checks as they stand; Tab and
+  Shift+Tab go round every check and button; Space toggles a check and
+  Enter fires the default button, in the preset sheet too (issue 78)
+  ([§589](https://github.com/jessolmstead/greycard/blob/master/docs/notes/589-the-paste-sheet-from-the-keys.md)).
 
 ## 0.10.0, 2026-11-06
 

@@ -11,8 +11,9 @@ import { PanelButton, Segmented, ScrollPane } from "../controls.slint";
 import { CarryRow } from "../structs.slint";
 
 // A check: off, on, or "some" for a heading with some of its parts
-// on. It takes the keys as the other controls do: Tab to it, Space or
-// Return to turn it over, a ring while it has the focus.
+// on. It takes the keys as the other controls do: Tab to it, Space
+// to turn it over, a ring while it has the focus. Return goes up to
+// the sheet, whose default button it is.
 component Check inherits Rectangle {
     in property <string> label;
     in property <string> a11y;
@@ -74,7 +75,7 @@ component Check inherits Rectangle {
     }
     fs := FocusScope {
         key-pressed(e) => {
-            if (e.text == " " || e.text == Key.Return) {
+            if (e.text == " ") {
                 root.toggled();
                 return accept;
             }
@@ -100,6 +101,10 @@ export component CarryList inherits VerticalLayout {
     callback toggled(int);
     callback all(bool);
     callback join-chosen(bool);
+    /// Check all, the list's first stop for Tab: where a sheet's Tab
+    /// goes round to, and whether it has the keys.
+    out property <bool> first-focused: check-all.focused;
+    public function focus-first() { check-all.focus(); }
 
     property <length> pitch: 24px;
     property <length> col-gap: Theme.space-4;
@@ -109,7 +114,7 @@ export component CarryList inherits VerticalLayout {
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: start;
-        PanelButton {
+        check-all := PanelButton {
             text: "Check all";
             clicked => { root.all(true); }
         }

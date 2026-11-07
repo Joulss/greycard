@@ -1196,6 +1196,12 @@ export component PanelButton inherits Rectangle {
     callback clicked();
     /// The menu asked for, at a point of the button.
     callback menu(length, length);
+    /// Whether the keys are the button's: a sheet that keeps Tab
+    /// within itself asks.
+    out property <bool> focused: fs.has-focus;
+    forward-focus: fs;
+    // The focus came by a click, not the keys: no ring for it.
+    property <bool> clicked-in: false;
     height: Theme.control-height;
     border-radius: Theme.radius-md;
     border-width: root.primary && root.enabled ? 0 : 1px;
@@ -1235,8 +1241,27 @@ export component PanelButton inherits Rectangle {
         width: Theme.icon;
         height: Theme.icon;
     }
+    // A primary button's border is its fill, so its focus ring goes
+    // around it instead: for the keys' focus alone, as a click's
+    // would leave a ring on every button pressed.
+    if root.primary && fs.has-focus && !root.clicked-in: ring := Rectangle {
+        x: -3px;
+        y: -3px;
+        width: root.width + 6px;
+        height: root.height + 6px;
+        border-radius: Theme.radius-md + 3px;
+        border-width: 2px;
+        border-color: Theme.focus-ring;
+    }
     fs := FocusScope {
         enabled: root.enabled;
+        // The window or a popup taking the keys a moment is no new
+        // focus: the button keeps how it had them.
+        focus-lost(reason) => {
+            if (reason != FocusReason.window-activation && reason != FocusReason.popup-activation) {
+                root.clicked-in = false;
+            }
+        }
         key-pressed(e) => {
             if (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
             return reject;
@@ -1248,11 +1273,13 @@ export component PanelButton inherits Rectangle {
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         down(e) => {
             if (root.has-menu && e.button == PointerEventButton.right) {
+                root.clicked-in = true;
                 fs.focus();
                 root.menu(self.mouse-x, self.mouse-y);
             }
         }
         clicked => {
+            root.clicked-in = true;
             fs.focus();
             if (root.has-menu && self.mouse-x >= root.width - root.chevron-w) {
                 root.menu(root.width - root.chevron-w, root.height);

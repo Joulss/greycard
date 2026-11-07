@@ -2433,9 +2433,11 @@ export component App inherits Window {
         }
     }
     // A paste's sheet closed, however: the next opening is a sync's
-    // unless a paste asks again.
+    // unless a paste asks again. The keys, which its button had, are
+    // the window's again.
     changed sync-open => {
         if (!self.sync-open) { self.sync-paste = false; }
+        if (!self.sync-open && !self.sheet-open()) { keys.focus(); }
     }
     /// Whether the frame menu is up, for the surfaces. A press outside
     /// a menu closes it and goes only to the menu area's parent, which
@@ -5377,7 +5379,11 @@ export component App inherits Window {
         collection-remove => { root.collection-menu-remove(); root.menu-done(); }
         archive(i) => { root.archive-menu-picked(i); root.menu-done(); }
         copy => { root.menu-copy(); root.menu-done(); }
-        paste => { root.paste-asked(); root.menu-done(); }
+        // The sheet takes the focus itself, as the sync's does.
+        paste => {
+            root.paste-asked();
+            if (!root.sync-open) { root.menu-done(); }
+        }
         meta(k, v) => { root.menu-meta(k, v); root.menu-done(); }
         // The sheet takes the focus itself: no `menu-done` when it
         // opens, whose timer would take it back.

@@ -76,11 +76,32 @@ export component SyncSheet inherits Rectangle {
         TouchArea { }
         // A check has the focus, and a key goes up from it and never
         // reaches the window's keys: Escape is taken here, on the card,
-        // so a click beside it still reaches the scrim.
+        // so a click beside it still reaches the scrim. Tab goes round
+        // the card's controls and never out to the window behind it:
+        // past Paste back to Check all, and Shift+Tab the other way.
         FocusScope {
+            focus-on-tab-navigation: false;
+            capture-key-pressed(e) => {
+                if (e.modifiers.control || e.modifiers.alt || e.modifiers.meta) { return reject; }
+                let back = e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift);
+                if (e.text == Key.Tab && !back && go.focused) {
+                    list.focus-first();
+                    return accept;
+                }
+                if (back && list.first-focused) {
+                    go.focus();
+                    return accept;
+                }
+                return reject;
+            }
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
                     root.sync-open = false;
+                    return accept;
+                }
+                // Enter on a check: Paste, as on Paste itself.
+                if (e.text == Key.Return && !e.repeat) {
+                    root.sync-applied();
                     return accept;
                 }
                 return reject;
@@ -140,7 +161,7 @@ export component SyncSheet inherits Rectangle {
                         wrap: word-wrap;
                     }
                 }
-                CarryList {
+                list := CarryList {
                     rows: root.sync-rows;
                     lines: root.sync-lines;
                     // The window less the sheet's words and buttons.
@@ -156,7 +177,10 @@ export component SyncSheet inherits Rectangle {
                         text: "Cancel";
                         clicked => { root.sync-open = false; }
                     }
-                    PanelButton {
+                    // The keys start here: Enter takes the checks as
+                    // they stand.
+                    go := PanelButton {
+                        init => { self.focus(); }
                         text: root.paste ? "Paste" : "Apply";
                         icon: @image-url("../icons/layers.svg");
                         primary: true;

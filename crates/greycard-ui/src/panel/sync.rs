@@ -3580,6 +3580,276 @@ mod tests {
         assert!(state.borrow().sidecars[0].current_label.is_none());
     }
 
+    /// The paste sheet from the keys alone (issue 78): it opens with
+    /// Paste holding the keys, so Enter takes the checks as they
+    /// stand.
+    #[test]
+    fn the_paste_sheet_opens_on_paste_and_enter_pastes() {
+        let app = window(3);
+        let (_state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        app.set_exposure(-0.6);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        assert!(app.get_sync_open());
+        press(&app, Key::Return);
+        assert!(!app.get_sync_open());
+        assert_eq!(app.get_exposure(), -0.6);
+        assert_eq!(history_rows(&app), ["Paste from IMG_0000.CR3", "Original"]);
+        // The keys are the window's again: Tab hides the panels.
+        assert!(!app.get_left_hidden());
+        press(&app, Key::Tab);
+        assert!(app.get_left_hidden(), "Tab reached the window");
+    }
+
+    /// The states of the sheet's rows, in their order.
+    fn row_states(app: &App) -> Vec<i32> {
+        let rows = app.get_sync_rows();
+        (0..rows.row_count())
+            .map(|i| rows.row_data(i).unwrap().state)
+            .collect()
+    }
+
+    /// Tab goes from Paste round to Check all, Uncheck all, and the
+    /// checks, every one a stop, then Cancel and Paste; Space turns a
+    /// check over, and Shift+Tab goes back the same way.
+    #[test]
+    fn tab_and_shift_tab_go_round_the_paste_sheet() {
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = state_for(&app, folder(3));
+        let shift_tab = |app: &App| with_modifier(app, Key::Shift, || press(app, Key::Tab));
+        app.invoke_select(0);
+        app.set_exposure(-0.6);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        let checks = {
+            let rows = app.get_sync_rows();
+            (0..rows.row_count())
+                .filter(|&i| rows.row_data(i).unwrap().kind != 2)
+                .count()
+        };
+        assert!(checks > 2, "{checks}");
+
+        // Past Paste to Check all, then Uncheck all, then the first
+        // check: Space turns it over and nothing else.
+        let before = row_states(&app);
+        press(&app, Key::Tab);
+        press(&app, Key::Tab);
+        press(&app, Key::Tab);
+        press(&app, " ");
+        let after = row_states(&app);
+        assert_ne!(before[0], after[0], "the first check turned over");
+        assert!(app.get_sync_open());
+        // Back once to Uncheck all, then to Check all: each pressed.
+        shift_tab(&app);
+        press(&app, " ");
+        assert!(
+            row_states(&app).iter().all(|&s| s == 0),
+            "{:?}",
+            row_states(&app)
+        );
+        shift_tab(&app);
+        press(&app, " ");
+        assert!(row_states(&app).iter().any(|&s| s != 0));
+        let all = row_states(&app);
+        // Back from Check all round to Paste, forward round to Check
+        // all again, and back: Enter pastes.
+        shift_tab(&app);
+        press(&app, Key::Tab);
+        assert_eq!(row_states(&app), all, "Tab moved and toggled nothing");
+        shift_tab(&app);
+        press(&app, Key::Return);
+        assert!(!app.get_sync_open());
+        assert_eq!(app.get_exposure(), -0.6);
+
+        // Again, and forward through every check: the stop after the
+        // last is Cancel, which leaves the sheet and pastes nothing.
+        app.invoke_undo();
+        assert_eq!(app.get_exposure(), 0.0);
+        app.invoke_paste_asked();
+        assert!(app.get_sync_open());
+        let before = row_states(&app);
+        // Paste to Check all, Uncheck all, the checks, then Cancel.
+        for _ in 0..2 + checks + 1 {
+            press(&app, Key::Tab);
+        }
+        press(&app, Key::Return);
+        assert!(!app.get_sync_open(), "Enter on Cancel closed the sheet");
+        assert_eq!(app.get_exposure(), 0.0, "and pasted nothing");
+        // Shift+Tab from Paste is Cancel too; Escape still cancels.
+        app.invoke_paste_asked();
+        assert_eq!(row_states(&app), before);
+        shift_tab(&app);
+        press(&app, " ");
+        assert!(!app.get_sync_open());
+        app.invoke_paste_asked();
+        shift_tab(&app);
+        press(&app, Key::Escape);
+        assert!(!app.get_sync_open());
+        assert_eq!(app.get_exposure(), 0.0);
+        // Enter on a check is Paste, never the check turned over.
+        app.invoke_paste_asked();
+        for _ in 0..3 {
+            press(&app, Key::Tab);
+        }
+        assert_eq!(row_states(&app), before);
+        press(&app, Key::Return);
+        assert!(!app.get_sync_open());
+        assert_eq!(app.get_exposure(), -0.6);
+    }
+
+    /// The frame menu's Paste leaves the keys on the sheet's Paste:
+    /// the menu's own hand-back, a moment later, takes nothing from it.
+    #[test]
+    fn the_menus_paste_opens_on_paste_too() {
+        use i_slint_backend_testing::ElementQuery;
+        use slint::platform::PointerEventButton;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        app.set_exposure(-0.6);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        let (x, y) = strip_cell(&app, 2);
+        let position = slint::LogicalPosition::new(x, y);
+        for event in [
+            WindowEvent::PointerMoved { position },
+            WindowEvent::PointerPressed {
+                position,
+                button: PointerEventButton::Right,
+            },
+            WindowEvent::PointerReleased {
+                position,
+                button: PointerEventButton::Right,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert!(app.get_menu_up());
+        let item = ElementQuery::from_root(&app)
+            .match_descendants()
+            .match_predicate(|e| {
+                e.accessible_label()
+                    .is_some_and(|l| l.starts_with("Paste settings from IMG_0000.CR3"))
+            })
+            .find_first()
+            .expect("the menu's Paste");
+        item.mock_single_click(PointerEventButton::Left);
+        assert!(
+            app.get_sync_open(),
+            "{:?} {:?}",
+            item.accessible_label(),
+            app.get_status()
+        );
+        // Past the menu's hand-back of the keys to the window.
+        for _ in 0..5 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(5));
+            slint::platform::update_timers_and_animations();
+        }
+        press(&app, Key::Return);
+        assert!(!app.get_sync_open());
+        assert_eq!(app.get_exposure(), -0.6);
+    }
+
+    /// A check reached by Tab below the list's view is brought into
+    /// it, above the sheet's buttons.
+    #[test]
+    fn a_check_tabbed_to_is_scrolled_into_view() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 420.0));
+        let (_state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        app.set_exposure(-0.6);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        let rows = app.get_sync_rows();
+        let checks: Vec<_> = (0..rows.row_count())
+            .map(|i| rows.row_data(i).unwrap())
+            .filter(|r| r.kind != 2)
+            .collect();
+        // The lowest check: the foot of the longer column.
+        let (at, low) = checks
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, r)| r.line)
+            .unwrap();
+        let low = low.a11y.to_string();
+        // A button's words: its own label.
+        let cancel = ElementHandle::find_by_accessible_label(&app, "Cancel")
+            .next()
+            .unwrap()
+            .absolute_position()
+            .y;
+        // Where the check's foot is, if it is drawn at all: one
+        // scrolled out of the list's view is not.
+        let bottom = |label: &str| {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+            ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .map(|e| e.absolute_position().y + e.size().height)
+        };
+        assert!(
+            bottom(&low).is_none_or(|b| b > cancel),
+            "the list scrolls in this window"
+        );
+        // Paste, round to Check all, Uncheck all, then the checks.
+        for _ in 0..3 + at {
+            press(&app, Key::Tab);
+        }
+        let b = bottom(&low).expect("the check in view");
+        assert!(b <= cancel, "{b} > {cancel}");
+        press(&app, Key::Escape);
+    }
+
+    /// The primary button's ring is for the keys' focus: Tab onto it
+    /// rings it, a click on it does not.
+    #[test]
+    fn a_primary_buttons_ring_is_for_the_keys() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = state_for(&app, folder(3));
+        let shift_tab = |app: &App| with_modifier(app, Key::Shift, || press(app, Key::Tab));
+        let rings = |app: &App| {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+            ElementHandle::find_by_element_id(app, "PanelButton::ring").count()
+        };
+        app.invoke_select(0);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        // Open with the keys on Paste: a ring.
+        assert_eq!(rings(&app), 1);
+        // A click on Uncheck all: the focus there, no ring anywhere.
+        let words = ElementHandle::find_by_accessible_label(&app, "Uncheck all")
+            .next()
+            .unwrap();
+        let (at, size) = (words.absolute_position(), words.size());
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(app.get_sync_open());
+        assert_eq!(rings(&app), 0);
+        // Back to Paste by the keys: Shift+Tab twice from Uncheck all
+        // goes round through Check all; the ring is back.
+        shift_tab(&app);
+        shift_tab(&app);
+        assert_eq!(rings(&app), 1);
+        press(&app, Key::Escape);
+    }
+
     /// A Subject mask pasted onto another frame has the same key there,
     /// adjustment and component, and the same shape: the panel's raster
     /// of one frame is never the other's. Going back to the frame it
@@ -3968,7 +4238,7 @@ mod tests {
     }
 
     #[test]
-    fn a_check_takes_space_and_return_and_tab_moves_on() {
+    fn a_check_takes_space_and_tab_moves_on_and_return_applies() {
         let (app, state, _worker) = two_frames();
         state.borrow_mut().views.picked = vec![0, 2];
         app.invoke_sync_open_asked();
@@ -3988,7 +4258,7 @@ mod tests {
         press(&app, " ");
         assert_eq!(dehaze(&app), 2);
         assert_eq!(heading(&app, "Detail"), 2);
-        press(&app, Key::Return);
+        press(&app, " ");
         assert_eq!(dehaze(&app), 0);
         // Tab leaves it: Space then turns over whatever is next, not
         // the Dehaze.
@@ -3999,6 +4269,14 @@ mod tests {
         tick(&app, "Detail: Texture");
         press(&app, Key::Escape);
         assert!(!app.get_sync_open());
+        // Return on a check is the sheet's Apply, the check left as
+        // it was.
+        app.invoke_sync_open_asked();
+        tick(&app, "Detail: Dehaze");
+        let before = dehaze(&app);
+        press(&app, Key::Return);
+        assert!(!app.get_sync_open());
+        assert_eq!(dehaze(&app), before);
     }
 
     #[test]
@@ -4119,6 +4397,37 @@ mod tests {
         app.invoke_mask_pasted();
         assert_eq!(app.get_status(), "the 2 frames had these already");
         assert_eq!(state.borrow().sidecars[2].current.adjustments, full);
+    }
+
+    /// Enter on a check of the preset sheet is its Save, once there
+    /// is a name; with none, nothing.
+    #[test]
+    fn enter_on_a_preset_check_saves_once_named() {
+        let (app, state, _worker) = two_frames();
+        let dir = crate::testing::scratch_dir("preset-enter");
+        state.borrow_mut().develop.preset_store = Some(preset::Store::at(dir.clone()));
+        app.invoke_preset_save_open();
+        assert!(app.get_preset_open());
+        let saves = std::rc::Rc::new(std::cell::Cell::new(0));
+        let seen = saves.clone();
+        app.on_preset_saved(move || seen.set(seen.get() + 1));
+        let rows = app.get_preset_rows();
+        let check = (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .find(|r| r.kind != 2)
+            .unwrap()
+            .a11y
+            .to_string();
+        app.set_preset_name("".into());
+        tick(&app, &check);
+        press(&app, Key::Return);
+        assert_eq!(saves.get(), 0, "no name, no save");
+        app.set_preset_name("Warm".into());
+        tick(&app, &check);
+        press(&app, Key::Return);
+        assert_eq!(saves.get(), 1);
+        drop(app);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

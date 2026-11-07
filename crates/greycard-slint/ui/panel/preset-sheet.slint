@@ -38,6 +38,12 @@ export component PresetSheet inherits Rectangle {
                     root.preset-open = false;
                     return accept;
                 }
+                // Enter on a check: Save, as in the field, once there
+                // is a name to save under.
+                if (e.text == Key.Return) {
+                    if (!e.repeat && root.preset-name != "") { root.preset-saved(); }
+                    return accept;
+                }
                 return reject;
             }
             preset-sheet := VerticalLayout {

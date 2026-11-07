@@ -601,3 +601,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§586. The Canon EOS R8 Mark II](notes/586-the-canon-eos-r8-mark-ii.md) (2026-11-07)
 - [§587. The window's app id](notes/587-the-windows-app-id.md) (2026-11-07)
 - [§588. The Navigator keeps one height](notes/588-the-navigator-keeps-one-height.md) (2026-11-07)
+- [§589. The paste sheet from the keys](notes/589-the-paste-sheet-from-the-keys.md) (2026-11-07)
