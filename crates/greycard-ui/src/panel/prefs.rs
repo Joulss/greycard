@@ -758,6 +758,16 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             });
         });
     }
+    // Fetch all, in the Models category.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_models_fetch_all(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            crate::panel::models::fetch_all(&mut state.borrow_mut(), &app);
+        });
+    }
     // Ctrl+, or the gear: the count first, then the sheet.
     {
         let (state, app_weak, worker) = (state.clone(), app.as_weak(), worker.clone());
@@ -787,6 +797,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
             show_elsewhere(&st, &app);
             crate::panel::assets::show_presets_missing(&st, &app);
+            drop(st);
+            crate::panel::models::show(&mut state.borrow_mut(), &app);
             app.set_settings_open(true);
         });
     }
@@ -2002,7 +2014,7 @@ mod tests {
         let (app, _state, _worker) = develop_window();
         app.window()
             .set_size(slint::LogicalSize::new(1024.0, 640.0));
-        for category in ["Interface", "Library", "Editing", "Keys", "About"] {
+        for category in crate::settings::CATEGORIES {
             app.set_settings_open(false);
             app.set_settings_category(category.into());
             app.invoke_settings_asked();

@@ -22,6 +22,18 @@ export struct BindRow {
     also: string,
 }
 
+/// A line of the Settings sheet's Models category: the model as the
+/// registry names it (up to its first comma), what it is for, its
+/// license's name, its size, and where it stands: in the store,
+/// fetching, skipped and why.
+export struct ModelLine {
+    name: string,
+    purpose: string,
+    license: string,
+    size: string,
+    status: string,
+}
+
 /// A row of the list of what a sheet carries (`carry.rs`): a
 /// section's heading, a part or a mask under it, or the line that
 /// says whether the masks replace the frames' or join them. Rust lays

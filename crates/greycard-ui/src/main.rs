@@ -656,6 +656,9 @@ enum Fetch {
         &'static greycard_ai::runtime::Unavailable,
         panel::assets::AfterRuntime,
     ),
+    /// Every model this machine runs, at once, asked once unprompted
+    /// (`panel::models::offer_once`).
+    Every,
 }
 
 /// A change to one frame's sidecar, by its number in the list, made
@@ -814,6 +817,7 @@ impl State {
                 fetch_failed: Vec::new(),
                 lenses_declined: false,
                 lenses_asked: false,
+                models: Default::default(),
                 preset_checks: carry::Checks::new(Vec::new(), |_| false),
                 preset_rows: carry::Shown::default(),
                 sync_checks: carry::Checks::new(Vec::new(), |_| false),

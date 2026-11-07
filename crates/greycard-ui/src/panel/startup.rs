@@ -659,6 +659,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let show_patch = cli.patch.and_then(|i| i.checked_sub(1));
         let store = greycard_ai::Store::user().ok();
         let lenses_declined = remembered.lenses_declined;
+        let models_asked = remembered.models_asked;
         let screenshot = cli.screenshot.clone();
         let snapshot = cli.snapshot.clone();
         let panel_scroll = cli.panel_scroll;
@@ -748,6 +749,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.window.deletes_allowed = deletes_allowed;
         st.launch.scripted = scripted;
         st.sheets.lenses_declined = lenses_declined;
+        st.sheets.models.asked = models_asked;
         st.work.export_presets = export_presets;
         st.work.export_last_folder = export_last_folder;
         let apps = remembered.edit_in.iter().map(PathBuf::from).collect();
@@ -999,6 +1001,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_patch_handles(ModelRc::from(state.borrow().develop.patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().develop.guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
+    // What this machine runs, for the models' list and their offer,
+    // asked on a thread now rather than when either is wanted.
+    let quiet = state.borrow().window.batch || state.borrow().launch.scripted;
+    if !quiet && state.borrow().develop.store.is_some() {
+        crate::panel::models::probe(&mut state.borrow_mut(), &app);
+    }
     crate::preparing::install(&app);
     // The keys as the user bound them, once the handler and the sheet
     // are wired.
@@ -2281,6 +2289,7 @@ fn merged(
     settings.cull_developed = kept.cull_developed;
     settings.sort = kept.sort;
     settings.lenses_declined = kept.lenses_declined;
+    settings.models_asked = kept.models_asked;
     settings.rawtherapee_answered = kept.rawtherapee_answered;
     settings.preset_favorites = kept.preset_favorites;
     settings.preset_folds = kept.preset_folds;
@@ -2455,13 +2464,14 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
             app.get_strip_hidden()
         },
         // Kept apart, both: culling's switch as it is flipped, and the
-        // lens offer's answer as it is given. The caller fills them in
-        // from disk.
+        // lens and model offers' answers as they are given. The caller
+        // fills them in from disk.
         cull_move_on: false,
         // Written as the Loupe's mode and Cull's switch change.
         loupe_cull: false,
         cull_developed: false,
         lenses_declined: false,
+        models_asked: false,
         // Written as the RawTherapee offer is answered.
         rawtherapee_answered: Vec::new(),
         // Written as a star or a fold changes; the caller keeps the file's.

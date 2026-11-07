@@ -13,13 +13,15 @@
 // the window's own properties so a change in either place shows in
 // both; the aspect an uncropped frame's crop opens at; the shipped
 // presets put back; the export sheet's format and color space,
-// bound the same way; and the apps Edit in hands a frame to. Keys:
+// bound the same way; and the apps Edit in hands a frame to. Models:
+// every model the registry knows, its size and where it stands, and
+// Fetch all, which fetches those this machine runs. Keys:
 // each rebindable action of the key table (`keys.rs`), a click on its
 // chord to press a new one, Escape to keep the old. About: the check
 // for a newer release, the version, and where greycard keeps its
 // files.
 import { Theme } from "../theme.slint";
-import { BindRow } from "../structs.slint";
+import { BindRow, ModelLine } from "../structs.slint";
 import { Toggle, PanelButton, Segmented, ScrollPane } from "../controls.slint";
 import { LineEdit } from "std-widgets.slint";
 
@@ -155,6 +157,19 @@ export component SettingsSheet inherits Rectangle {
     in property <bool> update-checking;
     callback update-check-changed();
     callback update-check-now();
+    /// The models: a line each, the Fetch all button's words (the size
+    /// left to fetch beside them) and whether it can be pressed, and a
+    /// note under them.
+    in property <[ModelLine]> models-lines;
+    in property <string> models-fetch-label;
+    in property <bool> models-fetch-enabled;
+    in property <string> models-note;
+    callback models-fetch-all();
+    // A model line's two columns: the name and what it is for, and the
+    // size and where it stands.
+    property <length> models-status-w: 152px;
+    property <length> models-text-w: root.pane-w - 2 * Theme.space-5 - Theme.scrollbar-band
+        - root.models-status-w - Theme.space-2;
     /// The keys: each action and its chord, under its group's heading;
     /// a press taken as the listening action's chord, true once the
     /// listening is over; every action back to its default; and the
@@ -203,7 +218,7 @@ export component SettingsSheet inherits Rectangle {
     /// A folder clicked, by its row (0 settings, 1 library, 2 caches,
     /// 3 log): the host opens it in the file manager.
     callback dir-clicked(int);
-    property <[string]> categories: ["Interface", "Library", "Editing", "Keys", "About"];
+    property <[string]> categories: ["Interface", "Library", "Editing", "Models", "Keys", "About"];
     property <length> column-w: 132px;
     property <length> pane-w: 440px;
     /// The focus goes to the column: a row left focused in the category
@@ -221,8 +236,9 @@ export component SettingsSheet inherits Rectangle {
         let n = root.categories.length;
         let at = root.category == "Library" ? 1
             : root.category == "Editing" ? 2
-            : root.category == "Keys" ? 3
-            : root.category == "About" ? 4
+            : root.category == "Models" ? 3
+            : root.category == "Keys" ? 4
+            : root.category == "About" ? 5
             : 0;
         let next = wrap ? Math.mod(at + by + n, n) : Math.clamp(at + by, 0, n - 1);
         root.choose(root.categories[next]);
@@ -241,12 +257,14 @@ export component SettingsSheet inherits Rectangle {
         // bottom edge only and the column stays under the pointer.
         property <length> tallest: min(
             max(column.preferred-height, interface.preferred-height, library.preferred-height,
-                editing.preferred-height, keys.preferred-height, about.preferred-height)
+                editing.preferred-height, models.preferred-height, keys.preferred-height,
+                about.preferred-height)
                 + done-row.preferred-height,
             root.height - 2 * Theme.space-5);
         height: min(
             max(column.preferred-height, root.category == "Library" ? library.preferred-height
                 : root.category == "Editing" ? editing.preferred-height
+                : root.category == "Models" ? models.preferred-height
                 : root.category == "Keys" ? keys.preferred-height
                 : root.category == "About" ? about.preferred-height
                 : interface.preferred-height)
@@ -392,6 +410,7 @@ export component SettingsSheet inherits Rectangle {
                         content-width: root.pane-w;
                         content-height: root.category == "Library" ? library.preferred-height
                             : root.category == "Editing" ? editing.preferred-height
+                            : root.category == "Models" ? models.preferred-height
                             : root.category == "Keys" ? keys.preferred-height
                             : root.category == "About" ? about.preferred-height
                             : interface.preferred-height;
@@ -961,6 +980,80 @@ export component SettingsSheet inherits Rectangle {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        models := VerticalLayout {
+                            visible: root.category == "Models";
+                            x: 0;
+                            y: 0;
+                            width: root.pane-w;
+                            height: self.preferred-height;
+                            padding: Theme.space-5;
+                            padding-right: Theme.space-5 + Theme.scrollbar-band;
+                            padding-bottom: Theme.space-2;
+                            spacing: Theme.space-3;
+                            Text {
+                                text: "MODELS";
+                                font-size: Theme.font-xs;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-secondary;
+                            }
+                            // Fetch all and what is left first, in reach without a
+                            // scroll however long the list.
+                            HorizontalLayout {
+                                alignment: start;
+                                PanelButton {
+                                    text: root.models-fetch-label;
+                                    icon: @image-url("../icons/image-down.svg");
+                                    enabled: root.models-fetch-enabled;
+                                    clicked => { root.models-fetch-all(); }
+                                }
+                            }
+                            // Each wrapping text has its own width, as the keys' rows
+                            // have, so a wrapped line counts in the category's height
+                            // and the note at the foot stays in reach.
+                            for line in root.models-lines: HorizontalLayout {
+                                spacing: Theme.space-2;
+                                VerticalLayout {
+                                    Text {
+                                        text: line.name;
+                                        width: root.models-text-w;
+                                        font-size: Theme.font-sm;
+                                        color: Theme.text;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: line.purpose + " · " + line.license;
+                                        width: root.models-text-w;
+                                        font-size: Theme.font-xs;
+                                        color: Theme.text-muted;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                VerticalLayout {
+                                    Text {
+                                        text: line.size;
+                                        width: root.models-status-w;
+                                        font-size: Theme.font-sm;
+                                        color: Theme.text-secondary;
+                                        horizontal-alignment: right;
+                                    }
+                                    Text {
+                                        text: line.status;
+                                        width: root.models-status-w;
+                                        font-size: Theme.font-xs;
+                                        color: Theme.text-secondary;
+                                        horizontal-alignment: right;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                            if root.models-note != "": Text {
+                                text: root.models-note;
+                                width: root.models-text-w + root.models-status-w + Theme.space-2;
+                                font-size: Theme.font-xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
                             }
                         }
                         keys := VerticalLayout {

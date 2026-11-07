@@ -73,6 +73,9 @@ pub(crate) struct Sheets {
     /// has been made this launch.
     pub(crate) lenses_declined: bool,
     pub(crate) lenses_asked: bool,
+    /// The fetch of every model at once: what waits, what is coming,
+    /// what failed, and the offer made once (`panel::models`).
+    pub(crate) models: panel::models::FetchAll,
     /// The save sheet's checks of sections, parts and masks, and the
     /// rows the sheet shows of them (`carry`).
     pub(crate) preset_checks: carry::Checks,

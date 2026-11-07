@@ -1105,9 +1105,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             match (fetch, yes) {
                 (Fetch::Model(model) | Fetch::Edge(model), true) => {
-                    st.sheets.fetching = true;
-                    worker.send(Job::Fetch { model });
+                    crate::panel::models::sheet_fetch(&mut st, model);
                 }
+                (Fetch::Every, yes) => crate::panel::models::answered(&mut st, &app, yes),
                 (Fetch::Edge(_), false) => {
                     st.sheets.edge_declined = true;
                     app.set_status(EDGE_DECLINED.into());
@@ -1191,6 +1191,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     }
                 }
             }
+            // A fetch of every model held while the sheet was up goes
+            // on, once nothing else is coming.
+            crate::panel::models::pump(&mut st, &app);
         });
     }
     // The CAMERA PROFILE section opened: read the directory again, so

@@ -8,6 +8,12 @@ export component ModelSheet inherits Rectangle {
     in-out property <string> fetch-title;
     in-out property <string> fetch-text;
     in-out property <string> fetch-note;
+    /// The two answers' words, and whether the one that declines is the
+    /// default, drawn as the primary: a fetch of every model asks Now
+    /// or As needed, As needed the default.
+    in property <string> fetch-yes: "Download";
+    in property <string> fetch-no: "Not now";
+    in property <bool> fetch-no-default: false;
     callback fetch-answered(bool);
 
     background: #000000a0;
@@ -48,13 +54,14 @@ export component ModelSheet inherits Rectangle {
             HorizontalLayout {
                 spacing: Theme.space-2;
                 PanelButton {
-                    text: "Not now";
+                    text: root.fetch-no;
+                    primary: root.fetch-no-default;
                     clicked => { root.fetch-answered(false); }
                 }
                 PanelButton {
-                    text: "Download";
+                    text: root.fetch-yes;
                     icon: @image-url("../icons/image-down.svg");
-                    primary: true;
+                    primary: !root.fetch-no-default;
                     clicked => { root.fetch-answered(true); }
                 }
             }

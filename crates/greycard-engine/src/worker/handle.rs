@@ -342,13 +342,13 @@ impl Worker {
     }
 
     pub fn send(&self, job: Job) {
-        if let Job::Fetch { model } = job {
+        if let Job::Fetch { model, warm } = job {
             let (deliver, reducer) = (self.deliver.clone(), self.background.clone());
             std::thread::Builder::new()
                 .name("greycard fetch".into())
                 .spawn(move || {
                     let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        if fetch(model, &*deliver) {
+                        if fetch(model, warm, &*deliver) {
                             // The frames whose pictures waited on a model
                             // are tried again: their cells ask.
                             for frame in reducer.iter().flat_map(|b| b.reducer.models_arrived()) {
@@ -825,7 +825,7 @@ pub fn order_thumbnails<T>(pending: &mut [(usize, T)], first: usize, last: usize
 /// Fetch a model, reporting as it comes.
 /// Fetch `model` into the store, saying how it goes; whether it is
 /// there now.
-fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool {
+fn fetch(model: &'static greycard_ai::Model, warm: bool, deliver: &dyn Fn(Outcome)) -> bool {
     let name = model.name;
     let store = match greycard_ai::Store::user() {
         Ok(s) => s,
@@ -845,6 +845,7 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool 
             last = Instant::now();
             deliver(Outcome::Fetching {
                 name,
+                file: p.file,
                 done: p.done,
                 total: p.total,
             });
@@ -866,16 +867,21 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool 
     // loads again when the fp16 one is here; a failure is logged, and
     // the editor's background fetch tries once more
     // (`ai::fetch_core_ml_quietly`).
-    if fetched
-        && cfg!(target_os = "macos")
-        && greycard_ai::registry::core_ml_file(model).is_some()
-        && !greycard_ai::denoise::fp32_refused()
-    {
+    // Asked to warm, as a fetch of every model is, the thread makes
+    // Core ML's compile too, after that file (`ai::warm_core_ml`, one
+    // model at a time), for Sky as well as the tiers.
+    let warms = warm && (model.id == greycard_ai::SKY.id || greycard_ai::tier_of(model).is_some());
+    let core_ml_file = greycard_ai::registry::core_ml_file(model).is_some()
+        && !greycard_ai::denoise::fp32_refused();
+    if fetched && cfg!(target_os = "macos") && (core_ml_file || warms) {
         let spawned = std::thread::Builder::new()
             .name("core-ml-fetch".into())
             .spawn(move || {
-                if let Err(e) = store.fetch_core_ml(model, |_| {}) {
+                if core_ml_file && let Err(e) = store.fetch_core_ml(model, |_| {}) {
                     tracing::info!("{name}: its file for Core ML did not arrive: {e}");
+                }
+                if warms {
+                    crate::ai::warm_core_ml(&store, model);
                 }
             });
         if let Err(e) = spawned {
@@ -910,6 +916,7 @@ fn fetch_runtime(runtime: &'static greycard_ai::Runtime, deliver: &dyn Fn(Outcom
             last = Instant::now();
             deliver(Outcome::Fetching {
                 name: runtime.name,
+                file: p.file,
                 done: p.done,
                 total: p.total,
             });

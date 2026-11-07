@@ -189,16 +189,6 @@ the reasoning lives in `docs/notes.md`.
       picture, a straight or square-angled line for a gradient or a
       brush, and sync onto the selection without the sheet
       (discussion 59, 2026-11-06)
-- [ ] Fetch all the models at once: a Fetch all action in the
-      Settings sheet's Models section with the total beside it (about
-      3.5 GB today), each line ticking to "in the store" as it lands
-      through the fetch queue; a one-line offer on first launch, under
-      the GPU and store lines, now or as you use them, the default
-      as-needed; only what this machine can run (no WebGPU Subject
-      model or remove UNet without a GPU, as §570's refusal knows),
-      saying what it skipped and why; on a Mac the Core ML compiles
-      warmed too, so the first mask is as quick as the second. No
-      silent prefetch. Asked by a user, 2026-11-07
 - [ ] Handheld HDR and focus stacking
 
 ### Speed

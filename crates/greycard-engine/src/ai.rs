@@ -1168,6 +1168,250 @@ impl FillHaves {
     }
 }
 
+/// What this machine can run, as the refusals above read it: whether
+/// ONNX Runtime can be had (why not, and the CPU-only runtime that
+/// would bring it, where there is one), whether the models have WebGPU,
+/// whether its shaders take 16-bit floats, and the card's memory. For a
+/// list of every model, and a fetch of all of them, to say which would
+/// never run here and why, in the words the refusals use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Here {
+    /// Why the AI features are off, or None where they are on.
+    pub off: Option<String>,
+    /// The CPU-only runtime that would turn them on, where they are off
+    /// and one can be fetched (`runtime::Unavailable::fetchable`).
+    pub runtime: Option<&'static greycard_ai::Runtime>,
+    pub webgpu: bool,
+    /// As [`greycard_ai::runtime::webgpu_shader_f16`] answers.
+    pub f16: Option<(bool, String)>,
+    /// The card's memory and its name, as [`Ai::room`] reads the whole
+    /// card (`runtime::webgpu_memory`); None where `room` never
+    /// refuses, which is wherever the card's free memory cannot be read
+    /// (`runtime::webgpu_free_memory`): shared memory, a CPU adapter, a
+    /// backend that will not say. An integrated GPU's figure there is
+    /// the firmware's carve-out, which is no reason to skip.
+    pub card: Option<(u64, String)>,
+}
+
+/// Why a model would never run here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NeverHere {
+    /// ONNX Runtime cannot be had: its reason.
+    Off(String),
+    /// The remove wants WebGPU.
+    NoWebGpu,
+    /// The remove wants 16-bit floats in shaders, which the card named
+    /// has none of.
+    NoF16(String),
+    /// The remove's smallest run needs more than the whole card: the
+    /// card, its bytes, and the need.
+    ShortCard(String, u64, u64),
+    /// The Subject file this machine does not use: the other runs, the
+    /// GPU copy where there is WebGPU (true), else the original.
+    OtherSubject(bool),
+}
+
+impl NeverHere {
+    /// In the refusals' own words, for the log.
+    pub fn words(&self) -> String {
+        match self {
+            NeverHere::Off(why) => why.clone(),
+            NeverHere::NoWebGpu => FillHaves::default()
+                .why_not(FillChoice::Best)
+                .unwrap_or_default()
+                .to_string(),
+            NeverHere::NoF16(card) => {
+                remove_f16_refusal(Some(&(false, card.clone()))).unwrap_or_default()
+            }
+            NeverHere::ShortCard(card, size, need) => {
+                short_of(card, *size, *need, "a removal at 512").unwrap_or_default()
+            }
+            NeverHere::OtherSubject(true) => "its GPU copy runs here".into(),
+            NeverHere::OtherSubject(false) => "the original runs here".into(),
+        }
+    }
+
+    /// In a few words, for a line of a list: no card named, nothing
+    /// longer than a line, and sizes in decimal GB as the list's are.
+    pub fn short(&self) -> String {
+        match self {
+            NeverHere::Off(_) => "no ONNX Runtime here".into(),
+            NeverHere::NoWebGpu => "needs a GPU with WebGPU".into(),
+            NeverHere::NoF16(_) => "no 16-bit floats in shaders".into(),
+            NeverHere::ShortCard(_, _, need) => {
+                format!("needs {:.1} GB on the card", *need as f64 / 1e9)
+            }
+            other => other.words(),
+        }
+    }
+}
+
+impl Here {
+    /// This machine. Blocks on the WebGPU adapter's probe the first
+    /// time, so for a thread of its own, never the window's.
+    pub fn now() -> Self {
+        let status = greycard_ai::runtime::status();
+        let off = status.err().map(|why| why.reason());
+        let runtime = status.err().and_then(|why| why.fetchable());
+        let webgpu = off.is_none() && on_webgpu();
+        let f16 = if webgpu {
+            greycard_ai::runtime::webgpu_shader_f16()
+        } else {
+            None
+        };
+        let card = if webgpu && greycard_ai::runtime::webgpu_free_memory().is_some() {
+            greycard_ai::runtime::webgpu_memory().map(|bytes| {
+                let name = f16
+                    .as_ref()
+                    .map(|(_, n)| n.clone())
+                    .or_else(greycard_ai::runtime::webgpu_name)
+                    .unwrap_or_else(|| "the card".into());
+                (bytes, name)
+            })
+        } else {
+            None
+        };
+        Self {
+            off,
+            runtime,
+            webgpu,
+            f16,
+            card,
+        }
+    }
+
+    /// This machine once the CPU-only runtime it lacks has come: the
+    /// CPU alone, as that runtime offers.
+    pub fn with_runtime(&self) -> Self {
+        Self::default()
+    }
+
+    /// Why `model` would never run here, or None. Every model wants
+    /// ONNX Runtime; the generative remove and its four steps want
+    /// WebGPU ([`FillHaves::why_not`]), 16-bit floats in shaders
+    /// ([`remove_f16_refusal`]), and a card that holds their smallest
+    /// run whole ([`Ai::room`] refuses one past the whole card); and of
+    /// the two Subject files, only the one [`greycard_ai::subject::pick`]
+    /// takes for a store with neither runs here. A model not
+    /// downloaded is not a reason.
+    pub fn why_not(&self, model: &Model) -> Option<NeverHere> {
+        if let Some(off) = &self.off {
+            return Some(NeverHere::Off(off.clone()));
+        }
+        if model.id == REMOVE.id || model.id == REMOVE_FAST.id {
+            let haves = FillHaves {
+                webgpu: self.webgpu,
+                ..FillHaves::default()
+            };
+            if haves.why_not(FillChoice::Best).is_some() {
+                return Some(NeverHere::NoWebGpu);
+            }
+            if let Some((false, card)) = &self.f16 {
+                return Some(NeverHere::NoF16(card.clone()));
+            }
+            let need = remove_needs(512, false);
+            if let Some((size, card)) = &self.card
+                && need > *size
+            {
+                return Some(NeverHere::ShortCard(card.clone(), *size, need));
+            }
+            return None;
+        }
+        let subject = [&greycard_ai::SUBJECT, &greycard_ai::SUBJECT_WEBGPU];
+        if subject.iter().any(|m| m.id == model.id) {
+            let used = greycard_ai::subject::pick(self.webgpu, |_| false, |_| false, |_| false);
+            if used.id != model.id {
+                return Some(NeverHere::OtherSubject(self.webgpu));
+            }
+        }
+        None
+    }
+}
+
+/// The remove refused on a WebGPU adapter whose shaders take no 16-bit
+/// floats (`f16` as [`greycard_ai::runtime::webgpu_shader_f16`]
+/// answers), in words: the remove's models are fp16 through and
+/// through. None where they take them, or no adapter answers.
+pub fn remove_f16_refusal(f16: Option<&(bool, String)>) -> Option<String> {
+    match f16 {
+        Some((false, name)) => Some(format!(
+            "the generative remove needs 16-bit floats in shaders, which {name} has none of"
+        )),
+        _ => None,
+    }
+}
+
+/// The models Core ML has loaded in this process, Sky and the
+/// denoiser's tiers, by id: their compile is in the cache, and
+/// [`warm_core_ml`] has nothing to do for them.
+static CORE_ML_LOADED: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+fn core_ml_loaded(id: &'static str) {
+    let mut loaded = CORE_ML_LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    if !loaded.contains(&id) {
+        loaded.push(id);
+    }
+}
+
+/// Core ML's compile of `model` made now, on a Mac, so the model's
+/// first use is as quick as its second: Core ML compiles a graph at a
+/// session's first load and keeps the compile in the user's cache.
+/// Only the models Core ML runs, Sky and the denoiser's tiers (the
+/// others stay off it, `Provider::without_core_ml`); a tier's fp16
+/// file, which Core ML opens in its place, is fetched first. One warm
+/// at a time, so four models landing do not compile at once, and none
+/// for a model already loaded in this process, the worker's or a warm
+/// before. Anywhere else, or without Core ML on offer, nothing (a
+/// tier's fp16 file still comes, `fetch_core_ml_quietly`). Blocks for
+/// the load, so for a thread of its own. A failure is logged and costs
+/// nothing: the first use compiles, as it did.
+pub fn warm_core_ml(store: &Store, model: &'static Model) {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    if !cfg!(target_os = "macos") || !providers().contains(&Provider::CoreMl) {
+        return;
+    }
+    let tier = greycard_ai::tier_of(model).is_some();
+    if model.id != SKY.id && !tier {
+        return;
+    }
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    if CORE_ML_LOADED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&model.id)
+    {
+        log::info!("{}: loaded already; no compile to make ahead", model.name);
+        return;
+    }
+    let started = Instant::now();
+    let loaded = if tier {
+        if greycard_ai::registry::core_ml_file(model).is_some()
+            && !greycard_ai::denoise::fp32_refused()
+            && let Err(e) = store.fetch_core_ml(model, |_| {})
+        {
+            log::info!("{}: its file for Core ML did not arrive: {e}", model.name);
+        }
+        Denoiser::from_store(store, model, providers())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    } else {
+        Sky::load(store, providers())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    };
+    match loaded {
+        Ok(()) => {
+            core_ml_loaded(model.id);
+            log::info!(
+                "{}: Core ML's compile made ahead, {:.1} s",
+                model.name,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        Err(e) => log::info!("{}: no compile made ahead: {e}", model.name),
+    }
+}
+
 /// The sampler a remove's Fill runs: four steps for a Fast one.
 pub fn steps_for(patch: &Patch) -> greycard_ai::remove::Steps {
     match patch.fill_choice() {
@@ -1791,6 +2035,7 @@ impl Ai {
             let had = store.core_ml_path(model).is_some();
             let denoiser = Denoiser::from_store(&store, model, &self.providers)
                 .map_err(|e| NoDenoiser::Failed(e.to_string()))?;
+            core_ml_loaded(model.id);
             self.denoiser_tiling = Some((model.id, denoiser.tiling()));
             self.denoiser = Some((model.id, denoiser));
             let wants = self.providers.contains(&Provider::CoreMl)
@@ -2226,11 +2471,10 @@ impl Ai {
         // first model fails on such a card with the shader compiler's
         // words, and a failure here is not counted as a fill ahead.
         if engine == Engine::Remove
-            && let Some((false, name)) = greycard_ai::runtime::webgpu_shader_f16()
+            && let Some(why) =
+                remove_f16_refusal(greycard_ai::runtime::webgpu_shader_f16().as_ref())
         {
-            return Err(NoFill::Failed(format!(
-                "the generative remove needs 16-bit floats in shaders, which {name} has none of"
-            )));
+            return Err(NoFill::Failed(why));
         }
         Ok(engine)
     }
@@ -4302,6 +4546,7 @@ impl Ai {
         if loaded.is_none() {
             let t = Instant::now();
             *loaded = Some(Sky::load(store, providers).map_err(|e| e.to_string())?);
+            core_ml_loaded(SKY.id);
             load = t.elapsed().as_secs_f64();
         }
         let model = loaded.as_mut().expect("the Sky model was just loaded");
@@ -6059,6 +6304,92 @@ mod tests {
         assert_eq!(all.default_choice(true), Fast);
         assert_eq!(all.default_choice(false), Best);
         assert_eq!(no_fast.default_choice(true), Best);
+    }
+
+    /// What runs here: the remove's two models want WebGPU, 16-bit
+    /// floats, and a card that holds them, in the fill's own words; one
+    /// Subject file of the two; and nothing at all with ONNX Runtime
+    /// off.
+    #[test]
+    fn here_says_what_never_runs_and_why() {
+        use greycard_ai::{DENOISE_FAST, SUBJECT, SUBJECT_WEBGPU};
+        let cpu = Here::default();
+        let gpu = Here {
+            webgpu: true,
+            f16: Some((true, "a card".into())),
+            card: Some((16 << 30, "a card".into())),
+            ..Here::default()
+        };
+        for m in [&REMOVE, &REMOVE_FAST, &SUBJECT_WEBGPU] {
+            let why = cpu.why_not(m);
+            if m.id == SUBJECT_WEBGPU.id {
+                assert_eq!(why, Some(NeverHere::OtherSubject(false)));
+            } else {
+                assert_eq!(why, Some(NeverHere::NoWebGpu), "{}", m.id);
+            }
+            assert_eq!(gpu.why_not(m), None, "{}", m.id);
+        }
+        assert_eq!(
+            NeverHere::NoWebGpu.words(),
+            FillHaves::default().why_not(FillChoice::Best).unwrap()
+        );
+        assert_eq!(
+            NeverHere::OtherSubject(false).short(),
+            "the original runs here"
+        );
+        assert_eq!(cpu.why_not(&SUBJECT), None);
+        assert_eq!(gpu.why_not(&SUBJECT), Some(NeverHere::OtherSubject(true)));
+        for m in [&SKY, &SAM, &SAM3, &DENOISE_FAST, &greycard_ai::FILL] {
+            assert_eq!(cpu.why_not(m), None, "{}", m.id);
+            assert_eq!(gpu.why_not(m), None, "{}", m.id);
+        }
+        let pascal = Here {
+            f16: Some((false, "GTX 1080".into())),
+            ..gpu.clone()
+        };
+        let why = pascal.why_not(&REMOVE_FAST).unwrap();
+        assert_eq!(
+            why.words(),
+            remove_f16_refusal(Some(&(false, "GTX 1080".into()))).unwrap()
+        );
+        assert_eq!(why.short(), "no 16-bit floats in shaders");
+        assert_eq!(pascal.why_not(&SKY), None);
+        // A card smaller than the smallest removal's need, as `room`
+        // refuses it; one unknown (unified memory) is not a reason.
+        let small = Here {
+            card: Some((6 << 30, "RTX 2060".into())),
+            ..gpu.clone()
+        };
+        let why = small.why_not(&REMOVE).unwrap();
+        assert_eq!(
+            why,
+            NeverHere::ShortCard("RTX 2060".into(), 6 << 30, remove_needs(512, false))
+        );
+        assert!(
+            why.words().starts_with("RTX 2060 has 6.0 GiB"),
+            "{}",
+            why.words()
+        );
+        assert!(why.short().starts_with("needs ") && !why.short().contains("RTX"));
+        let unified = Here {
+            card: None,
+            ..gpu.clone()
+        };
+        assert_eq!(unified.why_not(&REMOVE), None);
+        let off = Here {
+            off: Some("this processor has no AVX2".into()),
+            ..gpu
+        };
+        for m in greycard_ai::MODELS {
+            assert_eq!(
+                off.why_not(m),
+                Some(NeverHere::Off("this processor has no AVX2".into()))
+            );
+        }
+        // Anywhere but a Mac, nothing is warmed.
+        if !cfg!(target_os = "macos") {
+            warm_core_ml(&Store::at("/nonexistent"), &SKY);
+        }
     }
 
     /// The remove makes a Fill drawn for it when its window fits and

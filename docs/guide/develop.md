@@ -584,6 +584,12 @@ them. Each shows you its license before it downloads:
 - the learned denoiser, 5 to 20 MB depending on the tier
 
 Each one is downloaded once.
+**Fetch all** in Settings, Models downloads the denoiser's tiers with
+every other model this computer runs.
+
+The first time a picture opens, greycard also asks once whether to
+fetch every model now or as needed; that question comes first, and the
+lens offer at the next picture.
 
 greycard offers the lens database without being asked. The first
 time a picture opens and there are no lens profiles on the machine,

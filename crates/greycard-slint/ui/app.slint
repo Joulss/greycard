@@ -12,7 +12,7 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, KeywordChip, QueueRow } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -2067,7 +2067,17 @@ export component App inherits Window {
     in-out property <string> fetch-title: "";
     in-out property <string> fetch-text: "";
     in-out property <string> fetch-note: "";
+    in property <string> fetch-yes: "Download";
+    in property <string> fetch-no: "Not now";
+    in property <bool> fetch-no-default: false;
     callback fetch-answered(bool);
+    // The Settings sheet's Models category: a line a model, the Fetch
+    // all button's words and whether it can be pressed, and a note.
+    in property <[ModelLine]> models-lines: [];
+    in property <string> models-fetch-label: "Fetch all";
+    in property <bool> models-fetch-enabled: false;
+    in property <string> models-note: "";
+    callback models-fetch-all();
     // The export sheet.
     in-out property <bool> export-open: false;
     in-out property <string> export-format: "JPEG";
@@ -4906,6 +4916,9 @@ export component App inherits Window {
         fetch-title <=> root.fetch-title;
         fetch-text <=> root.fetch-text;
         fetch-note <=> root.fetch-note;
+        fetch-yes: root.fetch-yes;
+        fetch-no: root.fetch-no;
+        fetch-no-default: root.fetch-no-default;
         fetch-answered(a) => { root.fetch-answered(a); }
     }
 
@@ -5369,6 +5382,11 @@ export component App inherits Window {
         update-checking: root.update-checking;
         update-check-changed => { root.update-check-changed(); }
         update-check-now => { root.update-check-now(); }
+        models-lines: root.models-lines;
+        models-fetch-label: root.models-fetch-label;
+        models-fetch-enabled: root.models-fetch-enabled;
+        models-note: root.models-note;
+        models-fetch-all => { root.models-fetch-all(); }
         key-bindings: root.key-bindings;
         key-rebound(id, text, ctrl, shift, alt, meta) => {
             return root.key-rebound(id, text, ctrl, shift, alt, meta);

@@ -399,6 +399,10 @@ Subject, Background, Sky, Landscape, Object and People use learned models that g
 downloads the first time you need one. A sheet names the model, its
 size, where it comes from and its license before anything downloads;
 choose **Download** or **Not now**.
+To get them all at once, use **Fetch all** in Settings, Models. The
+first time a picture opens, greycard asks once whether to fetch every
+model now; **As needed**, the default, leaves each to come when it is
+first used.
 
 | Shape | Download |
 |---|---|

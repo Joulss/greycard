@@ -14,6 +14,15 @@ design note behind it.
   line's do
   ([§591](https://github.com/jessolmstead/greycard/blob/master/docs/notes/591-a-quick-demosaic-on-the-gpu-and-the-default-behind-it.md)).
 
+### Models
+
+- Fetch every model at once: Settings, Models lists each model with
+  its license, its size, and whether it is in the store, and Fetch all
+  brings those this machine runs, one at a time, saying what it skips
+  and why. The first picture opened offers the same once, As needed
+  the default
+  ([§598](https://github.com/jessolmstead/greycard/blob/master/docs/notes/598-fetch-every-model-at-once.md)).
+
 ### Library
 
 - A mouse's back and forward buttons over the grid go to the folders

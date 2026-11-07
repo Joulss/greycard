@@ -2,7 +2,7 @@
 
 The Settings sheet holds the choices that belong to your computer
 rather than to a picture, in five categories down its left side:
-Interface, Library, Editing, Keys, and About. Click one, or press the
+Interface, Library, Editing, Models, Keys, and About. Click one, or press the
 up and down arrows or Ctrl+Tab, to show it; Tab goes on into its
 rows. The sheet opens at the category you left it at. It also lists
 the lasting choices you make elsewhere: the canvas, the monitor and
@@ -243,6 +243,22 @@ The apps the frame menu's **Edit in** opens a frame in, one a row by
 name, in the order you added them. **Add...** picks another; **×**
 takes one off. See
 [Edit in another app](export.md#edit-in-another-app).
+
+## Models
+
+Every model greycard knows, with its license, its size, and where it
+stands: in the store, fetching, or skipped, with why. **Fetch all**
+downloads every model this computer can run that is not in the store
+yet, one at a time; the button shows how much that is. Without a GPU
+with WebGPU, or on a card too small or without 16-bit floats, the
+generative remove is skipped; of the Subject model's two copies, only
+the one this computer uses comes. Where the AI features are off until
+ONNX Runtime for the CPU is downloaded, Fetch all downloads it first.
+If one download fails, its line says why and the rest go on. Each
+model's full license is written beside it in the store. A download
+cannot be stopped once it has started. On a Mac, Fetch all also
+prepares Core ML for Sky and the denoiser, so their first use is as
+quick as the next.
 
 ## Keys
 

@@ -582,6 +582,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.develop.lens_options = lens_options;
             // No database on the machine: the first time a picture
             // is up, the download is offered without being asked for.
+            // Every model at once is offered first, once ever; the
+            // lens offer then waits for a later picture.
+            crate::panel::models::offer_once(&mut st, app);
             if matches!(lens, LensReport::NoDatabase) {
                 offer_lenses_once(&mut st, app);
             }
@@ -1081,7 +1084,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.window().request_redraw();
             }
         }
-        Outcome::Fetching { name, done, total } => {
+        Outcome::Fetching {
+            name,
+            file,
+            done,
+            total,
+        } => {
+            crate::panel::models::progress(&mut state.borrow_mut(), app, name, file, done, total);
             let short = name.split(',').next().unwrap_or(name);
             app.set_status(
                 format!(
@@ -1133,6 +1142,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A denoiser the edit is waiting for, or the fill model
             // with a fill to make: develop again with it.
             develop_for(&mut st, app, |m| m.id == model.id);
+            // A fetch of every model goes on to the next.
+            crate::panel::models::landed(&mut st, app, model.id, None);
             app.window().request_redraw();
         }
         Outcome::RuntimeFetched { runtime } => {
@@ -1144,6 +1155,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 format!("{short} is ready: the AI features run on the CPU, slower").into(),
             );
             runtime_arrived(&mut st, app);
+            // What runs here is asked again; a fetch of every model goes on.
+            crate::panel::models::runtime_landed(&mut st, app, runtime.id, None);
             app.window().request_redraw();
         }
         Outcome::FetchFailed { id, name, message } => {
@@ -1162,6 +1175,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if st.develop.landscape_pending.is_some() {
                 crate::panel::landscape::resume(&mut st, app);
             }
+            // A fetch of every model says it on the line and goes on,
+            // or, the runtime it waited on failing, lets its models go.
+            if greycard_ai::registry::runtime(id).is_some() {
+                crate::panel::models::runtime_landed(&mut st, app, id, Some(&message));
+            } else {
+                crate::panel::models::landed(&mut st, app, id, Some(&message));
+            }
             // The masks waiting on it are asked about again, and may
             // now turn to another model.
             app.window().request_redraw();
@@ -1178,6 +1198,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.sheets.runtime_next = None;
             st.develop.part_pending = None;
             st.develop.landscape_pending = None;
+            crate::panel::models::runtime_landed(&mut st, app, id, Some(&message));
             app.set_status(message.into());
             app.window().request_redraw();
         }
@@ -1208,6 +1229,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             st.sheets.fetching = false;
             app.set_status("the lens profiles are ready".into());
+            // A fetch of every model held behind it goes on.
+            crate::panel::models::pump(&mut st, app);
             // The develop keys in the index were made with the old
             // database; the next pass over each folder makes them anew.
             if let Some(indexer) = &st.views.index {
@@ -1233,6 +1256,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.sheets.fetching = false;
             tracing::error!("the lens profiles could not be fetched: {message}");
             app.set_status(format!("the lens profiles could not be fetched: {message}").into());
+            crate::panel::models::pump(&mut st, app);
         }
         Outcome::SetFrameStarted { set, index, name } => {
             let mut st = state.borrow_mut();

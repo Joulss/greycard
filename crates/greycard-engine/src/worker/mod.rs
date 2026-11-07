@@ -203,8 +203,13 @@ pub enum Job {
     /// `PersonOn`. One a frame, so a develop asked for goes first
     /// between any two.
     PersonOn(Box<PersonJob>),
-    /// Fetch a model into the store; on its own thread.
-    Fetch { model: &'static greycard_ai::Model },
+    /// Fetch a model into the store; on its own thread. `warm`: on a
+    /// Mac, Core ML's compile of it is made once it lands
+    /// (`ai::warm_core_ml`), for a fetch of every model at once.
+    Fetch {
+        model: &'static greycard_ai::Model,
+        warm: bool,
+    },
     /// Fetch Microsoft's CPU-only ONNX Runtime into the store, and load
     /// it; on its own thread.
     FetchRuntime {
@@ -542,8 +547,11 @@ pub enum Outcome {
         generation: u64,
         picture: Option<Arc<greycard_render::refine::MaskPicture>>,
     },
+    /// A file of a model (or of the runtime) coming: its bytes so far
+    /// and in all, zero when the server did not say.
     Fetching {
         name: &'static str,
+        file: &'static str,
         done: u64,
         total: u64,
     },

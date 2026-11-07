@@ -111,6 +111,11 @@ pub struct Settings {
     /// was answered Not now. It is asked once: from then on the LENS
     /// section's own button is the way to them.
     pub lenses_declined: bool,
+    /// Whether the offer to fetch every model at once, made unprompted
+    /// once a picture opens, was answered, Now or As needed. It is
+    /// asked once: from then on the Settings sheet's Models category
+    /// is the way to them.
+    pub models_asked: bool,
     /// The folders whose RawTherapee profiles were offered as they
     /// opened and answered, by Not now, or by a write that brought a
     /// frame in, each by its canonical path: never offered again. Kept
@@ -249,7 +254,7 @@ pub struct Settings {
 
 /// The Settings sheet's categories, top to bottom, by the names the
 /// sheet shows.
-pub const CATEGORIES: [&str; 5] = ["Interface", "Library", "Editing", "Keys", "About"];
+pub const CATEGORIES: [&str; 6] = ["Interface", "Library", "Editing", "Models", "Keys", "About"];
 
 /// The category `name` names, or the first for a name that is none.
 pub fn category_named(name: &str) -> &'static str {
@@ -637,6 +642,7 @@ impl Default for Settings {
             loupe_cull: false,
             cull_developed: false,
             lenses_declined: false,
+            models_asked: false,
             rawtherapee_answered: Vec::new(),
             preset_favorites: Vec::new(),
             preset_folds: Vec::new(),
@@ -1051,6 +1057,7 @@ mod tests {
             loupe_cull: true,
             cull_developed: true,
             lenses_declined: true,
+            models_asked: true,
             rawtherapee_answered: vec!["/home/x/Pictures/rt".into()],
             preset_favorites: vec!["warm.gcp".into(), "Film/portra.gcp".into()],
             preset_folds: vec!["group:Film".into()],

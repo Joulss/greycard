@@ -1833,8 +1833,11 @@ mod tests {
         assert_eq!(crate::testing::count_labeled(&app, "CROP"), 1);
         assert_eq!(crate::testing::count_labeled(&app, "SIDECARS"), 0);
         press(&app, Key::DownArrow);
-        assert_eq!(app.get_settings_category(), "Keys");
+        assert_eq!(app.get_settings_category(), "Models");
         assert_eq!(crate::testing::count_labeled(&app, "CROP"), 0);
+        assert_eq!(crate::testing::count_labeled(&app, "MODELS"), 1);
+        press(&app, Key::DownArrow);
+        assert_eq!(app.get_settings_category(), "Keys");
         assert_eq!(crate::testing::count_labeled(&app, "KEYS"), 1);
         press(&app, Key::DownArrow);
         press(&app, Key::DownArrow);
@@ -2119,7 +2122,7 @@ mod tests {
         // Tab from the column into the rows, then Ctrl+Shift+Tab.
         press(&app, Key::Tab);
         ctrl(Key::Tab, true);
-        assert_eq!(app.get_settings_category(), "Editing");
+        assert_eq!(app.get_settings_category(), "Models");
         // The focus left the hidden row for the column: the keys go on.
         ctrl(Key::Tab, false);
         assert_eq!(app.get_settings_category(), "Keys");
