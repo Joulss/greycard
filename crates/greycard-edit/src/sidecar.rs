@@ -706,6 +706,14 @@ impl Sidecar {
     /// file again in another place, a copy of one frame on an archive
     /// (§233). [`Self::save_in`] is the save; this is only the write.
     pub fn write_to(&self, path: &Path) -> Result<()> {
+        // A copy's hidden folder may not be there yet: the archive's
+        // shoot was copied before the folder was, or made by another
+        // tool. Made and hidden as a save makes its own.
+        if under_folder(path)
+            && let Some(shoot) = path.parent().and_then(Path::parent)
+        {
+            Self::folder_under(shoot)?;
+        }
         Ok(replace_synced(path, self.to_json().as_bytes())?)
     }
 
@@ -1284,6 +1292,29 @@ mod tests {
             "the beside copy is superseded"
         );
         assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), later);
+    }
+
+    #[test]
+    fn a_write_into_a_missing_hidden_folder_makes_it() {
+        let dir = scratch("write-into-folder");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let mut sidecar = Sidecar::default();
+        let mut e = Edit::default();
+        e.light.exposure = 1.0;
+        sidecar.record(e);
+
+        // A copy's sidecar written under a folder that is not there:
+        // the folder is made, and the file lands.
+        let under = Sidecar::path_in(&raw, Placement::Folder);
+        assert!(!under.parent().unwrap().exists());
+        sidecar.write_to(&under).unwrap();
+        assert_eq!(Sidecar::read(&under).unwrap(), sidecar);
+
+        // Beside, the shoot folder is what there is; nothing made.
+        let beside = Sidecar::path_in(&raw, Placement::Beside);
+        sidecar.write_to(&beside).unwrap();
+        assert_eq!(Sidecar::read(&beside).unwrap(), sidecar);
     }
 
     #[test]

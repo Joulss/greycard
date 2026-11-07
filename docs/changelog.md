@@ -223,6 +223,11 @@ are refused by 0.9.x.
 
 ### Library
 
+- An edit mirrored onto an archive copy whose shoot has no `.greycard`
+  folder yet lands: the folder is made on the write, where before the
+  write failed and the status bar counted the edit as waiting for the
+  archive for good
+  ([§582](https://github.com/jessolmstead/greycard/blob/master/docs/notes/582-the-copys-hidden-folder-made-on-the-write.md)).
 - Every frame has a focus score: **Focus** in the Sort menu puts the
   sharpest first, `focus>0.6` in the filter finds them, and Stack
   bursts tops each burst with its sharpest

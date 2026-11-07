@@ -594,3 +594,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§579. A double-click inside the crop is Done](notes/579-a-double-click-inside-the-crop-is-done.md) (2026-11-06)
 - [§580. The edit's stand-in fits as the develop will](notes/580-the-edits-stand-in-fits-as-the-develop-will.md) (2026-11-06)
 - [§581. The measured aberration stands the profile's down](notes/581-the-measured-aberration-stands-the-profiles-down.md) (2026-11-06)
+- [§582. The copy's hidden folder, made on the write](notes/582-the-copys-hidden-folder-made-on-the-write.md) (2026-11-06)
