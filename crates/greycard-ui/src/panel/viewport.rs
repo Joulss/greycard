@@ -4697,4 +4697,105 @@ pub(crate) mod tests {
         rest_on(&app, "Right panel");
         assert_eq!(app.get_tip_text(), "Show panel");
     }
+
+    /// NAVIGATOR is one height, its header and a box the pane's width
+    /// at 3:2, with a 3:2 frame, a 16:9 one, a portrait one, and a
+    /// chosen frame whose picture is on its way: nothing below it
+    /// moves. The frame sits centered in the box at its own shape,
+    /// and a press on it navigates by where it fell on the frame, not
+    /// on the box; on the empty box a press navigates nowhere. With
+    /// nothing chosen, the header alone.
+    #[test]
+    fn the_navigator_keeps_one_height_whatever_the_frame() {
+        use crate::testing::{click, settle};
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let asked = Rc::new(Cell::new((-1.0f32, -1.0f32)));
+        let a = asked.clone();
+        app.on_navigate(move |x, y| a.set((x, y)));
+        let picture = |w: u32, h: u32| {
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h))
+        };
+        let find = |id: &str| {
+            let e = ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("{id} in the window"));
+            (e.absolute_position(), e.size())
+        };
+        // A body's growth is the section's 120ms fold.
+        let show = |image: slint::Image| {
+            app.set_navigator(image);
+            settle(&app);
+            settle(&app);
+        };
+        app.set_selected(0);
+        let mut heights = Vec::new();
+        for (w, h) in [(300, 200), (320, 180), (200, 300)] {
+            show(picture(w, h));
+            let (section_at, section) = find("App::navigator-section");
+            heights.push(section.height);
+            let (held_at, held) = find("NavigatorSection::held");
+            assert!(
+                (held.height - held.width / 1.5).abs() < 0.5,
+                "the box at 3:2: {held:?}"
+            );
+            assert!(
+                held_at.y > section_at.y
+                    && (held_at.y + held.height - section_at.y - section.height).abs() < 0.5,
+                "the header, then the box: {held_at:?} {held:?} in {section_at:?} {section:?}"
+            );
+            let (at, shown) = find("NavigatorSection::shown");
+            let shape = w as f32 / h as f32;
+            assert!(
+                (shown.width / shown.height - shape).abs() < 0.02,
+                "{shown:?} at {shape}"
+            );
+            assert!(
+                (at.x + shown.width / 2.0 - held_at.x - held.width / 2.0).abs() < 1.0
+                    && (at.y + shown.height / 2.0 - held_at.y - held.height / 2.0).abs() < 1.0,
+                "centered: {at:?} {shown:?} in {held_at:?} {held:?}"
+            );
+            // A press a quarter in from the frame's left and top.
+            asked.set((-1.0, -1.0));
+            click(&app, at.x + shown.width / 4.0, at.y + shown.height / 4.0);
+            let (x, y) = asked.get();
+            assert!(
+                (x - 0.25).abs() < 0.02 && (y - 0.25).abs() < 0.02,
+                "{x} {y} at {w}x{h}"
+            );
+        }
+        // Chosen, its picture on its way: the box holds its place and
+        // a press on it navigates nowhere.
+        show(slint::Image::default());
+        heights.push(find("App::navigator-section").1.height);
+        let (held_at, held) = find("NavigatorSection::held");
+        asked.set((-1.0, -1.0));
+        click(
+            &app,
+            held_at.x + held.width / 2.0,
+            held_at.y + held.height / 2.0,
+        );
+        assert_eq!(asked.get(), (-1.0, -1.0), "no frame, no navigating");
+        assert!(
+            heights.iter().all(|h| (h - heights[0]).abs() < 0.5),
+            "{heights:?}"
+        );
+        // Nothing chosen: the header alone, as before.
+        app.set_selected(-1);
+        settle(&app);
+        settle(&app);
+        assert!(
+            ElementHandle::find_by_element_id(&app, "NavigatorSection::held")
+                .next()
+                .is_none(),
+            "no box with nothing chosen"
+        );
+        let header = find("App::navigator-section").1.height;
+        assert!(
+            header > 0.0 && header < heights[0] - held.height + 1.0,
+            "the header alone: {header} against {heights:?}"
+        );
+    }
 }

@@ -12,6 +12,10 @@ design note behind it.
 - On Linux the window carries an app id, so GNOME's dock pins it to
   its desktop entry and shows its icon (issue 86)
   ([§587](https://github.com/jessolmstead/greycard/blob/master/docs/notes/587-the-windows-app-id.md)).
+- The Navigator keeps one height, the picture fitted inside, so the
+  sections under it no longer jump while a frame loads or between
+  portrait and landscape (issue 81)
+  ([§588](https://github.com/jessolmstead/greycard/blob/master/docs/notes/588-the-navigator-keeps-one-height.md)).
 
 ## 0.10.0, 2026-11-06
 

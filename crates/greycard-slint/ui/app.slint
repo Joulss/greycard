@@ -4491,10 +4491,11 @@ export component App inherits Window {
                 // The frame's, and so the loupe's alone: first, so
                 // it keeps the pane's top left corner whatever the
                 // folder sections below it hold.
-                if !root.grid-open: NavigatorSection {
+                if !root.grid-open: navigator-section := NavigatorSection {
                     zoom-text: root.zoom-text;
                     collapsed-navigator <=> root.collapsed-navigator;
                     navigator: root.navigator;
+                    reserve: root.selected >= 0 && !root.culling;
                     nav-partial: root.nav-partial;
                     nav-left: root.nav-left;
                     nav-top: root.nav-top;

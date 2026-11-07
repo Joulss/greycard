@@ -13,6 +13,9 @@ export component NavigatorSection inherits Section {
     in property <float> nav-top;
     in property <float> nav-width;
     in property <float> nav-height;
+    // A frame is chosen, so its picture is here or on its way: the
+    // box holds its place while there is none yet.
+    in property <bool> reserve;
     callback navigate(float, float);
     callback focus-keys();
 
@@ -20,11 +23,15 @@ export component NavigatorSection inherits Section {
     icon: @image-url("../icons/maximize.svg");
     note: root.zoom-text;
     collapsed <=> root.collapsed-navigator;
-    if root.navigator.width > 0: Rectangle {
-        // The frame at the panel's width, or no
-        // taller than it is wide, centered.
-        property <float> aspect: root.navigator.width / max(1, root.navigator.height);
-        height: min(self.width, self.width / self.aspect);
+    // One height, the panel's width at 3:2, whatever the frame's
+    // shape and while it is on its way: a frame loading, or a
+    // portrait after a landscape, moves nothing below. The frame
+    // is fitted inside and centered. With nothing chosen, and in
+    // Cull, the header alone.
+    if root.navigator.width > 0 || root.reserve: held := Rectangle {
+        property <bool> has: root.navigator.width > 0;
+        property <float> aspect: self.has ? root.navigator.width / max(1, root.navigator.height) : 1.5;
+        height: self.width / 1.5;
         property <length> shown-w: min(self.width, self.height * self.aspect);
         property <length> shown-h: self.shown-w / self.aspect;
         border-radius: Theme.radius-md;
@@ -33,6 +40,7 @@ export component NavigatorSection inherits Section {
         border-color: Theme.border;
         clip: true;
         shown := Rectangle {
+            visible: parent.has;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             width: parent.shown-w;

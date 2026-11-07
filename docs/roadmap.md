@@ -769,11 +769,6 @@ clears or a tester asks for it.
       collapsed section's share goes to the open ones, each section's
       list scrolls on its own, the shares kept in the settings
       (issue 79, 2026-11-07)
-- [ ] The Navigator at a fixed height, the picture fitted inside at
-      its own shape, so the sections under it stay put between frames
-      and between portrait and landscape; today it follows the
-      picture and collapses while the next frame loads (issue 81,
-      2026-11-07)
 - [ ] The display curve (Per channel, AgX) as a part of Copy and
       Paste settings, its own check in the Paste sheet; today
       `preset::Part` has no entry for it, so it never travels

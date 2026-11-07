@@ -1627,20 +1627,16 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         {
                             tracing::warn!("navigator {}: {e}", Path::new(&path).display());
                         }
-                        // The navigator's height follows its picture's
-                        // shape, and the panel below it with that; a
-                        // peek from a row under the pointer leaves it
-                        // be, or the rows would move out from under
-                        // the pointer and the peek end.
-                        if st.develop.peek.is_none() {
-                            let buf =
-                                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                                    picture.as_bytes(),
-                                    picture.width,
-                                    picture.height,
-                                );
-                            app.set_navigator(slint::Image::from_rgba8(buf));
-                        }
+                        // The frame as shown, a peek's too, as the
+                        // scopes have it: the navigator keeps one
+                        // height whatever its picture's shape, so
+                        // nothing under the pointer moves.
+                        let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                            picture.as_bytes(),
+                            picture.width,
+                            picture.height,
+                        );
+                        app.set_navigator(slint::Image::from_rgba8(buf));
                     }
                     if in_flight {
                         // The bins arrive a frame later; have that frame.
