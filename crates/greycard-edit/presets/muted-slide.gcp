@@ -4,6 +4,7 @@
   "sections": [
     "light",
     "color",
+    "black-and-white",
     "curves",
     "mixer",
     "grading"

@@ -1014,7 +1014,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // none; one that draws hundreds has something marking it dirty
         // every frame. Said in the log with what was on, so a report
         // of a GPU kept busy by an idle window names the cause.
-        let mut frames: (std::time::Instant, u32) = (std::time::Instant::now(), 0);
+        // Frames since the count began, those that drew the viewport
+        // anew, and those a scope readback asked for: the last two say
+        // what a window drawing at rest is drawing for.
+        let mut frames: (std::time::Instant, u32, u32, u32) = (std::time::Instant::now(), 0, 0, 0);
         app.window()
             .set_rendering_notifier(move |phase, api| match phase {
                 slint::RenderingState::RenderingSetup => {
@@ -1142,8 +1145,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 slint::RenderingState::BeforeRendering => {
                     frames.1 += 1;
                     if frames.0.elapsed() >= FRAMES_COUNTED_OVER {
-                        let (since, n) =
-                            std::mem::replace(&mut frames, (std::time::Instant::now(), 0));
+                        let (since, n, drawn, for_scopes) =
+                            std::mem::replace(&mut frames, (std::time::Instant::now(), 0, 0, 0));
                         // Over the span the frames came in: a window
                         // left at rest for an hour reaches here on its
                         // next frame with that hour behind it.
@@ -1156,7 +1159,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 .map(|st| st.views.thumb_run.is_some())
                                 .unwrap_or(false);
                             tracing::info!(
-                                "window: {n} frames in the last {:.0} s; grid {}, busy {}, \
+                                "window: {n} frames in the last {:.0} s, {drawn} drawing the \
+                                 viewport, {for_scopes} for a scope readback; grid {}, busy {}, \
                                  queue busy {}, pictures coming {pictures}, status \"{}\"",
                                 seconds,
                                 app.get_grid_open(),
@@ -1632,6 +1636,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     }
                     if in_flight {
                         // The bins arrive a frame later; have that frame.
+                        frames.3 += 1;
                         app.window().request_redraw();
                     }
                     // `--turn` has a key still to press, and the
@@ -1666,6 +1671,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // one handed over again would mark the window dirty
                     // and have it draw another frame, without end.
                     if drew {
+                        frames.2 += 1;
                         app.set_texture(
                             slint::Image::try_from(texture).expect("the texture imports"),
                         );

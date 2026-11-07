@@ -123,6 +123,9 @@ export component RotateSection inherits Section {
     in-out property <string> guide-mode;
     in-out property <bool> collapsed-rotate;
     in-out property <float> geo-angle;
+    /// The Angle slider being set, by drag, wheel, or key: the
+    /// viewport lays its grid on.
+    in-out property <bool> angle-dragging;
     callback geometry-turned(int);
     callback geometry-flipped(bool);
     callback crop-toggled();
@@ -201,6 +204,7 @@ export component RotateSection inherits Section {
         value <=> root.geo-angle;
         text: (root.geo-angle >= 0 ? "+" : "") + round(root.geo-angle * 10) / 10 + "°";
         changed(v) => { root.geometry-changed(); }
+        changed moving => { root.angle-dragging = self.moving; }
     }
     // The frame's own turn, under the edit's.
     // The four above are a step in developing

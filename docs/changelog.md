@@ -5,20 +5,21 @@ design note behind it.
 
 ## 0.10.0
 
-Merges: HDR, panorama, and focus stack from the frame menu, each a
-DNG beside its first frame. Fills land one by one after the picture,
-and a fill, the denoiser, or a mask the graphics card has no memory
-for is refused rather than crashing the editor. The learned denoise
-blends luma and chroma apart, Structure under Clarity, Refine edge
-on a mask, a lens picker with Adobe profiles, a DNG's own
-corrections read, Lightroom's XMP edits opened, a focus score for
-every frame, preset favorites and groups, Edit in to several apps,
-the view at Fit without shimmer, a tentative Intel Mac package, and
-a round of fixes from the testers. Sidecars written by this build
-are refused by 0.9.x.
+HDR, panorama, and focus stack merges, a lens picker with Adobe
+profiles, Lightroom XMP edits opened, a focus score, preset
+favorites, Edit in to other apps, and a bunch of tester fixes.
+Sidecars from this build are refused by 0.9.x.
 
 ### The window
 
+- A frame whose sidecar holds a crop of nulls opens again, with no
+  crop: an Angle step or a level between a switch and the develop's
+  landing fitted the crop into a frame of unknown size and wrote NaN,
+  which the refit no longer does
+  ([§585](https://github.com/jessolmstead/greycard/blob/master/docs/notes/585-a-crop-fitted-into-an-unknown-frame.md)).
+- A grid lays over the picture while the Angle slider moves, by drag,
+  wheel, or key, or a level line is drawn, so a horizon or an edge can be brought level by eye
+  ([§583](https://github.com/jessolmstead/greycard/blob/master/docs/notes/583-a-grid-while-the-angle-is-set.md)).
 - The picture at Fit, and at any zoom under 1:1, no longer shimmers on
   foliage and fine texture: each screen pixel averages its share of
   the picture, as an export does. Isolated clipped specks no longer
@@ -87,6 +88,10 @@ are refused by 0.9.x.
 
 ### Presets
 
+- Muted Slide and Warm Negative turn Black and white off, so a color
+  look applied after Red-Filter Mono brings the color back; a shipped
+  preset never edited is brought up to this build's
+  ([§584](https://github.com/jessolmstead/greycard/blob/master/docs/notes/584-a-color-look-carries-black-and-white-off.md)).
 - A star on a preset's row makes it a favorite, listed under Favorites
   at the top of PRESETS (issue 72)
   ([§575](https://github.com/jessolmstead/greycard/blob/master/docs/notes/575-preset-favorites-and-groups.md)).

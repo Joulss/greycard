@@ -751,6 +751,28 @@ export component EditSlider inherits Rectangle {
     // on the label or the value text does neither: focus only.
     property <bool> track-armed: false;
     property <bool> dragging: false;
+    // The value being set: a drag under way (`dragging` is left set
+    // until the next press, so the pointer's hold is what ends it), or
+    // a wheel's or a key's step within the last moment. The viewport
+    // lays its grid on while the Angle slider says so.
+    out property <bool> moving: (root.dragging && ta.pressed) || root.stepped;
+    property <bool> stepped: false;
+    // Steps counted, and the count the timer last saw: it lets go only
+    // after a whole interval with no step, so a slow turn of the wheel
+    // does not blink the grid between notches.
+    property <int> step-count: 0;
+    property <int> step-seen: 0;
+    Timer {
+        interval: 1s;
+        running: root.stepped;
+        triggered => {
+            if (root.step-count == root.step-seen) {
+                root.stepped = false;
+            } else {
+                root.step-seen = root.step-count;
+            }
+        }
+    }
     property <length> press-x;
     // A drag moves the track's fraction by the pointer's travel from
     // an anchor: a point and the fraction there, unclamped so that a
@@ -801,6 +823,8 @@ export component EditSlider inherits Rectangle {
         value = root.logarithmic
             ? clamp(value * pow(2, by), minimum, maximum)
             : clamp(value + by, minimum, maximum);
+        root.step-count += 1;
+        root.stepped = true;
         changed(value);
     }
     function bump(way: int, big: bool) {

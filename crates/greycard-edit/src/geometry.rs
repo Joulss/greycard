@@ -15,6 +15,27 @@ pub struct Crop {
     pub h: f32,
 }
 
+/// A crop as written, each side possibly null (a NaN serialized).
+#[derive(Deserialize)]
+struct CropAsWritten {
+    x: Option<f32>,
+    y: Option<f32>,
+    w: Option<f32>,
+    h: Option<f32>,
+}
+
+/// `Geometry::crop` read: a crop whose every side is a finite number,
+/// else none.
+fn crop_or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Crop>, D::Error> {
+    let written = Option::<CropAsWritten>::deserialize(d)?;
+    Ok(written.and_then(|c| match (c.x, c.y, c.w, c.h) {
+        (Some(x), Some(y), Some(w), Some(h)) if [x, y, w, h].iter().all(|v| v.is_finite()) => {
+            Some(Crop { x, y, w, h })
+        }
+        _ => None,
+    }))
+}
+
 /// The shape a crop keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -128,7 +149,10 @@ pub struct Geometry {
     /// horizontals converge there.
     pub horizontal: f32,
     /// The crop, none for the whole frame (the largest that fits, when
-    /// turned).
+    /// turned). Read leniently: a crop with a null or infinite side,
+    /// which a build before §585 wrote from a fit into an unknown
+    /// frame size, is no crop, rather than a frame that will not open.
+    #[serde(deserialize_with = "crop_or_none")]
     pub crop: Option<Crop>,
     pub aspect: Aspect,
     pub portrait: bool,
@@ -1211,6 +1235,30 @@ mod tests {
 
     /// A stroke: its two ends, in source pixels.
     type Stroke = [(f32, f32); 2];
+
+    #[test]
+    fn a_crop_with_a_null_side_reads_as_no_crop() {
+        let read = |crop: &str| -> Option<Crop> {
+            serde_json::from_str::<Geometry>(&format!(r#"{{"crop": {crop}}}"#))
+                .expect("it reads")
+                .crop
+        };
+        assert_eq!(read("null"), None);
+        assert_eq!(
+            read(r#"{"x": null, "y": null, "w": null, "h": null}"#),
+            None
+        );
+        assert_eq!(read(r#"{"x": 0.1, "y": 0.1, "w": null, "h": 0.5}"#), None);
+        assert_eq!(
+            read(r#"{"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.6}"#),
+            Some(Crop {
+                x: 0.1,
+                y: 0.2,
+                w: 0.5,
+                h: 0.6
+            })
+        );
+    }
 
     #[test]
     fn the_whole_frame_is_the_identity() {

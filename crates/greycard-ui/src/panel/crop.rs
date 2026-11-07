@@ -263,7 +263,10 @@ pub(crate) fn set_crop(app: &App, crop: Option<Crop>) {
 /// compiler asks the question at every call rather than trusting
 /// each of them to remember.
 pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
-    if !settled {
+    // The size is not known until the frame's develop lands (a switch
+    // zeroes it); a fit into nothing is NaN, which the sidecar wrote
+    // as null and then would not read.
+    if !settled || sw <= 0.0 || sh <= 0.0 {
         return;
     }
     let geometry = read_geometry(app);
@@ -301,6 +304,13 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
             w: fitted.w * shrink,
             h: fitted.h * shrink,
         };
+    }
+    if ![fitted.x, fitted.y, fitted.w, fitted.h]
+        .iter()
+        .all(|v| v.is_finite())
+    {
+        log::warn!("the crop's refit on a {sw}x{sh} frame was not finite; the crop stands");
+        return;
     }
     set_crop(app, Some(fitted));
     app.set_crop_kept_area(kept);
@@ -1427,6 +1437,21 @@ mod tests {
             (w - 1.0).abs() < 1e-3 && (h - 4000.0 / 6000.0).abs() < 1e-3,
             "a square of an upright plane is {w} by {h} of it"
         );
+    }
+
+    /// A refit before the frame's size is known leaves the crop as it
+    /// is: the window is between a switch and the develop's landing.
+    #[test]
+    fn a_refit_on_an_unknown_frame_size_changes_nothing() {
+        let app = window(1);
+        let geometry = greycard_edit::geometry::Geometry {
+            angle: 3.0,
+            ..Default::default()
+        };
+        show_geometry(&geometry, &app);
+        refit_crop(&app, 0.0, 0.0, true);
+        assert!(!app.get_geo_has_crop(), "a crop was fitted into nothing");
+        assert_eq!(app.get_crop_kept_area(), 0.0);
     }
 
     /// What the old build wrote for "pick Original, then Turn left"

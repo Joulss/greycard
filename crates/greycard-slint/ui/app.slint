@@ -1403,6 +1403,8 @@ export component App inherits Window {
     in-out property <float> vignette-feather: 0.5;
     in-out property <float> vignette-roundness: 0;
     in-out property <float> geo-angle: 0;
+    // The Angle slider in a drag, for the viewport's grid.
+    in-out property <bool> angle-dragging: false;
     in-out property <float> geo-vertical: 0;
     in-out property <float> geo-horizontal: 0;
     in-out property <int> geo-turns: 0;
@@ -3203,6 +3205,7 @@ export component App inherits Window {
                 mask-dragged(a, b, c, d) => { root.mask-dragged(a, b, c, d); }
                 mask-dropped => { root.mask-dropped(); }
                 mask-body-at(a, b, c) => { return root.mask-body-at(a, b, c); }
+                angle-dragging: root.angle-dragging;
                 crop-left: root.crop-left;
                 crop-top: root.crop-top;
                 crop-width: root.crop-width;
@@ -3981,6 +3984,7 @@ export component App inherits Window {
                             guide-mode <=> root.guide-mode;
                             collapsed-rotate <=> root.collapsed-rotate;
                             geo-angle <=> root.geo-angle;
+                            angle-dragging <=> root.angle-dragging;
                             geometry-turned(a) => { root.geometry-turned(a); }
                             geometry-flipped(a) => { root.geometry-flipped(a); }
                             crop-toggled => { root.crop-toggled(); }

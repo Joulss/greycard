@@ -1323,8 +1323,10 @@ impl Store {
     /// user with presets of their own is the common case, not the
     /// exception), so the record of what has been seeded is not the
     /// directory's existence but a `seeded` file in it listing the
-    /// stems put there so far. A stem on that list is never written
-    /// again: one edited stays edited and one binned stays binned.
+    /// stems put there so far. A stem on that list is not written
+    /// again: one edited stays edited and one binned stays binned. The
+    /// one exception is a copy still exactly as an earlier build wrote
+    /// it ([`SUPERSEDED`]), which takes this build's text.
     /// Nothing is overwritten, and a failure is a word in the log, not
     /// an error — a preset that could not be written is not a reason
     /// for the editor not to start.
@@ -1336,10 +1338,19 @@ impl Store {
         let mut seeded = self.seeded();
         let mut changed = false;
         for (stem, text) in SHIPPED {
+            let path = self.dir.join(format!("{stem}.{EXTENSION}"));
             if seeded.iter().any(|s| s == stem) {
+                // Seeded before. A copy still as an earlier build wrote
+                // it takes this build's text; one the user changed, or
+                // moved to a group, or binned, is left as it is.
+                if SUPERSEDED.iter().any(|(s, old)| {
+                    *s == stem && std::fs::read_to_string(&path).is_ok_and(|have| have == *old)
+                }) && let Err(e) = std::fs::write(&path, text)
+                {
+                    log::warn!("preset {}: {e}", path.display());
+                }
                 continue;
             }
-            let path = self.dir.join(format!("{stem}.{EXTENSION}"));
             if path.exists() {
                 // Something of that name is there already: the
                 // user's, whatever it holds.
@@ -1457,6 +1468,20 @@ pub const SHIPPED: [(&str, &str); 3] = [
     ),
 ];
 
+/// Earlier builds' texts of shipped presets, by stem. A user's copy
+/// still byte for byte one of these was never touched, and the seed
+/// writes this build's over it; a copy that differs is the user's.
+pub const SUPERSEDED: [(&str, &str); 2] = [
+    (
+        "muted-slide",
+        include_str!("../presets/superseded/muted-slide.gcp"),
+    ),
+    (
+        "warm-negative",
+        include_str!("../presets/superseded/warm-negative.gcp"),
+    ),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1500,11 +1525,15 @@ mod tests {
         assert_eq!(slide.name, "Muted Slide");
         assert!(slide.sections.contains(&Section::Color));
         // It carries nothing it does not list, and lists nothing it
-        // does not change.
+        // does not change, but for Black and white: a color look lists
+        // it off on purpose, so it turns a mono picture back.
         for preset in SHIPPED.map(|(_, t)| Preset::from_json(t).unwrap()) {
             let bare = Edit::default();
             for s in Section::ALL {
                 let changed = !s.same(&preset.edit, &bare);
+                if *s == Section::BlackWhite && !changed {
+                    continue;
+                }
                 assert_eq!(
                     changed,
                     preset.sections.contains(s),
@@ -1548,6 +1577,18 @@ mod tests {
         assert_eq!(negative.name, "Warm Negative");
         assert!(!negative.edit.grain.is_off());
 
+        // The color looks carry Black and white, off, so one applied
+        // over Red-Filter Mono brings the color back.
+        for stem in ["muted-slide", "warm-negative"] {
+            let p = by_name(stem);
+            assert!(
+                p.sections.contains(&Section::BlackWhite),
+                "{} carries no Black and white",
+                p.name
+            );
+            assert!(!p.edit.bw.enabled, "{} is mono", p.name);
+        }
+
         // Red-Filter Mono is mono, and through a red filter: the one
         // thing here that its name states outright.
         let mono = by_name("red-filter-mono");
@@ -1555,6 +1596,29 @@ mod tests {
         assert!(mono.edit.bw.enabled);
         assert_eq!(mono.edit.bw.filter(), Some(crate::bw::Filter::Red));
         assert!(!mono.edit.grain.is_off());
+    }
+
+    /// A seeded copy still as an earlier build wrote it takes this
+    /// build's; one the user changed stands.
+    #[test]
+    fn an_untouched_copy_of_an_earlier_shipped_preset_is_brought_up() {
+        let d = dir("seed-superseded");
+        std::fs::create_dir_all(&d).unwrap();
+        let store = Store::at(d.clone());
+        let (stem, old) = SUPERSEDED[0];
+        let (_, new) = SHIPPED.iter().find(|(s, _)| *s == stem).unwrap();
+        let path = d.join(format!("{stem}.{EXTENSION}"));
+        std::fs::write(&path, old).unwrap();
+        store.keep_seeded(&[stem.to_string()]).unwrap();
+        store.seed();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), *new);
+
+        // Changed by the user: left as it is.
+        let mine = old.replace("0.", "0.1");
+        assert_ne!(mine, old);
+        std::fs::write(&path, &mine).unwrap();
+        store.seed();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), mine);
     }
 
     /// Every shipped preset is seeded once, into a new store and into

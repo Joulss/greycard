@@ -595,7 +595,6 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] While rotating the photo overlay a tight grid to help with alignment
 - [ ] Failures as a dialog queue, not a status line: a failed outcome
       today becomes "failed: {message}" in the status bar
       (deliver.rs); a queue of typed errors with a kind, the frame it
@@ -1027,6 +1026,15 @@ clears or a tester asks for it.
       Intersect (discussion 59, 2026-10-30)
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
+- [ ] The mouse's back and forward buttons as the folders visited, as
+      a browser has them: back to the folder a subfolder was opened
+      from in the grid, forward again; the frame step they do today
+      left to the arrows (2026-11-06)
+- [ ] A preset dragged onto a group's header or into its rows moves it
+      there, beside the right-click's Move to group: a drag past a
+      threshold so a click still applies, a drop on a folded header
+      counted, a drop on Favorites as the star, and the list's pane
+      creeping when the drag nears its edge (2026-11-06)
 - [ ] Sync from the open frame onto the selection by a middle-click
       on it, as DaVinci does (issue 56, 2026-10-30)
 - [ ] Dust and scratches on a film scan found and healed in one go,

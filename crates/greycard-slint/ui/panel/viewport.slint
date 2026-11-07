@@ -67,6 +67,24 @@ component Rule inherits Rectangle {
     }
 }
 
+// A grid of screen-aligned lines a fixed way apart, laid over the
+// picture while its angle is being set, so a horizon or an edge can be
+// brought level by eye against the nearest line. Every fourth line is
+// brighter, to count by.
+component AlignGrid inherits Rectangle {
+    property <length> pitch: 32px;
+    property <int> cols: floor(root.width / root.pitch);
+    property <int> rows: floor(root.height / root.pitch);
+    for i in root.cols: Rectangle {
+        x: (i + 1) * root.pitch; y: 0; width: 1px; height: 100%;
+        background: mod(i + 1, 4) == 0 ? #ffffff80 : #ffffff40;
+    }
+    for i in root.rows: Rectangle {
+        x: 0; y: (i + 1) * root.pitch; width: 100%; height: 1px;
+        background: mod(i + 1, 4) == 0 ? #ffffff80 : #ffffff40;
+    }
+}
+
 export component Viewport inherits Rectangle {
     /// A name is being typed in a panel's text box: the pointer
     /// crossing the picture leaves the keys where they are.
@@ -180,6 +198,9 @@ export component Viewport inherits Rectangle {
     in property <length> crop-top;
     in property <length> crop-width;
     in property <length> crop-height;
+    /// The Angle slider in a drag: the grid is laid on, over the crop
+    /// when the crop is in hand, else over the whole view.
+    in property <bool> angle-dragging;
     callback crop-pressed(int);
     callback crop-dragged(int, length, length);
     callback crop-released();
@@ -972,6 +993,14 @@ export component Viewport inherits Rectangle {
             dropped => { root.crop-dropped(); }
         }
     }
+    // The grid while the angle is set: over the crop in crop mode,
+    // where the thirds already are, over the whole view otherwise.
+    if root.angle-dragging && !root.placeholder: AlignGrid {
+        x: root.crop-mode ? root.crop-left : 0;
+        y: root.crop-mode ? root.crop-top : 0;
+        width: root.crop-mode ? root.crop-width : parent.width;
+        height: root.crop-mode ? root.crop-height : parent.height;
+    }
     // The chosen mask shape: its outline and its handles.
     if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.placeholder && !root.handles-down: Rectangle {
         for h[i] in root.mask-handles: Rule {
@@ -1111,6 +1140,7 @@ export component Viewport inherits Rectangle {
                 if (self.pressed) { leveler.x1 = self.mouse-x; leveler.y1 = self.mouse-y; }
             }
         }
+        if leveler.dragging: AlignGrid { width: 100%; height: 100%; }
         if leveler.dragging: Path {
             width: 100%;
             height: 100%;
