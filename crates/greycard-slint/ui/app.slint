@@ -1352,9 +1352,11 @@ export component App inherits Window {
     callback delete-adjustment();
     // The mask list's menu: a mask, by its index among the masks,
     // copied below itself or onto the mask clipboard; the clipboard's
-    // mask added to the open frame or to every selected frame.
+    // mask added to the open frame or to every selected frame; every
+    // mask copied as Copy settings with only the masks checked.
     callback mask-duplicated(int);
     callback mask-copied(int);
+    callback masks-copied();
     callback mask-pasted();
     in property <bool> mask-held: false;
     callback add-shape(string, string);
@@ -3415,6 +3417,7 @@ export component App inherits Window {
                         mask-held: root.mask-held;
                         duplicate-mask(i) => { root.mask-duplicated(i); }
                         copy-mask(i) => { root.mask-copied(i); }
+                        copy-masks => { root.masks-copied(); }
                         paste-mask => { root.mask-pasted(); }
                         focus-keys => { keys.focus(); }
                         menu-done => { root.menu-done(); }

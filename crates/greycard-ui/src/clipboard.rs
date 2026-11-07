@@ -35,12 +35,21 @@ pub(crate) struct Clipboard {
     /// the file's, or a version's stem and name, "IMG_0001 (Warm)". Kept
     /// from the copy, since a version's name may change after.
     name: String,
+    /// Copied by a mask row's Copy masks: the paste's sheet opens with
+    /// every mask checked and nothing else, rather than as the last
+    /// sync or paste had it.
+    pub(crate) masks_only: bool,
 }
 
 impl Clipboard {
     /// `edit` copied from the frame `from`, whole, named `name`.
     pub(crate) fn copy(edit: Edit, from: crate::versions::Key, name: String) -> Self {
-        Self { edit, from, name }
+        Self {
+            edit,
+            from,
+            name,
+            masks_only: false,
+        }
     }
 
     /// [`Clipboard::copy`] from a file's own frame, named for the file.

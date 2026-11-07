@@ -29,6 +29,10 @@ design note behind it.
   it there; Erase clears what the brush itself added or cut. Sidecars
   from earlier builds open as they looked
   ([§595](https://github.com/jessolmstead/greycard/blob/master/docs/notes/595-one-brush-row.md)).
+- A mask row's right-click menu has Copy masks: it copies the frame's
+  settings with only the masks checked, so Paste settings on other
+  frames carries every mask, and you can uncheck one on the sheet
+  ([§597](https://github.com/jessolmstead/greycard/blob/master/docs/notes/597-copy-masks-on-a-mask-rows-menu.md)).
 
 ## 0.10.1
 

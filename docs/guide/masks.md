@@ -22,6 +22,9 @@ what you chose.
   named as a new mask is ("Subject 3"), and **Copy mask**. Once a mask
   is copied, the menu on any row, **Global** too, offers **Paste mask**:
   see [Masks and other frames](#masks-and-other-frames).
+  **Copy masks**, next to it, copies every mask at once: Paste
+  settings on other frames then opens with each mask checked and
+  nothing else, so you can uncheck one before pressing **Paste**.
 
 The list stays put while the sections scroll under it, so **Global**
 or another mask is one click away from any slider. It shows up to six

@@ -608,3 +608,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§593. A culling tool's XMP beside a raw and its JPEG](notes/593-a-culling-tools-xmp-beside-a-raw-and-its-jpeg.md) (2026-11-07)
 - [§594. Back and forward as the folders visited](notes/594-back-and-forward-as-the-folders-visited.md) (2026-11-07)
 - [§595. One brush row](notes/595-one-brush-row.md) (2026-11-07)
+- [§597. Copy masks on a mask row's menu](notes/597-copy-masks-on-a-mask-rows-menu.md) (2026-11-07)

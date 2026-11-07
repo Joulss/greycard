@@ -1300,6 +1300,21 @@ pub(crate) fn copy_settings(st: &mut State, app: &App) {
 /// is the frame the panel holds; its sidecar's current state
 /// otherwise, brought up to date first.
 pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
+    copy_of(st, app, cell, false);
+}
+
+/// A mask row's Copy masks: Copy settings of the open frame, its
+/// paste's sheet opening with every mask checked and nothing else
+/// (`paste_checks`), so what a paste would carry is the masks.
+pub(crate) fn copy_masks(st: &mut State, app: &App) {
+    let Some(c) = st.current else {
+        return;
+    };
+    copy_of(st, app, c, true);
+}
+
+/// [`copy_settings_of`], the copy marked `masks_only` for Copy masks.
+fn copy_of(st: &mut State, app: &App, cell: usize, masks_only: bool) {
     if cell >= st.cells.len() {
         return;
     }
@@ -1334,8 +1349,15 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
     } else {
         as_source(edit, crate::panel::browser::mosaic_of(st, cell))
     };
-    let clip = Clipboard::copy(edit, from, frame_name(st, cell));
+    let mut clip = Clipboard::copy(edit, from, frame_name(st, cell));
+    clip.masks_only = masks_only;
     let name = clip.name();
+    if masks_only {
+        tracing::info!(
+            "copied the {} masks of {name} for a paste",
+            clip.edit.adjustments.len()
+        );
+    }
     st.sheets.clipboard = Some(clip);
     app.set_clip_from(name.clone().into());
     app.set_status(format!("copied the settings of {name}").into());
@@ -1343,18 +1365,42 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
 
 /// The checks a paste's sheet opens with, over the copied frame's
 /// masks: the last sync's or paste's this session, else what a sync
-/// checks by default.
+/// checks by default. A Copy masks copy opens on every mask and
+/// nothing else, the masks replacing or joining as the last sync or
+/// paste had them.
 fn paste_checks(st: &State, clip: &Clipboard) -> carry::Checks {
     let masks = carry::masks_of(&clip.edit);
-    let mut checks = match &st.sheets.sync_last {
-        Some(last) => last.with_masks(masks),
-        None => carry::Checks::new(masks, Section::syncs_by_default),
+    let last = st.sheets.sync_last.as_ref();
+    let mut checks = if clip.masks_only {
+        let mut checks = carry::Checks::new(masks, |s| s == Section::Adjustments);
+        checks.join = last.is_some_and(|l| l.join);
+        checks
+    } else if let Some(last) = last {
+        last.with_masks(masks)
+    } else {
+        carry::Checks::new(masks, Section::syncs_by_default)
     };
     // A picture's curve does not go: its row says so.
     if curveless(Some(&clip.from.path)) {
         checks.set_section(Section::DisplayCurve, false);
     }
     checks
+}
+
+/// What an applied paste leaves for the next paste's sheet: its
+/// checks, or for a Copy masks copy only how its masks landed, the
+/// sections staying as the last sync or paste had them.
+fn paste_last(st: &State) -> carry::Checks {
+    let checks = &st.sheets.sync_checks;
+    if !st.sheets.clipboard.as_ref().is_some_and(|c| c.masks_only) {
+        return checks.clone();
+    }
+    let mut last = match &st.sheets.sync_last {
+        Some(last) => last.clone(),
+        None => carry::Checks::new(Vec::new(), Section::syncs_by_default),
+    };
+    last.join = checks.join;
+    last
 }
 
 /// What the paste sheet says it will do: onto which frames, and the
@@ -1636,6 +1682,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
         });
     }
+    // A mask row's Copy masks: the open frame copied for its masks.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_masks_copied(move || {
+            if let Some(app) = app_weak.upgrade() {
+                copy_masks(&mut state.borrow_mut(), &app);
+            }
+        });
+    }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_paste_asked(move || {
@@ -1810,7 +1865,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     );
                     return;
                 }
-                st.sheets.sync_last = Some(st.sheets.sync_checks.clone());
+                st.sheets.sync_last = Some(paste_last(&st));
                 // A request for the chosen frames' sidecars, and the
                 // paste over exactly those frames once they are in.
                 let paths: Vec<crate::versions::Key> = chosen_frames(&st)
@@ -4528,6 +4583,107 @@ mod tests {
             .map(|r| r.a11y.to_string())
             .collect();
         assert_eq!(checked, ["Masks: Sky 1"]);
+        press(&app, Key::Escape);
+    }
+
+    /// How the sheet's masks land: 0 replacing the frame's, 1 joining.
+    fn joins(app: &App) -> i32 {
+        let rows = app.get_sync_rows();
+        (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .find(|r| r.kind == 2)
+            .expect("the masks' line")
+            .state
+    }
+
+    /// The headings with Masks alone on, as Copy masks opens a paste.
+    fn masks_alone() -> Vec<(String, i32)> {
+        Section::ALL
+            .iter()
+            .map(|s| {
+                let on = *s == Section::Adjustments;
+                (s.title().to_string(), if on { 2 } else { 0 })
+            })
+            .collect()
+    }
+
+    /// A mask row's Copy masks: a paste's sheet opens on every mask
+    /// and nothing else, replacing as a first paste does, and carries
+    /// all of them; a Copy settings after it opens as it always did.
+    #[test]
+    fn copy_masks_opens_the_paste_on_every_mask_and_nothing_else() {
+        let (app, state, _worker) = two_frames();
+        app.invoke_masks_copied();
+        assert!(state.borrow().sheets.clipboard.is_some());
+        assert!(!app.get_mask_held(), "the mask clipboard is apart");
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        assert!(app.get_sync_paste());
+        assert_eq!(headings(&app), masks_alone());
+        assert_eq!(joins(&app), 0);
+        app.invoke_sync_applied();
+        assert_eq!(
+            app.get_status(),
+            "pasted 1 section from IMG_0000.CR3 onto 1 frame"
+        );
+        {
+            let st = state.borrow();
+            let got = &st.sidecars[2].current;
+            assert_eq!(mask_names(got), ["Sky 1", "Face 2"]);
+            assert_eq!(got.light.exposure, 0.0, "no Light was chosen");
+            assert_eq!(got.light.tone.shadows, -0.5);
+            assert_eq!(got.detail.texture, 0.2);
+        }
+        // The same copy pasted again opens on the masks again.
+        app.invoke_paste_asked();
+        assert_eq!(headings(&app), masks_alone());
+        press(&app, Key::Escape);
+        // Copy settings is its own again: the sheet as a first paste
+        // opens it, the masks paste not remembered as a choice.
+        app.invoke_select(0);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        assert_eq!(headings(&app), defaults());
+        press(&app, Key::Escape);
+    }
+
+    /// Copy masks keeps how the last paste's masks landed, and a
+    /// choice made on its own sheet is kept for the next paste while
+    /// the sections stay as that paste had them.
+    #[test]
+    fn copy_masks_keeps_the_join_and_leaves_the_sections_chosen() {
+        let (app, state, _worker) = two_frames();
+        // A paste of Light alone, the masks joining.
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        press_words(&app, "Uncheck all");
+        tick(&app, "Light: Exposure");
+        press_words(&app, "Add to masks");
+        app.invoke_sync_applied();
+        // Copy masks: every mask, joining as that paste had them.
+        app.invoke_select(0);
+        app.invoke_masks_copied();
+        app.invoke_select(1);
+        app.invoke_paste_asked();
+        assert_eq!(headings(&app), masks_alone());
+        assert_eq!(joins(&app), 1);
+        // Replacing, chosen here, is what the next paste opens with.
+        press_words(&app, "Replace masks");
+        app.invoke_sync_applied();
+        assert_eq!(
+            mask_names(&state.borrow().sidecars[1].current),
+            ["Sky 1", "Face 2"]
+        );
+        app.invoke_select(0);
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        assert_eq!(joins(&app), 0);
+        // The sections as the Light paste chose them, not the masks.
+        assert_eq!(heading(&app, "Light"), 1);
+        assert_eq!(heading(&app, "Masks"), 0);
         press(&app, Key::Escape);
     }
 

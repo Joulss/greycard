@@ -36,6 +36,8 @@ export component AdjustmentsList inherits Section {
     // onto the mask clipboard; the clipboard's mask pasted.
     callback duplicate-mask(int);
     callback copy-mask(int);
+    // Every mask, as Copy settings with only the masks checked.
+    callback copy-masks();
     callback paste-mask();
     callback focus-keys();
     callback menu-done();
@@ -123,6 +125,10 @@ export component AdjustmentsList inherits Section {
                 if root.menu-row > 0: MenuItem {
                     title: "Copy mask";
                     activated => { root.copy-mask(root.menu-row - 1); root.menu-done(); }
+                }
+                if root.menu-row > 0: MenuItem {
+                    title: "Copy masks";
+                    activated => { root.copy-masks(); root.menu-done(); }
                 }
                 if root.mask-held: MenuItem {
                     title: "Paste mask";
