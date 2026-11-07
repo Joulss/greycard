@@ -180,6 +180,17 @@ the reasoning lives in `docs/notes.md`.
 - [ ] i18n
 - [ ] Forward/back button navigation
 - [ ] Add a Contribution policy/guide
+- [ ] Fetch all the models at once: a Fetch all action in the
+      Settings sheet's Models section with the total beside it (about
+      3.5 GB today), each line ticking to "in the store" as it lands
+      through the fetch queue; a one-line offer on first launch, under
+      the GPU and store lines, now or as you use them, the default
+      as-needed; only what this machine can run (no WebGPU Subject
+      model or remove UNet without a GPU, as §570's refusal knows),
+      saying what it skipped and why; on a Mac the Core ML compiles
+      warmed too, so the first mask is as quick as the second. No
+      silent prefetch. Asked by a user, 2026-11-07
+- [ ] Handheld HDR and focus stacking
 
 ### Speed
 
@@ -568,8 +579,6 @@ brackets and the panorama to shoot for testing are in
       better resampling kernel in `stack.rs` and `register.rs` (the
       Engine pool's warps item, pulled forward), and reference-frame
       deghosting, on by default
-- [ ] Focus through the Merge action and `greycard merge focus`, after
-      phase 1 (§125, §523)
 - [ ] A bracket finder: a burst whose EXIF exposures step marked as a
       bracket, so the merge can be asked of a whole card (§523)
 - [ ] A center for the vignette: two sliders or a drag on the picture
@@ -651,9 +660,11 @@ clears or a tester asks for it.
       grain, halation, and diffusion as things that happen on the way;
       darktable has a module in progress derived from it. Ours would
       be a look of a new kind beside the LUTs, with the data pack
-      fetched like a model. Waits on a read of the code's and the
-      data's licenses, and on a port decision: GPU, and at what cost
-      per frame. Asked 2026-10-18
+      fetched like a model, in place of the look stage rather than
+      over it, as darktable advises. Waits on a read of the code's and
+      the data's licenses, on darktable's module shipping, and on a
+      port decision: GPU, and at what cost per frame. Asked 2026-10-18,
+      and again as a user request
 - [ ] The work-area fit (§500) tried on the Mac with a large and a
       side Dock and on Windows with a task bar at the top and two
       monitors of different scale; built from the sources, not run
@@ -735,12 +746,6 @@ clears or a tester asks for it.
 - [ ] A sidecar batch's writes a few at a time (four or eight) where
       the share rewards it, measured on a network share and on a Mac
       first (§498)
-- [ ] The learned mask and fill caches keyed by the develop they were
-      made from: the window's Export reuses the mask its viewport made
-      from a base whose CA ran on the GPU, where `--export` makes it
-      from the export's CPU base (AE 174 on a Subject frame), and the
-      disk cache of masks is keyed by file, model and shape, so the
-      first run to make one decides it for every later edit (§236)
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
 - [ ] Choose output color space/gamut for export: sRGB, Display P3 and
@@ -796,14 +801,10 @@ clears or a tester asks for it.
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
-- [ ] A proper export queue (§213): a Destination row on the export
-      sheet (the folder, Change..., the last one remembered) that Export
-      and Add to queue both take, so queuing opens no chooser; and the
-      queue as a list, each set a line (frames, preset, folder, when
-      queued) that can be removed, reordered or sent elsewhere, with
-      Export the queue and Clear; the queued frames marked in the strip
-      and the grid. Covers the destination half of the naming-patterns
-      line (§157) and the last-location line above
+- [ ] The export queue's rest (§213): a queued set reordered or sent
+      elsewhere, and the queued frames marked in the strip and the
+      grid; the Folder row, the list, removal, Export the queue, and
+      Clear landed (§409, §416, §430)
 
 
 #### Library
@@ -963,11 +964,6 @@ clears or a tester asks for it.
 
 - [ ] MIDI Controller support
 - [ ] Zoom bar for grid and lightbox
-- [ ] Spektrafilm, darktable's spectral film simulation
-      (measured film and paper data, grain, halation), in place of
-      the look stage rather than over it, as darktable advises. Waits
-      on darktable's module shipping and on the licenses of
-      spektrafilm and its data pack
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows
       through a libheif found at runtime and loaded by name as ONNX
@@ -1013,8 +1009,6 @@ clears or a tester asks for it.
       Apple event winit does not deliver (§504)
 - [ ] The download progress shown where it cannot be missed while a
       dialog has the window greyed out (discussion 51, 2026-10-28)
-- [ ] A lighter canvas and a white one, for the light theme
-      (issue 53, 2026-10-29)
 - [ ] A fill from the near surround only, so a logo on a red button
       does not take the blue round it, and a repeated object is not
       drawn again (issue 54, 2026-10-29)
@@ -1049,14 +1043,11 @@ clears or a tester asks for it.
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
 - [ ] A bare `IMG.xmp` beside a raw and a JPEG of one shot read as the
-      raw's, as FastRawViewer, Photo Mechanic, and Lightroom mean it;
-      today neither file takes it and a culled folder's ratings and
-      labels never show (issue 31, 2026-10-22); the write keeps its
-      guard against the two writing over each other
-- [ ] A bump script for the cut: the workspace version set and both
-      lockfiles refreshed in one command, since the fuzz workspace's
-      lock is nothing here builds and CI's --locked fuzz job finds it
-      stale only after the push (2026-11-06)
+      raw's when it holds only a rating and a label, as FastRawViewer
+      and Photo Mechanic write it; one with Lightroom's develop settings
+      is read since §535, a culling tool's still falls under §124's
+      rule and the folder's ratings never show (issue 31, 2026-10-22);
+      the write keeps its guard against the two writing over each other
 - [ ] The mouse's back and forward buttons as the folders visited, as
       a browser has them: back to the folder a subfolder was opened
       from in the grid, forward again; the frame step they do today
@@ -1190,11 +1181,6 @@ release when the wait clears.
 
 #### Upstream
 
-- [ ] The "request to hide window failed" line on every quit: Slint
-      1.18.0's winit backend holds the window while it dispatches the
-      close, so the check fires wrongly and the window stays
-      registered; fixed in slint-ui/slint#13507 on 2026-09-19. Waits
-      on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#896 (the Deflate float writer) and #835
       (Nikon HE); the pin is the fork's float-deflate-pin, upstream
