@@ -139,7 +139,7 @@ planned.
 
 ## Where it stands
 
-Built, as of 0.9.0:
+Built, as of 0.10.0:
 
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
@@ -148,17 +148,20 @@ Built, as of 0.9.0:
   aberration correction on it too. Highlight reconstruction, chromatic aberration and
   defringe, DCP profiles, a profiled denoiser and a learned one, on
   Core ML on Apple silicon, deconvolution sharpening, lensfun
-  corrections. Every operation has a CPU reference and a test.
+  corrections with a lens picker that takes Adobe LCP profiles, and a
+  DNG's own corrections read. Every operation has a CPU reference and
+  a test.
 - **Editing.** Exposure, tone, curves, a color mixer, grading, black
-  and white, texture, clarity, dehaze, grain, vignette, and an Auto
-  for the tones. Crop, rotation, an auto level, guided perspective.
+  and white, texture, clarity, structure, dehaze, grain, vignette, and
+  an Auto for the tones. Crop, rotation, an auto level, guided perspective.
   Heal, clone, learned fill, and a generative remove that puts the
   frame's grain back. Scopes.
-  Presets, including Lightroom's, 3D LUT looks, and a look fitted
-  from the camera's own JPEG. A named history, snapshots, and
+  Presets with favorites and groups, including Lightroom's, 3D LUT
+  looks, and a look fitted from the camera's own JPEG. A named history, snapshots, and
   versions of a frame in one sidecar.
 - **Masks.** Gradient, radial, brush, by lightness and by color, each
-  with its own light, color, white balance and detail. Subject,
+  with its own light, color, white balance and detail, and an edge
+  refined to the picture's. Subject,
   background, sky, landscape (water, foliage, mountain, building),
   object and people's parts by model, on your machine.
 - **Library.** Folders watched as roots, a tree, an index that fills
@@ -168,7 +171,9 @@ Built, as of 0.9.0:
   Archives backed up by hash and joined edit by edit. Collections
   that follow a picture through a move. Import from a card with
   renaming and a verified backup, or a folder added where it is. A
-  Lightroom Classic catalog brought across whole. RawTherapee's
+  Lightroom Classic catalog brought across whole, and a Lightroom
+  XMP's edit opened beside its raw. A focus score for every frame.
+  Edit in another app and back. RawTherapee's
   profiles offered when a folder opens. Keywords and a title typed in
   the window, a capture time shifted for a second body, a sort order
   for the grid, and a camera's JPEG beside its raw kept as one frame.
@@ -183,7 +188,8 @@ Built, as of 0.9.0:
 - **Merge.** A tripod bracket to HDR, frames shot turning to a
   panorama, and a focus stack, each to a linear DNG that edits as a
   raw, with the frames denoised first if asked.
-- **Around it.** Packages for Linux, macOS and Windows. A Report a
+- **Around it.** Packages for Linux, macOS, and Windows, with Intel
+  Mac and Windows on ARM builds that are new and tentative. A Report a
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off.
 

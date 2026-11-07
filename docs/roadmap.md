@@ -1026,6 +1026,15 @@ clears or a tester asks for it.
       Intersect (discussion 59, 2026-10-30)
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
+- [ ] A bare `IMG.xmp` beside a raw and a JPEG of one shot read as the
+      raw's, as FastRawViewer, Photo Mechanic, and Lightroom mean it;
+      today neither file takes it and a culled folder's ratings and
+      labels never show (issue 31, 2026-10-22); the write keeps its
+      guard against the two writing over each other
+- [ ] A bump script for the cut: the workspace version set and both
+      lockfiles refreshed in one command, since the fuzz workspace's
+      lock is nothing here builds and CI's --locked fuzz job finds it
+      stale only after the push (2026-11-06)
 - [ ] The mouse's back and forward buttons as the folders visited, as
       a browser has them: back to the folder a subfolder was opened
       from in the grid, forward again; the frame step they do today

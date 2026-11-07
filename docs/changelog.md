@@ -3,7 +3,7 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.10.0
+## 0.10.0, 2026-11-06
 
 HDR, panorama, and focus stack merges, a lens picker with Adobe
 profiles, Lightroom XMP edits opened, a focus score, preset

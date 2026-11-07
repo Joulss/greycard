@@ -437,7 +437,9 @@ These are all on by default when a profile is found:
 - **Profile** turns all the profile's corrections on or off.
 - **Distortion** straightens lines that bow in or out.
 - **Chromatic aberration** removes the colored edges toward the
-  corners.
+  corners. On a raw it is greyed: the aberration is measured on the
+  frame itself and corrected before the profile, and the measurement
+  has the last word. It is live on a JPEG, a TIFF, or a linear DNG.
 - **Vignetting** brightens the darkened corners.
 
 ### By hand
