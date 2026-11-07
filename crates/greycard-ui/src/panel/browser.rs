@@ -1786,6 +1786,7 @@ pub(crate) fn open_folder(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, di
     // over the view the launch asked for: that view is not opened
     // over it once the index is open.
     state.borrow_mut().views.library.wanted = None;
+    state.borrow_mut().views.visited.opened_by_hand();
     let last = settings::Settings::load().shared.last_file;
     let last = (!last.is_empty()).then(|| PathBuf::from(last));
     crate::roots::open_listing(
@@ -1823,6 +1824,7 @@ pub(crate) fn open_paths(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, pat
     // As for a folder opened by hand: the launch's view is not opened
     // over these once the index is open.
     state.borrow_mut().views.library.wanted = None;
+    state.borrow_mut().views.visited.opened_by_hand();
     crate::roots::open_listing(
         state,
         app,
@@ -4860,11 +4862,12 @@ mod tests {
         assert_eq!(*steps.borrow(), vec![(-1, 0), (1, 0), (0, -1), (0, 1)]);
     }
 
-    /// A mouse's back and forward buttons step the grid as the left
-    /// and right arrows do, over a cell and over the sheet between the
-    /// cells; the left button there still steps nothing.
+    /// A mouse's back and forward buttons over the grid ask for the
+    /// folder visited before and after, over a cell and over the sheet
+    /// between the cells, and step no frame; the left button there
+    /// asks for nothing.
     #[test]
-    fn the_mouse_side_buttons_step_the_grid() {
+    fn the_mouse_side_buttons_go_back_and_forward_over_the_grid() {
         use i_slint_backend_testing::ElementHandle;
         use slint::platform::{PointerEventButton, WindowEvent};
         let app = window(3);
@@ -4875,6 +4878,9 @@ mod tests {
         let steps = Rc::new(RefCell::new(Vec::new()));
         let seen = steps.clone();
         app.on_grid_step(move |dx, dy, _, extend| seen.borrow_mut().push((dx, dy, extend)));
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let asked = visits.clone();
+        app.on_visit_folder(move |back| asked.borrow_mut().push(back));
         app.set_grid_open(true);
         app.invoke_grid_range(0.0, 773.0, 8, 0.0);
         let press = |at: slint::LogicalPosition, button| {
@@ -4903,10 +4909,8 @@ mod tests {
         let below = slint::LogicalPosition::new(middle.x, 900.0);
         press(below, PointerEventButton::Forward);
         press(below, PointerEventButton::Left);
-        assert_eq!(
-            *steps.borrow(),
-            [(1, 0, false), (-1, 0, false), (1, 0, false)]
-        );
+        assert_eq!(*visits.borrow(), [false, true, false]);
+        assert!(steps.borrow().is_empty(), "{:?}", steps.borrow());
     }
 
     #[test]

@@ -85,6 +85,8 @@ pub(crate) fn opened(st: &mut State, app: &App) {
         }
     }
     app.set_open_folder_note("".into());
+    let here = crate::panel::visited::place_of(st);
+    st.views.visited.landed(here);
     show(st, app);
     // RawTherapee's profiles beside its frames, offered once.
     crate::panel::rawtherapee::folder_opened(st, app);

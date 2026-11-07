@@ -26,20 +26,21 @@ export component GridSheet inherits Rectangle {
     /// Whether the frame menu is up: a press that closes it reaches
     /// the cell under it too, and is not a click there.
     pure callback menu-shown() -> bool;
-    /// A mouse's back or forward button: a step to the frame before
-    /// or after, as the left and right arrows step.
-    callback side-step(int);
+    /// A mouse's back or forward button (true for back): the folder
+    /// visited before, or the one gone back from, as a browser has
+    /// them. The arrows step the frames.
+    callback side-visit(bool);
     /// Whether `e` is a press of a mouse's back or forward button,
-    /// stepping if no menu is up. Every press is the topmost
-    /// TouchArea's, so a cell, a tile, the bar and the sheet between
-    /// them each ask this first, and the button works wherever the
-    /// pointer is over the frames.
+    /// going back or forward if no menu is up. Every press is the
+    /// topmost TouchArea's, so a cell, a tile, the bar and the sheet
+    /// between them each ask this first, and the button works wherever
+    /// the pointer is over the frames.
     function side-press(e: PointerEvent) -> bool {
         if (e.kind != PointerEventKind.down
             || (e.button != PointerEventButton.back && e.button != PointerEventButton.forward)) {
             return false;
         }
-        if (!root.menu-shown()) { root.side-step(e.button == PointerEventButton.back ? -1 : 1); }
+        if (!root.menu-shown()) { root.side-visit(e.button == PointerEventButton.back); }
         return true;
     }
     in property <bool> ctrl-click-menu;

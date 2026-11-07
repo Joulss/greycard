@@ -950,6 +950,9 @@ export component App inherits Window {
     /// tile's number.
     in property <[FolderTile]> grid-tiles: [];
     callback grid-tile-picked(int);
+    /// A mouse's back or forward button over the grid (true for
+    /// back): the folder visited before, or the one gone back from.
+    callback visit-folder(bool);
     callback grid-tile-reveal(int);
     /// The hover text over everything, and where; empty for none.
     out property <string> tip-text;
@@ -4324,7 +4327,7 @@ export component App inherits Window {
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
         stack-clicked(r) => { root.stack-badge(r); }
         menu-shown => { return root.menu-shown(); }
-        side-step(by) => { root.grid-step(by, 0, root.grid-cols, false); }
+        side-visit(back) => { root.visit-folder(back); }
         ctrl-click-menu: root.ctrl-click-menu;
         menu-at: root.menu-at;
         set-count: root.set-count;

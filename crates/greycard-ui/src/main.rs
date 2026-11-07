@@ -905,6 +905,7 @@ impl State {
                 collections: collections::Store::default(),
                 collections_held: Default::default(),
                 recent: panel::recent::Recent::default(),
+                visited: panel::visited::Visited::default(),
                 tree: tree::Tree::default(),
                 view: roots::View::Folder,
                 sort: sort::Kept::default(),
@@ -1109,6 +1110,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::lightroom::install(app, &state);
     panel::rawtherapee::install(app, &state);
     panel::recent::install(app, &state, &worker);
+    panel::visited::install(app, &state, &worker);
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     panel::collections::install(app, &state, &worker);

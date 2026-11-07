@@ -3,6 +3,16 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.11.0
+
+### Library
+
+- A mouse's back and forward buttons over the grid go to the folders
+  visited, as a browser's do: back returns to the folder a subfolder
+  was opened from, forward goes there again. The arrow keys step the
+  frames
+  ([§594](https://github.com/jessolmstead/greycard/blob/master/docs/notes/594-back-and-forward-as-the-folders-visited.md)).
+
 ## 0.10.1
 
 ### Fixes

@@ -403,5 +403,5 @@ the sheet says "No trash here: this is permanent."
 
 ## Mouse buttons
 
-In the grid, a mouse's back and forward side buttons step to the
-previous and next frame, as ← and → do.
+In the grid, a mouse's back and forward side buttons go to the
+folders visited, as a browser's do; ← and → step the frames.

@@ -161,8 +161,9 @@ your own.
 | Ctrl+click | Add a frame to the selection, or take it out |
 | Shift+click | Select every frame from the open one to this one (with Ctrl, added) |
 
-In the grid, a mouse's back and forward buttons step through the
-frames as ← and → do.
+In the grid, a mouse's back and forward buttons go to the folders
+visited, as a browser's do: back returns to the folder a subfolder
+was opened from, and forward goes there again.
 
 ### Views
 

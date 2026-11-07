@@ -117,6 +117,9 @@ pub(crate) struct Views {
     /// The folder open, as the Open folder button names it, and the
     /// folders opened before it.
     pub(crate) recent: panel::recent::Recent,
+    /// The places the browser has listed, for the mouse's back and
+    /// forward buttons over the grid.
+    pub(crate) visited: panel::visited::Visited,
     /// The open root's folders as a tree in the left pane, and the
     /// switch that opens a folder with those under it.
     pub(crate) tree: tree::Tree,

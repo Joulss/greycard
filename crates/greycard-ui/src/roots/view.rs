@@ -105,6 +105,7 @@ pub(crate) fn open_view_on(
     on: Option<Option<PathBuf>>,
 ) -> bool {
     let mut st = state.borrow_mut();
+    st.views.visited.opened_by_hand();
     // The export queue's frames are its file's, not the index's: listed
     // as files given are, with or without an index.
     if view == View::Queue {

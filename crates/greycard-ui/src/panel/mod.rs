@@ -42,4 +42,5 @@ pub(crate) mod sync;
 pub(crate) mod time_shift;
 pub(crate) mod versions;
 pub(crate) mod viewport;
+pub(crate) mod visited;
 pub(crate) mod words;

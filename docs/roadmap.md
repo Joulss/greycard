@@ -1042,10 +1042,6 @@ clears or a tester asks for it.
       Intersect (discussion 59, 2026-10-30)
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
-- [ ] The mouse's back and forward buttons as the folders visited, as
-      a browser has them: back to the folder a subfolder was opened
-      from in the grid, forward again; the frame step they do today
-      left to the arrows (2026-11-06)
 - [ ] A preset dragged onto a group's header or into its rows moves it
       there, beside the right-click's Move to group: a drag past a
       threshold so a click still applies, a drop on a folded header
