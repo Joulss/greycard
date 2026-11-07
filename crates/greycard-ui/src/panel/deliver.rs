@@ -1243,6 +1243,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.develop.generation += 1;
                 app.set_busy(true);
                 let edit = st.develop.edit.clone();
+                crate::panel::browser::walked_to(&mut st, i);
                 let job = crate::panel::browser::open_job(&mut st, i, edit);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {

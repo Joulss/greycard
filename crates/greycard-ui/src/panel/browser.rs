@@ -2572,9 +2572,15 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     app.set_busy(true);
     show_history(st, app);
     worker.send(open_job(st, i, edit));
-    // The frames the arrow keys reach from here, for the worker to
-    // make their bases while it waits on the user.
-    worker.neighbors(st.develop.generation, neighbors_of(st, i));
+    // The frames the arrow keys reach from here and beyond, deeper the
+    // way the strip is being walked, for the worker to make their bases
+    // while it waits on the user.
+    walked_to(st, i);
+    worker.neighbors(
+        st.develop.generation,
+        st.develop.walk.heading(),
+        neighbors_of(st, i),
+    );
     st.develop.neighbors_sent = Some(NeighborsSent::of(st, i, st.develop.generation));
     // The frame's own camera JPEG, to stand in for that
     // develop: after the job, so the decode that matters
@@ -2613,10 +2619,11 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
     }
 }
 
-/// The frames the arrow keys reach from cell `i`, as an open of each
-/// would be sent: the next, then the one before, each under the edit
-/// and the turn its sidecar gives. A frame whose sidecar still stands
-/// in from the index's row is sent under the stand-in's default edit
+/// The frames around cell `i` in the order their bases are to be made
+/// ([`beside`], deeper the way the strip is walked), as an open of each
+/// would be sent: each under the edit and the turn its sidecar gives.
+/// A frame whose sidecar still stands in from the index's row is sent
+/// under the stand-in's default edit
 /// when the row says the sidecar holds no develop and no versions,
 /// which is what the read will give (a wrong guess only misses the
 /// shelf), its turn read off the row's. Left out, and said in the log:
@@ -2630,15 +2637,17 @@ pub(crate) fn neighbors_of(st: &State, i: usize) -> Vec<crate::worker::Neighbor>
 
 /// [`neighbors_of`], with the ones left out said in the log when `say`.
 fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbor> {
-    beside(&st.views.shown, i)
+    beside(&st.views.shown, i, st.develop.walk.ahead)
         .into_iter()
-        .filter_map(|(c, side)| {
+        .filter_map(|(c, side, steps)| {
             let path = st.path_at(c)?.clone();
+            // Only the nearest each way: any shelf with room makes those,
+            // where the farther may be beyond the depth it allows.
             let left_out = |why: &str| {
-                if say {
+                if say && steps == 1 {
                     tracing::info!(
                         "the prefetch of the {} frame, {}, skipped: {why}",
-                        side.word(),
+                        side.at(steps),
                         file_name(&path)
                     );
                 }
@@ -2664,6 +2673,7 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                     turn: q.turn,
                     seed_blend: q.seed_blend,
                     side,
+                    steps,
                 });
             }
             Some(crate::worker::Neighbor {
@@ -2672,6 +2682,7 @@ fn neighbors_said(st: &State, i: usize, say: bool) -> Vec<crate::worker::Neighbo
                 turn,
                 seed_blend: crate::rows::wants_seed(st, c),
                 side,
+                steps,
             })
         })
         .collect()
@@ -2710,6 +2721,7 @@ impl NeighborsSent {
             && self.neighbors.iter().zip(now).all(|(a, b)| {
                 a.path == b.path
                     && a.side == b.side
+                    && a.steps == b.steps
                     && a.turn % 4 == b.turn % 4
                     && a.seed_blend == b.seed_blend
                     && same_base(&a.edit, &b.edit)
@@ -2723,7 +2735,7 @@ impl NeighborsSent {
                 .neighbors
                 .iter()
                 .zip(now)
-                .all(|(a, b)| a.path == b.path && a.side == b.side)
+                .all(|(a, b)| a.path == b.path && a.side == b.side && a.steps == b.steps)
     }
 }
 
@@ -2781,7 +2793,8 @@ pub(crate) fn neighbors_moved(st: &mut State) {
     // open's list let go before its develop landed) is offered again at
     // the next change rather than taken for the worker's.
     let (generation, open) = (fresh.generation, fresh.open.clone());
-    if worker.neighbors_again(generation, &open, neighbors_of(st, c), why) {
+    let heading = st.develop.walk.heading();
+    if worker.neighbors_again(generation, &open, heading, neighbors_of(st, c), why) {
         st.develop.neighbors_sent = Some(fresh);
     }
 }
@@ -2799,6 +2812,7 @@ pub(crate) fn neighbors_back(st: &mut State, worker: &crate::worker::Worker, c: 
     if worker.neighbors_again(
         generation,
         &open,
+        st.develop.walk.heading(),
         neighbors_of(st, c),
         "the return to the editor",
     ) {
@@ -2823,27 +2837,145 @@ fn unedited_stand_in(st: &State, c: usize) -> Option<u8> {
     }
 }
 
-/// The cells beside cell `current` among the browser's rows `shown`,
-/// the next first: the ones the right and left keys land on from it,
-/// under the filter and the sort the rows are in. From a cell the
-/// filter hides, the keys step from the nearest row shown, as `step`
-/// does. The cell itself is never one of them.
-pub(crate) fn beside(shown: &[usize], current: usize) -> Vec<(usize, crate::worker::Side)> {
+/// Which way the strip is being walked: `ahead`, the side the last
+/// steps went, and how many steps in a row have gone the other way
+/// since. One step back is a look at the frame just left, which is on
+/// the shelf; the walk turns on the second, so a back-and-forth compare
+/// does not send the prefetch to and fro. `streak` is how many steps
+/// in a row have just gone ahead, which a shelf with room for one base
+/// waits on. `from` is the cell last opened in the editor and its file,
+/// which a step is counted from.
+#[derive(Clone, Debug)]
+pub(crate) struct Walk {
+    pub(crate) ahead: crate::worker::Side,
+    against: u8,
+    streak: u8,
+    from: Option<(usize, PathBuf)>,
+}
+
+impl Default for Walk {
+    fn default() -> Self {
+        Self {
+            ahead: crate::worker::Side::Next,
+            against: 0,
+            streak: 0,
+            from: None,
+        }
+    }
+}
+
+/// The steps the other way that turn a walk.
+const TURNS_AFTER: u8 = 2;
+
+impl Walk {
+    /// A step to the frame on `side` of the last, or `None` for a jump,
+    /// which keeps the direction and forgets the steps against it.
+    pub(crate) fn step(&mut self, side: Option<crate::worker::Side>) {
+        match side {
+            Some(side) if side == self.ahead => {
+                self.against = 0;
+                self.streak = self.streak.saturating_add(1);
+            }
+            Some(side) => {
+                self.against += 1;
+                self.streak = 0;
+                if self.against >= TURNS_AFTER {
+                    // Turned by as many steps in a row the new way.
+                    self.ahead = side;
+                    self.against = 0;
+                    self.streak = TURNS_AFTER;
+                }
+            }
+            None => {
+                self.against = 0;
+                self.streak = 0;
+            }
+        }
+    }
+
+    /// The walk as the worker is told it.
+    pub(crate) fn heading(&self) -> crate::worker::Heading {
+        crate::worker::Heading {
+            ahead: self.ahead,
+            streak: self.streak,
+        }
+    }
+}
+
+/// Cell `i` opened in the editor: the walk takes it as a step from the
+/// cell opened before it when it is that cell's next or previous in the
+/// strip, as a jump otherwise. The same cell opened again is neither.
+pub(crate) fn walked_to(st: &mut State, i: usize) {
+    let Some(path) = st.path_at(i).cloned() else {
+        return;
+    };
+    let from = st
+        .develop
+        .walk
+        .from
+        .take()
+        .filter(|(c, p)| st.path_at(*c) == Some(p))
+        .map(|(c, _)| c);
+    if from != Some(i) {
+        let side = from.and_then(|f| step_side(&st.views.shown, f, i));
+        st.develop.walk.step(side);
+    }
+    st.develop.walk.from = Some((i, path));
+}
+
+/// Which side of cell `from` cell `to` is, when it is the one the right
+/// or the left key reaches from it among the rows `shown`.
+pub(crate) fn step_side(shown: &[usize], from: usize, to: usize) -> Option<crate::worker::Side> {
+    use crate::worker::Side;
+    [Side::Next, Side::Previous]
+        .into_iter()
+        .find(|&side| reach(shown, from, side, 1) == Some(to))
+}
+
+/// The cell `steps` rows away from cell `current` on `side` among the
+/// browser's rows `shown`: for one step, the one the right or the left
+/// key lands on from it. From a cell the filter hides, the keys step
+/// from the nearest row shown, as `step` does. Never the cell itself.
+fn reach(shown: &[usize], current: usize, side: crate::worker::Side, steps: u8) -> Option<usize> {
     use crate::worker::Side;
     let (row, on) = match shown.binary_search(&current) {
         Ok(row) => (row, true),
-        Err(_) => match cull::nearest_row(shown, current) {
-            Some(row) => (row, false),
-            None => return Vec::new(),
-        },
+        Err(_) => (cull::nearest_row(shown, current)?, false),
     };
-    let next = (row + 1).min(shown.len() - 1);
-    let previous = row.saturating_sub(1);
-    let mut out: Vec<(usize, Side)> = Vec::new();
-    for (at, side) in [(next, Side::Next), (previous, Side::Previous)] {
-        let c = shown[at];
-        if (at != row || !on) && c != current && !out.iter().any(|&(o, _)| o == c) {
-            out.push((c, side));
+    let last = shown.len().checked_sub(1)?;
+    let further = usize::from(steps.max(1)) - 1;
+    let at = match side {
+        Side::Next => Some((row + 1).min(last) + further).filter(|&at| at <= last)?,
+        Side::Previous => row.saturating_sub(1).checked_sub(further)?,
+    };
+    let c = shown[at];
+    (!(at == row && on) && c != current).then_some(c)
+}
+
+/// The cells around cell `current` among the browser's rows `shown`,
+/// with their side and how many steps away, the strip walked toward
+/// `ahead`: in the order their bases are to be made, the nearest ahead
+/// first so a single step finds its own, then the one behind (on a walk
+/// the frame just left, so a step back finds it too), then the farther
+/// ahead, as deep as [`crate::worker::DEEPEST`]. How many of them the
+/// worker makes is the shelf's to say. The cell itself is never one of
+/// them, nor any twice.
+pub(crate) fn beside(
+    shown: &[usize],
+    current: usize,
+    ahead: crate::worker::Side,
+) -> Vec<(usize, crate::worker::Side, u8)> {
+    let deepest = crate::worker::DEEPEST;
+    let behind = ahead.other();
+    let wanted = std::iter::once((ahead, 1))
+        .chain((1..=deepest.behind).map(|k| (behind, k)))
+        .chain((2..=deepest.ahead).map(|k| (ahead, k)));
+    let mut out: Vec<(usize, crate::worker::Side, u8)> = Vec::new();
+    for (side, steps) in wanted {
+        if let Some(c) = reach(shown, current, side, steps)
+            && !out.iter().any(|&(o, _, _)| o == c)
+        {
+            out.push((c, side, steps));
         }
     }
     out
@@ -3604,22 +3736,36 @@ mod tests {
     use slint::platform::{Key, WindowEvent};
     use std::cell::RefCell;
 
-    /// The neighbors the worker is told of are the frames the right and
-    /// the left keys reach, the next first, under the filter: a frame it
-    /// hides is passed over, and the ends of the strip have one. A
-    /// hidden frame's are those of the nearest row shown, as the keys
-    /// step from there. Each comes with its own line's edit and turn.
+    /// The neighbors the worker is told of start from the frames the
+    /// right and the left keys reach, under the filter: a frame it hides
+    /// is passed over, and the ends of the strip have fewer. A hidden
+    /// frame's are those of the nearest row shown, as the keys step from
+    /// there. In order: the next ahead, the one behind, then two more
+    /// ahead. Each comes with its own line's edit and turn.
     #[test]
     fn the_neighbors_are_the_frames_the_arrow_keys_reach() {
         use crate::worker::Side::{Next, Previous};
         let shown = [0, 2, 5, 7];
-        assert_eq!(beside(&shown, 2), vec![(5, Next), (0, Previous)]);
-        assert_eq!(beside(&shown, 0), vec![(2, Next)]);
-        assert_eq!(beside(&shown, 7), vec![(5, Previous)]);
-        assert_eq!(beside(&shown, 3), vec![(7, Next), (2, Previous)]);
-        assert_eq!(beside(&shown, 9), vec![(7, Next), (5, Previous)]);
-        assert_eq!(beside(&[4], 4), vec![]);
-        assert_eq!(beside(&[], 4), vec![]);
+        let right = |c| beside(&shown, c, Next);
+        assert_eq!(right(2), vec![(5, Next, 1), (0, Previous, 1), (7, Next, 2)]);
+        assert_eq!(right(0), vec![(2, Next, 1), (5, Next, 2), (7, Next, 3)]);
+        assert_eq!(right(7), vec![(5, Previous, 1)]);
+        assert_eq!(right(3), vec![(7, Next, 1), (2, Previous, 1)]);
+        assert_eq!(right(9), vec![(7, Next, 1), (5, Previous, 1)]);
+        assert_eq!(beside(&[4], 4, Next), vec![]);
+        assert_eq!(beside(&[4], 3, Next), vec![(4, Next, 1)]);
+        assert_eq!(beside(&[], 4, Next), vec![]);
+
+        let left = |c| beside(&shown, c, Previous);
+        assert_eq!(
+            left(7),
+            vec![(5, Previous, 1), (2, Previous, 2), (0, Previous, 3)]
+        );
+        assert_eq!(
+            left(3),
+            vec![(2, Previous, 1), (7, Next, 1), (0, Previous, 2)]
+        );
+        assert_eq!(left(0), vec![(2, Next, 1)]);
 
         let app = window(5);
         let files = crate::testing::folder(5);
@@ -3637,8 +3783,13 @@ mod tests {
             got,
             vec![
                 (files[3].clone(), Next, 1, 0.5),
-                (files[0].clone(), Previous, 0, 0.0)
+                (files[0].clone(), Previous, 0, 0.0),
+                (files[4].clone(), Next, 0, 0.0)
             ]
+        );
+        assert_eq!(
+            near.iter().map(|n| n.steps).collect::<Vec<_>>(),
+            vec![1, 1, 2]
         );
         assert_eq!(near[0].seed_blend, crate::rows::wants_seed(&st, 3));
 
@@ -3657,7 +3808,8 @@ mod tests {
         st.from_row[0] = stand_in(true, (0, false));
         st.line_mut(3).expect("a line").current = Edit::default();
         let near = neighbors_of(&st, 1);
-        assert_eq!(near.len(), 1, "the edited stand-in left out");
+        assert_eq!(near.len(), 2, "the edited stand-in left out");
+        assert_eq!(near[1].path, files[4]);
         assert_eq!(
             (near[0].path.clone(), near[0].side, near[0].turn),
             (files[3].clone(), Next, 1)
@@ -3666,7 +3818,88 @@ mod tests {
         assert!(near[0].seed_blend, "a raw never developed, by its row");
         // A mirror the row shows is no default geometry: left out.
         st.from_row[3] = stand_in(false, (1, true));
-        assert!(neighbors_of(&st, 1).is_empty());
+        let near = neighbors_of(&st, 1);
+        assert_eq!(near.len(), 1);
+        assert_eq!(near[0].path, files[4]);
+    }
+
+    /// A step is a move to the frame the right or the left key reaches;
+    /// one step back keeps the walk's direction, a second turns it, and a
+    /// back-and-forth compare never does. A jump keeps the direction and
+    /// forgets the steps against it.
+    #[test]
+    fn the_walk_turns_after_two_steps_the_other_way() {
+        use crate::worker::Side::{Next, Previous};
+        let shown = [0, 2, 5, 7];
+        assert_eq!(step_side(&shown, 2, 5), Some(Next));
+        assert_eq!(step_side(&shown, 5, 2), Some(Previous));
+        assert_eq!(step_side(&shown, 2, 7), None);
+        assert_eq!(step_side(&shown, 2, 2), None);
+
+        let mut walk = Walk::default();
+        assert_eq!(walk.ahead, Next);
+        walk.step(Some(Previous));
+        assert_eq!(walk.ahead, Next, "one step back is a look");
+        walk.step(Some(Previous));
+        assert_eq!(walk.ahead, Previous, "the second turns it");
+        for side in [Next, Previous, Next, Previous, Next] {
+            walk.step(Some(side));
+            assert_eq!(walk.ahead, Previous, "a compare, back and forth");
+        }
+        walk.step(None);
+        walk.step(Some(Next));
+        assert_eq!(walk.ahead, Previous, "the jump forgot the step before it");
+        walk.step(Some(Next));
+        assert_eq!(walk.ahead, Next);
+
+        // The streak a shelf for one base waits on: two steps ahead in a
+        // row; a compare of two frames never reaches it.
+        let mut walk = Walk::default();
+        walk.step(Some(Next));
+        assert_eq!(walk.heading().streak, 1);
+        walk.step(Some(Next));
+        assert_eq!(walk.heading().streak, 2);
+        for side in [Previous, Next, Previous, Next] {
+            walk.step(Some(side));
+            assert!(walk.heading().streak < 2, "a compare");
+            assert_eq!(walk.ahead, Next);
+        }
+        walk.step(Some(Previous));
+        walk.step(Some(Previous));
+        assert_eq!(walk.heading().ahead, Previous);
+        assert_eq!(walk.heading().streak, 2, "turned by two steps");
+        walk.step(None);
+        assert_eq!(walk.heading().streak, 0, "a jump");
+
+        // Opened in the editor: two steps left turn the neighbors sent.
+        let app = window(6);
+        let files = crate::testing::folder(6);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        st.views.shown = (0..6).collect();
+        for (i, ahead) in [(4, Next), (3, Next), (2, Previous), (3, Previous)] {
+            walked_to(&mut st, i);
+            assert_eq!(st.develop.walk.ahead, ahead, "at {i}");
+        }
+        let near: Vec<_> = neighbors_of(&st, 3)
+            .into_iter()
+            .map(|n| (n.path, n.side, n.steps))
+            .collect();
+        assert_eq!(
+            near,
+            vec![
+                (files[2].clone(), Previous, 1),
+                (files[4].clone(), Next, 1),
+                (files[1].clone(), Previous, 2),
+                (files[0].clone(), Previous, 3),
+            ]
+        );
+        // The same frame opened again is no step and no jump: the step
+        // right before it and the one after turn the walk.
+        walked_to(&mut st, 3);
+        assert_eq!(st.develop.walk.ahead, Previous);
+        walked_to(&mut st, 4);
+        assert_eq!(st.develop.walk.ahead, Next);
     }
 
     /// A filter change while a frame is open in the editor sends the
@@ -3689,14 +3922,22 @@ mod tests {
             rebuild_browser(&mut st, &app);
             st.current = Some(2);
             // What the open of frame 2 sent, as `open_frame` sends it.
-            worker.neighbors(generation, neighbors_of(&st, 2));
+            worker.neighbors(
+                generation,
+                crate::worker::Heading::steady(Next),
+                neighbors_of(&st, 2),
+            );
             st.develop.neighbors_sent = Some(NeighborsSent::of(&st, 2, generation));
         }
         assert_eq!(
             worker.neighbors_waiting(),
             Some((
                 generation,
-                vec![(files[3].clone(), Next), (files[1].clone(), Previous)]
+                vec![
+                    (files[3].clone(), Next),
+                    (files[1].clone(), Previous),
+                    (files[4].clone(), Next)
+                ]
             ))
         );
 
@@ -3719,7 +3960,7 @@ mod tests {
 
         // Once per change: a list put in its place stays through the
         // same filter applied again.
-        worker.neighbors(generation, Vec::new());
+        worker.neighbors(generation, crate::worker::Heading::steady(Next), Vec::new());
         crate::panel::cull::apply_filter(&state, &app);
         assert_eq!(worker.neighbors_waiting(), Some((generation, Vec::new())));
     }

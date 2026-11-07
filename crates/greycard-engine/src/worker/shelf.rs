@@ -298,11 +298,7 @@ impl Shelf {
         if !self.budget.holds(1, bytes) {
             return false;
         }
-        self.held.retain(|s| {
-            s.file.path != file.path
-                || (s.file == file
-                    && !(s.held.turn == held.turn && s.held.kept.same_base(&held.kept)))
-        });
+        self.held.retain(|s| !Self::replaced(s, &file, &held));
         self.held.push_front(Shelved { file, held, bytes });
         true
     }
@@ -388,6 +384,89 @@ impl Shelf {
             Budget::Bytes(most) => most.checked_div(bytes).unwrap_or(0),
             Budget::One => 1,
         }
+    }
+
+    /// Whether the put of `held` for `file` replaces the shelved `s`:
+    /// one of the same path made from what the file was before, or the
+    /// same file's base for the same steps at the same turn.
+    fn replaced(s: &Shelved, file: &FileKey, held: &FrameKept) -> bool {
+        s.file.path == file.path
+            && (s.file != *file || (s.held.turn == held.turn && s.held.kept.same_base(&held.kept)))
+    }
+
+    /// The file of a base in `keep` that putting the base `held` for
+    /// `file` and bringing the shelf under its budget would let go, the
+    /// least recently left first, as [`Shelf::put`] and [`Shelf::fit`]
+    /// would.
+    pub(super) fn pushes_out_of(
+        &self,
+        file: &FileKey,
+        held: &FrameKept,
+        keep: &[PathBuf],
+    ) -> Option<PathBuf> {
+        self.pushes_out_where(
+            |s| Self::replaced(s, file, held),
+            &file.path,
+            held.bytes(),
+            keep,
+        )
+    }
+
+    /// [`Shelf::pushes_out_of`] before the base is made, for one of
+    /// `bytes` of the file at `file` as the file system says it is now:
+    /// the bases of the file as it was before go with the put; those of
+    /// the file as it is, at another turn or under another base, are
+    /// counted as staying, which they may.
+    pub(super) fn pushes_out_before(
+        &self,
+        file: &FileKey,
+        bytes: u64,
+        keep: &[PathBuf],
+    ) -> Option<PathBuf> {
+        self.pushes_out_where(
+            |s| s.file.path == file.path && s.file.stat != file.stat,
+            &file.path,
+            bytes,
+            keep,
+        )
+    }
+
+    /// The file of a base in `keep`, other than one of `own`, that a put
+    /// of `bytes` replacing the bases `replaced` says, then a fit, would
+    /// let go; a base over the whole budget is not put, and pushes
+    /// nothing out.
+    fn pushes_out_where(
+        &self,
+        replaced: impl Fn(&Shelved) -> bool,
+        own: &Path,
+        bytes: u64,
+        keep: &[PathBuf],
+    ) -> Option<PathBuf> {
+        if !self.budget.holds(1, bytes) {
+            return None;
+        }
+        let mut staying: Vec<&Shelved> = self.held.iter().filter(|s| !replaced(s)).collect();
+        let mut total = bytes + staying.iter().map(|s| s.bytes).sum::<u64>();
+        while !self.budget.holds(staying.len() + 1, total) {
+            let out = staying.pop()?;
+            if out.file.path != own && keep.contains(&out.file.path) {
+                return Some(out.file.path.clone());
+            }
+            total -= out.bytes;
+        }
+        None
+    }
+
+    /// The bases of the files in `named` brought to the front, as if
+    /// just left, their order among themselves kept: what a list of
+    /// neighbors names is not the first to go when another is made.
+    pub(super) fn bring_forward(&mut self, named: &[PathBuf]) {
+        let (mut wanted, rest): (VecDeque<Shelved>, VecDeque<Shelved>) =
+            std::mem::take(&mut self.held)
+                .into_iter()
+                .partition(|s| named.contains(&s.file.path));
+        wanted.extend(rest);
+        self.held = wanted;
     }
 
     /// Let the least recently left go until the shelf is within its
@@ -696,6 +775,102 @@ mod tests {
         one.put(file("b"), base(&edit, 0, 32, 24));
         assert_eq!(one.fit(), 1);
         assert!(one.take(&file("b"), &edit, 0, true, None).is_some());
+    }
+
+    /// What a put would push out is said before it is made: a base
+    /// four times the open frame's size on a shelf for three of them
+    /// pushes out the two before it, and names the first of them it is
+    /// asked to keep; a base over the whole budget pushes nothing out.
+    #[test]
+    fn the_shelf_says_what_a_put_would_push_out() {
+        let edit = Edit::default();
+        let one = base(&edit, 0, 32, 24).bytes();
+        let big = base(&edit, 0, 64, 48).bytes();
+        assert!(big >= 3 * one, "{big} against {one}");
+        let mut shelf = Shelf::new(Budget::Bytes(big + one));
+        shelf.put(file("left"), base(&edit, 0, 32, 24));
+        shelf.put(file("named"), base(&edit, 0, 32, 24));
+        let keep = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        // A small one fits beside both.
+        assert_eq!(
+            shelf.pushes_out_before(&file("n"), one, &keep(&["left"])),
+            None
+        );
+        // A big one pushes out "left", the least recently put.
+        assert_eq!(
+            shelf.pushes_out_before(&file("n"), big, &keep(&["left", "named"])),
+            Some(PathBuf::from("left"))
+        );
+        assert_eq!(
+            shelf.pushes_out_before(&file("n"), big, &keep(&["named"])),
+            None,
+            "only left goes, which is not kept"
+        );
+        // A file's own base going is no loss to it.
+        assert_eq!(
+            shelf.pushes_out_before(&file("left"), big, &keep(&["left", "named"])),
+            None
+        );
+        assert_eq!(
+            shelf.pushes_out_before(&file("n"), 2 * big, &keep(&["left"])),
+            None,
+            "not put at all"
+        );
+        // One base at most: anything put pushes out what is there.
+        let mut alone = Shelf::new(Budget::One);
+        alone.put(file("left"), base(&edit, 0, 32, 24));
+        assert_eq!(
+            alone.pushes_out_before(&file("n"), one, &keep(&["left"])),
+            Some(PathBuf::from("left"))
+        );
+    }
+
+    /// The file's own base at another turn stays on a put, as `put`
+    /// keeps it, and is counted: the base it leaves no room for goes.
+    /// At the same turn under the same base it is replaced, and room is
+    /// left.
+    #[test]
+    fn a_put_counts_the_file_s_own_base_that_stays() {
+        let edit = Edit::default();
+        let one = base(&edit, 0, 32, 24).bytes();
+        let big = base(&edit, 0, 64, 48).bytes();
+        let mut shelf = Shelf::new(Budget::Bytes(big + one));
+        shelf.put(file("named"), base(&edit, 0, 32, 24));
+        shelf.put(file("own"), base(&edit, 0, 32, 24));
+        let keep = vec![PathBuf::from("named")];
+        let mut turned = base(&edit, 1, 64, 48);
+        turned.kept.shelve();
+        assert_eq!(
+            shelf.pushes_out_of(&file("own"), &turned, &keep),
+            Some(PathBuf::from("named"))
+        );
+        let mut same = base(&edit, 0, 64, 48);
+        same.kept.shelve();
+        assert_eq!(shelf.pushes_out_of(&file("own"), &same, &keep), None);
+        assert_eq!(
+            shelf.pushes_out_before(&file("own"), big, &keep),
+            Some(PathBuf::from("named"))
+        );
+    }
+
+    /// The bases a list names brought to the front go last: the others
+    /// are let go before them, the order among them kept.
+    #[test]
+    fn the_bases_a_list_names_are_brought_forward() {
+        let edit = Edit::default();
+        let one = base(&edit, 0, 32, 24).bytes();
+        let mut shelf = Shelf::new(Budget::Bytes(3 * one));
+        for name in ["a", "b", "c"] {
+            shelf.put(file(name), base(&edit, 0, 32, 24));
+        }
+        // The front is c, b, a: a goes first.
+        shelf.bring_forward(&[PathBuf::from("a"), PathBuf::from("b")]);
+        let order: Vec<_> = shelf.held.iter().map(|s| s.file.path.clone()).collect();
+        assert_eq!(order, ["b", "a", "c"].map(PathBuf::from));
+        shelf.put(file("d"), base(&edit, 0, 32, 24));
+        assert_eq!(shelf.fit(), 1);
+        assert!(shelf.take(&file("c"), &edit, 0, true, None).is_none());
+        assert!(shelf.take(&file("a"), &edit, 0, true, None).is_some());
     }
 
     /// A base over the whole budget on its own is not kept, and does

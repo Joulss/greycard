@@ -2,17 +2,18 @@
 //! and put on the shelf, so a step to the next frame or the one before
 //! finds its base made.
 //!
-//! The window says, with each open, which frames its arrow keys would
-//! reach from the frame opened: the next in the strip's order, then
-//! the one before, under the filter and the sort the strip shows, each
-//! with the edit, the turn, and the seed an open of it would send
-//! ([`Neighbor`]). Once that open's develop has landed, the frame is
-//! still open in the editor, nothing is queued, no save waits on a
-//! develop, no reduced develop is in hand, and the window has been
+//! The window says, with each open, which frames are around the frame
+//! opened and which way the strip is being walked: the nearest ahead,
+//! the one behind, then two more ahead, under the filter and the sort
+//! the strip shows, each with the edit, the turn, and the seed an open
+//! of it would send ([`Neighbor`]). The shelf's room says how many of
+//! them are made ([`depth`]). Once that open's develop has landed, the
+//! frame is still open in the editor, nothing is queued, no save waits
+//! on a develop, no reduced develop is in hand, and the window has been
 //! quiet for [`QUIET`], the worker decodes one neighbor and makes its
-//! base as an open would, and shelves it as a base left behind is shelved
-//! ([`Shelf::put`]): same key, same budget, the least recently left
-//! going first. One neighbor at a time, so no more than one frame is
+//! base as an open would, and shelves it as a base left behind is
+//! shelved ([`Shelf::put`]): same key, same budget, the least recently
+//! left going first. One neighbor at a time, so no more than one frame is
 //! decoded beyond the open one.
 //!
 //! The engine cannot stop inside a stage, so the prefetch asks between
@@ -49,11 +50,101 @@ impl Side {
             Side::Previous => "previous",
         }
     }
+
+    /// The frame `steps` away on this side, in words: "next", "second
+    /// next", "third previous".
+    pub fn at(self, steps: u8) -> String {
+        match steps {
+            0 | 1 => self.word().to_string(),
+            2 => format!("second {}", self.word()),
+            3 => format!("third {}", self.word()),
+            n => format!("{n}th {}", self.word()),
+        }
+    }
+
+    /// The other side.
+    pub fn other(self) -> Side {
+        match self {
+            Side::Next => Side::Previous,
+            Side::Previous => Side::Next,
+        }
+    }
+
+    /// Which way the strip is walked toward this side, for the log.
+    pub fn way(self) -> &'static str {
+        match self {
+            Side::Next => "right",
+            Side::Previous => "left",
+        }
+    }
+}
+
+/// How many neighbors are made each way from the open frame: `ahead`
+/// in the direction the strip is walked, `behind` the other way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Depth {
+    pub ahead: u8,
+    pub behind: u8,
+}
+
+/// The most the window sends and the worker makes: three ahead, one
+/// behind.
+pub const DEEPEST: Depth = Depth {
+    ahead: 3,
+    behind: 1,
+};
+
+/// Which way the strip is being walked: the side ahead, and how many
+/// steps in a row have just gone that way (`streak`, none after a jump
+/// or a step back).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Heading {
+    pub ahead: Side,
+    pub streak: u8,
+}
+
+impl Heading {
+    /// A walk under way toward `ahead`, two steps or more.
+    pub const fn steady(ahead: Side) -> Self {
+        Self {
+            ahead,
+            streak: STREAK_FOR_ONE,
+        }
+    }
+}
+
+/// The steps in a row ahead before a shelf with room for one base
+/// makes the next: one step is as likely half a compare of two frames,
+/// whose second the prefetch would push out.
+pub const STREAK_FOR_ONE: u8 = 2;
+
+/// How deep the prefetch goes with `room` bases the size of the open
+/// frame's on the shelf beside it, the strip walked as `heading` says:
+/// never more neighbors than the shelf holds. One behind once there is
+/// room for two, since the one behind on a walk is the frame just left,
+/// already shelved; the rest ahead, to [`DEEPEST`]. With room for one,
+/// the next ahead only once [`STREAK_FOR_ONE`] steps have gone that
+/// way, since it takes the place of the frame just left; a compare of
+/// two frames then keeps both.
+pub fn depth(room: u64, heading: Heading) -> Depth {
+    if room == 1 && heading.streak < STREAK_FOR_ONE {
+        return Depth {
+            ahead: 0,
+            behind: 0,
+        };
+    }
+    let behind = u8::from(room >= 2).min(DEEPEST.behind);
+    let ahead = room
+        .saturating_sub(u64::from(behind))
+        .min(u64::from(DEEPEST.ahead)) as u8;
+    Depth { ahead, behind }
 }
 
 /// A frame beside the open one, as an open of it would be asked for:
 /// its file, the edit its line holds, its quarter turns, and whether
-/// its learned blend is still to be seeded from its ISO.
+/// its learned blend is still to be seeded from its ISO; which side of
+/// the open frame it is on, and how many steps away (1 for the frame
+/// an arrow key reaches).
 #[derive(Clone, Debug)]
 pub struct Neighbor {
     pub path: PathBuf,
@@ -61,25 +152,94 @@ pub struct Neighbor {
     pub turn: u8,
     pub seed_blend: bool,
     pub side: Side,
+    pub steps: u8,
+}
+
+impl Neighbor {
+    /// Where it is from the open frame, in words, for the log.
+    pub fn place(&self) -> String {
+        self.side.at(self.steps)
+    }
 }
 
 /// The neighbors of the frame opened at `generation` still to be made,
-/// the next first, and how long the window must be quiet before the
-/// next of them begins: [`QUIET`], longer each time one gives way.
+/// in the order the window sent them (the nearest ahead first), which
+/// way the strip is being walked (`walking`, the side ahead), and how
+/// long the window must be quiet before the next of them begins:
+/// [`QUIET`], longer each time one gives way.
 pub(super) struct Neighbors {
     pub generation: u64,
+    pub heading: Heading,
     pub waiting: VecDeque<Neighbor>,
     pub quiet: Duration,
+    /// The files of the list as trimmed to its depth, made or still to
+    /// be: no prefetch of it pushes one of their bases off the shelf
+    /// ([`keep`]).
+    pub named: Option<Vec<PathBuf>>,
+    /// The depth it was trimmed to.
+    pub depth: Option<Depth>,
+    /// Which list this is, of all the worker was sent: a neighbor that
+    /// gave way goes back only onto its own list, not one sent since.
+    pub round: u64,
 }
 
+/// The files whose bases a prefetch of `list` may not push off the
+/// shelf: those the list names, and the frame just left (`left`)
+/// unless the depth keeps none behind, which is room for one base on a
+/// walk under way, where the next frame takes its place.
+pub(super) fn keep(list: &Neighbors, left: Option<&Path>) -> Vec<PathBuf> {
+    let mut keep = list.named.clone().unwrap_or_default();
+    if list.depth.is_some_and(|d| d.behind > 0) {
+        keep.extend(left.map(Path::to_path_buf));
+    }
+    keep
+}
+
+/// The file at `path` opened, `opened` the file open before it and
+/// `left` the one left before that: the frame left is the last other
+/// file, so an open of the file already open (another version of it,
+/// a reload after an outside edit, culling left on the same frame)
+/// leaves it as it was.
+pub(super) fn opened(opened: &mut Option<PathBuf>, left: &mut Option<PathBuf>, path: PathBuf) {
+    if opened.as_ref() != Some(&path) {
+        *left = opened.replace(path);
+    }
+}
+
+/// The rounds of the lists sent ([`Neighbors::round`]).
+static ROUNDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl Neighbors {
-    /// The neighbors of the frame opened at `generation`.
-    pub(super) fn new(generation: u64, waiting: Vec<Neighbor>) -> Self {
+    /// The neighbors of the frame opened at `generation`, the strip
+    /// walked as `heading` says.
+    pub(super) fn new(generation: u64, heading: Heading, waiting: Vec<Neighbor>) -> Self {
         Self {
             generation,
+            heading,
             waiting: waiting.into(),
             quiet: QUIET,
+            named: None,
+            depth: None,
+            round: ROUNDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    /// Those beyond `depth` let go, the order kept; the first time, the
+    /// files of those left are what the list names.
+    fn trim(&mut self, depth: Depth) {
+        let walking = self.heading.ahead;
+        self.waiting.retain(|n| {
+            n.steps
+                <= if n.side == walking {
+                    depth.ahead
+                } else {
+                    depth.behind
+                }
+        });
+        if self.named.is_none() {
+            self.named = Some(self.waiting.iter().map(|n| n.path.clone()).collect());
+        }
+        self.depth = Some(depth);
     }
 
     /// One of them gave way to a request and is to be begun again: the
@@ -88,7 +248,10 @@ impl Neighbors {
     /// after each look, would otherwise meet a stage to wait out at
     /// each move, and the work thrown away each time; the next open
     /// starts from [`QUIET`] again.
-    pub(super) fn gave_way(&mut self, n: Neighbor) {
+    pub(super) fn gave_way(&mut self, n: Neighbor, round: u64) {
+        if round != self.round {
+            return;
+        }
         self.waiting.push_front(n);
         self.quiet = (self.quiet * 2).min(QUIET * 8);
     }
@@ -138,10 +301,15 @@ pub(super) struct Idle<'a> {
 /// asked only when the queue holds nothing else for it (no develop, no
 /// open, no export, no save, no mask). Neighbors of an open since
 /// replaced are let go, as are all of them once no frame is open in the
-/// editor; the shelf too small for two bases the size of the open
-/// frame's lets them all go, said once, since a prefetch would push out
-/// the frame just left.
-pub(super) fn due(queued: &mut Option<Neighbors>, now: &Idle<'_>) -> Due {
+/// editor. Those beyond the [`depth`] the shelf has room for are let
+/// go, the depth and the walk's direction said when they differ from
+/// the last said (`said`, the worker's); a depth of none lets them all
+/// go.
+pub(super) fn due(
+    queued: &mut Option<Neighbors>,
+    said: &mut Option<(Depth, Side)>,
+    now: &Idle<'_>,
+) -> Due {
     let Some(neighbors) = queued.as_mut() else {
         return Due::Nothing;
     };
@@ -170,23 +338,35 @@ pub(super) fn due(queued: &mut Option<Neighbors>, now: &Idle<'_>) -> Due {
     if now.idle < neighbors.quiet {
         return Due::Wait(neighbors.quiet - now.idle);
     }
-    let room = shelf.room_for(open.base_bytes());
-    if room < 2 {
-        for n in &neighbors.waiting {
-            note(format!(
-                "the prefetch of the {} frame, {}, skipped: the shelf holds {room} base(s) \
-                 the size of the open frame's, fewer than two",
-                n.side.word(),
-                file_label(&n.path)
-            ));
-        }
+    // Counted in bases as a prefetch makes them, without the guide
+    // plane the open frame's carries; each put is checked at its own
+    // size besides (`Shelf::pushes_out_before`).
+    let room = shelf.room_for(open.picture_bytes());
+    let deep = depth(room, neighbors.heading);
+    let walking = neighbors.heading.ahead;
+    if *said != Some((deep, walking)) {
+        *said = Some((deep, walking));
+        note(depth_line(deep, walking));
+    }
+    if deep.ahead == 0 {
         *queued = None;
         return Due::Nothing;
     }
+    neighbors.trim(deep);
     match neighbors.waiting.pop_front() {
         Some(n) => Due::Fetch(Box::new(n)),
         None => Due::Nothing,
     }
+}
+
+/// The log's line for the prefetch's depth and the walk's direction.
+fn depth_line(depth: Depth, walking: Side) -> String {
+    format!(
+        "prefetch: {} ahead, {} behind, walking {}",
+        depth.ahead,
+        depth.behind,
+        walking.way()
+    )
 }
 
 /// Reserve the machine against the reduced develops for a prefetch:
@@ -347,17 +527,22 @@ pub(super) enum Fetched {
 /// when there is one, which holds nothing of the base after; a device
 /// that declines the picture leaves this base to the CPU, and any other
 /// device error lets the context go for the session, as a develop's
-/// does.
+/// does. No base is made, or put, whose place on the shelf would push
+/// out a base of a file in `keep` (the list's own and the frame just
+/// left): the neighbor's size is known from its decode, and may be
+/// larger than the open frame's the depth was counted in.
 pub(super) fn prefetch(
     n: &Neighbor,
     in_hand: Option<(&Path, &FrameKept)>,
+    keep: &[PathBuf],
     shelf: &mut Shelf,
     gpu: &mut Option<greycard_gpu::Context>,
     lenses: Option<&greycard_lens::Database>,
     ahead: &dyn Fn(&Facts) -> Ahead,
 ) -> Fetched {
     let name = file_label(&n.path);
-    let side = n.side.word();
+    let side = n.place();
+    let side = side.as_str();
     let turn = n.turn % 4;
     let skipped = |why: String| {
         note(format!(
@@ -390,7 +575,6 @@ pub(super) fn prefetch(
     ) {
         return skipped("its base is on the shelf".into());
     }
-    note(format!("prefetching the {side} frame, {name}"));
     let started = Instant::now();
     let mut stages_ran = Stages::new();
     let input = match timed(&mut stages_ran, "decode", || super::decode::open(&n.path)) {
@@ -402,6 +586,13 @@ pub(super) fn prefetch(
     }
     let walking = input.walked();
     let facts = walking.facts(turn);
+    if let Some(out) = shelf.pushes_out_before(&key, base_estimate(&facts), keep) {
+        return skipped(format!(
+            "its base would push the base of {} off the shelf",
+            file_label(&out)
+        ));
+    }
+    note(format!("prefetching the {side} frame, {name}"));
     // Asked before each stage: whether to stop there, said once when
     // the open of this very frame is what came.
     struct Asked<'a> {
@@ -507,6 +698,14 @@ pub(super) fn prefetch(
     let key = key.decoded(&input);
     drop(input);
     drop(walking);
+    // As the shelf will hold it, its working copies let go.
+    held.kept.shelve();
+    if let Some(out) = shelf.pushes_out_of(&key, &held, keep) {
+        return skipped(format!(
+            "its base would push the base of {} off the shelf",
+            file_label(&out)
+        ));
+    }
     if !shelf.put(key, held) {
         return skipped("its base is over the shelf's whole budget".into());
     }
@@ -521,6 +720,18 @@ pub(super) fn prefetch(
         gone,
     ));
     Fetched::Landed
+}
+
+/// The bytes the base of a frame of `facts` will take on the shelf: its
+/// picture at the size the develop crops the sensor to, in floats.
+pub(super) fn base_estimate(facts: &Facts) -> u64 {
+    match &facts.input {
+        crate::stages::InputKind::Raw { crop, .. } => {
+            let planes = greycard_core::WorkingImage::CHANNELS;
+            (crop.0 * crop.1 * planes * std::mem::size_of::<f32>()) as u64
+        }
+        _ => 0,
+    }
 }
 
 /// The line for a prefetch landed, on the develop line's shape: the
@@ -684,6 +895,7 @@ mod tests {
             turn: 0,
             seed_blend: false,
             side,
+            steps: 1,
         }
     }
 
@@ -708,6 +920,7 @@ mod tests {
     fn both(generation: u64) -> Option<Neighbors> {
         Some(Neighbors::new(
             generation,
+            Heading::steady(Side::Next),
             vec![
                 neighbor("b.CR3", Side::Next),
                 neighbor("z.CR3", Side::Previous),
@@ -718,7 +931,7 @@ mod tests {
     /// The bytes of a base of `width` by `height`, as the shelf counts
     /// the open frame's.
     fn size(width: usize, height: usize) -> u64 {
-        base(width, height).base_bytes()
+        base(width, height).picture_bytes()
     }
 
     /// Only once the open's develop has landed, no save waits on a
@@ -737,6 +950,7 @@ mod tests {
             assert!(matches!(
                 due(
                     &mut queued,
+                    &mut None,
                     &now(landed, Some(&open), false, Some(&shelf), idle)
                 ),
                 Due::Nothing
@@ -747,17 +961,23 @@ mod tests {
         assert!(matches!(
             due(
                 &mut queued,
+                &mut None,
                 &now(Some(3), Some(&open), true, Some(&shelf), idle)
             ),
             Due::Nothing
         ));
         assert!(matches!(
-            due(&mut queued, &now(Some(3), None, false, Some(&shelf), idle)),
+            due(
+                &mut queued,
+                &mut None,
+                &now(Some(3), None, false, Some(&shelf), idle)
+            ),
             Due::Nothing
         ));
         // Not quiet long enough: look again when it will have been.
         match due(
             &mut queued,
+            &mut None,
             &now(Some(3), Some(&open), false, Some(&shelf), QUIET / 3),
         ) {
             Due::Wait(d) => assert!(d > Duration::ZERO && d <= QUIET),
@@ -766,6 +986,7 @@ mod tests {
         let mut order = Vec::new();
         while let Due::Fetch(n) = due(
             &mut queued,
+            &mut None,
             &now(Some(3), Some(&open), false, Some(&shelf), idle),
         ) {
             order.push((n.path, n.side));
@@ -784,20 +1005,24 @@ mod tests {
         let mut queued = both(3);
         let Some(Due::Fetch(n)) = Some(due(
             &mut queued,
+            &mut None,
             &now(Some(3), Some(&open), false, Some(&shelf), idle),
         )) else {
             panic!("due");
         };
-        queued.as_mut().unwrap().gave_way(*n);
+        let round = queued.as_ref().unwrap().round;
+        queued.as_mut().unwrap().gave_way(*n, round);
         assert!(matches!(
             due(
                 &mut queued,
+                &mut None,
                 &now(Some(3), Some(&open), false, Some(&shelf), QUIET * 3 / 2)
             ),
             Due::Wait(_)
         ));
         match due(
             &mut queued,
+            &mut None,
             &now(Some(3), Some(&open), false, Some(&shelf), QUIET * 2),
         ) {
             Due::Fetch(n) => assert_eq!(n.side, Side::Next, "begun again first"),
@@ -805,9 +1030,21 @@ mod tests {
         }
         for _ in 0..5 {
             let n = neighbor("b.CR3", Side::Next);
-            queued.as_mut().unwrap().gave_way(n);
+            let round = queued.as_ref().unwrap().round;
+            queued.as_mut().unwrap().gave_way(n, round);
         }
         assert_eq!(queued.as_ref().unwrap().quiet, QUIET * 8);
+
+        // One of a list since replaced is not put on the new one.
+        let stale = queued.as_ref().unwrap().round;
+        let mut queued = both(3);
+        let before = queued.as_ref().unwrap().waiting.len();
+        queued
+            .as_mut()
+            .unwrap()
+            .gave_way(neighbor("old.CR3", Side::Next), stale);
+        assert_eq!(queued.as_ref().unwrap().waiting.len(), before);
+        assert_eq!(queued.as_ref().unwrap().quiet, QUIET);
 
         // No frame open in the editor (culling, the grid): let go.
         let mut queued = both(3);
@@ -815,7 +1052,7 @@ mod tests {
             frame_open: false,
             ..now(Some(3), Some(&open), false, Some(&shelf), idle)
         };
-        assert!(matches!(due(&mut queued, &away), Due::Nothing));
+        assert!(matches!(due(&mut queued, &mut None, &away), Due::Nothing));
         assert!(queued.is_none(), "let go with the editor");
 
         // A later open's develop landed: these were the last frame's.
@@ -823,6 +1060,7 @@ mod tests {
         assert!(matches!(
             due(
                 &mut queued,
+                &mut None,
                 &now(Some(4), Some(&open), false, Some(&shelf), idle)
             ),
             Due::Nothing
@@ -851,6 +1089,7 @@ mod tests {
         let mut queued = both(3);
         let due_now = due(
             &mut queued,
+            &mut None,
             &now(None, Some(&open), false, Some(&shelf), QUIET * 2),
         );
         settle_reservation(&due_now, &edited, wake);
@@ -861,6 +1100,7 @@ mod tests {
         stand_down();
         let due_now = due(
             &mut queued,
+            &mut None,
             &now(Some(3), Some(&open), false, Some(&shelf), QUIET / 2),
         );
         assert!(matches!(due_now, Due::Wait(_)));
@@ -871,6 +1111,7 @@ mod tests {
         stand_down();
         let due_now = due(
             &mut queued,
+            &mut None,
             &now(Some(3), Some(&open), false, Some(&shelf), QUIET * 2),
         );
         assert!(matches!(due_now, Due::Fetch(_)));
@@ -879,30 +1120,184 @@ mod tests {
         assert_eq!(woken.get(), 2);
     }
 
-    /// A shelf that holds fewer than two bases the size of the open
-    /// frame's (an 8 GB machine at 45 MP) prefetches nothing, and says
-    /// so once; two is enough.
+    /// The frame left is the last other file opened: A, then B, then a
+    /// version of B, and A is still the one left, kept by the list.
     #[test]
-    fn a_shelf_for_fewer_than_two_bases_prefetches_nothing() {
+    fn the_frame_left_is_the_last_other_file_opened() {
+        let (mut open, mut left) = (None, None);
+        opened(&mut open, &mut left, "A.CR3".into());
+        assert_eq!(left, None);
+        opened(&mut open, &mut left, "B.CR3".into());
+        assert_eq!(left, Some(PathBuf::from("A.CR3")));
+        opened(&mut open, &mut left, "B.CR3".into());
+        assert_eq!(left, Some(PathBuf::from("A.CR3")), "a version of B");
+        assert_eq!(open, Some(PathBuf::from("B.CR3")));
+        let mut list = Neighbors::new(
+            1,
+            Heading::steady(Side::Next),
+            vec![neighbor("C.CR3", Side::Next)],
+        );
+        list.trim(DEEPEST);
+        assert_eq!(
+            keep(&list, left.as_deref()),
+            vec![PathBuf::from("C.CR3"), PathBuf::from("A.CR3")]
+        );
+        opened(&mut open, &mut left, "C.CR3".into());
+        assert_eq!(left, Some(PathBuf::from("B.CR3")));
+    }
+
+    /// The depth is the shelf's room beside the open frame: never more
+    /// neighbors than it holds, one behind from room for two, the rest
+    /// ahead to three.
+    #[test]
+    fn the_depth_is_what_the_shelf_has_room_for() {
+        let d = |ahead, behind| Depth { ahead, behind };
+        let steady = Heading::steady(Side::Next);
+        assert_eq!(depth(0, steady), d(0, 0));
+        assert_eq!(depth(1, steady), d(1, 0));
+        assert_eq!(depth(2, steady), d(1, 1));
+        assert_eq!(depth(3, steady), d(2, 1));
+        assert_eq!(depth(4, steady), d(3, 1));
+        assert_eq!(depth(7, steady), DEEPEST);
+        assert_eq!(depth(u64::MAX, steady), DEEPEST);
+        for room in 0..12 {
+            let got = depth(room, steady);
+            assert!(u64::from(got.ahead + got.behind) <= room, "{room}");
+        }
+    }
+
+    /// At 45 MP (a base of 515 MB as the shelf counts it) an 8 GB
+    /// machine makes the next frame only, and 16 and 32 GB three ahead
+    /// and one behind.
+    #[test]
+    fn the_depth_per_machine() {
+        const G: u64 = 1 << 30;
+        let at_45_mp = 515 << 20;
+        let steady = Heading::steady(Side::Next);
+        let of = |ram: u64| depth(Shelf::new(Budget::of(ram)).room_for(at_45_mp), steady);
+        assert_eq!(
+            of(8 * G),
+            Depth {
+                ahead: 1,
+                behind: 0
+            }
+        );
+        assert_eq!(of(16 * G), DEEPEST);
+        assert_eq!(of(32 * G), DEEPEST);
+        assert_eq!(
+            depth(Shelf::new(Budget::One).room_for(at_45_mp), steady).ahead,
+            1
+        );
+        assert_eq!(
+            depth(Shelf::new(Budget::Bytes(0)).room_for(at_45_mp), steady).ahead,
+            0
+        );
+    }
+
+    /// With room for one base, the next is made only after two steps
+    /// ahead in a row: one step, a jump, or a step back makes nothing,
+    /// so a compare of two frames keeps both. More room does not wait.
+    #[test]
+    fn room_for_one_waits_for_a_streak() {
+        let at = |streak| Heading {
+            ahead: Side::Next,
+            streak,
+        };
+        let none = Depth {
+            ahead: 0,
+            behind: 0,
+        };
+        assert_eq!(depth(1, at(0)), none);
+        assert_eq!(depth(1, at(1)), none);
+        assert_eq!(depth(1, at(2)).ahead, 1);
+        assert_eq!(depth(1, at(9)).ahead, 1);
+        assert_eq!(depth(2, at(0)), depth(2, at(5)));
+        assert_eq!(depth(5, at(0)), DEEPEST);
+    }
+
+    /// The four a window sends walking right, made in its order and
+    /// trimmed to the depth: with room for one only the next; for two
+    /// the next and the one behind; for three the second next as well;
+    /// no room, none. What was last said of the depth and the walk is
+    /// kept for the next list.
+    #[test]
+    fn the_neighbors_are_made_to_the_depth_in_the_window_s_order() {
         let open = base(40, 30);
         let idle = QUIET * 2;
-        for (budget, fetches) in [
-            (Budget::One, false),
-            (Budget::Bytes(0), false),
-            (Budget::Bytes(size(40, 30) * 2 - 1), false),
-            (Budget::Bytes(size(40, 30) * 2), true),
+        let deep = |generation, walking| {
+            let n = |p: &str, side, steps| Neighbor {
+                steps,
+                ..neighbor(p, side)
+            };
+            Some(Neighbors::new(
+                generation,
+                Heading::steady(walking),
+                vec![
+                    n("n1.CR3", Side::Next, 1),
+                    n("p1.CR3", Side::Previous, 1),
+                    n("n2.CR3", Side::Next, 2),
+                    n("n3.CR3", Side::Next, 3),
+                ],
+            ))
+        };
+        let mut said_now = None;
+        for (budget, made) in [
+            (Budget::Bytes(0), vec![]),
+            (Budget::One, vec!["n1"]),
+            (Budget::Bytes(size(40, 30) * 2 - 1), vec!["n1"]),
+            (Budget::Bytes(size(40, 30) * 2), vec!["n1", "p1"]),
+            (Budget::Bytes(size(40, 30) * 3), vec!["n1", "p1", "n2"]),
+            (
+                Budget::Bytes(size(40, 30) * 9),
+                vec!["n1", "p1", "n2", "n3"],
+            ),
         ] {
             let shelf = Shelf::new(budget);
-            let mut queued = both(1);
-            let got = due(
+            let mut queued = deep(1, Side::Next);
+            let mut order = Vec::new();
+            while let Due::Fetch(n) = due(
                 &mut queued,
+                &mut said_now,
                 &now(Some(1), Some(&open), false, Some(&shelf), idle),
-            );
-            assert_eq!(matches!(got, Due::Fetch(_)), fetches, "{budget:?}");
-            if !fetches {
-                assert!(queued.is_none(), "let go, not asked again: {budget:?}");
+            ) {
+                order.push(
+                    n.path
+                        .to_string_lossy()
+                        .trim_end_matches(".CR3")
+                        .to_string(),
+                );
             }
+            assert_eq!(order, made, "{budget:?}");
+            assert!(queued.is_none(), "{budget:?}");
         }
+        // Walking left, the side ahead is the previous: the one next is
+        // behind, and beyond one behind is let go.
+        let shelf = Shelf::new(Budget::Bytes(size(40, 30) * 9));
+        let mut queued = deep(1, Side::Previous);
+        let mut order = Vec::new();
+        while let Due::Fetch(n) = due(
+            &mut queued,
+            &mut said_now,
+            &now(Some(1), Some(&open), false, Some(&shelf), idle),
+        ) {
+            order.push(n.place());
+        }
+        assert_eq!(order, vec!["next", "previous"]);
+        assert_eq!(said_now, Some((DEEPEST, Side::Previous)));
+        assert_eq!(
+            depth_line(DEEPEST, Side::Next),
+            "prefetch: 3 ahead, 1 behind, walking right"
+        );
+        assert_eq!(
+            depth_line(
+                Depth {
+                    ahead: 1,
+                    behind: 0
+                },
+                Side::Previous
+            ),
+            "prefetch: 1 ahead, 0 behind, walking left"
+        );
     }
 
     /// Anything asked for is something a prefetch gives way to, but

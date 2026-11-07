@@ -554,15 +554,17 @@ impl Worker {
         cv.notify_one();
     }
 
-    /// The frames the arrow keys reach from the one just opened at
-    /// `generation`, the next first: their bases are made onto the
-    /// shelf while the worker has nothing else to do, once that open's
-    /// develop has landed (`prefetch`). Those of an earlier open still
-    /// waiting are let go.
-    pub fn neighbors(&self, generation: u64, neighbors: Vec<Neighbor>) {
+    /// The frames around the one just opened at `generation`, the
+    /// strip walked as `heading` says, in the order their bases are to
+    /// be made (the nearest ahead first): made onto the shelf while the
+    /// worker has nothing else to do, once that open's develop has
+    /// landed, as deep as the shelf has room for (`prefetch`). Those of
+    /// an earlier open still waiting are let go.
+    pub fn neighbors(&self, generation: u64, heading: Heading, neighbors: Vec<Neighbor>) {
         let (lock, cv) = &*self.queue;
-        lock.lock().expect("worker queue").neighbors =
-            Some(super::prefetch::Neighbors::new(generation, neighbors));
+        lock.lock().expect("worker queue").neighbors = Some(super::prefetch::Neighbors::new(
+            generation, heading, neighbors,
+        ));
         cv.notify_one();
     }
 
@@ -579,6 +581,7 @@ impl Worker {
         &self,
         generation: u64,
         open: &std::path::Path,
+        heading: Heading,
         neighbors: Vec<Neighbor>,
         why: &str,
     ) -> bool {
@@ -596,7 +599,7 @@ impl Worker {
         }
         let named: Vec<String> = neighbors
             .iter()
-            .map(|n| format!("{} {}", n.side.word(), super::engine::file_label(&n.path)))
+            .map(|n| format!("{} {}", n.place(), super::engine::file_label(&n.path)))
             .collect();
         tracing::info!(
             "neighbors resent after {why}: {}",
@@ -606,7 +609,9 @@ impl Worker {
                 named.join(", ")
             }
         );
-        q.neighbors = Some(super::prefetch::Neighbors::new(generation, neighbors));
+        q.neighbors = Some(super::prefetch::Neighbors::new(
+            generation, heading, neighbors,
+        ));
         cv.notify_one();
         true
     }
@@ -727,6 +732,14 @@ impl Worker {
     pub(super) fn gave_back_by_test(&self) -> usize {
         let (lock, _) = &*self.queue;
         lock.lock().expect("worker queue").gave_back_by_test
+    }
+
+    /// The shelf made anew with `budget`, before the first open.
+    #[cfg(test)]
+    pub(super) fn shelf_by_test(&self, budget: super::shelf::Budget) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").shelf_by_test = Some(budget);
+        cv.notify_one();
     }
 
     /// The open frame's fills made with no model, every value `v`.

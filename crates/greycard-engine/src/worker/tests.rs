@@ -2908,6 +2908,7 @@ fn neighbor_at(path: &std::path::Path, edit: Edit, side: Side) -> Neighbor {
         turn: 0,
         seed_blend: false,
         side,
+        steps: 1,
     }
 }
 
@@ -2926,7 +2927,9 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
     let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
     let n = neighbor_at(b, edit.clone(), Side::Next);
     assert_eq!(
-        prefetch(&n, None, &mut shelf, &mut None, None, &|_| Ahead::Nothing),
+        prefetch(&n, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
         Fetched::Landed
     );
     assert_eq!(shelf.len(), 1);
@@ -2948,7 +2951,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
         "{lines:?}"
     );
     assert!(matches!(
-        prefetch(&n, None, &mut shelf, &mut None, None, &|_| Ahead::Nothing),
+        prefetch(&n, None, &[], &mut shelf, &mut None, None, &|_| Ahead::Nothing),
         Fetched::Skipped(why) if why == "its base is on the shelf"
     ));
     assert_eq!(shelf.len(), 1);
@@ -3030,7 +3033,7 @@ fn a_request_stops_a_prefetch_between_its_stages() {
             }
         };
         assert!(matches!(
-            prefetch(&n, None, &mut shelf, &mut None, None, &ahead),
+            prefetch(&n, None, &[], &mut shelf, &mut None, None, &ahead),
             Fetched::Abandoned(at, _) if at == stage
         ));
         assert_eq!(shelf.len(), 0, "nothing kept when stopped before {stage}");
@@ -3042,7 +3045,9 @@ fn a_request_stops_a_prefetch_between_its_stages() {
 
     let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
     assert_eq!(
-        prefetch(&n, None, &mut shelf, &mut None, None, &|_| Ahead::ItsOpen),
+        prefetch(&n, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::ItsOpen
+        }),
         Fetched::Landed
     );
     assert_eq!(shelf.len(), 1);
@@ -3084,6 +3089,7 @@ fn a_learned_frame_and_the_open_one_are_not_prefetched() {
         prefetch(
             &neighbor_at(&nowhere, learned, Side::Next),
             None,
+            &[],
             &mut shelf,
             &mut None,
             None,
@@ -3111,6 +3117,7 @@ fn a_learned_frame_and_the_open_one_are_not_prefetched() {
         prefetch(
             &neighbor_at(&paths[0], Edit::default(), Side::Next),
             Some((paths[0].as_path(), open_one)),
+            &[],
             &mut shelf,
             &mut None,
             None,
@@ -3155,6 +3162,7 @@ fn the_worker_prefetches_the_neighbors_once_idle_and_their_open_takes_the_base()
     worker.send(open(&paths[0], 1));
     worker.neighbors(
         1,
+        Heading::steady(Side::Next),
         vec![
             neighbor_at(&paths[1], Edit::default(), Side::Next),
             neighbor_at(&paths[2], Edit::default(), Side::Previous),
@@ -3194,6 +3202,563 @@ fn the_worker_prefetches_the_neighbors_once_idle_and_their_open_takes_the_base()
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A neighbor `steps` away on `side`, under the default edit.
+fn deep_at(path: &std::path::Path, side: Side, steps: u8) -> Neighbor {
+    Neighbor {
+        steps,
+        ..neighbor_at(path, Edit::default(), side)
+    }
+}
+
+/// A worker that delivers each develop's generation to the channel it
+/// gives back, and an open of `path` under the default edit.
+fn walking_worker() -> (Worker, std::sync::mpsc::Receiver<u64>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { generation, .. } | Outcome::Failed { generation, .. } = o {
+            tx.lock().unwrap().send(generation).unwrap();
+        }
+    });
+    (worker, rx)
+}
+
+fn open_default(path: &std::path::Path, generation: u64) -> Job {
+    Job::Open {
+        path: path.to_path_buf(),
+        version: None,
+        edit: Edit::default(),
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+    }
+}
+
+/// Wait, to a minute, until `seen`.
+fn until(what: &str, seen: &dyn Fn() -> bool) {
+    let asked = Instant::now();
+    while !seen() {
+        assert!(
+            asked.elapsed() < std::time::Duration::from_secs(60),
+            "{what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Walking right, the window sends three ahead and one behind, and the
+/// worker makes them nearest ahead first, then the one behind, then the
+/// farther ahead. A step finds its base on the shelf, and so does the
+/// step back after it, a reversal: the frame just left.
+#[test]
+fn a_walk_is_prefetched_deep_ahead_and_a_reversal_finds_its_base() {
+    use super::prefetch::said;
+    let names = [
+        "pf-deep-0.dng",
+        "pf-deep-1.dng",
+        "pf-deep-2.dng",
+        "pf-deep-3.dng",
+        "pf-deep-4.dng",
+        "pf-deep-5.dng",
+    ];
+    let (dir, p) = dngs("prefetch-deep", &names, 96, 64);
+    let (worker, rx) = walking_worker();
+    let wait = std::time::Duration::from_secs(60);
+    let landed = |name: &str| {
+        said(name)
+            .iter()
+            .any(|l| l.starts_with(&format!("prefetched {name}")))
+    };
+    let from_shelf = |name: &str| {
+        said(name)
+            .iter()
+            .any(|l| *l == format!("the base of {name} from the shelf"))
+    };
+
+    worker.send(open_default(&p[1], 1));
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![
+            deep_at(&p[2], Side::Next, 1),
+            deep_at(&p[0], Side::Previous, 1),
+            deep_at(&p[3], Side::Next, 2),
+            deep_at(&p[4], Side::Next, 3),
+        ],
+    );
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    until("all four made", &|| {
+        [2, 0, 3, 4].iter().all(|&i| landed(names[i]))
+    });
+    let order: Vec<String> = said("pf-deep-")
+        .into_iter()
+        .filter(|l| l.starts_with("prefetching"))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "prefetching the next frame, pf-deep-2.dng",
+            "prefetching the previous frame, pf-deep-0.dng",
+            "prefetching the second next frame, pf-deep-3.dng",
+            "prefetching the third next frame, pf-deep-4.dng",
+        ]
+    );
+
+    // A step right: from the shelf; its new far neighbor made, the ones
+    // made already not made again.
+    worker.send(open_default(&p[2], 2));
+    worker.neighbors(
+        2,
+        Heading::steady(Side::Next),
+        vec![
+            deep_at(&p[3], Side::Next, 1),
+            deep_at(&p[1], Side::Previous, 1),
+            deep_at(&p[4], Side::Next, 2),
+            deep_at(&p[5], Side::Next, 3),
+        ],
+    );
+    assert_eq!(rx.recv_timeout(wait).expect("the step lands"), 2);
+    assert!(from_shelf(names[2]));
+    until("the new far one made", &|| landed(names[5]));
+    for i in [3, 4] {
+        assert_eq!(
+            said(names[i])
+                .iter()
+                .filter(|l| l.starts_with("prefetched"))
+                .count(),
+            1,
+            "{} made once",
+            names[i]
+        );
+    }
+
+    // A step back, still walking right after one step the other way:
+    // the frame just left is on the shelf.
+    worker.send(open_default(&p[1], 3));
+    assert_eq!(rx.recv_timeout(wait).expect("the reversal lands"), 3);
+    assert!(from_shelf(names[1]), "the reversal from the shelf");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The bytes the shelf counts for the base of the raw at `path`, made
+/// as a prefetch makes it; and what the prefetch reckoned from its
+/// decode before making it, which is never less.
+fn shelved_bytes(path: &std::path::Path) -> u64 {
+    use super::prefetch::{Ahead, Fetched, base_estimate, prefetch};
+    use super::shelf::{Budget, Shelf};
+    let mut shelf = Shelf::new(Budget::Bytes(u64::MAX));
+    let n = deep_at(path, Side::Next, 1);
+    assert_eq!(
+        prefetch(&n, None, &[], &mut shelf, &mut None, None, &|_| {
+            Ahead::Nothing
+        }),
+        Fetched::Landed
+    );
+    let facts = super::decode::open(path)
+        .expect("our DNG decodes")
+        .0
+        .walked()
+        .facts(0);
+    let reckoned = base_estimate(&facts);
+    assert!(
+        reckoned >= shelf.bytes(),
+        "{reckoned} against {}",
+        shelf.bytes()
+    );
+    assert!(
+        reckoned <= shelf.bytes() * 2,
+        "{reckoned} against {}",
+        shelf.bytes()
+    );
+    shelf.bytes()
+}
+
+/// Neighbors larger than the open frame, on a shelf counted in bases
+/// of its size: the first fits beside the frame just left; the second
+/// would push the frame just left off, and is not made, nor anything
+/// the list names pushed off by it.
+#[test]
+fn a_neighbor_larger_than_the_open_frame_pushes_out_nothing_kept() {
+    use super::prefetch::{Ahead, Fetched, prefetch, said};
+    use super::shelf::{Budget, Shelf};
+    let (dir, small) = dngs("prefetch-big-small", &["pf-big-left.dng"], 64, 48);
+    let (dir2, big) = dngs("prefetch-big", &["pf-big-n1.dng", "pf-big-n2.dng"], 96, 64);
+    let one = shelved_bytes(&small[0]);
+    let two = shelved_bytes(&big[0]);
+    assert!(two > one && two < 3 * one, "{two} against {one}");
+    // Room for three of the open frame's size: two ahead, one behind.
+    let mut shelf = Shelf::new(Budget::Bytes(3 * one));
+    let none = |_: &crate::stages::Facts| Ahead::Nothing;
+    let left = deep_at(&small[0], Side::Previous, 1);
+    assert_eq!(
+        prefetch(&left, None, &[], &mut shelf, &mut None, None, &none),
+        Fetched::Landed
+    );
+    let keep = vec![big[0].clone(), small[0].clone(), big[1].clone()];
+    let n1 = deep_at(&big[0], Side::Next, 1);
+    assert_eq!(
+        prefetch(&n1, None, &keep, &mut shelf, &mut None, None, &none),
+        Fetched::Landed
+    );
+    let n2 = deep_at(&big[1], Side::Next, 2);
+    assert!(matches!(
+        prefetch(&n2, None, &keep, &mut shelf, &mut None, None, &none),
+        Fetched::Skipped(why) if why == "its base would push the base of pf-big-left.dng off the shelf"
+    ));
+    assert!(
+        !said("pf-big-n2.dng")
+            .iter()
+            .any(|l| l.starts_with("prefetched")),
+        "not made"
+    );
+    assert_eq!(shelf.bytes(), one + two, "both kept");
+    crate::testing::remove_dir_retry(&dir);
+    crate::testing::remove_dir_retry(&dir2);
+}
+
+/// With room for one base, a compare of two frames keeps both: walking
+/// right the next is made in place of the frame just left, but a step
+/// back and the step forward again make nothing, so each return finds
+/// its base on the shelf.
+#[test]
+fn a_compare_of_two_frames_with_room_for_one_stays_warm() {
+    use super::prefetch::{QUIET, said};
+    use super::shelf::Budget;
+    let names = [
+        "pf-one-0.dng",
+        "pf-one-1.dng",
+        "pf-one-2.dng",
+        "pf-one-3.dng",
+    ];
+    let (dir, p) = dngs("prefetch-one", &names, 96, 64);
+    let (sized, size) = dngs("prefetch-one-size", &["pf-one-size.dng"], 96, 64);
+    let one = shelved_bytes(&size[0]);
+    let (worker, rx) = walking_worker();
+    worker.shelf_by_test(Budget::Bytes(one * 3 / 2));
+    let wait = std::time::Duration::from_secs(60);
+    let heading = |streak| Heading {
+        ahead: Side::Next,
+        streak,
+    };
+    let from_shelf = |name: &str| {
+        said(name)
+            .iter()
+            .filter(|l| **l == format!("the base of {name} from the shelf"))
+            .count()
+    };
+    let step = |at: usize, generation: u64, streak: u8| {
+        worker.send(open_default(&p[at], generation));
+        let near = [(at + 1, Side::Next), (at.wrapping_sub(1), Side::Previous)];
+        worker.neighbors(
+            generation,
+            heading(streak),
+            near.iter()
+                .filter_map(|&(i, side)| p.get(i).map(|q| deep_at(q, side, 1)))
+                .collect(),
+        );
+        assert_eq!(rx.recv_timeout(wait).expect("a develop"), generation);
+    };
+    // A walk under way: at 1, then 2, the next made each time.
+    step(1, 1, 2);
+    until("2 made", &|| {
+        said(names[2]).iter().any(|l| l.starts_with("prefetched"))
+    });
+    step(2, 2, 3);
+    assert_eq!(from_shelf(names[2]), 1);
+    until("3 made", &|| {
+        said(names[3]).iter().any(|l| l.starts_with("prefetched"))
+    });
+    // Back to 1, which the walk let go; then 2, 1, 2: all warm.
+    step(1, 3, 0);
+    std::thread::sleep(QUIET * 10);
+    step(2, 4, 1);
+    assert_eq!(from_shelf(names[2]), 2, "the return to 2");
+    std::thread::sleep(QUIET * 10);
+    step(1, 5, 0);
+    assert_eq!(from_shelf(names[1]), 1, "the return to 1");
+    std::thread::sleep(QUIET * 10);
+    step(2, 6, 1);
+    assert_eq!(from_shelf(names[2]), 3);
+    assert_eq!(
+        said(names[3])
+            .iter()
+            .filter(|l| l.starts_with("prefetched"))
+            .count(),
+        1,
+        "nothing made during the compare"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+    crate::testing::remove_dir_retry(&sized);
+}
+
+/// On a shelf of three bases, two ahead and one behind, full: the
+/// step back's own list is made, the bases it names and skips as
+/// shelved brought forward first, so the one behind it makes pushes out
+/// neither of them; the step on from there finds its base.
+#[test]
+fn a_reversal_on_a_full_shelf_makes_its_own_list() {
+    use super::prefetch::said;
+    use super::shelf::Budget;
+    let names = [
+        "pf-full-0.dng",
+        "pf-full-1.dng",
+        "pf-full-2.dng",
+        "pf-full-3.dng",
+        "pf-full-4.dng",
+        "pf-full-5.dng",
+    ];
+    let (dir, p) = dngs("prefetch-full", &names, 96, 64);
+    let (sized, size) = dngs("prefetch-full-size", &["pf-full-size.dng"], 96, 64);
+    let one = shelved_bytes(&size[0]);
+    let (worker, rx) = walking_worker();
+    // Room for three prefetched bases and a half; the frames left
+    // carry their guide plane as well (a third again), so with one of
+    // them on it the shelf is full.
+    worker.shelf_by_test(Budget::Bytes(one * 7 / 2));
+    let wait = std::time::Duration::from_secs(60);
+    let made = |i: usize| {
+        said(names[i])
+            .iter()
+            .filter(|l| l.starts_with("prefetched"))
+            .count()
+    };
+    let from_shelf = |i: usize| {
+        said(names[i])
+            .iter()
+            .any(|l| *l == format!("the base of {} from the shelf", names[i]))
+    };
+    let step = |at: usize, generation: u64, streak: u8| {
+        worker.send(open_default(&p[at], generation));
+        let near = [
+            (at + 1, Side::Next, 1),
+            (at.wrapping_sub(1), Side::Previous, 1),
+            (at + 2, Side::Next, 2),
+            (at + 3, Side::Next, 3),
+        ];
+        worker.neighbors(
+            generation,
+            Heading {
+                ahead: Side::Next,
+                streak,
+            },
+            near.iter()
+                .filter_map(|&(i, side, steps)| p.get(i).map(|q| deep_at(q, side, steps)))
+                .collect(),
+        );
+        assert_eq!(rx.recv_timeout(wait).expect("a develop"), generation);
+    };
+    let skipped_on_shelf = |i: usize| {
+        said(names[i])
+            .iter()
+            .filter(|l| l.ends_with("skipped: its base is on the shelf"))
+            .count()
+    };
+    step(2, 1, 2);
+    until("3, 1, 4 made", &|| {
+        made(3) == 1 && made(1) == 1 && made(4) == 1
+    });
+    assert_eq!(made(5), 0, "room for two ahead");
+    step(3, 2, 3);
+    assert!(from_shelf(3));
+    until("5 made", &|| made(5) == 1);
+    // The shelf: 5, 2 (just left), 4, with no room for another. Back to
+    // 2, still walking right: 3 and 4 shelved, 1 to make.
+    step(2, 3, 0);
+    assert!(from_shelf(2));
+    until("1 made again", &|| made(1) == 2);
+    until("4 skipped as shelved", &|| skipped_on_shelf(4) >= 2);
+    assert_eq!(made(4), 1, "4 kept, not made again");
+    assert_eq!(made(3), 1, "3 kept, not made again");
+    // The list's far one kept through the reversal, and 1, which it
+    // made, still there after.
+    worker.send(open_default(&p[4], 4));
+    assert_eq!(rx.recv_timeout(wait).expect("a develop"), 4);
+    assert!(
+        from_shelf(4),
+        "the list's far one kept through the reversal"
+    );
+    worker.send(open_default(&p[1], 5));
+    assert_eq!(rx.recv_timeout(wait).expect("a develop"), 5);
+    assert!(from_shelf(1));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+    crate::testing::remove_dir_retry(&sized);
+}
+
+/// A new open's list replaces the last: a far neighbor of the last
+/// still waiting is never made, one in hand gives way, and a frame that
+/// is a neighbor of both is made under the new list's place.
+#[test]
+fn a_new_open_drops_the_far_prefetches() {
+    use super::prefetch::{AtCheck, at_next_check, said};
+    let names = [
+        "pf-drop-0.dng",
+        "pf-drop-1.dng",
+        "pf-drop-2.dng",
+        "pf-drop-3.dng",
+        "pf-drop-4.dng",
+        "pf-drop-5.dng",
+        "pf-drop-6.dng",
+    ];
+    let (dir, p) = dngs("prefetch-drop", &names, 96, 64);
+    let (worker, rx) = walking_worker();
+    let wait = std::time::Duration::from_secs(60);
+    let said_one = |name: &str, line: &str| said(name).iter().any(|l| l.contains(line));
+    let (at_tx, at_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel();
+    at_next_check(&p[3], AtCheck::Hold(at_tx, go_rx));
+
+    worker.send(open_default(&p[1], 1));
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![
+            deep_at(&p[2], Side::Next, 1),
+            deep_at(&p[0], Side::Previous, 1),
+            deep_at(&p[3], Side::Next, 2),
+            deep_at(&p[4], Side::Next, 3),
+        ],
+    );
+    assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
+    // The second next held in its prefetch; a jump to 5 meanwhile,
+    // whose behind is 4, the third next of the last list.
+    assert_eq!(at_rx.recv_timeout(wait).expect("held"), "prepare");
+    worker.send(open_default(&p[5], 2));
+    worker.neighbors(
+        2,
+        Heading::steady(Side::Next),
+        vec![
+            deep_at(&p[6], Side::Next, 1),
+            deep_at(&p[4], Side::Previous, 1),
+        ],
+    );
+    go_tx.send(()).unwrap();
+    assert_eq!(rx.recv_timeout(wait).expect("the jump lands"), 2);
+    until("4 made as 5's previous", &|| {
+        said_one(names[4], "prefetched pf-drop-4.dng, the previous frame")
+    });
+    assert!(said_one(
+        names[3],
+        "the prefetch of the second next frame, pf-drop-3.dng, abandoned before its prepare"
+    ));
+    assert!(!said_one(names[3], "prefetched"), "3 never made");
+    assert!(!said_one(names[4], "third next"), "the last list let go");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A measurement, not a check: a walk right through the raws in
+/// `GREYCARD_WALK_DIR`, the pauses after each develop delivered taken
+/// in turn from `GREYCARD_WALK_GAPS_MS` (milliseconds, by commas; 2500
+/// by default), so a long look and a burst of quick keys can be had,
+/// timing each open from its send to its develop delivered,
+/// which is the key to the picture less the window's own frame. The
+/// neighbors go as the window sends them walking right; the shelf's
+/// budget decides the depth, so a run with `GREYCARD_SHELF_MB` at room
+/// for two bases of the frames walked, and not three, is the depth
+/// before (one ahead, one behind): 600 for 24 MP frames, whose base the
+/// shelf counts at 275 MB, but 1100 at 45 MP. On the
+/// GPU when there is one: lavapipe under the recipe proves the walk
+/// runs there, but its times are not a real card's.
+#[test]
+#[ignore = "a measurement over real raws"]
+fn walk_timing() {
+    let Some(dir) = std::env::var_os("GREYCARD_WALK_DIR") else {
+        eprintln!("GREYCARD_WALK_DIR is not set");
+        return;
+    };
+    let gaps: Vec<u64> = std::env::var("GREYCARD_WALK_GAPS_MS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|v| v.trim().parse().ok())
+        .collect();
+    let gaps = if gaps.is_empty() { vec![2500] } else { gaps };
+    let mut p: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("the walk's folder")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| !is_picture_path(p) && p.is_file())
+        .collect();
+    p.sort();
+    for path in &p {
+        super::prefetch::watch(&super::engine::file_label(path));
+    }
+    let (worker, rx) = walking_worker();
+    let device = {
+        use greycard_gpu::wgpu;
+        let instance = greycard_gpu::instance();
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .ok()
+            .and_then(|adapter| {
+                eprintln!("adapter: {}", adapter.get_info().name);
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: Some("walk timing"),
+                    required_limits: adapter.limits(),
+                    ..Default::default()
+                }))
+                .ok()
+            })
+    };
+    match &device {
+        Some((d, q)) => worker.set_gpu(d, q),
+        None => skipped("the walk's timing"),
+    }
+    let mut times = Vec::new();
+    for (i, path) in p.iter().enumerate() {
+        let generation = i as u64 + 1;
+        let sent = Instant::now();
+        worker.send(open_default(path, generation));
+        let near = [
+            (i + 1, Side::Next, 1),
+            (i.wrapping_sub(1), Side::Previous, 1),
+            (i + 2, Side::Next, 2),
+            (i + 3, Side::Next, 3),
+        ];
+        worker.neighbors(
+            generation,
+            Heading::steady(Side::Next),
+            near.iter()
+                .filter_map(|&(at, side, steps)| p.get(at).map(|q| deep_at(q, side, steps)))
+                .collect(),
+        );
+        loop {
+            let got = rx
+                .recv_timeout(std::time::Duration::from_secs(600))
+                .expect("a develop");
+            if got == generation {
+                break;
+            }
+        }
+        let ms = sent.elapsed().as_secs_f64() * 1000.0;
+        let name = super::engine::file_label(path);
+        let shelved = super::prefetch::said(&name)
+            .iter()
+            .any(|l| *l == format!("the base of {name} from the shelf"));
+        eprintln!(
+            "step {i}: {name} {ms:.0} ms{}",
+            if shelved { ", base from the shelf" } else { "" }
+        );
+        times.push(ms);
+        std::thread::sleep(std::time::Duration::from_millis(gaps[i % gaps.len()]));
+    }
+    let steps = &times[1.min(times.len())..];
+    eprintln!(
+        "mean of {} steps after the first: {:.0} ms",
+        steps.len(),
+        steps.iter().sum::<f64>() / steps.len().max(1) as f64
+    );
+    for path in &p {
+        for line in super::prefetch::said(&super::engine::file_label(path)) {
+            if line.starts_with("prefetched") || line.contains("abandoned") {
+                eprintln!("  {line}");
+            }
+        }
+    }
+    worker.stop();
+}
+
 /// A worker that opens no frame (an export's from the command line)
 /// prefetches nothing, even when handed neighbors.
 #[test]
@@ -3201,7 +3766,11 @@ fn a_worker_that_opens_nothing_prefetches_nothing() {
     use super::prefetch::{QUIET, said};
     let (dir, paths) = dngs("prefetch-none", &["pf-none-B.dng"], 64, 48);
     let worker = Worker::new(|_| {});
-    worker.neighbors(1, vec![neighbor_at(&paths[0], Edit::default(), Side::Next)]);
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![neighbor_at(&paths[0], Edit::default(), Side::Next)],
+    );
     std::thread::sleep(QUIET * 10);
     assert!(said("pf-none-").is_empty());
     worker.stop();
@@ -3268,7 +3837,11 @@ fn the_worker_s_prefetch_meets_the_requests_of_the_real_queue() {
     // B's open sent while B's prefetch is held before its prepare.
     let (at, go) = hold(&p[1]);
     open(&p[0], 1);
-    worker.neighbors(1, vec![neighbor_at(&p[1], Edit::default(), Side::Next)]);
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![neighbor_at(&p[1], Edit::default(), Side::Next)],
+    );
     landed(1);
     assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
     open(&p[1], 2);
@@ -3292,6 +3865,7 @@ fn the_worker_s_prefetch_meets_the_requests_of_the_real_queue() {
     let (at, go) = hold(&p[2]);
     worker.neighbors(
         2,
+        Heading::steady(Side::Next),
         vec![
             neighbor_at(&p[2], Edit::default(), Side::Next),
             neighbor_at(&p[3], Edit::default(), Side::Previous),
@@ -3299,7 +3873,11 @@ fn the_worker_s_prefetch_meets_the_requests_of_the_real_queue() {
     );
     assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
     open(&p[4], 3);
-    worker.neighbors(3, vec![neighbor_at(&p[3], Edit::default(), Side::Next)]);
+    worker.neighbors(
+        3,
+        Heading::steady(Side::Next),
+        vec![neighbor_at(&p[3], Edit::default(), Side::Next)],
+    );
     go.send(()).unwrap();
     landed(3);
     until("D made for E", &|| {
@@ -3320,6 +3898,7 @@ fn the_worker_s_prefetch_meets_the_requests_of_the_real_queue() {
     open(&p[5], 4);
     worker.neighbors(
         4,
+        Heading::steady(Side::Next),
         vec![
             neighbor_at(&p[6], Edit::default(), Side::Next),
             neighbor_at(&p[7], Edit::default(), Side::Previous),
@@ -3347,6 +3926,7 @@ fn leaving_the_editor_lets_the_neighbors_go() {
     worker.set_open_frame(Some(Frame::file("/nowhere/pf-left-A.CR3")));
     worker.neighbors(
         1,
+        Heading::steady(Side::Next),
         vec![neighbor_at(
             std::path::Path::new("/nowhere/pf-left-B.CR3"),
             Edit::default(),
@@ -3382,7 +3962,7 @@ fn the_neighbors_come_back_with_the_open_frame() {
         )]
     };
     // Nothing landed yet: nothing taken.
-    assert!(!worker.neighbors_again(7, &paths[0], b(), "a test"));
+    assert!(!worker.neighbors_again(7, &paths[0], Heading::steady(Side::Next), b(), "a test"));
     assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
     worker.send(Job::Open {
         path: paths[0].clone(),
@@ -3401,11 +3981,17 @@ fn the_neighbors_come_back_with_the_open_frame() {
     );
     // Away to the grid: let go. Back on another file: not taken.
     worker.set_open_frame(None);
-    assert!(!worker.neighbors_again(7, std::path::Path::new("/nowhere/other.CR3"), b(), "a test"));
+    assert!(!worker.neighbors_again(
+        7,
+        std::path::Path::new("/nowhere/other.CR3"),
+        Heading::steady(Side::Next),
+        b(),
+        "a test"
+    ));
     assert!(worker.queue.0.lock().unwrap().neighbors.is_none());
     // Back on A: taken under A's open.
     worker.set_open_frame(Some(Frame::file(paths[0].clone())));
-    assert!(worker.neighbors_again(7, &paths[0], b(), "a test"));
+    assert!(worker.neighbors_again(7, &paths[0], Heading::steady(Side::Next), b(), "a test"));
     {
         let q = worker.queue.0.lock().unwrap();
         let n = q.neighbors.as_ref().expect("sent again");
@@ -3413,10 +3999,16 @@ fn the_neighbors_come_back_with_the_open_frame() {
     }
     // Sent again for the same open (the filter or the order moved):
     // its list, waiting or done, is replaced.
-    assert!(worker.neighbors_again(7, &paths[0], Vec::new(), "a test"));
+    assert!(worker.neighbors_again(
+        7,
+        &paths[0],
+        Heading::steady(Side::Next),
+        Vec::new(),
+        "a test"
+    ));
     // A list for another open waiting already is not replaced.
-    worker.neighbors(9, b());
-    assert!(!worker.neighbors_again(7, &paths[0], b(), "a test"));
+    worker.neighbors(9, Heading::steady(Side::Next), b());
+    assert!(!worker.neighbors_again(7, &paths[0], Heading::steady(Side::Next), b(), "a test"));
     assert_eq!(
         worker
             .queue
@@ -3473,7 +4065,11 @@ fn a_neighbor_whose_edit_changed_is_dropped_and_made_again() {
     };
     worker.set_open_frame(Some(Frame::file(paths[0].clone())));
     worker.send(open(&paths[0], Edit::default(), 1));
-    worker.neighbors(1, vec![neighbor_at(&paths[1], Edit::default(), Side::Next)]);
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![neighbor_at(&paths[1], Edit::default(), Side::Next)],
+    );
     assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
     until("B prefetched", &|| count("prefetched pf-ed-B.dng") == 1);
 
@@ -3484,6 +4080,7 @@ fn a_neighbor_whose_edit_changed_is_dropped_and_made_again() {
     assert!(worker.neighbors_again(
         1,
         &paths[0],
+        Heading::steady(Side::Next),
         vec![neighbor_at(&paths[1], brighter, Side::Next)],
         "a neighbor's edit changed"
     ));
@@ -3511,6 +4108,7 @@ fn a_neighbor_whose_edit_changed_is_dropped_and_made_again() {
     assert!(worker.neighbors_again(
         1,
         &paths[0],
+        Heading::steady(Side::Next),
         vec![neighbor_at(&paths[1], warmer.clone(), Side::Next)],
         "a neighbor's edit changed"
     ));
@@ -3593,7 +4191,11 @@ fn a_prefetch_whose_edit_changes_under_it_gives_way_and_is_let_go() {
     let (at, go) = hold(&paths[1]);
     worker.set_open_frame(Some(Frame::file(paths[0].clone())));
     worker.send(open(&paths[0], Edit::default(), 1));
-    worker.neighbors(1, vec![neighbor_at(&paths[1], Edit::default(), Side::Next)]);
+    worker.neighbors(
+        1,
+        Heading::steady(Side::Next),
+        vec![neighbor_at(&paths[1], Edit::default(), Side::Next)],
+    );
     assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 1);
     assert_eq!(at.recv_timeout(wait).expect("held"), "prepare");
     worker.edit_changed(paths[1].clone(), Some(holds(&brighter)));
@@ -3615,6 +4217,7 @@ fn a_prefetch_whose_edit_changes_under_it_gives_way_and_is_let_go() {
     assert!(worker.neighbors_again(
         1,
         &paths[0],
+        Heading::steady(Side::Next),
         vec![neighbor_at(&paths[1], warmer.clone(), Side::Next)],
         "a neighbor's edit changed"
     ));
@@ -3623,6 +4226,7 @@ fn a_prefetch_whose_edit_changes_under_it_gives_way_and_is_let_go() {
     assert!(worker.neighbors_again(
         1,
         &paths[0],
+        Heading::steady(Side::Next),
         vec![neighbor_at(&paths[1], Edit::default(), Side::Next)],
         "a neighbor's edit changed"
     ));

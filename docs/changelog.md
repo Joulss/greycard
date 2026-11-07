@@ -30,6 +30,11 @@ design note behind it.
   was opened from, forward goes there again. The arrow keys step the
   frames
   ([§594](https://github.com/jessolmstead/greycard/blob/master/docs/notes/594-back-and-forward-as-the-folders-visited.md)).
+- Walking through a shoot, the frames ahead are made further in
+  advance: with the memory for it, three ahead in the direction you
+  are walking and one behind, so quick steps still land on a ready
+  base
+  ([§601](https://github.com/jessolmstead/greycard/blob/master/docs/notes/601-the-prefetch-deeper-in-the-walks-direction.md)).
 
 ### Masks
 

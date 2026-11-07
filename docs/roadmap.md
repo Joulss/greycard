@@ -174,8 +174,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next
 
-- [ ] Frame switching: the prefetch deeper in the walk's direction
-      (§379), now the demosaic runs on the GPU (§591)
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
 - [ ] White balance (and maybe other adjustments) still available on JPG

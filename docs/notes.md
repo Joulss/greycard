@@ -612,3 +612,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§598. Fetch every model at once](notes/598-fetch-every-model-at-once.md) (2026-11-07)
 - [§599. The middle button](notes/599-the-middle-button.md) (2026-11-07)
 - [§600. The command line's export on the GPU](notes/600-the-command-lines-export-on-the-gpu.md) (2026-11-07)
+- [§601. The prefetch deeper in the walk's direction](notes/601-the-prefetch-deeper-in-the-walks-direction.md) (2026-11-07)

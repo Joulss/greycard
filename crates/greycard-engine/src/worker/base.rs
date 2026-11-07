@@ -179,10 +179,10 @@ impl FrameKept {
         self.kept.bytes() + self.beside_bytes()
     }
 
-    /// The bytes of the base and the patched picture, the guide plane,
-    /// and the refined masks' picture: what a frame of this size puts
-    /// on the shelf without a learned pair.
-    pub(super) fn base_bytes(&self) -> u64 {
+    /// The bytes of the base and the patched picture alone: what a
+    /// prefetched base of a frame this size puts on the shelf, with no
+    /// guide plane and no masks' picture beside it.
+    pub(super) fn picture_bytes(&self) -> u64 {
         let base = self.kept.picture(Keep::Base);
         let patched = self.kept.patched().map(|p| p.image);
         let size =
@@ -193,7 +193,7 @@ impl FrameKept {
         {
             total += size(p);
         }
-        total + self.beside_bytes()
+        total
     }
 
     /// Whether the base kept here serves a develop of `edit` at `turn`,

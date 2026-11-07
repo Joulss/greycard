@@ -1050,6 +1050,7 @@ impl State {
                 planes_asked: Default::default(),
                 generation: 0,
                 neighbors_sent: None,
+                walk: Default::default(),
             },
         }
     }

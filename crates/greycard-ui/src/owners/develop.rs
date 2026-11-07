@@ -380,6 +380,9 @@ pub(crate) struct Develop {
     /// them to be sent again once when what they are moves
     /// (`browser::neighbors_moved`).
     pub(crate) neighbors_sent: Option<crate::panel::browser::NeighborsSent>,
+    /// Which way the strip is being walked, for which neighbors are
+    /// sent (`browser::Walk`).
+    pub(crate) walk: crate::panel::browser::Walk,
 }
 
 /// Where a middle click's 200% came from: the zoom (0 for fit) and the

@@ -426,6 +426,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     }
     app.set_status("developing...".into());
     app.set_busy(true);
+    crate::panel::browser::walked_to(st, c);
     worker.send(crate::panel::browser::open_job(st, c, edit));
 }
 

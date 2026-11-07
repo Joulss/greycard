@@ -56,7 +56,7 @@ pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
 pub use self::{
     decode::correct_lens_of,
     handle::order_thumbnails,
-    prefetch::{Neighbor, Side},
+    prefetch::{DEEPEST, Depth, Heading, Neighbor, STREAK_FOR_ONE, Side},
     shelf::FileNow,
     thumbs::{file_stat, thumb_key, thumb_tag, thumbnail},
 };
@@ -671,6 +671,9 @@ struct Queue {
     /// (`Ai::fill_by_test`): for a test of the rounds.
     #[cfg(test)]
     fill_by_test: Option<f32>,
+    /// The shelf's budget, as a test has it, for a shelf made anew.
+    #[cfg(test)]
+    shelf_by_test: Option<shelf::Budget>,
     /// The card's free memory, and what its sessions give back when
     /// dropped, as a test has them (`Ai::free_memory_by_test`).
     #[cfg(test)]

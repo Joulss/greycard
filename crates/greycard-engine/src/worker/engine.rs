@@ -111,6 +111,9 @@ pub(super) fn run(
     let mut input: Option<Input> = None;
     // The open file's path, for the export's account of its source.
     let mut opened_path: Option<PathBuf> = None;
+    // The file open before it, whose base the open shelved: no prefetch
+    // pushes it off the shelf.
+    let mut left_path: Option<PathBuf> = None;
     // The open file with what the file system and its decode said of
     // it as it was opened: what its base is shelved under when another
     // is opened.
@@ -152,6 +155,9 @@ pub(super) fn run(
     // The generation of the last open whose develop landed: the
     // neighbors the window sent with that open are the ones prefetched.
     let mut landed: Option<u64> = None;
+    // What the log was last told of the prefetch's depth and the
+    // walk's direction, said again only when either changes.
+    let mut depth_said: Option<(prefetch::Depth, prefetch::Side)> = None;
     // The generation of the last develop delivered, open or not: an ask
     // for the refined masks' picture of another is let go.
     let mut developed: Option<u64> = None;
@@ -198,6 +204,10 @@ pub(super) fn run(
                 #[cfg(test)]
                 if let Some(v) = q.fill_by_test.take() {
                     ai.fill_by_test = Some(v);
+                }
+                #[cfg(test)]
+                if let Some(budget) = q.shelf_by_test.take() {
+                    shelf = Some(Shelf::new(budget));
                 }
                 #[cfg(test)]
                 if let Some((free, freed)) = q.free_by_test.take() {
@@ -324,7 +334,7 @@ pub(super) fn run(
                     idle: edited.idle_for(),
                     frame_open: edited.any_open(),
                 };
-                let due = prefetch::due(&mut q.neighbors, &now);
+                let due = prefetch::due(&mut q.neighbors, &mut depth_said, &now);
                 prefetch::settle_reservation(&due, &edited, wake);
                 match due {
                     Due::Fetch(n) => {
@@ -349,10 +359,18 @@ pub(super) fn run(
                                 .0;
                             continue;
                         }
+                        let (round, keep) = q
+                            .neighbors
+                            .as_ref()
+                            .map(|w| (w.round, prefetch::keep(w, left_path.as_deref())))
+                            .unwrap_or_default();
                         drop(q);
                         let generation = landed;
                         let in_hand = opened_path.as_deref().zip(base.as_ref());
                         let shelf = shelf.as_mut().expect("a shelf is due to have one");
+                        // What the list names first in line to stay,
+                        // a base it skips as shelved among them.
+                        shelf.bring_forward(&keep);
                         let ahead = |facts: &crate::stages::Facts| {
                             let q = lock.lock().expect("worker queue");
                             prefetch::ahead(&q, edited.any_open(), &n, facts, lenses.as_deref())
@@ -361,6 +379,7 @@ pub(super) fn run(
                             prefetch::prefetch(
                                 &n,
                                 in_hand,
+                                &keep,
                                 shelf,
                                 &mut gpu,
                                 lenses.as_deref(),
@@ -400,7 +419,7 @@ pub(super) fn run(
                                     && let Some(waiting) = q.neighbors.as_mut()
                                     && Some(waiting.generation) == generation
                                 {
-                                    waiting.gave_way(n);
+                                    waiting.gave_way(n, round);
                                 }
                             }
                             Ok(_) => {}
@@ -954,7 +973,7 @@ pub(super) fn run(
                         // a panic in the develop leaves the worker and the
                         // UI, which has its Opened, on the same file.
                         input = Some(opened);
-                        opened_path = Some(path);
+                        prefetch::opened(&mut opened_path, &mut left_path, path);
                         opened_file = coming;
                         let opened = input.as_ref().expect("just set");
                         let mut round = Round::first();
