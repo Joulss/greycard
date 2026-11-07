@@ -45,7 +45,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, windows-2025]
+        # The Linux tests run on the release's Ubuntu, not the label:
+        # ubuntu-latest moved to 26.04 on 2026-11-07 and its Mesa 26.0.8
+        # lavapipe died with SIGSEGV in greycard-gpu's lens tests.
+        os: [ubuntu-24.04, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
     # Git Bash is on every Windows runner under this name and gives the
     # three OSes the one shell, the same call release.yml makes; the

@@ -35,6 +35,10 @@ the reasoning lives in `docs/notes.md`.
       WebGPU context with the merge's own denoiser, which has no lock of
       its own (§578); a merge's models on the worker's holders, or a
       hold on develops while a merge runs
+- [ ] Mesa 26.0.8's lavapipe on Ubuntu 26.04 kills greycard-gpu's
+      lens test binary with SIGSEGV after its first test (CI,
+      2026-11-07); 26.2.6 here passes. CI runs on ubuntu-24.04 until
+      the crash is found, as the release already does
 - [ ] System and File display profiles differ with the same profile
       picked (issue 53): waits on the reporter's profile; a table-based
       monitor profile is the lead
@@ -1061,6 +1065,23 @@ clears or a tester asks for it.
 - [ ] [ and ] as the brush's size with a brush in hand, since Turn on
       them costs a develop when hit by habit (discussion 59,
       2026-11-04)
+- [ ] One brush row: the brush's own Add, Subtract, and Erase folded
+      into the shape's, so a brush under Subtract takes away from the
+      mask whatever it has painted; two testers painted on a Luminance
+      and a Subject mask and nothing happened (discussion 59,
+      2026-11-02 and 2026-11-06)
+- [ ] The middle button: drag the picture under any tool, 200% on the
+      picture, a straight or square-angled line for a gradient or a
+      brush, and sync onto the selection without the sheet
+      (discussion 59, 2026-11-06)
+- [ ] A tablet in hand: the brush's size set without a wheel and seen
+      while its slider drags, the pen's pressure on the flow, and the
+      shortcuts a pen can reach (discussion 59, 2026-11-06)
+- [ ] An export batch timed end to end on a few hundred edited
+      frames, masks and fills included, and the slow stage found; a
+      tester's job took days against hours in Lightroom, the switching
+      between frames named as the worst of it (discussion 59,
+      2026-11-06)
 
 ## Blocked
 
