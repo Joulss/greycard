@@ -360,3 +360,144 @@ fn ops_alone() {
         });
     }
 }
+
+/// The dual demosaic's time split, and the RCD dual against the AMaZE
+/// dual at the fit view's scale, on each frame `GREYCARD_RAWS` names
+/// (comma separated): the measure a quick demosaic on the GPU stands
+/// on, the RCD dual standing in for the AMaZE dual until the latter
+/// lands.
+///
+/// ```text
+/// GREYCARD_RAWS=a.CR3,b.NEF GREYCARD_RUNS=3 RAYON_NUM_THREADS=8 \
+///     cargo test --release -p greycard-core --lib -- --ignored --nocapture dual_split
+/// ```
+///
+/// The split: AMaZE alone, VNG4 alone, the blend mask alone (the
+/// lightness, the contrast's sigmoid, and its blur), then the whole
+/// dual, whose blend is the rest. The comparison: both duals box
+/// reduced to a long edge of 2000, as the fit view shows them, and
+/// compared in camera RGB clamped to 0..1, both linear and through a
+/// 1/2.2 power as a display sees it: PSNR, the largest difference, and
+/// the 99.9th percentile of the differences.
+#[test]
+#[ignore = "a measurement, not a test"]
+fn dual_split() {
+    let Ok(paths) = std::env::var("GREYCARD_RAWS") else {
+        panic!("GREYCARD_RAWS names the frames to measure");
+    };
+    let runs: usize = std::env::var("GREYCARD_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    for path in paths.split(',') {
+        let frame = crate::decode::decode_path(path).expect("the frame decodes");
+        let iso = frame.shot.iso;
+        let settings = DevelopSettings::default();
+        let prepared = prepare(&frame, &settings, true).expect("the frame prepares");
+        let (w, h) = (prepared.width, prepared.height);
+        let pattern = prepared.pattern.clone().expect("a mosaic");
+        let contrast = dual_contrast(&settings, prepared.noise.as_ref(), prepared.gains);
+        let s = &prepared.samples;
+        println!(
+            "frame {w}x{h} ({:.1} MP), ISO {iso:?}, {} threads",
+            (w * h) as f64 / 1e6,
+            rayon::current_num_threads()
+        );
+        let mut amaze_out = Vec::new();
+        time("amaze", runs, || {
+            let t = Instant::now();
+            amaze_out = amaze::demosaic_amaze(s, w, h, &pattern).unwrap();
+            (t.elapsed(), Vec::new())
+        });
+        time("vng4", runs, || {
+            let t = Instant::now();
+            let out = vng4::demosaic_vng4(s, w, h, &pattern).unwrap();
+            (t.elapsed(), out)
+        });
+        time("rcd", runs, || {
+            let t = Instant::now();
+            let out = rcd::demosaic_rcd(s, w, h, &pattern).unwrap();
+            (t.elapsed(), out)
+        });
+        let (threshold, _) = dual::threshold_for(contrast, &amaze_out, w, h);
+        time("mask", runs, || {
+            let t = Instant::now();
+            let l = dual::lightness(&amaze_out, w, h);
+            let mask = dual::blend_mask(&l, w, h, &threshold);
+            (t.elapsed(), mask)
+        });
+        drop(amaze_out);
+        let mut amaze_dual = Vec::new();
+        time("amaze dual", runs, || {
+            let t = Instant::now();
+            amaze_dual = dual::demosaic_dual(s, w, h, &pattern, DemosaicMethod::Amaze, contrast)
+                .unwrap()
+                .0;
+            (t.elapsed(), Vec::new())
+        });
+        let mut rcd_dual = Vec::new();
+        time("rcd dual", runs, || {
+            let t = Instant::now();
+            rcd_dual = dual::demosaic_dual(s, w, h, &pattern, DemosaicMethod::Rcd, contrast)
+                .unwrap()
+                .0;
+            (t.elapsed(), Vec::new())
+        });
+        let (fa, fw, fh) = fit_view(&amaze_dual, w, h, 2000);
+        let (fr, _, _) = fit_view(&rcd_dual, w, h, 2000);
+        for (name, curve) in [
+            ("linear", (|v: f32| v) as fn(f32) -> f32),
+            ("gamma 2.2", |v: f32| v.powf(1.0 / 2.2)),
+        ] {
+            let mut d: Vec<f32> = fa
+                .iter()
+                .zip(&fr)
+                .map(|(a, b)| (curve(a.clamp(0.0, 1.0)) - curve(b.clamp(0.0, 1.0))).abs())
+                .collect();
+            let mse = d.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / d.len() as f64;
+            d.sort_by(f32::total_cmp);
+            println!(
+                "fit view {fw}x{fh}, {name}: PSNR {:.1} dB, max {:.5}, p99.9 {:.5}",
+                -10.0 * mse.log10(),
+                d[d.len() - 1],
+                d[d.len() * 999 / 1000]
+            );
+        }
+        // The same at 1:1, for scale.
+        let mut d: Vec<f32> = amaze_dual
+            .iter()
+            .zip(&rcd_dual)
+            .map(|(a, b)| (a.clamp(0.0, 1.0) - b.clamp(0.0, 1.0)).abs())
+            .collect();
+        let mse = d.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / d.len() as f64;
+        d.sort_by(f32::total_cmp);
+        println!(
+            "1:1, linear: PSNR {:.1} dB, max {:.5}, p99.9 {:.5}",
+            -10.0 * mse.log10(),
+            d[d.len() - 1],
+            d[d.len() * 999 / 1000]
+        );
+    }
+}
+
+/// Interleaved RGB box reduced by the whole factor that brings its
+/// long edge to `long` or under, as the fit view's mipmaps do.
+fn fit_view(rgb: &[f32], w: usize, h: usize, long: usize) -> (Vec<f32>, usize, usize) {
+    let f = w.max(h).div_ceil(long);
+    let (ow, oh) = (w / f, h / f);
+    let mut out = vec![0.0f32; ow * oh * 3];
+    for y in 0..oh {
+        for x in 0..ow {
+            for c in 0..3 {
+                let mut sum = 0.0f64;
+                for yy in y * f..y * f + f {
+                    for xx in x * f..x * f + f {
+                        sum += rgb[(yy * w + xx) * 3 + c] as f64;
+                    }
+                }
+                out[(y * ow + x) * 3 + c] = (sum / (f * f) as f64) as f32;
+            }
+        }
+    }
+    (out, ow, oh)
+}

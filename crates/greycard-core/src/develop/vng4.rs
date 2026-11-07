@@ -351,6 +351,58 @@ impl Greens<'_> {
     }
 }
 
+/// A gradient term as a device reads it: the two sample offsets
+/// `(dy, dx)`, the weight, and the directions it adds to, a bit per
+/// neighbor in the order [`neighbors`] gives them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientTerm {
+    pub d1: (i32, i32),
+    pub d2: (i32, i32),
+    pub weight: f32,
+    pub grads: u8,
+}
+
+/// The four-color index of each CFA phase `[y & 1][x & 1]` (red 0,
+/// green on red rows 1, blue 2, green on blue rows 3), and each phase's
+/// gradient terms in the order the reference sums them: what a device
+/// implementation needs to run the same sums. Fails on a pattern that
+/// is not 2x2 Bayer.
+#[allow(clippy::type_complexity)]
+pub fn gradient_terms(
+    pattern: &CfaPattern,
+) -> Result<([[usize; 2]; 2], [[Vec<GradientTerm>; 2]; 2])> {
+    if !is_bayer(pattern) {
+        return Err(Error::Unsupported(format!(
+            "VNG4 needs a 2x2 Bayer pattern, got {pattern}"
+        )));
+    }
+    let mosaic = Mosaic::new(&[], 0, pattern);
+    let terms = mosaic.terms.map(|row| {
+        row.map(|terms| {
+            terms
+                .iter()
+                .map(|t| GradientTerm {
+                    d1: (t.d1.0 as i32, t.d1.1 as i32),
+                    d2: (t.d2.0 as i32, t.d2.1 as i32),
+                    weight: t.weight,
+                    grads: t
+                        .grads
+                        .iter()
+                        .enumerate()
+                        .fold(0u8, |m, (g, &on)| m | (u8::from(on == 1.0) << g)),
+                })
+                .collect()
+        })
+    });
+    Ok((mosaic.color, terms))
+}
+
+/// The eight neighbors `(dy, dx)` in the order a [`GradientTerm`]'s
+/// bits name them.
+pub fn neighbors() -> [(i32, i32); 8] {
+    CHOOD.map(|(dy, dx)| (dy as i32, dx as i32))
+}
+
 /// Rows per band when the demosaic runs in bands: the green is computed
 /// a row beyond each band on both sides, so wider bands repeat less.
 pub(crate) const BAND: usize = 64;

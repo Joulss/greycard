@@ -44,9 +44,11 @@ use crate::error::{Error, Result};
 use crate::raw::{CfaColor, CfaPattern};
 
 /// Tile side including margins, as the reference: a multiple of 32.
-const TS: usize = 160;
+#[doc(hidden)]
+pub const TS: usize = 160;
 /// Margin on each side of a tile, reflected from the image.
-const MARGIN: usize = 16;
+#[doc(hidden)]
+pub const MARGIN: usize = 16;
 /// Pixels at the image edge that come from bilinear instead.
 const BORDER: usize = 3;
 
@@ -96,7 +98,7 @@ pub fn demosaic_amaze(
     if width < 2 * MARGIN + 2 || height < 2 * MARGIN + 2 {
         return Ok(out);
     }
-    let ceiling = samples.iter().copied().fold(1.0f32, f32::max);
+    let ceiling = ceiling(samples);
 
     // Tile origins, in image coordinates, stepping by the tile interior.
     let step = TS - 2 * MARGIN;
@@ -149,8 +151,29 @@ pub fn demosaic_amaze(
                 dst.copy_from_slice(src);
             }
         });
-    // The outer ring of the image saw reflected data; use bilinear there
-    // as the reference uses its border routine.
+    fill_border(&mut out, samples, width, height, pattern);
+    Ok(out)
+}
+
+/// The level the demosaic clamps to: the largest sample, and at least 1.
+/// Shared with the GPU port. (A maximum is the same in any order, so
+/// the threads' split does not show.)
+#[doc(hidden)]
+pub fn ceiling(samples: &[f32]) -> f32 {
+    samples.par_iter().copied().reduce(|| 1.0f32, f32::max)
+}
+
+/// The outer ring of the image, which saw reflected data: bilinear
+/// there, as the reference uses its border routine. Shared with the GPU
+/// port.
+#[doc(hidden)]
+pub fn fill_border(
+    out: &mut [f32],
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+) {
     let mut ring = |y: usize, x: usize| {
         let i = (y * width + x) * 3;
         out[i..i + 3].copy_from_slice(&bilinear_pixel(samples, width, height, pattern, y, x));
@@ -165,7 +188,6 @@ pub fn demosaic_amaze(
             ring(y, x);
         }
     }
-    Ok(out)
 }
 
 struct Image<'a> {

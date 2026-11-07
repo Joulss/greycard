@@ -49,8 +49,8 @@ pub(super) struct FrameKept {
     /// The last walk's guide plane, and the masks' bands it made.
     pub guide: Arc<greycard_render::finish::Guide>,
     pub planes: Option<Arc<greycard_render::detail::DetailPlanes>>,
-    /// Whether the CA or the lens in the base ran on the device: the
-    /// export's picture is the reference's.
+    /// Whether the CA, the demosaic, or the lens in the base ran on the
+    /// device.
     pub on_gpu: bool,
     /// The picture the refined masks are made against, with what it
     /// was made from: made only for an edit that refines a mask

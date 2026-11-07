@@ -489,11 +489,13 @@ pub(super) fn prefetch(
         });
     stages_ran.extend(walked.seconds.iter().filter(|(n, _)| *n != "CA").copied());
     let mut held = FrameKept::new(&facts);
-    held.on_gpu = steps
-        .steps
-        .iter()
-        .zip(&walked.places)
-        .any(|(s, p)| *p == Place::Gpu && matches!(s, Step::Op(Stage::Ca(_) | Stage::Lens(_))));
+    held.on_gpu = steps.steps.iter().zip(&walked.places).any(|(s, p)| {
+        *p == Place::Gpu
+            && matches!(
+                s,
+                Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_))
+            )
+    });
     held.kept = kept;
     held.edit = edit;
     held.turn = turn;

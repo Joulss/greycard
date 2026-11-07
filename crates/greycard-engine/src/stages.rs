@@ -486,6 +486,23 @@ impl Stage {
         }
     }
 
+    /// Whether the stage is a demosaic with a device version: the Bayer
+    /// ones but bilinear. The viewport and the prefetch run it there,
+    /// so a base the one makes is the same demosaic the other would.
+    pub fn demosaics_on_device(&self) -> bool {
+        matches!(
+            self,
+            Stage::Demosaic(
+                DemosaicMethod::Rcd
+                    | DemosaicMethod::RcdVng4
+                    | DemosaicMethod::Vng4
+                    | DemosaicMethod::Amaze
+                    | DemosaicMethod::AmazeVng4,
+                _
+            )
+        )
+    }
+
     /// Whether the stage's picture at one turn is its picture at
     /// another turned, to the bit. The lens is radial and the
     /// defringe symmetric in exact arithmetic, but a turn changes the
@@ -863,7 +880,14 @@ pub fn stages(
             match (bin, learned) {
                 (b, _) if b > 1 && pattern.is_some() => s.op(Stage::Bin(b)),
                 (_, Some(model)) => s.op(Stage::Learned(model)),
-                _ => s.op(Stage::Demosaic(settings.demosaic, settings.dual_contrast)),
+                // The method the mosaic takes, as the prepare resolves
+                // it: where it runs is decided by what it is.
+                _ => s.op(Stage::Demosaic(
+                    pattern
+                        .as_ref()
+                        .map_or(settings.demosaic, |p| settings.demosaic.for_mosaic(p)),
+                    settings.dual_contrast,
+                )),
             }
             s.op_if(
                 denoise
@@ -1337,6 +1361,63 @@ mod tests {
         assert_eq!(taps(&gradient), 1);
         edit.detail.dehaze = 0.0;
         assert!(!has(&edit, &export()));
+    }
+
+    /// The demosaic goes to the device for the viewport and the
+    /// prefetch when one is lent and its method has a device version;
+    /// the CPU's without one, and the export's always, as the command
+    /// line's is. An X-Trans frame's resolves to its own.
+    #[test]
+    fn the_demosaic_is_on_the_device_for_the_viewport_and_the_prefetch() {
+        use crate::walk::{Place, plan};
+        use greycard_edit::Demosaic;
+        let place = |edit: &Edit, purpose: &Purpose, facts: &Facts, lent: bool| {
+            let steps = stages(edit, purpose, facts, None);
+            let i = steps
+                .steps
+                .iter()
+                .position(|s| matches!(s, Step::Op(Stage::Demosaic(..))))?;
+            Some((plan(&steps, purpose, lent)[i], steps.steps[i].clone()))
+        };
+        let with = |method| Edit {
+            demosaic: method,
+            ..Edit::default()
+        };
+        for method in [
+            Demosaic::AmazeVng4,
+            Demosaic::RcdVng4,
+            Demosaic::Amaze,
+            Demosaic::Rcd,
+            Demosaic::Vng4,
+        ] {
+            let edit = with(method);
+            for purpose in [Purpose::Viewport, Purpose::Prefetch] {
+                let (on, _) = place(&edit, &purpose, &raw(0), true).unwrap();
+                assert_eq!(on, Place::Gpu, "{method:?} {purpose:?}");
+                let (off, _) = place(&edit, &purpose, &raw(0), false).unwrap();
+                assert_eq!(off, Place::Cpu, "{method:?} {purpose:?} with no device");
+            }
+            // The export is the command line's, which has no device.
+            let (on, _) = place(&edit, &export(), &raw(0), true).unwrap();
+            assert_eq!(on, Place::Cpu, "{method:?} export");
+            // The reduced pictures bin in its place.
+            assert!(place(&edit, &Purpose::Reduced, &raw(0), true).is_none());
+        }
+        let (on, _) = place(&with(Demosaic::Bilinear), &Purpose::Viewport, &raw(0), true).unwrap();
+        assert_eq!(on, Place::Cpu, "bilinear has no device version");
+        let (on, stage) = place(&Edit::default(), &Purpose::Viewport, &xtrans(), true).unwrap();
+        assert_eq!(on, Place::Cpu);
+        assert!(matches!(
+            stage,
+            Step::Op(Stage::Demosaic(DemosaicMethod::Markesteijn3, _))
+        ));
+        // The export is all the reference's, a device lent or not.
+        let steps = stages(&Edit::default(), &export(), &raw(0), None);
+        assert!(
+            plan(&steps, &export(), true)
+                .iter()
+                .all(|p| *p == Place::Cpu)
+        );
     }
 
     #[test]

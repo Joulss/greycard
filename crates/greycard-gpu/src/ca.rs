@@ -634,7 +634,7 @@ impl Context {
     /// The mosaic into its texture, a band of rows at a time and a
     /// submit after each, so the queue's staging copies do not pile
     /// up to the frame's whole size.
-    fn upload_mosaic(&self, texture: &wgpu::Texture, samples: &[f32], w: u32, h: u32) {
+    pub(crate) fn upload_mosaic(&self, texture: &wgpu::Texture, samples: &[f32], w: u32, h: u32) {
         let band = ((32usize << 20) / (w as usize * 4)).max(1);
         for y0 in (0..h as usize).step_by(band) {
             let rows = band.min(h as usize - y0);

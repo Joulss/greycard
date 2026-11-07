@@ -14,9 +14,12 @@
 //! The ops so far: the capture sharpening ([`Context::sharpen`]), the
 //! lateral chromatic aberration correction ([`Context::correct_ca`]),
 //! the lens correction ([`Context::correct_lens`]), the local contrast
-//! ([`Context::local_contrast`]), and the dehaze's block sums and
-//! apply ([`Context::dehaze_reduced`], [`Context::dehaze`]), its fit
-//! staying the reference's on the CPU.
+//! ([`Context::local_contrast`]), the dehaze's block sums and apply
+//! ([`Context::dehaze_reduced`], [`Context::dehaze`]), its fit staying
+//! the reference's on the CPU, and the Bayer demosaics: AMaZE
+//! ([`Context::demosaic_amaze`]), RCD, VNG4, and their duals
+//! ([`Context::demosaic_rcd`], [`Context::demosaic_vng4`],
+//! [`Context::demosaic_rcd_dual`]).
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,8 +38,10 @@ macro_rules! with_halves {
     };
 }
 
+mod amaze;
 mod ca;
 mod dehaze;
+mod demosaic;
 mod lens;
 mod local_contrast;
 mod plumbing;
@@ -213,6 +218,14 @@ pub struct Context {
     lens: lens::Pipelines,
     local_contrast: local_contrast::Pipelines,
     dehaze: dehaze::Pipelines,
+    /// The demosaics' pipelines, built on their first use: AMaZE's is
+    /// the largest shader here, and a device that cannot build them
+    /// still runs every other op.
+    demosaic: OnceLock<std::result::Result<demosaic::Pipelines, String>>,
+    amaze: OnceLock<std::result::Result<amaze::Pipelines, String>>,
+    /// At most this many rows a demosaic band, where not zero: for the
+    /// tests ([`Context::limit_demosaic_bands`]).
+    demosaic_rows: std::sync::atomic::AtomicUsize,
     /// Set once the device is found lost: by a wait that panicked, an
     /// error naming the loss, or the device's lost callback on a device
     /// of our own.
@@ -293,8 +306,38 @@ impl Context {
             lens,
             local_contrast,
             dehaze,
+            demosaic: OnceLock::new(),
+            amaze: OnceLock::new(),
+            demosaic_rows: std::sync::atomic::AtomicUsize::new(0),
             lost: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// The demosaics' pipelines, built the first time one is asked for;
+    /// a build the device refused is [`Error::Gpu`] then and after.
+    fn demosaic_pipelines(&self) -> Result<&demosaic::Pipelines> {
+        built(
+            self.demosaic.get_or_init(|| {
+                scoped(&self.device, "building the demosaic's pipelines", || {
+                    Ok(demosaic::Pipelines::new(&self.device))
+                })
+                .map_err(|e| e.to_string())
+            }),
+            "building the demosaic's pipelines",
+        )
+    }
+
+    /// AMaZE's pipelines, as [`Context::demosaic_pipelines`] are built.
+    fn amaze_pipelines(&self) -> Result<&amaze::Pipelines> {
+        built(
+            self.amaze.get_or_init(|| {
+                scoped(&self.device, "building AMaZE's pipelines", || {
+                    Ok(amaze::Pipelines::new(&self.device))
+                })
+                .map_err(|e| e.to_string())
+            }),
+            "building AMaZE's pipelines",
+        )
     }
 
     /// Whether the device has been found lost. Every op on a lost
@@ -580,6 +623,41 @@ impl Context {
         Ok(out)
     }
 
+    /// [`Context::read_buffer`] straight into `out`, its length the
+    /// bytes read: no copy of its own on the way.
+    fn read_buffer_into(&self, buffer: &wgpu::Buffer, offset: u64, out: &mut [u8]) -> Result<()> {
+        let len = out.len() as u64;
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("read back"),
+            size: len.max(4),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("read back"),
+            });
+        encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, len);
+        self.queue.submit(Some(encoder.finish()));
+        let slice = staging.slice(..len.max(4));
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        self.wait()?;
+        rx.recv()
+            .map_err(|_| Error::ReadBack("the map callback never came".into()))?
+            .map_err(|e| Error::ReadBack(e.to_string()))?;
+        let data = slice
+            .get_mapped_range()
+            .map_err(|e| Error::ReadBack(e.to_string()))?;
+        out.copy_from_slice(&data[..out.len()]);
+        drop(data);
+        staging.unmap();
+        Ok(())
+    }
+
     /// A rectangle of a texture, rows packed, `bytes` a texel. In bands
     /// of rows so that no staging buffer outgrows a device's limit.
     fn read_texture(
@@ -697,6 +775,17 @@ fn scoped<T>(
         }),
         (result, None) => result,
     }
+}
+
+/// Pipelines built once, or why they could not be.
+fn built<'a, T>(
+    pipelines: &'a std::result::Result<T, String>,
+    what: &'static str,
+) -> Result<&'a T> {
+    pipelines.as_ref().map_err(|error| Error::Gpu {
+        what,
+        error: error.clone(),
+    })
 }
 
 /// A developed picture on the GPU, as [`Context::upload`] put it.

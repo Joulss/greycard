@@ -73,17 +73,26 @@ pub enum Place {
 }
 
 /// Where each step of `steps` runs for `purpose`, with a device `lent`
-/// or not: every stage with a device version on it for the viewport
-/// and the prefetch, everything on the CPU for the rest, which are
-/// the reference.
+/// or not: every stage with a device version on it, the demosaic among
+/// them ([`Stage::demosaics_on_device`]), for the viewport and the
+/// prefetch, so the two make the same demosaic; everything on the CPU
+/// for the rest, which are the reference, the export as the command
+/// line, which has no device, makes it.
 pub fn plan(steps: &Steps, purpose: &Purpose, lent: bool) -> Vec<Place> {
     let device = lent && matches!(purpose, Purpose::Viewport | Purpose::Prefetch);
+    places(steps, device, device)
+}
+
+/// The places of `steps` with the device's stages on it where `device`
+/// says, and its demosaic where `demosaic` does.
+fn places(steps: &Steps, device: bool, demosaic: bool) -> Vec<Place> {
     steps
         .steps
         .iter()
         .map(|step| match step {
             Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if device => Place::Gpu,
             Step::Op(stage) if device && stage.device() => Place::Gpu,
+            Step::Op(stage) if demosaic && stage.demosaics_on_device() => Place::Gpu,
             _ => Place::Cpu,
         })
         .collect()
@@ -1185,17 +1194,10 @@ fn walk_held(
 }
 
 /// `steps`' places after the learned denoiser was taken out of them:
-/// on the device where it was `lent` and a stage has a version there.
+/// on the device where it was `lent` and a stage has a version there,
+/// the demosaic standing in for it among them.
 fn replan(steps: &Steps, lent: bool) -> Vec<Place> {
-    steps
-        .steps
-        .iter()
-        .map(|s| match s {
-            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if lent => Place::Gpu,
-            Step::Op(stage) if lent && stage.device() => Place::Gpu,
-            _ => Place::Cpu,
-        })
-        .collect()
+    places(steps, lent, lent)
 }
 
 /// Why an attempt at a walk is to be made again, or not.
@@ -1483,11 +1485,15 @@ fn attempt(
             Step::Op(_) if plan[i] == Place::Gpu => {
                 let end = run_end(steps, plan, i);
                 let ctx = gpu.as_ref().expect("a plan on the device has a context");
-                let inline = matches!(step, Step::Op(Stage::Ca(_) | Stage::Lens(_)));
+                let inline = matches!(
+                    step,
+                    Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_))
+                );
                 match device_run(steps, i..end, ctx, &mut st, kept, &mut places, &mut walked) {
                     Ok(()) => i = end,
-                    // The CA and the lens read a picture still in hand:
-                    // their run again on the CPU is the stage itself.
+                    // The CA, the demosaic, and the lens read a picture
+                    // still in hand: their run again on the CPU is the
+                    // stage itself.
                     Err(e) if inline => {
                         let Step::Op(stage) = step else {
                             unreachable!()
@@ -1495,6 +1501,17 @@ fn attempt(
                         match e {
                             greycard_gpu::Error::Unsupported(why) => {
                                 log::info!("the {} on the CPU: {why}", stage.name());
+                            }
+                            // The demosaic's working set is made for
+                            // its run and is the largest of any op's: a
+                            // card too small for it says so with an
+                            // error of its own, which is the picture's
+                            // and not the device's.
+                            e @ greycard_gpu::Error::Gpu { .. }
+                                if matches!(stage, Stage::Demosaic(..)) =>
+                            {
+                                log::warn!("the GPU's demosaic: {e}; the CPU's for this frame");
+                                ctx.release();
                             }
                             e if keeps_device(hold, &e) => {
                                 log::warn!(
@@ -1584,14 +1601,20 @@ fn steps_name(steps: &Steps, i: usize) -> &'static str {
 /// after it the plan puts there, and the keeps between them.
 fn run_end(steps: &Steps, plan: &[Place], i: usize) -> usize {
     let mut end = i + 1;
-    // The CA and the lens run on pictures in memory, one at a time.
-    if matches!(steps.steps[i], Step::Op(Stage::Ca(_) | Stage::Lens(_))) {
+    // The CA, the demosaic, and the lens run on pictures in memory,
+    // one at a time.
+    if matches!(
+        steps.steps[i],
+        Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_))
+    ) {
         return end;
     }
     while end < steps.steps.len() {
         match &steps.steps[end] {
             Step::Keep(_) => end += 1,
-            Step::Op(Stage::Ca(_) | Stage::Lens(_) | Stage::Finish(_)) => break,
+            Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_) | Stage::Finish(_)) => {
+                break;
+            }
             Step::Op(_) if plan[end] == Place::Gpu => end += 1,
             _ => break,
         }
@@ -1979,6 +2002,51 @@ fn device_run(
             prepared.chromatic_aberration = Some(stats);
             walked.ca = Some(stats);
             walked.seconds.push(("CA", started.elapsed().as_secs_f64()));
+            places.push(Place::Gpu);
+            return Ok(());
+        }
+        Step::Op(Stage::Demosaic(method, _)) => {
+            let Buf::Mosaic(prepared) = &st.buf else {
+                unreachable!("the demosaic is the mosaic's")
+            };
+            let started = Instant::now();
+            let Some(pattern) = prepared.pattern.as_ref() else {
+                return Err(greycard_gpu::Error::Unsupported(
+                    "a file with no mosaic".into(),
+                ));
+            };
+            let (samples, w, h) = (&prepared.samples, prepared.width, prepared.height);
+            // The dual's threshold as the reference's demosaic takes it:
+            // the measured noise's, through the gains.
+            let contrast = || {
+                core_develop::dual_contrast(&st.settings, prepared.noise.as_ref(), prepared.gains)
+            };
+            let rgb = match method {
+                DemosaicMethod::Rcd => ctx.demosaic_rcd(samples, w, h, pattern)?,
+                DemosaicMethod::Vng4 => ctx.demosaic_vng4(samples, w, h, pattern)?,
+                DemosaicMethod::Amaze => ctx.demosaic_amaze(samples, w, h, pattern)?,
+                DemosaicMethod::RcdVng4 => {
+                    ctx.demosaic_rcd_dual(samples, w, h, pattern, contrast())?
+                }
+                DemosaicMethod::AmazeVng4 => {
+                    ctx.demosaic_amaze_dual(samples, w, h, pattern, contrast())?
+                }
+                m => {
+                    return Err(greycard_gpu::Error::Unsupported(format!(
+                        "{} has no device version",
+                        m.name()
+                    )));
+                }
+            };
+            let Buf::Mosaic(prepared) =
+                std::mem::replace(&mut st.buf, Buf::Working(Arc::new(WorkingImage::new(0, 0))))
+            else {
+                unreachable!("checked above")
+            };
+            st.buf = Buf::Camera { prepared, rgb };
+            walked
+                .seconds
+                .push(("demosaic on the GPU", started.elapsed().as_secs_f64()));
             places.push(Place::Gpu);
             return Ok(());
         }
@@ -2868,6 +2936,92 @@ mod tests {
         assert!(picture(&export).data == picture(&reference).data);
     }
 
+    /// A demosaic the device declines falls back to the CPU's for the
+    /// frame, the develop going on and the device kept: a frame too
+    /// small for the device's bands, here, as a card too small for its
+    /// working set would decline it.
+    #[test]
+    fn a_demosaic_the_device_declines_is_the_cpu_s() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = Input::Raw(frame_of(14, 12, [1.0, 1.0]));
+        let mut e = Edit::default();
+        e.lens.chromatic_aberration = false;
+        let steps = stages::stages(&e, &Purpose::Viewport, &input.facts(0), None);
+        let i = steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Demosaic(..))))
+            .unwrap();
+        let places = plan(&steps, &Purpose::Viewport, true);
+        assert_eq!(places[i], Place::Gpu);
+        let mut kept = Kept::new();
+        let walked = walk(
+            &steps,
+            &places,
+            &input,
+            &mut kept,
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .expect("the develop goes on");
+        assert_eq!(walked.places[i], Place::Cpu);
+        assert!(gpu.is_some(), "the device is kept");
+        let mut reference = Kept::new();
+        walk_cpu(&e, &Purpose::Viewport, &input, 0, &mut reference);
+        assert!(
+            kept.picture(Keep::Base).unwrap().data == reference.picture(Keep::Base).unwrap().data
+        );
+    }
+
+    /// The viewport and the prefetch make the same demosaic on a
+    /// device: the prefetch's base is the viewport's to the bit, and the
+    /// viewport's points serve the prefetch's list; the export, the
+    /// reference's on the CPU, takes none of them.
+    #[test]
+    fn the_viewport_and_the_prefetch_make_the_same_demosaic_on_a_device() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        let go = |purpose: &Purpose, kept: &mut Kept, gpu: &mut Option<greycard_gpu::Context>| {
+            let steps = stages::stages(&e, purpose, &input.facts(0), None);
+            let plan = plan(&steps, purpose, gpu.is_some());
+            walk(&steps, &plan, &input, kept, &mut NoModels, gpu, &NoHold).unwrap()
+        };
+        let mut viewport_kept = Kept::new();
+        let viewport = go(&Purpose::Viewport, &mut viewport_kept, &mut gpu);
+        assert!(
+            viewport
+                .seconds
+                .iter()
+                .any(|(name, _)| *name == "demosaic on the GPU"),
+            "{:?}",
+            viewport.seconds
+        );
+        assert!(viewport_kept.ran_on_device(Keep::Base, |s| matches!(s, Stage::Demosaic(..))));
+        let mut prefetch_kept = Kept::new();
+        go(&Purpose::Prefetch, &mut prefetch_kept, &mut gpu);
+        let base = |k: &Kept| k.picture(Keep::Base).cloned().unwrap();
+        assert!(
+            base(&viewport_kept).data == base(&prefetch_kept).data,
+            "the prefetch's base is the viewport's to the bit"
+        );
+        let steps = stages::stages(&e, &Purpose::Prefetch, &input.facts(0), None);
+        let prefetch_plan = plan(&steps, &Purpose::Prefetch, true);
+        assert!(viewport_kept.serves(&steps, &prefetch_plan, Keep::Base));
+        let export = go(
+            &Purpose::Export(Box::default()),
+            &mut viewport_kept.clone(),
+            &mut gpu,
+        );
+        assert_eq!(export.from, None, "the export makes the reference's base");
+    }
+
     /// A reduce drops the pixels past its last whole block, which a
     /// turn puts on another edge: an odd-sized picture's kept base is
     /// developed again at a new turn, not permuted, and is the picture
@@ -2965,14 +3119,16 @@ mod tests {
             walked.sharpen_mask.is_some(),
             "the sharpen ran on the CPU too"
         );
-        let cpu_plan = plan(&steps, &Purpose::Viewport, false);
+        // Everything on the CPU but the demosaic, which is the
+        // device's picture whatever runs after it.
+        let cpu_plan = places(&steps, false, true);
         let cpu = walk(
             &steps,
             &cpu_plan,
             &input,
             &mut Kept::new(),
             &mut NoModels,
-            &mut None,
+            &mut gpu,
             &NoHold,
         )
         .unwrap();

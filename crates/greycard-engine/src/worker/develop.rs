@@ -217,11 +217,13 @@ pub(super) fn develop_round(
             .map(|(_, s)| s)
             .sum::<f64>()
     };
-    h.on_gpu = steps
-        .steps
-        .iter()
-        .zip(&walked.places)
-        .any(|(s, p)| *p == Place::Gpu && matches!(s, Step::Op(Stage::Ca(_) | Stage::Lens(_))));
+    h.on_gpu = steps.steps.iter().zip(&walked.places).any(|(s, p)| {
+        *p == Place::Gpu
+            && matches!(
+                s,
+                Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_))
+            )
+    });
     // A develop with a device lent that came back in memory ran
     // nothing of the edit there past the inline ops: what the device
     // holds was for another edit, and goes. One without a device (the
@@ -653,6 +655,31 @@ mod tests {
             line,
             "developed 8192x5464: base from the shelf, denoiser kept, upload 0.12 s, \
              sharpen on the GPU, total 0.40 s"
+        );
+
+        // The demosaic on the device carries its seconds, as the CPU's
+        // does, so a tester's log shows it.
+        let line = developed_line(&DevelopLog {
+            width: 8192,
+            height: 5464,
+            from: BaseFrom::Made,
+            ca: Some((CaRan::Gpu, 0.05)),
+            learned: &LearnedReport::Off,
+            fills: &FillReport::default(),
+            stages: &vec![
+                ("prepare", 0.31),
+                ("demosaic on the GPU", 0.094),
+                ("finish", 0.2),
+            ],
+            detail: None,
+            dehazed: None,
+            sharpened: Some(Sharpened::Gpu),
+            total: 0.9,
+        });
+        assert_eq!(
+            line,
+            "developed 8192x5464: base made, CA on the GPU 0.05 s, prepare 0.31 s, \
+             demosaic on the GPU 0.09 s, finish 0.20 s, sharpen on the GPU, total 0.90 s"
         );
 
         let line = developed_line(&DevelopLog {

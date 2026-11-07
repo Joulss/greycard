@@ -390,6 +390,85 @@ fn develop_once(
     )
 }
 
+/// `develop_job` on `frame` under `edit` with `gpu`, from `base`: the
+/// outcome and the picture.
+fn develop_with(
+    frame: &Arc<RawFrame>,
+    edit: &Edit,
+    base: &mut Option<FrameKept>,
+    gpu: &mut Option<greycard_gpu::Context>,
+) -> (Outcome, Option<Arc<WorkingImage>>) {
+    let deliver: Deliver = Arc::new(|_| {});
+    develop_job(
+        &Input::Raw(frame.clone()),
+        edit,
+        0,
+        1,
+        base,
+        &mut Ai::new(),
+        None,
+        None,
+        gpu,
+        &deliver,
+    )
+}
+
+/// A device error in the demosaic (a card too small for its working
+/// set says so as an error of its own) falls back to the CPU's
+/// demosaic for that frame and keeps the context: a device allowed 20
+/// workgroups a dimension cannot run a 330-wide mosaic's 21, and the
+/// frame is too small for the CA to run at all.
+#[test]
+fn a_gpu_error_in_the_demosaic_falls_back_and_keeps_the_context() {
+    use crate::stages::{Keep, Purpose, Stage, Step};
+    use greycard_gpu::wgpu::Limits;
+    let Some(ctx) = context_with(Limits {
+        max_compute_workgroups_per_dimension: 20,
+        ..Limits::default()
+    }) else {
+        skipped("the demosaic fallback check");
+        return;
+    };
+    let input = crate::walk::Input::Raw(Arc::new(aberrated_frame(330, 200)));
+    let edit = Edit::default();
+    let mut steps = crate::stages::stages(&edit, &Purpose::Viewport, &input.facts(0), None);
+    let base_at = steps.at(Keep::Base).unwrap();
+    steps.steps.truncate(base_at + 1);
+    let demosaic = steps
+        .steps
+        .iter()
+        .position(|s| matches!(s, Step::Op(Stage::Demosaic(..))))
+        .unwrap();
+    let places = crate::walk::plan(&steps, &Purpose::Viewport, true);
+    assert_eq!(places[demosaic], crate::walk::Place::Gpu);
+    let mut gpu = Some(ctx);
+    let mut kept = crate::walk::Kept::new();
+    let walked = crate::walk::walk(
+        &steps,
+        &places,
+        &input,
+        &mut kept,
+        &mut crate::walk::NoModels,
+        &mut gpu,
+        &crate::walk::NoHold,
+    )
+    .expect("the develop goes on");
+    assert_eq!(walked.places[demosaic], crate::walk::Place::Cpu);
+    assert!(gpu.is_some(), "the context is kept");
+    let mut reference = crate::walk::Kept::new();
+    crate::walk::walk(
+        &steps,
+        &crate::walk::plan(&steps, &Purpose::Viewport, false),
+        &input,
+        &mut reference,
+        &mut crate::walk::NoModels,
+        &mut None,
+        &crate::walk::NoHold,
+    )
+    .unwrap();
+    assert!(kept.picture(Keep::Base).unwrap().data == reference.picture(Keep::Base).unwrap().data);
+}
+
 /// `develop_job` on `frame` under `edit` at the frame's `turn`,
 /// on the CPU, from `base`: the picture.
 fn develop_turned(
@@ -961,11 +1040,17 @@ fn a_gpu_error_in_the_ca_falls_back_and_an_unsupported_size_keeps_the_context() 
     let frame = Arc::new(aberrated_frame(400, 320));
     let mut gpu = Some(ctx);
     let mut base = None;
-    let (outcome, image) = develop_once(&frame, &mut base, &mut gpu);
+    // Bilinear, whose demosaic is the CPU's, so the CA is the one op
+    // on the device.
+    let bilinear = Edit {
+        demosaic: greycard_edit::Demosaic::Bilinear,
+        ..Edit::default()
+    };
+    let (outcome, image) = develop_with(&frame, &bilinear, &mut base, &mut gpu);
     assert!(matches!(outcome, Outcome::Developed { .. }));
     assert!(gpu.is_none(), "the context is dropped after a device error");
     assert!(base.as_ref().is_some_and(|b| !b.on_gpu));
-    let (_, reference) = develop_once(&frame, &mut None, &mut None);
+    let (_, reference) = develop_with(&frame, &bilinear, &mut None, &mut None);
     assert_eq!(image.unwrap().data, reference.unwrap().data);
 
     let Some(ctx) = context_with(Limits {
@@ -978,7 +1063,7 @@ fn a_gpu_error_in_the_ca_falls_back_and_an_unsupported_size_keeps_the_context() 
     let frame = Arc::new(aberrated_frame(500, 300));
     let mut gpu = Some(ctx);
     let mut base = None;
-    let (outcome, _) = develop_once(&frame, &mut base, &mut gpu);
+    let (outcome, _) = develop_with(&frame, &bilinear, &mut base, &mut gpu);
     assert!(matches!(outcome, Outcome::Developed { .. }));
     assert!(
         gpu.is_some(),

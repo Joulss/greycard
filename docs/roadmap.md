@@ -174,9 +174,8 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next
 
-- [ ] Frame switching: the demosaic, the largest part of a cold base
-      (§378, §479), made quicker, and the prefetch deeper in the
-      walk's direction (§379); how, a decision of its own
+- [ ] Frame switching: the prefetch deeper in the walk's direction
+      (§379), now the demosaic runs on the GPU (§591)
 - [ ] The command line's export under a device when the machine has
       one, so it and the editor's export run the same demosaic, CA,
       and lens on the GPU and match again; a flag forces the CPU
@@ -208,6 +207,12 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
+- [ ] The GPU demosaic's remaining time (§591): the AMaZE dual's
+      result fed straight into the blend's buffers instead of read
+      back and uploaded again (540 MB each way at 45 MP); the
+      automatic threshold's second RCD run for the RCD dual; the
+      bands' staging persistent and double-buffered as the AMaZE op's
+      is. At 45 MP the dual is 247 ms where AMaZE alone is 90
 - [ ] A proxy develop for the fit view, as a placeholder and not a
       mode: 2x2 Bayer quads binned to one RGB pixel, shown only while
       the full develop is pending and replaced by it when it lands, so

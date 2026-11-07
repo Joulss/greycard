@@ -861,8 +861,10 @@ fn wants_noise(settings: &DevelopSettings) -> bool {
 }
 
 /// The dual demosaic's threshold setting with `Auto` resolved to the
-/// measured noise, transformed for the gains the RGB carries.
-fn dual_contrast(
+/// measured noise, transformed for the gains the RGB carries: what
+/// [`demosaic_prepared`] hands the dual, for a device implementation to
+/// hand its own.
+pub fn dual_contrast(
     settings: &DevelopSettings,
     noise: Option<&noise::NoiseEstimate>,
     gains: [f32; 3],

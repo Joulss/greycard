@@ -75,3 +75,50 @@ Before the build the dual's time is split, AMaZE against VNG4
 against the blend, at 45 MP, and the two duals compared at the fit
 view's scale on a clean frame and a noisy one, so the claim that
 they are indistinguishable there is a number and not a sentence.
+
+## What was built, measured the same day
+
+The trial decided it. AMaZE ported to the GPU, with the reference's
+160-pixel tiles kept so its tile-edge reads match, came out equal to
+the CPU port to rounding on synthetic scenes and on real frames from
+six makers, and quick: on an RTX 5070 Ti, 90 ms at 45 MP against
+300 ms for the CPU on 32 threads. So the two-stage walk above was
+never committed (its diff is kept in the build's plan), and the
+default itself runs on the GPU.
+
+| 45 MP, RTX 5070 Ti against 32 CPU threads | GPU | CPU |
+|---|---|---|
+| AMaZE dual, the default | 247 ms | 641 ms |
+| RCD dual | 137 ms | 877 ms |
+| AMaZE alone | 90 ms | 301 ms |
+| RCD alone | 134 ms | 543 ms |
+| VNG4 alone | 127 ms | 210 ms |
+
+Against a tester's eight threads, where the dual took over two
+seconds, that is eight times. RCD, VNG4, and the dual's blend mask
+run in bands of whole rows with a 32-row halo; banded output equals
+the whole frame to the bit. The dual's threshold is the reference's
+search run on the GPU's detail result, which on a real card can be
+one step (0.01) off the CPU's. Where a card's fused multiply-adds
+flip a direction decision at a hard edge, a pixel can differ by its
+local contrast; the real-frame test bounds that at a tenth of the
+frame's largest value and one sample in ten thousand past a
+thousandth, which the AMaZE dual meets by a wide margin (at most 13
+of 305 M samples on the frames tried).
+
+The demosaic stage goes on the device for the viewport and the
+prefetch. The export keeps the CPU's, because the command line
+renders exactly what the editor exports and headless has no device;
+a GPU export comes when the command line can take a device too, on
+the roadmap. A base demosaiced on the device serves only device
+walks, as the CA rule has it. A declined or failed device runs that
+frame's demosaic on the CPU and keeps the context; the pipelines are
+built on first use, so a shader that will not build costs the
+demosaic alone. X-Trans stays on Markesteijn on the CPU.
+
+Left for later, on the roadmap's Speed track: the AMaZE dual reads
+AMaZE's result back and uploads it again band by band for the blend
+(540 MB each way at 45 MP); the automatic threshold runs RCD twice
+for the RCD dual; the bands' staging could be persistent and
+double-buffered as the AMaZE op's is. Together those are most of the
+gap between 247 ms and AMaZE's own 90.

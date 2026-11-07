@@ -77,15 +77,17 @@ pub struct DualStats {
 }
 
 /// The threshold over the image: one value, or one per unit of L*.
-enum Threshold {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Threshold {
     Uniform(f32),
+    /// One a unit of L*, 0 to 100: 101 of them.
     ByLightness(Vec<f32>),
 }
 
 impl Threshold {
     /// The threshold at a pixel of lightness `l` in the reference's units.
     #[inline]
-    fn at(&self, l: f32) -> f32 {
+    pub fn at(&self, l: f32) -> f32 {
         match self {
             Threshold::Uniform(t) => *t,
             Threshold::ByLightness(table) => {
@@ -95,20 +97,63 @@ impl Threshold {
         }
     }
 
-    fn is_zero(&self) -> bool {
+    /// Whether no pixel takes VNG4: the detail demosaic alone.
+    pub fn is_zero(&self) -> bool {
         match self {
             Threshold::Uniform(t) => *t == 0.0,
             Threshold::ByLightness(table) => table.iter().all(|t| *t == 0.0),
         }
     }
+
+    /// The threshold at each unit of L* from 0 to 100, which [`at`]
+    /// rounds a lightness to: what a device reads in place of the
+    /// enum.
+    ///
+    /// [`at`]: Threshold::at
+    pub fn table(&self) -> [f32; 101] {
+        std::array::from_fn(|i| self.at(i as f32 * L_SCALE))
+    }
 }
 
 /// The reference's lightness scale: L* in 0..100 times this.
-const L_SCALE: f32 = 327.68;
+pub const L_SCALE: f32 = 327.68;
 /// Contrast units: the reference divides the L* differences by 16.
-const CONTRAST_SCALE: f32 = 0.0625 / L_SCALE;
+pub const CONTRAST_SCALE: f32 = 0.0625 / L_SCALE;
 /// Sigma of the blur over the blend mask.
-const MASK_BLUR_SIGMA: f32 = 2.0;
+pub const MASK_BLUR_SIGMA: f32 = 2.0;
+
+/// Whether the threshold for `contrast` is read off the detail
+/// demosaic's result ([`threshold_for`]): the automatic search, which
+/// looks for the flattest tile in it.
+pub fn threshold_reads_detail(contrast: DualContrast) -> bool {
+    matches!(contrast, DualContrast::Auto | DualContrast::Tiles)
+}
+
+/// The threshold a dual demosaic blends by for `contrast`, and where it
+/// came from. `detail` is the detail demosaic's interleaved RGB, read
+/// only where [`threshold_reads_detail`] says.
+pub fn threshold_for(
+    contrast: DualContrast,
+    detail: &[f32],
+    width: usize,
+    height: usize,
+) -> (Threshold, ThresholdSource) {
+    match contrast {
+        DualContrast::Fixed(t) => (Threshold::Uniform(t.max(0.0)), ThresholdSource::Fixed),
+        DualContrast::Auto | DualContrast::Tiles => (
+            Threshold::Uniform(auto_threshold(
+                &lightness(detail, width, height),
+                width,
+                height,
+            )),
+            ThresholdSource::Tiles,
+        ),
+        DualContrast::Noise(model) => (
+            Threshold::ByLightness(noise_thresholds(&model)),
+            ThresholdSource::Noise,
+        ),
+    }
+}
 
 /// Demosaic with `base`, then VNG4, and blend them by local contrast.
 pub fn demosaic_dual(
@@ -130,21 +175,7 @@ pub fn demosaic_dual(
     }
     let mut out = demosaic_cfa(samples, width, height, pattern, base)?;
 
-    let (threshold, source) = match contrast {
-        DualContrast::Fixed(t) => (Threshold::Uniform(t.max(0.0)), ThresholdSource::Fixed),
-        DualContrast::Auto | DualContrast::Tiles => (
-            Threshold::Uniform(auto_threshold(
-                &lightness(&out, width, height),
-                width,
-                height,
-            )),
-            ThresholdSource::Tiles,
-        ),
-        DualContrast::Noise(model) => (
-            Threshold::ByLightness(noise_thresholds(&model)),
-            ThresholdSource::Noise,
-        ),
-    };
+    let (threshold, source) = threshold_for(contrast, &out, width, height);
     let reported = threshold.at(MID_GREY_L * L_SCALE);
     if threshold.is_zero() || width < 5 || height < 5 {
         return Ok((
@@ -264,7 +295,7 @@ fn threshold_for_noise(sigma_l: f32) -> f32 {
 /// CIE L* of interleaved RGB, in the reference's units. The RGB is
 /// white-balanced camera space, taken as if it were sRGB, as the reference
 /// does: the mask only needs something monotone in brightness.
-fn lightness(rgb: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub fn lightness(rgb: &[f32], width: usize, height: usize) -> Vec<f32> {
     let mut l = vec![0.0f32; width * height];
     l.par_iter_mut().zip(rgb.par_chunks(3)).for_each(|(l, px)| {
         let y = 0.212671 * px[0] + 0.715160 * px[1] + 0.072169 * px[2];
@@ -280,7 +311,7 @@ fn lightness(rgb: &[f32], width: usize, height: usize) -> Vec<f32> {
 
 /// The sigmoid in contrast: 0.5 at the threshold, near 0 at zero contrast,
 /// near 1 at twice the threshold.
-fn blend_factor(contrast: f32, threshold: f32) -> f32 {
+pub fn blend_factor(contrast: f32, threshold: f32) -> f32 {
     let x = -16.0 + (16.0 / threshold) * contrast;
     0.5 * (1.0 + x / (1.0 + x * x).sqrt())
 }
@@ -298,8 +329,9 @@ fn contrast_at(l: &[f32], width: usize, y: usize, x: usize) -> f32 {
 }
 
 /// The blend mask: the sigmoid of local contrast, edges copied from the
-/// nearest measured pixel, blurred.
-fn blend_mask(l: &[f32], width: usize, height: usize, threshold: &Threshold) -> Vec<f32> {
+/// nearest measured pixel, blurred. The share of each pixel that is
+/// the detail demosaic's.
+pub fn blend_mask(l: &[f32], width: usize, height: usize, threshold: &Threshold) -> Vec<f32> {
     let mut blend = vec![1.0f32; width * height];
     blend
         .par_chunks_mut(width)
@@ -436,8 +468,10 @@ fn tile_threshold(l: &[f32], width: usize, ty: usize, tx: usize, size: usize) ->
     (c + 1) as f32 / 100.0
 }
 
-/// Separable Gaussian blur, edges clamped.
-pub(crate) fn gaussian_blur(data: &mut [f32], width: usize, height: usize, sigma: f32) {
+/// The taps of [`gaussian_blur`]'s kernel at `sigma`, from the center
+/// out, normalized: three sigmas of them past the center. The blend
+/// mask's is [`MASK_BLUR_SIGMA`]'s, seven taps.
+pub fn blur_kernel(sigma: f32) -> Vec<f32> {
     let radius = (3.0 * sigma).ceil() as usize;
     let mut kernel: Vec<f32> = (0..=radius)
         .map(|i| (-(i as f32 * i as f32) / (2.0 * sigma * sigma)).exp())
@@ -446,6 +480,13 @@ pub(crate) fn gaussian_blur(data: &mut [f32], width: usize, height: usize, sigma
     for k in &mut kernel {
         *k /= norm;
     }
+    kernel
+}
+
+/// Separable Gaussian blur, edges clamped.
+pub(crate) fn gaussian_blur(data: &mut [f32], width: usize, height: usize, sigma: f32) {
+    let kernel = blur_kernel(sigma);
+    let radius = kernel.len() - 1;
     let taps = |i: isize, n: usize| i.clamp(0, n as isize - 1) as usize;
 
     // Both passes take the taps in the same order as a clamped index
