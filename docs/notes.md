@@ -603,6 +603,7 @@ in its section; the roadmap and the changelog only point at it.
 - [§588. The Navigator keeps one height](notes/588-the-navigator-keeps-one-height.md) (2026-11-07)
 - [§589. The paste sheet from the keys](notes/589-the-paste-sheet-from-the-keys.md) (2026-11-07)
 - [§590. The display curve goes with a copy](notes/590-the-display-curve-goes-with-a-copy.md) (2026-11-07)
+- [§591. A quick demosaic on the GPU, and the default behind it](notes/591-a-quick-demosaic-on-the-gpu-and-the-default-behind-it.md) (2026-11-07)
 - [§592. The strip holds still under a delete](notes/592-the-strip-holds-still-under-a-delete.md) (2026-11-07)
 - [§593. A culling tool's XMP beside a raw and its JPEG](notes/593-a-culling-tools-xmp-beside-a-raw-and-its-jpeg.md) (2026-11-07)
 - [§594. Back and forward as the folders visited](notes/594-back-and-forward-as-the-folders-visited.md) (2026-11-07)

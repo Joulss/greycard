@@ -174,12 +174,22 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next
 
-- [ ] Proper signed Windows installer
+- [ ] Frame switching: the demosaic, the largest part of a cold base
+      (§378, §479), made quicker, and the prefetch deeper in the
+      walk's direction (§379); how, a decision of its own
+- [ ] The command line's export under a device when the machine has
+      one, so it and the editor's export run the same demosaic, CA,
+      and lens on the GPU and match again; a flag forces the CPU
+- [ ] A Windows installer (Inno Setup or WiX) from the release
+      workflow, signed
 - [ ] White balance (and maybe other adjustments) still available on JPG
-- [ ] Resizeable panes and panels inside them (issue 79)
-- [ ] i18n
-- [ ] Forward/back button navigation
-- [ ] Add a Contribution policy/guide
+- [ ] Resizeable panes and panels inside them (issue 79), and the
+      Develop panel's sections told apart (issue 80)
+- [ ] i18n (issue 75)
+- [ ] The middle button: drag the picture under any tool, 200% on the
+      picture, a straight or square-angled line for a gradient or a
+      brush, and sync onto the selection without the sheet
+      (discussion 59, 2026-11-06)
 - [ ] Fetch all the models at once: a Fetch all action in the
       Settings sheet's Models section with the total beside it (about
       3.5 GB today), each line ticking to "in the store" as it lands
@@ -1085,10 +1095,6 @@ clears or a tester asks for it.
 - [ ] [ and ] as the brush's size with a brush in hand, since Turn on
       them costs a develop when hit by habit (discussion 59,
       2026-11-04)
-- [ ] The middle button: drag the picture under any tool, 200% on the
-      picture, a straight or square-angled line for a gradient or a
-      brush, and sync onto the selection without the sheet
-      (discussion 59, 2026-11-06)
 - [ ] A tablet in hand: the brush's size set without a wheel and seen
       while its slider drags, the pen's pressure on the flow, and the
       shortcuts a pen can reach (discussion 59, 2026-11-06)
@@ -1122,9 +1128,8 @@ release when the wait clears.
       Path, the file associations under HKLM, and an entry under the
       machine's Uninstall key, with uninstall.cmd taking the same
       switch; today GREYCARD_PREFIX puts the files there and the rest
-      stays the one user's. An installer package (Inno Setup or WiX)
-      from the release workflow is the step after, and where signing
-      goes. Asked 2026-10-19. Two testers would rather unzip anywhere,
+      stays the one user's. The installer package itself is under Next.
+      Asked 2026-10-19. Two testers would rather unzip anywhere,
       as RawTherapee ships, than install: the zip runs in place today
       from bin\, and the guide says so; keep it beside the installer
 - [ ] A GPU path for the models on Windows on ARM: pyke publishes an
