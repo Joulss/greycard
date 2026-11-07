@@ -167,6 +167,9 @@ pub(crate) struct Develop {
     pub(crate) fresh_mask: Option<u64>,
     /// A mask shape being drawn in the viewport.
     pub(crate) placing: Option<Placing>,
+    /// The brush row was put on Subtract by a brush asked for under
+    /// Subtract, and goes back to Add when that brush is put down.
+    pub(crate) brush_row_cuts: bool,
     /// A part's person being picked on the picture.
     pub(crate) choosing: Option<panel::parts::Choosing>,
     /// A part chosen from the menu, waiting on the people (or its

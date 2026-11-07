@@ -976,6 +976,7 @@ impl State {
                 target: None,
                 fresh_mask: None,
                 placing: None,
+                brush_row_cuts: false,
                 choosing: None,
                 part_pending: None,
                 landscape_pending: None,

@@ -90,7 +90,7 @@ pub use sidecar::{
 };
 
 /// The schema version this build writes.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

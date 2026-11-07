@@ -52,6 +52,8 @@ pub(super) struct LocalGpu {
 
 /// A mask's shape as the shader has it. A brush is a layer of the
 /// brush texture array (kind 2), with its raster's aspect in `b.x`;
+/// a brush that paints on the mask and has cut anything is kind 6,
+/// its paint in its layer and its cut in the next (`Mask::at_cut`);
 /// a raster shape still waiting for its raster is kind 3, nothing,
 /// and holds no layer. A luminance window is kind 4, its low, high
 /// and their feathers in `a`; a color window kind 5, its hue, half
@@ -77,6 +79,18 @@ impl ShapeGpu {
         layer: u32,
         wide: bool,
     ) -> Self {
+        if let Some(r) = raster
+            && cuts(c, r)
+        {
+            return Self {
+                kind: 6,
+                flags: 0,
+                layer,
+                wide: wide as u32,
+                a: [0.0; 4],
+                b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
+            };
+        }
         let flags = c.mode as u32 | ((c.invert as u32) << 2);
         match &c.shape {
             Shape::Linear { from, to } => Self {
@@ -168,16 +182,47 @@ impl ShapeGpu {
     }
 }
 
+/// Whether `c`, with its raster `r`, is a brush the shader joins by
+/// its paint and its cut: one that paints on the mask and has cut.
+fn cuts(c: &greycard_edit::mask::Component, r: &RasterRef) -> bool {
+    c.paints_on_mask() && r.0.cut().is_some()
+}
+
+/// A layer of a rasters' array: a raster's paint, or a brush's cut.
+#[derive(Clone)]
+pub(super) struct Layer {
+    pub(super) raster: RasterRef,
+    pub(super) cut: bool,
+}
+
+impl Layer {
+    fn paint(raster: &RasterRef) -> Self {
+        Self {
+            raster: raster.clone(),
+            cut: false,
+        }
+    }
+
+    /// Its texels, row by row.
+    fn data(&self) -> &[u8] {
+        match (self.cut, self.raster.0.cut()) {
+            (true, Some(cut)) => cut,
+            _ => self.raster.0.data(),
+        }
+    }
+}
+
 /// The locals as the shader takes them.
 pub(super) struct LocalsGpu {
     pub(super) params: Vec<LocalGpu>,
     pub(super) tables: Vec<[f32; 4]>,
     pub(super) shapes: Vec<ShapeGpu>,
     /// The narrow rasters (a brush's, a learned mask's at
-    /// `RASTER_WIDTH`), in the order of their layers.
-    pub(super) rasters: Vec<RasterRef>,
+    /// `RASTER_WIDTH`), in the order of their layers: a brush that
+    /// cuts takes two, its paint and its cut.
+    pub(super) rasters: Vec<Layer>,
     /// The wide ones (a Sky's past the rule), in the order of theirs.
-    pub(super) wide: Vec<RasterRef>,
+    pub(super) wide: Vec<Layer>,
 }
 
 /// The locals' buffers: their parameters, their tables and their
@@ -188,8 +233,8 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
     let mut params = Vec::new();
     let mut tables = Vec::new();
     let mut shapes = Vec::new();
-    let mut rasters: Vec<RasterRef> = Vec::new();
-    let mut wide: Vec<RasterRef> = Vec::new();
+    let mut rasters: Vec<Layer> = Vec::new();
+    let mut wide: Vec<Layer> = Vec::new();
     for local in locals.iter().take(MAX_LOCALS) {
         let b = &local.baked;
         // The shapes first, so a switched-off one is simply not
@@ -210,9 +255,9 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
                 b: [r.0.aspect, r.0.width as f32, r.0.height as f32, 0.0],
             });
             if is_wide {
-                wide.push(r.clone());
+                wide.push(Layer::paint(r));
             } else {
-                rasters.push(r.clone());
+                rasters.push(Layer::paint(r));
             }
         }
         for (i, c) in local.mask.live().filter(|_| local.refined.is_none()) {
@@ -223,10 +268,13 @@ pub(super) fn locals_gpu(locals: &[Local]) -> LocalsGpu {
             if c.shape.is_raster()
                 && let Some(r) = raster
             {
-                if is_wide {
-                    wide.push(r.clone());
-                } else {
-                    rasters.push(r.clone());
+                let array = if is_wide { &mut wide } else { &mut rasters };
+                array.push(Layer::paint(r));
+                if cuts(c, r) {
+                    array.push(Layer {
+                        raster: r.clone(),
+                        cut: true,
+                    });
                 }
             }
         }
@@ -300,8 +348,12 @@ pub(super) fn is_wide(raster: &greycard_edit::brush::Raster) -> bool {
 pub(super) struct Brushes {
     label: &'static str,
     texture: gpu::Texture,
-    /// Each layer's raster: its allocation and version.
-    layers: Vec<(usize, u64)>,
+    /// Each layer's raster: its allocation and version, and whether
+    /// the layer is its cut.
+    layers: Vec<(usize, u64, bool)>,
+    /// The layer count last logged as past the device's limit; 0 while
+    /// within it.
+    over: usize,
 }
 
 impl Brushes {
@@ -310,7 +362,8 @@ impl Brushes {
         Self {
             label,
             texture: Self::texture(device, label, 1, 1, 1),
-            layers: vec![(0, 0)],
+            layers: vec![(0, 0, false)],
+            over: 0,
         }
     }
 
@@ -347,7 +400,25 @@ impl Brushes {
     /// Bring the array to `rasters`: made anew when their number or
     /// the largest size changes, each layer written when its raster
     /// did.
-    pub(super) fn sync(&mut self, device: &gpu::Device, queue: &gpu::Queue, rasters: &[RasterRef]) {
+    pub(super) fn sync(&mut self, device: &gpu::Device, queue: &gpu::Queue, rasters: &[Layer]) {
+        // More layers than the device takes would fail validation, so
+        // the array stops at its limit and the log says so, once for
+        // each count past it; a shape past it reads out of bounds, which
+        // WGSL bounds to zero or any texel of the array.
+        let most = device.limits().max_texture_array_layers as usize;
+        let over = if rasters.len() > most {
+            rasters.len()
+        } else {
+            0
+        };
+        if over != 0 && over != self.over {
+            tracing::warn!(
+                "{}: {over} raster layers, the device takes {most}; the rest are left out",
+                self.label,
+            );
+        }
+        self.over = over;
+        let rasters = &rasters[..rasters.len().min(most)];
         if rasters.is_empty() {
             if self.layers.len() != 1 || self.texture.width() != 1 {
                 *self = Self::empty(device, self.label);
@@ -360,10 +431,11 @@ impl Brushes {
             || self.layers.len() != rasters.len()
         {
             self.texture = Self::texture(device, self.label, w, h, rasters.len() as u32);
-            self.layers = vec![(0, 0); rasters.len()];
+            self.layers = vec![(0, 0, false); rasters.len()];
         }
-        for (i, r) in rasters.iter().enumerate() {
-            let key = (Arc::as_ptr(&r.0) as usize, r.0.version);
+        for (i, layer) in rasters.iter().enumerate() {
+            let r = &layer.raster;
+            let key = (Arc::as_ptr(&r.0) as usize, r.0.version, layer.cut);
             if self.layers[i] == key {
                 continue;
             }
@@ -379,7 +451,7 @@ impl Brushes {
                     },
                     aspect: gpu::TextureAspect::All,
                 },
-                r.0.data(),
+                layer.data(),
                 gpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(rw),
@@ -396,9 +468,12 @@ impl Brushes {
     }
 
     /// The array's size for `rasters`: the widest and the tallest.
-    pub(super) fn size(rasters: &[RasterRef]) -> (u32, u32) {
-        rasters.iter().fold((1, 1), |(w, h), r| {
-            (w.max(r.0.width as u32), h.max(r.0.height as u32))
+    pub(super) fn size(rasters: &[Layer]) -> (u32, u32) {
+        rasters.iter().fold((1, 1), |(w, h), l| {
+            (
+                w.max(l.raster.0.width as u32),
+                h.max(l.raster.0.height as u32),
+            )
         })
     }
 }

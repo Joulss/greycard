@@ -1085,11 +1085,6 @@ clears or a tester asks for it.
 - [ ] [ and ] as the brush's size with a brush in hand, since Turn on
       them costs a develop when hit by habit (discussion 59,
       2026-11-04)
-- [ ] One brush row: the brush's own Add, Subtract, and Erase folded
-      into the shape's, so a brush under Subtract takes away from the
-      mask whatever it has painted; two testers painted on a Luminance
-      and a Subject mask and nothing happened (discussion 59,
-      2026-11-02 and 2026-11-06)
 - [ ] The middle button: drag the picture under any tool, 200% on the
       picture, a straight or square-angled line for a gradient or a
       brush, and sync onto the selection without the sheet

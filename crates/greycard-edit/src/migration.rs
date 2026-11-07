@@ -6,13 +6,14 @@ use crate::{Edit, Error, Result, VERSION, baseline, geometry};
 impl Edit {
     /// Whether this edit is still part-migrated: version 4's step
     /// for [`geometry::Aspect::Original`] wants the frame's shape,
-    /// which the sidecar does not carry, so [`migrate`] leaves the
-    /// edit at version 3 and this says so. An edit that answers yes
-    /// must have [`Self::migrate_with_frame`] called on it before
-    /// anything reads its crop's aspect — and it is safe to save
-    /// meanwhile, since it writes back as the version 3 it still is.
+    /// which the sidecar does not carry, so [`migrate`] marks the edit
+    /// [`Edit::frame_pending`] and this says so (as it does for an edit
+    /// made at version 3 in hand). An edit that answers yes must have
+    /// [`Self::migrate_with_frame`] called on it before anything reads
+    /// its crop's aspect — and it is safe to save meanwhile, since it
+    /// writes back with the mark.
     pub fn needs_frame(&self) -> bool {
-        self.version < 4
+        self.frame_pending || self.version < 4
     }
 
     /// Finish version 4's step now the frame's shape is known.
@@ -46,6 +47,7 @@ impl Edit {
                 self.geometry.portrait = false;
             }
         }
+        self.frame_pending = false;
         self.version = VERSION;
     }
 }
@@ -91,12 +93,15 @@ impl Edit {
 /// the frame's developed picture turned by the edit's own quarter
 /// turns, which a sidecar does not hold.
 ///
-/// So this step cannot be done here. An edit that needs it is left
-/// at version 3 and says so through [`Edit::needs_frame`]; whoever
-/// knows the frame's shape finishes it with
+/// So this step cannot be done here. An edit that needs it is marked
+/// [`Edit::frame_pending`] and says so through [`Edit::needs_frame`];
+/// whoever knows the frame's shape finishes it with
 /// [`Edit::migrate_with_frame`], and until then the edit reads,
-/// renders and writes back as the version 3 it is, so nothing is
-/// lost by a build that only listed a folder.
+/// renders and writes back with the mark, so nothing is lost by a
+/// build that only listed a folder. Until version 8 the mark was the
+/// version itself, left at 3; that ran every later step again at the
+/// next read, which version 8's step cannot take, so a build from now
+/// writes the mark and its own version.
 ///
 /// Version 5 is the sidecar's versions ([`Sidecar::versions`]).
 /// Nothing in an edit moved or changed meaning, so the step is the
@@ -111,6 +116,20 @@ impl Edit {
 /// is the one it was; an edit that develops nothing is the default and
 /// takes its body's. A build from before would drop the field and
 /// brighten or darken the picture, so it refuses the sidecar instead.
+///
+/// Version 8 is one brush row: a brush's Subtract takes from the mask
+/// under it, where it took from the brush's own paint and nothing
+/// else ([`brush`]). An edit written before keeps its picture: on a
+/// brush joined by anything but a plain Subtract, its Subtract strokes
+/// become [`Op::Lift`], which is what they did; a brush joined by
+/// Subtract and not inverted (a "− Brush") becomes a brush joined by
+/// Add whose Add strokes are Subtract and whose Subtract strokes are
+/// Lift, so it cuts what its paint cut, by as much. The first day's
+/// `erase: true` on a stroke is a Subtract before either. A build from
+/// before would read a Subtract as a lift, so it refuses the sidecar.
+///
+/// [`brush`]: crate::brush
+/// [`Op::Lift`]: crate::brush::Op::Lift
 ///
 /// Two shapes serde would take are refused before any step, since
 /// neither writes back as it reads (both found by fuzzing). An edit
@@ -201,9 +220,15 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
         {
             noise.insert("learned_chroma_strength".into(), blend);
         }
+        if version < 8 {
+            one_brush_row(obj);
+        }
         // Version 4's step needs the frame's shape, which is not in
-        // here: an edit that wants it stays at 3 until someone who
-        // knows the frame calls `Edit::migrate_with_frame`. Only an
+        // here: an edit that wants it is marked `frame_pending` until
+        // someone who knows the frame calls `Edit::migrate_with_frame`.
+        // The mark, not the version, says so: an edit written back at 3
+        // would have every later step run on it again at its next read,
+        // and version 8's is not one that can. Only an
         // `Original` aspect is affected; every other edit is brought
         // up by its version number alone. Version 5's step (the
         // sidecar's versions) moves nothing in an edit.
@@ -214,9 +239,65 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
                 .and_then(|a| a.get("kind"))
                 .and_then(|k| k.as_str())
                 == Some("original");
-        obj.insert("version".into(), if waiting { 3 } else { VERSION }.into());
+        if waiting {
+            obj.insert("frame_pending".into(), true.into());
+        }
+        obj.insert("version".into(), VERSION.into());
     }
     Ok(value)
+}
+
+/// Version 8's step on every brush in the edit's masks (the doc of
+/// [`migrate`]).
+fn one_brush_row(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    use serde_json::Value;
+    let Some(adjustments) = obj.get_mut("adjustments").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let components = adjustments
+        .iter_mut()
+        .filter_map(|a| a.get_mut("mask")?.get_mut("components")?.as_array_mut())
+        .flatten()
+        .filter_map(Value::as_object_mut);
+    for c in components {
+        let is_brush = c
+            .get("shape")
+            .and_then(|s| s.get("kind"))
+            .and_then(Value::as_str)
+            == Some("brush");
+        if !is_brush {
+            continue;
+        }
+        let minus = c.get("mode").and_then(Value::as_str) == Some("subtract")
+            && !c.get("invert").and_then(Value::as_bool).unwrap_or(false);
+        if minus {
+            c.insert("mode".into(), "add".into());
+        }
+        let Some(strokes) = c
+            .get_mut("shape")
+            .and_then(|s| s.get_mut("strokes"))
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for stroke in strokes.iter_mut().filter_map(Value::as_object_mut) {
+            let erase = stroke
+                .remove("erase")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false);
+            let op = match stroke.get("op").and_then(Value::as_str).unwrap_or("add") {
+                "add" if erase => "subtract",
+                op => op,
+            };
+            let op = match (op, minus) {
+                ("add", true) => "subtract",
+                ("subtract", _) => "lift",
+                (op, _) => op,
+            }
+            .to_owned();
+            stroke.insert("op".into(), op.into());
+        }
+    }
 }
 
 /// A stored file's shape refused, in the words of a JSON error.
@@ -359,10 +440,12 @@ mod tests {
             let edit = Edit::from_json(&stored(turns, portrait)).unwrap();
             // It reads, and it says it is not finished with.
             assert!(edit.needs_frame(), "{name}");
-            assert_eq!(edit.version, 3, "{name}");
-            // Saved back meanwhile it is still a version 3 file, so a
-            // build that only listed the folder loses nothing.
-            assert!(edit.to_json().contains("\"version\": 3"), "{name}");
+            assert!(edit.frame_pending, "{name}");
+            // Saved back meanwhile it keeps the mark, so a build that
+            // only listed the folder loses nothing, and reads the same.
+            let saved = edit.to_json();
+            assert!(saved.contains("\"frame_pending\": true"), "{name}");
+            assert_eq!(Edit::from_json(&saved).unwrap(), edit, "{name}");
 
             let mut edit = edit;
             edit.migrate_with_frame(source.1 > source.0);

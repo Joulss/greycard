@@ -949,6 +949,70 @@ fn wide_rasters_beside_narrow_ones_are_the_cpus() {
     assert!(mean <= 0.5 / 255.0, "mean {mean}");
 }
 
+/// A brush that cuts: its paint and its cut in two layers, joined on
+/// the GPU as on the CPU, over a gradient it adds to and takes from;
+/// and the same strokes in a brush joined by Intersect, which reads
+/// its paint alone in one layer.
+#[test]
+fn a_brushs_cut_is_the_cpus() {
+    use greycard_edit::brush::{Op, Raster, Stroke};
+    let image = field();
+    let aspect = image.height as f32 / image.width as f32;
+    let stroke = |op: Op, points: Vec<[f32; 2]>, flow: f32| Stroke {
+        points,
+        ..Stroke::new(op, 0.08, 0.6, flow)
+    };
+    let strokes = vec![
+        stroke(Op::Add, vec![[0.6, 0.1], [0.9, 0.5]], 1.0),
+        stroke(Op::Subtract, vec![[0.1, 0.2], [0.4, 0.3]], 1.0),
+        stroke(Op::Subtract, vec![[0.2, 0.5], [0.7, 0.4]], 0.5),
+        stroke(Op::Add, vec![[0.3, 0.1], [0.3, 0.6]], 0.4),
+        stroke(Op::Erase, vec![[0.15, 0.25], [0.2, 0.3]], 1.0),
+    ];
+    let brush = RasterRef(Arc::new(Raster::of(&strokes, aspect)));
+    assert!(brush.0.cut().is_some());
+    let gradient = Shape::Linear {
+        from: [0.0, 0.0],
+        to: [1.0, 0.6],
+    };
+    let with = |mode: Mode| {
+        let mut l = local_of(vec![
+            (gradient.clone(), Mode::Add),
+            (
+                Shape::Brush {
+                    strokes: strokes.clone(),
+                },
+                mode,
+            ),
+        ]);
+        l.rasters = vec![None, Some(brush.clone())];
+        l
+    };
+    let locals = vec![with(Mode::Add), with(Mode::Intersect)];
+    let packed = super::locals::locals_gpu(&locals);
+    assert_eq!(packed.rasters.len(), 3, "two layers and one");
+    assert!(packed.rasters[1].cut && !packed.rasters[2].cut);
+    // The cut takes the mask away where the gradient gave it.
+    let cut = locals[0].weight_sampled(0.4, 0.3, None);
+    assert!(cut < 0.05, "{cut}");
+    let Some((device, queue)) = device("the brush cut's GPU check") else {
+        return;
+    };
+    for local in &locals {
+        let (worst, mean) = gpu_against_cpu(
+            &device,
+            &queue,
+            &image,
+            std::slice::from_ref(local),
+            0.0,
+            true,
+        );
+        eprintln!("a brush's cut, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+        assert!(worst <= 3.0 / 255.0, "max {worst}");
+        assert!(mean <= 0.5 / 255.0, "mean {mean}");
+    }
+}
+
 /// A switched-off adjustment's mask can still be shown, and its
 /// range shapes read the picture for it even when no switched-on
 /// one does: not an empty sample, which painted a window from 0

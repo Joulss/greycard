@@ -13,6 +13,14 @@ design note behind it.
   frames
   ([§594](https://github.com/jessolmstead/greycard/blob/master/docs/notes/594-back-and-forward-as-the-folders-visited.md)).
 
+### Masks
+
+- A brush's Subtract now takes away from the whole mask under it, so
+  painting under Subtract over a Luminance, Subject, or Sky mask cuts
+  it there; Erase clears what the brush itself added or cut. Sidecars
+  from earlier builds open as they looked
+  ([§595](https://github.com/jessolmstead/greycard/blob/master/docs/notes/595-one-brush-row.md)).
+
 ## 0.10.1
 
 ### Fixes

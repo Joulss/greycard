@@ -345,12 +345,14 @@ impl Local {
         if let Some(r) = &self.refined {
             return r.0.at(u, v);
         }
-        self.mask.at_sampled(u, v, sample, |i, u, v| {
-            self.rasters
-                .get(i)
-                .and_then(|r| r.as_ref())
-                .map_or(0.0, |r| r.0.at(u, v))
-        })
+        let raster = |i: usize| self.rasters.get(i).and_then(|r| r.as_ref());
+        self.mask.at_cut(
+            u,
+            v,
+            sample,
+            |i, u, v| raster(i).map_or(0.0, |r| r.0.at(u, v)),
+            |i, u, v| raster(i).map_or(0.0, |r| r.0.cut_at(u, v)),
+        )
     }
 
     /// Whether this local's mask reads the picture, switched on.

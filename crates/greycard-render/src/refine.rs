@@ -210,12 +210,14 @@ pub fn refined(
                 let [l, a, b] = lab[k].map(|c| c * gain);
                 greycard_edit::mask::Sample { lightness: l, a, b }
             });
-            mask.at_sampled(u, v, s, |i, u, v| {
-                rasters
-                    .get(i)
-                    .and_then(|r| r.as_ref())
-                    .map_or(0.0, |r| r.0.at(u, v))
-            })
+            let raster = |i: usize| rasters.get(i).and_then(|r| r.as_ref());
+            mask.at_cut(
+                u,
+                v,
+                s,
+                |i, u, v| raster(i).map_or(0.0, |r| r.0.at(u, v)),
+                |i, u, v| raster(i).map_or(0.0, |r| r.0.cut_at(u, v)),
+            )
         })
         .collect();
     let eps = EPS * (-2.0 * stops / 3.0).exp2();

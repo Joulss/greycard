@@ -145,13 +145,14 @@ Click **Brush** and paint. While a brush is chosen, the button reads
 | **Size** | the brush's radius, as a share of the picture's width; the scroll wheel changes it too, one step a click, and a touchpad scroll by as many steps as the same distance on a wheel |
 | **Feather** | how much of the radius fades |
 | **Flow** | how much each stroke lays down |
-| **Add**, **Subtract**, **Erase** | paint, take paint away by the flow, or clear paint completely under the brush |
+| **Add**, **Subtract**, **Erase** | add to the mask by the flow, take from it by the flow, or clear what the brush itself did, completely, under the brush |
 
-**Add**, **Subtract**, and **Erase** act on the brush's own paint. To
-take a brush out of the mask, choose **Subtract** in **Add a shape**; a
-first **Subtract** or **Erase** stroke on a new brush in a mask with
-shapes does that for you, and the row goes back to **Add** so the next
-strokes cut too.
+**Subtract** takes away from the whole mask under the stroke, whatever
+the shapes before the brush gave there, so a brush over a Sky,
+Subject, or Luminance shape cuts it. **Erase** clears only the brush's
+own strokes, added or subtracted. Choosing **Subtract** in **Add a
+shape** for a new brush puts this row on **Subtract** until the brush
+is put down.
 
 With the brush in hand, **Shift+[** and **Shift+]** take the feather
 down or up a tenth, and **Ctrl+[** and **Ctrl+]** the flow.

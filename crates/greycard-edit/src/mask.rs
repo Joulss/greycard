@@ -707,6 +707,16 @@ pub struct Component {
     pub enabled: bool,
 }
 
+impl Component {
+    /// Whether this is a brush that paints on the mask before it: joined
+    /// by Add and not inverted, so its paint adds and its cut takes
+    /// away (`brush`'s doc). Any other brush joins its paint by its
+    /// mode as any shape does, and its cut is not read.
+    pub fn paints_on_mask(&self) -> bool {
+        self.shape.is_brush() && self.mode == Mode::Add && !self.invert
+    }
+}
+
 impl Default for Component {
     fn default() -> Self {
         Self {
@@ -1172,6 +1182,22 @@ impl Mask {
         sample: Option<Sample>,
         raster: impl Fn(usize, f32, f32) -> f32,
     ) -> f32 {
+        self.at_cut(u, v, sample, raster, |_, _, _| 0.0)
+    }
+
+    /// `at_sampled`, a brush's cut given by `cut` as its paint is by
+    /// `raster`. A brush that paints on the mask
+    /// ([`Component::paints_on_mask`]) takes `acc` to
+    /// `acc + p(1 - acc) - c acc`, its paint `p` and its cut `c`: the
+    /// Add join where nothing is cut.
+    pub fn at_cut(
+        &self,
+        u: f32,
+        v: f32,
+        sample: Option<Sample>,
+        raster: impl Fn(usize, f32, f32) -> f32,
+        cut: impl Fn(usize, f32, f32) -> f32,
+    ) -> f32 {
         if self.is_empty() {
             return 0.0;
         }
@@ -1184,6 +1210,10 @@ impl Mask {
             } else {
                 c.shape.at(u, v)
             };
+            if c.paints_on_mask() {
+                acc = (acc + s - acc * s - cut(i, u, v) * acc).clamp(0.0, 1.0);
+                continue;
+            }
             let s = if c.invert { 1.0 - s } else { s };
             acc = match c.mode {
                 Mode::Add => acc + s - acc * s,
@@ -2477,5 +2507,246 @@ mod tests {
         .unwrap();
         assert!(only.is_empty());
         assert_eq!(only.at(0.5, 0.5), 0.0);
+    }
+
+    /// The mask's value with its brushes painted from their strokes:
+    /// paint and cut, as the render side reads them.
+    fn painted(mask: &Mask, aspect: f32) -> impl Fn(f32, f32) -> f32 + '_ {
+        let rasters: Vec<Option<crate::brush::Raster>> = mask
+            .components
+            .iter()
+            .map(|c| match &c.shape {
+                Shape::Brush { strokes } => Some(crate::brush::Raster::of(strokes, aspect)),
+                _ => None,
+            })
+            .collect();
+        move |u, v| {
+            let read = |plane: fn(&crate::brush::Raster, f32, f32) -> f32| {
+                let rasters = &rasters;
+                move |i: usize, u: f32, v: f32| rasters[i].as_ref().map_or(0.0, |r| plane(r, u, v))
+            };
+            mask.at_cut(
+                u,
+                v,
+                None,
+                read(crate::brush::Raster::at),
+                read(crate::brush::Raster::cut_at),
+            )
+        }
+    }
+
+    /// One brush row: on a mask whose first shape covers the place, a
+    /// Subtract stroke takes the mask away there, an Add joins where
+    /// nothing was, and an Erase removes the brush's own paint and cut,
+    /// leaving what the shapes before it gave.
+    #[test]
+    fn a_brush_adds_to_takes_from_and_erases_on_the_mask() {
+        use crate::brush::{Op, Stroke};
+        let aspect = 0.75;
+        let dab = |op: Op, at: Pos, flow: f32| Stroke {
+            points: vec![at],
+            ..Stroke::new(op, 0.05, 0.0, flow)
+        };
+        // A disc over the left half of the frame, a brush after it.
+        let mask = |strokes: Vec<Stroke>| Mask {
+            components: vec![
+                Component {
+                    shape: Shape::Radial {
+                        center: [0.25, 0.375],
+                        radius: [0.3, 0.3],
+                        angle: 0.0,
+                        feather: 0.0,
+                    },
+                    ..Default::default()
+                },
+                Component {
+                    shape: Shape::Brush { strokes },
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let (inside, outside) = ([0.25, 0.375], [0.75, 0.375]);
+        assert_eq!(painted(&mask(vec![]), aspect)(0.25, 0.375), 1.0);
+        // Subtract inside the disc takes the mask away there, by the
+        // flow; nowhere else.
+        let cut = mask(vec![dab(Op::Subtract, inside, 1.0)]);
+        assert!(painted(&cut, aspect)(0.25, 0.375) < 0.01);
+        assert_eq!(painted(&cut, aspect)(0.25, 0.2), 1.0);
+        let half = mask(vec![dab(Op::Subtract, inside, 0.5)]);
+        assert!((painted(&half, aspect)(0.25, 0.375) - 0.5).abs() < 0.01);
+        // Add outside joins.
+        let add = mask(vec![dab(Op::Add, outside, 1.0)]);
+        assert!(painted(&add, aspect)(0.75, 0.375) > 0.99);
+        assert_eq!(painted(&add, aspect)(0.75, 0.2), 0.0);
+        // Erase over both gives back what the disc gave.
+        let erased = mask(vec![
+            dab(Op::Subtract, inside, 1.0),
+            dab(Op::Add, outside, 1.0),
+            dab(Op::Erase, inside, 0.2),
+            dab(Op::Erase, outside, 0.2),
+        ]);
+        assert_eq!(painted(&erased, aspect)(0.25, 0.375), 1.0);
+        assert_eq!(painted(&erased, aspect)(0.75, 0.375), 0.0);
+        // An Add over a cut paints it back in.
+        let back = mask(vec![
+            dab(Op::Subtract, inside, 1.0),
+            dab(Op::Add, inside, 1.0),
+        ]);
+        assert!(painted(&back, aspect)(0.25, 0.375) > 0.99);
+        // Under Intersect a Subtract narrows the paint, which takes
+        // from the mask too.
+        let mut within = mask(vec![
+            dab(Op::Add, [0.2, 0.375], 1.0),
+            dab(Op::Subtract, [0.2, 0.375], 1.0),
+        ]);
+        within.components[1].mode = Mode::Intersect;
+        assert!(painted(&within, aspect)(0.2, 0.375) < 0.01);
+    }
+
+    /// An edit from before one brush row reads to the picture it had:
+    /// a brush's Subtract strokes lifted its own paint, a "− Brush" cut
+    /// by its paint, and the first day's `erase` flag was a Subtract.
+    /// The old picture is worked out here by the old rule, from the
+    /// paint alone, each brush joined by its mode.
+    #[test]
+    fn an_edit_from_before_one_brush_row_reads_unchanged() {
+        use crate::brush::{Op, Raster, Stroke};
+        let aspect = 2.0 / 3.0;
+        let stroke = |op: &str, erase: bool, x: f32, flow: f32| {
+            let erase = if erase { r#","erase":true"# } else { "" };
+            format!(
+                r#"{{"points":[[{x},0.2],[{},0.45]],"radius":0.08,"feather":0.5,"flow":{flow},"op":"{op}"{erase}}}"#,
+                x + 0.2
+            )
+        };
+        let strokes = [
+            stroke("add", false, 0.1, 1.0),
+            stroke("subtract", false, 0.2, 0.6),
+            stroke("add", true, 0.3, 0.7),
+            stroke("erase", false, 0.4, 1.0),
+            stroke("add", false, 0.5, 0.5),
+        ]
+        .join(",");
+        // The old meaning in this build's ops: what took paint away
+        // without the hard edge of an erase is a lift.
+        let old_ops = [Op::Add, Op::Lift, Op::Lift, Op::Erase, Op::Add];
+        let linear = r#"{"shape":{"kind":"linear","from":[0.0,0.0],"to":[1.0,0.6]},"mode":"add"}"#;
+        let brush = |mode: &str, invert: bool| {
+            format!(
+                r#"{{"shape":{{"kind":"brush","strokes":[{strokes}]}},"mode":"{mode}","invert":{invert}}}"#
+            )
+        };
+        let cases = [
+            ("add", false),
+            ("subtract", false),
+            ("intersect", false),
+            ("subtract", true),
+            ("add", true),
+        ];
+        let adjustments: Vec<String> = cases
+            .iter()
+            .enumerate()
+            .map(|(i, (mode, invert))| {
+                format!(
+                    r#"{{"id":{i},"mask":{{"components":[{linear},{}]}}}}"#,
+                    brush(mode, *invert)
+                )
+            })
+            .collect();
+        let json = format!(
+            r#"{{"version":7,"adjustments":[{}]}}"#,
+            adjustments.join(",")
+        );
+        let edit = crate::Edit::from_json(&json).unwrap();
+        assert_eq!(edit.version, crate::VERSION);
+        // The old raster: the strokes' paint by the old ops.
+        let first = &edit.adjustments[0].mask.components[1].shape;
+        let Shape::Brush { strokes: read } = first else {
+            panic!("a brush");
+        };
+        let old_strokes: Vec<Stroke> = read
+            .iter()
+            .zip(old_ops)
+            .map(|(s, op)| Stroke { op, ..s.clone() })
+            .collect();
+        let old = Raster::of(&old_strokes, aspect);
+        for (a, (mode, invert)) in edit.adjustments.iter().zip(cases) {
+            let c = &a.mask.components[1];
+            // A plain "− Brush" now paints on the mask; the rest keep
+            // their mode.
+            let now = match (mode, invert) {
+                ("subtract", true) => Mode::Subtract,
+                ("intersect", _) => Mode::Intersect,
+                _ => Mode::Add,
+            };
+            assert_eq!((c.mode, c.invert), (now, invert), "{mode} {invert}");
+            let mut worst = 0.0f32;
+            let now_at = painted(&a.mask, aspect);
+            for y in 0..40 {
+                for x in 0..60 {
+                    let (u, v) = ((x as f32 + 0.5) / 60.0, (y as f32 + 0.5) / 60.0);
+                    let lin = a.mask.components[0].shape.at(u, v);
+                    let s = old.at(u, v);
+                    let s = if invert { 1.0 - s } else { s };
+                    let was = match mode {
+                        "add" => lin + s - lin * s,
+                        "subtract" => lin * (1.0 - s),
+                        _ => lin * s,
+                    };
+                    worst = worst.max((now_at(u, v) - was).abs());
+                }
+            }
+            assert!(worst < 1e-5, "{mode} {invert}: {worst}");
+        }
+        // Written again, the edit reads as it is: no second step.
+        let again = crate::Edit::from_json(&edit.to_json()).unwrap();
+        assert_eq!(again, edit);
+        assert!(!edit.to_json().contains("\"erase\": "));
+    }
+
+    /// An edit from before version 4 still waiting on its frame is
+    /// brought up once: written back and read again, a "− Brush" keeps
+    /// its strokes' new meaning rather than taking version 8's step a
+    /// second time, and a Subtract stroke saved into it stays a
+    /// Subtract.
+    #[test]
+    fn an_edit_waiting_on_its_frame_takes_one_brush_row_once() {
+        use crate::brush::{Op, Stroke};
+        let json = r#"{"version":3,"geometry":{"aspect":{"kind":"original"}},
+            "adjustments":[{"id":1,"mask":{"components":[
+            {"shape":{"kind":"linear","from":[0.0,0.0],"to":[1.0,0.6]},"mode":"add"},
+            {"shape":{"kind":"brush","strokes":[
+                {"points":[[0.3,0.3]],"radius":0.05,"feather":0,"flow":1,"op":"add"},
+                {"points":[[0.4,0.3]],"radius":0.05,"feather":0,"flow":1,"op":"subtract"}]},
+             "mode":"subtract"}]}}]}"#;
+        let ops = |e: &crate::Edit| {
+            let c = &e.adjustments[0].mask.components[1];
+            let Shape::Brush { strokes } = &c.shape else {
+                panic!("a brush");
+            };
+            (c.mode, strokes.iter().map(|s| s.op).collect::<Vec<_>>())
+        };
+        let mut first = crate::Edit::from_json(json).unwrap();
+        assert!(first.needs_frame());
+        assert_eq!(ops(&first), (Mode::Add, vec![Op::Subtract, Op::Lift]));
+        let again = crate::Edit::from_json(&first.to_json()).unwrap();
+        assert!(again.needs_frame());
+        assert_eq!(again, first);
+        // A stroke of the new meaning saved meanwhile keeps it.
+        let Shape::Brush { strokes } = &mut first.adjustments[0].mask.components[1].shape else {
+            panic!("a brush");
+        };
+        strokes.push(Stroke {
+            points: vec![[0.5, 0.3]],
+            ..Stroke::new(Op::Subtract, 0.05, 0.0, 1.0)
+        });
+        let saved = crate::Edit::from_json(&first.to_json()).unwrap();
+        assert_eq!(ops(&saved).1, vec![Op::Subtract, Op::Lift, Op::Subtract]);
+        // Finished with the frame, the mark goes.
+        let mut done = saved.clone();
+        done.migrate_with_frame(false);
+        assert!(!done.needs_frame());
+        assert!(!done.to_json().contains("frame_pending"));
     }
 }

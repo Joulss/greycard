@@ -130,11 +130,13 @@ impl Edit {
         pipelines: impl Fn(&Shape) -> Vec<String>,
     ) -> u64 {
         // What reaches no pixel is taken out: the version the edit was
-        // written at (a migration that changes nothing changes no
-        // picture), an adjustment's name, and the light a mask's
+        // written at and whether it waits on its frame (a migration that
+        // changes nothing changes no picture), an adjustment's name, and
+        // the light a mask's
         // switched-off white balance keeps for when it goes on again.
         let mut edit = self.clone();
         edit.version = 0;
+        edit.frame_pending = false;
         for a in &mut edit.adjustments {
             a.name.clear();
             a.look.white_balance = a.look.white_balance.acting();
@@ -256,6 +258,9 @@ mod tests {
         );
         sidecar.current.version = 1;
         assert_eq!(key(&sidecar.current, None), k, "nor is the schema version");
+        sidecar.current.frame_pending = true;
+        assert_eq!(key(&sidecar.current, None), k, "nor the wait on the frame");
+        sidecar.current.frame_pending = false;
         sidecar.current.adjustments.push(crate::Adjustment {
             id: 3,
             name: "Sky".into(),

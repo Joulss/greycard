@@ -18,6 +18,12 @@ use crate::{
 pub struct Edit {
     /// Schema version of the struct as written.
     pub version: u32,
+    /// Version 4's step still waits on the frame's shape
+    /// ([`Edit::needs_frame`]). Kept apart from `version`, so an edit
+    /// written back meanwhile is at this build's version and no other
+    /// step runs on it twice; left out of a sidecar when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frame_pending: bool,
     pub light: Light,
     /// The display curve under the light: per channel, as it always has
     /// been, or AgX. Global, as the curve is; left out of a sidecar at its
@@ -340,6 +346,7 @@ impl Default for Edit {
     fn default() -> Self {
         Self {
             version: VERSION,
+            frame_pending: false,
             light: Light::default(),
             display_curve: DisplayCurve::default(),
             white_balance: WhiteBalance::default(),

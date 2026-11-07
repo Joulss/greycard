@@ -1,9 +1,19 @@
 //! Brush strokes and the raster they paint. A stroke is a run of
 //! points in the masks' units with a size, a feather and a flow,
-//! laying paint down or lifting it. The strokes are what the sidecar
-//! keeps; the raster is made from them, the same way on both paths,
-//! at a fixed width, so a painted mask is one thing at any export
-//! size. While a stroke is under way only its new points are stamped.
+//! adding to the mask under it, taking from it, or erasing what the
+//! brush did there. The strokes are what the sidecar keeps; the raster
+//! is made from them, the same way on both paths, at a fixed width, so
+//! a painted mask is one thing at any export size. While a stroke is
+//! under way only its new points are stamped.
+//!
+//! A brush is a map on the mask before it, texel by texel: each stroke
+//! sends the mask `m` under it to `m + k(1 - m)` (Add) or `m(1 - k)`
+//! (Subtract), `k` its coverage times its flow, and an erase moves the
+//! map back toward leaving `m` alone. Any run of those is
+//! `m(1 - p - c) + p` for two planes, the paint `p` and the cut `c`,
+//! which is what the raster keeps. The paint is what one plane held
+//! before there was a cut, to the bit, so a brush joined by its mode
+//! as any shape is reads its paint alone.
 
 use serde::{Deserialize, Serialize};
 
@@ -62,17 +72,29 @@ pub fn raster_height(width: usize, aspect: f32) -> usize {
 // A row of a raster is a whole number of the GPU copy's row alignment.
 const _: () = assert!(RASTER_WIDTH.is_multiple_of(256) && WIDE_RASTER_WIDTH.is_multiple_of(256));
 
-/// What a stroke does to the paint under it.
+/// What a stroke does to the mask under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Op {
-    /// Lays paint down by its flow, feathered.
+    /// Adds to the mask by its flow, feathered.
     #[default]
     Add,
-    /// Takes paint away by its flow, feathered.
+    /// Takes from the mask by its flow, feathered, whatever the shapes
+    /// before the brush gave there: on a brush that paints on the mask
+    /// (`Component::paints_on_mask`, joined by Add and not inverted).
+    /// On any other brush it takes paint away, and its cut is not read:
+    /// under Intersect that narrows the mask, and on an inverted brush
+    /// the inversion makes it more mask.
     Subtract,
-    /// Clears the whole radius, hard-edged, whatever the flow.
+    /// Clears the brush's own paint and cut over the whole radius,
+    /// hard-edged, whatever the flow.
     Erase,
+    /// Clears the brush's own paint and cut by the flow, feathered: an
+    /// erase that is not hard. What a Subtract stroke did before the
+    /// schema's version 8, when it lifted the brush's paint and took
+    /// nothing from the shapes before it; a sidecar from then reads its
+    /// Subtract strokes as this (`migrate`). Not offered: not in `ALL`.
+    Lift,
 }
 
 impl Op {
@@ -83,6 +105,7 @@ impl Op {
             Op::Add => "Add",
             Op::Subtract => "Subtract",
             Op::Erase => "Erase",
+            Op::Lift => "Lift",
         }
     }
 
@@ -103,9 +126,6 @@ pub struct Stroke {
     /// How much the stroke lays down or takes away, 0 to 1.
     pub flow: f32,
     pub op: Op,
-    /// The first day's sidecars said this for a subtract; read, not written.
-    #[serde(skip_serializing)]
-    erase: bool,
 }
 
 impl Stroke {
@@ -130,7 +150,6 @@ impl Default for Stroke {
             feather: 0.5,
             flow: 1.0,
             op: Op::Add,
-            erase: false,
         }
     }
 }
@@ -146,28 +165,21 @@ impl Stroke {
         }
     }
 
-    /// What the stroke does, the old flag counted.
-    pub fn op(&self) -> Op {
-        if self.erase && self.op == Op::Add {
-            Op::Subtract
-        } else {
-            self.op
-        }
-    }
-
     /// Whether `other` is this stroke with points added.
     fn continues(&self, other: &Stroke) -> bool {
         self.radius == other.radius
             && self.feather == other.feather
             && self.flow == other.flow
-            && self.op() == other.op()
+            && self.op == other.op
             && other.points.starts_with(&self.points)
     }
 }
 
 /// The strokes painted: a texel is the finished strokes composited,
 /// with the stroke under way over them. Covers u in 0 to 1 and v in
-/// 0 to `aspect`.
+/// 0 to `aspect`. Two planes, the paint and the cut (the module's
+/// doc); the cut is made only once a Subtract stroke lands, so a
+/// brush that never took anything away, and a model's mask, keep one.
 #[derive(Clone)]
 pub struct Raster {
     pub width: usize,
@@ -179,6 +191,10 @@ pub struct Raster {
     base: Vec<u8>,
     /// The coverage of the stroke under way, 0 where there is none.
     cover: Vec<u8>,
+    /// What is cut, 0 to 255; empty while nothing is.
+    cut: Vec<u8>,
+    /// The finished strokes' cut alone; empty with `cut`.
+    cut_base: Vec<u8>,
     /// The strokes as painted so far.
     done: Vec<Stroke>,
     /// The distance to the next stamp along the stroke under way.
@@ -212,6 +228,8 @@ impl Raster {
             data: vec![0; width * height],
             base: vec![0; width * height],
             cover: vec![0; width * height],
+            cut: Vec::new(),
+            cut_base: Vec::new(),
             done: Vec::new(),
             carry: 0.0,
             version: 0,
@@ -229,6 +247,8 @@ impl Raster {
             aspect,
             base: data.clone(),
             cover: vec![0; width * height],
+            cut: Vec::new(),
+            cut_base: Vec::new(),
             data,
             done: Vec::new(),
             carry: 0.0,
@@ -243,9 +263,14 @@ impl Raster {
         r
     }
 
-    /// The texels, row by row.
+    /// The texels, row by row: the paint.
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// The cut's texels, row by row, when a stroke has cut anything.
+    pub fn cut(&self) -> Option<&[u8]> {
+        (!self.cut.is_empty()).then_some(&self.cut[..])
     }
 
     /// Bring the raster to `strokes`: the points added since the last
@@ -260,6 +285,8 @@ impl Raster {
             self.data.fill(0);
             self.base.fill(0);
             self.cover.fill(0);
+            self.cut.clear();
+            self.cut_base.clear();
             self.done.clear();
             self.carry = 0.0;
             self.version += 1;
@@ -276,6 +303,7 @@ impl Raster {
         for stroke in &strokes[n..] {
             // The stroke before it is finished.
             self.base.copy_from_slice(&self.data);
+            self.cut_base.copy_from_slice(&self.cut);
             self.cover.fill(0);
             self.carry = 0.0;
             if !stroke.points.is_empty() {
@@ -293,6 +321,11 @@ impl Raster {
     /// Stamp the stroke's points from index `from`, along its line at
     /// a sixth of the radius, carrying the spacing across the points.
     fn stamp_from(&mut self, stroke: &Stroke, from: usize) {
+        // The first cut makes the plane; only a Subtract adds to it.
+        if stroke.op == Op::Subtract && self.cut.is_empty() {
+            self.cut = vec![0; self.data.len()];
+            self.cut_base = vec![0; self.data.len()];
+        }
         let radius = (stroke.radius.max(1e-4) * self.width as f32).max(0.5);
         let spacing = (radius / 6.0).max(0.5);
         let (w, h, aspect) = (self.width as f32, self.height as f32, self.aspect);
@@ -317,10 +350,12 @@ impl Raster {
 
     /// One disc of the brush at `c` (texels): the stroke's coverage is
     /// the most any of its discs gave, and what is shown is the
-    /// finished strokes with that laid over or taken away by the
-    /// flow; an erase clears the disc outright.
+    /// finished strokes with that put on by the flow. An Add lays
+    /// paint and lifts the cut, a Subtract lays cut and lifts the
+    /// paint, an erase or a lift lifts both; an erase clears the disc
+    /// outright.
     fn stamp(&mut self, c: (f32, f32), radius: f32, stroke: &Stroke) {
-        let op = stroke.op();
+        let op = stroke.op;
         let (feather, flow) = match op {
             Op::Erase => (0.0, 1.0),
             _ => (stroke.feather.clamp(0.0, 1.0), stroke.flow.clamp(0.0, 1.0)),
@@ -347,9 +382,17 @@ impl Raster {
                 let (b, k) = (self.base[i] as f32 / 255.0, s as f32 / 255.0 * flow);
                 let shown = match op {
                     Op::Add => b + k * (1.0 - b),
-                    Op::Subtract | Op::Erase => b * (1.0 - k),
+                    Op::Subtract | Op::Erase | Op::Lift => b * (1.0 - k),
                 };
                 self.data[i] = (shown * 255.0).round() as u8;
+                if !self.cut.is_empty() {
+                    let was = self.cut_base[i] as f32 / 255.0;
+                    let cut = match op {
+                        Op::Subtract => was + k * (1.0 - was),
+                        Op::Add | Op::Erase | Op::Lift => was * (1.0 - k),
+                    };
+                    self.cut[i] = (cut * 255.0).round() as u8;
+                }
             }
         }
     }
@@ -357,12 +400,25 @@ impl Raster {
     /// The value at (u, v) in the masks' units, between texels as a
     /// linear sampler clamped to the edge has it.
     pub fn at(&self, u: f32, v: f32) -> f32 {
+        self.sample(&self.data, u, v)
+    }
+
+    /// The cut at (u, v), read as [`Raster::at`] reads the paint;
+    /// nothing where no stroke has cut.
+    pub fn cut_at(&self, u: f32, v: f32) -> f32 {
+        if self.cut.is_empty() {
+            return 0.0;
+        }
+        self.sample(&self.cut, u, v)
+    }
+
+    fn sample(&self, plane: &[u8], u: f32, v: f32) -> f32 {
         let x = (u * self.width as f32 - 0.5).clamp(0.0, (self.width - 1) as f32);
         let y = (v / self.aspect * self.height as f32 - 0.5).clamp(0.0, (self.height - 1) as f32);
         let (x0, y0) = (x.floor() as usize, y.floor() as usize);
         let (x1, y1) = ((x0 + 1).min(self.width - 1), (y0 + 1).min(self.height - 1));
         let (fx, fy) = (x - x0 as f32, y - y0 as f32);
-        let t = |x: usize, y: usize| self.data[y * self.width + x] as f32 / 255.0;
+        let t = |x: usize, y: usize| plane[y * self.width + x] as f32 / 255.0;
         let top = t(x0, y0) * (1.0 - fx) + t(x1, y0) * fx;
         let bottom = t(x0, y1) * (1.0 - fx) + t(x1, y1) * fx;
         top * (1.0 - fy) + bottom * fy
@@ -472,13 +528,12 @@ mod tests {
         assert_eq!(r.at(0.5, 0.3), 0.0);
         assert_eq!(r.at(0.545, 0.3), 0.0);
         assert_eq!(r.at(0.58, 0.3), 1.0);
-        // The old flag reads as a subtract.
-        let old: Stroke = serde_json::from_str(
-            r#"{"points":[[0.5,0.3]],"radius":0.05,"feather":0,"flow":0.5,"erase":true}"#,
-        )
-        .unwrap();
-        assert_eq!(old.op(), Op::Subtract);
-        assert!(!serde_json::to_string(&old).unwrap().contains("erase"));
+        // A lift takes half of the paint as the subtract did, and cuts
+        // nothing.
+        let lift = dab([0.5, 0.3], 0.05, 0.0, 0.5, Op::Lift);
+        let lifted = Raster::of(&[paint.clone(), lift], aspect);
+        assert!((lifted.at(0.5, 0.3) - 0.5).abs() < 0.01);
+        assert!(lifted.cut().is_none());
         // Within one stroke the discs do not pile up: a long stroke's
         // feathered edge is one disc's.
         let long = Stroke {
@@ -488,6 +543,62 @@ mod tests {
         let one = Raster::of(&[dab([0.5, 0.3], 0.1, 0.5, 1.0, Op::Add)], aspect);
         let r = Raster::of(&[long], aspect);
         assert!((r.at(0.5, 0.38) - one.at(0.5, 0.38)).abs() < 0.01);
+    }
+
+    /// The paint is the one plane a raster held before the cut, to the
+    /// bit, whatever the ops; the cut is laid by a Subtract only, lifted
+    /// by an Add, cleared by an erase, and the two never pass one.
+    #[test]
+    fn a_subtract_lays_cut_an_add_lifts_it_and_an_erase_clears_both() {
+        let aspect = 0.75;
+        let at = [0.5, 0.3];
+        let add = dab(at, 0.1, 0.0, 1.0, Op::Add);
+        let cut = dab(at, 0.1, 0.0, 0.5, Op::Subtract);
+        let r = Raster::of(std::slice::from_ref(&add), aspect);
+        assert!(r.cut().is_none(), "no cut until a Subtract");
+        assert_eq!(r.cut_at(0.5, 0.3), 0.0);
+        // Over full paint: half the paint goes and half is cut.
+        let r = Raster::of(&[add.clone(), cut.clone()], aspect);
+        assert!((r.at(0.5, 0.3) - 0.5).abs() < 0.01);
+        assert!((r.cut_at(0.5, 0.3) - 0.5).abs() < 0.01);
+        // On nothing: all cut.
+        let full_cut = dab(at, 0.1, 0.0, 1.0, Op::Subtract);
+        let r = Raster::of(std::slice::from_ref(&full_cut), aspect);
+        assert_eq!((r.at(0.5, 0.3), r.cut_at(0.5, 0.3)), (0.0, 1.0));
+        // An Add over a cut lifts it by its flow.
+        let half_add = dab(at, 0.1, 0.0, 0.5, Op::Add);
+        let r = Raster::of(&[full_cut.clone(), half_add], aspect);
+        assert!((r.at(0.5, 0.3) - 0.5).abs() < 0.01);
+        assert!((r.cut_at(0.5, 0.3) - 0.5).abs() < 0.01);
+        // An erase clears both, hard, at any flow.
+        let erase = dab(at, 0.05, 0.9, 0.1, Op::Erase);
+        let r = Raster::of(&[add.clone(), full_cut.clone(), erase], aspect);
+        assert_eq!((r.at(0.5, 0.3), r.cut_at(0.5, 0.3)), (0.0, 0.0));
+        assert_eq!(r.cut_at(0.58, 0.3), 1.0, "outside the erase");
+        // The paint is the old raster's: subtract and lift alike take
+        // the same from it.
+        let ops = [Op::Add, Op::Subtract, Op::Add, Op::Erase, Op::Subtract];
+        let strokes: Vec<Stroke> = ops
+            .iter()
+            .enumerate()
+            .map(|(i, &op)| Stroke {
+                points: vec![[0.3 + 0.08 * i as f32, 0.3], [0.5, 0.35]],
+                ..Stroke::new(op, 0.07, 0.6, 0.6)
+            })
+            .collect();
+        let lifted: Vec<Stroke> = strokes
+            .iter()
+            .map(|s| Stroke {
+                op: if s.op == Op::Subtract { Op::Lift } else { s.op },
+                ..s.clone()
+            })
+            .collect();
+        let (cut, old) = (Raster::of(&strokes, aspect), Raster::of(&lifted, aspect));
+        assert_eq!(cut.data(), old.data());
+        assert!(old.cut().is_none());
+        let planes = cut.data().iter().zip(cut.cut().unwrap());
+        assert!(planes.clone().any(|(_, &c)| c > 0));
+        assert!(planes.map(|(&p, &c)| p as u32 + c as u32).max() <= Some(256));
     }
 
     #[test]
@@ -518,6 +629,8 @@ mod tests {
         }
         let whole = Raster::of(&[a.clone(), b.clone()], aspect);
         assert_eq!(step.data(), whole.data());
+        assert!(whole.cut().is_some());
+        assert_eq!(step.cut(), whole.cut());
         // Nothing to do leaves it alone; fewer strokes paints again.
         let v = step.version;
         assert!(!step.update(&[a.clone(), b.clone()]));

@@ -239,7 +239,9 @@ struct Local {
 // its size in texels in b.yz), kind 3 a raster not made yet; kind 4 a
 // luminance window (a: low, high, their feathers), kind 5 a color
 // window (a: hue in degrees, half its width, the hue's feather, the
-// chroma floor; b.x the floor's feather). The low two bits of the
+// chroma floor; b.x the floor's feather); kind 6 a brush that paints
+// on the mask and has cut, read as kind 2 is, its paint in its layer
+// and its cut in the next, joined in `mask_at`. The low two bits of the
 // flags are the mode (0 adds, 1 subtracts, 2 intersects); bit 2
 // inverts.
 struct Shape {
@@ -1021,6 +1023,14 @@ fn mask_at(l: Local, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
     var acc = 0.0;
     for (var i = 0u; i < l.shapes_count; i = i + 1u) {
         let sh = shapes[l.shapes_start + i];
+        if (sh.kind == 6u) {
+            // Its paint adds and its cut takes away, as `Mask::at_cut`.
+            let v = uv.y / sh.b.x;
+            let paint = raster_at(sh.wide, sh.layer, sh.b.yz, uv.x, v);
+            let cut = raster_at(sh.wide, sh.layer + 1u, sh.b.yz, uv.x, v);
+            acc = clamp(acc + paint - acc * paint - cut * acc, 0.0, 1.0);
+            continue;
+        }
         let s = shape_at(sh, uv, sample);
         let mode = sh.flags & 3u;
         if (mode == 1u) {

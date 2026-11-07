@@ -483,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_waiting_on_the_frame_keeps_its_three() {
+    fn an_edit_waiting_on_the_frame_keeps_its_mark() {
         let mut waiting = Edit {
             version: 3,
             ..Edit::default()
@@ -496,11 +496,16 @@ mod tests {
         s.record(exposed(1.0));
         s.new_version(None, None).unwrap();
         let back = reread(&s);
-        assert_eq!(back.history[0].edit.version, 3);
+        assert!(back.history[0].edit.frame_pending);
         assert!(back.needs_frame());
-        let value: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
-        assert_eq!(value["history"][0]["version"], 3);
+        // Read and written back, it keeps the mark at this build's
+        // version, and reads the same again.
+        let value: serde_json::Value = serde_json::from_str(&back.to_json()).unwrap();
+        assert_eq!(value["history"][0]["version"], VERSION);
+        assert_eq!(value["history"][0]["frame_pending"], true);
         assert_eq!(value["current"]["version"], VERSION);
+        assert!(value["current"].get("frame_pending").is_none());
+        assert_eq!(reread(&back), back);
         // A version-4 edit is not waiting on anything.
         let four = Edit {
             version: 4,
