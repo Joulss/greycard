@@ -648,6 +648,16 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// Run the engine's GPU ops on `ctx`, built by the caller on a
+    /// device of its own (`Context::for_export`), whose lost callback
+    /// is the context's: the command line's export, which has no window
+    /// to lend one and would otherwise build the ops' pipelines twice.
+    pub fn set_context(&self, ctx: greycard_gpu::Context) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").context = Some(ctx);
+        cv.notify_one();
+    }
+
     /// What tells the worker the window's device was lost, from
     /// whichever thread found the loss (the device's lost callback
     /// runs there): the engine's ops go to the CPU from then on, and

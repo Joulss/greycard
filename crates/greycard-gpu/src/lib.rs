@@ -205,6 +205,89 @@ pub fn adapters(backends: wgpu::Backends) -> Vec<wgpu::AdapterInfo> {
         .collect()
 }
 
+/// The adapter a device of our own is made on: the one
+/// `WGPU_ADAPTER_NAME` names where it is set, else the one wgpu takes
+/// for the power preference `WGPU_POWER_PREF` names, high performance
+/// where it names none, as the window asks for its own. Its kind is the
+/// caller's to judge: a software one (lavapipe, WARP) comes back too.
+fn adapter() -> Result<wgpu::Adapter> {
+    let instance = instance();
+    if let Ok(name) = std::env::var(WGPU_ADAPTER_NAME) {
+        let name = name.to_lowercase();
+        return pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+            .into_iter()
+            .find(|a| a.get_info().name.to_lowercase().contains(&name))
+            .ok_or(Error::NoAdapter);
+    }
+    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference:
+            wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance),
+        ..Default::default()
+    }))
+    .map_err(|_| Error::NoAdapter)
+}
+
+/// A device of our own on `adapter`, with the limits the ops want.
+fn device_on(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
+    let limits = adapter.limits();
+    let required_limits = wgpu::Limits {
+        max_texture_dimension_2d: WANTED_TEXTURE_DIMENSION.min(limits.max_texture_dimension_2d),
+        ..wgpu::Limits::default()
+    };
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("greycard-gpu"),
+        required_limits,
+        ..Default::default()
+    }))
+    .map_err(|e| Error::Device(e.to_string()))
+}
+
+/// The variable Slint reads to take a CPU adapter.
+pub const SLINT_WGPU_CPU: &str = "SLINT_WGPU_CPU";
+
+/// The variable wgpu reads to take the adapter it names.
+pub const WGPU_ADAPTER_NAME: &str = "WGPU_ADAPTER_NAME";
+
+/// Set beside [`SLINT_WGPU_CPU`] where a greycard set it, so a greycard
+/// started from one does not read it as asked for by hand.
+pub const SLINT_WGPU_CPU_OURS: &str = "GREYCARD_SET_SLINT_WGPU_CPU";
+
+/// Whether the adapter was asked for by hand in the environment `var`
+/// reads: [`SLINT_WGPU_CPU`] that no greycard set, or
+/// [`WGPU_ADAPTER_NAME`]. The window and the command line's export
+/// both take a software adapter only then.
+pub fn asked_by_hand(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    let slint_cpu = var(SLINT_WGPU_CPU).is_some_and(|v| v.to_str().is_some());
+    (slint_cpu && var(SLINT_WGPU_CPU_OURS).is_none()) || var(WGPU_ADAPTER_NAME).is_some()
+}
+
+/// Whether an export takes an adapter of `kind`: any but a software
+/// one, which only when `software` says it was asked for.
+fn takes(kind: wgpu::DeviceType, software: bool) -> bool {
+    kind != wgpu::DeviceType::Cpu || software
+}
+
+/// Why [`Context::for_export`] gave no context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Declined {
+    /// No adapter at all, or none named.
+    NoGpu,
+    /// Only a software adapter, not asked for.
+    Software,
+    /// The adapter would not make a device or build the ops.
+    Failed(String),
+}
+
+impl std::fmt::Display for Declined {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Declined::NoGpu => f.write_str("no GPU"),
+            Declined::Software => f.write_str("software adapter declined"),
+            Declined::Failed(e) => write!(f, "no GPU: {e}"),
+        }
+    }
+}
+
 /// A device, its queue, and the ops' pipelines built for it.
 pub struct Context {
     device: wgpu::Device,
@@ -241,35 +324,43 @@ impl Context {
         Self::build(device.clone(), queue.clone(), info)
     }
 
-    /// On an adapter of our own, the fastest the machine has, or
-    /// [`Error::NoAdapter`] when it has none.
+    /// On an adapter of our own ([`adapter`]), or [`Error::NoAdapter`]
+    /// when the machine has none.
     pub fn own() -> Result<Self> {
-        let adapter =
-            pollster::block_on(instance().request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            }))
-            .map_err(|_| Error::NoAdapter)?;
-        let limits = adapter.limits();
-        let required_limits = wgpu::Limits {
-            max_texture_dimension_2d: WANTED_TEXTURE_DIMENSION.min(limits.max_texture_dimension_2d),
-            ..wgpu::Limits::default()
-        };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("greycard-gpu"),
-            required_limits,
-            ..Default::default()
-        }))
-        .map_err(|e| Error::Device(e.to_string()))?;
+        let adapter = adapter()?;
+        let (device, queue) = device_on(&adapter)?;
         let ctx = Self::build(device, queue, adapter.get_info())?;
-        // The device is ours, so its lost callback is too; on a device
-        // the caller lent, the callback is the caller's.
-        let lost = ctx.lost.clone();
-        ctx.device.set_device_lost_callback(move |reason, message| {
-            lost.store(true, Ordering::Release);
-            log::warn!("greycard-gpu: the device was lost ({reason:?}): {message}");
-        });
+        ctx.watch_loss();
         Ok(ctx)
+    }
+
+    /// A context of our own for an export with no window, on the
+    /// adapter [`adapter`] takes: refused when that is a software one
+    /// (lavapipe, WARP) unless `software` says it was asked for, since
+    /// its shaders run slower than the CPU runs the same stages.
+    pub fn for_export(software: bool) -> std::result::Result<Self, Declined> {
+        let adapter = adapter().map_err(|_| Declined::NoGpu)?;
+        let info = adapter.get_info();
+        if !takes(info.device_type, software) {
+            log::info!("greycard-gpu: {} declined, a software adapter", info.name);
+            return Err(Declined::Software);
+        }
+        let (device, queue) = device_on(&adapter).map_err(|e| Declined::Failed(e.to_string()))?;
+        let ctx = Self::build(device, queue, info).map_err(|e| Declined::Failed(e.to_string()))?;
+        ctx.watch_loss();
+        Ok(ctx)
+    }
+
+    /// The device is ours, so its lost callback is too: it marks the
+    /// context lost. On a device the caller lent, the callback is the
+    /// caller's.
+    fn watch_loss(&self) {
+        let lost = self.lost.clone();
+        self.device
+            .set_device_lost_callback(move |reason, message| {
+                lost.store(true, Ordering::Release);
+                log::warn!("greycard-gpu: the device was lost ({reason:?}): {message}");
+            });
     }
 
     fn build(device: wgpu::Device, queue: wgpu::Queue, info: wgpu::AdapterInfo) -> Result<Self> {
@@ -805,5 +896,40 @@ impl Image {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An export takes any adapter but a software one, and that only
+    /// when asked for.
+    #[test]
+    fn a_software_adapter_is_taken_only_when_asked() {
+        use wgpu::DeviceType;
+        for kind in [
+            DeviceType::DiscreteGpu,
+            DeviceType::IntegratedGpu,
+            DeviceType::VirtualGpu,
+            DeviceType::Other,
+        ] {
+            assert!(takes(kind, false), "{kind:?}");
+        }
+        assert!(!takes(DeviceType::Cpu, false));
+        assert!(takes(DeviceType::Cpu, true));
+    }
+
+    /// `SLINT_WGPU_CPU` is asked for by hand unless a greycard set it,
+    /// which its marker says; `WGPU_ADAPTER_NAME` always is.
+    #[test]
+    fn asked_by_hand_reads_the_two_variables_and_the_marker() {
+        let env = |set: &'static [&'static str]| {
+            move |name: &str| set.contains(&name).then(|| std::ffi::OsString::from("1"))
+        };
+        assert!(!asked_by_hand(env(&[])));
+        assert!(asked_by_hand(env(&[SLINT_WGPU_CPU])));
+        assert!(!asked_by_hand(env(&[SLINT_WGPU_CPU, SLINT_WGPU_CPU_OURS])));
+        assert!(asked_by_hand(env(&[WGPU_ADAPTER_NAME])));
     }
 }

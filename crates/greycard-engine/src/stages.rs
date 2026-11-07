@@ -40,8 +40,9 @@ pub enum Purpose {
     /// The open frame on screen: on the GPU where one is lent, ending
     /// at the viewport's shader.
     Viewport,
-    /// A file under the sheet's settings: the CPU reference, ending at
-    /// the file.
+    /// A file under the sheet's settings, ending at the file: the CA,
+    /// the demosaic, and the lens on the GPU where one is lent, as the
+    /// viewport runs them, the rest on the CPU.
     Export(Box<export::Settings>),
     /// The edit's pictures of a frame not open: binned, the masks from
     /// the cache, finished to a 2048 sRGB picture.
@@ -486,9 +487,21 @@ impl Stage {
         }
     }
 
+    /// Whether the stage has a device version that takes a picture in
+    /// memory and hands one back: the CA, the lens when it moves a
+    /// pixel, and a demosaic with a device version. Every walk with a
+    /// device runs these there ([`crate::walk::plan`]).
+    pub fn in_memory_on_device(&self) -> bool {
+        match self {
+            Stage::Ca(_) | Stage::Lens(_) => self.device(),
+            _ => self.demosaics_on_device(),
+        }
+    }
+
     /// Whether the stage is a demosaic with a device version: the Bayer
-    /// ones but bilinear. The viewport and the prefetch run it there,
-    /// so a base the one makes is the same demosaic the other would.
+    /// ones but bilinear. The viewport, the prefetch, and the export run
+    /// it there, so a base the one makes is the same demosaic the others
+    /// would.
     pub fn demosaics_on_device(&self) -> bool {
         matches!(
             self,
@@ -1363,12 +1376,12 @@ mod tests {
         assert!(!has(&edit, &export()));
     }
 
-    /// The demosaic goes to the device for the viewport and the
-    /// prefetch when one is lent and its method has a device version;
-    /// the CPU's without one, and the export's always, as the command
-    /// line's is. An X-Trans frame's resolves to its own.
+    /// The demosaic goes to the device for the viewport, the prefetch,
+    /// and the export when one is lent and its method has a device
+    /// version; the CPU's without one. An X-Trans frame's resolves to
+    /// its own.
     #[test]
-    fn the_demosaic_is_on_the_device_for_the_viewport_and_the_prefetch() {
+    fn the_demosaic_is_on_the_device_for_every_walk_lent_one() {
         use crate::walk::{Place, plan};
         use greycard_edit::Demosaic;
         let place = |edit: &Edit, purpose: &Purpose, facts: &Facts, lent: bool| {
@@ -1391,15 +1404,12 @@ mod tests {
             Demosaic::Vng4,
         ] {
             let edit = with(method);
-            for purpose in [Purpose::Viewport, Purpose::Prefetch] {
+            for purpose in [Purpose::Viewport, Purpose::Prefetch, export()] {
                 let (on, _) = place(&edit, &purpose, &raw(0), true).unwrap();
                 assert_eq!(on, Place::Gpu, "{method:?} {purpose:?}");
                 let (off, _) = place(&edit, &purpose, &raw(0), false).unwrap();
                 assert_eq!(off, Place::Cpu, "{method:?} {purpose:?} with no device");
             }
-            // The export is the command line's, which has no device.
-            let (on, _) = place(&edit, &export(), &raw(0), true).unwrap();
-            assert_eq!(on, Place::Cpu, "{method:?} export");
             // The reduced pictures bin in its place.
             assert!(place(&edit, &Purpose::Reduced, &raw(0), true).is_none());
         }
@@ -1411,10 +1421,61 @@ mod tests {
             stage,
             Step::Op(Stage::Demosaic(DemosaicMethod::Markesteijn3, _))
         ));
-        // The export is all the reference's, a device lent or not.
-        let steps = stages(&Edit::default(), &export(), &raw(0), None);
+    }
+
+    /// An export lent a device runs its CA, demosaic, and lens there,
+    /// as the viewport does, and the rest on the CPU: the Detail
+    /// section, the dehaze, and the sharpen, whose device versions end
+    /// at the viewport's half floats, and its own finish. Without a
+    /// device (`--cpu`, or a machine with none) every step is the
+    /// CPU's.
+    #[test]
+    fn an_export_lent_a_device_runs_the_ca_demosaic_and_lens_there() {
+        use crate::walk::{Place, plan};
+        let mut edit = everything();
+        edit.lens.chromatic_aberration = true;
+        edit.lens.manual = -0.05;
+        let steps = stages(&edit, &export(), &raw(0), None);
+        let lent = plan(&steps, &export(), true);
+        let mut on = Vec::new();
+        for (step, place) in steps.steps.iter().zip(&lent) {
+            if let Step::Op(stage) = step {
+                if *place == Place::Gpu {
+                    on.push(stage.name());
+                }
+                if matches!(
+                    stage,
+                    Stage::LocalContrast(_)
+                        | Stage::Dehaze(_)
+                        | Stage::Sharpen(..)
+                        | Stage::Finish(_)
+                ) {
+                    assert_eq!(*place, Place::Cpu, "{}", stage.name());
+                }
+            }
+        }
+        assert_eq!(on, ["CA", "demosaic", "lens"]);
+        // The viewport's own puts the same three there.
+        let viewport = stages(&edit, &Purpose::Viewport, &raw(0), None);
+        let in_memory = |s: &Steps, p: &[Place]| {
+            s.steps
+                .iter()
+                .zip(p)
+                .filter(|(s, p)| {
+                    **p == Place::Gpu
+                        && matches!(
+                            s,
+                            Step::Op(Stage::Ca(_) | Stage::Demosaic(..) | Stage::Lens(_))
+                        )
+                })
+                .count()
+        };
+        assert_eq!(
+            in_memory(&viewport, &plan(&viewport, &Purpose::Viewport, true)),
+            3
+        );
         assert!(
-            plan(&steps, &export(), true)
+            plan(&steps, &export(), false)
                 .iter()
                 .all(|p| *p == Place::Cpu)
         );

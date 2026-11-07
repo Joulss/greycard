@@ -24,6 +24,8 @@ greycard-edit-io = { path = "../greycard-edit-io" }
 greycard-library = { path = "../greycard-library" }
 # The editor's export with no window, and the settings it reads.
 greycard-engine = { path = "../greycard-engine" }
+# The export's own device, which the engine is lent and never makes.
+greycard-gpu = { path = "../greycard-gpu" }
 image.workspace = true
 clap.workspace = true
 anyhow.workspace = true

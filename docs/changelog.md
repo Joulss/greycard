@@ -52,6 +52,15 @@ design note behind it.
   without the sheet
   ([§599](https://github.com/jessolmstead/greycard/blob/master/docs/notes/599-the-middle-button.md)).
 
+### Export
+
+- Exports from the editor and from `greycard export` develop on the
+  GPU when the machine has one, so the two give the same file. Files
+  differ slightly from 0.10's, which were made on the CPU. For a CPU
+  render, use `--cpu` on `greycard export` or `--cpu-ops` on the
+  editor's `--export`
+  ([§600](https://github.com/jessolmstead/greycard/blob/master/docs/notes/600-the-command-lines-export-on-the-gpu.md)).
+
 ## 0.10.1
 
 ### Fixes

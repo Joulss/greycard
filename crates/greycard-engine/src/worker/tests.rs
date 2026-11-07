@@ -512,6 +512,7 @@ fn export_held(
         base,
         &mut WorkerModels::new(ai, None, &deliver, 0),
         None,
+        &mut None,
         settings,
     )
     .expect("exported")
@@ -588,10 +589,11 @@ pub(super) fn skipped(what: &str) {
     println!("SKIPPED: {what} has no GPU to run on");
 }
 
-/// The export's picture is the reference's: a base whose CA ran on
-/// the GPU is not reused by a develop without one (the export's),
-/// which makes the base afresh on the CPU, and that picture is the
-/// one a session that never had a GPU makes, byte for byte.
+/// A develop with no device (an export under `--cpu`, or after the
+/// device went) is the reference's: a base whose CA ran on the GPU is
+/// not reused by it, the base is made afresh on the CPU, and that
+/// picture is the one a session that never had a GPU makes, byte for
+/// byte.
 #[test]
 fn an_export_after_a_gpu_base_develops_the_reference_s() {
     let Some(ctx) = greycard_gpu::Context::own().ok() else {
@@ -605,7 +607,7 @@ fn an_export_after_a_gpu_base_develops_the_reference_s() {
     assert!(matches!(outcome, Outcome::Developed { .. }));
     assert!(base.as_ref().is_some_and(|b| b.on_gpu));
     let stamp = base.as_ref().unwrap().stamp;
-    // The export: no GPU, the same edit.
+    // No GPU, the same edit.
     let (outcome, exported) = develop_once(&frame, &mut base, &mut None);
     assert!(matches!(outcome, Outcome::Developed { .. }));
     let b = base.as_ref().unwrap();
@@ -933,6 +935,7 @@ fn an_export_walks_from_the_window_s_cpu_points_and_leaves_them() {
         0,
         &mut WorkerModels::new(&mut ai, None, &deliver, 0),
         None,
+        &mut None,
         &settings,
     )
     .unwrap();
@@ -1938,6 +1941,54 @@ fn a_prefetch_s_device_error_leaves_the_session_its_device() {
     let window = picture(&NoHold, &mut gpu);
     assert!(gpu.is_none(), "the window's walk lets it go");
     assert!(window.data == reference.data);
+}
+
+/// An export whose CA meets a device error short of a lost device
+/// (a device allowed 20 workgroups a dimension cannot run the
+/// 400x320's) writes that frame on the CPU and leaves the session its
+/// context, as a prefetch does, so one large file never puts the
+/// viewport on the CPU; the file is the one an export with no device
+/// writes.
+#[test]
+fn an_export_s_device_error_leaves_the_session_its_device() {
+    let limits = greycard_gpu::wgpu::Limits {
+        max_compute_workgroups_per_dimension: 20,
+        ..greycard_gpu::wgpu::Limits::default()
+    };
+    let Some(ctx) = context_with(limits) else {
+        skipped("the export's device error");
+        return;
+    };
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let settings = greycard_render::export::Settings {
+        format: greycard_render::export::Format::Tiff,
+        ..Default::default()
+    };
+    let deliver: Deliver = Arc::new(|_| {});
+    let export = |gpu: &mut Option<greycard_gpu::Context>| {
+        let mut ai = Ai::new();
+        super::export::walk_export(
+            Input::Raw(frame.clone()),
+            &Edit::default(),
+            0,
+            &mut WorkerModels::new(&mut ai, None, &deliver, 0),
+            None,
+            gpu,
+            &settings,
+        )
+        .expect("written")
+        .0
+        .pixels
+    };
+    let sixteen = |p: greycard_render::export::Pixels| match p {
+        greycard_render::export::Pixels::Sixteen(v) => v,
+        greycard_render::export::Pixels::Eight(_) => panic!("a TIFF's pixels are sixteen bits"),
+    };
+    let mut gpu = Some(ctx);
+    let on_device = sixteen(export(&mut gpu));
+    assert!(gpu.is_some(), "the session keeps its device");
+    let reference = sixteen(export(&mut None));
+    assert!(on_device == reference);
 }
 
 /// A move of the Dehaze alone, which fits again from the kept
@@ -3921,6 +3972,7 @@ fn develop_and_walk(
         base.as_ref(),
         &mut WorkerModels::new(&mut ai, None, &deliver, 0),
         None,
+        &mut None,
         &settings,
     )
     .unwrap();
@@ -3931,6 +3983,7 @@ fn develop_and_walk(
         turn,
         &mut super::base::WorkerModels::new(&mut ai, None, &deliver, 0),
         None,
+        &mut None,
         &settings,
     )
     .unwrap();
@@ -5101,6 +5154,7 @@ fn an_export_fails_its_item_on_a_card_short_of_a_fill() {
         0,
         &mut WorkerModels::new(&mut ai, None, &deliver, 0),
         None,
+        &mut None,
         &settings,
     )
     .err()
@@ -5122,6 +5176,7 @@ fn an_export_fails_its_item_on_a_card_short_of_a_fill() {
         0,
         &mut WorkerModels::new(&mut ai, None, &deliver, 0),
         None,
+        &mut None,
         &settings,
     )
     .expect("written");

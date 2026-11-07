@@ -2009,6 +2009,7 @@ dependencies = [
  "greycard-edit",
  "greycard-edit-io",
  "greycard-engine",
+ "greycard-gpu",
  "greycard-lens",
  "greycard-library",
  "image",

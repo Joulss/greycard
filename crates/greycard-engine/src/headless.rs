@@ -4,13 +4,15 @@
 //! command line's `greycard export` and the editor's `--export` both
 //! run it.
 //!
-//! The export never needed the window. The worker writes a frame on
-//! the CPU reference path whatever device it was lent (an export
-//! develops with no GPU, and a base whose CA the GPU corrected is made
-//! again on the CPU), so the window's part was only to read the
-//! sidecar, lay the overrides on it, fill the sheet and wait. All of
-//! that is here, and no wgpu device is asked for: there is nothing for
-//! one to do.
+//! The export never needed the window: its part was only to read the
+//! sidecar, lay the overrides on it, fill the sheet, and wait, and all
+//! of that is here. What it lent was its device, and the export runs
+//! its CA, demosaic, and lens there as the viewport does. The engine
+//! makes no device: the caller lends the run one ([`Lent`]), the
+//! command line's own made by `Context::for_export` where the machine
+//! has a GPU, and the run lends it to its worker as the window lends
+//! its own, so the editor's export and this one are one picture on one
+//! machine. Without one, every stage runs on the CPU.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -362,21 +364,26 @@ pub fn plan(
     })
 }
 
+/// The context a run's CA, demosaic, and lens run on, made by the
+/// caller on a device of its own; or why there is none, in the
+/// caller's words (`--cpu`, or [`greycard_gpu::Declined`]'s), for the
+/// run's first line.
+pub type Lent = std::result::Result<greycard_gpu::Context, String>;
+
+/// The run's first line: where it develops.
+pub fn lent_line(lent: &Lent) -> String {
+    match lent {
+        Ok(ctx) => format!("export: on {}", ctx.name()),
+        Err(why) => format!("export: on the CPU ({why})"),
+    }
+}
+
 /// Write `plan` on a worker of its own and wait for the set: each
 /// frame's export noted in its sidecar's history as it lands, as the
-/// window notes it.
-pub fn run(plan: Plan) -> Finished {
-    let Plan {
-        frames,
-        folder,
-        settings,
-        on_exists,
-        preset,
-        placement,
-        xmp,
-        index,
-    } = plan;
-    if let Some(dir) = &folder
+/// window notes it. The worker's ops run on `lent` where it is a
+/// context.
+pub fn run(plan: Plan, lent: Lent) -> Finished {
+    if let Some(dir) = &plan.folder
         && let Err(e) = std::fs::create_dir_all(dir)
     {
         let line = format!("export: {}: {e}", dir.display());
@@ -390,11 +397,27 @@ pub fn run(plan: Plan) -> Finished {
             line,
         };
     }
+    run_on(plan, lent)
+}
+
+/// [`run`], its folder there.
+fn run_on(plan: Plan, lent: Lent) -> Finished {
+    let Plan {
+        frames,
+        folder,
+        settings,
+        on_exists,
+        preset,
+        placement,
+        xmp,
+        index,
+    } = plan;
+    tracing::info!("{}", lent_line(&lent));
     let total = frames.len();
     let single = folder.is_none().then(|| frames[0].out.clone());
     let set = Arc::new(queue::Set::new(total, folder, settings, on_exists).with_preset(preset));
     tracing::info!(
-        "exporting {} with no window, on the CPU reference path: {}",
+        "exporting {} with no window: {}",
         match &single {
             Some(path) => format!("to {}", path.display()),
             None => format!(
@@ -409,6 +432,13 @@ pub fn run(plan: Plan) -> Finished {
     let worker = Worker::headless(move |outcome| {
         let _ = tx.send(outcome);
     });
+    // The context watches its own device: a loss marks it lost, and
+    // the worker's ops go to the CPU from the next frame. A frame whose
+    // op met the loss as an error goes on on the CPU; one whose wait
+    // panicked on it fails, and the run says so with exit code 1.
+    if let Ok(ctx) = lent {
+        worker.set_context(ctx);
+    }
     worker.send(Job::ExportSet {
         set: set.clone(),
         frames,
@@ -762,6 +792,15 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
+    /// The context the command line lends a run on this machine, a
+    /// software adapter taken under `GREYCARD_REQUIRE_GPU`, whose
+    /// machines run the GPU tests on lavapipe.
+    fn lent() -> Lent {
+        let required = std::env::var_os("GREYCARD_REQUIRE_GPU").is_some_and(|v| !v.is_empty());
+        let asked = greycard_gpu::asked_by_hand(|n| std::env::var_os(n));
+        greycard_gpu::Context::for_export(asked || required).map_err(|d| d.to_string())
+    }
+
     /// A folder of the test's own under the workspace's target, gone
     /// when the test is, however it ends.
     struct Scratch(PathBuf);
@@ -880,29 +919,8 @@ mod tests {
         .unwrap();
     }
 
-    /// A device as the window's is, on the high-performance adapter;
-    /// none without one.
-    fn device() -> Option<(greycard_gpu::wgpu::Device, greycard_gpu::wgpu::Queue)> {
-        use greycard_gpu::wgpu;
-        let instance = greycard_gpu::instance();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .ok()?;
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("the window's, in a test"),
-            required_limits: wgpu::Limits {
-                max_texture_dimension_2d: 16384.min(adapter.limits().max_texture_dimension_2d),
-                ..wgpu::Limits::default()
-            },
-            ..Default::default()
-        }))
-        .ok()
-    }
-
-    /// What the window did for `--export FILE` before the export had
-    /// no window, job for job: the device lent to the worker, the
+    /// What the window does for an export of the frame it has open,
+    /// job for job: the device lent to the worker, the
     /// frame opened under `edit` and developed on it, the blend the
     /// open seeds taken into the edit, then the open frame written
     /// under that edit.
@@ -911,10 +929,12 @@ mod tests {
         let worker = Worker::new(move |o| {
             let _ = tx.send(o);
         });
-        let lent = device();
-        match &lent {
-            Some((device, queue)) => worker.set_gpu(device, queue),
-            None => println!("no adapter: the window's develop runs on the CPU"),
+        // The device the command line takes on this machine, lent as
+        // the window lends its own.
+        let lent = lent();
+        println!("the window's: {}", lent_line(&lent));
+        if let Ok(ctx) = &lent {
+            worker.set_gpu(ctx.device(), ctx.queue());
         }
         worker.send(Job::Open {
             path: frame.source.clone(),
@@ -1067,7 +1087,7 @@ mod tests {
             ..plan.frames[0].clone()
         };
         let windowed = window_export(&window, settings).expect("the window wrote it");
-        let finished = run(plan);
+        let finished = run(plan, lent());
         assert!(finished.succeeded(), "{}", finished.line);
 
         let (a, b) = (
@@ -1110,7 +1130,7 @@ mod tests {
         let planned = plan(&to(&[&source], &out), &remembered, None, None).unwrap();
         assert_eq!(planned.settings.format, export::Format::Png);
         assert_eq!(planned.frames[0].edit.light.exposure, -0.3);
-        assert!(run(planned).succeeded());
+        assert!(run(planned, lent()).succeeded());
         let kept = Sidecar::load(&source).unwrap().unwrap();
         assert_eq!(kept.current_exports.len(), 1);
         assert_eq!(
@@ -1127,7 +1147,7 @@ mod tests {
         // The default edit, not the sidecar's.
         assert_eq!(planned.frames[0].edit, Edit::default());
         assert_eq!(planned.placement, None);
-        assert!(run(planned).succeeded());
+        assert!(run(planned, lent()).succeeded());
         assert!(off.is_file());
         assert_eq!(
             Sidecar::load(&source)
@@ -1159,7 +1179,7 @@ mod tests {
         let export = |source: &Path, name: &str| {
             let out = scratch.0.join(name);
             let planned = plan(&to(&[source], &out), &remembered, None, None).unwrap();
-            assert!(run(planned).succeeded());
+            assert!(run(planned, lent()).succeeded());
             image::open(&out).unwrap().to_rgb16()
         };
         let save = |source: &Path, exposure: f32| {
@@ -1240,7 +1260,7 @@ mod tests {
             Some("Warm")
         );
         assert_eq!(planned.frames[0].out, out.join("frame-Warm.jpg"));
-        assert!(run(planned).succeeded());
+        assert!(run(planned, lent()).succeeded());
         assert!(out.join("frame-Warm.jpg").is_file());
         let kept = Sidecar::load(&source).unwrap().unwrap();
         assert_eq!(kept.current_exports.len(), 0, "not on the file's own line");
@@ -1345,7 +1365,7 @@ mod tests {
                 ..how
             };
             let planned = plan(&req, &remembered, None, None).unwrap();
-            let finished = run(planned);
+            let finished = run(planned, lent());
             assert!(finished.succeeded(), "{}", finished.line);
             let mut names: Vec<String> = std::fs::read_dir(&target)
                 .unwrap()
@@ -1612,7 +1632,7 @@ mod tests {
             ..to(&[&files[0]], &out)
         };
         let planned = plan(&req, &Shared::default(), None, None).unwrap();
-        let finished = run(planned);
+        let finished = run(planned, lent());
         assert!(!finished.succeeded());
         assert_eq!(finished.tally.failed.len(), 1);
         assert!(
@@ -1640,7 +1660,7 @@ mod tests {
         let out = scratch.0.join("out.png");
         let planned = plan(&to(&[&source], &out), &Shared::default(), None, None).unwrap();
         assert!(!planned.frames[0].edit.needs_frame());
-        let finished = run(planned);
+        let finished = run(planned, lent());
         assert_eq!(finished.code(), WRITTEN, "{}", finished.line);
         let kept = Sidecar::load(&source).unwrap().unwrap();
         assert!(!kept.needs_frame(), "written back up to date");
@@ -1675,7 +1695,7 @@ mod tests {
         };
         let planned = plan(&req, &Shared::default(), None, None).unwrap();
         assert_eq!(planned.frames[0].time_shift, 300);
-        assert!(run(planned).succeeded());
+        assert!(run(planned, lent()).succeeded());
         let taken = |path: &Path| greycard_core::picture::probe_path(path).unwrap().taken;
         assert_eq!(taken(&out).as_deref(), Some("2024:08:24 15:37:39"));
         assert_eq!(taken(&source).as_deref(), Some("2024:08:24 15:32:39"));
@@ -1711,7 +1731,7 @@ mod tests {
                 xmp_sidecars,
                 ..to(&[&source], out)
             };
-            run(plan(&req, &Shared::default(), None, None).unwrap()).code()
+            run(plan(&req, &Shared::default(), None, None).unwrap(), lent()).code()
         };
         assert_eq!(export(false, &scratch.0.join("a.png")), WRITTEN);
         assert!(!xmp.exists(), "no .xmp unless asked");
@@ -1763,7 +1783,7 @@ mod tests {
                 xmp_sidecars: true,
                 ..to(&[&source], out)
             };
-            run(plan(&req, &Shared::default(), None, None).unwrap()).code()
+            run(plan(&req, &Shared::default(), None, None).unwrap(), lent()).code()
         };
         assert_eq!(export(&scratch.0.join("a.png")), WRITTEN);
         let written = std::fs::read_to_string(&xmp).unwrap();
@@ -1816,8 +1836,10 @@ mod tests {
                 .save_in(&source, greycard_edit::Placement::Beside)
                 .unwrap();
             let out = scratch.0.join(out);
-            let finished =
-                run(plan(&to(&[&source], &out), &Shared::default(), None, None).unwrap());
+            let finished = run(
+                plan(&to(&[&source], &out), &Shared::default(), None, None).unwrap(),
+                lent(),
+            );
             assert!(out.is_file());
             finished
         };
@@ -1868,5 +1890,98 @@ mod tests {
         let line = back.line(Some(&id)).unwrap();
         assert_eq!(line.current.light.exposure, 1.1);
         assert_eq!(line.current_label.as_deref(), Some("Preset: Bright"));
+    }
+
+    /// A Bayer frame on disk, `width` by `height`, with a lateral
+    /// chromatic aberration for the CA to correct.
+    fn mosaic(path: &Path, width: usize, height: usize) {
+        use greycard_core::merge::{Noise, testing};
+        let samples = testing::mosaic_of(width, height, 0.6, Noise::ASSUMED, 7, |x, y, c| {
+            let (cx, cy) = (width as f32 / 2.0, height as f32 / 2.0);
+            let scale = [1.004, 1.0, 0.996][c];
+            let (sx, sy) = (cx + (x as f32 - cx) / scale, cy + (y as f32 - cy) / scale);
+            testing::scene(sx as usize, sy as usize, c, width, height) * 0.3
+                + 0.1 * ((sx * 0.21).sin() * (sy * 0.17).cos() + 1.0)
+        });
+        testing::write_dng(path, samples, width, height, (1, 100), "Mosaic");
+    }
+
+    /// The point of a device for the command line: on one machine, a
+    /// mosaic exported with no window is the file the window writes
+    /// of the frame it has open (its viewport's base reused, its CA
+    /// and demosaic on the window's device), pixel for pixel; with no
+    /// device lent (`--cpu`) the run says so, and its file is the CPU's,
+    /// within the bound the GPU's demosaic is held to against it.
+    #[test]
+    fn a_mosaic_exports_alike_from_the_window_and_the_command_line() {
+        let on_device = match lent() {
+            Ok(ctx) => {
+                println!("{}", lent_line(&Ok(ctx)));
+                true
+            }
+            Err(why) => {
+                assert!(
+                    std::env::var_os("GREYCARD_REQUIRE_GPU").is_none_or(|v| v.is_empty()),
+                    "no device for the export ({why}) and GREYCARD_REQUIRE_GPU is set"
+                );
+                false
+            }
+        };
+        let scratch = Scratch::new("mosaic");
+        let source = scratch.0.join("frame.dng");
+        mosaic(&source, 480, 320);
+        let out = scratch.0.join("headless.tif");
+        let req = Request {
+            no_sidecars: true,
+            ..to(&[&source], &out)
+        };
+        let remembered = Shared::default();
+        let plan = plan(&req, &remembered, None, None).unwrap();
+        let window = queue::Frame {
+            out: scratch.0.join("window.tif"),
+            ..plan.frames[0].clone()
+        };
+        let settings = plan.settings.clone();
+        let windowed = window_export(&window, settings).expect("the window wrote it");
+        let finished = run(plan, lent());
+        assert!(finished.succeeded(), "{}", finished.line);
+        let pixels = |p: &Path| image::open(p).unwrap().to_rgb16();
+        let (a, b) = (pixels(&windowed), pixels(&out));
+        assert_eq!(a.dimensions(), b.dimensions());
+        assert!(a == b, "the window's export and the command line's differ");
+
+        let cpu_out = scratch.0.join("cpu.tif");
+        let cpu_plan = super::plan(&to(&[&source], &cpu_out), &remembered, None, None).unwrap();
+        let none: Lent = Err("--cpu".into());
+        assert_eq!(lent_line(&none), "export: on the CPU (--cpu)");
+        let finished = run(cpu_plan, none);
+        assert!(finished.succeeded(), "{}", finished.line);
+        let c = pixels(&cpu_out);
+        assert_eq!(a.dimensions(), c.dimensions());
+        if !on_device {
+            assert!(a == c);
+            return;
+        }
+        // The device ran: its demosaic is not the CPU's to the bit.
+        assert!(a != c, "the device's export is the CPU's: did the GPU run?");
+        // The GPU's demosaic against the CPU's, as the demosaic's own
+        // real-frame test bounds it: no sample past a tenth of the
+        // frame's largest value, and at most one in ten thousand past a
+        // thousandth of it.
+        let largest = f64::from(*c.as_raw().iter().max().unwrap());
+        let diffs: Vec<f64> = a
+            .as_raw()
+            .iter()
+            .zip(c.as_raw())
+            .map(|(x, y)| f64::from(x.abs_diff(*y)))
+            .collect();
+        let most = diffs.iter().copied().fold(0.0, f64::max);
+        let past = diffs.iter().filter(|d| **d > largest / 1000.0).count();
+        println!(
+            "the device's export against the CPU's: at most {most} of {largest}, {past} of {} past a thousandth",
+            diffs.len()
+        );
+        assert!(most <= largest / 10.0, "{most} of {largest}");
+        assert!(past * 10_000 <= diffs.len(), "{past} of {}", diffs.len());
     }
 }

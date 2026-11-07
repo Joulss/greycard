@@ -44,7 +44,9 @@ const EDGES: &[(&str, &[&str])] = &[
     ),
     (
         "greycard-cli",
-        &["core", "edit", "edit-io", "lens", "ai", "library", "engine"],
+        &[
+            "core", "edit", "edit-io", "lens", "gpu", "ai", "library", "engine",
+        ],
     ),
     ("greycard-bench", &["core", "ai"]),
     ("ort-dylib", &[]),

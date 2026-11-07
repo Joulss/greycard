@@ -607,6 +607,9 @@ struct Queue {
     /// them, for the engine's GPU ops to run on: the picture they
     /// leave is then the viewport's without a copy.
     gpu: Option<(greycard_gpu::wgpu::Device, greycard_gpu::wgpu::Queue)>,
+    /// A context built by whoever holds the device (the command line's
+    /// export, on a device of its own), taken as it is.
+    context: Option<greycard_gpu::Context>,
     /// The window's device was lost (`Worker::gpu_lost_teller`): the engine's
     /// ops go to the CPU, and with `Some(true)` the develop on screen is
     /// made again there; `Some(false)` when the editor is about to
@@ -837,6 +840,7 @@ impl FrameDevelop {
             lenses,
             &greycard_render::export::Settings::default(),
             &mut crate::walk::Kept::new(),
+            &mut None,
         )?;
         Ok(FrameDevelop {
             image,

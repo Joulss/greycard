@@ -348,8 +348,11 @@ under **SNAPSHOTS**.
 
 ## From the command line
 
-An export can run from a terminal or a script, with no window. It needs
-no GPU and no desktop, so it also runs over SSH.
+An export can run from a terminal or a script, with no window and no
+desktop, so it also runs over SSH. Where the machine has a GPU, it
+develops there as the editor does, and the file is the one the editor
+would write. Without one it runs on the CPU. Add `--cpu` to run on the
+CPU anyway: the file then comes out the same on every machine.
 
 ```
 greycard export IMG_0001.CR3 out.jpg --export-preset "Web 2048"
@@ -373,6 +376,7 @@ where they go.
 | `--on-exists WHAT` | `increment`, `overwrite` or `skip`. |
 | `--version-name NAME` | Exports each frame's version of that name instead of the frame's own edit, named `IMG_0001-NAME.jpg` in a folder, and recorded in the version's history. A frame with no version of that name stops the run. |
 | `--preset NAME` | Applies a develop preset first, saved as a step in the history of the frame opened: the file given, or in a folder the one you last had open. Not with `--all`; lay a preset over many files with `greycard presets --apply NAME <files>`, then export. |
+| `--cpu` | Develops on the CPU alone, without the GPU. Slower, and the same file on every machine. The editor's `--export` takes `--cpu-ops` for this. |
 | `--exposure EV`, `--develop-temperature K`, `--agx` | Change this export only, on the frame opened (with `--all` or several frames, on every frame). Not saved to the frame. `--exposure 0` sets the exposure to 0. |
 | `--no-sidecars` | Reads and writes no `.gcd`: each frame exports at its defaults, and nothing is recorded. |
 | `--sidecar-folder` | Writes the `.gcd` into the hidden `.greycard` folder for this run. |

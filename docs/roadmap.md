@@ -176,9 +176,6 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] Frame switching: the prefetch deeper in the walk's direction
       (§379), now the demosaic runs on the GPU (§591)
-- [ ] The command line's export under a device when the machine has
-      one, so it and the editor's export run the same demosaic, CA,
-      and lens on the GPU and match again; a flag forces the CPU
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
 - [ ] White balance (and maybe other adjustments) still available on JPG
@@ -199,6 +196,11 @@ seconds.
       automatic threshold's second RCD run for the RCD dual; the
       bands' staging persistent and double-buffered as the AMaZE op's
       is. At 45 MP the dual is 247 ms where AMaZE alone is 90
+- [ ] An export's Detail, dehaze, and sharpen on the device as the
+      viewport's are (§600): their GPU forms end in the viewport's
+      half-float texture, and an export finishes in full floats, so
+      they want a full-float download path and a sharpen that writes
+      full floats
 - [ ] A proxy develop for the fit view, as a placeholder and not a
       mode: 2x2 Bayer quads binned to one RGB pixel, shown only while
       the full develop is pending and replaced by it when it lands, so

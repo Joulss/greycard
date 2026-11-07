@@ -1769,6 +1769,7 @@ fn an_export_s_sky_is_the_viewport_s() {
             None,
             &settings,
             kept,
+            &mut None,
         )
         .expect("the export's walk");
         assert!(left_out.is_empty(), "{left_out:?}");

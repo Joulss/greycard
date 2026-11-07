@@ -31,7 +31,7 @@ pub(crate) fn export(cli: &Cli, target: &Path) -> Result<std::process::ExitCode>
         presets.as_ref(),
         greycard_library::Library::user_path(),
     )?;
-    let finished = run(plan);
+    let finished = run(plan, lent(cli.cpu_ops));
     // The log is a file, and the terminal shows warnings up: the one
     // line a batch caller wants is said here whichever way it went.
     eprintln!("{}", finished.line);
@@ -55,6 +55,17 @@ pub(crate) fn request(cli: &Cli, target: &Path) -> Request {
         sidecar_folder: cli.sidecar_folder,
         xmp_sidecars: cli.xmp_sidecars,
     }
+}
+
+/// The context the run's CA, demosaic, and lens go on: none under
+/// `--cpu-ops`, the editor's own switch for its ops, else one of our
+/// own where the machine has a GPU, a software adapter taken only when
+/// asked for by hand, as the window takes one.
+fn lent(cpu_ops: bool) -> greycard_engine::headless::Lent {
+    if cpu_ops {
+        return Err("--cpu-ops".into());
+    }
+    greycard_gpu::Context::for_export(crate::adapter::asked()).map_err(|d| d.to_string())
 }
 
 /// End the process with `code`, the run's work all done and said.
@@ -199,6 +210,11 @@ mod tests {
                 sidecar_folder: true,
                 xmp_sidecars: true,
             }
+        );
+        assert_eq!(
+            lent(true).err().as_deref(),
+            Some("--cpu-ops"),
+            "--cpu-ops is the export's --cpu"
         );
         let bare = request(&cli(&["--export", "out.jpg"]), Path::new("out.jpg"));
         assert!(bare.paths.is_empty() && bare.overrides.is_empty());

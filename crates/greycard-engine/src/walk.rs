@@ -73,26 +73,43 @@ pub enum Place {
 }
 
 /// Where each step of `steps` runs for `purpose`, with a device `lent`
-/// or not: every stage with a device version on it, the demosaic among
-/// them ([`Stage::demosaics_on_device`]), for the viewport and the
-/// prefetch, so the two make the same demosaic; everything on the CPU
-/// for the rest, which are the reference, the export as the command
-/// line, which has no device, makes it.
+/// or not. Every walk with a device runs there the stages that work a
+/// picture in memory and hand it back (the CA, the demosaic, and the
+/// lens: [`Stage::in_memory_on_device`]): the viewport, the prefetch,
+/// and the export, so a base one makes is the base the others would,
+/// and the editor's export and the command line's are one picture on
+/// one machine. The viewport's runs on the device (the Detail section,
+/// the dehaze, and the sharpen, [`Stage::device`]), which end at its
+/// half-float texture, and its shader are the viewport's and the
+/// prefetch's alone: the export finishes in full floats on the CPU.
+/// The reduced pictures, the models' pictures, and a merge's frames are
+/// all the CPU's.
 pub fn plan(steps: &Steps, purpose: &Purpose, lent: bool) -> Vec<Place> {
-    let device = lent && matches!(purpose, Purpose::Viewport | Purpose::Prefetch);
-    places(steps, device, device)
+    let runs = lent && matches!(purpose, Purpose::Viewport | Purpose::Prefetch);
+    let in_memory = runs || (lent && matches!(purpose, Purpose::Export(_)));
+    places(steps, runs, in_memory)
 }
 
-/// The places of `steps` with the device's stages on it where `device`
-/// says, and its demosaic where `demosaic` does.
-fn places(steps: &Steps, device: bool, demosaic: bool) -> Vec<Place> {
+/// The places of `steps` with the viewport's runs on the device where
+/// `runs` says, and the stages on pictures in memory where `in_memory`
+/// does. The learned denoiser runs on its own providers, never as a
+/// device step; its place is the one the demosaic standing in for it
+/// would take, so a walk that drops it ([`replan`]) keeps the plan.
+fn places(steps: &Steps, runs: bool, in_memory: bool) -> Vec<Place> {
+    let stand_in = steps.ops().find_map(|s| match s {
+        Stage::Prepare(p) => Some(
+            Stage::Demosaic(p.settings.demosaic, p.settings.dual_contrast).in_memory_on_device(),
+        ),
+        _ => None,
+    });
     steps
         .steps
         .iter()
         .map(|step| match step {
-            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if device => Place::Gpu,
-            Step::Op(stage) if device && stage.device() => Place::Gpu,
-            Step::Op(stage) if demosaic && stage.demosaics_on_device() => Place::Gpu,
+            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if runs => Place::Gpu,
+            Step::Op(stage) if in_memory && stage.in_memory_on_device() => Place::Gpu,
+            Step::Op(Stage::Learned(_)) if in_memory && stand_in == Some(true) => Place::Gpu,
+            Step::Op(stage) if runs && stage.device() => Place::Gpu,
             _ => Place::Cpu,
         })
         .collect()
@@ -387,9 +404,9 @@ pub trait Hold {
 
     /// Whether a device error short of a lost device leaves the
     /// session its context, this walk going on on the CPU: a walk
-    /// nobody waits on (a prefetch) is not worth the session's device
-    /// over a failure that may be its own, such as running out of
-    /// memory on a large neighbor.
+    /// nobody waits on (a prefetch) or a file's (an export) is not
+    /// worth the session's device over a failure that may be its own,
+    /// such as running out of memory on a large frame.
     fn keeps_device(&self) -> bool {
         false
     }
@@ -401,11 +418,23 @@ fn keeps_device(hold: &dyn Hold, e: &greycard_gpu::Error) -> bool {
     hold.keeps_device() && !matches!(e, greycard_gpu::Error::Lost(_))
 }
 
-/// Nothing to hold and never a give-way: headless export's and the
-/// command line's.
+/// Nothing to hold and never a give-way: the viewport's walk, and the
+/// tests'.
 pub struct NoHold;
 
 impl Hold for NoHold {}
+
+/// An export's walk: nothing to hold and never a give-way, and a device
+/// error on its frame, short of a lost device, runs that frame on the
+/// CPU and leaves the session its context, so one large file never puts
+/// the viewport on the CPU.
+pub struct ExportHold;
+
+impl Hold for ExportHold {
+    fn keeps_device(&self) -> bool {
+        true
+    }
+}
 
 /// What a kept point holds of the picture.
 #[derive(Clone)]
@@ -730,7 +759,7 @@ impl Kept {
 
     /// The upload, and the dehaze's copy read off its run, let go once
     /// no point holds the picture it was made from: that picture was
-    /// made again (an export's, with the CA on the CPU), and the upload
+    /// made again (one with no device, its CA on the CPU), and the upload
     /// would hold the old one for nothing until the next run.
     fn drop_orphaned_upload(&mut self) {
         let held = |from: &Arc<WorkingImage>| {
@@ -1128,8 +1157,8 @@ fn walk_held(
         && let Err(why) = models.can_denoise(model)
     {
         log::info!("the learned denoiser: {why:?}; the engine's own path stands in");
+        plan = replan(&steps, &plan);
         steps = steps.without_learned();
-        plan = replan(&steps, plan.contains(&Place::Gpu));
         stood_in = Some(why);
     }
     loop {
@@ -1176,8 +1205,8 @@ fn walk_held(
             }
             Err(Retry::Learned(why)) => {
                 log::info!("the learned denoiser: {why:?}; the engine's own path stands in");
+                plan = replan(&steps, &plan);
                 steps = steps.without_learned();
-                plan = replan(&steps, plan.contains(&Place::Gpu));
                 stood_in = Some(why);
             }
             Err(Retry::Cpu { from, keep_context }) => {
@@ -1193,11 +1222,18 @@ fn walk_held(
     }
 }
 
-/// `steps`' places after the learned denoiser was taken out of them:
-/// on the device where it was `lent` and a stage has a version there,
-/// the demosaic standing in for it among them.
-fn replan(steps: &Steps, lent: bool) -> Vec<Place> {
-    places(steps, lent, lent)
+/// `plan`, the places of `steps`, carried over to
+/// [`Steps::without_learned`]'s list: the steps it drops dropped, the
+/// demosaic standing in for the learned denoiser at the place the plan
+/// gave the denoiser ([`places`]).
+fn replan(steps: &Steps, plan: &[Place]) -> Vec<Place> {
+    steps
+        .steps
+        .iter()
+        .zip(plan)
+        .filter(|(s, _)| !matches!(s, Step::Keep(Keep::Pair) | Step::Op(Stage::Blend { .. })))
+        .map(|(_, p)| *p)
+        .collect()
 }
 
 /// Why an attempt at a walk is to be made again, or not.
@@ -1482,7 +1518,7 @@ fn attempt(
                 places.push(plan[i]);
                 i += 1;
             }
-            Step::Op(_) if plan[i] == Place::Gpu => {
+            Step::Op(stage) if plan[i] == Place::Gpu && !matches!(stage, Stage::Learned(_)) => {
                 let end = run_end(steps, plan, i);
                 let ctx = gpu.as_ref().expect("a plan on the device has a context");
                 let inline = matches!(
@@ -2672,7 +2708,11 @@ mod tests {
             &input.facts(0),
             None,
         );
-        let export_plan = plan(&export, &Purpose::Export(Box::default()), true);
+        // An export with no device (`--cpu`) is all the CPU's, and takes
+        // none of it; one lent a device takes the base.
+        let lent = plan(&export, &Purpose::Export(Box::default()), true);
+        assert!(kept.serves(&export, &lent, Keep::Base));
+        let export_plan = plan(&export, &Purpose::Export(Box::default()), false);
         assert!(export_plan.iter().all(|p| *p == Place::Cpu));
         assert!(!kept.serves(&export, &export_plan, Keep::Base));
         let walked = walk(
@@ -2894,8 +2934,8 @@ mod tests {
     /// On a device, the viewport's walk runs the CA, the Detail
     /// section, and the sharpen there and ends at the viewport's
     /// texture; a sharpen moved starts from the picture before it, kept
-    /// on the device; and an export after it, all on the CPU, takes
-    /// none of it and makes the reference's picture. Skipped where no
+    /// on the device; and an export after it with no device (`--cpu`)
+    /// takes none of it and makes the reference's picture. Skipped where no
     /// adapter is, unless GREYCARD_REQUIRE_GPU says one must be.
     #[test]
     fn on_a_device_the_viewport_s_run_ends_at_its_texture() {
@@ -2924,7 +2964,7 @@ mod tests {
         assert_eq!(sharper.from, Some(Keep::PreSharpen));
         assert!(matches!(sharper.buf, Buf::Texture(_)));
 
-        let export = go(&e, &Purpose::Export(Box::default()), &mut kept, &mut gpu);
+        let export = go(&e, &Purpose::Export(Box::default()), &mut kept, &mut None);
         assert_eq!(export.from, None);
         assert!(export.places.iter().all(|p| *p == Place::Cpu));
         let reference = go(
@@ -2976,10 +3016,11 @@ mod tests {
         );
     }
 
-    /// The viewport and the prefetch make the same demosaic on a
-    /// device: the prefetch's base is the viewport's to the bit, and the
-    /// viewport's points serve the prefetch's list; the export, the
-    /// reference's on the CPU, takes none of them.
+    /// The viewport, the prefetch, and the export make the same
+    /// demosaic on a device: the prefetch's base is the viewport's to
+    /// the bit, and the viewport's points serve the prefetch's list and
+    /// the export's, whose picture is the one an export from nothing on
+    /// the device makes; the export with no device takes none of them.
     #[test]
     fn the_viewport_and_the_prefetch_make_the_same_demosaic_on_a_device() {
         let Some(mut gpu) = device() else {
@@ -3019,7 +3060,94 @@ mod tests {
             &mut viewport_kept.clone(),
             &mut gpu,
         );
-        assert_eq!(export.from, None, "the export makes the reference's base");
+        assert!(
+            matches!(export.from, Some(Keep::Base | Keep::Patched)),
+            "the viewport's points serve: {:?}",
+            export.from
+        );
+        let fresh = go(&Purpose::Export(Box::default()), &mut Kept::new(), &mut gpu);
+        assert_eq!(fresh.from, None);
+        assert!(
+            picture(&export).data == picture(&fresh).data,
+            "the export from the viewport's points is the export from nothing"
+        );
+        let cpu = go(
+            &Purpose::Export(Box::default()),
+            &mut viewport_kept.clone(),
+            &mut None,
+        );
+        assert_eq!(cpu.from, None, "with no device the export makes its own");
+    }
+
+    /// An export lent a device whose ops fail goes on on the CPU, as
+    /// the viewport does: a lost device lets the context go and the
+    /// export is the CPU's to the bit; a demosaic the device declines
+    /// (a frame too small for its bands) is the CPU's for the frame
+    /// with the context kept.
+    #[test]
+    fn an_export_on_a_failing_device_falls_back_to_the_cpu() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let purpose = Purpose::Export(Box::default());
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        let steps = stages::stages(&e, &purpose, &input.facts(0), None);
+        let lent = plan(&steps, &purpose, true);
+        assert!(lent.contains(&Place::Gpu));
+        let reference = walk_cpu(&e, &purpose, &input, 0, &mut Kept::new());
+        gpu.as_ref().unwrap().mark_lost();
+        let walked = walk(
+            &steps,
+            &lent,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .expect("the export goes on");
+        assert!(gpu.is_none(), "a lost device's context goes");
+        let demosaic = steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Demosaic(..))))
+            .unwrap();
+        assert_eq!(lent[demosaic], Place::Gpu);
+        // A CA on a frame below its smallest side runs nowhere, so only
+        // the steps past the demosaic say where the rest went.
+        assert!(walked.places[demosaic..].iter().all(|p| *p == Place::Cpu));
+        assert!(picture(&walked).data == picture(&reference).data);
+
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let small = Input::Raw(frame_of(14, 12, [1.0, 1.0]));
+        let mut e = Edit::default();
+        e.lens.chromatic_aberration = false;
+        let steps = stages::stages(&e, &purpose, &small.facts(0), None);
+        let i = steps
+            .steps
+            .iter()
+            .position(|s| matches!(s, Step::Op(Stage::Demosaic(..))))
+            .unwrap();
+        let lent = plan(&steps, &purpose, true);
+        assert_eq!(lent[i], Place::Gpu);
+        let walked = walk(
+            &steps,
+            &lent,
+            &small,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .expect("the export goes on");
+        assert_eq!(walked.places[i], Place::Cpu);
+        assert!(gpu.is_some(), "the device is kept");
+        let reference = walk_cpu(&e, &purpose, &small, 0, &mut Kept::new());
+        assert!(picture(&walked).data == picture(&reference).data);
     }
 
     /// A reduce drops the pixels past its last whole block, which a

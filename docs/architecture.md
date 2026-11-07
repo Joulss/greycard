@@ -29,7 +29,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 | `greycard-edit` | The edit schema in physical units, its sections, migrations, the sidecar and its history, versions, sync, and the `Loader` trait for profiles and looks | core |
 | `greycard-edit-io` | Other tools' files read into the edit (Lightroom, RawTherapee, XMP), preset import, the profile and look stores (`Stores`), and a frame's sidecar as an open reads it (`on_disk`) | core, edit |
 | `greycard-lens` | The lensfun database and Adobe's `.lcp` files, fetched and matched to a frame | core |
-| `greycard-gpu` | The device versions of core's ops (CA, lens, local contrast, dehaze, sharpen), each held to its reference, and the `Context` a device's owner lends the engine | core |
+| `greycard-gpu` | The device versions of core's ops (CA, demosaic, lens, local contrast, dehaze, sharpen), each held to its reference, and the `Context` a device's owner lends the engine | core |
 | `greycard-ai` | ONNX Runtime, the model store and registry, the learned masks, the learned denoiser, and the fill | core |
 | `greycard-match` | The camera match's fit: the maker's look from the JPEG a raw carries | core |
 | `greycard-render` | A developed frame made into a picture or a file: the CPU finish the shader is held to, AgX, the masks' detail bands, geometry, the border, the watermark, and the export | core, edit |
@@ -38,7 +38,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 | `greycard-engine` | The stage list and the walk, the worker and its jobs, the reduced develop, the thumbnail pool, the previews, the edit's pictures, the models' side, the export queue, sheet, and headless run, the settings subset, and the camera match's runner and the measurement runners over the export's develop | core, edit, edit-io, lens, gpu, render, ai, match, library |
 | `greycard-slint` | The `.slint` files compiled to Rust, a crate of its own so a change to the editor's code does not recompile them | none |
 | `greycard-ui` | The editor: the window, its `State`, the panels and sheets; a library target of its windowless modules beside the `greycard-ui` binary | core, edit, edit-io, lens, gpu, render, ai, library, match, engine, viewport, slint |
-| `greycard-cli` | The `greycard` binary: `develop`, `export`, `merge`, `library`, `models`, `lenses`, and the rest | core, edit, edit-io, lens, ai, library, engine |
+| `greycard-cli` | The `greycard` binary: `develop`, `export`, `merge`, `library`, `models`, `lenses`, and the rest | core, edit, edit-io, lens, gpu, ai, library, engine |
 | `greycard-bench` | The demosaic benchmark and the denoiser's training data | core, ai |
 | `ort-dylib` | A build tool: makes the ONNX Runtime shared library `scripts/ort-dylib.sh` installs | none |
 | `greycard-fuzz` | The fuzz targets over every reader of outside text, a workspace of its own (`fuzz/`) | core, edit, edit-io, library |
@@ -126,7 +126,7 @@ must give, and the list is made from its `Facts`.
 |---|---|---|---|
 | `Prepare` | Levels, crop, the DNG's mosaic opcodes (gain maps, bad-pixel lists), hot pixels, the noise measured, white balance as gains in camera space, and highlight reconstruction | core, `develop::prepare_with` (`develop/gain_map.rs`, `develop/bad_pixels.rs`, `develop/hotpixels.rs`, `develop/highlights.rs`) | none |
 | `Ca` | Lateral chromatic aberration on the mosaic | core, `develop/ca.rs` | `ca.wgsl`; `crates/greycard-gpu/tests/ca.rs` |
-| `Demosaic` | Mosaic to camera RGB | core, `demosaic_prepared` (`rcd.rs`, `amaze.rs`, `vng4.rs`, `xtrans.rs`, `dual.rs`) | none |
+| `Demosaic` | Mosaic to camera RGB | core, `demosaic_prepared` (`rcd.rs`, `amaze.rs`, `vng4.rs`, `xtrans.rs`, `dual.rs`) | `amaze.wgsl`, `rcd.wgsl`, `vng4.wgsl`, `dual.wgsl` (Bayer; X-Trans stays on the CPU); `crates/greycard-gpu/tests/amaze.rs` and `demosaic.rs` |
 | `Bin` | In place of the demosaic, for the reduced develop | core, `develop/reduced.rs` | none |
 | `Learned` | In place of the demosaic: the learned denoiser's network and a plain demosaic beside it | ai, through the walk's `Models` (`worker/base.rs`) | ONNX Runtime's own providers |
 | `Denoise` | The profiled denoise on camera RGB | core, `develop/denoise.rs` | none |
@@ -158,8 +158,9 @@ picture, what it measured, its taps, its steps, and where each ran, in
 a `walk::Kept`. The next walk resumes from the last point whose steps
 make the same picture as the start of its own list (keeps skipped, a
 mask tap read alike whatever its purpose) and whose places its plan
-allows, so an all-CPU export never starts from a picture the device
-touched. The open frame holds a `FrameKept` (`worker/base.rs`); the
+allows, so a walk without a device never starts from a picture the
+device touched (an export runs under the device when one is lent,
+§600). The open frame holds a `FrameKept` (`worker/base.rs`); the
 shelf and the prefetch hold the same. The open file's export resumes
 from a copy of it that shares every picture by `Arc`, so the window's
 device points survive the export (§501, §505, §506).
@@ -302,7 +303,7 @@ name is defined once (§514).
 ## 5. Testing
 
 - **Every op has a CPU reference with a test**, and a device version
-  is held to it: the five ops in `crates/greycard-gpu/tests/`, the
+  is held to it: the ops in `crates/greycard-gpu/tests/`, the
   shader in `crates/greycard-viewport/src/render/tests.rs`, the scopes
   against `scope.rs`. An export is always the reference's.
 - **GPU tests on lavapipe** (§221). CI's Linux job installs Mesa's

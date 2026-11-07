@@ -69,6 +69,10 @@ pub(crate) struct ExportArgs {
     /// Write an `.xmp` with each sidecar, over the editor's setting
     #[arg(long)]
     xmp_sidecars: bool,
+    /// Develop on the CPU alone, without the GPU the editor would use:
+    /// the same pixels on every machine
+    #[arg(long)]
+    cpu: bool,
 }
 
 impl ExportArgs {
@@ -107,16 +111,29 @@ impl ExportArgs {
 /// written or a run that could not begin.
 pub(crate) fn export(args: ExportArgs) -> Result<u8> {
     let presets = preset::Store::user();
+    let cpu = args.cpu;
     let plan = plan(
         &args.request()?,
         &Shared::load(),
         presets.as_ref(),
         greycard_library::Library::user_path(),
     )?;
-    let finished = run(plan);
+    let finished = run(plan, lent(cpu));
     // The line a script wants, whichever way it went.
     eprintln!("{}", finished.line);
     Ok(finished.code())
+}
+
+/// The context the run's CA, demosaic, and lens go on: none under
+/// `--cpu`, else one of our own where the machine has a GPU, a
+/// software adapter taken only when asked for by hand, as the editor
+/// takes one.
+fn lent(cpu: bool) -> greycard_engine::headless::Lent {
+    if cpu {
+        return Err("--cpu".into());
+    }
+    let asked = greycard_gpu::asked_by_hand(|name| std::env::var_os(name));
+    greycard_gpu::Context::for_export(asked).map_err(|d| d.to_string())
 }
 
 #[cfg(test)]
@@ -147,6 +164,13 @@ mod tests {
         let req = request(&["a.CR3", "b.CR3", "out/"]);
         assert_eq!(req.paths, [PathBuf::from("a.CR3"), PathBuf::from("b.CR3")]);
         assert_eq!(req.target, PathBuf::from("out/"));
+        let cpu = |args: &[&str]| {
+            let mut all = vec!["export"];
+            all.extend_from_slice(args);
+            Line::try_parse_from(all).unwrap().args.cpu
+        };
+        assert!(!cpu(&["a.CR3", "out.jpg"]));
+        assert!(cpu(&["a.CR3", "out.jpg", "--cpu"]));
         assert!(
             Line::try_parse_from(["export", "a.CR3"])
                 .unwrap()

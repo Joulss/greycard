@@ -357,6 +357,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 base.as_ref(),
                 &mut WorkerModels::new(&mut ai, None, &deliver, 0),
                 lenses.as_ref(),
+                &mut None,
                 &settings(2048),
             )
             .expect("finished");

@@ -21,17 +21,18 @@ use greycard_gpu::wgpu;
 use crate::{App, State};
 
 /// The variable Slint reads to take a CPU adapter.
-const SLINT_WGPU_CPU: &str = "SLINT_WGPU_CPU";
+const SLINT_WGPU_CPU: &str = greycard_gpu::SLINT_WGPU_CPU;
 
 /// The variable wgpu reads to take the adapter it names, which Slint
 /// honors before its own choice.
-const WGPU_ADAPTER_NAME: &str = "WGPU_ADAPTER_NAME";
+#[cfg(test)]
+const WGPU_ADAPTER_NAME: &str = greycard_gpu::WGPU_ADAPTER_NAME;
 
 /// Set beside `SLINT_WGPU_CPU` where we set it: a greycard started
 /// from anything we start (a browser `webbrowser` opened, which takes
 /// no environment of ours, where the desktop has no opener) inherits
 /// both, and reads the first as ours and not as asked for by hand.
-const OURS: &str = "GREYCARD_SET_SLINT_WGPU_CPU";
+const OURS: &str = greycard_gpu::SLINT_WGPU_CPU_OURS;
 
 /// Whether we set `SLINT_WGPU_CPU` ourselves, and so take it off the
 /// commands we start that let us.
@@ -133,8 +134,7 @@ pub(crate) fn asked() -> bool {
 /// [`asked`] over an environment `var` reads: `SLINT_WGPU_CPU` that a
 /// greycard set, with its marker beside it, is not asked for by hand.
 fn asked_in(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
-    let slint_cpu = var(SLINT_WGPU_CPU).is_some_and(|v| v.to_str().is_some());
-    (slint_cpu && var(OURS).is_none()) || var(WGPU_ADAPTER_NAME).is_some()
+    greycard_gpu::asked_by_hand(var)
 }
 
 /// The choice from what the probe found and whether the adapter was

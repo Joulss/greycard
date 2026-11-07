@@ -82,7 +82,7 @@ impl Round {
 /// on pictures in memory, the Detail section and the sharpen as one
 /// run with the picture before the sharpen kept on the device, ending
 /// at the viewport's texture, so a sharpen slider costs the sharpen
-/// alone. Without it (the export of the open frame), the reference's
+/// alone. Without it (a session with no device), the reference's
 /// path from points the device never touched, and the picture comes
 /// back with its half floats. A device that declines a picture runs
 /// that run on the CPU with its context kept; any other device error
@@ -226,8 +226,8 @@ pub(super) fn develop_round(
     });
     // A develop with a device lent that came back in memory ran
     // nothing of the edit there past the inline ops: what the device
-    // holds was for another edit, and goes. One without a device (the
-    // open file's export) leaves the window's as they are.
+    // holds was for another edit, and goes. One without a device
+    // leaves the window's as they are.
     if gpu.is_some() && !matches!(walked.buf, Buf::Texture(_)) {
         h.kept.forget_device();
     }

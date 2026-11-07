@@ -9,8 +9,11 @@ use crate::walk::NoLearned;
 /// resumes from a copy of the window's points, sharing their pictures:
 /// what it keeps and lets go of in resuming is the copy's, so the
 /// window's points (on the device too) are as they were for its next
-/// develop. The export's list runs on the CPU, so it resumes only from
-/// a point the CPU made. What of the edit was left out.
+/// develop. With `gpu` the export's CA, demosaic, and lens run there as
+/// the viewport's do, so the viewport's base serves it; without one it
+/// resumes only from a point the CPU made. What of the edit was left
+/// out.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn export_open(
     edit: &Edit,
     turn: u8,
@@ -18,17 +21,20 @@ pub(super) fn export_open(
     held: Option<&FrameKept>,
     models: &mut WorkerModels<'_>,
     lenses: Option<&greycard_lens::Database>,
+    gpu: &mut Option<greycard_gpu::Context>,
     written: Written<'_>,
 ) -> Result<Vec<String>, String> {
     let Some(f) = input else {
         return Err("no file is open".into());
     };
-    let (rendered, left_out) = render_open(edit, turn, f, held, models, lenses, written.settings)?;
+    let (rendered, left_out) =
+        render_open(edit, turn, f, held, models, lenses, gpu, written.settings)?;
     write_rendered(&rendered, edit, written)?;
     Ok(left_out)
 }
 
 /// [`export_open`]'s pixels, with what of the edit was left out.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_open(
     edit: &Edit,
     turn: u8,
@@ -36,6 +42,7 @@ pub(super) fn render_open(
     held: Option<&FrameKept>,
     models: &mut WorkerModels<'_>,
     lenses: Option<&greycard_lens::Database>,
+    gpu: &mut Option<greycard_gpu::Context>,
     settings: &greycard_render::export::Settings,
 ) -> Result<(greycard_render::export::Rendered, Vec<String>), String> {
     let mut kept = held.map(|h| h.kept.clone()).unwrap_or_default();
@@ -47,6 +54,7 @@ pub(super) fn render_open(
         lenses,
         settings,
         &mut kept,
+        gpu,
     )?;
     drop(kept);
     let rendered = crate::finish::finish_file(&image, edit, &finish, settings)
@@ -91,12 +99,14 @@ pub(super) fn seeded(edit: &Edit, seed: bool, input: Option<&Input>) -> Edit {
 /// its stage list for the export ([`walk_export`]), and written to
 /// `path`, the open file's base and learned pair left as they were for
 /// the next develop. The edit it was written under, and what of it
-/// was left out.
+/// was left out. With `gpu`, its CA, demosaic, and lens run there.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn export_other(
     frame: &crate::queue::Frame,
     ai: &mut Ai,
     cache: Option<&greycard_ai::DenoiseCache>,
     lenses: Option<&greycard_lens::Database>,
+    gpu: &mut Option<greycard_gpu::Context>,
     deliver: &Deliver,
     settings: &greycard_render::export::Settings,
     path: &std::path::Path,
@@ -113,6 +123,7 @@ pub(super) fn export_other(
         // said under the generation no develop has.
         &mut WorkerModels::new(ai, cache, deliver, 0),
         lenses,
+        gpu,
         settings,
     )?;
     left_out.extend(lens_words);
@@ -131,16 +142,18 @@ pub(super) fn export_other(
 }
 
 /// `input` walked under `edit` at `turn` through its stage list for
-/// the export, on the CPU and from nothing kept, with `models`'s
-/// models, and finished under the sheet's `settings` with its border
-/// and mark: the file's pixels. Beside them, what of the edit was left
-/// out, in [`left_out_of`]'s words and then [`learned_masks`]'.
+/// the export, from nothing kept, with `models`'s models and on `gpu`
+/// where the plan puts a stage there, and finished under the sheet's
+/// `settings` with its border and mark: the file's pixels. Beside
+/// them, what of the edit was left out, in [`left_out_of`]'s words and
+/// then [`learned_masks`]'.
 pub(super) fn walk_export(
     input: Input,
     edit: &Edit,
     turn: u8,
     models: &mut WorkerModels<'_>,
     lenses: Option<&greycard_lens::Database>,
+    gpu: &mut Option<greycard_gpu::Context>,
     settings: &greycard_render::export::Settings,
 ) -> Result<(greycard_render::export::Rendered, Vec<String>), String> {
     let mut kept = crate::walk::Kept::new();
@@ -152,6 +165,7 @@ pub(super) fn walk_export(
         lenses,
         settings,
         &mut kept,
+        gpu,
     )?;
     drop(kept);
     let rendered = crate::finish::finish_file(&image, edit, &finish, settings)
@@ -160,12 +174,14 @@ pub(super) fn walk_export(
 }
 
 /// `input` walked under `edit` at `turn` through its stage list for
-/// the export, on the CPU, from what `kept` holds, with `models`'s
-/// models: the picture before the finish and what the finish reads
-/// beside it. Beside them, what of the edit was left out, in
+/// the export, from what `kept` holds, with `models`'s models, its CA,
+/// demosaic, and lens on `gpu` where one is lent (a declined or failed
+/// op runs on the CPU, as the viewport's does): the picture before the
+/// finish and what the finish reads beside it. Beside them, what of the edit was left out, in
 /// [`left_out_of`]'s words and then [`learned_masks`]'. The walk keeps
 /// nothing new in `kept` but the patched picture a learned mask beside
 /// a Fill is made on.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn walk_for_export(
     input: crate::walk::Input,
     edit: &Edit,
@@ -174,9 +190,10 @@ pub(super) fn walk_for_export(
     lenses: Option<&greycard_lens::Database>,
     settings: &greycard_render::export::Settings,
     kept: &mut crate::walk::Kept,
+    gpu: &mut Option<greycard_gpu::Context>,
 ) -> Result<(Arc<WorkingImage>, crate::finish::FinishInput, Vec<String>), String> {
     use crate::stages::{Keep, LEARNED_DENOISER, Purpose, Skip, Stage, Step, Tap, stages};
-    use crate::walk::{Buf, NoHold, plan, walk};
+    use crate::walk::{Buf, ExportHold, plan, walk};
 
     let started = Instant::now();
     models.edit = edit.clone();
@@ -204,9 +221,9 @@ pub(super) fn walk_for_export(
         Step::Keep(_) => false,
         _ => true,
     });
-    let plan = plan(&steps, &purpose, false);
+    let plan = plan(&steps, &purpose, gpu.is_some());
     let walked =
-        walk(&steps, &plan, &input, kept, models, &mut None, &NoHold).map_err(|e| e.to_string())?;
+        walk(&steps, &plan, &input, kept, models, gpu, &ExportHold).map_err(|e| e.to_string())?;
     drop(input);
     debug_assert!(walked.without.is_empty(), "an export runs its fills");
     // A model the card stayed short of fails the item, rather than
@@ -247,7 +264,7 @@ pub(super) fn walk_for_export(
     walked.sharpen_mask = None;
     let finish = walked.finish_input();
     let Buf::Working(image) = walked.buf else {
-        unreachable!("a walk on the CPU ends at a picture in memory")
+        unreachable!("an export's walk ends at a picture in memory")
     };
     // The develop's line, its denoiser and fills in its words.
     super::develop::warn_failed_fills(&fills);

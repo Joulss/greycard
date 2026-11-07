@@ -167,6 +167,7 @@ pub(super) fn run(
     let mut fills_due: Option<FillsDue> = None;
     loop {
         let mut device = None;
+        let mut built = None;
         // A lost device, found by the ops (a wait that failed, an op's
         // error), by a panic, or by the window's device-lost callback:
         // the context goes, and the develop on screen, a texture on
@@ -217,6 +218,11 @@ pub(super) fn run(
                     && !gpu_gone
                 {
                     device = Some(d);
+                }
+                if let Some(ctx) = q.context.take()
+                    && !gpu_gone
+                {
+                    built = Some(ctx);
                 }
                 for (path, now) in std::mem::take(&mut q.edits_changed) {
                     drop_changed(shelf.as_mut(), &path, now.as_ref(), lenses.as_deref());
@@ -430,8 +436,21 @@ pub(super) fn run(
                 };
             }
         };
-        if let Some((d, q)) = device.take() {
-            match greycard_gpu::Context::from_device(&d, &q) {
+        // No caller hands over both; a device waiting beside a context
+        // would be dropped unseen.
+        if built.is_some() && device.is_some() {
+            debug_assert!(false, "a device and a context both handed over");
+            tracing::warn!(
+                "engine ops: a context and a device both handed over; the device dropped"
+            );
+        }
+        let built = built.map(Ok).or_else(|| {
+            device
+                .take()
+                .map(|(d, q)| greycard_gpu::Context::from_device(&d, &q))
+        });
+        if let Some(made) = built {
+            match made {
                 Ok(ctx) => {
                     let planes = if ctx.keeps_local_contrast_planes() {
                         "kept"
@@ -675,6 +694,7 @@ pub(super) fn run(
                                     // no develop has, as a set frame's are.
                                     &mut WorkerModels::new(&mut ai, cache.as_ref(), &deliver, 0),
                                     lenses.as_deref(),
+                                    &mut gpu,
                                     Written {
                                         settings: &set.settings,
                                         path: &path,
@@ -694,6 +714,7 @@ pub(super) fn run(
                                     other,
                                     cache.as_ref(),
                                     lenses.as_deref(),
+                                    &mut gpu,
                                     &deliver,
                                     &set.settings,
                                     &path,
@@ -738,6 +759,7 @@ pub(super) fn run(
                     };
                     held.unwrap_or_else(|payload| {
                         panicked = true;
+                        lost_seen |= says_lost(&panic_message(payload.as_ref()));
                         crate::queue::Done::Failed {
                             message: format!(
                                 "the worker panicked: {}",
@@ -746,6 +768,13 @@ pub(super) fn run(
                         }
                     })
                 });
+            // A device the export's walk let go is gone for the open
+            // frame too, as after a prefetch.
+            if gpu.is_none()
+                && let Some(b) = base.as_mut()
+            {
+                b.kept.forget_device();
+            }
             let hit = ai.hit_short() || set_ai.as_ref().is_some_and(Ai::hit_short);
             ai.set_patience(None);
             if let Some(o) = set_ai.as_mut() {
