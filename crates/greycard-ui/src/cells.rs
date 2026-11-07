@@ -219,6 +219,9 @@ pub(crate) fn set_rows(app: &App, thumbs: Vec<Thumb>) {
         view.fit(count);
         view.notify.reset();
     }
+    // A new list until the caller says frames were only taken out of
+    // the old one (`drop_files`).
+    app.set_rows_dropped(false);
     // A model of its own each time: the window re-flows when `thumbs`
     // changes, not when the rows under it do.
     app.set_thumbs(ModelRc::new(Rows {

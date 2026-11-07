@@ -72,6 +72,7 @@ export component Filmstrip inherits Rectangle {
         strip.content-x = -clamp(to, 0px, root.strip-max);
     }
     callback strip-relay();
+    callback strip-renew();
     callback strip-report();
     callback focus-keys();
     /// The scroll bar's thumb, asked of the grid's arithmetic along
@@ -86,11 +87,12 @@ export component Filmstrip inherits Rectangle {
     out property <length> content-width: strip.content-width;
 
     height: root.strip-pad + root.cell-h + root.strip-foot;
-    // A new list of another length: the strip is laid out afresh from
-    // its start. Its length changing as shapes come in is not that, and
-    // the window holds the scroll still under those.
+    // A list of another length: the window lays the strip out afresh
+    // from its start, or holds it still when frames were only taken
+    // out. Its length changing as shapes come in is neither, and the
+    // window holds the scroll still under those.
     property <int> count: root.thumbs.length;
-    changed count => { root.strip-relay(); }
+    changed count => { root.strip-renew(); }
     background: Theme.surface;
     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
     // A wheel over the strip scrolls it sideways. Slint's

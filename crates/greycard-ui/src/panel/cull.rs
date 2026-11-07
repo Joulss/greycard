@@ -2542,6 +2542,11 @@ pub(crate) fn drop_files(
     st.views.picked.clear();
     let next = rebuild_browser(st, app)
         .or_else(|| stand_in.and_then(|f| crate::cull::nearest_row(&st.views.shown, f)));
+    // The same list less some frames: the strip and the grid hold
+    // their scroll and move only to show the frame chosen next. The
+    // window reads this after this call, when its change handlers
+    // run; the next list put says false again.
+    app.set_rows_dropped(true);
     // After the rebuild, so the rows put first and the rows near the
     // screen are the new list's.
     crate::roots::ask_owed(st, worker);
@@ -4961,6 +4966,139 @@ mod tests {
         slint::platform::update_timers_and_animations();
         assert_eq!(state.borrow().current, Some(2));
         assert_eq!(app.get_file_name(), "IMG_0003.CR3");
+    }
+
+    /// Run what a turn of the event loop would: the change handlers
+    /// and the zero-length timers, the select after a drop among them.
+    fn settle() {
+        for _ in 0..4 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+            slint::platform::update_timers_and_animations();
+        }
+    }
+
+    /// Row `row` whole in the strip at its scroll, the pad beside it.
+    fn whole_in_strip(app: &App, row: i32) -> bool {
+        let layout = crate::cells::strip_layout(app);
+        let scroll = app.get_strip_scroll();
+        layout.reveal(scroll, app.get_strip_view(), row) == scroll
+    }
+
+    /// Forty frames in a strip 1200 wide, frame `selected` chosen.
+    fn long_strip(selected: i32) -> (App, Rc<Shared>, Rc<Worker>) {
+        let app = window(40);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 800.0));
+        let (state, worker) = state_for(&app, folder(40));
+        settle();
+        app.invoke_select(selected);
+        settle();
+        (app, state, worker)
+    }
+
+    /// The selected frame deleted mid-strip: the strip stays where it
+    /// was, the frames before it where they were, and the frame that
+    /// takes its place is chosen where it stood (issues 83 and 84).
+    #[test]
+    fn a_frame_deleted_mid_strip_leaves_the_strip_where_it_was() {
+        let (app, state, worker) = long_strip(20);
+        let layout = crate::cells::strip_layout(&app);
+        let (left, width) = layout.place(20).unwrap();
+        let mid = left + width / 2.0 - app.get_strip_view() / 2.0;
+        app.invoke_strip_hold(mid);
+        settle();
+        let scroll = app.get_strip_scroll();
+        assert!(scroll > 0.0 && whole_in_strip(&app, 20));
+        drop_files(&mut state.borrow_mut(), &app, &worker, &[20], "gone".into());
+        settle();
+        assert_eq!(app.get_selected(), 20, "the frame after took its place");
+        assert_eq!(app.get_strip_scroll(), scroll, "the strip jumped");
+        assert!(whole_in_strip(&app, 20));
+        // A new list after it is laid out afresh, from the start.
+        crate::cells::set_rows(&app, vec![Default::default(); 30]);
+        settle();
+        let fresh = crate::cells::strip_layout(&app).reveal(0.0, app.get_strip_view(), 20);
+        assert_eq!(app.get_strip_scroll(), fresh);
+    }
+
+    /// The selected frame deleted while the wheel had taken it off
+    /// screen, or cut it at the edge: the strip moves the least that
+    /// shows the frame chosen in its place, and no further.
+    #[test]
+    fn a_frame_deleted_off_screen_brings_the_next_on_by_the_least() {
+        for away in [false, true] {
+            let (app, state, worker) = long_strip(20);
+            let layout = crate::cells::strip_layout(&app);
+            let (left, _) = layout.place(20).unwrap();
+            // Cut at the left edge by ten pixels, or a screen past it.
+            let to = if away { left + 1500.0 } else { left + 10.0 };
+            app.invoke_strip_hold(to);
+            settle();
+            assert!(!whole_in_strip(&app, 20));
+            drop_files(&mut state.borrow_mut(), &app, &worker, &[20], "gone".into());
+            settle();
+            assert_eq!(app.get_selected(), 20);
+            let (left, _) = crate::cells::strip_layout(&app).place(20).unwrap();
+            assert_eq!(
+                app.get_strip_scroll(),
+                left - crate::strip::PAD,
+                "the least scroll (away: {away})"
+            );
+        }
+    }
+
+    /// The grid holds still the same way: the selected frame deleted
+    /// mid-sheet leaves the sheet's scroll where it was.
+    #[test]
+    fn a_frame_deleted_mid_sheet_leaves_the_grid_where_it_was() {
+        let (app, state, worker) = long_strip(0);
+        app.set_grid_open(true);
+        settle();
+        app.invoke_select(20);
+        settle();
+        // Down a little: the selected frame still whole.
+        app.invoke_scroll_by(30.0);
+        settle();
+        let scroll = app.get_grid_scroll();
+        assert!(scroll > 0.0);
+        drop_files(&mut state.borrow_mut(), &app, &worker, &[20], "gone".into());
+        settle();
+        assert_eq!(app.get_selected(), 20);
+        assert_eq!(app.get_grid_scroll(), scroll, "the sheet jumped");
+    }
+
+    /// The last frames deleted from a sheet scrolled to its end: a row
+    /// goes, the sheet comes back up to its new end and no further, and
+    /// the frame before them is chosen, whole. A new list after that is
+    /// laid out afresh, from the top.
+    #[test]
+    fn the_last_frames_deleted_pull_the_sheet_back_to_its_new_end() {
+        let (app, state, worker) = long_strip(0);
+        app.set_grid_open(true);
+        settle();
+        app.invoke_select(39);
+        settle();
+        let end = app.get_grid_scroll();
+        assert!(end > 0.0);
+        // Twelve frames: at least a row of the sheet, whatever its
+        // columns.
+        let gone: Vec<usize> = (28..40).collect();
+        drop_files(&mut state.borrow_mut(), &app, &worker, &gone, "gone".into());
+        settle();
+        assert_eq!(app.get_selected(), 27, "the frame before them");
+        let held = app.get_grid_scroll();
+        assert!(0.0 < held && held < end, "{held} against {end}");
+        app.invoke_scroll_by(10_000.0);
+        assert_eq!(app.get_grid_scroll(), held, "held at the new end");
+        // Nothing chosen and the sheet part way down: a new list puts
+        // it at the top.
+        app.set_selected(-1);
+        app.invoke_scroll_by(-30.0);
+        settle();
+        assert!(app.get_grid_scroll() > 0.0);
+        crate::cells::set_rows(&app, vec![Default::default(); 40]);
+        settle();
+        assert_eq!(app.get_grid_scroll(), 0.0);
     }
 
     #[test]

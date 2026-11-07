@@ -603,3 +603,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§588. The Navigator keeps one height](notes/588-the-navigator-keeps-one-height.md) (2026-11-07)
 - [§589. The paste sheet from the keys](notes/589-the-paste-sheet-from-the-keys.md) (2026-11-07)
 - [§590. The display curve goes with a copy](notes/590-the-display-curve-goes-with-a-copy.md) (2026-11-07)
+- [§592. The strip holds still under a delete](notes/592-the-strip-holds-still-under-a-delete.md) (2026-11-07)

@@ -26,6 +26,12 @@ design note behind it.
   on by default; it travels only between raws, since a JPEG or TIFF
   has no switch (issue 82)
   ([§590](https://github.com/jessolmstead/greycard/blob/master/docs/notes/590-the-display-curve-goes-with-a-copy.md)).
+- Deleting the selected frame or version, or moving it out with the
+  rejects, no longer scrolls the filmstrip or the grid so the next
+  frame lands at the far edge: both stay where they were and scroll
+  only when the frame chosen next would be off screen, and then by
+  the least (issues 83 and 84)
+  ([§592](https://github.com/jessolmstead/greycard/blob/master/docs/notes/592-the-strip-holds-still-under-a-delete.md)).
 
 ## 0.10.0, 2026-11-06
 

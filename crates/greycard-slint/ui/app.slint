@@ -331,6 +331,22 @@ export component App inherits Window {
         strip.content-x = 0px;
         root.strip-reveal();
     }
+    /// Frames taken out of the list, deleted or moved away, rather
+    /// than a new list: Rust says so after the rows it put. The rest
+    /// stay where they stood on screen.
+    in property <bool> rows-dropped;
+    /// The strip after a list of another length: held where it was,
+    /// within the shorter row, and moved the least that shows the
+    /// selected frame whole, when frames were taken out; else laid
+    /// out afresh from its start.
+    function strip-renew() {
+        if (!root.rows-dropped) {
+            root.strip-relay();
+            return;
+        }
+        strip.content-x = min(0px, max(strip.width - strip.content-width, strip.content-x));
+        root.strip-reveal();
+    }
     /// Tell Rust which frames are on screen. Sent on every move; the
     /// Rust side drops a repeat of the range it last acted on.
     function strip-report() {
@@ -553,8 +569,16 @@ export component App inherits Window {
     }
     changed tile-cell => { root.grid-relay(); }
     // Another folder's frames: the sheet re-flows and reports afresh,
-    // as the strip does from its content width.
-    changed thumbs => { root.grid-relay(); }
+    // as the strip does from its content width. Frames taken out of
+    // the list hold the sheet where it was, as they do the strip.
+    changed thumbs => {
+        if (root.rows-dropped) {
+            root.grid-scroll = clamp(root.grid-scroll, 0px, root.grid-max);
+            root.grid-reveal();
+        } else {
+            root.grid-relay();
+        }
+    }
     // The tiles come or go with the view, and move the cells.
     changed grid-top => { root.grid-relay(); }
     /// Scroll the sheet, or size the cells when Ctrl is held. A
@@ -4169,6 +4193,7 @@ export component App inherits Window {
             strip-length(s) => { return root.strip-length(s); }
             strip-foot: root.strip-foot;
             strip-relay => { root.strip-relay(); }
+            strip-renew => { root.strip-renew(); }
             strip-report => { root.strip-report(); }
             bar-length(a, b) => { return root.bar-length(a, b); }
             bar-offset(a, b, c) => { return root.bar-offset(a, b, c); }

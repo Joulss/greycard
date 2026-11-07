@@ -393,7 +393,11 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
     for &file in &files {
         write_file(st, file);
     }
-    crate::versions::settle(st, app, worker);
+    // The same list less some cells: the strip and the grid hold
+    // their scroll, as they do when files leave it.
+    if crate::versions::settle(st, app, worker) {
+        app.set_rows_dropped(true);
+    }
     let said = match gone.as_slice() {
         [] => "nothing deleted".to_string(),
         [one] => format!("deleted the version {one}"),
@@ -875,6 +879,39 @@ mod tests {
         assert_eq!(app.get_delete_confirm(), "");
         drop(st);
         assert_eq!(rows(&app)[1].1, "Cool");
+    }
+
+    /// A version deleted mid-strip leaves the strip where it was: its
+    /// file's own cell, beside it, opens in its place.
+    #[test]
+    fn a_version_deleted_mid_strip_leaves_the_strip_where_it_was() {
+        let app = window(40);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 800.0));
+        let (state, worker) = state_for(&app, folder(40));
+        let settle = || {
+            for _ in 0..4 {
+                i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        version_of(&state, &app, &worker, 20, "Warm");
+        settle();
+        app.invoke_select(21);
+        settle();
+        assert_eq!(state.borrow().version_name(21).as_deref(), Some("Warm"));
+        let layout = crate::cells::strip_layout(&app);
+        let (left, width) = layout.place(21).unwrap();
+        app.invoke_strip_hold(left + width / 2.0 - app.get_strip_view() / 2.0);
+        settle();
+        let scroll = app.get_strip_scroll();
+        assert!(scroll > 0.0);
+        app.invoke_delete_asked("selection".into());
+        app.invoke_delete_answered(1);
+        settle();
+        assert_eq!(state.borrow().current, Some(20), "its file's own cell");
+        assert_eq!(app.get_selected(), 20);
+        assert_eq!(app.get_strip_scroll(), scroll, "the strip jumped");
     }
 
     /// Two versions chosen and deleted at once both go, and the file's
