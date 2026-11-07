@@ -28,11 +28,12 @@
 #                        README under doc/greycard
 #
 # What is not bundled, and why. The binaries link, at exec, glibc
-# (libc, libm, and ld-linux), libgcc_s, and, for greycard-ui,
-# fontconfig, and nothing else; ONNX Runtime and Dawn add libstdc++,
-# and ONNX Runtime needs Dawn, which sits beside it. lcms2 is built in
-# statically (LCMS2_STATIC, the release workflow's "Static lcms2"
-# step), so no host is asked for it.
+# (libc, libm, and ld-linux), libgcc_s, and fontconfig (both of them:
+# the watermark's text is set in the render crate, which the window
+# and the command line's --export share), and nothing else; ONNX
+# Runtime and Dawn add libstdc++, and ONNX Runtime needs Dawn, which
+# sits beside it. lcms2 is built in statically (LCMS2_STATIC, the
+# release workflow's "Static lcms2" step), so no host is asked for it.
 # glibc and the loader are the host's by definition; libgcc_s and
 # libstdc++ are on every desktop that has a compiled program on it,
 # and a copy of ours would fight the host's driver stack, which loads
@@ -163,7 +164,7 @@ allowed() {
     libc.so.6 | libm.so.6 | ld-linux-x86-64.so.2 | libgcc_s.so.1) return 0 ;;
     esac
     case "$1:$2" in
-    greycard-ui:libfontconfig.so.1) return 0 ;;
+    greycard-ui:libfontconfig.so.1 | greycard:libfontconfig.so.1) return 0 ;;
     libonnxruntime.so:libstdc++.so.6 | libwebgpu_dawn.so:libstdc++.so.6) return 0 ;;
     libonnxruntime.so:libwebgpu_dawn.so) return 0 ;;
     esac
