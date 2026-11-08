@@ -11,30 +11,33 @@ none of the weight.
 
 ## The decision
 
-Two marks, both from the theme's tokens, and no change to the
-controls or the spacing. The header gets a band one step up from the
-panel's surface (`raised`), full width of the panel, the title and
-its arrow on it as they are. A hairline in `border` runs along the
-top of each section, so a folded section is a band with a line, and
-the run of folded sections at the panel's end reads as a list of
-headers and not as one block. Spacing stays as it is, since the
-tester's one fear is losing the panel's compactness, and the band
-does the telling apart on its own.
+One mark, from the theme's tokens, and no change to the controls or
+the spacing: a hairline in `border` along the top of each section.
+Each header then sits between the line above it and the rule the
+header already draws under itself, so a section reads as a block
+with a lid, and the run of folded sections at the panel's end reads
+as a list of headers and not as one mass. Spacing stays as it is,
+since the tester's one fear is losing the panel's compactness.
+
+We tried a band first, the header on a surface one step up from the
+panel's (`raised`), and then one step down (`base`), captured on the
+same frame beside the line alone. The lighter band read as a row of
+buttons, cheaper than the panel around it; the darker one as a
+recess that drew the eye to the headers more than to the controls.
+The line alone did the telling apart and left the panel's look.
 
 Every section comes from one component, `Section` (controls.slint),
 so the change is made once and reaches the panel's sections, the
 Masks tab's, and the left pane's, which share the component. The
-left pane's sections take the same marks: one look for a header
-everywhere. The tokens are per theme, so Charcoal, Grey, and Light
-each get their own step.
+tokens are per theme, so Charcoal, Grey, and Light each get their
+own line.
 
 ## The mechanism
 
-A `Rectangle` behind the header's row in `Section`, `Theme.raised`,
-and a 1 px `Rectangle` above it in `Theme.border`; the header's own
-padding unchanged. The sheets' own headers are not `Section`s and do
-not change. The capture harness takes the panel before and after for
-the record.
+A 1 px `Rectangle` in `Theme.border` at the top of `Section`; the
+header's own padding and rule unchanged. The sheets' own headers are
+not `Section`s and do not change. The capture harness took the panel
+before and after, and with each band, for the record.
 
 ## Verified
 (To be filled from the build.)
