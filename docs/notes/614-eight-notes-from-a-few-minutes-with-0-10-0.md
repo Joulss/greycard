@@ -58,3 +58,44 @@ menu click. With the keys rebindable it can follow later.
 **Not changed.** Space and a drag not panning, intermittently: Space
 pans only with a brush or a retouch tool in hand; elsewhere a plain
 drag pans and Space is Fit or 1:1. Waits on which tool was in hand.
+
+## What was built
+
+**The rings, the wheel, the pick, and Shift.** The brush's ring and
+the repair tool's drop `!root.hand` from their conditions: each hides
+while a drag pans or the middle button pans, and shows under Shift or
+Space at rest. `wheel::pick_along(x, y, hue)` is the pointer's
+projection onto the hue's unit ray on `pick`'s scale, clamped to
+0..1; `held_pick` under the hue hold reads it, so a drag in to the
+center falls to zero and stays there past it. `finish::Picked`
+carries `shown_chroma` beside `shown_hue`, the Oklab chroma of the
+color as shown with the wheels and the tint out, as the hue already
+is; `set_hand_hue` sets a wheel's zero amount to chroma over 0.1,
+clamped, and keeps a nonzero one. Still one history step. We read the
+shown color rather than the working-space pixel: the hue comes from
+there, and scene-linear chroma grows with exposure.
+
+Shift on a placed shape's handles had no bug: the handle's
+press-time read reaches `MaskDrag.held`, and `dragged_held` makes the
+circle or the step. What the tester met, we believe, is Shift pressed
+mid-drag, which did nothing, since placing and handles alike read it
+at the press only. Both now read it live: the viewport's
+`pointer-event` sets `place-shift` from each move's modifiers while a
+press places, and `CropHandle.shift` is set on every pointer event as
+`alt` is and carried by `mask-dragged`. The press's read stays the
+start; a Shift taken or let go acts on the next move.
+
+*Verified.* UI tests with real key and pointer events: the brush's
+ring and the repair's stay under Shift at rest, go during a Shift
+drag that pans, and return after; Shift before the press on a placed
+Radial's axis ends makes a circle and on a Linear's end a step, and
+without Shift nothing is held; Shift pressed mid-drag on a handle and
+while placing makes the circle on the next move and releasing lets it
+go. Unit tests of `pick_along` at the center, past it, and off-axis.
+A UI test of the pick: a saturated chroma onto a zero tint and a zero
+grading wheel sets an amount, a grey leaves zero, 0.4 is kept, the
+other wheels stay, one history row a pick; the GPU Ctrl-click test on
+lavapipe checks the amount is the chroma over 0.1.
+
+*Not verified.* None of it by hand in the running editor; whether
+the tester pressed Shift mid-drag.

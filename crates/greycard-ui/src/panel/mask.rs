@@ -121,8 +121,8 @@ pub(crate) struct Placing {
     pub(crate) component: Option<usize>,
     /// An object's press has become a box.
     pub(crate) boxed: bool,
-    /// Shift at the press: a linear held to steps of its angle, a
-    /// radial to a circle.
+    /// Shift at the press, then as each move of the drag reads it: a
+    /// linear held to steps of its angle, a radial to a circle.
     pub(crate) held: bool,
 }
 
@@ -337,7 +337,8 @@ pub(crate) struct MaskDrag {
     handle: usize,
     /// The handle's place on the view when pressed, logical pixels.
     at: (f32, f32),
-    /// Shift at the press (`Shape::dragged_held`).
+    /// Shift at the press, then as each move reads it
+    /// (`Shape::dragged_held`).
     held: bool,
 }
 
@@ -1586,6 +1587,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 app.window().request_redraw();
                 return;
             }
+            // Shift as this move read it: a hold taken or let go in the
+            // drag acts from here on.
+            let shift = app.get_place_shift();
+            if let Some(p) = st.develop.placing.as_mut() {
+                p.held = shift;
+            }
             let Some((from, index, which, held)) = st
                 .develop
                 .placing
@@ -1838,11 +1845,16 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_mask_dragged(move |_, dx, dy, alt| {
+        app.on_mask_dragged(move |_, dx, dy, alt, shift| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let mut st = state.borrow_mut();
+            // Shift as this move read it: a hold taken or let go in the
+            // drag acts from here on, the press's read its start.
+            if let Some(d) = st.develop.mask_drag.as_mut() {
+                d.held = shift;
+            }
             let Some((shape, handle, at, held)) = st
                 .develop
                 .mask_drag
@@ -1860,7 +1872,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // next — toggling Alt mid-drag keeps the dragged end
             // under the pointer, though the far end does jump between
             // its mirrored and its press-time spot.
-            // Shift, read at the press, holds it as placing does.
+            // Shift holds it as placing does.
             let moved = if held {
                 shape.dragged_held(handle, p, alt, |a, q| on_view_step(&st, &app, a, q))
             } else if alt {
@@ -3687,6 +3699,292 @@ mod tests {
         );
     }
 
+    /// The brush's ring, and the repair tool's after it, shows under
+    /// the pointer with Shift held at rest, where Shift and a bracket
+    /// set the feather it draws, and goes only while a drag under
+    /// Shift pans the picture.
+    #[test]
+    fn a_tools_ring_stays_under_shift_until_a_drag_pans() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (3000, 2000);
+            st.develop.center = (1500.0, 1000.0);
+        }
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        rest();
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Brush");
+        let rings = || {
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Ring").count()
+        };
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let at = |x: f32| slint::LogicalPosition::new(base.x + x, base.y + 300.0);
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: at(400.0),
+        });
+        assert!(rings() > 0, "the ring under the pointer");
+        let shift = |down: bool| {
+            let text = Key::Shift.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        shift(true);
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: at(410.0),
+        });
+        assert!(rings() > 0, "Shift at rest keeps the ring");
+        let was = state.borrow().develop.center;
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position: at(410.0),
+            button: PointerEventButton::Left,
+        });
+        for x in [430.0, 460.0] {
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position: at(x) });
+        }
+        assert_ne!(state.borrow().develop.center, was, "Shift's drag pans");
+        assert_eq!(rings(), 0, "a drag that pans takes it away");
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position: at(460.0),
+            button: PointerEventButton::Left,
+        });
+        assert!(rings() > 0, "back once the pan ends");
+        shift(false);
+        assert!(rings() > 0);
+
+        // The repair tool's ring likewise.
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        app.invoke_retouch_toggled("Heal".into());
+        assert_eq!(app.get_retouch_mode(), "Heal");
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: at(400.0),
+        });
+        assert!(rings() > 0, "the patch's ring");
+        shift(true);
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: at(410.0),
+        });
+        assert!(rings() > 0, "Shift at rest keeps it");
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position: at(410.0),
+            button: PointerEventButton::Left,
+        });
+        for x in [430.0, 460.0] {
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position: at(x) });
+        }
+        assert_eq!(rings(), 0, "a drag that pans takes it away");
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position: at(460.0),
+            button: PointerEventButton::Left,
+        });
+        shift(false);
+        assert!(rings() > 0, "back once the pan ends");
+    }
+
+    /// Shift taken mid-drag holds a radial to a circle from the next
+    /// move, and let go mid-drag lets it go, on a placed radial's
+    /// handle and on a radial being placed alike.
+    #[test]
+    fn shift_taken_or_let_go_mid_drag_acts_on_the_next_move() {
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        let shift = |app: &App, down: bool| {
+            let text = Key::Shift.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        let to = |app: &App, p: (f32, f32)| {
+            let position = slint::LogicalPosition::new(p.0, p.1);
+            app.window()
+                .dispatch_event(WindowEvent::PointerMoved { position });
+        };
+        let button = |app: &App, p: (f32, f32), down: bool| {
+            let position = slint::LogicalPosition::new(p.0, p.1);
+            let button = PointerEventButton::Left;
+            app.window().dispatch_event(if down {
+                WindowEvent::PointerPressed { position, button }
+            } else {
+                WindowEvent::PointerReleased { position, button }
+            });
+        };
+        let radii = |s: &Shape| {
+            let Shape::Radial { radius, .. } = *s else {
+                panic!("{s:?}")
+            };
+            radius
+        };
+
+        // A placed radial's long axis end.
+        let radial = a_radial(0.2, 0.1);
+        let (app, state, _worker, base) = body_setup(radial.clone());
+        let pts: Vec<Pt> = radial
+            .handles()
+            .into_iter()
+            .map(|(u, v)| {
+                let (x, y) = source_to_view(&state.borrow(), &app, u, v);
+                Pt { x, y }
+            })
+            .collect();
+        app.set_mask_handles(ModelRc::new(VecModel::from(pts)));
+        let (u, v) = radial.handles()[1];
+        let at = shown_at(&app, &state, base, u, v);
+        to(&app, at);
+        button(&app, at, true);
+        to(&app, (at.0 + 10.0, at.1));
+        let r = radii(&the_shape(&state));
+        assert!(r[0] > 0.2 && r[1] == 0.1, "free so far: {r:?}");
+        shift(&app, true);
+        to(&app, (at.0 + 20.0, at.1));
+        let r = radii(&the_shape(&state));
+        assert_eq!(r[0], r[1], "Shift taken: a circle: {r:?}");
+        shift(&app, false);
+        to(&app, (at.0 + 25.0, at.1));
+        let r = radii(&the_shape(&state));
+        assert!(r[0] > 0.2 && r[1] == 0.1, "Shift let go: {r:?}");
+        button(&app, (at.0 + 25.0, at.1), false);
+
+        // A radial being placed.
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.source_size = (3000, 2000);
+            st.develop.center = (1500.0, 1000.0);
+        }
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        rest();
+        app.invoke_add_shape("Radial".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Radial");
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        let at = (base.x + 400.0, base.y + 300.0);
+        let placed = || {
+            let st = state.borrow();
+            radii(&st.develop.edit.adjustments[0].mask.components[0].shape)
+        };
+        to(&app, at);
+        button(&app, at, true);
+        to(&app, (at.0 + 60.0, at.1 + 20.0));
+        let r = placed();
+        assert!(r[0] != r[1], "free so far: {r:?}");
+        shift(&app, true);
+        to(&app, (at.0 + 70.0, at.1 + 25.0));
+        let r = placed();
+        assert_eq!(r[0], r[1], "Shift taken: a circle: {r:?}");
+        shift(&app, false);
+        to(&app, (at.0 + 80.0, at.1 + 30.0));
+        let r = placed();
+        assert!(r[0] != r[1], "Shift let go: {r:?}");
+        button(&app, (at.0 + 80.0, at.1 + 30.0), false);
+    }
+
+    /// The report's shape: a shape placed free, then Shift held at the
+    /// press on a handle and through a real drag of it. A radial's
+    /// axis end makes it a circle; a linear's end puts it on a step of
+    /// its angle. Without Shift the same drags hold nothing.
+    #[test]
+    fn shift_on_a_placed_shapes_handle_holds_it() {
+        use slint::platform::{Key, WindowEvent};
+        // A drag of handle `h` of `shape` by (dx, dy) view pixels, Shift
+        // held from before the press when `shift`, and the shape after.
+        let run = |shape: Shape, h: usize, (dx, dy): (f32, f32), shift: bool| {
+            let (app, state, _worker, base) = body_setup(shape.clone());
+            let pts: Vec<Pt> = shape
+                .handles()
+                .into_iter()
+                .map(|(u, v)| {
+                    let (x, y) = source_to_view(&state.borrow(), &app, u, v);
+                    Pt { x, y }
+                })
+                .collect();
+            app.set_mask_handles(ModelRc::new(VecModel::from(pts)));
+            let (u, v) = shape.handles()[h];
+            let at = shown_at(&app, &state, base, u, v);
+            let key = |down: bool| {
+                let text = Key::Shift.into();
+                app.window().dispatch_event(if down {
+                    WindowEvent::KeyPressed { text }
+                } else {
+                    WindowEvent::KeyReleased { text }
+                });
+            };
+            if shift {
+                key(true);
+            }
+            crate::testing::drag(
+                &app,
+                &[
+                    at,
+                    (at.0 + dx / 2.0, at.1 + dy / 2.0),
+                    (at.0 + dx, at.1 + dy),
+                ],
+            );
+            if shift {
+                key(false);
+            }
+            the_shape(&state)
+        };
+        let radii = |s: &Shape| {
+            let Shape::Radial { radius, .. } = *s else {
+                panic!("{s:?}")
+            };
+            radius
+        };
+        // The right end of the long axis, out a little.
+        let held = radii(&run(a_radial(0.2, 0.1), 1, (20.0, 3.0), true));
+        assert_eq!(held[0], held[1], "a circle: {held:?}");
+        assert!(held[0] > 0.2, "the handle reached: {held:?}");
+        let free = radii(&run(a_radial(0.2, 0.1), 1, (20.0, 3.0), false));
+        assert!(free[0] > 0.2 && free[1] == 0.1, "{free:?}");
+        // The top end of the short axis likewise holds by its radius.
+        let held = radii(&run(a_radial(0.2, 0.1), 4, (3.0, -15.0), true));
+        assert_eq!(held[0], held[1], "a circle: {held:?}");
+
+        let degrees = |s: &Shape| {
+            let Shape::Linear { from, to } = *s else {
+                panic!("{s:?}")
+            };
+            (to[1] - from[1]).atan2(to[0] - from[0]).to_degrees()
+        };
+        let off_step = |a: f32| {
+            let r = a.rem_euclid(15.0);
+            r.min(15.0 - r)
+        };
+        let linear = Shape::Linear {
+            from: [0.4, 0.3],
+            to: [0.6, 0.45],
+        };
+        assert!(off_step(degrees(&linear)) > 1.0, "placed off a step");
+        let held = run(linear.clone(), 2, (17.0, -6.0), true);
+        assert_ne!(held, linear, "the end moved");
+        assert!(off_step(degrees(&held)) < 1e-3, "{held:?}");
+        let free = run(linear.clone(), 2, (17.0, -6.0), false);
+        assert!(off_step(degrees(&free)) > 1.0, "{free:?}");
+        // The other end too.
+        let held = run(linear, 1, (-11.0, 9.0), true);
+        assert!(off_step(degrees(&held)) < 1e-3, "{held:?}");
+    }
+
     /// Off the body a drag still pans, and the shape stays put.
     #[test]
     fn a_drag_off_the_body_still_pans() {
@@ -4683,7 +4981,7 @@ mod tests {
             };
             let placed = shape();
             app.invoke_mask_grabbed(h, shift);
-            app.invoke_mask_dragged(h, 60.0, 25.0, false);
+            app.invoke_mask_dragged(h, 60.0, 25.0, false, shift);
             app.invoke_mask_dropped();
             rest();
             let rows = app.get_history_rows();

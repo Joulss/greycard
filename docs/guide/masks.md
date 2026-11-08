@@ -125,7 +125,7 @@ fades to nothing where you let go. Afterwards, drag anywhere in the
 band between the end lines, or the middle line, to move it, or an end
 line to turn and stretch it about the middle. Hold **Alt** while
 dragging an end line to move that end alone. A drag outside the band
-moves the picture. Hold **Shift** as you start the drag, placing it or
+moves the picture. Hold **Shift** during the drag, placing it or
 moving an end, to keep its angle to steps of 15 degrees.
 Pressing the **middle button** during the drag does the same.
 
@@ -135,9 +135,8 @@ Press at the center and drag outward. Drag anywhere inside the
 ellipse, or its center handle, to move it; the pointer turns to a
 move arrow there. Drag a handle at the end of either axis to change
 that radius and turn the ellipse. **Feather** (50% to start) is how
-much of the ellipse fades out toward its edge. Hold **Shift** as you
-start the drag, placing it or moving an axis handle, to keep it a
-circle.
+much of the ellipse fades out toward its edge. Hold **Shift** during
+the drag, placing it or moving an axis handle, to keep it a circle.
 Pressing the **middle button** during the drag does the same.
 
 ### Brush

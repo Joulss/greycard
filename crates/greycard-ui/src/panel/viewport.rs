@@ -905,14 +905,16 @@ pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Pi
 /// What a wheel's pick reads: [`pick_stages`] with the grading and
 /// the tint out, the rest of the look in. A second pick on a cast the
 /// wheel already pushes still answers the cast's hue, not the pushed
-/// one, so the pick does not chase itself.
-pub(crate) fn wheel_pick_hue(st: &mut State, app: &App, px: [f32; 3]) -> f32 {
+/// one, so the pick does not chase itself. The hue, and the Oklab
+/// chroma there for a wheel at nothing to take its amount from.
+pub(crate) fn wheel_pick(st: &mut State, app: &App, px: [f32; 3]) -> (f32, f32) {
     let edit = greycard_edit::Edit {
         grading: Default::default(),
         tint: greycard_edit::Tint::OFF,
         ..read_edit(app, &st.develop.edit, st.develop.target)
     };
-    pick_through(st, app, px, &edit).shown_hue
+    let picked = pick_through(st, app, px, &edit);
+    (picked.shown_hue, picked.shown_chroma)
 }
 
 fn pick_through(
@@ -2149,10 +2151,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(px) = sample_view_at(&st, &app, x, y, reach) else {
                 return;
             };
-            let hue = wheel_pick_hue(&mut st, &app, px);
+            let (hue, chroma) = wheel_pick(&mut st, &app, px);
             drop(st);
             let hue = if complement { hue + 180.0 } else { hue };
-            crate::panel::color::set_hand_hue(&app, hand, hue);
+            crate::panel::color::set_hand_hue(&app, hand, hue, chroma);
         });
     }
     {
@@ -2888,7 +2890,7 @@ pub(crate) mod tests {
         let _unload = Unload(state.clone());
         // The color's hue with the wheels out: the same however far
         // the wheel in hand already pushes it.
-        let want = wheel_pick_hue(&mut state.borrow_mut(), &app, color);
+        let want = wheel_pick(&mut state.borrow_mut(), &app, color).0;
         let shown = || pick_stages(&mut state.borrow_mut(), &app, color).shown_hue;
         // The view's middle, in the window.
         let base =
@@ -2951,6 +2953,18 @@ pub(crate) mod tests {
         assert_eq!(app.get_wheel_hand(), crate::panel::color::TINT_HAND);
         ctrl_click(false);
         assert!(near(app.get_tint_hue(), want), "{want}");
+        // At nothing, the pick gives it an amount, the color's chroma
+        // over its reference.
+        app.set_tint_amount(0.0);
+        ctrl_click(false);
+        let chroma = wheel_pick(&mut state.borrow_mut(), &app, color).1;
+        assert!(chroma > 0.0, "a colored frame");
+        let amount = app.get_tint_amount();
+        assert!(amount > 0.0, "the pick shows");
+        assert!(
+            (amount - (chroma / 0.1).min(1.0)).abs() < 1e-5,
+            "{amount} for {chroma}"
+        );
 
         // Esc puts it down: a Ctrl-click sets nothing.
         crate::testing::press(&app, Key::Escape);

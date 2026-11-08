@@ -156,8 +156,9 @@ export component Viewport inherits Rectangle {
     callback place-pressed(length, length, bool);
     callback place-dragged(length, length);
     callback place-released();
-    // Shift at the press that places a shape: a linear held to steps
-    // of its angle, a radial to a circle.
+    // Shift at the press that places a shape, and on every move of
+    // its drag after: a linear held to steps of its angle, a radial
+    // to a circle.
     in-out property <bool> place-shift;
     // The middle button held in a left drag placing a gradient or a
     // brush: a linear or a radial held as Shift holds it, a brush's
@@ -184,8 +185,10 @@ export component Viewport inherits Rectangle {
     callback mask-grabbed(int, bool);
     // Alt as the handle's own pointer event reported it on this move
     // (`CropHandle.alt`), so a linear gradient's end can choose pivot
-    // (plain) or free-end (Alt) rotation.
-    callback mask-dragged(int, length, length, bool);
+    // (plain) or free-end (Alt) rotation; and Shift likewise
+    // (`CropHandle.shift`), so a hold taken or let go mid-drag acts on
+    // the next move.
+    callback mask-dragged(int, length, length, bool, bool);
     callback mask-dropped();
     /// Whether a point of the view lies on the chosen shape's body,
     /// where a drag moves the whole shape as its center handle does.
@@ -517,6 +520,9 @@ export component Viewport inherits Rectangle {
                 return;
             }
             if (e.kind == PointerEventKind.move) {
+                // Shift taken or let go in a drag placing a shape holds
+                // it or lets it go from this move on; `moved` follows.
+                if (self.placed-down) { root.place-shift = e.modifiers.shift; }
                 // Only the picture's own pan comes here; another
                 // area's coming here means that area is gone.
                 if (root.mid-down && root.mid-view) {
@@ -654,7 +660,7 @@ export component Viewport inherits Rectangle {
                         self.body-moving = true;
                         root.mask-grabbed(0, false);
                     }
-                    root.mask-dragged(0, self.mouse-x - self.down-x, self.mouse-y - self.down-y, false);
+                    root.mask-dragged(0, self.mouse-x - self.down-x, self.mouse-y - self.down-y, false, false);
                 } else if (self.dragged && !self.picked-down && !self.placed-down && root.crop-mode && !root.bare) {
                     // Crop mode is a mode: a drag out here draws,
                     // whether or not the picture is zoomed in enough
@@ -751,8 +757,10 @@ export component Viewport inherits Rectangle {
         }
     }
     // The brush under the pointer: its radius, and where
-    // its feather begins.
-    if root.placing == "Brush" && ta.has-hover && !root.bare && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
+    // its feather begins. The hand at rest keeps it, since
+    // Shift and a bracket set the feather it shows; only a
+    // drag that pans takes it away.
+    if root.placing == "Brush" && ta.has-hover && !root.bare && !ta.hand-down && !root.mid-down: Rectangle {
         for s[k] in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Ring {
             stroke: s == 1.0 ? (root.brush-op == "Erase" ? #ff6060cc : root.brush-op == "Subtract" ? #ffb860cc : #ffffffcc) : #ffffff50;
             halo: k == 0;
@@ -950,8 +958,9 @@ export component Viewport inherits Rectangle {
             height: 100%;
         }
     }
-    // The repair tool under the pointer: its radius and feather.
-    if root.retouch-mode != "" && ta.has-hover && !root.bare && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
+    // The repair tool under the pointer: its radius and feather,
+    // kept under the hand at rest as the brush's is.
+    if root.retouch-mode != "" && ta.has-hover && !root.bare && !ta.hand-down && !root.mid-down: Rectangle {
         for s[k] in [1.0, 1.0 - root.patch-feather]: Ring {
             stroke: s == 1.0 ? #7fd0ffcc : #7fd0ff50;
             halo: k == 0;
@@ -1255,7 +1264,7 @@ export component Viewport inherits Rectangle {
                 border-color: #00000080;
             }
             grabbed(k) => { root.mask-grabbed(k, self.press-modifiers.shift); }
-            dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy, self.alt); }
+            dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy, self.alt, self.shift); }
             dropped => { root.mask-dropped(); }
             middle(e, x, y) => { root.middle-at(e, x, y); }
         }

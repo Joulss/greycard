@@ -1606,6 +1606,9 @@ export component CropHandle inherits TouchArea {
     // cares (a linear gradient's end) reads it fresh on every move; a
     // crop handle just leaves it alone.
     out property <bool> alt: false;
+    // Shift likewise, fresh on every move, for a caller whose hold
+    // follows Shift through the drag.
+    out property <bool> shift: false;
     // The keys held at the press, for a caller that reads them in its
     // `grabbed`.
     out property <KeyboardModifiers> press-modifiers;
@@ -1623,6 +1626,7 @@ export component CropHandle inherits TouchArea {
     mouse-cursor: self.middle-held ? MouseCursor.grabbing : root.cursor;
     pointer-event(e) => {
         self.alt = e.modifiers.alt;
+        self.shift = e.modifiers.shift;
         if (e.button == PointerEventButton.middle) {
             if (e.kind == PointerEventKind.down && !self.pressed) {
                 self.middle-held = true;

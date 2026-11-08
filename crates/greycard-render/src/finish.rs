@@ -911,6 +911,8 @@ pub struct Picked {
     /// `curves` was baked with: the wheels' and the tint's own hue
     /// circle.
     pub shown_hue: f32,
+    /// Its Oklab chroma there, alongside `shown_hue`.
+    pub shown_chroma: f32,
 }
 
 // The sections as each caller has them: from an edit or a look, not one Baked.
@@ -973,6 +975,7 @@ pub fn pick(
         lightness: oklab(shaded.map(|v| v * shade_fade(shaded[0].max(shaded[1]).max(shaded[2]))))
             [0],
         shown_hue: lab[2].atan2(lab[1]).to_degrees().rem_euclid(360.0),
+        shown_chroma: lab[1].hypot(lab[2]),
     }
 }
 

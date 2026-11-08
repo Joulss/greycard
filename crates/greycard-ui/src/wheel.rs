@@ -26,6 +26,17 @@ pub fn pick(x: f32, y: f32) -> (Option<f32>, f32) {
     (hue, ((r - DEAD) / (1.0 - DEAD)).clamp(0.0, 1.0))
 }
 
+/// A press or a drag on a hue circle whose hue is held at `hue`: the
+/// strength is the pointer's projection onto that hue's ray, on
+/// [`pick`]'s scale, so a drag in to the center falls to nothing and
+/// on past it stays there rather than climbing again on the far side.
+pub fn pick_along(x: f32, y: f32, hue: f32) -> f32 {
+    let (dx, dy) = (2.0 * x - 1.0, 2.0 * y - 1.0);
+    let (s, c) = hue.to_radians().sin_cos();
+    let r = dx * c + dy * s;
+    ((r - DEAD) / (1.0 - DEAD)).clamp(0.0, 1.0)
+}
+
 /// Where a hue and a strength sit in a hue circle's picture, in the
 /// same coordinates: [`pick`]'s inverse for every pair it can
 /// return.
@@ -92,5 +103,39 @@ mod tests {
         assert_eq!(place(0.0, 0.0), (0.5 + DEAD / 2.0, 0.5));
         assert_eq!(place(210.0, 2.0), place(210.0, 1.0));
         assert_eq!(place(210.0, -1.0), place(210.0, 0.0));
+    }
+
+    #[test]
+    fn a_held_hue_reads_the_strength_along_its_own_ray() {
+        // On the ray the strength is pick's, falling to nothing as the
+        // pointer comes in to the center.
+        for hue in [0.0f32, 90.0, 215.0] {
+            let mut last = f32::INFINITY;
+            for strength in [1.0f32, 0.75, 0.5, 0.25, 0.0] {
+                let (x, y) = place(hue, strength);
+                let s = pick_along(x, y, hue);
+                assert!((s - strength).abs() < 1e-5, "{hue} at {strength} read {s}");
+                assert!(s < last || s == 0.0);
+                last = s;
+            }
+            assert_eq!(pick_along(0.5, 0.5, hue), 0.0, "the center is nothing");
+            // On past the center, the far side of the wheel, it stays
+            // at nothing rather than climbing again.
+            for strength in [0.1f32, 0.5, 1.0] {
+                let (x, y) = place(hue + 180.0, strength);
+                assert_eq!(
+                    pick_along(x, y, hue),
+                    0.0,
+                    "{hue}: past the center at {strength}"
+                );
+            }
+        }
+        // Off the ray the strength is the projection: a point at 60
+        // degrees from the held hue reads half its radius.
+        let (x, y) = place(60.0, 1.0);
+        let r = (1.0f32 * 60f32.to_radians().cos() - DEAD) / (1.0 - DEAD);
+        assert!((pick_along(x, y, 0.0) - r).abs() < 1e-5);
+        // Square to the ray it is nothing, wherever along the square.
+        assert_eq!(pick_along(0.5, 0.9, 0.0), 0.0);
     }
 }

@@ -1553,7 +1553,8 @@ export component App inherits Window {
     callback place-pressed(length, length, bool);
     callback place-dragged(length, length);
     callback place-released();
-    // Shift at the press placing a shape (`Viewport.place-shift`).
+    // Shift at the press placing a shape, and on each move of its drag
+    // after (`Viewport.place-shift`).
     in-out property <bool> place-shift;
     // The middle button held while placing (`Viewport.place-line`).
     in-out property <bool> place-line;
@@ -1583,8 +1584,8 @@ export component App inherits Window {
     // `alt`: Alt as the handle's own pointer event reported it on this
     // move (`CropHandle`'s `alt`), not a window-wide latch — a mask
     // handle's own drag reads it to choose pivot (plain) or free-end
-    // (Alt) rotation.
-    callback mask-dragged(int, length, length, bool);
+    // (Alt) rotation; Shift as it read on the same move.
+    callback mask-dragged(int, length, length, bool, bool);
     callback mask-dropped();
     /// Whether a point of the view (logical pixels) lies on the chosen
     /// shape's body, where a drag moves the whole shape.
@@ -3473,7 +3474,7 @@ export component App inherits Window {
                 mask-ry <=> root.mask-ry;
                 mask-feather-scale <=> root.mask-feather-scale;
                 mask-grabbed(a, b) => { root.mask-grabbed(a, b); }
-                mask-dragged(a, b, c, d) => { root.mask-dragged(a, b, c, d); }
+                mask-dragged(a, b, c, d, e) => { root.mask-dragged(a, b, c, d, e); }
                 mask-dropped => { root.mask-dropped(); }
                 mask-body-at(a, b, c) => { return root.mask-body-at(a, b, c); }
                 angle-dragging: root.angle-dragging;

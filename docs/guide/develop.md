@@ -314,7 +314,8 @@ Three wheels: **Shadows**, **Mid-tones** and **Highlights**.
 - The wheel last pressed is in hand, its ring drawn heavier.
   Ctrl-click (⌘-click on a Mac) the picture to set its hue to the
   color there, or Ctrl+Shift-click for the opposite hue; its strength
-  stays. The color is read without the wheels and the tint, so a
+  stays, and a wheel at zero takes one from the color's saturation.
+  The color is read without the wheels and the tint, so a
   second pick on the same spot finds the same hue. Esc, or a control
   in another section, puts it down.
 - Double-click a wheel to clear it.

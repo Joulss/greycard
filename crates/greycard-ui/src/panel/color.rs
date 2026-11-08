@@ -113,13 +113,16 @@ const HOLD_AMOUNT: i32 = 2;
 
 /// A wheel's hue and amount after a press or a drag at `(x, y)`,
 /// from `(hue0, amount0)`, the wheel's at the press under a hold and
-/// as it stands under none: Shift's hold keeps the hue, Ctrl's the
-/// amount, and a free drag takes both from the pointer (the hue kept
-/// at the center, where there is none to read).
+/// as it stands under none: Shift's hold keeps the hue and reads the
+/// amount along its ray (nothing at the center and past it), Ctrl's
+/// keeps the amount, and a free drag takes both from the pointer (the
+/// hue kept at the center, where there is none to read).
 pub(crate) fn held_pick(x: f32, y: f32, hold: i32, (hue0, amount0): (f32, f32)) -> (f32, f32) {
+    if hold == HOLD_HUE {
+        return (hue0, wheel::pick_along(x, y, hue0));
+    }
     let (hue, amount) = wheel::pick(x, y);
     match hold {
-        HOLD_HUE => (hue0, amount),
         HOLD_AMOUNT => (hue.unwrap_or(hue0), amount0),
         _ => (hue.unwrap_or(hue0), amount),
     }
@@ -164,18 +167,38 @@ pub(crate) fn keep_wheel(st: &mut State, app: &App) {
     }
 }
 
+/// The Oklab chroma a pick onto a wheel at nothing reads as the
+/// wheel's whole amount.
+const PICK_CHROMA: f32 = 0.1;
+
+/// A wheel's amount after a pick of a color of Oklab `chroma`: its
+/// own, or with none to keep, the color's chroma over
+/// [`PICK_CHROMA`], so a pick onto an empty wheel shows.
+fn picked_amount(amount: f32, chroma: f32) -> f32 {
+    if amount > 0.0 {
+        amount
+    } else {
+        (chroma / PICK_CHROMA).clamp(0.0, 1.0)
+    }
+}
+
 /// The wheel in hand turned to `hue` at its own amount, as a pick
-/// from the picture sets it: one change, one step of the history.
-pub(crate) fn set_hand_hue(app: &App, hand: i32, hue: f32) {
+/// from the picture sets it, or at an amount from the picked color's
+/// `chroma` if it had none: one change, one step of the history.
+pub(crate) fn set_hand_hue(app: &App, hand: i32, hue: f32, chroma: f32) {
     let hue = hue.rem_euclid(360.0);
     if hand == TINT_HAND {
         app.set_tint_hue(hue);
+        app.set_tint_amount(picked_amount(app.get_tint_amount(), chroma));
         show_tint(app);
     } else {
         let i = (hand.max(0) as usize).min(2);
         let mut hues = grade_values(app.get_grade_hues());
         hues[i] = hue;
         app.set_grade_hues(grade_model(&hues));
+        let mut sats = grade_values(app.get_grade_saturations());
+        sats[i] = picked_amount(sats[i], chroma);
+        app.set_grade_saturations(grade_model(&sats));
         choose_grade_range(app, i);
     }
     app.invoke_view_changed();
@@ -1345,17 +1368,29 @@ mod tests {
             }
             read()
         };
-        let check = |path: &[(f32, f32)], set: &dyn Fn(), read: &dyn Fn() -> (f32, f32)| {
-            let plain = dragged(path, None, set, read);
-            assert!(
-                plain.0 != start.0 && plain.1 != start.1,
-                "a plain drag moves both: {plain:?}"
-            );
-            let shift = dragged(path, Some(Key::Shift), set, read);
-            assert_eq!(shift, (start.0, plain.1), "Shift holds the hue");
-            let ctrl = dragged(path, Some(Key::Control), set, read);
-            assert_eq!(ctrl, (plain.0, start.1), "Ctrl holds the strength");
-        };
+        // `past`: the path ends on the far side of the center from the
+        // held hue, where Shift reads nothing; otherwise it ends near the
+        // held hue's ray, where it reads a little under the radius.
+        let check =
+            |path: &[(f32, f32)], past: bool, set: &dyn Fn(), read: &dyn Fn() -> (f32, f32)| {
+                let plain = dragged(path, None, set, read);
+                assert!(
+                    plain.0 != start.0 && plain.1 != start.1,
+                    "a plain drag moves both: {plain:?}"
+                );
+                let shift = dragged(path, Some(Key::Shift), set, read);
+                assert_eq!(shift.0, start.0, "Shift holds the hue");
+                if past {
+                    assert_eq!(shift.1, 0.0, "past the center is nothing: {shift:?}");
+                } else {
+                    assert!(
+                        shift.1 > 0.0 && shift.1 < plain.1,
+                        "along the held hue: {shift:?} for {plain:?}"
+                    );
+                }
+                let ctrl = dragged(path, Some(Key::Control), set, read);
+                assert_eq!(ctrl, (plain.0, start.1), "Ctrl holds the strength");
+            };
 
         // Scrolled into view, and measured where the scroll leaves it.
         center(&app, "Shadows wheel");
@@ -1367,6 +1402,7 @@ mod tests {
                 (x + 25.0, y - 10.0),
                 (x + 25.0, y - 15.0),
             ],
+            true,
             &|| {
                 app.set_grade_hues(grade_model(&[start.0; 3]));
                 app.set_grade_saturations(grade_model(&[start.1; 3]));
@@ -1387,6 +1423,7 @@ mod tests {
                 (x - 40.0, y + 20.0),
                 (x - 50.0, y + 25.0),
             ],
+            false,
             &|| {
                 app.set_tint_hue(start.0);
                 app.set_tint_amount(start.1);
@@ -1394,6 +1431,79 @@ mod tests {
             &|| (app.get_tint_hue(), app.get_tint_amount()),
         );
         assert_eq!(app.get_wheel_hand(), TINT_HAND);
+    }
+
+    #[test]
+    fn a_held_hue_reads_its_amount_along_its_ray() {
+        use crate::wheel::DEAD;
+        let from = (90.0, 0.7);
+        // Up, the held hue's way: the amount the radius gives.
+        let (hue, amount) = held_pick(0.5, 0.5 + 0.5 * (DEAD + 0.5 * (1.0 - DEAD)), HOLD_HUE, from);
+        assert_eq!(hue, 90.0);
+        assert!((amount - 0.5).abs() < 1e-5, "{amount}");
+        // Down, past the center: nothing, where a free drag reads half.
+        let (x, y) = (0.5, 0.5 - 0.5 * (DEAD + 0.5 * (1.0 - DEAD)));
+        assert_eq!(held_pick(x, y, HOLD_HUE, from), (90.0, 0.0));
+        assert!((held_pick(x, y, 0, from).1 - 0.5).abs() < 1e-5);
+    }
+
+    /// A pick from the picture onto a wheel at nothing gives it an
+    /// amount from the color's chroma, a grey none; onto a wheel with
+    /// an amount it keeps that. One history step each.
+    #[test]
+    fn a_pick_onto_an_empty_wheel_sets_its_amount() {
+        use crate::testing;
+        let app = testing::window(1);
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        // Past the save's wait, so each change is its own step.
+        let rest = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ));
+            slint::platform::update_timers_and_animations();
+        };
+        let steps = || {
+            rest();
+            app.get_history_rows().row_count()
+        };
+        let tint = || (app.get_tint_hue(), app.get_tint_amount());
+        let mid = || {
+            let g = read_grading(&app);
+            (g.midtones.hue, g.midtones.saturation)
+        };
+
+        // The tint: at nothing, a saturated pick sets an amount.
+        app.set_tint_amount(0.0);
+        let was = steps();
+        set_hand_hue(&app, TINT_HAND, 40.0, 0.06);
+        assert_eq!(tint().0, 40.0);
+        assert!((tint().1 - 0.6).abs() < 1e-6, "{:?}", tint());
+        assert_eq!(steps(), was + 1, "one step");
+        // At an amount, the amount kept.
+        app.set_tint_amount(0.4);
+        set_hand_hue(&app, TINT_HAND, 120.0, 0.25);
+        assert_eq!(tint(), (120.0, 0.4));
+        // A grey onto nothing stays at nothing.
+        app.set_tint_amount(0.0);
+        set_hand_hue(&app, TINT_HAND, 200.0, 0.0);
+        assert_eq!(tint(), (200.0, 0.0));
+
+        // A grading wheel likewise, the others untouched; a chroma past
+        // the reference is the whole amount.
+        let was = steps();
+        set_hand_hue(&app, 1, 300.0, 0.3);
+        assert_eq!(mid(), (300.0, 1.0));
+        assert_eq!(steps(), was + 1, "one step");
+        let g = read_grading(&app);
+        assert_eq!((g.shadows.saturation, g.highlights.saturation), (0.0, 0.0));
+        app.set_grade_saturations(grade_model(&[0.0, 0.4, 0.0]));
+        set_hand_hue(&app, 1, 10.0, 0.08);
+        assert_eq!(mid(), (10.0, 0.4));
+        app.set_grade_saturations(grade_model(&[0.0; 3]));
+        set_hand_hue(&app, 1, 20.0, 0.0);
+        assert_eq!(mid(), (20.0, 0.0));
     }
 
     /// A release with no press on the ring, as the click that closes a

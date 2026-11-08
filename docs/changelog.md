@@ -37,6 +37,10 @@ design note behind it.
   no sidecar yet starts with its lens corrections off; raws that
   already have a sidecar keep theirs (issue 101)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+- Ctrl and a click on the picture with a color wheel at zero in hand
+  also sets its amount from the color's saturation; a wheel with an
+  amount keeps it (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ### Models
 
@@ -73,6 +77,10 @@ design note behind it.
   ([§597](https://github.com/jessolmstead/greycard/blob/master/docs/notes/597-copy-masks-on-a-mask-rows-menu.md)).
 - On a card the editor has filled, a Sky, Subject, or Background mask is no longer refused: the editor first lets go of its own working memory on the card, and if the card is still short the mask runs on the CPU, slower but made (issue 91)
   ([§610](https://github.com/jessolmstead/greycard/blob/master/docs/notes/610-a-learned-mask-on-a-card-the-editor-has-filled.md)).
+- Shift pressed or let go in the middle of a drag holds or frees a
+  Linear or Radial from the next move, placing it and on its handles
+  alike (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ### The window
 
@@ -183,6 +191,14 @@ design note behind it.
 - The Keywords field keeps its height however many keywords a frame
   carries; the section grows and the panel scrolls (issue 98)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+- The brush's ring, and the repair tool's, stay under the pointer
+  with Shift or Space held, so a feather change by Shift and a bracket
+  shows; they hide only while a drag pans (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
+- Shift on a color wheel holds the hue and reads the amount along it,
+  so a drag in through the center stops at zero instead of climbing
+  on the far side (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ## 0.10.0, 2026-11-06
 
