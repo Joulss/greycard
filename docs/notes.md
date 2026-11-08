@@ -621,3 +621,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§607. The export's Detail, dehaze, and sharpen on the GPU](notes/607-the-exports-detail-dehaze-and-sharpen-on-the-gpu.md) (2026-11-07)
 - [§608. A picture's lens corrections start off](notes/608-a-pictures-lens-corrections-start-off.md) (2026-11-08)
 - [§609. A name cut short, whole at the pointer](notes/609-a-name-cut-short-whole-at-the-pointer.md) (2026-11-07)
+- [§610. A learned mask on a card the editor has filled](notes/610-a-learned-mask-on-a-card-the-editor-has-filled.md) (2026-11-08)
