@@ -597,11 +597,19 @@ pub(crate) const FROM_THE_FILE: &str = "From the file";
 /// The Maker row's first entry: every maker's lenses.
 pub(crate) const ALL_MAKERS: &str = "All";
 
-/// The Maker row's entries for `options`: All, then each maker of a
-/// row, alphabetically. A maker with no row is not there.
-pub(crate) fn lens_makers(options: &[greycard_engine::lens::LensOption]) -> Vec<String> {
+/// The Maker row's entries for `options` under the words `filter`:
+/// All, then alphabetically each maker of the body's lenses and the
+/// profiles, of a lens on another mount the words list (see
+/// [`lens_listed`]), and of the lens `chosen`. The words narrow only
+/// the off-mount makers, so a maker picked stays while its lenses do.
+pub(crate) fn lens_makers(
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    filter: &str,
+) -> Vec<String> {
     let mut makers: Vec<String> = options
         .iter()
+        .filter(|o| !o.off_mount || lens_listed(o, filter) || o.choice == *chosen)
         .map(|o| o.maker.clone())
         .filter(|m| !m.is_empty())
         .collect();
@@ -610,6 +618,25 @@ pub(crate) fn lens_makers(options: &[greycard_engine::lens::LensOption]) -> Vec<
     std::iter::once(ALL_MAKERS.to_string())
         .chain(makers)
         .collect()
+}
+
+/// Whether the words `filter` let an option be listed, maker aside:
+/// the body's lenses and the profiles when the words match them (no
+/// words match all), a lens on another mount (one on an adapter) only
+/// when words are typed and match it, so every mount's lenses do not
+/// swamp the body's own. An off-mount lens is matched on its name and
+/// maker, never the mounts its label adds: "sony" on a Sony body is
+/// not every lens calibrated on Sony A.
+fn lens_listed(o: &greycard_engine::lens::LensOption, filter: &str) -> bool {
+    use greycard_edit::LensChoice;
+    if !o.off_mount {
+        return lens_matches(&format!("{} {}", o.label, o.maker), filter);
+    }
+    let name = match &o.choice {
+        LensChoice::Database(name) | LensChoice::Lcp(name) => name.as_str(),
+        LensChoice::FromFile => return false,
+    };
+    !filter.trim().is_empty() && lens_matches(&format!("{name} {}", o.maker), filter)
 }
 
 /// Whether a row's `label` holds every word of `filter`, case aside.
@@ -631,11 +658,12 @@ pub(crate) struct LensRows {
 
 /// The Lens row's rows: From the file, then those of `options` by
 /// `maker` (every maker's for none) whose label and maker between them
-/// hold every word of `filter`. The lens `chosen` is always among them,
-/// first after From the file when the maker or the filter would leave it
-/// out; one not
-/// among `options` (a preset or a sidecar from another body or another
-/// machine) is listed by its name, after the rest, and has no maker.
+/// hold every word of `filter`, a lens on another mount only when
+/// words are typed (see [`lens_listed`]). The lens `chosen` is always
+/// among them, first after From the file when the maker or the filter
+/// would leave it out; one not among `options` (a preset or a sidecar
+/// from another body or another machine) is listed by its name, after
+/// the rest, and has no maker.
 pub(crate) fn lens_rows(
     options: &[greycard_engine::lens::LensOption],
     chosen: &greycard_edit::LensChoice,
@@ -646,8 +674,7 @@ pub(crate) fn lens_rows(
     let mut keys = vec![String::new()];
     let mut labels = vec![FROM_THE_FILE.to_string()];
     for o in options {
-        let named = format!("{} {}", o.label, o.maker);
-        if maker.is_none_or(|m| m == o.maker) && lens_matches(&named, filter) {
+        if maker.is_none_or(|m| m == o.maker) && lens_listed(o, filter) {
             keys.push(o.choice.key());
             labels.push(o.label.clone());
         }
@@ -701,6 +728,35 @@ pub(crate) fn show_lens_rows(
     app.set_lens_choice_labels(model(rows.labels));
     app.set_lens_choice_index(rows.index as i32);
     label
+}
+
+/// Put the Maker row's entries on the panel for the filter as it
+/// stands, the maker shown kept while it is among them, All when not:
+/// the words bring lenses on other mounts, and their makers, in and out.
+fn show_lens_makers(
+    options: &[greycard_engine::lens::LensOption],
+    chosen: &greycard_edit::LensChoice,
+    app: &App,
+) {
+    let makers = lens_makers(options, chosen, &app.get_lens_filter());
+    let shown: Vec<String> = app
+        .get_lens_makers()
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+    if shown == makers {
+        return;
+    }
+    let index = shown_maker(app)
+        .and_then(|m| makers.iter().position(|n| *n == m))
+        .unwrap_or(0);
+    app.set_lens_makers(ModelRc::new(VecModel::from(
+        makers
+            .into_iter()
+            .map(slint::SharedString::from)
+            .collect::<Vec<_>>(),
+    )));
+    app.set_lens_maker_index(index as i32);
 }
 
 /// Whether the open frame is another than the one the LENS filter and
@@ -763,7 +819,7 @@ fn show_lens_as(
     app: &App,
     follow: bool,
 ) {
-    let makers = lens_makers(options);
+    let makers = lens_makers(options, chosen, &app.get_lens_filter());
     let chosen_maker = options
         .iter()
         .find(|o| o.choice == *chosen)
@@ -1078,8 +1134,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
         });
     }
-    // The Maker row or the filter changed: the Lens row shows the rows
-    // they leave, the chosen lens among them.
+    // The Maker row or the filter changed: the Maker row lists the
+    // makers the words leave, and the Lens row shows the rows they
+    // leave, the chosen lens among them.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_lens_rows_changed(move || {
@@ -1088,6 +1145,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let st = state.borrow();
             let chosen = greycard_edit::LensChoice::from_key(app.get_lens_choice().as_str());
+            show_lens_makers(&st.develop.lens_options, &chosen, &app);
             show_lens_rows(&st.develop.lens_options, &chosen, &app);
         });
     }
@@ -2448,11 +2506,13 @@ mod tests {
                 choice: LensChoice::Database("Canon RF 50mm F1.8 STM".into()),
                 label: "Canon RF 50mm F1.8 STM".into(),
                 maker: "Canon".into(),
+                off_mount: false,
             },
             LensOption {
                 choice: LensChoice::Lcp("hand.lcp".into()),
                 label: "Hand 35mm".into(),
                 maker: "Hand".into(),
+                off_mount: false,
             },
         ];
         let found = LensReport::Found {
@@ -2497,6 +2557,7 @@ mod tests {
             choice,
             label: label.into(),
             maker: maker.into(),
+            off_mount: false,
         };
         let db = |name: &str| LensChoice::Database(name.into());
         vec![
@@ -2537,12 +2598,12 @@ mod tests {
     fn the_lens_rows_narrow_by_maker_and_words_and_keep_the_choice() {
         use greycard_edit::LensChoice;
         let options = maker_options();
+        let from = LensChoice::FromFile;
         assert_eq!(
-            lens_makers(&options),
+            lens_makers(&options, &from, ""),
             [ALL_MAKERS, "Canon", "Samyang", "Sigma"]
         );
-        assert_eq!(lens_makers(&[]), [ALL_MAKERS]);
-        let from = LensChoice::FromFile;
+        assert_eq!(lens_makers(&[], &from, ""), [ALL_MAKERS]);
         let labels = |r: &LensRows| r.labels.clone();
         let all = lens_rows(&options, &from, None, "");
         assert_eq!(all.labels.len(), 6);
@@ -2629,6 +2690,7 @@ mod tests {
             choice: LensChoice::Database("Laowa 15mm f/2 Zero-D".into()),
             label: "Laowa 15mm f/2 Zero-D".into(),
             maker: "Venus".into(),
+            off_mount: false,
         }];
         let venus = lens_rows(&laowa, &from, None, "venus 15mm");
         assert_eq!(labels(&venus), [FROM_THE_FILE, "Laowa 15mm f/2 Zero-D"]);
@@ -2776,6 +2838,130 @@ mod tests {
         assert_eq!(
             strings(app.get_lens_makers()),
             [ALL_MAKERS, "Samyang", "Sigma"]
+        );
+    }
+
+    /// A lens on another mount, for one on an adapter: not listed, nor
+    /// its maker, with no words typed; with words that match it,
+    /// listed after the body's own lenses and before the profiles, its
+    /// maker on the Maker row; picked, the edit holds its name alone.
+    #[test]
+    fn a_lens_off_the_mount_is_listed_when_words_find_it() {
+        use greycard_edit::LensChoice;
+        use greycard_engine::lens::LensOption;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let name = "Sigma 35mm f/1.4 DG HSM | A";
+        let label = format!("{name} (Canon EF, Nikon F AF)");
+        let options = vec![
+            LensOption {
+                choice: LensChoice::Database("Sony FE 35mm F1.8".into()),
+                label: "Sony FE 35mm F1.8".into(),
+                maker: "Sony".into(),
+                off_mount: false,
+            },
+            LensOption {
+                choice: LensChoice::Database(name.into()),
+                label: label.clone(),
+                maker: "Sigma".into(),
+                off_mount: true,
+            },
+            LensOption {
+                choice: LensChoice::Database("Minolta AF 50mm F1.7".into()),
+                label: "Minolta AF 50mm F1.7 (Sony Alpha)".into(),
+                maker: "Minolta".into(),
+                off_mount: true,
+            },
+            LensOption {
+                choice: LensChoice::Lcp("hand.lcp".into()),
+                label: "Hand 35mm".into(),
+                maker: "Hand".into(),
+                off_mount: false,
+            },
+        ];
+        state.borrow_mut().develop.lens_options = options.clone();
+        let strings = |m: ModelRc<slint::SharedString>| -> Vec<String> {
+            m.iter().map(|s| s.to_string()).collect()
+        };
+        let report = LensReport::NoLensName;
+        let from = LensChoice::FromFile;
+        show_lens_opened(&report, &options, &from, &app, true);
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [FROM_THE_FILE, "Sony FE 35mm F1.8", "Hand 35mm"]
+        );
+        assert_eq!(strings(app.get_lens_makers()), [ALL_MAKERS, "Hand", "Sony"]);
+
+        app.set_lens_filter("35".into());
+        app.invoke_lens_rows_changed();
+        let labels = strings(app.get_lens_choice_labels());
+        assert_eq!(
+            labels,
+            [FROM_THE_FILE, "Sony FE 35mm F1.8", &label, "Hand 35mm"]
+        );
+        assert_eq!(
+            strings(app.get_lens_makers()),
+            [ALL_MAKERS, "Hand", "Sigma", "Sony"]
+        );
+        // Words that do not match it leave it out; and the words are
+        // matched on an off-mount lens's name and maker, not on the
+        // mounts its label adds.
+        assert_eq!(
+            lens_rows(&options, &from, None, "sony").labels,
+            [FROM_THE_FILE, "Sony FE 35mm F1.8"]
+        );
+        assert_eq!(
+            lens_rows(&options, &from, None, "minolta").labels,
+            [FROM_THE_FILE, "Minolta AF 50mm F1.7 (Sony Alpha)"]
+        );
+        // Under its maker, with the words: listed.
+        let sigma = lens_rows(&options, &from, Some("Sigma"), "35");
+        assert_eq!(sigma.labels, [FROM_THE_FILE, label.as_str()]);
+
+        // Picked: the key is the name's, and the edit holds the name.
+        let keys = strings(app.get_lens_choice_keys());
+        app.set_lens_choice(keys[2].clone().into());
+        let edit = read_edit(&app, &greycard_edit::Edit::default(), None);
+        assert_eq!(edit.lens.chosen, LensChoice::Database(name.into()));
+        // Shown chosen with the words cleared: still listed, labeled
+        // with its mounts, and available.
+        app.set_lens_filter("".into());
+        show_lens(&report, &options, &edit.lens.chosen, &app);
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [FROM_THE_FILE, &label, "Sony FE 35mm F1.8", "Hand 35mm"]
+        );
+        assert_eq!(app.get_lens_choice_index(), 1);
+        assert_eq!(app.get_lens_profile(), label.as_str());
+        assert!(app.get_lens_available());
+
+        // Sigma picked on the Maker row while the words find the
+        // Sigma, then words that drop it with another lens chosen: the
+        // Maker row loses Sigma and falls back to All. The body's own
+        // makers stay whatever the words.
+        let maker =
+            |app: &App| strings(app.get_lens_makers())[app.get_lens_maker_index() as usize].clone();
+        show_lens(&report, &options, &from, &app);
+        app.set_lens_filter("35".into());
+        app.invoke_lens_rows_changed();
+        let at = strings(app.get_lens_makers())
+            .iter()
+            .position(|m| m == "Sigma")
+            .unwrap();
+        app.set_lens_maker_index(at as i32);
+        app.invoke_lens_rows_changed();
+        assert_eq!(maker(&app), "Sigma");
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [FROM_THE_FILE, label.as_str()]
+        );
+        app.set_lens_filter("sony".into());
+        app.invoke_lens_rows_changed();
+        assert_eq!(app.get_lens_maker_index(), 0);
+        assert_eq!(strings(app.get_lens_makers()), [ALL_MAKERS, "Hand", "Sony"]);
+        assert_eq!(
+            strings(app.get_lens_choice_labels()),
+            [FROM_THE_FILE, "Sony FE 35mm F1.8"]
         );
     }
 

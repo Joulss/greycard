@@ -48,6 +48,10 @@ design note behind it.
 - Shift or Ctrl and a bracket step the brush's feather or flow by
   0.05, half the old step (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
+- A lens on another mount, on an adapter, is in the Lens picker: type
+  part of its name in Find a lens and it appears after the body's own,
+  with the mounts it was calibrated on
+  ([§615](https://github.com/jessolmstead/greycard/blob/master/docs/notes/615-a-lens-off-the-bodys-mount-in-the-picker.md)).
 
 ### Models
 

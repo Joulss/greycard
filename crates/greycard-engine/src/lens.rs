@@ -22,6 +22,10 @@ pub struct LensOption {
     pub label: String,
     /// Who made the lens, one spelling a maker (see [`options_in`]).
     pub maker: String,
+    /// A lens of the database's on none of the body's mounts, for a
+    /// lens on an adapter: its label names its mounts, and the picker
+    /// lists it only when words typed match it.
+    pub off_mount: bool,
 }
 
 /// The profile's correction for a picture `width` by `height` of the
@@ -112,8 +116,8 @@ pub fn profile_correction_in(
 }
 
 /// What the picker offers for a file: the database's lenses for its
-/// body, then the Adobe profiles in the profile directory, one a lens
-/// name.
+/// body, then those on other mounts, then the Adobe profiles in the
+/// profile directory, one a lens name.
 pub fn options(db: Option<&Database>, identity: Identity) -> Vec<LensOption> {
     options_in(
         db,
@@ -139,20 +143,36 @@ pub fn options_in(
     profiles: Option<&Path>,
 ) -> Vec<LensOption> {
     let makers = Makers::of(db);
-    let mut out: Vec<LensOption> = db
-        .and_then(|db| db.camera(make, model).map(|c| db.lenses_for(c)))
+    let body = db.and_then(|db| db.camera(make, model).map(|c| (db, c)));
+    let mut out: Vec<LensOption> = body
+        .map(|(db, c)| db.lenses_for(c))
         .unwrap_or_default()
         .into_iter()
         .map(|l| LensOption {
             choice: LensChoice::Database(l.name().to_string()),
             label: l.name().to_string(),
             maker: makers.spelled(&l.maker),
+            off_mount: false,
         })
         .collect();
+    // The lenses on other mounts, for one on an adapter: labeled with
+    // the mounts they were calibrated on, the choice the name alone,
+    // so a sidecar holds the name and not the label.
+    out.extend(
+        body.map(|(db, c)| db.lenses_off_mount(c))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| LensOption {
+                choice: LensChoice::Database(l.name().to_string()),
+                label: format!("{} ({})", l.name(), l.mounts.join(", ")),
+                maker: makers.spelled(&l.maker),
+                off_mount: true,
+            }),
+    );
     // A profile made on another body is read at this body's sensor
     // size, which only the database knows: without it, only this
     // body's own are offered.
-    let sized = db.and_then(|db| db.camera(make, model)).is_some();
+    let sized = body.is_some();
     let made_here = |l: &lcp::Listed| lcp::load(&l.path).is_some_and(|p| p.made_on(make, model));
     let rank = |l: &lcp::Listed| (l.raw != raw, !made_here(l));
     let mut adobe: Vec<lcp::Listed> = Vec::new();
@@ -172,6 +192,7 @@ pub fn options_in(
         maker: makers.of_profile(&l),
         choice: LensChoice::Lcp(l.file),
         label: l.lens,
+        off_mount: false,
     }));
     out
 }
@@ -350,6 +371,11 @@ mod tests {
                 ("Canon RF 50mm F1.8 STM", "Canon"),
                 ("Canon RF 85mm F2 Macro IS STM", "Canon"),
                 ("Sigma 24-70mm F2.8 DG DN Art", "Sigma"),
+                // Off the body's mounts, after its own, with the
+                // mounts named.
+                ("7Artisans 25mm f/1.8 (Fujifilm X)", "7Artisans"),
+                ("Canon EF 50mm f/1.8 STM (Canon EF)", "Canon"),
+                ("Sigma 18-35mm F1.8 DC HSM (Nikon F AF)", "Sigma"),
                 // Profiles: a third party's under its own name, not
                 // the camera's; one named by the camera maker's series
                 // under the camera's maker, by its leading letters
@@ -363,6 +389,60 @@ mod tests {
             ]
         );
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A lens on another mount, for one on an adapter, comes after the
+    /// body's, labeled with its mounts in the database's order, and the
+    /// choice is its name alone; picked, it corrects.
+    #[test]
+    fn the_picker_offers_a_lens_off_the_mount_with_its_mounts_named() {
+        let name = "Sigma 35mm f/1.4 DG HSM | A";
+        let mut db = Database::default();
+        db.read_xml(&format!(
+            "<lensdatabase version=\"2\"><camera><maker>Sony</maker>\
+             <model>Sony ILCE-7M4</model><mount>Sony E</mount>\
+             <cropfactor>1</cropfactor></camera>{}{}</lensdatabase>",
+            db_lens("Sony", "Sony FE 50mm F1.8", "Sony E"),
+            db_lens("Sigma", name, "Canon EF</mount><mount>Nikon F AF"),
+        ))
+        .unwrap();
+        let shot = Shot {
+            focal_length: Some(35.0),
+            ..Default::default()
+        };
+        let id = ("Sony", "ILCE-7M4", &shot, true);
+        let options = options_in(Some(&db), id, None);
+        assert_eq!(
+            options,
+            [
+                LensOption {
+                    choice: LensChoice::Database("Sony FE 50mm F1.8".into()),
+                    label: "Sony FE 50mm F1.8".into(),
+                    maker: "Sony".into(),
+                    off_mount: false,
+                },
+                LensOption {
+                    choice: LensChoice::Database(name.into()),
+                    label: format!("{name} (Canon EF, Nikon F AF)"),
+                    maker: "Sigma".into(),
+                    off_mount: true,
+                },
+            ]
+        );
+        let picked = greycard_edit::Lens {
+            chosen: options[1].choice.clone(),
+            ..Default::default()
+        };
+        let c = profile_correction_in(
+            (600, 400),
+            Orientation::Normal,
+            id,
+            &picked,
+            Some(&db),
+            None,
+        );
+        assert!(c.is_some_and(|c| c.distortion.is_some()));
+        assert!(left_out_in(id, &picked, Some(&db), None).is_none());
     }
 
     #[test]
@@ -384,6 +464,7 @@ mod tests {
                 choice: LensChoice::Lcp("c.lcp".into()),
                 label: "Hand 35mm".into(),
                 maker: "Hand".into(),
+                off_mount: false,
             }]
         );
         // A rendered picture takes the one made on JPEGs, once the

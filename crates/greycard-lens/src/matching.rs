@@ -198,13 +198,45 @@ impl Database {
     /// sorted by name.
     pub fn lenses_for(&self, camera: &Camera) -> Vec<&Lens> {
         let mounts = self.mounts_taken(&camera.mount);
+        self.one_a_name(camera.crop_factor, |l| {
+            l.mounts.iter().any(|m| mounts.contains(&m.as_str()))
+        })
+    }
+
+    /// The lenses on none of the body's mounts that draw straight
+    /// lines, for a lens on an adapter: one a name, nearest the body's
+    /// sensor size, sorted by name. The glass is the same on any
+    /// mount; the database lists the mounts its calibrators had.
+    pub fn lenses_off_mount(&self, camera: &Camera) -> Vec<&Lens> {
+        let on_mount = self.names_on_mount(camera);
+        self.one_a_name(camera.crop_factor, |l| !on_mount.contains(l.name()))
+    }
+
+    /// The names of the straight-line lenses the body's mounts take.
+    fn names_on_mount(&self, camera: &Camera) -> std::collections::HashSet<&str> {
+        let mounts = self.mounts_taken(&camera.mount);
+        self.lenses
+            .iter()
+            .filter(|l| {
+                l.kind == LensType::Rectilinear
+                    && l.mounts.iter().any(|m| mounts.contains(&m.as_str()))
+            })
+            .map(Lens::name)
+            .collect()
+    }
+
+    /// The straight-line lenses `keep` keeps, one a name (the entry
+    /// calibrated nearest `crop`), sorted by name.
+    fn one_a_name(&self, crop: f32, keep: impl Fn(&Lens) -> bool) -> Vec<&Lens> {
         let mut out: Vec<&Lens> = Vec::new();
-        for l in self.lenses.iter().filter(|l| {
-            l.kind == LensType::Rectilinear && l.mounts.iter().any(|m| mounts.contains(&m.as_str()))
-        }) {
+        for l in self
+            .lenses
+            .iter()
+            .filter(|l| l.kind == LensType::Rectilinear && keep(l))
+        {
             match out.iter_mut().find(|o| o.name() == l.name()) {
                 Some(o) => {
-                    if nearer(l, o, camera.crop_factor) {
+                    if nearer(l, o, crop) {
                         *o = l;
                     }
                 }
@@ -215,13 +247,32 @@ impl Database {
         out
     }
 
-    /// The lens of this name, as [`Database::lenses_for`] gives it for
-    /// `camera`: none when it is not among them, as the picker does not
-    /// offer it. For a body the database does not know, the first
-    /// straight-line entry of the name.
+    /// The lens of this name for `camera`: as [`Database::lenses_for`]
+    /// gives it when it is among them, else as
+    /// [`Database::lenses_off_mount`] does, a lens on an adapter. For a
+    /// body the database does not know, the first straight-line entry
+    /// of the name.
     pub fn lens_named(&self, camera: Option<&Camera>, name: &str) -> Option<&Lens> {
         match camera {
-            Some(c) => self.lenses_for(c).into_iter().find(|l| l.name() == name),
+            Some(c) => self
+                .lenses_for(c)
+                .into_iter()
+                .find(|l| l.name() == name)
+                .or_else(|| {
+                    // Off the mount: the entry of the name nearest the
+                    // body's sensor size, as `lenses_off_mount` has it,
+                    // in one pass. A name on the mount was found above.
+                    self.lenses
+                        .iter()
+                        .filter(|l| l.kind == LensType::Rectilinear && l.name() == name)
+                        .reduce(|best, l| {
+                            if nearer(l, best, c.crop_factor) {
+                                l
+                            } else {
+                                best
+                            }
+                        })
+                }),
             None => self
                 .lenses
                 .iter()
@@ -424,6 +475,86 @@ mod tests {
         // Nothing alike is nothing.
         assert!(
             db.lens(r6, None, "RF100mm F2.8 L MACRO IS USM", Some(100.0))
+                .is_none()
+        );
+    }
+
+    /// Two Sony E bodies, full frame and crop, and a Sigma calibrated
+    /// on Canon EF (full frame) and Nikon F (on a crop body), for a
+    /// lens on an adapter. (The R7 would not do for the crop case: it
+    /// takes Canon EF, so the Sigma is on its mount.)
+    const ADAPTED: &str = r#"<lensdatabase version="2">
+        <camera>
+            <maker>Sony</maker>
+            <model>Sony ILCE-7M4</model>
+            <mount>Sony E</mount>
+            <cropfactor>1</cropfactor>
+        </camera>
+        <camera>
+            <maker>Sony</maker>
+            <model>Sony ILCE-6400</model>
+            <mount>Sony E</mount>
+            <cropfactor>1.5</cropfactor>
+        </camera>
+        <lens>
+            <maker>Sigma</maker>
+            <model>Sigma 35mm f/1.4 DG HSM | A</model>
+            <mount>Nikon F AF</mount>
+            <cropfactor>1.5</cropfactor>
+            <calibration><distortion model="poly3" focal="35" k1="-0.01"/></calibration>
+        </lens>
+        <lens>
+            <maker>Sigma</maker>
+            <model>Sigma 35mm f/1.4 DG HSM | A</model>
+            <mount>Canon EF</mount>
+            <mount>Nikon F AF</mount>
+            <cropfactor>1</cropfactor>
+            <calibration><distortion model="poly3" focal="35" k1="-0.02"/></calibration>
+        </lens>
+    </lensdatabase>"#;
+
+    #[test]
+    fn a_lens_off_the_bodys_mount_is_offered_apart_and_named_back() {
+        let mut db = db();
+        db.read_xml(ADAPTED).unwrap();
+        let sony = db.camera("Sony", "ILCE-7M4").unwrap();
+        let name = "Sigma 35mm f/1.4 DG HSM | A";
+        let names = |v: Vec<&Lens>| v.iter().map(|l| l.name().to_string()).collect::<Vec<_>>();
+        let on = names(db.lenses_for(sony));
+        assert_eq!(on, ["Sigma 28mm F1.4 DG HSM | A"]);
+        let off = db.lenses_off_mount(sony);
+        // One a name, the full-frame entry for a full-frame body, and
+        // never a fisheye or a lens the body already takes.
+        let sigma: Vec<&&Lens> = off.iter().filter(|l| l.name() == name).collect();
+        assert_eq!(sigma.len(), 1);
+        assert_eq!(sigma[0].crop_factor, 1.0);
+        assert!(!off.iter().any(|l| l.kind != LensType::Rectilinear));
+        assert!(!off.iter().any(|l| on.contains(&l.name().to_string())));
+        let off = names(off);
+        let mut sorted = off.clone();
+        sorted.sort_by_key(|n| n.to_lowercase());
+        assert_eq!(off, sorted);
+        // Picked by name, it holds; a name on the mount is the mount's.
+        let picked = db.lens_named(Some(sony), name).unwrap();
+        assert_eq!(picked.crop_factor, 1.0);
+        assert_eq!(picked.mounts, ["Canon EF", "Nikon F AF"]);
+        let own = db
+            .lens_named(Some(sony), "Sigma 28mm F1.4 DG HSM | A")
+            .unwrap();
+        assert!(own.mounts.iter().any(|m| m == "Sony E"));
+        let r6 = db.camera("Canon", "EOS R6").unwrap();
+        let fifty = db.lens_named(Some(r6), "Canon RF 50mm F1.8 STM").unwrap();
+        assert_eq!(fifty.mounts, ["Canon RF"]);
+        // A crop body takes the entry calibrated nearest its size,
+        // in the list and by name.
+        let crop = db.camera("Sony", "ILCE-6400").unwrap();
+        let listed = db.lenses_off_mount(crop);
+        let listed = listed.iter().find(|l| l.name() == name).unwrap();
+        assert_eq!(listed.crop_factor, 1.5);
+        assert_eq!(db.lens_named(Some(crop), name).unwrap().crop_factor, 1.5);
+        // A fisheye is not picked by name off the mount either.
+        assert!(
+            db.lens_named(Some(sony), "Samyang 8mm f/3.5 Fish-eye")
                 .is_none()
         );
     }

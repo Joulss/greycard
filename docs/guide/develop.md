@@ -426,6 +426,8 @@ name inside each. The profile folder is the one that holds your DCP
 camera profiles (see [Camera profile](#camera-profile)). greycard
 reads an LCP's distortion, vignetting, and chromatic aberration,
 matched to the shot's focal length, aperture, and focus distance.
+A lens on another mount, on an adapter, appears when you type part of
+its name in **Find a lens**, with its mounts after the name.
 
 Where to get LCPs:
 
@@ -445,8 +447,8 @@ body is used.
 
 The lens picked is kept in the edit, and goes with copy and paste and
 with presets, as the **Profile** switch does. A lens that is not
-there for this body (one picked for another mount, or a profile not on
-this machine) is still shown by its name, greyed, and corrects
+there for this body (one the database lacks, or a profile not on this
+machine) is still shown by its name, greyed, and corrects
 nothing. An export without it says so.
 
 ### From the profile

@@ -8,7 +8,8 @@
 //! Adobe's lens profiles (`.lcp`), which the user may keep beside
 //! their camera profiles, are read by [`lcp`] into the same
 //! [`LensCorrection`]; a lens may also be picked by hand from the
-//! database's lenses for the body ([`Database::lenses_for`]).
+//! database's lenses for the body ([`Database::lenses_for`]), or one
+//! on another mount ([`Database::lenses_off_mount`]).
 //!
 //! The engine never sees the database: `greycard-core` has the
 //! models, this crate has the data and the matching, and a consumer
@@ -943,10 +944,16 @@ mod tests {
         };
         let f = frame("EOS R7", "RF50mm F1.8 STM", 50.0, 2.5);
         assert_eq!(p, db.profile(&f).unwrap());
-        // Off the body's mounts it is not offered, and not found.
+        // Off the body's mounts it is not in the body's list, and is
+        // still found by name, as a lens on an adapter.
+        assert!(
+            db.lenses_off_mount(r7)
+                .iter()
+                .any(|l| l.name() == "Sigma 28mm F1.4 DG HSM | A")
+        );
         assert!(
             db.lens_named(Some(r7), "Sigma 28mm F1.4 DG HSM | A")
-                .is_none()
+                .is_some()
         );
         assert!(db.lens_named(None, "Sigma 28mm F1.4 DG HSM | A").is_some());
         assert!(db.lens_named(None, "Canon RF 50mm F1.8 STM").is_some());
