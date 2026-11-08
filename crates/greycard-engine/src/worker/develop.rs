@@ -136,6 +136,10 @@ pub(super) fn develop_round(
     if round.budget.is_some_and(|b| b > 0) {
         h.kept.drop_unmade();
     }
+    // The card's free memory before and after a develop on it, for the
+    // log: what the window's own develop takes without asking, which
+    // the floor the models' sessions are kept over is measured from.
+    let free_before = gpu.as_ref().and_then(|_| crate::ai::card_free_for_log());
     let walked = match walk(
         &steps,
         &plan,
@@ -156,6 +160,9 @@ pub(super) fn develop_round(
             );
         }
     };
+    let card_free = free_before
+        .filter(|_| walked.places.contains(&Place::Gpu))
+        .and_then(|before| crate::ai::card_free_for_log().map(|after| (before, after)));
     // A base made in this walk is a new picture for the masks; one
     // turned where it stood is too, though it is the base kept.
     let turned = walked.from == Some(Keep::Base) && h.turn != turn && h.stamp > 0;
@@ -355,6 +362,7 @@ pub(super) fn develop_round(
         detail: detail_ran,
         dehazed: walked.dehaze.and(dehaze_ran),
         sharpened,
+        card_free,
         total: seconds,
     });
     let outcome = Outcome::Developed {
@@ -459,6 +467,9 @@ struct DevelopLog<'a> {
     detail: Option<DetailRan>,
     dehazed: Option<DehazeRan>,
     sharpened: Option<Sharpened>,
+    /// The card's free memory before the develop and after, bytes, when
+    /// it ran on the device and the card says.
+    card_free: Option<(u64, u64)>,
     total: f64,
 }
 
@@ -534,6 +545,7 @@ fn developed_line(log: &DevelopLog<'_>) -> String {
         detail,
         dehazed,
         sharpened,
+        card_free,
         total,
     } = log;
     let mut parts: Vec<String> = Vec::new();
@@ -569,6 +581,14 @@ fn developed_line(log: &DevelopLog<'_>) -> String {
         Some(Sharpened::Cpu) => parts.push("sharpen".into()),
         Some(Sharpened::Gpu) => parts.push("sharpen on the GPU".into()),
         None => {}
+    }
+    if let Some((before, after)) = card_free {
+        let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+        parts.push(format!(
+            "the card {:.2} GiB free before, {:.2} after",
+            gib(before),
+            gib(after)
+        ));
     }
     format!(
         "developed {width}x{height}: {}, total {total:.2} s",
@@ -629,6 +649,7 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            card_free: None,
             total: 2.5,
         });
         assert_eq!(
@@ -649,12 +670,34 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            card_free: None,
             total: 0.4,
         });
         assert_eq!(
             line,
             "developed 8192x5464: base from the shelf, denoiser kept, upload 0.12 s, \
              sharpen on the GPU, total 0.40 s"
+        );
+        // The card's free memory around a develop on it, where known.
+        let line = developed_line(&DevelopLog {
+            width: 8192,
+            height: 5464,
+            from: BaseFrom::Shelf,
+            ca: None,
+            learned: &LearnedReport::Kept,
+            fills: &FillReport::default(),
+            stages: &vec![("upload", 0.118)],
+            detail: None,
+            dehazed: None,
+            sharpened: Some(Sharpened::Gpu),
+            card_free: Some((9 << 29, 3 << 30)),
+            total: 0.4,
+        });
+        assert!(
+            line.ends_with(
+                "sharpen on the GPU, the card 4.50 GiB free before, 3.00 after, total 0.40 s"
+            ),
+            "{line}"
         );
 
         // The demosaic on the device carries its seconds, as the CPU's
@@ -674,6 +717,7 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            card_free: None,
             total: 0.9,
         });
         assert_eq!(
@@ -693,6 +737,7 @@ mod tests {
             detail: Some(DetailRan::Cpu(0.5)),
             dehazed: Some(DehazeRan::Cpu),
             sharpened: Some(Sharpened::Cpu),
+            card_free: None,
             total: 0.75,
         });
         assert_eq!(

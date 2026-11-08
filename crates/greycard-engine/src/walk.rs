@@ -348,6 +348,21 @@ pub trait Models {
     /// leaves the patch as it was.
     fn fill(&mut self, patch: &Patch, region: &Region, picture: &WorkingImage) -> Option<Vec<f32>>;
 
+    /// A fill kept for `patch` at the full develop's size, `full`, read
+    /// and taken down by `factor` to `region` of `picture`, that
+    /// develop's picture reduced: none where none is kept for this
+    /// picture. No model runs.
+    fn fill_read(
+        &mut self,
+        _patch: &Patch,
+        _region: &Region,
+        _picture: &WorkingImage,
+        _factor: usize,
+        _full: (usize, usize),
+    ) -> Option<Vec<f32>> {
+        None
+    }
+
     /// Whether a fill left unmade in `retouch` could be made now.
     fn could_fill_more(&mut self, retouch: &Retouch, picture: &WorkingImage) -> bool;
 
@@ -1959,9 +1974,12 @@ fn cpu_op(
             applied.apply_with(&mut picture, |patch, region, before| {
                 let made = match fills {
                     Fills::Run => models.fill(patch, region, before),
-                    Fills::Refuse => {
-                        walked.without.push(format!("the fill {}", patch.name()));
-                        None
+                    Fills::Read { factor, full } => {
+                        let read = models.fill_read(patch, region, before, *factor, *full);
+                        if read.is_none() {
+                            walked.without.push(format!("the fill {}", patch.name()));
+                        }
+                        read
                     }
                 };
                 if made.is_none() {
@@ -4109,5 +4127,232 @@ mod tests {
         let dark = Arc::new(WorkingImage::from_data(1, 1, vec![0.2; 3]).unwrap());
         let out = blend(&grey, &dark, 0.5, 0.0);
         assert!(out.data.iter().all(|v| (*v - 0.4).abs() < 1e-6));
+    }
+
+    /// The fill print's tolerances, measured: the largest relative move
+    /// of any block's mean ([`crate::ai::print_distance`]) under five
+    /// fills' windows, between the CPU's base and the device's (the
+    /// rounding a fill must survive), between the base and the base
+    /// under the smallest edits a user makes (one mired of white
+    /// balance, one step of the lens's distortion, one of exposure),
+    /// and between the full develop's and the reduced develop's.
+    /// `GREYCARD_PRINT_RAW` names a raw to measure on; the engine's
+    /// test frame otherwise. Run it on lavapipe.
+    #[test]
+    #[ignore = "a measurement, printed: run on lavapipe, GREYCARD_PRINT_RAW naming a raw"]
+    fn the_fill_print_measured() {
+        use greycard_edit::retouch::{Method, Patch};
+        type Prints = Vec<Vec<[u16; 3]>>;
+        /// Each fill's print of the picture it would be made from;
+        /// none made, so every one sees the base.
+        struct Printer(Prints);
+        impl Models for Printer {
+            fn can_denoise(&mut self, m: &'static greycard_ai::Model) -> Result<(), NoLearned> {
+                NoModels.can_denoise(m)
+            }
+            fn denoise(
+                &mut self,
+                m: &'static greycard_ai::Model,
+                f: &RawFrame,
+                p: &Prepared,
+            ) -> Result<Vec<f32>, NoLearned> {
+                NoModels.denoise(m, f, p)
+            }
+            fn fill(
+                &mut self,
+                _: &Patch,
+                region: &Region,
+                before: &WorkingImage,
+            ) -> Option<Vec<f32>> {
+                self.0.push(crate::ai::fill_print(
+                    region,
+                    before,
+                    before.width,
+                    before.height,
+                    1,
+                ));
+                None
+            }
+            fn fill_read(
+                &mut self,
+                patch: &Patch,
+                _: &Region,
+                picture: &WorkingImage,
+                factor: usize,
+                full: (usize, usize),
+            ) -> Option<Vec<f32>> {
+                let region = patch.region(full.0, full.1)?;
+                self.0.push(crate::ai::fill_print(
+                    &region, picture, full.0, full.1, factor,
+                ));
+                None
+            }
+            fn could_fill_more(&mut self, _: &Retouch, _: &WorkingImage) -> bool {
+                false
+            }
+            fn rasters(
+                &mut self,
+                how: crate::stages::Masks,
+                base: &Arc<WorkingImage>,
+                patched: Option<Patched<'_>>,
+                meta: &Meta,
+            ) -> Rasters {
+                NoModels.rasters(how, base, patched, meta)
+            }
+        }
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = match std::env::var_os("GREYCARD_PRINT_RAW") {
+            Some(path) => Input::Raw(Arc::new(
+                greycard_core::decode::decode_path_unmapped(std::path::Path::new(&path))
+                    .expect("the raw decodes"),
+            )),
+            None => Input::Raw(frame_of(640, 480, [1.0, 1.0])),
+        };
+        let mut base = Edit {
+            white_balance: greycard_edit::WhiteBalance::Custom {
+                temperature: 5000.0,
+                tint: 0.0,
+            },
+            ..Edit::default()
+        };
+        base.retouch.enabled = true;
+        for (i, at) in [[0.3, 0.3], [0.7, 0.3], [0.5, 0.5], [0.3, 0.7], [0.7, 0.7]]
+            .into_iter()
+            .enumerate()
+        {
+            base.retouch.patches.push(Patch {
+                id: i as u64 + 1,
+                method: Method::Fill,
+                points: vec![at],
+                radius: 0.03,
+                remove: true,
+                ..Default::default()
+            });
+        }
+        let prints = |edit: &Edit, purpose: &Purpose, gpu: &mut Option<greycard_gpu::Context>| {
+            let steps = stages::stages(edit, purpose, &input.facts(0), None);
+            let plan = plan(&steps, purpose, gpu.is_some());
+            let mut printer = Printer(Vec::new());
+            let walked = walk(
+                &steps,
+                &plan,
+                &input,
+                &mut Kept::new(),
+                &mut printer,
+                gpu,
+                &NoHold,
+            )
+            .expect("walks");
+            (printer.0, walked.places.contains(&Place::Gpu))
+        };
+        let export = Purpose::Export(Box::default());
+        let distance = |a: &Prints, b: &Prints| {
+            assert_eq!(a.len(), b.len());
+            a.iter()
+                .zip(b)
+                .map(|(a, b)| crate::ai::print_distance(a, b))
+                .fold(0.0f32, f32::max)
+        };
+        let (cpu, _) = prints(&base, &export, &mut None);
+        let (device, on_device) = prints(&base, &export, &mut gpu);
+        assert!(on_device, "the device ran some of the walk");
+        let (again, _) = prints(&base, &export, &mut None);
+        let edited = |change: &dyn Fn(&mut Edit)| {
+            let mut e = base.clone();
+            change(&mut e);
+            prints(&e, &export, &mut None).0
+        };
+        let mired = edited(&|e| {
+            e.white_balance = greycard_edit::WhiteBalance::Custom {
+                temperature: 1.0 / (1.0 / 5000.0 - 1e-6),
+                tint: 0.0,
+            }
+        });
+        let lens = edited(&|e| e.lens.manual = 0.005);
+        let exposure = edited(&|e| e.light.exposure = 0.1);
+        // Where the device walk ran each stage, and how far its
+        // pictures under the windows are from the CPU's, pixel by pixel.
+        {
+            let steps = stages::stages(&base, &export, &input.facts(0), None);
+            let plan = plan(&steps, &export, true);
+            let on: Vec<&str> = steps
+                .steps
+                .iter()
+                .zip(&plan)
+                .filter_map(|(s, p)| match s {
+                    Step::Op(stage) if *p == Place::Gpu => Some(stage.name()),
+                    _ => None,
+                })
+                .collect();
+            eprintln!("on the device: {on:?}");
+        }
+        let (reduced, _) = prints(&base, &Purpose::Reduced, &mut None);
+        let spread = |a: &Prints, b: &Prints| {
+            let mut all: Vec<f32> = a
+                .iter()
+                .zip(b)
+                .flat_map(|(a, b)| a.iter().zip(b))
+                .flat_map(|(a, b)| a.iter().zip(b))
+                .filter(|(a, b)| **a != u16::MAX && **b != u16::MAX)
+                .map(|(&a, &b)| crate::ai::print_distance(&[[a; 3]], &[[b; 3]]))
+                .collect();
+            all.sort_by(f32::total_cmp);
+            let q = |f: f64| all[((all.len() - 1) as f64 * f) as usize];
+            format!(
+                "{} values: median {:.5}, 90% {:.5}, 99% {:.5}, max {:.5}",
+                all.len(),
+                q(0.5),
+                q(0.9),
+                q(0.99),
+                q(1.0)
+            )
+        };
+        let reduced_distance = |full: &Prints| {
+            full.iter()
+                .zip(&reduced)
+                .map(|(a, b)| crate::ai::print_distance(a, b))
+                .fold(0.0f32, f32::max)
+        };
+        eprintln!("CPU against CPU: {:.5}", distance(&cpu, &again));
+        eprintln!("CPU against the device: {:.5}", distance(&cpu, &device));
+        eprintln!("one mired: {:.5}", distance(&cpu, &mired));
+        eprintln!("one lens step: {:.5}", distance(&cpu, &lens));
+        eprintln!("an exposure step: {:.5}", distance(&cpu, &exposure));
+        eprintln!("reduced against the CPU: {:.5}", reduced_distance(&cpu));
+        eprintln!(
+            "reduced against the device: {:.5}",
+            reduced_distance(&device)
+        );
+        let reduced_mired = {
+            let mut e = base.clone();
+            e.white_balance = greycard_edit::WhiteBalance::Custom {
+                temperature: 1.0 / (1.0 / 5000.0 - 1e-6),
+                tint: 0.0,
+            };
+            prints(&e, &Purpose::Reduced, &mut None).0
+        };
+        eprintln!(
+            "reduced, one mired against none: {:.5}",
+            distance(&reduced, &reduced_mired)
+        );
+        eprintln!("one mired, spread: {}", spread(&cpu, &mired));
+        eprintln!("one lens step, spread: {}", spread(&cpu, &lens));
+        let three = edited(&|e| {
+            e.white_balance = greycard_edit::WhiteBalance::Custom {
+                temperature: 1.0 / (1.0 / 5000.0 - 3e-6),
+                tint: 0.0,
+            }
+        });
+        eprintln!("three mired, spread: {}", spread(&cpu, &three));
+        eprintln!(
+            "reduced against the CPU, spread: {}",
+            spread(&cpu, &reduced)
+        );
+        eprintln!(
+            "reduced, one mired, spread: {}",
+            spread(&reduced, &reduced_mired)
+        );
     }
 }

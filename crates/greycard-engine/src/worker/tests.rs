@@ -5747,16 +5747,37 @@ fn leaving_the_editor_pauses_the_fills() {
     crate::testing::remove_dir_retry(&dir);
 }
 
-/// The worker gives the card back once a queue of fills ends, once
-/// when a queue is given up for another job, and after an export
-/// frame whose fills ran a model; a model that ran nothing gives
-/// nothing back.
+/// The worker gives a card short of room back once a queue of fills
+/// ends, once when a queue is given up for another job, and after an
+/// export frame whose fills ran a model; a model that ran nothing gives
+/// nothing back, and a card with room keeps the sessions.
 #[test]
 fn the_worker_gives_the_card_back_when_its_fills_are_done() {
     const GIB: u64 = 1 << 30;
-    // At the queue's end.
-    let (worker, dir, path, rx, go) = fill_worker("give-back-end", 0.9);
+    // With room, the sessions are kept at the queue's end.
+    let (worker, dir, path, rx, go) = fill_worker("give-back-room", 0.9);
     worker.free_by_test(12 * GIB, GIB, 0);
+    go.send(()).unwrap();
+    worker.send(open_with_fills(&path));
+    let wait = std::time::Duration::from_secs(60);
+    let next = || rx.recv_timeout(wait).expect("the worker says");
+    while next() != "developed 1: []" {}
+    worker.send(Job::Mask {
+        key: (1, 0),
+        shape: Shape::Linear {
+            from: [0.2, 0.5],
+            to: [0.8, 0.5],
+        },
+        model: None,
+    });
+    assert_eq!(next(), "mask");
+    assert_eq!(worker.gave_back_by_test(), 0);
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+
+    // Short of room, at the queue's end.
+    let (worker, dir, path, rx, go) = fill_worker("give-back-end", 0.9);
+    worker.free_by_test(3 * GIB, GIB, 0);
     go.send(()).unwrap();
     worker.send(open_with_fills(&path));
     let wait = std::time::Duration::from_secs(60);
@@ -5779,7 +5800,7 @@ fn the_worker_gives_the_card_back_when_its_fills_are_done() {
 
     // Given up for another develop: once, before it.
     let (worker, dir, path, rx, go) = fill_worker("give-back-change", 0.9);
-    worker.free_by_test(12 * GIB, GIB, 0);
+    worker.free_by_test(3 * GIB, GIB, 0);
     go.send(()).unwrap();
     worker.send(open_with_fills(&path));
     let next = || rx.recv_timeout(wait).expect("the worker says");

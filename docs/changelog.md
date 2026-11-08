@@ -103,8 +103,6 @@ design note behind it.
   CPU alone
   ([§607](https://github.com/jessolmstead/greycard/blob/master/docs/notes/607-the-exports-detail-dehaze-and-sharpen-on-the-gpu.md)).
 
-## 0.10.1
-
 ### Fixes
 
 - Canon EOS R8 Mark II raws open
@@ -137,6 +135,18 @@ design note behind it.
   never writes into that shared file, and a rating given here stands
   until the culling tool changes its own (issue 31)
   ([§593](https://github.com/jessolmstead/greycard/blob/master/docs/notes/593-a-culling-tools-xmp-beside-a-raw-and-its-jpeg.md)).
+- A generative fill is no longer made again when the picture under it
+  moves only by rounding, as when the develop runs on the CPU instead
+  of the GPU (issue 92); every fill is made once more at this version
+  on a machine whose develop runs on the GPU
+  ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
+- On a card with room to spare, the models stay loaded between fills
+  and masks instead of loading again each time (issue 92)
+  ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
+- An edited frame with a generative fill shows its edit in the strip
+  and the grid without being opened first, once the fill has been made
+  (issue 92)
+  ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
 
 ## 0.10.0, 2026-11-06
 

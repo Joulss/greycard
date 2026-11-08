@@ -1095,9 +1095,9 @@ pub enum NoFill {
 }
 
 /// A fill made: the patch, window and engine it was made for, the
-/// print of the picture under the window ([`window_print`]) hashed, and
-/// the region's values.
-type FillMade = (Patch, Window, u64, Engine, Vec<f32>);
+/// print of the picture under the window ([`window_print`]), and the
+/// region's values.
+type FillMade = (Patch, Window, WindowPrint, Engine, Vec<f32>);
 
 /// Which model makes a Fill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1265,10 +1265,22 @@ impl NeverHere {
     }
 }
 
+/// The card's free memory now, bytes, for the log: none until the
+/// WebGPU adapter has been asked for by something else ([`Here::now`]
+/// on its own thread), so a develop never sets off the adapter's probe
+/// on the worker, and none where the card does not say.
+pub fn card_free_for_log() -> Option<u64> {
+    greycard_ai::runtime::webgpu_free_memory_if_probed().map(|(free, _)| free)
+}
+
 impl Here {
     /// This machine. Blocks on the WebGPU adapter's probe the first
     /// time, so for a thread of its own, never the window's.
     pub fn now() -> Self {
+        Self::probe()
+    }
+
+    fn probe() -> Self {
         let status = greycard_ai::runtime::status();
         let off = status.err().map(|why| why.reason());
         let runtime = status.err().and_then(|why| why.fetchable());
@@ -1470,6 +1482,15 @@ const MASK_PEAK: u64 = 20 * TENTH_GIB;
 /// window's own textures can grow while a model runs (a develop
 /// landing).
 const CARD_MARGIN: u64 = greycard_ai::remove::CARD_MARGIN;
+
+/// What the window's own develop may take of the card without asking,
+/// over [`CARD_MARGIN`]: its frame's textures and the GPU ops' working
+/// sets on the largest frame open. The models' sessions are kept after
+/// a fill while the card has this free, and given back under it
+/// ([`give_back_card`]); every model run asks for its own room. A first
+/// figure, to be measured on a real card from the worker's log line of
+/// the card's free memory before and after a develop lands.
+const KEEP_FLOOR: u64 = 30 * TENTH_GIB;
 
 /// How many times an export or a merge asks the card for a model it is
 /// short of, and how long it waits between: three asks, ten seconds in
@@ -1749,8 +1770,9 @@ pub fn card_free_now() -> Option<(u64, String)> {
 }
 
 /// The card given back once a fill's model has run in any of `ais`,
-/// the worker's models, or a UNet was opened ahead, or at once when
-/// `force`d after a short: every ONNX Runtime session they hold
+/// the worker's models, or a UNet was opened ahead, when the card has
+/// less than [`KEEP_FLOOR`] and [`CARD_MARGIN`] free with them held, or
+/// at once when `force`d after a short: every ONNX Runtime session they hold
 /// dropped, the UNet held between removals let go, and the host's
 /// heap trimmed. ONNX Runtime's WebGPU provider keeps one context a
 /// process for all its sessions, and the buffers a session lets go
@@ -1773,9 +1795,18 @@ pub fn give_back_card(ais: &mut [&mut Ai], force: bool) -> bool {
     if !(ran || force) {
         return false;
     }
-    let Some((before, _)) = ais.first().and_then(|a| a.free_memory()) else {
+    let Some((before, card)) = ais.first().and_then(|a| a.free_memory()) else {
         return false;
     };
+    // With room for the window's develop, the sessions are kept: a
+    // model loaded again costs the next fill or mask seconds.
+    if !force && before >= KEEP_FLOOR + CARD_MARGIN {
+        tracing::info!(
+            "{card}: the models' sessions kept, {:.1} GiB free",
+            before as f64 / (1u64 << 30) as f64
+        );
+        return false;
+    }
     let held = ais.iter().any(|a| a.holds_sessions());
     for ai in ais.iter_mut() {
         ai.drop_sessions();
@@ -1797,8 +1828,9 @@ pub fn give_back_card(ais: &mut [&mut Ai], force: bool) -> bool {
     true
 }
 
-/// Whether [`give_back_card`] would let anything go now: a fill's model
-/// ran, no merge runs, and the card's free memory is known. Asked under
+/// Whether [`give_back_card`] is to be asked now: a fill's model ran,
+/// no merge runs, and the card's free memory is known. It reads the
+/// card again and keeps the sessions while there is room. Asked under
 /// the queue's lock, so the give-back itself waits until it is let go.
 pub fn give_back_due(ais: &[&Ai]) -> bool {
     ais.iter().any(|a| a.fills_ran())
@@ -1960,7 +1992,7 @@ fn regrains(engine: Engine, scale: f32) -> bool {
 /// `height`, and how deep the hole is: round the box of what the
 /// region covers, at the picture's own pixels
 /// ([`greycard_ai::fill::window`]).
-fn window_for(region: &Region, width: usize, height: usize) -> (Window, f32) {
+pub(crate) fn window_for(region: &Region, width: usize, height: usize) -> (Window, f32) {
     let hole: Vec<f32> = region
         .cover
         .iter()
@@ -2392,48 +2424,55 @@ impl Ai {
     /// for it costs nothing.
     pub fn fill_kept(&mut self, patch: &Patch, region: &Region, image: &WorkingImage) -> bool {
         let (window, _) = self.window_of(patch, region, image);
-        let print = print_hash(image, region, window);
-        self.fill_in_memory(patch, window, print).is_some()
-            || self.fill_from_disk(patch, region, image, window, print)
+        let print = window_print(image, region, window);
+        let size = (image.width, image.height);
+        self.fill_in_memory(patch, window, &print).is_some()
+            || self.fill_from_disk(patch, region, size, window, &print)
     }
 
     /// The patch's fill, as it is now, kept in memory: made for this
-    /// patch, this window, and this picture under it, so a fill made
-    /// under another white balance or noise setting is not served
-    /// after the base changes, as it is not from disk.
+    /// patch, this window, and this picture under it within
+    /// [`PRINT_TOLERANCE`], so a fill made under another white balance
+    /// or noise setting is not served after the base changes, as it is
+    /// not from disk, and one made from the same picture rounded
+    /// otherwise is.
     fn fill_in_memory(
         &self,
         patch: &Patch,
         window: Window,
-        print: u64,
+        print: &[[u16; 3]],
     ) -> Option<(Vec<f32>, Engine)> {
         self.fills
             .get(&(patch.id, patch.seed))
-            .filter(|(p, w, pr, _, _)| same_fill(p, patch) && *w == window && *pr == print)
+            .filter(|(p, w, pr, _, _)| {
+                same_fill(p, patch)
+                    && *w == window
+                    && prints_agree(pr, print, PRINT_TOLERANCE, Compare::Every)
+            })
             .map(|(_, _, _, engine, data)| (data.clone(), *engine))
     }
 
     /// The patch's fill read from its slot on disk into memory, if it
-    /// is there as the patch and the picture round it are now.
+    /// is there as the patch is now and its print is `print`'s within
+    /// [`PRINT_TOLERANCE`]; else from its slot at the version before,
+    /// once.
     fn fill_from_disk(
         &mut self,
         patch: &Patch,
         region: &Region,
-        image: &WorkingImage,
+        size: (usize, usize),
         window: Window,
-        print: u64,
+        print: &[[u16; 3]],
     ) -> bool {
-        let size = (image.width, image.height);
-        let Some(path) = self.fill_path(patch, region, image, window, print) else {
+        let Some(path) = self.fill_path(patch, region, size, window) else {
             return false;
         };
-        let Some((engine, data)) = read_fill(
-            &path,
-            FILL_VERSION,
-            size,
-            window,
-            (region.width, region.height),
-        ) else {
+        let dims = (region.width, region.height);
+        let read = read_slot(&path, size, window, dims, |stored| {
+            prints_agree(stored, print, PRINT_TOLERANCE, Compare::Every)
+        })
+        .or_else(|| self.fill_from_hashed_slot(patch, region, size, window, print, &path));
+        let Some((engine, stored, data)) = read else {
             return false;
         };
         tracing::info!(
@@ -2444,52 +2483,101 @@ impl Ai {
         );
         self.fills.insert(
             (patch.id, patch.seed),
-            (patch.clone(), window, print, engine, data),
+            (patch.clone(), window, stored, engine, data),
         );
         true
     }
 
-    /// Where the patch's fill on the open file lives on disk: beside
-    /// the made rasters, named by a hash of the file, the patch as
-    /// [`same_fill`] compares it, its seed, the picture's size, the
-    /// region, the window, both engines' models, and `print`, the
-    /// window's known pixels hashed ([`print_hash`]): a fill made under
-    /// another white balance, lens, turn or virtual copy is another.
+    /// The patch's fill from its slot at [`FILL_VERSION_HASHED`], named
+    /// with `print` hashed in, kept again in the slot `path` with the
+    /// print, and the old file let go once it is: a machine whose base
+    /// did not move keeps its fills across the change of version.
+    fn fill_from_hashed_slot(
+        &self,
+        patch: &Patch,
+        region: &Region,
+        size: (usize, usize),
+        window: Window,
+        print: &[[u16; 3]],
+        path: &Path,
+    ) -> Option<(Engine, WindowPrint, Vec<f32>)> {
+        let old = self.fill_path_hashed(patch, region, size, window, print)?;
+        let dims = (region.width, region.height);
+        let (engine, _, data) = read_fill(&old, FILL_VERSION_HASHED, size, window, dims, |_| true)?;
+        if write_slot(path, engine, size, window, dims, print, &data) {
+            // Read meanwhile by another run, or held open on Windows: left.
+            let _ = std::fs::remove_file(&old);
+        }
+        tracing::info!(
+            "fill {}: kept again from the fill cache's last version",
+            patch.name()
+        );
+        Some((engine, print.to_vec(), data))
+    }
+
+    /// Where the fills on disk live: beside the made rasters.
+    fn fills_root(&self) -> Option<PathBuf> {
+        if !self.disk {
+            return None;
+        }
+        Some(self.store.as_ref()?.root().parent()?.join("masks"))
+    }
+
+    /// What reads the fills kept on disk for `file` without this `Ai`:
+    /// the reduced develop's. None off the disk.
+    pub fn fill_reader(&self, file: &Path) -> Option<FillReader> {
+        Some(FillReader {
+            root: self.fills_root()?,
+            file: file.to_path_buf(),
+        })
+    }
+
+    /// The slot the patch's fill on the open file lives in on disk
+    /// ([`fill_slot`], its files [`slot_files`]): a fill made under
+    /// another turn or crop is another slot; one made under another
+    /// white balance or lens, a virtual copy's among them, is the same
+    /// slot, told apart by the print kept in each of its files, which
+    /// hold [`BASES_A_SLOT`] bases. A virtual copy with the same base
+    /// is the same fill.
     fn fill_path(
         &self,
         patch: &Patch,
         region: &Region,
-        image: &WorkingImage,
+        size: (usize, usize),
         window: Window,
-        print: u64,
     ) -> Option<PathBuf> {
-        let size = (image.width, image.height);
-        if !self.disk {
-            return None;
-        }
         let file = self.file.as_ref()?;
-        let root = self.store.as_ref()?.root().parent()?.join("masks");
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        file.hash(&mut h);
-        "fill".hash(&mut h);
-        patch.id.hash(&mut h);
-        patch.seed.hash(&mut h);
-        for p in &patch.points {
-            p.map(f32::to_bits).hash(&mut h);
-        }
-        patch.radius.to_bits().hash(&mut h);
-        patch.feather.to_bits().hash(&mut h);
-        std::mem::discriminant(&patch.method).hash(&mut h);
-        patch.remove.hash(&mut h);
-        patch.fast.hash(&mut h);
-        size.hash(&mut h);
-        (region.x, region.y, region.width, region.height).hash(&mut h);
-        window.hash(&mut h);
-        greycard_ai::FILL.id.hash(&mut h);
-        REMOVE.id.hash(&mut h);
-        REMOVE_FAST.id.hash(&mut h);
-        print.hash(&mut h);
-        Some(root.join(format!("{:016x}.fill", h.finish())))
+        Some(fill_slot(
+            &self.fills_root()?,
+            file,
+            patch,
+            region,
+            size,
+            window,
+            None,
+        ))
+    }
+
+    /// [`Ai::fill_path`] as it was at [`FILL_VERSION_HASHED`], with the
+    /// window's print hashed into the name.
+    fn fill_path_hashed(
+        &self,
+        patch: &Patch,
+        region: &Region,
+        size: (usize, usize),
+        window: Window,
+        print: &[[u16; 3]],
+    ) -> Option<PathBuf> {
+        let file = self.file.as_ref()?;
+        Some(fill_slot(
+            &self.fills_root()?,
+            file,
+            patch,
+            region,
+            size,
+            window,
+            Some(print_hash(print)),
+        ))
     }
 
     /// The patch's fill made: kept in memory and on disk, at half
@@ -2507,15 +2595,15 @@ impl Ai {
             *v = half::f16::from_f32(v.clamp(-65504.0, 65504.0)).to_f32();
         }
         let size = (image.width, image.height);
-        let print = print_hash(image, region, window);
-        if let Some(path) = self.fill_path(patch, region, image, window, print) {
-            write_fill(
+        let print = window_print(image, region, window);
+        if let Some(path) = self.fill_path(patch, region, size, window) {
+            write_slot(
                 &path,
-                FILL_VERSION,
                 engine,
                 size,
                 window,
                 (region.width, region.height),
+                &print,
                 &data,
             );
         }
@@ -3184,12 +3272,13 @@ impl Ai {
         told: &mut dyn FnMut(usize, usize),
     ) -> Result<(Vec<f32>, Engine), NoFill> {
         let (window, depth) = self.window_of(patch, region, image);
-        let print = print_hash(image, region, window);
-        if let Some(kept) = self.fill_in_memory(patch, window, print) {
+        let print = window_print(image, region, window);
+        let size = (image.width, image.height);
+        if let Some(kept) = self.fill_in_memory(patch, window, &print) {
             return Ok(kept);
         }
-        if self.fill_from_disk(patch, region, image, window, print)
-            && let Some(kept) = self.fill_in_memory(patch, window, print)
+        if self.fill_from_disk(patch, region, size, window, &print)
+            && let Some(kept) = self.fill_in_memory(patch, window, &print)
         {
             return Ok(kept);
         }
@@ -5569,8 +5658,15 @@ fn evict_other_bases(path: &Path) {
 /// same patch, so the old ones are made again. The frame's grain is
 /// kept in the fill ([`regrain`]), so a change to how it is measured or
 /// drawn counts: 4, the surround's line drawn to its bins' relative
-/// error, without the bins of texture.
-const FILL_VERSION: u8 = 4;
+/// error, without the bins of texture; 5, the window's print kept in
+/// the file and compared, no longer hashed into its name.
+const FILL_VERSION: u8 = 5;
+
+/// The version before the print was kept in the file: its slot is named
+/// with the print hashed in, and its file holds none. Read once, where
+/// a fill at [`FILL_VERSION`] is not, and kept again at it
+/// ([`Ai::fill_from_hashed_slot`]).
+const FILL_VERSION_HASHED: u8 = 4;
 
 /// The first bytes of a fill kept on disk.
 const FILL_MAGIC: &[u8; 6] = b"GCFILL";
@@ -5582,11 +5678,137 @@ const FILL_HEADER: usize = FILL_MAGIC.len() + 2 + 8 * 4;
 /// The side of the blocks [`window_print`] takes means over.
 const PRINT_BLOCK: usize = 16;
 
-/// [`window_print`] hashed: what a fill in memory and on disk is kept
-/// under, so the two agree on when the picture has changed.
-fn print_hash(image: &WorkingImage, region: &Region, window: Window) -> u64 {
+/// A print of the picture under a fill's window ([`window_print`]):
+/// each block's mean per channel as f16 bits, [`EMPTY_BLOCK`] for a
+/// block with none of the window's known pixels.
+type WindowPrint = Vec<[u16; 3]>;
+
+/// A print block with none of the window's known pixels in it.
+const EMPTY_BLOCK: u16 = u16::MAX;
+
+/// How far a block's mean may move, relative to the larger of the two
+/// and [`PRINT_FLOOR`], and the print still be of the picture the fill
+/// was made from. Measured on two raws, a Canon CR3 and a Nikon NEF,
+/// five windows each (`the_fill_print_measured`): the CPU's base and
+/// lavapipe's (CA and demosaic on the device) differ by at most 0.0008,
+/// one step of half precision; one mired of white balance moves some
+/// block by 0.0056 and 0.016, a step of the lens's distortion by 0.83
+/// and 0.95, and exposure, the finish's, by nothing. The tolerance sits
+/// between, nearer the rounding: a few steps of half precision.
+const PRINT_TOLERANCE: f32 = 0.003;
+
+/// The level under which a block's mean is compared as if it were
+/// this: a 256th of the working range, whose white is 1.0, so a black
+/// block, whose relative moves are large and mean nothing, compares
+/// sanely.
+const PRINT_FLOOR: f32 = 1.0 / 256.0;
+
+/// How far the median block's mean of the reduced develop's picture
+/// may move from the full develop's, relative as [`PRINT_TOLERANCE`]
+/// ([`Compare::Median`]): the bin stands in for the demosaic, the
+/// profiled denoiser is left out, and a block's edge falls between the
+/// reduced picture's pixels, which moves single blocks by up to 0.34
+/// and the median by 0.002 and 0.004 on the raws measured. One mired
+/// moves the median by 0.003, three by 0.009, a lens step by 0.06 and
+/// 0.08: a reduced picture tells a fill's picture from one moved by a
+/// few mired or more, not by one.
+const REDUCED_PRINT_TOLERANCE: f32 = 0.01;
+
+/// How two prints are compared ([`prints_agree`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Compare {
+    /// Every block's mean within the tolerance, an empty block matching
+    /// only an empty one: the full develop's, against the picture the
+    /// fill was made from.
+    Every,
+    /// The median block's move within the tolerance, over the values
+    /// known in both, at least one: the reduced develop's, whose bin
+    /// moves a block at an edge as far as an edit does, while the run of
+    /// blocks stays where the full develop's are.
+    Median,
+}
+
+/// Whether the picture whose print is `now` is the one `stored` was
+/// taken of, as `compare` says, each value's move relative to the
+/// larger of the two and [`PRINT_FLOOR`].
+fn prints_agree(stored: &[[u16; 3]], now: &[[u16; 3]], tolerance: f32, compare: Compare) -> bool {
+    if stored.len() != now.len() {
+        return false;
+    }
+    let mut moves = Vec::new();
+    for (s, n) in stored.iter().zip(now) {
+        for (&s, &n) in s.iter().zip(n) {
+            if s == EMPTY_BLOCK || n == EMPTY_BLOCK {
+                if compare == Compare::Every && s != n {
+                    return false;
+                }
+                continue;
+            }
+            let moved = value_move(s, n);
+            if compare == Compare::Every {
+                if moved > tolerance {
+                    return false;
+                }
+            } else {
+                moves.push(moved);
+            }
+        }
+    }
+    match compare {
+        Compare::Every => true,
+        Compare::Median if moves.is_empty() => false,
+        Compare::Median => {
+            let mid = moves.len() / 2;
+            let (_, median, _) = moves.select_nth_unstable_by(mid, f32::total_cmp);
+            *median <= tolerance
+        }
+    }
+}
+
+/// How far a print's value `b` is from `a`, both f16 bits, relative to
+/// the larger of the two and [`PRINT_FLOOR`]; NaN for a value that is
+/// not a number, which no tolerance takes.
+fn value_move(a: u16, b: u16) -> f32 {
+    let (a, b) = (
+        half::f16::from_bits(a).to_f32(),
+        half::f16::from_bits(b).to_f32(),
+    );
+    let moved = (a - b).abs() / a.abs().max(b.abs()).max(PRINT_FLOOR);
+    if moved.is_nan() { f32::INFINITY } else { moved }
+}
+
+/// The largest relative move of any block between two prints, as
+/// [`prints_agree`] measures it, over the blocks known in both: what
+/// the tolerances were measured with.
+#[cfg(test)]
+pub(crate) fn print_distance(a: &[[u16; 3]], b: &[[u16; 3]]) -> f32 {
+    a.iter()
+        .zip(b)
+        .flat_map(|(a, b)| a.iter().zip(b))
+        .filter(|(a, b)| **a != EMPTY_BLOCK && **b != EMPTY_BLOCK)
+        .map(|(&a, &b)| value_move(a, b))
+        .fold(0.0, f32::max)
+}
+
+/// The print of a fill over `region` of a picture `width` by `height`
+/// under its window, taken of `image`, that picture reduced by
+/// `factor`: what a fill would be kept and served under.
+#[cfg(test)]
+pub(crate) fn fill_print(
+    region: &Region,
+    image: &WorkingImage,
+    width: usize,
+    height: usize,
+    factor: usize,
+) -> WindowPrint {
+    let (window, _) = window_for(region, width, height);
+    reduced_print(image, region, window, factor)
+}
+
+/// A print hashed, as the slots at [`FILL_VERSION_HASHED`] were named.
+fn print_hash(print: &[[u16; 3]]) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    window_print(image, region, window).hash(&mut h);
+    print.to_vec().hash(&mut h);
     h.finish()
 }
 
@@ -5596,7 +5818,24 @@ fn print_hash(image: &WorkingImage, region: &Region, window: Window) -> u64 {
 /// the base develop under the window (white balance, profile, lens,
 /// noise, a turn) changes it, and a fill made from another picture is
 /// not served for this one.
-fn window_print(image: &WorkingImage, region: &Region, window: Window) -> Vec<[u16; 3]> {
+fn window_print(image: &WorkingImage, region: &Region, window: Window) -> WindowPrint {
+    reduced_print(image, region, window, 1)
+}
+
+/// [`window_print`] of the full develop's `window` and `region`, taken
+/// of `image`, that develop's picture reduced by `factor`: a reduced
+/// pixel is in the block its center falls in, and left out where any
+/// of the full pixels it stands for is in the hole. A factor of one is
+/// [`window_print`] itself. A frame turned whose side is not a whole
+/// number of bins leaves the reduced picture's pixels off the full
+/// ones by that side modulo the factor, at most one full pixel at a
+/// factor of two; the median compare takes it in.
+fn reduced_print(
+    image: &WorkingImage,
+    region: &Region,
+    window: Window,
+    factor: usize,
+) -> WindowPrint {
     let covered = |px: usize, py: usize| {
         px >= region.x
             && px < region.x + region.width
@@ -5609,15 +5848,35 @@ fn window_print(image: &WorkingImage, region: &Region, window: Window) -> Vec<[u
         window.height.div_ceil(PRINT_BLOCK),
     );
     let mut sums = vec![([0.0f64; 3], 0usize); bw * bh];
-    for y in 0..window.height {
-        let py = window.y + y;
-        for x in 0..window.width {
-            let px = window.x + x;
-            if covered(px, py) {
+    let (x0, x1) = (
+        window.x / factor,
+        (window.x + window.width).div_ceil(factor).min(image.width),
+    );
+    let (y0, y1) = (
+        window.y / factor,
+        (window.y + window.height)
+            .div_ceil(factor)
+            .min(image.height),
+    );
+    let inside = |c: usize, from: usize, len: usize| c >= from && c < from + len;
+    for ry in y0..y1 {
+        let cy = ry * factor + factor / 2;
+        if !inside(cy, window.y, window.height) {
+            continue;
+        }
+        for rx in x0..x1 {
+            let cx = rx * factor + factor / 2;
+            if !inside(cx, window.x, window.width) {
                 continue;
             }
-            let i = (py * image.width + px) * 3;
-            let (sum, n) = &mut sums[(y / PRINT_BLOCK) * bw + x / PRINT_BLOCK];
+            let hole = (0..factor)
+                .any(|dy| (0..factor).any(|dx| covered(rx * factor + dx, ry * factor + dy)));
+            if hole {
+                continue;
+            }
+            let i = (ry * image.width + rx) * 3;
+            let (sum, n) =
+                &mut sums[((cy - window.y) / PRINT_BLOCK) * bw + (cx - window.x) / PRINT_BLOCK];
             for (s, v) in sum.iter_mut().zip(&image.data[i..i + 3]) {
                 *s += f64::from(*v);
             }
@@ -5627,7 +5886,7 @@ fn window_print(image: &WorkingImage, region: &Region, window: Window) -> Vec<[u
     sums.iter()
         .map(|(sum, n)| {
             if *n == 0 {
-                return [u16::MAX; 3];
+                return [EMPTY_BLOCK; 3];
             }
             sum.map(|v| half::f16::from_f64(v / *n as f64).to_bits())
         })
@@ -5636,9 +5895,12 @@ fn window_print(image: &WorkingImage, region: &Region, window: Window) -> Vec<[u
 
 /// A fill kept on disk: the magic, the version, the engine, then the
 /// picture's size, the window and the region's size as little-endian
-/// u32s, then the region's values as little-endian f16. Half precision
-/// halves a fill that can run to tens of megabytes; its step, under a
-/// part in two thousand, is below the grain put back over the fill.
+/// u32s; from version 5 the print's block count as a u32 and its
+/// blocks as little-endian f16 bits; then the region's values as
+/// little-endian f16. Half precision halves a fill that can run to tens
+/// of megabytes; its step, under a part in two thousand, is below the
+/// grain put back over the fill.
+#[allow(clippy::too_many_arguments)]
 fn write_fill(
     path: &Path,
     version: u8,
@@ -5646,19 +5908,26 @@ fn write_fill(
     size: (usize, usize),
     window: Window,
     region: (usize, usize),
+    print: &[[u16; 3]],
     data: &[f32],
-) {
+) -> bool {
     use std::io::Write;
+    let part = path.with_extension("fill-part");
     let write = || -> Result<(), Box<dyn std::error::Error>> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let part = path.with_extension("fill-part");
         let mut out = std::io::BufWriter::new(std::fs::File::create(&part)?);
         out.write_all(FILL_MAGIC)?;
         out.write_all(&[version, engine_byte(engine)])?;
         for n in fill_numbers(size, window, region) {
             out.write_all(&u32::try_from(n)?.to_le_bytes())?;
+        }
+        if version > FILL_VERSION_HASHED {
+            out.write_all(&u32::try_from(print.len())?.to_le_bytes())?;
+            for v in print.iter().flatten() {
+                out.write_all(&v.to_le_bytes())?;
+            }
         }
         for v in data {
             out.write_all(&half::f16::from_f32(*v).to_le_bytes())?;
@@ -5667,24 +5936,110 @@ fn write_fill(
         std::fs::rename(&part, path)?;
         Ok(())
     };
-    if let Err(e) = write() {
-        tracing::warn!("fill cache {}: {e}", path.display());
+    match write() {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("fill cache {}: {e}", path.display());
+            let _ = std::fs::remove_file(&part);
+            false
+        }
     }
+}
+
+/// The files a fill's slot (`<slot>.fill`, [`fill_slot`]) keeps its
+/// bases' fills in, `<slot>-<n>.fill`, [`BASES_A_SLOT`] of them:
+/// virtual copies of a frame whose bases differ (a white balance each)
+/// read theirs in turn rather than make it again.
+fn slot_files(slot: &Path) -> Vec<PathBuf> {
+    let stem = slot
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let dir = slot.parent().unwrap_or(Path::new(""));
+    (0..BASES_A_SLOT)
+        .map(|n| dir.join(format!("{stem}-{n}.fill")))
+        .collect()
+}
+
+/// The fill in `slot` whose print `takes`, at [`FILL_VERSION`], its
+/// files read newest first.
+fn read_slot(
+    slot: &Path,
+    size: (usize, usize),
+    window: Window,
+    region: (usize, usize),
+    takes: impl Fn(&[[u16; 3]]) -> bool,
+) -> Option<(Engine, WindowPrint, Vec<f32>)> {
+    let mut files: Vec<_> = slot_files(slot)
+        .into_iter()
+        .filter_map(|f| {
+            let made = std::fs::metadata(&f).and_then(|m| m.modified()).ok()?;
+            Some((made, f))
+        })
+        .collect();
+    files.sort_by_key(|(made, _)| std::cmp::Reverse(*made));
+    files
+        .iter()
+        .find_map(|(_, f)| read_fill(f, FILL_VERSION, size, window, region, &takes))
+}
+
+/// A fill kept in `slot` at [`FILL_VERSION`]: over the file whose print
+/// is `print`'s within [`PRINT_TOLERANCE`], else in a file not there,
+/// else over the oldest. True when it was written.
+fn write_slot(
+    slot: &Path,
+    engine: Engine,
+    size: (usize, usize),
+    window: Window,
+    region: (usize, usize),
+    print: &[[u16; 3]],
+    data: &[f32],
+) -> bool {
+    let files = slot_files(slot);
+    let same = |f: &Path| {
+        let mut same = false;
+        read_fill(f, FILL_VERSION, size, window, region, |stored| {
+            same = prints_agree(stored, print, PRINT_TOLERANCE, Compare::Every);
+            false
+        });
+        same
+    };
+    let made = |f: &Path| std::fs::metadata(f).and_then(|m| m.modified()).ok();
+    let Some(target) = files
+        .iter()
+        .find(|f| same(f))
+        .or_else(|| files.iter().find(|f| !f.exists()))
+        .or_else(|| files.iter().min_by_key(|f| made(f)))
+    else {
+        return false;
+    };
+    write_fill(
+        target,
+        FILL_VERSION,
+        engine,
+        size,
+        window,
+        region,
+        print,
+        data,
+    )
 }
 
 /// A fill kept on disk, if the file is there and was written at
 /// `version` for a picture of `size`, `window` and a region of
-/// `region`'s size: the engine that made it and the values.
+/// `region`'s size, and `takes` its print (none before version 5): the
+/// engine that made it, the print, and the values.
 fn read_fill(
     path: &Path,
     version: u8,
     size: (usize, usize),
     window: Window,
     region: (usize, usize),
-) -> Option<(Engine, Vec<f32>)> {
+    takes: impl FnOnce(&[[u16; 3]]) -> bool,
+) -> Option<(Engine, WindowPrint, Vec<f32>)> {
     use std::io::Read;
-    // The header alone first: a slot of another version or picture is
-    // not read through on every develop.
+    // The header and the print first: a slot of another version or
+    // picture is not read through on every develop.
     let mut file = std::fs::File::open(path).ok()?;
     let mut header = [0u8; FILL_HEADER];
     file.read_exact(&mut header).ok()?;
@@ -5705,8 +6060,37 @@ fn read_fill(
         .iter()
         .zip(numbers)
         .all(|(b, n)| u32::from_le_bytes(*b) as usize == n);
+    if !same {
+        return None;
+    }
+    let mut print = Vec::new();
+    let mut print_bytes = 0;
+    if version > FILL_VERSION_HASHED {
+        let mut count = [0u8; 4];
+        file.read_exact(&mut count).ok()?;
+        let count = u32::from_le_bytes(count) as usize;
+        let blocks = window.width.div_ceil(PRINT_BLOCK) * window.height.div_ceil(PRINT_BLOCK);
+        if count != blocks {
+            return None;
+        }
+        let mut bytes = vec![0u8; count * 6];
+        file.read_exact(&mut bytes).ok()?;
+        print = bytes
+            .as_chunks::<6>()
+            .0
+            .iter()
+            .map(|b| {
+                [
+                    u16::from_le_bytes([b[0], b[1]]),
+                    u16::from_le_bytes([b[2], b[3]]),
+                    u16::from_le_bytes([b[4], b[5]]),
+                ]
+            })
+            .collect();
+        print_bytes = 4 + count * 6;
+    }
     let want = region.0 * region.1 * 3 * 2;
-    if !same || file.metadata().ok()?.len() != (FILL_HEADER + want) as u64 {
+    if file.metadata().ok()?.len() != (FILL_HEADER + print_bytes + want) as u64 || !takes(&print) {
         return None;
     }
     let mut values = vec![0u8; want];
@@ -5717,7 +6101,141 @@ fn read_fill(
         .iter()
         .map(|b| half::f16::from_le_bytes(*b).to_f32())
         .collect();
-    Some((engine, data))
+    Some((engine, print, data))
+}
+
+/// Where a fill lives on disk under `root`: named by a hash of the
+/// file, the patch as [`same_fill`] compares it, its seed, the
+/// picture's size, the region, the window, and both engines' models;
+/// at [`FILL_VERSION_HASHED`], `print` hashed in too.
+#[allow(clippy::too_many_arguments)]
+fn fill_slot(
+    root: &Path,
+    file: &Path,
+    patch: &Patch,
+    region: &Region,
+    size: (usize, usize),
+    window: Window,
+    print: Option<u64>,
+) -> PathBuf {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    file.hash(&mut h);
+    "fill".hash(&mut h);
+    patch.id.hash(&mut h);
+    patch.seed.hash(&mut h);
+    for p in &patch.points {
+        p.map(f32::to_bits).hash(&mut h);
+    }
+    patch.radius.to_bits().hash(&mut h);
+    patch.feather.to_bits().hash(&mut h);
+    std::mem::discriminant(&patch.method).hash(&mut h);
+    patch.remove.hash(&mut h);
+    patch.fast.hash(&mut h);
+    size.hash(&mut h);
+    (region.x, region.y, region.width, region.height).hash(&mut h);
+    window.hash(&mut h);
+    greycard_ai::FILL.id.hash(&mut h);
+    REMOVE.id.hash(&mut h);
+    REMOVE_FAST.id.hash(&mut h);
+    if let Some(print) = print {
+        print.hash(&mut h);
+    }
+    root.join(format!("{:016x}.fill", h.finish()))
+}
+
+/// What reads the fills kept on disk for a develop that makes none:
+/// the reduced develop's, for one file.
+#[derive(Debug, Clone)]
+pub struct FillReader {
+    root: PathBuf,
+    file: PathBuf,
+}
+
+impl FillReader {
+    /// The fill kept for `patch` on the full develop's picture, `full`
+    /// in size, read and taken down by `factor` with a box filter to
+    /// `region` of `image`, that picture reduced by `factor`: served
+    /// when the print of `image` under the fill's window is the stored
+    /// one's within [`REDUCED_PRINT_TOLERANCE`]. None for a fill not
+    /// kept, made for another picture, or a factor that does not divide
+    /// the print's blocks. No model runs.
+    pub fn fill_read_only(
+        &self,
+        patch: &Patch,
+        region: &Region,
+        image: &WorkingImage,
+        factor: usize,
+        full: (usize, usize),
+    ) -> Option<Vec<f32>> {
+        if factor == 0 || !PRINT_BLOCK.is_multiple_of(factor) {
+            return None;
+        }
+        let full_region = patch.region(full.0, full.1)?;
+        let (window, _) = window_for(&full_region, full.0, full.1);
+        let path = fill_slot(
+            &self.root,
+            &self.file,
+            patch,
+            &full_region,
+            full,
+            window,
+            None,
+        );
+        let print = reduced_print(image, &full_region, window, factor);
+        let (fw, fh) = (full_region.width, full_region.height);
+        let (_, _, data) = read_slot(&path, full, window, (fw, fh), |stored| {
+            prints_agree(stored, &print, REDUCED_PRINT_TOLERANCE, Compare::Median)
+        })?;
+        tracing::info!(
+            "fill {}: read from the fill cache for a picture reduced by {factor}",
+            patch.name()
+        );
+        Some(box_down(&data, &full_region, region, image, factor))
+    }
+}
+
+/// A fill over `full`, the full develop's region, taken down by
+/// `factor` to `region` of `image`: each pixel the mean of the full
+/// pixels it stands for inside `full`, or the picture's own where none
+/// are. On a turned frame whose side is not a whole number of bins the
+/// two grids are off by that side modulo the factor (at most one full
+/// pixel at two), which a thumbnail does not show.
+fn box_down(
+    data: &[f32],
+    full: &Region,
+    region: &Region,
+    image: &WorkingImage,
+    factor: usize,
+) -> Vec<f32> {
+    let mut out = Vec::with_capacity(region.width * region.height * 3);
+    for y in region.y..region.y + region.height {
+        for x in region.x..region.x + region.width {
+            let mut sum = [0.0f32; 3];
+            let mut n = 0usize;
+            for fy in y * factor..(y + 1) * factor {
+                if fy < full.y || fy >= full.y + full.height {
+                    continue;
+                }
+                for fx in x * factor..(x + 1) * factor {
+                    if fx < full.x || fx >= full.x + full.width {
+                        continue;
+                    }
+                    let i = ((fy - full.y) * full.width + (fx - full.x)) * 3;
+                    for (s, v) in sum.iter_mut().zip(&data[i..i + 3]) {
+                        *s += v;
+                    }
+                    n += 1;
+                }
+            }
+            if n == 0 {
+                let i = (y * image.width + x) * 3;
+                out.extend_from_slice(&image.data[i..i + 3]);
+            } else {
+                out.extend(sum.map(|s| s / n as f32));
+            }
+        }
+    }
+    out
 }
 
 /// The numbers a fill kept on disk is checked by.
@@ -6834,11 +7352,11 @@ mod tests {
         for (k, m) in kept.iter().zip(&made) {
             assert!((k - m).abs() <= m * 1e-3, "{k} against {m}");
         }
-        let print = print_hash(&image, &region, window);
-        let path = ai
-            .fill_path(&patch, &region, &image, window, print)
-            .expect("a slot");
-        assert!(path.is_file());
+        let size = (image.width, image.height);
+        let print = window_print(&image, &region, window);
+        let slot = ai.fill_path(&patch, &region, size, window).expect("a slot");
+        let path = slot_files(&slot)[0].clone();
+        assert!(path.is_file() && !slot.exists());
 
         // Opened again: memory is empty, the store has no model.
         ai.forget(Some(file.clone()));
@@ -6867,8 +7385,8 @@ mod tests {
         let mut fast = patch.clone();
         fast.set_fill_choice(FillChoice::Fast);
         assert_ne!(
-            ai.fill_path(&fast, &region, &image, window, print),
-            ai.fill_path(&patch, &region, &image, window, print)
+            ai.fill_path(&fast, &region, size, window),
+            ai.fill_path(&patch, &region, size, window)
         );
         assert!(!ai.fill_kept(&fast, &region, &image));
         let mut lama = patch.clone();
@@ -6876,7 +7394,7 @@ mod tests {
         assert!(!ai.fill_kept(&lama, &region, &image));
         ai.forget(Some(file.clone()));
         assert!(ai.fill_kept(&patch, &region, &image));
-        assert!(ai.fill_in_memory(&fast, window, print).is_none());
+        assert!(ai.fill_in_memory(&fast, window, &print).is_none());
         ai.forget(Some(file.clone()));
         // So is the patch on the picture developed otherwise: another
         // white balance, or a virtual copy's, under the window.
@@ -6889,7 +7407,7 @@ mod tests {
         // The fill now in memory is no more the warmer picture's than
         // the slot was: the base changed under the window, the fill
         // is made again.
-        assert!(ai.fill_in_memory(&patch, window, print).is_some());
+        assert!(ai.fill_in_memory(&patch, window, &print).is_some());
         assert!(!ai.fill_kept(&patch, &region, &warmer));
         assert!(ai.fill_kept(&patch, &region, &image));
         // So is the patch on a picture of another size.
@@ -6903,20 +7421,22 @@ mod tests {
         // The slot read with another version, or a header that does not
         // match, is a miss.
         let dims = (region.width, region.height);
-        let size = (image.width, image.height);
-        assert!(read_fill(&path, FILL_VERSION, size, window, dims).is_some());
-        assert!(read_fill(&path, FILL_VERSION + 1, size, window, dims).is_none());
-        assert!(read_fill(&path, FILL_VERSION, (201, 100), window, dims).is_none());
+        let any = |_: &[[u16; 3]]| true;
+        assert!(read_fill(&path, FILL_VERSION, size, window, dims, any).is_some());
+        assert!(read_fill(&path, FILL_VERSION + 1, size, window, dims, any).is_none());
+        assert!(read_fill(&path, FILL_VERSION, (201, 100), window, dims, any).is_none());
+        assert!(read_fill(&path, FILL_VERSION, size, window, dims, |_| false).is_none());
         // Written at an old version (the grain measured before its line
         // left texture out, say), the slot misses where it stands, and
         // the fill is made again in the same slot.
         write_fill(
             &path,
-            FILL_VERSION - 1,
+            FILL_VERSION - 2,
             Engine::Remove,
             size,
             window,
             dims,
+            &[],
             &kept,
         );
         ai.forget(Some(file.clone()));
@@ -6930,11 +7450,437 @@ mod tests {
         // Off the disk, nothing is written.
         let mut memory = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
         memory.forget(Some(PathBuf::from("open.CR3")));
+        assert!(memory.fill_path(&patch, &region, size, window).is_none());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A fill patch on a 200 by 100 picture with a texture under its
+    /// window, the picture, its region, and the window.
+    fn print_case() -> (WorkingImage, Patch, Region) {
+        let mut image = WorkingImage::new(200, 100);
+        for (i, px) in image.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let (x, y) = ((i % 200) as f32, (i / 200) as f32);
+            *px = [
+                0.2 + 0.3 * x / 200.0,
+                0.3 + 0.1 * (y / 7.0).sin(),
+                0.1 + 0.05 * (x / 5.0).cos(),
+            ];
+        }
+        let patch = Patch {
+            id: 7,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.25]],
+            radius: 0.05,
+            remove: true,
+            seed: 2,
+            ..Default::default()
+        };
+        let region = patch.region(image.width, image.height).unwrap();
+        (image, patch, region)
+    }
+
+    /// The picture with every value scaled by `by`.
+    fn scaled(image: &WorkingImage, by: f32) -> WorkingImage {
+        let mut out = image.clone();
+        out.data.iter_mut().for_each(|v| *v *= by);
+        out
+    }
+
+    /// The fill's slot is named by the patch, the picture's size, and
+    /// the window, never its pixels; the print is in the file, and a
+    /// picture moved by less than the tolerance is served the fill, on
+    /// disk and in memory, while one moved by more is not.
+    #[test]
+    fn a_fill_is_served_on_a_print_within_the_tolerance() {
+        let dir = crate::testing::scratch_dir("fill-print");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let (image, patch, region) = print_case();
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        let size = (image.width, image.height);
+        let path = ai.fill_path(&patch, &region, size, window).unwrap();
+        let data = vec![0.4; region.width * region.height * 3];
+        ai.keep_fill(&patch, &region, &image, window, Engine::Remove, data);
+        // The pixels do not name the slot.
+        let other = scaled(&image, 1.5);
+        assert_eq!(ai.fill_path(&patch, &region, size, window), Some(path));
+
+        let near = scaled(&image, 1.0 + PRINT_TOLERANCE / 4.0);
+        let far = scaled(&image, 1.0 + PRINT_TOLERANCE * 2.0);
+        // In memory.
+        assert!(ai.fill_kept(&patch, &region, &near));
+        assert!(!ai.fill_kept(&patch, &region, &far));
+        assert!(!ai.fill_kept(&patch, &region, &other));
+        // On disk.
+        for (picture, served) in [(&near, true), (&far, false), (&image, true)] {
+            ai.forget(Some(file.clone()));
+            assert_eq!(ai.fill_kept(&patch, &region, picture), served);
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Prints compare block by block, relative to the larger of the two
+    /// and a floor: a block empty on one side and not the other never
+    /// matches, a black block moves by the floor's share, and the
+    /// reduced develop's compare passes over empty blocks.
+    #[test]
+    fn prints_compare_with_a_floor_and_exact_empties() {
+        let f = |v: f32| half::f16::from_f32(v).to_bits();
+        let a = vec![[f(0.5), f(0.25), f(0.0)], [EMPTY_BLOCK; 3]];
+        let mut b = a.clone();
+        assert!(prints_agree(&a, &b, PRINT_TOLERANCE, Compare::Every));
+        b[0][0] = f(0.5 * (1.0 + PRINT_TOLERANCE * 0.5));
+        assert!(prints_agree(&a, &b, PRINT_TOLERANCE, Compare::Every));
+        b[0][0] = f(0.5 * (1.0 + PRINT_TOLERANCE * 2.0));
+        assert!(!prints_agree(&a, &b, PRINT_TOLERANCE, Compare::Every));
+        // Black against a hair above it: within the floor's share.
+        let mut c = a.clone();
+        c[0][2] = f(PRINT_FLOOR * PRINT_TOLERANCE * 0.5);
+        assert!(prints_agree(&a, &c, PRINT_TOLERANCE, Compare::Every));
+        // An empty block that is not empty in the other.
+        let mut d = a.clone();
+        d[1] = [f(0.5); 3];
+        assert!(!prints_agree(&a, &d, PRINT_TOLERANCE, Compare::Every));
+        assert!(prints_agree(&a, &d, PRINT_TOLERANCE, Compare::Median));
+        assert!(!prints_agree(
+            &[[EMPTY_BLOCK; 3]],
+            &[[f(0.5); 3]],
+            1.0,
+            Compare::Median
+        ));
+        // Another count of blocks.
+        assert!(!prints_agree(&a, &a[..1], PRINT_TOLERANCE, Compare::Every));
+        // One block moved far, the rest where they were: not the
+        // picture block by block, the same picture by the median.
+        let mut many = vec![[f(0.5), f(0.25), f(0.125)]; 5];
+        let stored = many.clone();
+        many[2] = [f(0.9); 3];
+        assert!(!prints_agree(
+            &stored,
+            &many,
+            PRINT_TOLERANCE,
+            Compare::Every
+        ));
+        assert!(prints_agree(
+            &stored,
+            &many,
+            PRINT_TOLERANCE,
+            Compare::Median
+        ));
+        let all: Vec<_> = stored.iter().map(|_| [f(0.9); 3]).collect();
+        assert!(!prints_agree(
+            &stored,
+            &all,
+            PRINT_TOLERANCE,
+            Compare::Median
+        ));
+    }
+
+    /// A fill kept at the version before, under its print hashed into
+    /// the name, is read once, kept again at this version under the new
+    /// name, and its old slot let go.
+    #[test]
+    fn a_fill_of_the_version_before_is_kept_again_once() {
+        let dir = crate::testing::scratch_dir("fill-hashed");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let (image, patch, region) = print_case();
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        let size = (image.width, image.height);
+        let dims = (region.width, region.height);
+        let print = window_print(&image, &region, window);
+        let old = ai
+            .fill_path_hashed(&patch, &region, size, window, &print)
+            .unwrap();
+        let new = ai.fill_path(&patch, &region, size, window).unwrap();
+        assert_ne!(old, new);
+        let data: Vec<f32> = (0..dims.0 * dims.1 * 3)
+            .map(|i| half::f16::from_f32(i as f32 * 1e-4).to_f32())
+            .collect();
+        write_fill(
+            &old,
+            FILL_VERSION_HASHED,
+            Engine::Remove,
+            size,
+            window,
+            dims,
+            &[],
+            &data,
+        );
+        // Another picture does not find it under its own print.
+        assert!(!ai.fill_kept(&patch, &region, &scaled(&image, 1.5)));
+        assert!(old.is_file());
+        // This one does, and keeps it again.
+        assert!(ai.fill_kept(&patch, &region, &image));
+        let first = slot_files(&new)[0].clone();
+        assert!(!old.exists() && first.is_file());
+        let (engine, stored, read) =
+            read_fill(&first, FILL_VERSION, size, window, dims, |_| true).unwrap();
+        assert_eq!((engine, &stored, &read), (Engine::Remove, &print, &data));
+        ai.forget(Some(file));
+        match ai.fill(&patch, &region, &image) {
+            Ok((served, engine)) => assert_eq!((served, engine), (data, Engine::Remove)),
+            Err(e) => panic!("{e:?}"),
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Virtual copies of one frame, a white balance each past the
+    /// tolerance, keep their fills of one patch in one slot's files and
+    /// read them back in turn; a fourth base takes the oldest's file,
+    /// and the same base again writes over its own.
+    #[test]
+    fn a_slot_keeps_its_bases_fills_in_turn() {
+        let dir = crate::testing::scratch_dir("fill-bases");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let (image, patch, region) = print_case();
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        let cells = region.width * region.height * 3;
+        let bases: Vec<_> = (0..4)
+            .map(|i| scaled(&image, 1.0 + 0.1 * i as f32))
+            .collect();
+        let keep = |ai: &mut Ai, i: usize| {
+            ai.keep_fill(
+                &patch,
+                &region,
+                &bases[i],
+                window,
+                Engine::Remove,
+                vec![0.1 * (i + 1) as f32; cells],
+            );
+            // Apart in time, so the oldest is told.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let served = |ai: &mut Ai, i: usize| {
+            ai.forget(Some(file.clone()));
+            ai.fill(&patch, &region, &bases[i]).ok().map(|(d, _)| d[0])
+        };
+        let near =
+            |v: Option<f32>, i: usize| v.is_some_and(|v| (v - 0.1 * (i + 1) as f32).abs() < 1e-3);
+        for i in 0..3 {
+            keep(&mut ai, i);
+        }
+        for i in [0, 1, 2, 0, 2] {
+            assert!(near(served(&mut ai, i), i), "base {i}");
+        }
+        // The same base again: its own file, nothing evicted.
+        keep(&mut ai, 1);
+        let slot = ai
+            .fill_path(&patch, &region, (image.width, image.height), window)
+            .unwrap();
+        assert!(slot_files(&slot).iter().all(|f| f.is_file()));
+        for i in 0..3 {
+            assert!(near(served(&mut ai, i), i), "base {i} again");
+        }
+        // A fourth evicts the oldest written, the first.
+        keep(&mut ai, 3);
+        assert!(near(served(&mut ai, 3), 3));
+        assert!(served(&mut ai, 0).is_none());
+        assert!(near(served(&mut ai, 1), 1) && near(served(&mut ai, 2), 2));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The fill of the version before is left where it is when it
+    /// cannot be kept again: a slot that cannot be written to.
+    #[test]
+    fn the_version_before_stays_when_it_cannot_be_kept_again() {
+        let dir = crate::testing::scratch_dir("fill-hashed-unwritable");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        ai.forget(Some(PathBuf::from("open.CR3")));
+        let (image, patch, region) = print_case();
+        let (window, _) = ai.window_of(&patch, &region, &image);
+        let size = (image.width, image.height);
+        let dims = (region.width, region.height);
+        let print = window_print(&image, &region, window);
+        let old = ai
+            .fill_path_hashed(&patch, &region, size, window, &print)
+            .unwrap();
+        let data = vec![0.25; dims.0 * dims.1 * 3];
+        assert!(write_fill(
+            &old,
+            FILL_VERSION_HASHED,
+            Engine::Remove,
+            size,
+            window,
+            dims,
+            &[],
+            &data
+        ));
+        // Every file of the new slot a directory: no write lands.
+        let slot = ai.fill_path(&patch, &region, size, window).unwrap();
+        for f in slot_files(&slot) {
+            std::fs::create_dir_all(&f).unwrap();
+        }
+        assert!(!write_slot(
+            &slot,
+            Engine::Remove,
+            size,
+            window,
+            dims,
+            &print,
+            &data
+        ));
+        // Served all the same, from the old file, which stays.
+        assert!(ai.fill_kept(&patch, &region, &image));
+        assert!(old.is_file());
         assert!(
-            memory
-                .fill_path(&patch, &region, &image, window, print)
+            std::fs::read_dir(old.parent().unwrap())
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().ends_with(".fill-part")),
+            "no part file left behind"
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The box filter by hand: a full region at (3, 2), 4 by 2, taken
+    /// down by 2 to a reduced region at (0, 1), 4 by 1. Each reduced
+    /// pixel is the mean of the full region's pixels under it, and the
+    /// picture's own where none are.
+    #[test]
+    fn the_box_filter_pins_the_regions_offsets() {
+        let region = |x, y, width, height| Region {
+            x,
+            y,
+            width,
+            height,
+            cover: vec![1.0; width * height],
+            ring: vec![0.0; width * height],
+        };
+        let full = region(3, 2, 4, 2);
+        // Each full pixel's value is its column plus ten its row, in
+        // the region.
+        let data: Vec<f32> = (0..8)
+            .flat_map(|i| [(i % 4) as f32 + 10.0 * (i / 4) as f32; 3])
+            .collect();
+        let image = WorkingImage::from_data(8, 4, vec![9.0; 8 * 4 * 3]).unwrap();
+        let out = box_down(&data, &full, &region(0, 1, 4, 1), &image, 2);
+        let firsts: Vec<f32> = out.chunks(3).map(|p| p[0]).collect();
+        // (0, 1) stands for full columns 0 and 1: none in the region.
+        // (1, 1) for column 3 at rows 2 and 3: 0 and 10.
+        // (2, 1) for columns 4 and 5: 1, 2, 11, and 12.
+        // (3, 1) for columns 6 and 7, the region ending at 6: 3 and 13.
+        assert_eq!(firsts, [9.0, 5.0, 6.5, 8.0]);
+    }
+
+    /// The picture taken down by `factor`, each pixel its block's mean.
+    fn reduced_by(image: &WorkingImage, factor: usize) -> WorkingImage {
+        let (w, h) = (image.width / factor, image.height / factor);
+        let mut out = WorkingImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                for c in 0..3 {
+                    let mut sum = 0.0;
+                    for dy in 0..factor {
+                        for dx in 0..factor {
+                            sum += image.data
+                                [((y * factor + dy) * image.width + x * factor + dx) * 3 + c];
+                        }
+                    }
+                    out.data[(y * w + x) * 3 + c] = sum / (factor * factor) as f32;
+                }
+            }
+        }
+        out
+    }
+
+    /// A fill kept at full size is read by a develop reduced by 2 or 4,
+    /// taken down to the reduced region, within a step of the fill
+    /// box-filtered; a fill not on disk, a picture moved, or a factor
+    /// that does not divide the print's blocks refuses.
+    #[test]
+    fn a_reduced_develop_reads_a_fill_kept() {
+        let dir = crate::testing::scratch_dir("fill-reduced");
+        let mut ai = Ai::for_test_on_disk(Store::at(dir.join("models")));
+        ai.providers = vec![Provider::Cpu];
+        let file = PathBuf::from("open.CR3");
+        ai.forget(Some(file.clone()));
+        let mut big = WorkingImage::new(400, 240);
+        for (i, px) in big.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let (x, y) = ((i % 400) as f32, (i / 400) as f32);
+            *px = [0.2 + 0.3 * x / 400.0, 0.3 + 0.1 * y / 240.0, 0.15];
+        }
+        let full = (big.width, big.height);
+        let patch = Patch {
+            id: 3,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.3]],
+            radius: 0.04,
+            remove: true,
+            ..Default::default()
+        };
+        let reader = ai.fill_reader(&file).expect("on disk");
+        let other_reader = ai.fill_reader(Path::new("other.CR3")).unwrap();
+        let region = patch.region(full.0, full.1).unwrap();
+        let (window, _) = ai.window_of(&patch, &region, &big);
+        let fill: Vec<f32> = (0..region.width * region.height)
+            .flat_map(|i| {
+                let (x, y) = ((i % region.width) as f32, (i / region.width) as f32);
+                [0.5 + 0.001 * x, 0.4 + 0.001 * y, 0.3]
+            })
+            .collect();
+        let small = reduced_by(&big, 2);
+        let small_region = patch.region(small.width, small.height).unwrap();
+        // Not on disk yet.
+        assert!(
+            reader
+                .fill_read_only(&patch, &small_region, &small, 2, full)
                 .is_none()
         );
+        let kept = ai.keep_fill(&patch, &region, &big, window, Engine::Remove, fill);
+        for factor in [2, 4] {
+            let small = reduced_by(&big, factor);
+            let small_region = patch.region(small.width, small.height).unwrap();
+            let read = reader
+                .fill_read_only(&patch, &small_region, &small, factor, full)
+                .unwrap_or_else(|| panic!("read at {factor}"));
+            assert_eq!(read.len(), small_region.width * small_region.height * 3);
+            let want = box_down(&kept, &region, &small_region, &small, factor);
+            for (r, w) in read.iter().zip(&want) {
+                assert!((r - w).abs() <= 1e-6, "{r} against {w} at {factor}");
+            }
+            // Inside the hole, the fill's values, not the picture's.
+            let centre =
+                (small_region.height / 2 * small_region.width + small_region.width / 2) * 3;
+            assert!(read[centre] > 0.45, "{} at {factor}", read[centre]);
+            // Another file's slot is not this one's.
+            assert!(
+                other_reader
+                    .fill_read_only(&patch, &small_region, &small, factor, full)
+                    .is_none()
+            );
+            // A picture the fill was not made from.
+            let moved = scaled(&small, 1.0 + REDUCED_PRINT_TOLERANCE * 2.0);
+            assert!(
+                reader
+                    .fill_read_only(&patch, &small_region, &moved, factor, full)
+                    .is_none()
+            );
+        }
+        // A third does not divide the print's blocks.
+        let third = reduced_by(&big, 3);
+        let third_region = patch.region(third.width, third.height).unwrap();
+        assert!(
+            reader
+                .fill_read_only(&patch, &third_region, &third, 3, (402, 240))
+                .is_none()
+        );
+        assert!(
+            reader
+                .fill_read_only(&patch, &third_region, &third, 3, full)
+                .is_none()
+        );
+        // Off the disk, no reader.
+        let memory = Ai::for_test(Store::at(dir.join("models")), vec![Provider::Cpu]);
+        assert!(memory.fill_reader(&file).is_none());
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -9113,12 +10059,13 @@ mod tests {
     }
 
     /// The card is given back once a fill's model has run in any of the
-    /// worker's models, and not again until another runs; a fill kept
-    /// runs nothing and gives nothing back; nor is it where the card's
-    /// free memory is not known, as on unified memory.
+    /// worker's models while the card is short of the floor, and not
+    /// again until another runs; a fill kept runs nothing and gives
+    /// nothing back; nor is it where the card's free memory is not
+    /// known, as on unified memory.
     #[test]
     fn the_card_is_given_back_after_a_fill_ran() {
-        let mut ai = on_card(4 * GIB, 6 * GIB);
+        let mut ai = on_card(3 * GIB, 6 * GIB);
         let mut other = Ai::for_test(Store::at("no-store"), vec![Provider::Cpu]);
         assert!(ai.holds_sessions());
         assert!(!give_back_card(&mut [&mut ai, &mut other], false));
@@ -9133,7 +10080,7 @@ mod tests {
         assert!(give_back_due(&[&ai, &other]));
         assert!(give_back_card(&mut [&mut ai, &mut other], false));
         assert!(!ai.holds_sessions() && !other.holds_sessions());
-        assert_eq!(ai.free_memory().map(|(f, _)| f), Some(10 * GIB));
+        assert_eq!(ai.free_memory().map(|(f, _)| f), Some(9 * GIB));
         assert!(!give_back_card(&mut [&mut ai, &mut other], false));
         // Kept, it is served without a run.
         ai.fill(&patch, &region, &image).expect("kept");
@@ -9263,10 +10210,39 @@ mod tests {
         let mut ai = on_card(8 * GIB, GIB);
         ai.fill(&patch, &region, &image).expect("made");
         let merge = MergeRunning::new();
-        assert!(!give_back_card(&mut [&mut ai], false));
+        assert!(!give_back_card(&mut [&mut ai], true));
         assert!(ai.holds_sessions());
         drop(merge);
-        assert!(give_back_card(&mut [&mut ai], false));
+        assert!(give_back_card(&mut [&mut ai], true));
+    }
+
+    /// After a fill's model ran, the sessions are kept while the card
+    /// has the floor and the margin free with them held, given back
+    /// under it, and given back whatever it has when forced.
+    #[test]
+    fn the_sessions_are_kept_while_the_card_has_room() {
+        let image = WorkingImage::new(200, 100);
+        let patch = Patch {
+            remove: false,
+            ..remove_patch(15)
+        };
+        let region = patch.region(image.width, image.height).unwrap();
+        let room = KEEP_FLOOR + CARD_MARGIN;
+        let mut ai = on_card(room + GIB, GIB);
+        ai.fill(&patch, &region, &image).expect("made");
+        assert!(give_back_due(&[&ai]));
+        assert!(!give_back_card(&mut [&mut ai], false));
+        assert!(ai.holds_sessions());
+        // Asked once a fill: not again until another runs.
+        assert!(!give_back_due(&[&ai]));
+        // Under the floor, the next run's give-back lets them go.
+        let mut short = on_card(room - TENTH_GIB, GIB);
+        short.fill(&patch, &region, &image).expect("made");
+        assert!(give_back_card(&mut [&mut short], false));
+        assert!(!short.holds_sessions());
+        // Forced, with room, they go all the same.
+        assert!(give_back_card(&mut [&mut ai], true));
+        assert!(!ai.holds_sessions());
     }
 
     /// A count of the fills ahead does not ask the card: a fill it is

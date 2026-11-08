@@ -684,8 +684,24 @@ fn adapter_free_memory(adapter: &wgpu::Adapter) -> Option<(u64, &'static str)> {
 /// The adapter's identity, type, and memory, asked once a process and
 /// kept.
 #[cfg(webgpu_ep)]
+static ADAPTER: OnceLock<Option<Adapter>> = OnceLock::new();
+
+/// [`webgpu_free_memory`] only once the adapter has been asked for
+/// by something else: `None` while it has not, so a caller that must
+/// not set off the probe (the worker's develop, logging the card's
+/// free memory) blocks on nothing.
+pub fn webgpu_free_memory_if_probed() -> Option<(u64, &'static str)> {
+    #[cfg(webgpu_ep)]
+    {
+        ADAPTER.get()?;
+        return webgpu_free_memory();
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+#[cfg(webgpu_ep)]
 fn webgpu_adapter() -> Option<&'static Adapter> {
-    static ADAPTER: OnceLock<Option<Adapter>> = OnceLock::new();
     ADAPTER
         .get_or_init(|| {
             use pollster::FutureExt as _;

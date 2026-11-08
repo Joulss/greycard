@@ -39,9 +39,10 @@
 //! mosaic in full before the bin, where its radius means what it did.
 //!
 //! A picture made without something its edit asks for is not kept, as
-//! the open frame's is not: a Fill patch (its model runs on the open
-//! frame alone), a look not in the look directory, and a learned mask
-//! whose raster is not in the mask cache. The look and the masks are
+//! the open frame's is not: a Fill patch whose fill is not on disk (its
+//! model runs on the open frame alone; one kept at the full size is
+//! read and taken down by the bin), a look not in the look directory,
+//! and a learned mask whose raster is not in the mask cache. The look and the masks are
 //! asked after before anything is decoded. A mask whose model is not in
 //! the store waits for a fetch of one; one whose model is there is asked
 //! of the worker, at the lowest priority it has (`Job::MasksFor`), and
@@ -70,11 +71,11 @@ use greycard_core::image::WorkingImage;
 use greycard_edit::Edit;
 use greycard_edit::brush::Raster;
 
-use crate::ai::Ai;
+use crate::ai::{Ai, FillReader};
 use crate::edited_pictures::{Edited, Shows};
 use crate::stages::{Purpose, Stage, Step, stages};
 use crate::version_key::Key;
-use crate::walk::{Buf, Input, Kept, NoHold, NoModels, plan, walk};
+use crate::walk::{Buf, Input, Kept, Models, NoHold, NoModels, plan, walk};
 
 /// How many reduced develops the pool runs at once: one while a frame
 /// is open in the editor, whose develop is what the user is waiting on
@@ -207,10 +208,81 @@ pub fn develop(
     develop_as(path, edit, turn, lenses, &Purpose::Reduced)
 }
 
+/// [`develop`], with the fills kept on disk read through `fills`.
+pub fn develop_reading(
+    path: &Path,
+    edit: &Edit,
+    turn: u8,
+    lenses: Option<&greycard_lens::Database>,
+    fills: Option<&FillReader>,
+) -> Result<Developed, Why> {
+    walk_reduced(path, edit, turn, lenses, &Purpose::Reduced, fills)
+}
+
+/// The reduced develop's models: none runs; a fill kept on disk is
+/// read where there is a reader.
+struct ReadFills<'a>(Option<&'a FillReader>);
+
+impl Models for ReadFills<'_> {
+    fn can_denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+    ) -> Result<(), crate::walk::NoLearned> {
+        NoModels.can_denoise(model)
+    }
+
+    fn denoise(
+        &mut self,
+        model: &'static greycard_ai::Model,
+        frame: &greycard_core::raw::RawFrame,
+        prepared: &greycard_core::develop::Prepared,
+    ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+        NoModels.denoise(model, frame, prepared)
+    }
+
+    fn fill(
+        &mut self,
+        patch: &greycard_edit::retouch::Patch,
+        region: &greycard_core::develop::retouch::Region,
+        picture: &WorkingImage,
+    ) -> Option<Vec<f32>> {
+        NoModels.fill(patch, region, picture)
+    }
+
+    fn fill_read(
+        &mut self,
+        patch: &greycard_edit::retouch::Patch,
+        region: &greycard_core::develop::retouch::Region,
+        picture: &WorkingImage,
+        factor: usize,
+        full: (usize, usize),
+    ) -> Option<Vec<f32>> {
+        self.0?.fill_read_only(patch, region, picture, factor, full)
+    }
+
+    fn could_fill_more(
+        &mut self,
+        retouch: &greycard_edit::retouch::Retouch,
+        picture: &WorkingImage,
+    ) -> bool {
+        NoModels.could_fill_more(retouch, picture)
+    }
+
+    fn rasters(
+        &mut self,
+        how: crate::stages::Masks,
+        base: &Arc<WorkingImage>,
+        patched: Option<crate::walk::Patched<'_>>,
+        meta: &crate::walk::Meta,
+    ) -> crate::walk::Rasters {
+        NoModels.rasters(how, base, patched, meta)
+    }
+}
+
 /// The frame at `path` walked under `purpose`, the reduced develop or
 /// what the models see, on the CPU and from nothing kept: the list's
-/// bin and skips are the reduced develop's, and a fill it refuses
-/// leaves the picture without the edit.
+/// bin and skips are the reduced develop's, and a fill not kept leaves
+/// the picture without the edit.
 pub fn develop_as(
     path: &Path,
     edit: &Edit,
@@ -218,9 +290,21 @@ pub fn develop_as(
     lenses: Option<&greycard_lens::Database>,
     purpose: &Purpose,
 ) -> Result<Developed, Why> {
+    walk_reduced(path, edit, turn, lenses, purpose, None)
+}
+
+/// [`develop_as`], the fills read through `fills`.
+fn walk_reduced(
+    path: &Path,
+    edit: &Edit,
+    turn: u8,
+    lenses: Option<&greycard_lens::Database>,
+    purpose: &Purpose,
+    fills: Option<&FillReader>,
+) -> Result<Developed, Why> {
     debug_assert!(
         purpose.is_reduced(),
-        "the reduced develop walks Reduced or ModelsSee, whose fills are refused or left out"
+        "the reduced develop walks Reduced or ModelsSee, whose fills are read or left out"
     );
     let started = Instant::now();
     let input = open(path).map_err(|e| Why::Failed(format!("{e:#}")))?;
@@ -235,7 +319,7 @@ pub fn develop_as(
         &plan,
         &input,
         &mut Kept::new(),
-        &mut NoModels,
+        &mut ReadFills(fills),
         &mut None,
         &NoHold,
     )
@@ -736,11 +820,12 @@ impl Reducer {
             return Err(Why::NotWanted);
         };
         let lenses = self.lenses();
+        let fills = self.ai.lock().expect("reduced ai").fill_reader(path);
         let started = Instant::now();
         self.develops.fetch_add(1, Ordering::SeqCst);
         let developed = self
             .pool()
-            .install(|| develop(path, &edit, turn, lenses.as_deref()))?;
+            .install(|| develop_reading(path, &edit, turn, lenses.as_deref(), fills.as_ref()))?;
         let rasters = rasters(
             &mut self.ai.lock().expect("reduced ai"),
             path,
@@ -862,6 +947,102 @@ mod tests {
             reduced.err()
         );
         assert!(develop_as(&path, &edit, 0, None, &crate::stages::Purpose::ModelsSee).is_ok());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A fill the full develop kept on disk is read by the reduced
+    /// develop, and its picture is the edit's; before it was kept, the
+    /// develop is without it.
+    #[test]
+    fn the_reduced_develop_reads_a_fill_kept() {
+        struct Making<'a>(&'a mut Ai);
+        impl Models for Making<'_> {
+            fn can_denoise(
+                &mut self,
+                m: &'static greycard_ai::Model,
+            ) -> Result<(), crate::walk::NoLearned> {
+                NoModels.can_denoise(m)
+            }
+            fn denoise(
+                &mut self,
+                m: &'static greycard_ai::Model,
+                f: &greycard_core::raw::RawFrame,
+                p: &greycard_core::develop::Prepared,
+            ) -> Result<Vec<f32>, crate::walk::NoLearned> {
+                NoModels.denoise(m, f, p)
+            }
+            fn fill(
+                &mut self,
+                patch: &greycard_edit::retouch::Patch,
+                region: &greycard_core::develop::retouch::Region,
+                picture: &WorkingImage,
+            ) -> Option<Vec<f32>> {
+                self.0.fill(patch, region, picture).ok().map(|(d, _)| d)
+            }
+            fn could_fill_more(
+                &mut self,
+                _: &greycard_edit::retouch::Retouch,
+                _: &WorkingImage,
+            ) -> bool {
+                false
+            }
+            fn rasters(
+                &mut self,
+                how: crate::stages::Masks,
+                base: &Arc<WorkingImage>,
+                patched: Option<crate::walk::Patched<'_>>,
+                meta: &crate::walk::Meta,
+            ) -> crate::walk::Rasters {
+                NoModels.rasters(how, base, patched, meta)
+            }
+        }
+        let dir = scratch("fill-read");
+        let path = dir.join("frame.dng");
+        crate::testing::linear_dng(&path, 96, 64, "Canon", "Canon EOS R5");
+        let mut edit = Edit::default();
+        edit.retouch.patches.push(greycard_edit::retouch::Patch {
+            id: 1,
+            method: greycard_edit::retouch::Method::Fill,
+            points: vec![[0.5, 0.3]],
+            radius: 0.05,
+            ..Default::default()
+        });
+        let mut ai = Ai::for_test_on_disk(greycard_ai::Store::at(dir.join("models")));
+        ai.fill_by_test = Some(0.6);
+        ai.forget(Some(path.clone()));
+        let reader = ai.fill_reader(&path).expect("a reader on disk");
+        assert!(matches!(
+            develop_reading(&path, &edit, 0, None, Some(&reader)),
+            Err(Why::Without(_))
+        ));
+        // The full develop makes the fill and keeps it.
+        let input = open(&path).unwrap();
+        let purpose = Purpose::Export(Box::default());
+        let steps = stages(&edit, &purpose, &input.facts(0), None);
+        let plan = plan(&steps, &purpose, false);
+        let full = walk(
+            &steps,
+            &plan,
+            &input,
+            &mut Kept::new(),
+            &mut Making(&mut ai),
+            &mut None,
+            &NoHold,
+        )
+        .expect("the full develop");
+        assert!(full.without.is_empty());
+        let read = develop_reading(&path, &edit, 0, None, Some(&reader)).expect("the fill read");
+        // The hole is the fill's, the patch's point (in units of the
+        // width) at its center.
+        let w = read.image.width;
+        let at = ((w * 3 / 10) * w + w / 2) * 3;
+        assert!(
+            (read.image.data[at] - 0.6).abs() < 0.05,
+            "{}",
+            read.image.data[at]
+        );
+        // With no reader, as before.
+        assert!(develop(&path, &edit, 0, None).is_err());
         crate::testing::remove_dir_retry(&dir);
     }
 

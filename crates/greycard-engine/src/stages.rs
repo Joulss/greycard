@@ -574,13 +574,19 @@ impl Stage {
     }
 }
 
-/// Whether a retouch's fills are made by their model or refused.
+/// Whether a retouch's fills are made by their model or read from
+/// those kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fills {
     Run,
-    /// A fill refuses: the patch is left as it was and the picture is
-    /// not the edit's.
-    Refuse,
+    /// The reduced develop's: a fill kept on disk at the full develop's
+    /// size, `full`, is read and taken down by `factor`, the bin; one
+    /// not kept refuses, the patch left as it was and the picture not
+    /// the edit's. No model runs.
+    Read {
+        factor: usize,
+        full: (usize, usize),
+    },
 }
 
 /// Where the walk ends.
@@ -1014,7 +1020,14 @@ pub fn stages(
         } else {
             s.op(Stage::Retouch(
                 edit.retouch.clone(),
-                if reduced { Fills::Refuse } else { Fills::Run },
+                if reduced {
+                    Fills::Read {
+                        factor: bin,
+                        full: facts.binned(1),
+                    }
+                } else {
+                    Fills::Run
+                },
             ));
         }
     }
@@ -1330,7 +1343,7 @@ mod tests {
             .map(|step| match step {
                 Step::Op(Stage::Bin(n)) => format!("bin {n}"),
                 Step::Op(Stage::Reduce(n)) => format!("reduce {n}"),
-                Step::Op(Stage::Retouch(_, Fills::Refuse)) => "retouch, fills refused".into(),
+                Step::Op(Stage::Retouch(_, Fills::Read { .. })) => "retouch, fills read".into(),
                 Step::Op(Stage::Finish(Finish::Shader)) => "shader".into(),
                 Step::Op(Stage::Finish(Finish::Cpu { fit, .. })) => format!("finish {fit:?}"),
                 Step::Op(Stage::IntoWorking { .. }) => "into working".into(),
@@ -1563,7 +1576,7 @@ mod tests {
                 "into working",
                 "defringe",
                 "keep Base",
-                "retouch, fills refused",
+                "retouch, fills read",
                 "guide",
                 "keep Patched",
                 "local contrast",

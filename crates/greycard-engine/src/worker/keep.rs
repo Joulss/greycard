@@ -117,7 +117,7 @@ pub(super) fn keep_open(
             .cloned(),
     );
     if !left_out.is_empty() {
-        for why in &left_out {
+        for why in keep_lines(&left_out) {
             tracing::info!("the edit's pictures of {name}: not kept, {why}");
         }
         left(edited);
@@ -192,4 +192,43 @@ pub(super) fn keep_open(
         crate::edited_pictures::keep(&on, job, |frame| deliver(Outcome::EditedKept { frame }))
     }));
     None
+}
+
+/// What a keep's log says of `left_out`: each item once, and the People
+/// masks with no person picked once between them, however many shapes
+/// ask.
+fn keep_lines(left_out: &[String]) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut asked = false;
+    for why in left_out {
+        if why.contains(crate::ai::PART_ASKS) {
+            if !asked {
+                lines.push(crate::ai::PART_ASKS);
+            }
+            asked = true;
+        } else if !lines.contains(&why.as_str()) {
+            lines.push(why.as_str());
+        }
+    }
+    lines
+}
+
+#[cfg(test)]
+mod keep_line_tests {
+    use super::keep_lines;
+    use crate::ai::PART_ASKS;
+
+    /// A People mask with no person picked is said once a keep, however
+    /// many of its shapes ask; anything else left out is said as it is.
+    #[test]
+    fn a_people_mask_asking_is_said_once() {
+        let left_out = vec![
+            format!("Lips 1's Lips shape: {PART_ASKS}; its mask written empty"),
+            "the look Film".to_string(),
+            format!("Eyes 1's Iris shape: {PART_ASKS}; its mask written empty"),
+            format!("Skin 1's Skin shape: {PART_ASKS}; its mask written empty"),
+        ];
+        assert_eq!(keep_lines(&left_out), vec![PART_ASKS, "the look Film"]);
+        assert!(keep_lines(&[]).is_empty());
+    }
 }
