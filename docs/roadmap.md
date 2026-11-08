@@ -182,6 +182,7 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The left pane's sections share its height (issue 79, §603)
 - [ ] The Develop sections told apart (issue 80, §604)
 - [ ] The panes and the strip take a size (§605)
+- [ ] A picture's lens corrections start off (discussion 90, §608)
 - [ ] i18n (issue 75)
 - [ ] Handheld HDR and focus stacking
 

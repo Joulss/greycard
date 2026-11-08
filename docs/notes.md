@@ -619,3 +619,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§605. The panes and the strip take a size](notes/605-the-panes-and-the-strip-take-a-size.md) (2026-11-07)
 - [§606. The GPU dual's detail stays on the device](notes/606-the-gpu-duals-detail-stays-on-the-device.md) (2026-11-07)
 - [§607. The export's Detail, dehaze, and sharpen on the GPU](notes/607-the-exports-detail-dehaze-and-sharpen-on-the-gpu.md) (2026-11-07)
+- [§608. A picture's lens corrections start off](notes/608-a-pictures-lens-corrections-start-off.md) (2026-11-08)
