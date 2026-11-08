@@ -190,6 +190,7 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
+- [ ] The SAM 3 encoder's session takes 46 s to build on WebGPU (the provider's shader compile, not cached across sessions); a tester with People masks pays it per picture the card is given back (issue 92, §611)
 - [ ] The GPU dual's last traffic (§606): the mosaic goes up twice
       for the AMaZE dual (183 MiB at 45 MP), and the automatic
       threshold's search reads back the full detail result where the
