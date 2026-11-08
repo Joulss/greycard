@@ -1509,10 +1509,12 @@ const CARD_MARGIN: u64 = greycard_ai::remove::CARD_MARGIN;
 /// over [`CARD_MARGIN`]: its frame's textures and the GPU ops' working
 /// sets on the largest frame open. The models' sessions are kept after
 /// a fill while the card has this free, and given back under it
-/// ([`give_back_card`]); every model run asks for its own room. A first
-/// figure, to be measured on a real card from the worker's log line of
-/// the card's free memory before and after a develop lands.
-const KEEP_FLOOR: u64 = 30 * TENTH_GIB;
+/// ([`give_back_card`]); every model run asks for its own room.
+/// Measured from the worker's log line of the card's free memory
+/// before and after a develop lands, on an RTX 5070 Ti: 1.15 GiB at
+/// 24 MP, 4.0 GiB at 102 MP, the largest sensor shipping. Half a GiB
+/// over the 102 MP figure.
+const KEEP_FLOOR: u64 = 45 * TENTH_GIB;
 
 /// How many times an export or a merge asks the card for a model it is
 /// short of, and how long it waits between: three asks, ten seconds in

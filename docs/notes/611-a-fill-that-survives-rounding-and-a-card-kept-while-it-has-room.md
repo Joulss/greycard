@@ -116,7 +116,7 @@ that write has landed.
 
 **The card kept while it has room.** `give_back_card` reads the card
 with the sessions held after a fill's model ran and gives them back
-only under `KEEP_FLOOR` (3 GiB, a first figure) plus `CARD_MARGIN`, or
+only under `KEEP_FLOOR` (4.5 GiB, measured below) plus `CARD_MARGIN`, or
 when forced after a short; kept, it logs "{card}: the models'
 sessions kept, {free} GiB free". Unknown free memory (unified memory,
 lavapipe) is unchanged: nothing given back. The develop's log line
@@ -125,7 +125,11 @@ the device, the figure the floor is to be measured from; it is asked
 only once the models' probe of the machine has run, so a develop never
 sets off the adapter's probe on the worker.
 
-`KEEP_FLOOR` is a first figure, not measured. Once the sessions are
+`KEEP_FLOOR` was first set at 3 GiB unmeasured. The develop line on
+the RTX 5070 Ti on 2026-11-08 read 1.15 GiB taken by a 24 MP develop
+and 3.98 to 4.02 GiB by a 102 MP one, the largest sensor shipping, so
+the floor is 4.5 GiB: a 102 MP frame still develops with the sessions
+held. Once the sessions are
 kept, nothing gives the card back for a bigger frame opened after:
 the window's develop does not ask for room, and the card is given back
 only when a model next asks for its own and is short.
@@ -212,8 +216,6 @@ hardware with the margin the lavapipe figures gave.
 
 ## Not verified
 
-- `KEEP_FLOOR` on a real card: the new develop log line is there to
-  measure it from.
 - The tolerance against a real card's device develop (only lavapipe,
   which was bit-identical in prints on the CR3).
 - The reduced read at factor 2 end to end on a Bayer raw (the
