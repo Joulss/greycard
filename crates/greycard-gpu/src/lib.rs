@@ -309,6 +309,18 @@ pub struct Context {
     /// At most this many rows a demosaic band, where not zero: for the
     /// tests ([`Context::limit_demosaic_bands`]).
     demosaic_rows: std::sync::atomic::AtomicUsize,
+    /// At most this many rows a buffer of a detail result kept on the
+    /// device, where not zero: for the tests
+    /// ([`Context::limit_demosaic_frame_buffers`]).
+    demosaic_frame_rows: std::sync::atomic::AtomicUsize,
+    /// At most this many rows of tiles an AMaZE batch for the dual,
+    /// where not zero: for the tests
+    /// ([`Context::limit_amaze_dual_batches`]).
+    amaze_dual_tile_rows: std::sync::atomic::AtomicUsize,
+    /// The bytes the demosaics have sent up and read back since
+    /// [`Context::take_demosaic_traffic`] last took them: for the
+    /// ignored timing test.
+    demosaic_traffic: [std::sync::atomic::AtomicU64; 2],
     /// Set once the device is found lost: by a wait that panicked, an
     /// error naming the loss, or the device's lost callback on a device
     /// of our own.
@@ -400,6 +412,9 @@ impl Context {
             demosaic: OnceLock::new(),
             amaze: OnceLock::new(),
             demosaic_rows: std::sync::atomic::AtomicUsize::new(0),
+            demosaic_frame_rows: std::sync::atomic::AtomicUsize::new(0),
+            amaze_dual_tile_rows: std::sync::atomic::AtomicUsize::new(0),
+            demosaic_traffic: Default::default(),
             lost: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -429,6 +444,23 @@ impl Context {
             }),
             "building AMaZE's pipelines",
         )
+    }
+
+    /// The bytes the demosaics sent up to the device and read back
+    /// from it since the last call, `(up, back)`, and zero again: for
+    /// the ignored timing test, which prints what each op moves.
+    #[doc(hidden)]
+    pub fn take_demosaic_traffic(&self) -> (u64, u64) {
+        let [up, back] = &self.demosaic_traffic;
+        (
+            up.swap(0, Ordering::Relaxed),
+            back.swap(0, Ordering::Relaxed),
+        )
+    }
+
+    /// Count bytes sent up (`back` false) or read back by a demosaic.
+    fn count_demosaic_traffic(&self, back: bool, bytes: u64) {
+        self.demosaic_traffic[usize::from(back)].fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Whether the device has been found lost. Every op on a lost
@@ -712,41 +744,6 @@ impl Context {
         drop(data);
         staging.unmap();
         Ok(out)
-    }
-
-    /// [`Context::read_buffer`] straight into `out`, its length the
-    /// bytes read: no copy of its own on the way.
-    fn read_buffer_into(&self, buffer: &wgpu::Buffer, offset: u64, out: &mut [u8]) -> Result<()> {
-        let len = out.len() as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("read back"),
-            size: len.max(4),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("read back"),
-            });
-        encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, len);
-        self.queue.submit(Some(encoder.finish()));
-        let slice = staging.slice(..len.max(4));
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.wait()?;
-        rx.recv()
-            .map_err(|_| Error::ReadBack("the map callback never came".into()))?
-            .map_err(|e| Error::ReadBack(e.to_string()))?;
-        let data = slice
-            .get_mapped_range()
-            .map_err(|e| Error::ReadBack(e.to_string()))?;
-        out.copy_from_slice(&data[..out.len()]);
-        drop(data);
-        staging.unmap();
-        Ok(())
     }
 
     /// A rectangle of a texture, rows packed, `bytes` a texel. In bands

@@ -15,19 +15,24 @@
 //! default 128 MB a binding: 2.8 MB a tile in all, 130 MB a row of
 //! tiles at 6000 pixels across. The ceiling, the outer ring of three
 //! pixels (bilinear, as the reference's), and frames too small for a
-//! tile are the reference's own functions on the CPU.
+//! tile are the reference's own functions on the CPU; the ring goes up
+//! packed and a last pass writes it into each band, so the result on
+//! the device is whole and the AMaZE dual blends into it there.
 //!
 //! Every buffer is made for a call and reused across its batches, as
 //! the other ops here do: about 400 MB on the device at 45 MP. A
 //! device that cannot make them reports it in the error scope, which
 //! comes back as [`Error::Gpu`] for the caller to fall back on the CPU.
 
-use greycard_core::develop::amaze::{MARGIN, TS, ceiling, fill_border};
+use greycard_core::develop::amaze::{MARGIN, TS, border_ring, ceiling};
 use greycard_core::develop::demosaic_bilinear;
 use greycard_core::develop::rcd::is_bayer;
 use greycard_core::raw::CfaPattern;
 
-use crate::plumbing::{SAMPLED, STORAGE_BUFFER, Uniforms, groups, layout, pipeline, uniform};
+use crate::demosaic::Frame;
+use crate::plumbing::{
+    SAMPLED, STORAGE_BUFFER, STORAGE_BUFFER_READ, Uniforms, groups, layout, pipeline, uniform,
+};
 use crate::{Context, Error, Result};
 
 /// The shader's uniform, laid out as WGSL lays it out.
@@ -56,7 +61,7 @@ const CELLS: u64 = (TS * TS) as u64;
 const STEP: usize = TS - 2 * MARGIN;
 
 /// The kernels in the order they run, and the shape of their dispatch.
-const KERNELS: [(&str, Shape); 18] = [
+const KERNELS: [(&str, Shape); 19] = [
     ("init", Shape::Cells),
     ("gradients", Shape::Cells),
     ("differences", Shape::Cells),
@@ -75,6 +80,7 @@ const KERNELS: [(&str, Shape); 18] = [
     ("green_again", Shape::Cells),
     ("other_chroma", Shape::Cells),
     ("output", Shape::Cells),
+    ("border", Shape::Band),
 ];
 
 #[derive(Clone, Copy)]
@@ -85,6 +91,8 @@ enum Shape {
     Lines,
     /// A workgroup a tile.
     Tiles,
+    /// A thread a pixel of the batch's band, 16x16 groups.
+    Band,
 }
 
 /// The op's pipelines, built once per device.
@@ -111,6 +119,7 @@ impl Pipelines {
                 STORAGE_BUFFER,
                 STORAGE_BUFFER,
                 STORAGE_BUFFER,
+                STORAGE_BUFFER_READ,
             ],
         );
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -157,6 +166,63 @@ impl Context {
         pattern: &CfaPattern,
         tile_rows: Option<usize>,
     ) -> Result<Vec<f32>> {
+        let out = self.amaze_to(samples, width, height, pattern, tile_rows, None, true)?;
+        Ok(out.expect("read back as asked"))
+    }
+
+    /// AMaZE's batches for the dual at most `rows` rows of tiles (none:
+    /// as many as fit), for a test of the copies into the device's
+    /// frame from every batch on a small frame.
+    #[doc(hidden)]
+    pub fn limit_amaze_dual_batches(&self, rows: Option<usize>) {
+        self.amaze_dual_tile_rows
+            .store(rows.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// AMaZE's result into `frame` on the device, for the dual's blend
+    /// to start from without a trip through the host, and read back
+    /// as well where `read_back` asks (the automatic threshold's
+    /// search reads it there). Run within the caller's error scope,
+    /// where `frame` was made, with a scope of its own nested inside
+    /// for AMaZE's buffers.
+    pub(crate) fn amaze_into_frame(
+        &self,
+        samples: &[f32],
+        width: usize,
+        height: usize,
+        pattern: &CfaPattern,
+        frame: &Frame,
+        read_back: bool,
+    ) -> Result<Option<Vec<f32>>> {
+        let tile_rows = match self
+            .amaze_dual_tile_rows
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => None,
+            r => Some(r),
+        };
+        self.amaze_to(
+            samples,
+            width,
+            height,
+            pattern,
+            tile_rows,
+            Some(frame),
+            read_back,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn amaze_to(
+        &self,
+        samples: &[f32],
+        width: usize,
+        height: usize,
+        pattern: &CfaPattern,
+        tile_rows: Option<usize>,
+        frame: Option<&Frame>,
+        read_back: bool,
+    ) -> Result<Option<Vec<f32>>> {
         if !is_bayer(pattern) {
             return Err(Error::Unsupported(format!(
                 "AMaZE needs a 2x2 Bayer pattern, got {pattern}"
@@ -164,10 +230,18 @@ impl Context {
         }
         assert_eq!(samples.len(), width * height, "one sample a pixel");
         if width < 2 * MARGIN + 2 || height < 2 * MARGIN + 2 {
-            return Ok(demosaic_bilinear(samples, width, height, pattern));
+            // Too small for a tile: the reference's own bilinear, put
+            // on the device as it is where a frame asks for it.
+            let out = demosaic_bilinear(samples, width, height, pattern);
+            if let Some(frame) = frame {
+                frame.upload(&self.queue, &out);
+                self.count_demosaic_traffic(false, frame.bytes());
+            }
+            return Ok(read_back.then_some(out));
         }
         let (w, h) = self.fits(width, height)?;
         let ceiling = ceiling(samples);
+        let ring = border_ring(samples, width, height, pattern);
         let color = |r, c| {
             pattern
                 .color_at(r, c)
@@ -181,19 +255,20 @@ impl Context {
             colors: [color(0, 0), color(0, 1), color(1, 0), color(1, 1)],
             ..Default::default()
         };
-        let mut out = self.scoped("demosaicing with AMaZE", || {
-            self.amaze_unscoped(samples, params, tile_rows)
-        })?;
-        fill_border(&mut out, samples, width, height, pattern);
-        Ok(out)
+        self.scoped("demosaicing with AMaZE", || {
+            self.amaze_unscoped(samples, &ring, params, tile_rows, frame, read_back)
+        })
     }
 
     fn amaze_unscoped(
         &self,
         samples: &[f32],
+        ring: &[f32],
         params: Params,
         tile_rows: Option<usize>,
-    ) -> Result<Vec<f32>> {
+        frame: Option<&Frame>,
+        read_back: bool,
+    ) -> Result<Option<Vec<f32>>> {
         let pipelines = self.amaze_pipelines()?;
         let [w, h] = params.size;
         let (width, height) = (w as usize, h as usize);
@@ -241,6 +316,7 @@ impl Context {
             view_formats: &[],
         });
         self.upload_mosaic(&mosaic, samples, w, h);
+        self.count_demosaic_traffic(false, (samples.len() * 4 + ring.len() * 4) as u64);
         let buffer = |label: &str, size: u64, usage: wgpu::BufferUsages| {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -272,15 +348,24 @@ impl Context {
             band_bytes,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
+        let ring_buf = buffer(
+            "amaze border ring",
+            (ring.len() * 4) as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        self.queue
+            .write_buffer(&ring_buf, 0, bytemuck::cast_slice(ring));
         // Two staging buffers, so a batch runs while the one before it
-        // is unpacked.
-        let staging: [wgpu::Buffer; 2] = std::array::from_fn(|_| {
-            buffer(
-                "amaze read back",
-                band_bytes,
-                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            )
-        });
+        // is unpacked; none when nothing comes back.
+        let staging: Vec<wgpu::Buffer> = (0..if read_back { 2 } else { 0 })
+            .map(|_| {
+                buffer(
+                    "amaze read back",
+                    band_bytes,
+                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                )
+            })
+            .collect();
         let uniforms = Uniforms::new(&self.device, "amaze params", batches as u64);
         let view = mosaic.create_view(&Default::default());
         let mut entries = vec![
@@ -306,6 +391,10 @@ impl Context {
         entries.push(wgpu::BindGroupEntry {
             binding: 7,
             resource: band.as_entire_binding(),
+        });
+        entries.push(wgpu::BindGroupEntry {
+            binding: 8,
+            resource: ring_buf.as_entire_binding(),
         });
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("amaze"),
@@ -340,10 +429,20 @@ impl Context {
                         Shape::Cells => pass.dispatch_workgroups(cells, cells, tiles),
                         Shape::Lines => pass.dispatch_workgroups(2, tiles, 1),
                         Shape::Tiles => pass.dispatch_workgroups(tiles, 1, 1),
+                        Shape::Band => {
+                            pass.dispatch_workgroups(groups(w, 16), groups(rows as u32, 16), 1)
+                        }
                     }
                 }
             }
+            if let Some(frame) = frame {
+                frame.copy_in(&mut encoder, &band, 0, y0, y0 + rows);
+            }
             let bytes = rows as u64 * u64::from(w) * 12;
+            if !read_back {
+                self.queue.submit(Some(encoder.finish()));
+                return None;
+            }
             encoder.copy_buffer_to_buffer(&band, 0, &staging[b % 2], 0, bytes);
             self.queue.submit(Some(encoder.finish()));
             let (tx, rx) = std::sync::mpsc::channel();
@@ -352,17 +451,29 @@ impl Context {
                 .map_async(wgpu::MapMode::Read, move |r| {
                     let _ = tx.send(r);
                 });
-            rx
+            Some(rx)
         };
+        if !read_back {
+            // The result stays on the device; what comes after is
+            // ordered behind these on the queue.
+            for b in 0..batches {
+                submit(b);
+            }
+            // Waited for, so that AMaZE's buffers, dropped on return,
+            // are let go before the blend makes its own: else they
+            // live on behind the queue and the two sets meet.
+            self.wait()?;
+            return Ok(None);
+        }
         let mut out = vec![0f32; width * height * 3];
-        let mut pending = submit(0);
+        let mut pending = submit(0).expect("read back");
         for b in 0..batches {
             self.wait()?;
             pending
                 .recv()
                 .map_err(|_| Error::ReadBack("the map callback never came".into()))?
                 .map_err(|e| Error::ReadBack(e.to_string()))?;
-            let next = (b + 1 < batches).then(|| submit(b + 1));
+            let next = (b + 1 < batches).then(|| submit(b + 1).expect("read back"));
             let (y0, rows) = rows_of(b);
             let bytes = rows as u64 * u64::from(w) * 12;
             let buffer = &staging[b % 2];
@@ -378,7 +489,8 @@ impl Context {
                 pending = rx;
             }
         }
-        Ok(out)
+        self.count_demosaic_traffic(true, (out.len() * 4) as u64);
+        Ok(Some(out))
     }
 }
 

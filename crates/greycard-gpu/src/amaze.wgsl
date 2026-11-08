@@ -46,6 +46,11 @@ struct Params {
 // column.
 @group(0) @binding(6) var<storage, read_write> boxes: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read_write> band: array<f32>;
+// The outer ring of three pixels, bilinear as the reference's border
+// routine and made on the host (`border_ring`): the top three rows,
+// the bottom three, then each row between them its three pixels at
+// the left and its three at the right, interleaved.
+@group(0) @binding(8) var<storage, read> ring: array<f32>;
 
 const TS: i32 = 160;
 const MARGIN: i32 = 16;
@@ -888,4 +893,36 @@ fn output(@builtin(global_invocation_id) id: vec3<u32>) {
     band[o] = clamp(r, 0.0, P.ceiling);
     band[o + 1u] = clamp(g, 0.0, P.ceiling);
     band[o + 2u] = clamp(bl, 0.0, P.ceiling);
+}
+
+const BORDER: u32 = 3u;
+
+// The ring into the batch's band, over the output's values there: a
+// thread a pixel of the band, those off the ring returning at once.
+@compute @workgroup_size(16, 16)
+fn border(@builtin(global_invocation_id) id: vec3<u32>) {
+    let w = P.size.x;
+    let h = P.size.y;
+    let rows = min(P.count / P.tiles_across * u32(STEP), h - P.band_y0);
+    if id.x >= w || id.y >= rows {
+        return;
+    }
+    let x = id.x;
+    let y = P.band_y0 + id.y;
+    var k: u32;
+    if y < BORDER {
+        k = y * w + x;
+    } else if y >= h - BORDER {
+        k = (y - (h - 2u * BORDER)) * w + x;
+    } else if x < BORDER {
+        k = 2u * BORDER * w + (y - BORDER) * 2u * BORDER + x;
+    } else if x >= w - BORDER {
+        k = 2u * BORDER * w + (y - BORDER) * 2u * BORDER + x - (w - 2u * BORDER);
+    } else {
+        return;
+    }
+    let o = (id.y * w + x) * 3u;
+    band[o] = ring[k * 3u];
+    band[o + 1u] = ring[k * 3u + 1u];
+    band[o + 2u] = ring[k * 3u + 2u];
 }

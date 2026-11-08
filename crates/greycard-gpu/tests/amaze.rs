@@ -3,7 +3,7 @@
 //! Without a GPU adapter each test says so and returns; it does not
 //! pass in silence. (`cargo test` shows the line with `--nocapture`.)
 
-use greycard_core::develop::amaze::demosaic_amaze;
+use greycard_core::develop::amaze::{demosaic_amaze, fill_border};
 use greycard_core::raw::{CfaColor, CfaPattern};
 use greycard_gpu::Context;
 
@@ -251,6 +251,45 @@ fn the_batches_meet_without_a_seam() {
                     .all(|(a, b)| a.to_bits() == b.to_bits()),
                 "{scene}: batches of {rows} tile rows differ from one batch"
             );
+        }
+    }
+}
+
+/// The outer ring of three pixels is the reference's border routine to
+/// the bit: it is made on the host by the same function and written on
+/// the device, in one batch and in batches of a row of tiles.
+#[test]
+fn the_border_ring_is_the_reference_s_to_the_bit() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    for name in ["RGGB", "BGGR", "GRBG", "GBRG"] {
+        let pattern = bayer(name);
+        for (w, h) in [(41, 37), (301, 270)] {
+            for (scene, samples) in scenes(w, h, &pattern) {
+                let mut want = vec![0f32; w * h * 3];
+                fill_border(&mut want, &samples, w, h, &pattern);
+                for rows in [None, Some(1)] {
+                    let got = ctx
+                        .demosaic_amaze_in_batches(&samples, w, h, &pattern, rows)
+                        .unwrap();
+                    for y in 0..h {
+                        for x in 0..w {
+                            if (3..h - 3).contains(&y) && (3..w - 3).contains(&x) {
+                                continue;
+                            }
+                            let i = (y * w + x) * 3;
+                            assert!(
+                                (0..3).all(|c| got[i + c].to_bits() == want[i + c].to_bits()),
+                                "{name} {w}x{h} {scene} batches {rows:?}: ({x}, {y}) is {:?}, \
+                                 the reference's {:?}",
+                                &got[i..i + 3],
+                                &want[i..i + 3]
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

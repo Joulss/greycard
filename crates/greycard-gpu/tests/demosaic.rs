@@ -282,17 +282,30 @@ fn the_amaze_dual_matches_the_reference() {
                 "{name} {contrast:?} blends: {stats:?}"
             );
             let gpu = ctx.demosaic_amaze_dual(&m, w, h, &p, contrast).unwrap();
-            let scale = cpu.iter().copied().fold(0f32, f32::max);
-            let (worst, at, over) = apart(&cpu, &gpu, w, 1e-3 * scale);
-            println!(
-                "AMaZE dual {name} {contrast:?}: largest {worst:e} at {at:?}, {over} past 1e-3"
-            );
-            assert!(
-                worst <= 1e-1 * scale && (over as f64) <= cpu.len() as f64 * AMAZE_SHARE,
-                "AMaZE dual {name} {contrast:?}: {over} past 1e-3, the largest {worst} at {at:?}"
-            );
+            amaze_dual_holds(&cpu, &gpu, w, &format!("{name} {contrast:?}"));
+        }
+        // Under AMaZE's tile, its result is the reference's bilinear,
+        // made on the CPU and put on the device for the blend.
+        let (w, h) = (20, 20);
+        for contrast in [DualContrast::Fixed(0.2), DualContrast::Noise(model)] {
+            let m = mosaic(w, h, &p, 0.01, 31 + k as u64);
+            let (cpu, _) = demosaic_dual(&m, w, h, &p, DemosaicMethod::Amaze, contrast).unwrap();
+            let gpu = ctx.demosaic_amaze_dual(&m, w, h, &p, contrast).unwrap();
+            amaze_dual_holds(&cpu, &gpu, w, &format!("{name} {w}x{h} {contrast:?}"));
         }
     }
+}
+
+/// The AMaZE dual's bound: no more than [`AMAZE_SHARE`] of the samples
+/// past 1e-3 of the reference's largest value, and none past a tenth.
+fn amaze_dual_holds(cpu: &[f32], gpu: &[f32], w: usize, what: &str) {
+    let scale = cpu.iter().copied().fold(0f32, f32::max);
+    let (worst, at, over) = apart(cpu, gpu, w, 1e-3 * scale);
+    println!("AMaZE dual {what}: largest {worst:e} at {at:?}, {over} past 1e-3");
+    assert!(
+        worst <= 1e-1 * scale && (over as f64) <= cpu.len() as f64 * AMAZE_SHARE,
+        "AMaZE dual {what}: {over} past 1e-3, the largest {worst} at {at:?}"
+    );
 }
 
 /// A frame worked in bands is the frame worked whole, to the bit: the
@@ -307,28 +320,54 @@ fn bands_are_the_whole_frame_to_the_bit() {
         a: [4e-4, 2e-4, 5e-4],
         b: [2e-6, 1e-6, 3e-6],
     };
-    // An even width and an odd one; a fixed threshold and the noise
-    // model's table by lightness.
+    // An even width and an odd one; a fixed threshold, the noise
+    // model's table by lightness, and the automatic search, whose
+    // detail result is kept on the device from its own run.
     for ((w, h), contrast) in [
         ((72, 301), DualContrast::Fixed(0.15)),
         ((73, 301), DualContrast::Noise(model)),
+        ((201, 301), DualContrast::Tiles),
     ] {
-        let m = mosaic(w, h, &p, 0.01, 5);
+        let m = if contrast == DualContrast::Tiles {
+            flat_with_an_edge(w, h, &p, 5)
+        } else {
+            mosaic(w, h, &p, 0.01, 5)
+        };
         let run = || {
             [
                 ctx.demosaic_rcd(&m, w, h, &p).unwrap(),
                 ctx.demosaic_vng4(&m, w, h, &p).unwrap(),
                 ctx.demosaic_rcd_dual(&m, w, h, &p, contrast).unwrap(),
-                // AMaZE's result goes up again band by band, at each
-                // band's own offset, and is blended into in place.
+                // AMaZE's result stays on the device, each band
+                // starting from its own rows of it.
                 ctx.demosaic_amaze_dual(&m, w, h, &p, contrast).unwrap(),
             ]
         };
         let whole = run();
-        for rows in [66, 80, 131] {
+        assert!(
+            whole[2] != whole[0],
+            "the RCD dual {contrast:?} blends at all"
+        );
+        assert!(
+            whole[3] != ctx.demosaic_amaze(&m, w, h, &p).unwrap(),
+            "the AMaZE dual {contrast:?} blends at all"
+        );
+        // The detail result kept on the device is in buffers of whole
+        // rows; a band's copies cross from one to the next. AMaZE's
+        // batches of one row of tiles copy in from every batch, its
+        // ring written at every batch's offset.
+        for (rows, frame_rows, tile_rows) in [
+            (66, None, None),
+            (80, Some(37), Some(1)),
+            (131, Some(100), Some(1)),
+        ] {
             ctx.limit_demosaic_bands(Some(rows));
+            ctx.limit_demosaic_frame_buffers(frame_rows);
+            ctx.limit_amaze_dual_batches(tile_rows);
             let banded = run();
             ctx.limit_demosaic_bands(None);
+            ctx.limit_demosaic_frame_buffers(None);
+            ctx.limit_amaze_dual_batches(None);
             for (op, (a, b)) in ["RCD", "VNG4", "RCD dual", "AMaZE dual"]
                 .iter()
                 .zip(whole.iter().zip(&banded))
@@ -594,8 +633,12 @@ fn timing() {
     });
     for (w, h) in [(6000usize, 4000usize), (8256, 5504)] {
         let m = mosaic(w, h, &p, 0.01, 3);
+        // The automatic threshold's search reads the detail result on
+        // the host, so it takes a path of its own: on a scene with the
+        // flat tile it looks for.
+        let flat = flat_with_an_edge(w, h, &p, 3);
         type Run<'a> = Box<dyn Fn() -> Vec<f32> + 'a>;
-        let ops: [(&str, Run, Run); 4] = [
+        let ops: [(&str, Run, Run); 6] = [
             (
                 "AMaZE dual",
                 Box::new(|| ctx.demosaic_amaze_dual(&m, w, h, &p, contrast).unwrap()),
@@ -615,6 +658,30 @@ fn timing() {
                 }),
             ),
             (
+                "AMaZE dual, automatic",
+                Box::new(|| {
+                    ctx.demosaic_amaze_dual(&flat, w, h, &p, DualContrast::Tiles)
+                        .unwrap()
+                }),
+                Box::new(|| {
+                    demosaic_dual(&flat, w, h, &p, DemosaicMethod::Amaze, DualContrast::Tiles)
+                        .unwrap()
+                        .0
+                }),
+            ),
+            (
+                "RCD dual, automatic",
+                Box::new(|| {
+                    ctx.demosaic_rcd_dual(&flat, w, h, &p, DualContrast::Tiles)
+                        .unwrap()
+                }),
+                Box::new(|| {
+                    demosaic_dual(&flat, w, h, &p, DemosaicMethod::Rcd, DualContrast::Tiles)
+                        .unwrap()
+                        .0
+                }),
+            ),
+            (
                 "RCD",
                 Box::new(|| ctx.demosaic_rcd(&m, w, h, &p).unwrap()),
                 Box::new(|| demosaic_rcd(&m, w, h, &p).unwrap()),
@@ -629,20 +696,25 @@ fn timing() {
             let cold = std::time::Instant::now();
             gpu();
             let cold = cold.elapsed();
+            ctx.take_demosaic_traffic();
             let mut warm = std::time::Duration::MAX;
             for _ in 0..3 {
                 let t = std::time::Instant::now();
                 gpu();
                 warm = warm.min(t.elapsed());
             }
+            let (up, back) = ctx.take_demosaic_traffic();
             let t = std::time::Instant::now();
             cpu();
             let cpu_time = t.elapsed();
             println!(
-                "{w}x{h} ({:.1} MP) {name}: GPU {:.1} ms warm (best of 3), {:.1} ms cold; CPU {:.1} ms",
+                "{w}x{h} ({:.1} MP) {name}: GPU {:.1} ms warm (best of 3), {:.1} ms cold, \
+                 {} MB up and {} MB back a run; CPU {:.1} ms",
                 (w * h) as f64 / 1e6,
                 warm.as_secs_f64() * 1e3,
                 cold.as_secs_f64() * 1e3,
+                (up / 3) >> 20,
+                (back / 3) >> 20,
                 cpu_time.as_secs_f64() * 1e3,
             );
         }

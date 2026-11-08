@@ -10,9 +10,12 @@ design note behind it.
 - With a GPU, the editor's demosaic runs there: the default (AMaZE
   and VNG4), and RCD, VNG4, and their duals chosen by hand, so a
   frame's picture lands sooner on its first open and its neighbors'
-  are made sooner ahead of it; exports keep the CPU's, as the command
-  line's do
+  are made sooner ahead of it
   ([§591](https://github.com/jessolmstead/greycard/blob/master/docs/notes/591-a-quick-demosaic-on-the-gpu-and-the-default-behind-it.md)).
+- Switching to a frame not yet seen develops quicker on a machine
+  with a GPU: the default demosaic keeps its intermediate result on
+  the graphics card instead of sending it back and forth
+  ([§606](https://github.com/jessolmstead/greycard/blob/master/docs/notes/606-the-gpu-duals-detail-stays-on-the-device.md)).
 
 ### Models
 

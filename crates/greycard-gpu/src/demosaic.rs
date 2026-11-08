@@ -8,13 +8,16 @@
 //! their constants are theirs.
 //!
 //! The AMaZE dual takes its detail half from AMaZE's own op
-//! (`amaze.rs`), whose tiles are its own: its result goes up again as
-//! each band's start, and the mask and VNG4 are blended into it here,
-//! in place on the host, the original of the last band's halo rows
-//! kept aside for the next band's upload. Its host peak is so the
-//! mosaic, AMaZE's result (which becomes the blend's), and one halo:
-//! about 1.2 GB beside the mosaic at 102 MP, against twice that with a
-//! second frame for the result.
+//! (`amaze.rs`), whose tiles are its own. Its result stays on the
+//! device in a [`Frame`], whole rows in buffers the device's largest
+//! takes, and each band of the blend starts from a copy of its rows
+//! there, halo and all: the frame's own values, so the band's interior
+//! is what the whole frame gives. Only the blend's result comes back.
+//! The RCD dual under the automatic threshold keeps RCD's result the
+//! same way: the threshold's run reads it back for the search and
+//! leaves it on the device, and the blend starts from it instead of
+//! running RCD again. The frame is 12 bytes a pixel on the device,
+//! 545 MB at 45 MP, beside the bands' 256 MB and their staging.
 //!
 //! The kernels are a pass each, in `rcd.wgsl`, `vng4.wgsl` and
 //! `dual.wgsl` after the bindings and the bilinear they share in
@@ -34,14 +37,16 @@
 //! band's planes are storage buffers, eight floats a site in all, its
 //! height chosen to keep them to [`BAND_BYTES`] and the result's
 //! buffer within the device's binding limit, and they are made for
-//! the run and dropped at its end.
+//! the run and dropped at its end. Two staging buffers a band's
+//! interior, made once a run, take its result back in turn, so a band
+//! runs while the one before it is unpacked.
 //!
 //! The thresholds are the CPU's code. The noise model's table by
 //! lightness or the fixed one is handed to the mask as a table of 101,
 //! the reference's to the bit. The automatic one searches the detail
 //! result for its flattest tile, and that result is the GPU's: RCD's
-//! read back for the RCD dual (and the bands run again with it),
-//! AMaZE's for the AMaZE dual. A few ULP there can move the tile the
+//! for the RCD dual, AMaZE's for the AMaZE dual, each read back for
+//! the search alone. A few ULP there can move the tile the
 //! search settles on, so on a real card the automatic threshold can be
 //! a hundredth (one of its steps) from the reference's; a test bounds
 //! it to that. The largest sample, where both demosaics clamp, is the
@@ -215,6 +220,28 @@ impl Context {
             .store(rows.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Buffers of at most `rows` rows for a detail result kept on the
+    /// device (none: as many as the device's largest buffer takes), for
+    /// a test of the copies across them on a small frame.
+    #[doc(hidden)]
+    pub fn limit_demosaic_frame_buffers(&self, rows: Option<usize>) {
+        self.demosaic_frame_rows
+            .store(rows.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// A frame's RGB to keep on the device, in buffers as
+    /// [`Context::limit_demosaic_frame_buffers`] has them.
+    fn frame(&self, width: usize, height: usize) -> Frame {
+        let most = match self
+            .demosaic_frame_rows
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            0 => usize::MAX,
+            r => r,
+        };
+        Frame::new(&self.device, width, height, most)
+    }
+
     /// [`greycard_core::develop::rcd::demosaic_rcd`] on the GPU: the
     /// same contract, interleaved RGB back. A frame under 16 a side,
     /// or one whose bands the device cannot hold, is
@@ -226,7 +253,7 @@ impl Context {
         height: usize,
         pattern: &CfaPattern,
     ) -> Result<Vec<f32>> {
-        self.demosaic_bands(samples, width, height, pattern, Mode::Rcd, None, None)
+        self.demosaic_bands(samples, width, height, pattern, Mode::Rcd, None)
     }
 
     /// [`greycard_core::develop::vng4::demosaic_vng4`] on the GPU, as
@@ -238,7 +265,7 @@ impl Context {
         height: usize,
         pattern: &CfaPattern,
     ) -> Result<Vec<f32>> {
-        self.demosaic_bands(samples, width, height, pattern, Mode::Vng4, None, None)
+        self.demosaic_bands(samples, width, height, pattern, Mode::Vng4, None)
     }
 
     /// [`greycard_core::develop::dual::demosaic_dual`] with RCD as its
@@ -254,35 +281,66 @@ impl Context {
         pattern: &CfaPattern,
         contrast: DualContrast,
     ) -> Result<Vec<f32>> {
-        let threshold = if threshold_reads_detail(contrast) {
-            let detail = self.demosaic_rcd(samples, width, height, pattern)?;
+        if !threshold_reads_detail(contrast) {
+            let (threshold, _) = threshold_for(contrast, &[], width, height);
+            if threshold.is_zero() {
+                return self.demosaic_rcd(samples, width, height, pattern);
+            }
+            return self.demosaic_bands(
+                samples,
+                width,
+                height,
+                pattern,
+                Mode::Dual,
+                Some(&threshold),
+            );
+        }
+        // The search reads RCD's result on the host; the blend starts
+        // from the same result kept on the device, so RCD runs once.
+        let rows = self.checked_rows(samples, width, height, pattern)?;
+        self.scoped("demosaicing", || {
+            let frame = self.frame(width, height);
+            let detail = self.demosaic_bands_unscoped(
+                &Bands {
+                    samples,
+                    width,
+                    height,
+                    pattern,
+                    mode: Mode::Rcd,
+                    threshold: None,
+                    start: None,
+                    sink: Some(&frame),
+                    rows,
+                },
+                None,
+            )?;
             let (threshold, _) = threshold_for(contrast, &detail, width, height);
             if threshold.is_zero() {
                 return Ok(detail);
             }
-            threshold
-        } else {
-            threshold_for(contrast, &[], width, height).0
-        };
-        if threshold.is_zero() {
-            return self.demosaic_rcd(samples, width, height, pattern);
-        }
-        self.demosaic_bands(
-            samples,
-            width,
-            height,
-            pattern,
-            Mode::Dual,
-            Some(&threshold),
-            None,
-        )
+            self.demosaic_bands_unscoped(
+                &Bands {
+                    samples,
+                    width,
+                    height,
+                    pattern,
+                    mode: Mode::Dual,
+                    threshold: Some(&threshold),
+                    start: Some(&frame),
+                    sink: None,
+                    rows,
+                },
+                Some(detail),
+            )
+        })
     }
 
     /// [`greycard_core::develop::dual::demosaic_dual`] with AMaZE as its
     /// detail half, on the GPU: AMaZE ([`Context::demosaic_amaze`]),
-    /// then the mask and VNG4 blended into it band by band, the detail
-    /// result going back up as each band's start. The threshold is the
-    /// reference's, read off AMaZE's result where it searches.
+    /// its result kept on the device, then the mask and VNG4 blended
+    /// into it band by band, each band starting from that result. The
+    /// threshold is the reference's, read off AMaZE's result where it
+    /// searches, which alone brings that result back to the host.
     pub fn demosaic_amaze_dual(
         &self,
         samples: &[f32],
@@ -291,20 +349,40 @@ impl Context {
         pattern: &CfaPattern,
         contrast: DualContrast,
     ) -> Result<Vec<f32>> {
-        let detail = self.demosaic_amaze(samples, width, height, pattern)?;
-        let (threshold, _) = threshold_for(contrast, &detail, width, height);
-        if threshold.is_zero() {
-            return Ok(detail);
+        let reads = threshold_reads_detail(contrast);
+        let fixed = (!reads).then(|| threshold_for(contrast, &[], width, height).0);
+        if fixed.as_ref().is_some_and(Threshold::is_zero) {
+            return self.demosaic_amaze(samples, width, height, pattern);
         }
-        self.demosaic_bands(
-            samples,
-            width,
-            height,
-            pattern,
-            Mode::Dual,
-            Some(&threshold),
-            Some(detail),
-        )
+        let rows = self.checked_rows(samples, width, height, pattern)?;
+        self.scoped("demosaicing", || {
+            let frame = self.frame(width, height);
+            let detail = self.amaze_into_frame(samples, width, height, pattern, &frame, reads)?;
+            let threshold = match fixed {
+                Some(t) => t,
+                None => {
+                    let detail = detail.as_deref().expect("read back for the search");
+                    threshold_for(contrast, detail, width, height).0
+                }
+            };
+            if threshold.is_zero() {
+                return Ok(detail.expect("only the search finds no threshold"));
+            }
+            self.demosaic_bands_unscoped(
+                &Bands {
+                    samples,
+                    width,
+                    height,
+                    pattern,
+                    mode: Mode::Dual,
+                    threshold: Some(&threshold),
+                    start: Some(&frame),
+                    sink: None,
+                    rows,
+                },
+                detail,
+            )
+        })
     }
 
     /// The rows a band holds, its halo with it: as many as keep its
@@ -336,17 +414,14 @@ impl Context {
         Ok(rows)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn demosaic_bands(
+    /// What the bands take, checked, and the rows a band holds.
+    fn checked_rows(
         &self,
         samples: &[f32],
         width: usize,
         height: usize,
         pattern: &CfaPattern,
-        mode: Mode,
-        threshold: Option<&Threshold>,
-        detail: Option<Vec<f32>>,
-    ) -> Result<Vec<f32>> {
+    ) -> Result<usize> {
         if !rcd::is_bayer(pattern) {
             return Err(Error::Unsupported(format!(
                 "the demosaic on the GPU needs a 2x2 Bayer pattern, got {pattern}"
@@ -363,16 +438,11 @@ impl Context {
                 "a {width}x{height} mosaic is the CPU's"
             )));
         }
-        let rows = self.band_rows(width, height)?;
-        self.scoped("demosaicing", || {
-            self.demosaic_bands_unscoped(
-                samples, width, height, pattern, mode, threshold, detail, rows,
-            )
-        })
+        self.band_rows(width, height)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn demosaic_bands_unscoped(
+    fn demosaic_bands(
         &self,
         samples: &[f32],
         width: usize,
@@ -380,12 +450,42 @@ impl Context {
         pattern: &CfaPattern,
         mode: Mode,
         threshold: Option<&Threshold>,
-        detail: Option<Vec<f32>>,
-        rows: usize,
     ) -> Result<Vec<f32>> {
-        // A detail result made elsewhere (AMaZE's) is blended into in
-        // place: it is the result.
-        let given = detail.is_some();
+        let rows = self.checked_rows(samples, width, height, pattern)?;
+        self.scoped("demosaicing", || {
+            self.demosaic_bands_unscoped(
+                &Bands {
+                    samples,
+                    width,
+                    height,
+                    pattern,
+                    mode,
+                    threshold,
+                    start: None,
+                    sink: None,
+                    rows,
+                },
+                None,
+            )
+        })
+    }
+
+    /// The bands of one run, read back into `out` (a fresh frame when
+    /// none is given; the detail result's own buffer otherwise, which
+    /// the blend overwrites row by row, since every band's start comes
+    /// from the device).
+    fn demosaic_bands_unscoped(&self, run: &Bands, out: Option<Vec<f32>>) -> Result<Vec<f32>> {
+        let &Bands {
+            samples,
+            width,
+            height,
+            pattern,
+            mode,
+            threshold,
+            start,
+            sink,
+            rows,
+        } = run;
         let p = self.demosaic_pipelines()?;
         let (fc4, phase_terms) =
             vng4::gradient_terms(pattern).map_err(|e| Error::Unsupported(e.to_string()))?;
@@ -482,20 +582,29 @@ impl Context {
             ],
         });
 
-        let mut out = detail.unwrap_or_else(|| vec![0.0f32; width * height * 3]);
-        debug_assert_eq!(out.len(), width * height * 3);
-        // The original of the detail result's rows just above the next
-        // band, which the last band's blend has overwritten in `out`.
         let row = width * 3;
-        let mut halo: Vec<f32> = Vec::new();
+        let row_bytes = (row * 4) as u64;
         let step = if rows == height {
             height
         } else {
             rows - 2 * HALO
         };
-        let mut y0 = 0;
-        while y0 < height {
-            let y1 = (y0 + step).min(height);
+        let bands: Vec<(usize, usize)> = (0..height)
+            .step_by(step)
+            .map(|y0| (y0, (y0 + step).min(height)))
+            .collect();
+        // Two staging buffers for a band's interior, made once for the
+        // run, so a band runs while the one before it is unpacked.
+        let staging: [wgpu::Buffer; 2] = std::array::from_fn(|_| {
+            buffer(
+                "demosaic read back",
+                step as u64 * row_bytes,
+                U::COPY_DST | U::MAP_READ,
+            )
+        });
+        let mut up = 0u64;
+        let mut submit = |k: usize| {
+            let (y0, y1) = bands[k];
             let (top, bottom) = (y0.saturating_sub(HALO), (y1 + HALO).min(height));
             let band = bottom - top;
             self.queue.write_buffer(
@@ -503,6 +612,7 @@ impl Context {
                 0,
                 bytemuck::cast_slice(&samples[top * width..bottom * width]),
             );
+            up += (band * width * 4) as u64;
             self.queue.write_buffer(
                 &params,
                 0,
@@ -521,29 +631,13 @@ impl Context {
                     term_count,
                 }),
             );
-            // A detail result made elsewhere (AMaZE's) is the band's
-            // start in place of RCD's: its rows above the band as they
-            // were, kept aside, then the rest as they still are.
-            if given {
-                debug_assert_eq!(halo.len(), (y0 - top) * row);
-                self.queue
-                    .write_buffer(&rgb, 0, bytemuck::cast_slice(&halo));
-                self.queue.write_buffer(
-                    &rgb,
-                    ((y0 - top) * row * 4) as u64,
-                    bytemuck::cast_slice(&out[y0 * row..bottom * row]),
-                );
-                // The next band's halo, of rows the blend below is
-                // about to overwrite.
-                let next_top = y1.saturating_sub(HALO);
-                let mut kept: Vec<f32> = Vec::with_capacity((y1 - next_top) * row);
-                if next_top < y0 {
-                    kept.extend_from_slice(&halo[(next_top - top) * row..]);
-                }
-                kept.extend_from_slice(&out[next_top.max(y0) * row..y1 * row]);
-                halo = kept;
-            }
             let mut encoder = self.encoder("demosaic");
+            // A detail result kept on the device (AMaZE's, or RCD's
+            // from the threshold's run) is the band's start in place
+            // of RCD's, its halo rows with it.
+            if let Some(start) = start {
+                start.copy_out(&mut encoder, top, bottom, &rgb, 0);
+            }
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_bind_group(0, &bind, &[]);
@@ -554,7 +648,7 @@ impl Context {
                         pass.dispatch_workgroups(gx, gy, 1);
                     }
                 };
-                if mode != Mode::Vng4 && !given {
+                if mode != Mode::Vng4 && start.is_none() {
                     run(&p.rcd);
                 }
                 if mode == Mode::Dual {
@@ -564,15 +658,163 @@ impl Context {
                     run(&p.vng4);
                 }
             }
+            let (offset, bytes) = ((y0 - top) as u64 * row_bytes, (y1 - y0) as u64 * row_bytes);
+            if let Some(sink) = sink {
+                sink.copy_in(&mut encoder, &rgb, offset, y0, y1);
+            }
+            encoder.copy_buffer_to_buffer(&rgb, offset, &staging[k % 2], 0, bytes);
             self.queue.submit(Some(encoder.finish()));
-            self.read_buffer_into(
-                &rgb,
-                ((y0 - top) * row * 4) as u64,
-                bytemuck::cast_slice_mut(&mut out[y0 * row..y1 * row]),
-            )?;
-            y0 = y1;
+            let (tx, rx) = std::sync::mpsc::channel();
+            staging[k % 2]
+                .slice(..bytes)
+                .map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+            rx
+        };
+
+        let mut out = out.unwrap_or_else(|| vec![0.0f32; width * height * 3]);
+        assert_eq!(out.len(), width * height * 3);
+        let mut pending = submit(0);
+        for k in 0..bands.len() {
+            self.wait()?;
+            pending
+                .recv()
+                .map_err(|_| Error::ReadBack("the map callback never came".into()))?
+                .map_err(|e| Error::ReadBack(e.to_string()))?;
+            let next = (k + 1 < bands.len()).then(|| submit(k + 1));
+            let (y0, y1) = bands[k];
+            let staged = &staging[k % 2];
+            let bytes = (y1 - y0) as u64 * row_bytes;
+            let data = staged
+                .slice(..bytes)
+                .get_mapped_range()
+                .map_err(|e| Error::ReadBack(e.to_string()))?;
+            out[y0 * row..y1 * row].copy_from_slice(bytemuck::cast_slice(&data));
+            drop(data);
+            staged.unmap();
+            if let Some(rx) = next {
+                pending = rx;
+            }
         }
+        drop(submit);
+        self.count_demosaic_traffic(false, up);
+        self.count_demosaic_traffic(true, (out.len() * 4) as u64);
         Ok(out)
+    }
+}
+
+/// One run of the bands.
+struct Bands<'a> {
+    samples: &'a [f32],
+    width: usize,
+    height: usize,
+    pattern: &'a CfaPattern,
+    mode: Mode,
+    threshold: Option<&'a Threshold>,
+    /// A detail result on the device each band starts from, in place
+    /// of RCD's own.
+    start: Option<&'a Frame>,
+    /// Where the bands' results go on the device as well, for a run
+    /// after this one to start from.
+    sink: Option<&'a Frame>,
+    rows: usize,
+}
+
+/// A frame's interleaved RGB kept on the device between runs: a
+/// detail result for the dual's blend to start from. In buffers of
+/// whole rows, as many as the device's largest buffer takes; it is
+/// copied to and from, never bound.
+pub(crate) struct Frame {
+    chunks: Vec<wgpu::Buffer>,
+    chunk_rows: usize,
+    row_bytes: u64,
+}
+
+impl Frame {
+    /// At most `most` rows a buffer.
+    pub(crate) fn new(device: &wgpu::Device, width: usize, height: usize, most: usize) -> Self {
+        let row_bytes = width as u64 * 12;
+        let chunk_rows = ((device.limits().max_buffer_size / row_bytes) as usize)
+            .min(most)
+            .clamp(1, height.max(1));
+        let chunks = (0..height.div_ceil(chunk_rows))
+            .map(|k| {
+                let rows = chunk_rows.min(height - k * chunk_rows);
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("demosaic detail"),
+                    size: rows as u64 * row_bytes,
+                    usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
+        Self {
+            chunks,
+            chunk_rows,
+            row_bytes,
+        }
+    }
+
+    /// Its bytes on the device.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.chunks.iter().map(wgpu::Buffer::size).sum()
+    }
+
+    /// Rows `y0..y1` as runs within its buffers: the buffer, the
+    /// offset in it, the offset from row `y0`, and the bytes.
+    fn runs(
+        &self,
+        y0: usize,
+        y1: usize,
+    ) -> impl Iterator<Item = (&wgpu::Buffer, u64, u64, u64)> + '_ {
+        let r = self.chunk_rows;
+        (y0 / r..y1.div_ceil(r)).map(move |k| {
+            let (lo, hi) = (y0.max(k * r), y1.min((k + 1) * r));
+            (
+                &self.chunks[k],
+                (lo - k * r) as u64 * self.row_bytes,
+                (lo - y0) as u64 * self.row_bytes,
+                (hi - lo) as u64 * self.row_bytes,
+            )
+        })
+    }
+
+    /// Rows `y0..y1` in from `src` at `offset`.
+    pub(crate) fn copy_in(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::Buffer,
+        offset: u64,
+        y0: usize,
+        y1: usize,
+    ) {
+        for (chunk, at, from, bytes) in self.runs(y0, y1) {
+            encoder.copy_buffer_to_buffer(src, offset + from, chunk, at, bytes);
+        }
+    }
+
+    /// Rows `y0..y1` out to `dst` at `offset`.
+    pub(crate) fn copy_out(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        y0: usize,
+        y1: usize,
+        dst: &wgpu::Buffer,
+        offset: u64,
+    ) {
+        for (chunk, at, from, bytes) in self.runs(y0, y1) {
+            encoder.copy_buffer_to_buffer(chunk, at, dst, offset + from, bytes);
+        }
+    }
+
+    /// The whole frame up from the host.
+    pub(crate) fn upload(&self, queue: &wgpu::Queue, rgb: &[f32]) {
+        let floats = self.chunk_rows * self.row_bytes as usize / 4;
+        for (chunk, part) in self.chunks.iter().zip(rgb.chunks(floats)) {
+            queue.write_buffer(chunk, 0, bytemuck::cast_slice(part));
+            queue.submit([]);
+        }
     }
 }
 

@@ -191,12 +191,11 @@ On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
 seconds.
 
-- [ ] The GPU demosaic's remaining time (§591): the AMaZE dual's
-      result fed straight into the blend's buffers instead of read
-      back and uploaded again (540 MB each way at 45 MP); the
-      automatic threshold's second RCD run for the RCD dual; the
-      bands' staging persistent and double-buffered as the AMaZE op's
-      is. At 45 MP the dual is 247 ms where AMaZE alone is 90
+- [ ] The GPU dual's last traffic (§606): the mosaic goes up twice
+      for the AMaZE dual (183 MiB at 45 MP), and the automatic
+      threshold's search reads back the full detail result where the
+      GPU's lightness would be a third the bytes, if its cube root
+      can be held to the CPU's one-step bound
 - [ ] An export's Detail, dehaze, and sharpen on the device as the
       viewport's are (§600): their GPU forms end in the viewport's
       half-float texture, and an export finishes in full floats, so
@@ -210,9 +209,9 @@ seconds.
       7 s at 102 MP and 1 s at 24 MP on an M5 (§479): showing it is a
       judgment on those. §270 builds the reduced develop itself, for
       the edited thumbnails
-- [ ] The first open of a 45 MP frame: the demosaic (1.2 s) is most
-      of a fresh base's 1.9 s on eight threads, now the lens is on the
-      GPU (§378, §386); on an M5, 2.8 s of 6.5 to 7.0 s at 102 MP (§479)
+- [ ] The first open of a frame on a machine with no GPU: the
+      demosaic (1.2 s at 45 MP) is most of a fresh base's 1.9 s on
+      eight threads (§378, §386); with a GPU it runs there (§591, §606)
 - [ ] A Clarity or Dehaze move at 102 MP takes 2.2 s and 2.0 s on an
       M5, nearly all of it the capture sharpen's 20 iterations run
       again after the move (§479, §480). Sharpen at the viewport's

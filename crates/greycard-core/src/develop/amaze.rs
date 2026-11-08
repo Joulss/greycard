@@ -190,6 +190,31 @@ pub fn fill_border(
     }
 }
 
+/// The ring [`fill_border`] writes, packed: the top three rows, the
+/// bottom three, then each row between them its three pixels at the
+/// left and its three at the right, interleaved RGB. The GPU port
+/// uploads it and writes it into its result on the device, so the
+/// result can stay there. Shared with the GPU port.
+#[doc(hidden)]
+pub fn border_ring(samples: &[f32], width: usize, height: usize, pattern: &CfaPattern) -> Vec<f32> {
+    let mut ring =
+        Vec::with_capacity((2 * BORDER * width + 2 * BORDER * (height - 2 * BORDER)) * 3);
+    let mut push = |y: usize, x: usize| {
+        ring.extend_from_slice(&bilinear_pixel(samples, width, height, pattern, y, x));
+    };
+    for y in (0..BORDER).chain(height - BORDER..height) {
+        for x in 0..width {
+            push(y, x);
+        }
+    }
+    for y in BORDER..height - BORDER {
+        for x in (0..BORDER).chain(width - BORDER..width) {
+            push(y, x);
+        }
+    }
+    ring
+}
+
 struct Image<'a> {
     samples: &'a [f32],
     width: usize,
@@ -1224,6 +1249,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The packed ring is the ring [`fill_border`] writes, in the
+    /// order the GPU port reads it.
+    #[test]
+    fn the_packed_ring_is_the_border() {
+        let (w, h) = (41, 37);
+        let pattern = CfaPattern::rggb();
+        let cfa: Vec<f32> = (0..w * h)
+            .map(|i| ((i * 7919) % 1000) as f32 / 1000.0)
+            .collect();
+        let mut want = vec![f32::NAN; w * h * 3];
+        fill_border(&mut want, &cfa, w, h, &pattern);
+        let ring = border_ring(&cfa, w, h, &pattern);
+        let mut got = vec![f32::NAN; w * h * 3];
+        let mut k = 0;
+        let mut put = |y: usize, x: usize| {
+            got[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&ring[k * 3..k * 3 + 3]);
+            k += 1;
+        };
+        for y in (0..BORDER).chain(h - BORDER..h) {
+            for x in 0..w {
+                put(y, x);
+            }
+        }
+        for y in BORDER..h - BORDER {
+            for x in (0..BORDER).chain(w - BORDER..w) {
+                put(y, x);
+            }
+        }
+        assert_eq!(
+            ring.len(),
+            (2 * BORDER * w + 2 * BORDER * (h - 2 * BORDER)) * 3
+        );
+        assert!(
+            want.iter()
+                .zip(&got)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "the packed ring is not the border"
+        );
     }
 
     #[test]
