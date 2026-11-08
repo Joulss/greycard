@@ -16,7 +16,7 @@ thumbs`: to the top, then the selection revealed at the bottom edge.
 
 We now tell the window when a list is the old one less some frames.
 `drop_files` (a delete, the rejects moved out) and a version's delete
-(through `versions::settle`) set `rows-dropped` after their rebuild;
+(through `versions::settle`) set `rows-held` after their rebuild;
 every `set_rows` clears it first. The window's change handlers run
 after the Rust call returns, so they read the drop's value, and the
 next list put from anywhere else reads false again; a drop that leaves
@@ -47,3 +47,10 @@ from a read off the window's thread, so the flag would have to ride
 with the read to its landing. And `versions::settle` serves more than
 a delete (a version made, a stack opened or closed); those grow or
 reorder the list, and whether they should hold is its own question.
+
+**Later the same day.** The reporter found the same jump on stacking
+and unstacking. Both rebuild the list through `stacks::settle`, which
+now sets the flag too; it is `rows-held`, since the list is no longer
+only the old one less some frames but the old one changed in place,
+folded or unfolded. Unstacking makes the row longer, and the hold
+within the row is the same rule.

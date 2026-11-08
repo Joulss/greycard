@@ -89,11 +89,11 @@ design note behind it.
   on by default; it travels only between raws, since a JPEG or TIFF
   has no switch (issue 82)
   ([§590](https://github.com/jessolmstead/greycard/blob/master/docs/notes/590-the-display-curve-goes-with-a-copy.md)).
-- Deleting the selected frame or version, or moving it out with the
-  rejects, no longer scrolls the filmstrip or the grid so the next
-  frame lands at the far edge: both stay where they were and scroll
-  only when the frame chosen next would be off screen, and then by
-  the least (issues 83 and 84)
+- Deleting the selected frame or version, moving it out with the
+  rejects, stacking, or unstacking no longer scrolls the filmstrip or
+  the grid so the next frame lands at the far edge: both stay where
+  they were and scroll only when the frame chosen next would be off
+  screen, and then by the least (issues 83 and 84)
   ([§592](https://github.com/jessolmstead/greycard/blob/master/docs/notes/592-the-strip-holds-still-under-a-delete.md)).
 - A rating and a label from FastRawViewer or Photo Mechanic in a bare
   `IMG.xmp` beside a raw and its JPEG now show on the raw; greycard

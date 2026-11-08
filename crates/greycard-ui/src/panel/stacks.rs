@@ -59,11 +59,14 @@ fn chosen_stacks(st: &State) -> Vec<Listed> {
 }
 
 /// The list made again after a change to the stacks, and the browser's
-/// rows with it.
+/// rows with it. The same list with frames folded or unfolded: the
+/// strip and the grid hold their scroll, as they do under a delete
+/// (issue 84's second report).
 pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) {
     if !crate::versions::settle(st, app, worker) {
         crate::panel::browser::rebuild_browser(st, app);
     }
+    app.set_rows_held(true);
 }
 
 /// The name a stack goes by in the status line: its top's.
@@ -929,6 +932,7 @@ mod tests {
         with_modifier(app, Key::Control, || press(app, "g"));
         assert_eq!(app.get_status(), "3 frames stacked under x1.tif");
         assert_eq!(rows(app), ["x0.tif", "x1.tif [3]", "x2.tif"]);
+        assert!(app.get_rows_held(), "the strip holds under a stack");
         assert_eq!(on_disk(&s), [["x1.tif", "x3.tif", "x4.tif"]]);
         wants_agree(&s);
         assert_eq!(chosen_frames(&state.borrow()), [cell(&s, 1)]);
@@ -1013,6 +1017,7 @@ mod tests {
             ["x0.tif", "x1.tif", "x2.tif", "x3.tif", "x4.tif"]
         );
         assert!(on_disk(&s).is_empty());
+        assert!(app.get_rows_held(), "and under an unstack");
         teardown(s);
     }
 

@@ -336,16 +336,17 @@ export component App inherits Window {
         strip.content-x = 0px;
         root.strip-reveal();
     }
-    /// Frames taken out of the list, deleted or moved away, rather
-    /// than a new list: Rust says so after the rows it put. The rest
-    /// stay where they stood on screen.
-    in property <bool> rows-dropped;
+    /// The same list changed in place, frames deleted or moved away,
+    /// stacked or unstacked, rather than a new list: Rust says so
+    /// after the rows it put. The rest stay where they stood on
+    /// screen.
+    in property <bool> rows-held;
     /// The strip after a list of another length: held where it was,
-    /// within the shorter row, and moved the least that shows the
-    /// selected frame whole, when frames were taken out; else laid
+    /// within the row, and moved the least that shows the selected
+    /// frame whole, when the list was changed in place; else laid
     /// out afresh from its start.
     function strip-renew() {
-        if (!root.rows-dropped) {
+        if (!root.rows-held) {
             root.strip-relay();
             return;
         }
@@ -574,10 +575,10 @@ export component App inherits Window {
     }
     changed tile-cell => { root.grid-relay(); }
     // Another folder's frames: the sheet re-flows and reports afresh,
-    // as the strip does from its content width. Frames taken out of
-    // the list hold the sheet where it was, as they do the strip.
+    // as the strip does from its content width. A list changed in
+    // place holds the sheet where it was, as it does the strip.
     changed thumbs => {
-        if (root.rows-dropped) {
+        if (root.rows-held) {
             root.grid-scroll = clamp(root.grid-scroll, 0px, root.grid-max);
             root.grid-reveal();
         } else {

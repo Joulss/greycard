@@ -166,11 +166,10 @@ the reasoning lives in `docs/notes.md`.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
-- [ ] The strip jumps on a delete: the frame chosen next lands at the
-      right edge where the rule is the least scroll that shows it
-      (`strip::reveal`); the delete path reveals from a fresh layout
-      where it should hold (`strip::held`, panel/browser.rs). Reproduce
-      first (issues 83 and 84, 2026-11-07)
+- [ ] The full name at the pointer over a cut-short one: the strip's
+      and the grid's file names, the Develop panel's header, and the
+      folder tree, on the hover text layer the roots list already uses
+      (§311) (issue 88, 2026-11-07)
 
 ## Next
 

@@ -396,7 +396,7 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
     // The same list less some cells: the strip and the grid hold
     // their scroll, as they do when files leave it.
     if crate::versions::settle(st, app, worker) {
-        app.set_rows_dropped(true);
+        app.set_rows_held(true);
     }
     let said = match gone.as_slice() {
         [] => "nothing deleted".to_string(),

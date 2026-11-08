@@ -2547,7 +2547,7 @@ pub(crate) fn drop_files(
     // their scroll and move only to show the frame chosen next. The
     // window reads this after this call, when its change handlers
     // run; the next list put says false again.
-    app.set_rows_dropped(true);
+    app.set_rows_held(true);
     // After the rebuild, so the rows put first and the rows near the
     // screen are the new list's.
     crate::roots::ask_owed(st, worker);
