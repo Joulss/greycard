@@ -185,7 +185,8 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
-- [ ] i18n (issue 75)
+- [ ] i18n foundation: every window string translatable, one catalog,
+      a Language setting (issue 75, §616)
 
 ### Speed
 
