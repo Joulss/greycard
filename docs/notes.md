@@ -626,3 +626,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§612. The handheld bracket and stack](notes/612-the-handheld-bracket-and-stack.md) (2026-11-08)
 - [§613. Six tester items after 0.10.0](notes/613-six-tester-items-after-0-10-0.md) (2026-11-08)
 - [§614. Eight notes from a few minutes with 0.10.0](notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md) (2026-11-08)
+- [§615. A lens off the body's mount, in the picker](notes/615-a-lens-off-the-bodys-mount-in-the-picker.md) (2026-11-08)
