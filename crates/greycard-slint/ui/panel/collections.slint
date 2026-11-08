@@ -8,7 +8,7 @@
 // and touches no frame.
 
 import { Theme } from "../theme.slint";
-import { Section } from "../controls.slint";
+import { Section, ScrollPane } from "../controls.slint";
 import { CollectionChip } from "../structs.slint";
 
 component CollectionRow inherits Rectangle {
@@ -126,6 +126,7 @@ export component CollectionsSection inherits Section {
     title: "COLLECTIONS";
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-collections;
+    shares: true;
 
     function open-menu(c: CollectionChip, x: length, y: length) {
         root.focus-keys();
@@ -165,15 +166,32 @@ export component CollectionsSection inherits Section {
                 }
             }
         }
-        for c in root.collections: CollectionRow {
-            chip: c;
-            ctrl-click-menu: root.ctrl-click-menu;
-            menu-shown => { return root.menu-shown(); }
-            clicked => { root.picked(c.id); root.focus-keys(); }
-            menu(x, y) => { root.open-menu(c, x, y); }
+        // Three rows at least, and the pane's share past them up to
+        // the whole list (app.slint), the rest a scroll away.
+        if root.collections.length > 0: Rectangle {
+            property <length> floor: min(rows.preferred-height, 3 * (Theme.control-height - 6px) + 2px);
+            preferred-height: self.floor;
+            min-height: self.floor;
+            max-height: rows.preferred-height;
+            vertical-stretch: 1;
+            ScrollPane {
+                rows := VerticalLayout {
+                    spacing: 1px;
+                    // Clear of the scroll bar's band, as the folders' rows are.
+                    padding-right: Theme.scrollbar-band;
+                    for c in root.collections: CollectionRow {
+                        chip: c;
+                        ctrl-click-menu: root.ctrl-click-menu;
+                        menu-shown => { return root.menu-shown(); }
+                        clicked => { root.picked(c.id); root.focus-keys(); }
+                        menu(x, y) => { root.open-menu(c, x, y); }
+                    }
+                }
+            }
         }
         if root.collections.length == 0: Text {
             text: "No collections yet";
+            max-height: self.preferred-height;
             color: Theme.text-muted;
             font-size: Theme.font-xs;
             wrap: word-wrap;

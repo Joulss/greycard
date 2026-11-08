@@ -174,8 +174,6 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
-- [ ] The left pane's sections share its height (issue 79, §603)
-- [ ] The Develop sections told apart (issue 80, §604)
 - [ ] The panes and the strip take a size (§605)
 - [ ] i18n (issue 75)
 - [ ] Handheld HDR and focus stacking

@@ -190,6 +190,12 @@ open in the grid and folded in the loupe.
 A folder with no frames of its own opens empty, and the status line
 suggests **With subfolders**.
 
+The left pane's lists, Folders, Collections, Presets, Snapshots, and
+History, share the pane's height. A list that has little to show
+gives its room to the others, and folding one does the same. Drag the
+gap between two open lists to move room from one to the other; the
+split is remembered. Double-click the gap to even the two.
+
 ### Subfolder tiles
 
 In the grid, the folders inside the open folder appear as tiles above

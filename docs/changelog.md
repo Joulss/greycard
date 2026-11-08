@@ -72,6 +72,16 @@ design note behind it.
   header, the Develop panel's head, or the folder tree shows whole at
   the pointer after a moment's rest (issue 88)
   ([§609](https://github.com/jessolmstead/greycard/blob/master/docs/notes/609-a-name-cut-short-whole-at-the-pointer.md)).
+- The left pane's lists (Folders, Collections, Presets, Snapshots, and
+  History) now divide the pane's height between them instead of each
+  sitting in a small box of its own: folding one gives its room to the
+  rest, dragging the gap between two moves room from one to the other
+  and is remembered, and a double-click there evens them (issue 79)
+  ([§603](https://github.com/jessolmstead/greycard/blob/master/docs/notes/603-the-left-panes-sections-share-its-height.md)).
+- A hairline runs along the top of each section, so the Develop
+  panel's sections, the Masks tab's, and the left pane's read apart at
+  a glance; the spacing is as it was (issue 80)
+  ([§604](https://github.com/jessolmstead/greycard/blob/master/docs/notes/604-the-develop-sections-told-apart.md)).
 
 ### Export
 

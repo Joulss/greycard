@@ -36,6 +36,7 @@ pub(crate) mod recent;
 pub(crate) mod reset;
 pub(crate) mod retouch;
 pub(crate) mod saves;
+pub(crate) mod shares;
 pub(crate) mod sort;
 pub(crate) mod stacks;
 pub(crate) mod startup;

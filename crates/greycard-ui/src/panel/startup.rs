@@ -427,6 +427,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     show_sheet(&app, &sheet);
     show_presets_picker(&app, &remembered.shared.export_presets, preset.as_deref());
     show_folds(&app, &remembered.collapsed);
+    crate::panel::shares::show(&app, &remembered.shares);
     app.set_scope(opening_scope(&cli, &remembered).name().into());
     app.set_scope_selection(cli.scope_selection);
     app.set_show_sharpen_mask(cli.sharpen_mask);
@@ -2439,6 +2440,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // The state's, put in by `take_state_choices`.
         mat: false,
         collapsed: read_folds(app),
+        shares: crate::panel::shares::read(app),
         // Written as the switch is flipped; the caller keeps the file's.
         one_section: false,
         grid_cell: app.get_grid_cell(),

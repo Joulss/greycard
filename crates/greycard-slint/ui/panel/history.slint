@@ -85,18 +85,20 @@ export component SnapshotsSection inherits Section {
     title: "SNAPSHOTS";
     icon: @image-url("../icons/image.svg");
     collapsed <=> root.collapsed-snapshots;
+    shares: true;
     if root.snapshot-names.length > 0: Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        // As the presets' and the history's box: the list's height up
-        // to 200 px, so a long run of snapshots never pushes the pane
-        // past the window (and the window past the screen). The pane
-        // scrolls around this section rather than the other way, so
-        // the box never squeezes a row to make room.
-        preferred-height: min(snapshot-list.preferred-height, 200px);
-        max-height: self.preferred-height;
+        // As the folders' box: three rows at least, and the pane's
+        // share past them up to the whole list, so a long run of
+        // snapshots never pushes the pane past the window (and the
+        // window past the screen).
+        property <length> floor: min(snapshot-list.preferred-height, 3 * Theme.control-height + 8px);
+        preferred-height: self.floor;
+        min-height: self.floor;
+        max-height: snapshot-list.preferred-height;
         vertical-stretch: 1;
         ScrollPane {
             snapshot-list := VerticalLayout {
@@ -216,6 +218,7 @@ export component SnapshotsSection inherits Section {
     }
     if root.snapshot-names.length == 0: Text {
         text: "None yet.";
+        max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-muted;
         wrap: word-wrap;
@@ -244,20 +247,20 @@ export component HistorySection inherits Section {
     action-clicked => { root.reset-asked(); }
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
+    shares: true;
     if root.history-rows.length > 0: Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        // Its list's height up to 260 px, the rest a scroll away, so
-        // a long history never pushes the pane past the window. The
-        // pane scrolls around this section rather than the other way,
-        // so the box never squeezes a row to make room.
-        preferred-height: min(history-list.preferred-height, 260px);
-        max-height: self.preferred-height;
-        // Three rows at least, whatever sits below the pane's
-        // sections: the pane scrolls before this box shrinks past them.
-        min-height: min(history-list.preferred-height, 3 * (Theme.control-height - 4px) + 4px);
+        // As the folders' box: three rows at least, whatever sits
+        // below the pane's sections (the pane scrolls before this box
+        // shrinks past them), and the pane's share past them up to the
+        // whole list, the rest a scroll away.
+        property <length> floor: min(history-list.preferred-height, 3 * (Theme.control-height - 6px) + 8px);
+        preferred-height: self.floor;
+        min-height: self.floor;
+        max-height: history-list.preferred-height;
         vertical-stretch: 1;
         ScrollPane {
             history-list := VerticalLayout {
@@ -322,6 +325,7 @@ export component HistorySection inherits Section {
     }
     if root.history-rows.length == 0: Text {
         text: "No changes yet.";
+        max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-muted;
         wrap: word-wrap;

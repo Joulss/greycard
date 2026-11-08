@@ -89,6 +89,7 @@ export component PresetsSection inherits Section {
     title: "PRESETS";
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
+    shares: true;
 
     // The list: a click lays the preset over the edit, as one step;
     // the bin at the row's end asks to remove it from the store. A
@@ -99,12 +100,13 @@ export component PresetsSection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        // As the history's box: its list up to 200 px. The pane
-        // scrolls around this section rather than the other way, so
-        // the box always sits at its full height (or the list's own,
-        // under that) and never squeezes a row.
-        preferred-height: min(preset-list.preferred-height, 200px);
-        max-height: self.preferred-height;
+        // As the folders' box: three rows at least, and the pane's
+        // share past them up to the whole list. The pane scrolls
+        // around this section before the box goes under three rows.
+        property <length> floor: min(preset-list.preferred-height, 3 * (Theme.control-height - 6px) + 8px);
+        preferred-height: self.floor;
+        min-height: self.floor;
+        max-height: preset-list.preferred-height;
         vertical-stretch: 1;
         menu := ContextMenuArea {
             width: 0px;
@@ -282,6 +284,8 @@ export component PresetsSection inherits Section {
     }
     if root.preset-names.length == 0: Text {
         text: "Save the edit or import a Lightroom preset.";
+        // Held to its lines: the box alone takes the section's share.
+        max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-muted;
         wrap: word-wrap;
@@ -290,6 +294,7 @@ export component PresetsSection inherits Section {
     // as the pane is too narrow for a long name on a button.
     if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: Text {
         text: "Remove " + root.preset-names[root.confirm-remove] + " from the list?";
+        max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-secondary;
         wrap: word-wrap;

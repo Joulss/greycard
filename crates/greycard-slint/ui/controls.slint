@@ -317,6 +317,12 @@ export component Section inherits VerticalLayout {
         triggered => { root.chased = false; }
     }
     callback switched();
+    // One of the left pane's lists, which share the pane's height
+    // (app.slint): open, the body may grow past its own height, up to
+    // its layout's maximum, and the room goes to the list's box, the
+    // one child of the body that stretches. Its other children must
+    // each have a bounded height.
+    in property <bool> shares: false;
     spacing: 6px;
     padding-top: Theme.space-1;
     // The header, with a hairline along the section's top, in the
@@ -449,7 +455,7 @@ export component Section inherits VerticalLayout {
         background: Theme.border;
     }
     // The body, clipped to nothing when folded.
-    Rectangle {
+    fold-box := Rectangle {
         clip: true;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
         animate full { duration: root.fold-time; easing: ease-out; }
@@ -458,14 +464,46 @@ export component Section inherits VerticalLayout {
         // and period pass a folded section's sliders over.
         property <float> shut: root.collapsed ? 1 : 0;
         animate shut { duration: root.fold-time; }
-        preferred-height: self.full;
-        max-height: self.full;
-        min-height: self.full;
+        // Sharing, the body's height is the layout's share, not its
+        // own: open and settled, it is bounded by the body's layout
+        // alone. Folding, by a fraction of the height it had when last
+        // open and settled (`held`), so a fold runs from the share the
+        // list had. Opening, by the same fraction of the body's own
+        // bounds, so at its end they are the settled bounds and the
+        // share it lands on is the one the pane has now, with no step
+        // however the window changed while it was folded. A list's
+        // content changing while open moves at once: no fold is under
+        // way to animate it.
+        property <float> open: root.collapsed ? 0 : 1;
+        animate open { duration: root.fold-time; easing: ease-out; }
+        property <length> held;
+        property <bool> moving: self.open < 1;
+        property <bool> folding: self.moving && root.collapsed;
+        property <length> span: self.held > 0 ? self.held : body.preferred-height;
+        preferred-height: !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.preferred-height;
+        max-height: !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.max-height;
+        min-height: !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.min-height;
+        // Kept only for a sharing section, so no other lays itself out
+        // as it is made (a change handler reads its height at once).
+        if root.shares: Rectangle {
+            width: 0px;
+            height: 0px;
+            property <length> laid: fold-box.height;
+            property <bool> settled: !root.collapsed && !fold-box.moving;
+            init => { if (self.settled && self.laid > 0) { fold-box.held = self.laid; } }
+            changed laid => { if (self.settled && self.laid > 0) { fold-box.held = self.laid; } }
+        }
         body := VerticalLayout {
             x: parent.shut >= 1 ? -100000px : 0;
             y: 0;
             width: 100%;
-            height: self.preferred-height;
+            // Folding, at the height it had, so it slides under the clip
+            // rather than squeezing its list.
+            height: !root.shares ? self.preferred-height
+                : max(parent.height, self.preferred-height, parent.folding ? parent.span : 0px);
             spacing: Theme.space-1;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
@@ -2115,6 +2153,41 @@ export component ScrollBand inherits TouchArea {
 // The thumb stays drawn at rest here: a view whose bar faded would
 // hide that it holds more below. The thumb's arithmetic is the
 // grid's: 4 px from the ends, no shorter than 24 px.
+// A gap that is dragged to move room from one side of it to the
+// other: the gap between two of the left pane's lists, and the panes'
+// edges. Nothing is drawn; the pointer over it turns to the resizing
+// hand. `dragged` carries the pointer's travel since the press, in
+// the window, along y or, with `along-y` false, along x, so the gap
+// moving under the pointer as the room moves does not count. A
+// double-click is `evened`, which its press and release precede.
+export component DragEdge inherits Rectangle {
+    in property <bool> along-y: true;
+    callback started();
+    callback dragged(length);
+    callback ended();
+    callback evened();
+    property <length> from;
+    pure function at() -> length {
+        return root.along-y ? root.absolute-position.y + area.mouse-y
+            : root.absolute-position.x + area.mouse-x;
+    }
+    area := TouchArea {
+        mouse-cursor: root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
+        pointer-event(e) => {
+            if (e.button != PointerEventButton.left) { return; }
+            if (e.kind == PointerEventKind.down) {
+                root.from = root.at();
+                root.started();
+            }
+            if (e.kind == PointerEventKind.up) { root.ended(); }
+        }
+        moved => {
+            if (self.pressed) { root.dragged(root.at() - root.from); }
+        }
+        double-clicked => { root.evened(); }
+    }
+}
+
 export component ScrollPane {
     out property <length> visible-width <=> flick.width;
     out property <length> visible-height <=> flick.height;

@@ -71,6 +71,12 @@ pub struct Settings {
     /// The panel's sections folded away, by the names the panel
     /// keeps them under.
     pub collapsed: Vec<String>,
+    /// The left pane's lists' weights in sharing its height, by
+    /// section name, as the gaps between them were last dragged; a
+    /// list not named weighs one. Read leniently: a weight that is no
+    /// number reads as one, and a map that is no map as none.
+    #[serde(deserialize_with = "shares_leniently")]
+    pub shares: std::collections::BTreeMap<String, f32>,
     /// Whether opening one of the develop panel's sections folds the
     /// others of its tab. Off by default. Written as the switch is
     /// flipped.
@@ -434,6 +440,32 @@ where
     }
 }
 
+/// The left pane's weights by name, a weight that is no number read as
+/// one and a `shares` that is no map as none, so a hand edit never sets
+/// the whole file aside.
+fn shares_leniently<'de, D>(d: D) -> Result<std::collections::BTreeMap<String, f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Object(map) => Ok(map
+            .into_iter()
+            .map(|(name, v)| {
+                let w = v.as_f64().map(|w| w as f32).unwrap_or_else(|| {
+                    tracing::warn!("settings: shares: {name} is {v}, not a weight; one");
+                    1.0
+                });
+                (name, w)
+            })
+            .collect()),
+        serde_json::Value::Null => Ok(Default::default()),
+        other => {
+            tracing::warn!("settings: shares is {other}, not a map of weights; none");
+            Ok(Default::default())
+        }
+    }
+}
+
 /// The views a launch may open on, as the Settings sheet's row spells
 /// them; the first is the default.
 pub const START_VIEWS: [&str; 2] = ["Loupe", "Library"];
@@ -630,6 +662,7 @@ impl Default for Settings {
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
             mat: false,
             collapsed: Vec::new(),
+            shares: Default::default(),
             one_section: false,
             grid_cell: crate::grid::CELL,
             grid_wheel: true,
@@ -1045,6 +1078,7 @@ mod tests {
             canvas_color: "Mid grey".into(),
             mat: true,
             collapsed: vec!["grain".into(), "demosaic".into()],
+            shares: [("presets".to_string(), 1.5), ("history".to_string(), 0.5)].into(),
             one_section: true,
             grid_cell: 256.0,
             grid_wheel: false,
@@ -1384,6 +1418,33 @@ mod tests {
             let read: Settings = serde_json::from_str(text).expect(text);
             assert_eq!(read.ui_scale, 150, "{text}");
             assert!(read.grid_wheel, "{text}");
+        }
+    }
+
+    /// A hand-edited weight that is no number reads as one, and a
+    /// shares that is no map as none; the rest of the file stands.
+    #[test]
+    fn the_shares_are_read_leniently() {
+        let read: Settings =
+            serde_json::from_str(r#"{"shares": {"presets": 1.5, "history": 2}}"#).unwrap();
+        assert_eq!(read.shares.get("presets"), Some(&1.5));
+        assert_eq!(read.shares.get("history"), Some(&2.0));
+        let read: Settings = serde_json::from_str(
+            r#"{"ui_scale": 150, "shares": {"presets": "big", "history": null, "folders": 0.5}}"#,
+        )
+        .unwrap();
+        assert_eq!(read.ui_scale, 150);
+        assert_eq!(read.shares.get("presets"), Some(&1.0));
+        assert_eq!(read.shares.get("history"), Some(&1.0));
+        assert_eq!(read.shares.get("folders"), Some(&0.5));
+        for text in [
+            r#"{"ui_scale": 150, "shares": [1, 2]}"#,
+            r#"{"ui_scale": 150, "shares": null}"#,
+            r#"{"ui_scale": 150, "shares": "even"}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert!(read.shares.is_empty(), "{text}");
         }
     }
 

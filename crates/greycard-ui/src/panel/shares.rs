@@ -1,0 +1,543 @@
+//! The left pane's lists' weights in sharing its height, kept between
+//! runs by section name. The sharing itself is the pane's layout's
+//! (`share-folders` in app.slint); this only reads the weights out for
+//! the settings file and puts them back at the start.
+
+use std::collections::BTreeMap;
+
+use crate::App;
+
+/// A sharing list, by the name the settings keep its weight under,
+/// with the panel's property for it.
+type Share = (&'static str, fn(&App) -> f32, fn(&App, f32));
+
+const SHARES: &[Share] = &[
+    ("folders", App::get_share_folders, App::set_share_folders),
+    (
+        "collections",
+        App::get_share_collections,
+        App::set_share_collections,
+    ),
+    ("presets", App::get_share_presets, App::set_share_presets),
+    (
+        "snapshots",
+        App::get_share_snapshots,
+        App::set_share_snapshots,
+    ),
+    ("history", App::get_share_history, App::set_share_history),
+];
+
+/// The weights the last run left; a list not named, or named with a
+/// weight that is no number or not above nothing, weighs one.
+pub(crate) fn show(app: &App, kept: &BTreeMap<String, f32>) {
+    for (name, _, set) in SHARES {
+        let w = kept
+            .get(*name)
+            .copied()
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .unwrap_or(1.0);
+        set(app, w);
+    }
+}
+
+/// The weights now, by name: only those not one, so a file whose
+/// lists were never dragged says nothing of them.
+pub(crate) fn read(app: &App) -> BTreeMap<String, f32> {
+    SHARES
+        .iter()
+        .map(|(name, get, _)| (name.to_string(), get(app)))
+        .filter(|(_, w)| *w != 1.0)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use slint::{ComponentHandle, ModelRc, VecModel};
+
+    use super::*;
+    use crate::testing::{click, drag, settle, window};
+    use crate::{CollectionChip, FolderRow, HistoryRow, PresetRow};
+
+    const SECTIONS: [&str; 4] = [
+        "folders-section",
+        "presets-section",
+        "snapshots-section",
+        "history-section",
+    ];
+
+    /// The Loupe's left pane with FOLDERS, PRESETS, SNAPSHOTS, and
+    /// HISTORY open, each with `rows` rows (PRESETS `presets`).
+    fn pane(rows: usize, presets: usize) -> App {
+        pane_folded(rows, presets, false)
+    }
+
+    /// [`pane`], PRESETS folded from the start when `folded`, as a
+    /// run whose settings fold it opens.
+    fn pane_folded(rows: usize, presets: usize, folded: bool) -> App {
+        let app = window(3);
+        app.set_collapsed_presets(folded);
+        let folders: Vec<FolderRow> = (0..rows)
+            .map(|i| FolderRow {
+                name: format!("folder {i}").into(),
+                path: format!("/nowhere/{i}").into(),
+                count: 3,
+                ..Default::default()
+            })
+            .collect();
+        app.set_folder_tree(ModelRc::new(VecModel::from(folders)));
+        app.set_folder_tree_shown(true);
+        let names: Vec<slint::SharedString> =
+            (0..presets).map(|i| format!("preset {i}").into()).collect();
+        let preset_rows: Vec<PresetRow> = (0..presets)
+            .map(|i| PresetRow {
+                text: format!("preset {i}").into(),
+                index: i as i32,
+                ..Default::default()
+            })
+            .collect();
+        app.set_preset_names(ModelRc::new(VecModel::from(names)));
+        app.set_preset_list_rows(ModelRc::new(VecModel::from(preset_rows)));
+        let snapshots: Vec<slint::SharedString> =
+            (0..rows).map(|i| format!("snapshot {i}").into()).collect();
+        app.set_snapshot_names(ModelRc::new(VecModel::from(snapshots)));
+        let history: Vec<HistoryRow> = (0..rows)
+            .map(|i| HistoryRow {
+                name: format!("step {i}").into(),
+                ..Default::default()
+            })
+            .collect();
+        app.set_history_rows(ModelRc::new(VecModel::from(history)));
+        settle(&app);
+        app
+    }
+
+    fn sized(app: &App, height: f32) {
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, height));
+        settle(app);
+        settle(app);
+    }
+
+    fn wheel(app: &App, dy: f32) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(8.0, 200.0),
+                delta_x: 0.0,
+                delta_y: dy,
+            });
+        settle(app);
+    }
+
+    /// A section's top and height in the window, the pane scrolled
+    /// down to it if need be (what is scrolled out of sight is not
+    /// found) and back to its top after.
+    fn section(app: &App, id: &str) -> (f32, f32) {
+        use i_slint_backend_testing::ElementHandle;
+        let find = || {
+            ElementHandle::find_by_element_id(app, &format!("App::{id}"))
+                .next()
+                .map(|e| (e.absolute_position().y, e.size().height))
+        };
+        let mut found = find();
+        let mut steps = 0;
+        while found.is_none() && steps < 40 {
+            wheel(app, -60.0);
+            found = find();
+            steps += 1;
+        }
+        if steps > 0 {
+            wheel(app, 10_000.0);
+        }
+        found.unwrap_or_else(|| panic!("{id} in the left pane"))
+    }
+
+    fn heights(app: &App) -> Vec<f32> {
+        SECTIONS.iter().map(|id| section(app, id).1).collect()
+    }
+
+    /// Each section's height past its floor, the window 1600 high:
+    /// against the same window 500 high, where every list is at its
+    /// floor and the pane scrolls.
+    fn growth(app: &App) -> Vec<f32> {
+        sized(app, 500.0);
+        let floors = heights(app);
+        sized(app, 1600.0);
+        heights(app)
+            .iter()
+            .zip(&floors)
+            .map(|(h, f)| h - f)
+            .collect()
+    }
+
+    fn near(a: f32, b: f32, said: &str) {
+        assert!((a - b).abs() <= 2.0, "{said}: {a} against {b}");
+    }
+
+    /// The middle of the gap above `id`'s section, in the left pane.
+    fn gap_above(app: &App, id: &str) -> (f32, f32) {
+        let (top, _) = section(app, id);
+        (100.0, top - 4.0)
+    }
+
+    #[test]
+    fn the_open_lists_share_the_pane_by_weight() {
+        let app = pane(60, 60);
+        let even = growth(&app);
+        assert!(even[0] > 40.0, "a tall window grows the lists: {even:?}");
+        for (g, id) in even.iter().zip(SECTIONS) {
+            near(*g, even[0], id);
+        }
+        // Twice the weight, twice the room past the floor.
+        app.set_share_presets(2.0);
+        let g = growth(&app);
+        near(g[1], 2.0 * g[0], "PRESETS at two");
+        near(g[2], g[0], "SNAPSHOTS at one");
+        near(g[3], g[0], "HISTORY at one");
+        // And the pane used as before: what PRESETS took, the others gave.
+        near(g.iter().sum(), even.iter().sum(), "the room shared");
+    }
+
+    #[test]
+    fn a_folded_list_gives_its_room_to_the_others() {
+        let app = pane(60, 60);
+        let open = growth(&app);
+        app.set_collapsed_snapshots(true);
+        app.set_collapsed_history(true);
+        settle(&app);
+        let g = growth(&app);
+        near(g[0], g[1], "FOLDERS and PRESETS share alike");
+        assert!(
+            g[0] > open[0] + 40.0,
+            "FOLDERS took SNAPSHOTS' and HISTORY's room: {g:?} against {open:?}"
+        );
+    }
+
+    #[test]
+    fn a_short_list_gives_back_what_it_does_not_need() {
+        let long = pane(60, 60);
+        let shared = growth(&long);
+        // Five presets: their whole list, and the rest to the others.
+        let app = pane(60, 5);
+        let g = growth(&app);
+        assert!(g[1] < shared[1], "PRESETS at its list: {g:?}");
+        near(g[0], g[2], "FOLDERS and SNAPSHOTS");
+        near(g[2], g[3], "SNAPSHOTS and HISTORY");
+        assert!(
+            g[0] > shared[0] + 20.0,
+            "PRESETS' spare went round: {g:?} against {shared:?}"
+        );
+    }
+
+    #[test]
+    fn a_drag_moves_room_and_its_weights_are_kept() {
+        let app = pane(60, 60);
+        sized(&app, 1600.0);
+        let before = heights(&app);
+        let (x, y) = gap_above(&app, "snapshots-section");
+        drag(&app, &[(x, y), (x, y + 30.0), (x, y + 60.0)]);
+        settle(&app);
+        let after = heights(&app);
+        near(after[1], before[1] + 60.0, "PRESETS took the drag");
+        near(after[2], before[2] - 60.0, "SNAPSHOTS gave it");
+        near(after[0], before[0], "FOLDERS kept its own");
+        near(after[3], before[3], "HISTORY kept its own");
+        // The division holds as the window changes: the two keep
+        // their ratio past their floors.
+        let g = growth(&app);
+        let (wp, ws) = (app.get_share_presets(), app.get_share_snapshots());
+        assert!(wp > 1.0 && ws < 1.0, "the weights moved: {wp} {ws}");
+        near(g[1] / g[0], wp, "PRESETS by its weight");
+
+        // Kept by name, and back at the next start.
+        let kept = crate::panel::startup::remember(&app).shares;
+        assert_eq!(kept.len(), 2, "only the dragged two: {kept:?}");
+        assert_eq!(kept.get("presets"), Some(&wp));
+        assert_eq!(kept.get("snapshots"), Some(&ws));
+        let next = window(3);
+        show(&next, &kept);
+        assert_eq!(next.get_share_presets(), wp);
+        assert_eq!(next.get_share_snapshots(), ws);
+        assert_eq!(next.get_share_history(), 1.0);
+        assert_eq!(read(&next), kept);
+    }
+
+    #[test]
+    fn a_double_click_on_a_gap_evens_its_two() {
+        let app = pane(60, 60);
+        sized(&app, 1600.0);
+        app.set_share_snapshots(3.0);
+        app.set_share_history(1.0);
+        settle(&app);
+        let (x, y) = gap_above(&app, "history-section");
+        click(&app, x, y);
+        click(&app, x, y);
+        settle(&app);
+        assert_eq!(app.get_share_snapshots(), 2.0);
+        assert_eq!(app.get_share_history(), 2.0);
+        assert_eq!(app.get_share_presets(), 1.0);
+    }
+
+    #[test]
+    fn a_short_window_scrolls_the_pane_with_every_list_at_its_floor() {
+        use i_slint_backend_testing::ElementHandle;
+        let app = pane(60, 60);
+        sized(&app, 500.0);
+        let floors = heights(&app);
+        sized(&app, 600.0);
+        // Still the floors: 600 is short of them too.
+        for ((h, f), id) in heights(&app).iter().zip(&floors).zip(SECTIONS) {
+            near(*h, *f, id);
+        }
+        // HISTORY is past the foot, out of sight, and the wheel over
+        // the pane brings it in.
+        let history = || ElementHandle::find_by_element_id(&app, "App::history-section").count();
+        assert_eq!(history(), 0, "HISTORY past the pane's foot");
+        for _ in 0..40 {
+            wheel(&app, -60.0);
+            if history() > 0 {
+                return;
+            }
+        }
+        panic!("the wheel never brought HISTORY in");
+    }
+
+    #[test]
+    fn the_librarys_folders_and_collections_share_alike() {
+        let app = pane(60, 0);
+        let chips: Vec<CollectionChip> = (0..60)
+            .map(|i| CollectionChip {
+                id: format!("c{i}").into(),
+                name: format!("collection {i}").into(),
+                ..Default::default()
+            })
+            .collect();
+        app.set_collections(ModelRc::new(VecModel::from(chips)));
+        app.set_grid_open(true);
+        settle(&app);
+        let ids = ["folders-section", "collections-section"];
+        let measure = |app: &App| -> Vec<f32> { ids.iter().map(|id| section(app, id).1).collect() };
+        sized(&app, 500.0);
+        let floors = measure(&app);
+        sized(&app, 1600.0);
+        let tall = measure(&app);
+        let (gf, gc) = (tall[0] - floors[0], tall[1] - floors[1]);
+        assert!(gf > 100.0, "FOLDERS grew: {gf}");
+        near(gf, gc, "COLLECTIONS as FOLDERS");
+        // Their gap is a drag too.
+        let (x, y) = gap_above(&app, "collections-section");
+        drag(&app, &[(x, y), (x, y - 40.0)]);
+        settle(&app);
+        let moved = measure(&app);
+        near(moved[0], tall[0] - 40.0, "FOLDERS gave");
+        near(moved[1], tall[1] + 40.0, "COLLECTIONS took");
+    }
+
+    /// Each section's height at the floors, the window 500 high, and
+    /// the pane back at 1600.
+    fn floors(app: &App) -> Vec<f32> {
+        sized(app, 500.0);
+        let f = heights(app);
+        sized(app, 1600.0);
+        f
+    }
+
+    /// The fold's clock moved on by `ms`, and the frame drawn.
+    fn after(app: &App, ms: u64) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+        slint::platform::update_timers_and_animations();
+    }
+
+    #[test]
+    fn a_grown_list_folds_from_its_share_and_opens_back_to_it() {
+        let app = pane(60, 60);
+        let floor = floors(&app);
+        let open = heights(&app);
+        assert!(
+            open[1] > floor[1] + 60.0,
+            "PRESETS grown: {open:?} {floor:?}"
+        );
+        let neighbors = |h: &[f32]| h[0] + h[2] + h[3];
+
+        app.set_collapsed_presets(true);
+        after(&app, 0);
+        after(&app, 10);
+        let mid = heights(&app);
+        assert!(
+            mid[1] < open[1] && mid[1] > floor[1] + 20.0,
+            "folding from its share, not its floor: {} from {} (floor {})",
+            mid[1],
+            open[1],
+            floor[1]
+        );
+        // What it gave, the others took, and no more: no jump.
+        near(
+            neighbors(&mid) - neighbors(&open),
+            open[1] - mid[1],
+            "the neighbors grew by what PRESETS gave",
+        );
+        settle(&app);
+        settle(&app);
+        let folded = heights(&app);
+        assert!(folded[1] < floor[1], "folded: {folded:?}");
+
+        app.set_collapsed_presets(false);
+        after(&app, 0);
+        after(&app, 10);
+        let opening = heights(&app);
+        assert!(
+            opening[1] > folded[1] && opening[1] < open[1],
+            "opening: {} between {} and {}",
+            opening[1],
+            folded[1],
+            open[1]
+        );
+        near(
+            neighbors(&folded) - neighbors(&opening),
+            opening[1] - folded[1],
+            "the neighbors gave what PRESETS took",
+        );
+        settle(&app);
+        settle(&app);
+        let back = heights(&app);
+        for ((b, o), id) in back.iter().zip(&open).zip(SECTIONS) {
+            near(*b, *o, id);
+        }
+    }
+
+    /// PRESETS opened, frame by frame: its height at each step of the
+    /// fold's 120 ms, the last at its end.
+    fn opening(app: &App) -> Vec<f32> {
+        app.set_collapsed_presets(false);
+        after(app, 0);
+        (0..12)
+            .map(|_| {
+                after(app, 10);
+                heights(app)[1]
+            })
+            .collect()
+    }
+
+    /// The last steps of an opening are small and its end is where the
+    /// pane settles: no step at the hand-over to the layout.
+    fn lands_without_a_step(app: &App, steps: &[f32], said: &str) {
+        let n = steps.len();
+        assert!(
+            (steps[n - 1] - steps[n - 2]).abs() < 10.0,
+            "{said}: a step at the end, {steps:?}"
+        );
+        settle(app);
+        settle(app);
+        near(heights(app)[1], steps[n - 1], said);
+        assert!(
+            (heights(app)[1] - steps[n - 1]).abs() <= 1.0,
+            "{said}: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn an_opening_lands_on_the_share_the_pane_has_now() {
+        // Folded on a short window, opened on a tall one: the share it
+        // opens to is not the one it folded from.
+        let app = pane(60, 60);
+        sized(&app, 900.0);
+        app.set_collapsed_presets(true);
+        settle(&app);
+        settle(&app);
+        sized(&app, 1600.0);
+        let steps = opening(&app);
+        lands_without_a_step(&app, &steps, "reopened after a resize");
+
+        // Folded from the start, never open, opened on a tall window:
+        // it lands on its share, not its floor.
+        let share = {
+            let open = pane(60, 60);
+            sized(&open, 1600.0);
+            heights(&open)[1]
+        };
+        let app = pane_folded(60, 60, true);
+        sized(&app, 1600.0);
+        let steps = opening(&app);
+        lands_without_a_step(&app, &steps, "first opened");
+        near(steps[steps.len() - 1], share, "its share");
+    }
+
+    #[test]
+    fn a_drag_that_moves_nothing_writes_nothing() {
+        // Every list short of a tall window's share: all at their
+        // ceilings, so the gap has nowhere to go.
+        let app = pane(5, 5);
+        sized(&app, 1600.0);
+        let before = heights(&app);
+        let (x, y) = gap_above(&app, "snapshots-section");
+        drag(&app, &[(x, y), (x, y + 20.0), (x, y - 20.0), (x, y + 40.0)]);
+        settle(&app);
+        assert!(read(&app).is_empty(), "{:?}", read(&app));
+        for ((a, b), id) in heights(&app).iter().zip(&before).zip(SECTIONS) {
+            near(*a, *b, id);
+        }
+        // And a press with a jiggle back to where it was, on lists
+        // that could move.
+        let app = pane(60, 60);
+        sized(&app, 1600.0);
+        let (x, y) = gap_above(&app, "snapshots-section");
+        drag(&app, &[(x, y), (x, y + 3.0), (x, y)]);
+        settle(&app);
+        assert!(read(&app).is_empty(), "{:?}", read(&app));
+    }
+
+    #[test]
+    fn a_drag_stops_at_a_ceiling_and_at_a_floor() {
+        // Five presets, at their whole list: a drag down would grow
+        // them past it, and moves nothing.
+        let app = pane(60, 5);
+        sized(&app, 1600.0);
+        let before = heights(&app);
+        let (x, y) = gap_above(&app, "snapshots-section");
+        drag(&app, &[(x, y), (x, y + 40.0)]);
+        settle(&app);
+        near(heights(&app)[1], before[1], "PRESETS at its ceiling");
+        assert!(read(&app).is_empty(), "{:?}", read(&app));
+        // Up, it gives SNAPSHOTS the room.
+        drag(&app, &[(x, y), (x, y - 20.0)]);
+        settle(&app);
+        let up = heights(&app);
+        near(up[1], before[1] - 20.0, "PRESETS gave");
+        near(up[2], before[2] + 20.0, "SNAPSHOTS took");
+
+        // Long lists, dragged far past PRESETS's floor: held there.
+        let app = pane(60, 60);
+        let floor = floors(&app);
+        let before = heights(&app);
+        let (x, y) = gap_above(&app, "snapshots-section");
+        drag(&app, &[(x, y), (x, y - 2000.0)]);
+        settle(&app);
+        let after = heights(&app);
+        near(after[1], floor[1], "PRESETS at its floor");
+        near(
+            after[2],
+            before[2] + (before[1] - floor[1]),
+            "SNAPSHOTS took all PRESETS had past it",
+        );
+        assert_eq!(app.get_share_presets(), 0.01);
+    }
+
+    #[test]
+    fn weights_not_numbers_read_as_one() {
+        let app = window(1);
+        let kept: BTreeMap<String, f32> = [
+            ("presets".to_string(), f32::NAN),
+            ("history".to_string(), -2.0),
+            ("folders".to_string(), 0.25),
+        ]
+        .into();
+        show(&app, &kept);
+        assert_eq!(app.get_share_presets(), 1.0);
+        assert_eq!(app.get_share_history(), 1.0);
+        assert_eq!(app.get_share_folders(), 0.25);
+        assert_eq!(read(&app), [("folders".to_string(), 0.25)].into());
+    }
+}

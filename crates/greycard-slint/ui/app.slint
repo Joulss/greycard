@@ -9,7 +9,7 @@ import { Palette } from "std-widgets.slint";
 import { Theme, ScrollBars } from "theme.slint";
 // The theme's name is read on the Rust side's tests.
 export { Theme, ScrollBars } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys } from "controls.slint";
 import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow } from "structs.slint";
@@ -1306,6 +1306,123 @@ export component App inherits Window {
     callback history-reset();
     in-out property <bool> collapsed-snapshots: false;
     in-out property <bool> collapsed-history: false;
+    /// The left pane's lists, FOLDERS, COLLECTIONS, PRESETS, SNAPSHOTS,
+    /// and HISTORY, share the room the pane has after its fixed parts
+    /// by these weights. Each list's box is held to three rows (or its
+    /// list, when shorter) and to its whole list; the room past the
+    /// floors goes to the open ones by weight, and what one gives back
+    /// under its ceiling goes round again to the others: the pane's
+    /// layout does it by stretch. Dragging the gap between two open
+    /// lists sets their two weights; a double-click there evens them.
+    /// Kept in the settings by section name (`panel::shares`).
+    in-out property <float> share-folders: 1;
+    in-out property <float> share-collections: 1;
+    in-out property <float> share-presets: 1;
+    in-out property <float> share-snapshots: 1;
+    in-out property <float> share-history: 1;
+    // As laid out now, by list (folders 0, collections 1, presets 2,
+    // snapshots 3, history 4): how far each has grown past its floor,
+    // and how much further its list would let it.
+    property <length> grown-folders;
+    property <length> grown-collections;
+    property <length> grown-presets;
+    property <length> grown-snapshots;
+    property <length> grown-history;
+    property <length> room-folders;
+    property <length> room-collections;
+    property <length> room-presets;
+    property <length> room-snapshots;
+    property <length> room-history;
+    pure function share-of(i: int) -> float {
+        return i == 0 ? root.share-folders : i == 1 ? root.share-collections
+            : i == 2 ? root.share-presets : i == 3 ? root.share-snapshots : root.share-history;
+    }
+    function share-set(i: int, w: float) {
+        if (i == 0) { root.share-folders = w; }
+        else if (i == 1) { root.share-collections = w; }
+        else if (i == 2) { root.share-presets = w; }
+        else if (i == 3) { root.share-snapshots = w; }
+        else { root.share-history = w; }
+    }
+    pure function grown-of(i: int) -> length {
+        return i == 0 ? root.grown-folders : i == 1 ? root.grown-collections
+            : i == 2 ? root.grown-presets : i == 3 ? root.grown-snapshots : root.grown-history;
+    }
+    pure function room-of(i: int) -> length {
+        return i == 0 ? root.room-folders : i == 1 ? root.room-collections
+            : i == 2 ? root.room-presets : i == 3 ? root.room-snapshots : root.room-history;
+    }
+    function share-laid(i: int, grown: length, room: length) {
+        if (i == 0) { root.grown-folders = grown; root.room-folders = room; }
+        else if (i == 1) { root.grown-collections = grown; root.room-collections = room; }
+        else if (i == 2) { root.grown-presets = grown; root.room-presets = room; }
+        else if (i == 3) { root.grown-snapshots = grown; root.room-snapshots = room; }
+        else { root.grown-history = grown; root.room-history = room; }
+    }
+    // Raised as a drag starts: each list then says how it lies, by
+    // the next event, which is when the drag reads it.
+    property <int> share-ask;
+    property <bool> share-pending;
+    // The drag under way: the list above the gap and the one below,
+    // how they stood at the press, and the room a weight of one comes
+    // to, read from one of the two still short of its ceiling, which
+    // grows by its weight.
+    property <int> share-a;
+    property <int> share-b;
+    property <length> share-ga;
+    property <length> share-gb;
+    property <length> share-ra;
+    property <length> share-rb;
+    property <length> share-k;
+    property <float> share-wa;
+    property <float> share-wb;
+    function share-press(a: int, b: int) {
+        root.share-a = a;
+        root.share-b = b;
+        root.share-pending = true;
+        root.share-ask += 1;
+    }
+    function share-start() {
+        let a = root.share-a;
+        let b = root.share-b;
+        root.share-pending = false;
+        root.share-ga = max(0px, root.grown-of(a));
+        root.share-gb = max(0px, root.grown-of(b));
+        root.share-ra = max(0px, root.room-of(a));
+        root.share-rb = max(0px, root.room-of(b));
+        let wa = root.share-of(a);
+        let wb = root.share-of(b);
+        root.share-wa = wa;
+        root.share-wb = wb;
+        root.share-k = root.share-ra > 0.5px && wa > 0 ? root.share-ga / wa
+            : root.share-rb > 0.5px && wb > 0 ? root.share-gb / wb
+            : wa + wb > 0 ? (root.share-ga + root.share-gb) / (wa + wb) : 0px;
+    }
+    // The gap moved `d` since the press: the list above takes it from
+    // the one below (or gives it), each held between its floor and its
+    // ceiling, and the two weights are set to the heights that result,
+    // so the others keep theirs and the division holds as the window
+    // changes. A weight never goes quite to nothing, so a list dragged
+    // down to its floor can be dragged back. A drag that moves nothing,
+    // the two at their ceilings or floors or the pointer back where it
+    // pressed, leaves the weights as they were at the press.
+    function share-drag(d: length) {
+        if (root.share-pending) { root.share-start(); }
+        if (root.share-k <= 0px) { return; }
+        let dy = clamp(d, max(-root.share-ga, -root.share-rb), min(root.share-ra, root.share-gb));
+        if (abs(dy) < 0.5px) {
+            root.share-set(root.share-a, root.share-wa);
+            root.share-set(root.share-b, root.share-wb);
+            return;
+        }
+        root.share-set(root.share-a, max(0.01, (root.share-ga + dy) / root.share-k));
+        root.share-set(root.share-b, max(0.01, (root.share-gb - dy) / root.share-k));
+    }
+    function share-even(a: int, b: int) {
+        let w = (root.share-of(a) + root.share-of(b)) / 2;
+        root.share-set(a, w);
+        root.share-set(b, w);
+    }
     /// Paint the capture sharpening's blend mask over the picture.
     in-out property <bool> show-sharpen-mask: false;
     in-out property <string> placing: "";
@@ -4557,27 +4674,33 @@ export component App inherits Window {
         }
         // The sections scroll; Settings and Report stay put
         // beneath them, as the develop panel does on the
-        // right. Presets, Snapshots and History each cap
-        // their own list, and the navigator is just one
-        // thumbnail, held to the pane's width — nothing here
-        // is unbounded on its own, but their sum, on a small
-        // or high-DPI screen, still could be. A ScrollPane
+        // right. The lists share the pane's height (see
+        // `share-folders`), each held to three rows at
+        // least, and the navigator is just one thumbnail,
+        // held to the pane's width — so the pane scrolls only
+        // when the floors alone outrun it, on a short or
+        // high-DPI screen. A ScrollPane
         // never passes its content's size up to its parent,
         // so nothing here can raise the window's minimum
         // height past the screen's (see the note above about
         // Windows leaving fullscreen).
         ScrollPane {
             VerticalLayout {
-                alignment: start;
+                // Stretched, so the lists take the room; all else
+                // here keeps its height (a stretch of none), and the
+                // room the lists leave goes to the foot below them.
                 padding: Theme.space-4;
                 // Clear of the scroll bar's band, however wide it is.
                 padding-right: max(Theme.space-4, ScrollBars.band + 2px);
                 padding-top: Theme.space-2;
+                // The foot's own gap makes up the rest.
+                padding-bottom: Theme.space-4 - Theme.space-2;
                 spacing: Theme.space-2;
                 // The frame's, and so the loupe's alone: first, so
                 // it keeps the pane's top left corner whatever the
                 // folder sections below it hold.
                 if !root.grid-open: navigator-section := NavigatorSection {
+                    vertical-stretch: 0;
                     zoom-text: root.zoom-text;
                     collapsed-navigator <=> root.collapsed-navigator;
                     navigator: root.navigator;
@@ -4593,6 +4716,7 @@ export component App inherits Window {
                 // The button, and under it the folder it
                 // opened, which offers the ones before it.
                 VerticalLayout {
+                    vertical-stretch: 0;
                     spacing: 2px;
                     PanelButton {
                         text: "Open folder...";
@@ -4643,6 +4767,7 @@ export component App inherits Window {
                 // it runs its progress under it: the grid covers the
                 // status plate. Ctrl+Shift+I reaches the same sheet.
                 if root.grid-open: VerticalLayout {
+                    vertical-stretch: 0;
                     spacing: 2px;
                     // One button for the ways in: a click opens a menu
                     // of them. While a card import runs it is that
@@ -4696,6 +4821,7 @@ export component App inherits Window {
                 }
                 // The library's roots, with the grid: a row a root.
                 if root.grid-open: RootsSection {
+                    vertical-stretch: 0;
                     roots: root.library-roots;
                     all-on: root.library-all-on;
                     all-count: root.library-all-count;
@@ -4716,37 +4842,81 @@ export component App inherits Window {
                     tip(t, x, y) => { root.tip-at(t, x, y); }
                 }
                 // The open root's folders, from the index.
-                if root.folder-tree-shown: folders-section := FoldersSection {
-                    rows: root.folder-tree;
-                    subfolders <=> root.folder-tree-subfolders;
-                    collapsed-folders <=> root.collapsed-folders;
-                    animated <=> root.folders-animated;
-                    picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
-                    folded(p) => { root.folder-tree-folded(p); }
-                    subfolders-changed => { root.folder-tree-subfolders-changed(); }
-                    focus-keys => { keys.focus(); }
+                // Its share of the pane's height (see `share-folders`):
+                // the section's own bounds, its weight, how it lies now.
+                if root.folder-tree-shown: Rectangle {
+                    min-height: folders-section.min-height;
+                    preferred-height: folders-section.preferred-height;
+                    max-height: folders-section.max-height;
+                    min-width: folders-section.min-width;
+                    preferred-width: folders-section.preferred-width;
+                    vertical-stretch: root.share-folders;
+                    property <length> grown: self.height - folders-section.preferred-height;
+                    property <length> room: folders-section.max-height - self.height;
+                    // Told only when a drag asks: a handler on the height
+                    // itself would lay the section out as it is made, and
+                    // its fold would then move as its list first fills.
+                    property <int> asked: root.share-ask;
+                    changed asked => { root.share-laid(0, self.grown, self.room); }
+                    folders-section := FoldersSection {
+                        rows: root.folder-tree;
+                        subfolders <=> root.folder-tree-subfolders;
+                        collapsed-folders <=> root.collapsed-folders;
+                        animated <=> root.folders-animated;
+                        picked(p) => { root.commit-title(); root.folder-tree-picked(p); }
+                        folded(p) => { root.folder-tree-folded(p); }
+                        subfolders-changed => { root.folder-tree-subfolders-changed(); }
+                        focus-keys => { keys.focus(); }
+                    }
                 }
                 // The collections, beside the roots and the folders.
-                if root.grid-open: CollectionsSection {
-                    collections: root.collections;
-                    ctrl-click-menu: root.ctrl-click-menu;
-                    collapsed-collections <=> root.collapsed-collections;
-                    picked(id) => { root.commit-title(); root.collection-picked(id); }
-                    rename(id) => { root.collection-rename(id); }
-                    delete(id) => { root.collection-delete(id); }
-                    capture-toggled(id) => { root.collection-capture(id); }
-                    forget-missing(id) => { root.collection-forget-missing(id); }
-                    forgettable(id) => { return root.collection-forgettable(id); }
-                    add => { root.collection-new(); }
-                    focus-keys => { keys.focus(); }
-                    menu-done => { root.menu-done(); }
-                    menu-shown => { return root.menu-shown(); }
+                // Its share of the pane's height (see `share-folders`):
+                // the section's own bounds, its weight, how it lies now.
+                if root.grid-open: Rectangle {
+                    min-height: collections-section.min-height;
+                    preferred-height: collections-section.preferred-height;
+                    max-height: collections-section.max-height;
+                    min-width: collections-section.min-width;
+                    preferred-width: collections-section.preferred-width;
+                    vertical-stretch: root.share-collections;
+                    property <length> grown: self.height - collections-section.preferred-height;
+                    property <length> room: collections-section.max-height - self.height;
+                    // Told only when a drag asks: a handler on the height
+                    // itself would lay the section out as it is made, and
+                    // its fold would then move as its list first fills.
+                    property <int> asked: root.share-ask;
+                    changed asked => { root.share-laid(1, self.grown, self.room); }
+                    collections-section := CollectionsSection {
+                        collections: root.collections;
+                        ctrl-click-menu: root.ctrl-click-menu;
+                        collapsed-collections <=> root.collapsed-collections;
+                        picked(id) => { root.commit-title(); root.collection-picked(id); }
+                        rename(id) => { root.collection-rename(id); }
+                        delete(id) => { root.collection-delete(id); }
+                        capture-toggled(id) => { root.collection-capture(id); }
+                        forget-missing(id) => { root.collection-forget-missing(id); }
+                        forgettable(id) => { return root.collection-forgettable(id); }
+                        add => { root.collection-new(); }
+                        focus-keys => { keys.focus(); }
+                        menu-done => { root.menu-done(); }
+                        menu-shown => { return root.menu-shown(); }
+                    }
+                    // The gap above, to the list there, when both are open.
+                    if root.folder-tree-shown && !root.collapsed-folders && !root.collapsed-collections: DragEdge {
+                        y: -Theme.space-2;
+                        width: 100%;
+                        height: Theme.space-2;
+                        started => { root.share-press(0, 1); }
+                        dragged(d) => { root.share-drag(d); }
+                        evened => { root.share-even(0, 1); }
+                    }
                 }
                 // The frames waiting to be exported, a listing of their
                 // own: below the collections rather than among the
                 // roots, since it is no folder, and in no section, so
                 // folding one never hides the one way into its view.
                 if root.grid-open: RootRow {
+                    vertical-stretch: 0;
                     text: "Export queue";
                     count: root.queue-view-count;
                     on: root.queue-view-on;
@@ -4759,6 +4929,7 @@ export component App inherits Window {
                 // the roots, folders and collections, which say where
                 // the user is; this says what is chosen there.
                 if root.grid-open: MetaSection {
+                    vertical-stretch: 0;
                     frame-meta-on: root.frame-meta-on;
                     frame-title: root.frame-title;
                     frame-title-mixed: root.frame-title-mixed;
@@ -4781,69 +4952,150 @@ export component App inherits Window {
                 // bin removes it, and the edit is saved or a
                 // Lightroom preset brought in below the list. Not
                 // in culling, as the snapshots and the history.
-                if !root.cull-mode && !root.grid-open && !root.frozen: PresetsSection {
-                    selected <=> root.selected;
-                    collapsed-presets <=> root.collapsed-presets;
-                    preset-names <=> root.preset-names;
-                    rows: root.preset-list-rows;
-                    groups: root.preset-groups;
-                    ctrl-click-menu: root.ctrl-click-menu;
-                    favorite-toggled(i) => { root.preset-favorite-toggled(i); }
-                    fold-toggled(k) => { root.preset-fold-toggled(k); }
-                    // A pick from the Move to group sub-menu, New group...
-                    // too, as the frame menu's New collection...: two
-                    // popups close at once, and `menu-done` gives the keys
-                    // back.
-                    moved(i, g) => { root.preset-moved(i, g); root.menu-done(); }
-                    ungrouped(i) => { root.preset-ungrouped(i); }
-                    // Rename group... is the top menu's: its sheet takes
-                    // the focus itself, which `menu-done`'s timer would
-                    // take back.
-                    group-rename(g) => {
-                        root.preset-group-rename(g);
-                        if (!root.preset-group-sheet-open) { root.menu-done(); }
+                // Its share of the pane's height (see `share-folders`):
+                // the section's own bounds, its weight, how it lies now.
+                if !root.cull-mode && !root.grid-open && !root.frozen: Rectangle {
+                    min-height: presets-section.min-height;
+                    preferred-height: presets-section.preferred-height;
+                    max-height: presets-section.max-height;
+                    min-width: presets-section.min-width;
+                    preferred-width: presets-section.preferred-width;
+                    vertical-stretch: root.share-presets;
+                    property <length> grown: self.height - presets-section.preferred-height;
+                    property <length> room: presets-section.max-height - self.height;
+                    // Told only when a drag asks: a handler on the height
+                    // itself would lay the section out as it is made, and
+                    // its fold would then move as its list first fills.
+                    property <int> asked: root.share-ask;
+                    changed asked => { root.share-laid(2, self.grown, self.room); }
+                    presets-section := PresetsSection {
+                        selected <=> root.selected;
+                        collapsed-presets <=> root.collapsed-presets;
+                        preset-names <=> root.preset-names;
+                        rows: root.preset-list-rows;
+                        groups: root.preset-groups;
+                        ctrl-click-menu: root.ctrl-click-menu;
+                        favorite-toggled(i) => { root.preset-favorite-toggled(i); }
+                        fold-toggled(k) => { root.preset-fold-toggled(k); }
+                        // A pick from the Move to group sub-menu, New group...
+                        // too, as the frame menu's New collection...: two
+                        // popups close at once, and `menu-done` gives the keys
+                        // back.
+                        moved(i, g) => { root.preset-moved(i, g); root.menu-done(); }
+                        ungrouped(i) => { root.preset-ungrouped(i); }
+                        // Rename group... is the top menu's: its sheet takes
+                        // the focus itself, which `menu-done`'s timer would
+                        // take back.
+                        group-rename(g) => {
+                            root.preset-group-rename(g);
+                            if (!root.preset-group-sheet-open) { root.menu-done(); }
+                        }
+                        focus-keys => { keys.focus(); }
+                        menu-done => { root.menu-done(); }
+                        menu-shown => { return root.menu-shown(); }
+                        confirm-remove <=> root.preset-confirm-remove;
+                        preset-applied(a) => { root.preset-applied(a); }
+                        preset-deleted(a) => { root.preset-deleted(a); }
+                        preset-import => { root.preset-import(); }
+                        preset-save-open => { root.preset-save-open(); }
+                        set-count: root.set-count;
+                        sync-open-asked => { root.sync-open-asked(); }
                     }
-                    focus-keys => { keys.focus(); }
-                    menu-done => { root.menu-done(); }
-                    menu-shown => { return root.menu-shown(); }
-                    confirm-remove <=> root.preset-confirm-remove;
-                    preset-applied(a) => { root.preset-applied(a); }
-                    preset-deleted(a) => { root.preset-deleted(a); }
-                    preset-import => { root.preset-import(); }
-                    preset-save-open => { root.preset-save-open(); }
-                    set-count: root.set-count;
-                    sync-open-asked => { root.sync-open-asked(); }
+                    // The gap above, to the list there, when both are open.
+                    if root.folder-tree-shown && !root.collapsed-folders && !root.collapsed-presets: DragEdge {
+                        y: -Theme.space-2;
+                        width: 100%;
+                        height: Theme.space-2;
+                        started => { root.share-press(0, 2); }
+                        dragged(d) => { root.share-drag(d); }
+                        evened => { root.share-even(0, 2); }
+                    }
                 }
                 // The snapshots: whole states kept by name. A
                 // click restores one as a step; a double-click
                 // renames it; the bin removes it.
                 // Not in culling, where the panel is not the
                 // frame's and a step is the way out of the mode.
-                if !root.cull-mode && !root.grid-open && !root.frozen: SnapshotsSection {
-                    selected <=> root.selected;
-                    snapshot-names <=> root.snapshot-names;
-                    snapshot-editing <=> root.snapshot-editing;
-                    snapshot-taken => { root.snapshot-taken(); }
-                    snapshot-restored(a) => { root.snapshot-restored(a); }
-                    snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
-                    snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
-                    snapshot-deleted(a) => { root.snapshot-deleted(a); }
-                    collapsed-snapshots <=> root.collapsed-snapshots;
+                // Its share of the pane's height (see `share-folders`):
+                // the section's own bounds, its weight, how it lies now.
+                if !root.cull-mode && !root.grid-open && !root.frozen: Rectangle {
+                    min-height: snapshots-section.min-height;
+                    preferred-height: snapshots-section.preferred-height;
+                    max-height: snapshots-section.max-height;
+                    min-width: snapshots-section.min-width;
+                    preferred-width: snapshots-section.preferred-width;
+                    vertical-stretch: root.share-snapshots;
+                    property <length> grown: self.height - snapshots-section.preferred-height;
+                    property <length> room: snapshots-section.max-height - self.height;
+                    // Told only when a drag asks: a handler on the height
+                    // itself would lay the section out as it is made, and
+                    // its fold would then move as its list first fills.
+                    property <int> asked: root.share-ask;
+                    changed asked => { root.share-laid(3, self.grown, self.room); }
+                    snapshots-section := SnapshotsSection {
+                        selected <=> root.selected;
+                        snapshot-names <=> root.snapshot-names;
+                        snapshot-editing <=> root.snapshot-editing;
+                        snapshot-taken => { root.snapshot-taken(); }
+                        snapshot-restored(a) => { root.snapshot-restored(a); }
+                        snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
+                        snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
+                        snapshot-deleted(a) => { root.snapshot-deleted(a); }
+                        collapsed-snapshots <=> root.collapsed-snapshots;
+                    }
+                    // The gap above, to the list there, when both are open.
+                    if !root.collapsed-presets && !root.collapsed-snapshots: DragEdge {
+                        y: -Theme.space-2;
+                        width: 100%;
+                        height: Theme.space-2;
+                        started => { root.share-press(2, 3); }
+                        dragged(d) => { root.share-drag(d); }
+                        evened => { root.share-even(2, 3); }
+                    }
                 }
                 // The history: every step, newest first, the
                 // current one lit and the undone ones muted. A
                 // click makes a step current; what lies past it
                 // stays until the next change.
-                if !root.cull-mode && !root.grid-open && !root.frozen: HistorySection {
-                    history-rows <=> root.history-rows;
-                    hint: root.history-version;
-                    history-current <=> root.history-current;
-                    history-clicked(a) => { root.history-clicked(a); }
-                    history-hovered(a) => { root.history-hovered(a); }
-                    resettable: root.history-resettable;
-                    reset-asked => { root.history-reset(); }
-                    collapsed-history <=> root.collapsed-history;
+                // Its share of the pane's height (see `share-folders`):
+                // the section's own bounds, its weight, how it lies now.
+                if !root.cull-mode && !root.grid-open && !root.frozen: Rectangle {
+                    min-height: history-section.min-height;
+                    preferred-height: history-section.preferred-height;
+                    max-height: history-section.max-height;
+                    min-width: history-section.min-width;
+                    preferred-width: history-section.preferred-width;
+                    vertical-stretch: root.share-history;
+                    property <length> grown: self.height - history-section.preferred-height;
+                    property <length> room: history-section.max-height - self.height;
+                    // Told only when a drag asks: a handler on the height
+                    // itself would lay the section out as it is made, and
+                    // its fold would then move as its list first fills.
+                    property <int> asked: root.share-ask;
+                    changed asked => { root.share-laid(4, self.grown, self.room); }
+                    history-section := HistorySection {
+                        history-rows <=> root.history-rows;
+                        hint: root.history-version;
+                        history-current <=> root.history-current;
+                        history-clicked(a) => { root.history-clicked(a); }
+                        history-hovered(a) => { root.history-hovered(a); }
+                        resettable: root.history-resettable;
+                        reset-asked => { root.history-reset(); }
+                        collapsed-history <=> root.collapsed-history;
+                    }
+                    // The gap above, to the list there, when both are open.
+                    if !root.collapsed-snapshots && !root.collapsed-history: DragEdge {
+                        y: -Theme.space-2;
+                        width: 100%;
+                        height: Theme.space-2;
+                        started => { root.share-press(3, 4); }
+                        dragged(d) => { root.share-drag(d); }
+                        evened => { root.share-even(3, 4); }
+                    }
                 }
+                // The room the lists leave, at the foot: the least of
+                // stretches, so it takes only what none of them can.
+                Rectangle { vertical-stretch: 0.0001; }
             }
         }
         VerticalLayout {

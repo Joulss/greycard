@@ -24,6 +24,7 @@ export component FoldersSection inherits Section {
     title: "FOLDERS";
     icon: @image-url("../icons/folder-open.svg");
     collapsed <=> root.collapsed-folders;
+    shares: true;
     Toggle {
         label: "With subfolders";
         checked <=> root.subfolders;
@@ -34,12 +35,14 @@ export component FoldersSection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        // As the history's box: the list's height up to 320 px, the
-        // rest a scroll away, so a root of a thousand folders never
-        // pushes the pane past the window.
-        preferred-height: min(folder-list.preferred-height, 320px);
-        max-height: self.preferred-height;
-        min-height: min(folder-list.preferred-height, 3 * (Theme.control-height - 6px) + 4px);
+        // Three rows, or the list when shorter, and as much more of the
+        // list as the pane's share gives it (app.slint), the rest a
+        // scroll away, so a root of a thousand folders never pushes
+        // the pane past the window.
+        property <length> floor: min(folder-list.preferred-height, 3 * (Theme.control-height - 8px) + 6px);
+        preferred-height: self.floor;
+        min-height: self.floor;
+        max-height: folder-list.preferred-height;
         vertical-stretch: 1;
         folder-pane := ScrollPane {
             folder-list := VerticalLayout {
