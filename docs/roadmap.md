@@ -170,12 +170,15 @@ the reasoning lives in `docs/notes.md`.
       and the grid's file names, the Develop panel's header, and the
       folder tree, on the hover text layer the roots list already uses
       (§311) (issue 88, 2026-11-07)
+- [ ] The NOISE section's chroma denoiser on a picture: it works on
+      RGB where the learned tier wants a mosaic, so a JPEG could have
+      it; the section says "raw only" today (§602, 2026-11-07)
 
 ## Next
 
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
-- [ ] White balance (and maybe other adjustments) still available on JPG
+- [ ] White balance on a picture (§602)
 - [ ] Resizeable panes and panels inside them (issue 79), and the
       Develop panel's sections told apart (issue 80)
 - [ ] i18n (issue 75)
