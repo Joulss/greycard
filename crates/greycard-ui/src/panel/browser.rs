@@ -2459,6 +2459,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.develop.edit = edit;
         st.views.panel_stand_in = Some(file.clone());
         st.current = Some(i);
+        crate::panel::edit::show_white(st, &st.develop.edit, app);
         st.develop.generation += 1;
         app.set_selected(row);
         show_file_name(st, app, Some(&file));
@@ -2556,6 +2557,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // develop says which way up it stands (`crop::start_landed`).
     st.develop.crop_start_due = app.get_crop_mode();
     st.current = Some(i);
+    crate::panel::edit::show_white(st, &st.develop.edit, app);
     st.develop.generation += 1;
     // The key's moment, until the frame that shows this
     // frame: the log's line, and `--time-select`.

@@ -2168,4 +2168,82 @@ mod tests {
             }
         }
     }
+
+    /// A sixteen-bit PNG, sRGB with no profile, of a soft gradient and a
+    /// grey patch: a picture that is not a raw.
+    fn png(path: &Path, width: u32, height: u32) {
+        let px = image::ImageBuffer::from_fn(width, height, |x, y| {
+            if x < width / 4 && y < height / 4 {
+                image::Rgb([30000u16, 30000, 30000])
+            } else {
+                image::Rgb([
+                    (x * 65535 / width) as u16,
+                    (y * 65535 / height) as u16,
+                    ((x + y) * 65535 / (width + height)) as u16,
+                ])
+            }
+        });
+        image::DynamicImage::ImageRgb16(px).save(path).unwrap();
+    }
+
+    /// The identity on a picture with a white balance offset: the
+    /// window's export and the command line's are one file but for the
+    /// moment of writing, and the offset reached both, the grey patch
+    /// warmer than the picture at As shot makes it.
+    #[test]
+    fn a_pictures_offset_exports_alike_from_the_window_and_the_command_line() {
+        let scratch = Scratch::new("picture-white");
+        let source = scratch.0.join("frame.png");
+        png(&source, 240, 160);
+        let mut sidecar = Sidecar {
+            line: greycard_edit::Line::of(Edit::for_picture()),
+            ..Sidecar::default()
+        };
+        sidecar.current.white_balance = WhiteBalance::Offset {
+            mired: 40.0,
+            tint: 0.002,
+        };
+        sidecar
+            .save_in(&source, greycard_edit::Placement::Beside)
+            .unwrap();
+        let out = scratch.0.join("headless.tif");
+        let req = to(&[&source], &out);
+        let remembered = Shared::default();
+        let plan = plan(&req, &remembered, None, None).unwrap();
+        assert_eq!(
+            plan.frames[0].edit.white_balance,
+            sidecar.current.white_balance
+        );
+        let window = queue::Frame {
+            out: scratch.0.join("window.tif"),
+            ..plan.frames[0].clone()
+        };
+        let settings = plan.settings.clone();
+        let windowed = window_export(&window, settings.clone()).expect("the window wrote it");
+        let finished = run(plan, lent());
+        assert!(finished.succeeded(), "{}", finished.line);
+        let (a, b) = (
+            std::fs::read(&windowed).unwrap(),
+            std::fs::read(&out).unwrap(),
+        );
+        let pixels = |p: &Path| image::open(p).unwrap().to_rgb16();
+        assert!(pixels(&windowed) == pixels(&out), "the pixels differ");
+        assert!(
+            differ_only_in_dates(&a, &b),
+            "bytes differ outside the dates"
+        );
+
+        // The same picture at As shot: the patch is grey there and warm
+        // under the offset.
+        let shot = queue::Frame {
+            out: scratch.0.join("shot.tif"),
+            edit: Edit::for_picture(),
+            ..window.clone()
+        };
+        let shot = window_export(&shot, settings).expect("written");
+        let at = |p: &Path| *pixels(p).get_pixel(10, 10);
+        let (g, w) = (at(&shot), at(&out));
+        assert!(g[0].abs_diff(g[2]) < 300, "{g:?}");
+        assert!(w[0] > g[0] && w[2] < g[2], "{w:?} against {g:?}");
+    }
 }

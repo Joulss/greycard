@@ -14,6 +14,15 @@ export component WhiteBalanceSection inherits Section {
     in-out property <float> temperature;
     in-out property <float> tint;
     in property <bool> raw-input;
+    // A picture that is not a raw: its white balance is an offset from
+    // its own white, so the global's sliders read as a mask's offset
+    // does, over the span that reaches the panel's lights from that
+    // white; a mask's keeps the whole span and has no Follow global.
+    in property <bool> picture: false;
+    in property <float> mired-min: -450;
+    in property <float> mired-max: 450;
+    in property <float> tint-min: -0.1;
+    in property <float> tint-max: 0.1;
     // A mask's own: no As shot and no Auto, its switch on the
     // section's title, Follow global where As shot would be, its
     // sliders live while it is on.
@@ -21,7 +30,7 @@ export component WhiteBalanceSection inherits Section {
     // Whether the sliders move the picture. The global's always do:
     // under As shot they show the camera's white, and moving either
     // turns As shot off and keeps the white where the pointer left it.
-    property <bool> live: root.raw-input && (root.local ? root.on : true);
+    property <bool> live: root.local ? root.on : true;
     callback develop-changed();
     // As shot switched: on, the sliders go back to the camera's white.
     callback as-shot-toggled();
@@ -36,7 +45,7 @@ export component WhiteBalanceSection inherits Section {
     // the temperature in mired, the tint in Duv.
     in-out property <bool> relative: false;
     callback relative-toggled();
-    property <bool> offset: root.local && root.relative;
+    property <bool> offset: root.local ? root.relative : root.picture;
     // The offsets as shown, a small negative rounded to zero shown
     // as zero rather than as minus zero.
     property <float> shown-mired: round(root.temperature) == 0 ? 0 : round(root.temperature);
@@ -44,15 +53,13 @@ export component WhiteBalanceSection inherits Section {
 
     title: "WHITE BALANCE";
     icon: @image-url("../icons/thermometer.svg");
-    hint: root.raw-input ? "" : "raw only";
     collapsed <=> root.collapsed-wb;
     if !root.local: Toggle {
         label: "As shot";
-        enabled: root.raw-input;
         checked <=> root.as-shot;
         toggled => { root.as-shot-toggled(); }
     }
-    if root.local: Toggle {
+    if root.local && !root.picture: Toggle {
         label: "Follow global";
         enabled: root.live;
         checked <=> root.relative;
@@ -69,8 +76,8 @@ export component WhiteBalanceSection inherits Section {
         // As an offset, mired toward the higher kelvin, past the
         // range's whole span either way (500 less 83), so any light
         // in it is an offset from any global in it.
-        minimum: root.offset ? -450 : 2000;
-        maximum: root.offset ? 450 : 12000;
+        minimum: !root.offset ? 2000 : root.local ? -450 : root.mired-min;
+        maximum: !root.offset ? 12000 : root.local ? 450 : root.mired-max;
         default: root.offset ? 0 : 5500;
         step: root.offset ? 1 : 50;
         steps: root.offset ? Steps.mired : Steps.kelvin;
@@ -96,8 +103,8 @@ export component WhiteBalanceSection inherits Section {
         enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #5fbf5f 0%, #cfd6dc 50%, #d65fd6 100%);
-        minimum: root.offset ? -0.1 : -0.05;
-        maximum: root.offset ? 0.1 : 0.05;
+        minimum: !root.offset ? -0.05 : root.local ? -0.1 : root.tint-min;
+        maximum: !root.offset ? 0.05 : root.local ? 0.1 : root.tint-max;
         default: 0;
         step: 0.001;
         steps: Steps.thousandths;
@@ -123,13 +130,11 @@ export component WhiteBalanceSection inherits Section {
         alignment: end;
         if !root.local: PanelButton {
             text: "Auto";
-            enabled: root.raw-input;
             clicked => { root.wb-auto(); }
         }
         PanelButton {
             text: "Neutral";
             icon: @image-url("../icons/pipette.svg");
-            enabled: root.raw-input;
             // On a mask the patch is made neutral under the mask, and
             // the mask's white is switched on to do it.
             primary: root.picking == "White";

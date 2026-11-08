@@ -593,11 +593,29 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // Show the frame's own white balance on the sliders, so a
             // custom setting starts from it; and keep it, for As shot
             // switched back on.
-            st.develop.as_shot_white =
-                matches!(kind, SourceKind::Raw).then_some((as_shot.0 as f32, as_shot.1 as f32));
+            // A picture's sliders are an offset from its own white, so
+            // its As shot is the offset of zero.
+            let camera = match kind {
+                SourceKind::Raw => (as_shot.0 as f32, as_shot.1 as f32),
+                SourceKind::Picture { .. } => {
+                    // Its "as shot" is its own white: the offset sliders
+                    // reach from there to the ends of the panel's lights.
+                    let ((m0, m1), (d0, d1)) =
+                        greycard_edit::white::picture_offset_range(greycard_core::TempTint {
+                            cct: as_shot.0,
+                            duv: as_shot.1,
+                        });
+                    app.set_picture_mired_min(m0 as f32);
+                    app.set_picture_mired_max(m1 as f32);
+                    app.set_picture_tint_min(d0 as f32);
+                    app.set_picture_tint_max(d1 as f32);
+                    (0.0, 0.0)
+                }
+            };
+            st.develop.as_shot_white = Some(camera);
             if st.develop.edit.white_balance == WhiteBalance::AsShot {
-                app.set_temperature(as_shot.0 as f32);
-                app.set_tint(as_shot.1 as f32);
+                app.set_temperature(camera.0);
+                app.set_tint(camera.1);
             }
             if let Some(t) = st.launch.preview_temperature.take() {
                 app.set_as_shot(false);

@@ -1110,6 +1110,7 @@ fn picture_input(image: &Arc<WorkingImage>) -> Input {
             metadata: Default::default(),
             space: "sRGB".into(),
             bits: 16,
+            white: greycard_core::illuminant::D65,
         }),
     }
 }

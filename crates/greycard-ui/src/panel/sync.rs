@@ -60,12 +60,41 @@ pub(crate) use crate::preset_fit::{preset_fitted, probed_body, profile_fits};
 
 /// `preset` as it reaches or leaves cell `c`: without the display
 /// curve when the cell's file is a picture, which shows no switch for
-/// it ([`crate::preset_fit::curve_fitted`]).
+/// it ([`crate::preset_fit::curve_fitted`]), and with its white balance
+/// as the cell's kind takes one ([`preset_for_target`]). The raw's As
+/// shot an offset lands at is the panel's, for the frame open and
+/// decoded; no file is read here, on the window's thread.
 pub(crate) fn preset_for_curve(st: &State, preset: &Preset, c: usize) -> Preset {
+    let shot = (st.current == Some(c))
+        .then_some(st.develop.as_shot_white)
+        .flatten()
+        .filter(|_| !curveless(st.path_at(c).map(|p| p.as_path())))
+        .map(|(cct, duv)| TempTint {
+            cct: cct as f64,
+            duv: duv as f64,
+        });
+    preset_for_target(st, preset, c, shot)
+}
+
+/// [`preset_for_curve`] with the raw's As shot given, read before on the
+/// pool ([`read_whites`]): an offset onto a raw is the light it names
+/// there ([`crate::preset_fit::white_fitted`]), and left out without
+/// one; a kelvin light does not go onto a picture.
+fn preset_for_target(st: &State, preset: &Preset, c: usize, shot: Option<TempTint>) -> Preset {
     match st.path_at(c) {
-        Some(path) => crate::preset_fit::curve_fitted(preset, path),
+        Some(path) => {
+            let curved = crate::preset_fit::curve_fitted(preset, path);
+            crate::preset_fit::white_fitted(&curved, path, || shot)
+        }
         None => preset.clone(),
     }
+}
+
+/// Whether laying `preset` reads the raws' own As shot: it carries a
+/// picture's offset, which lands on a raw as a light from there.
+fn offset_reads_targets(preset: &Preset) -> bool {
+    preset.sections.contains(&Section::WhiteBalance)
+        && matches!(preset.edit.white_balance, WhiteBalance::Offset { .. })
 }
 
 /// Whether `file` is a picture, whose display curve no switch shows
@@ -400,27 +429,34 @@ fn lay_shifted_over_targets(
     // custom, read from the raws on the pool before the lay, as the
     // sidecars were above: a read is tens of milliseconds a raw and
     // more for a DNG, too long a batch's worth for the window's thread.
+    // So is a raw target's own light that a picture's offset lands at.
     let shift = shift.filter(|s| !s.is_none());
-    let whites = match shift {
-        Some(s) if s.reads_targets(preset) => {
-            let wanted: Vec<(usize, PathBuf, greycard_edit::camera::Camera)> = targets
-                .iter()
-                .filter_map(|&c| {
-                    let current = &st.line(c)?.current;
-                    if current.white_balance != WhiteBalance::AsShot {
-                        return None;
-                    }
-                    let camera = if left_off.contains(&c) {
-                        current.camera.clone()
-                    } else {
-                        profile_choice(preset, current)
-                    };
-                    Some((c, st.path_at(c)?.to_path_buf(), camera))
-                })
-                .collect();
-            read_whites(&wanted)
-        }
-        _ => HashMap::new(),
+    let offset = offset_reads_targets(preset);
+    let whites = if offset || shift.is_some_and(|s| s.reads_targets(preset)) {
+        let wanted: Vec<(usize, PathBuf, greycard_edit::camera::Camera)> = targets
+            .iter()
+            .filter_map(|&c| {
+                let current = &st.line(c)?.current;
+                let path = st.path_at(c)?;
+                let wanted = if offset {
+                    !greycard_core::picture::is_picture_path(path)
+                } else {
+                    current.white_balance == WhiteBalance::AsShot
+                };
+                if !wanted {
+                    return None;
+                }
+                let camera = if left_off.contains(&c) {
+                    current.camera.clone()
+                } else {
+                    profile_choice(preset, current)
+                };
+                Some((c, st.path_at(c)?.to_path_buf(), camera))
+            })
+            .collect();
+        read_whites(&wanted)
+    } else {
+        HashMap::new()
     };
     // Each cell's own line takes the preset as a step of its history: a
     // file and a version of it are two lines of one sidecar.
@@ -436,7 +472,8 @@ fn lay_shifted_over_targets(
                     let shot = whites.get(&c).copied().flatten();
                     Some(shifted(preset, s, &current, shot))
                 });
-                let preset = &preset_for_curve(st, own.as_ref().unwrap_or(preset), c);
+                let shot = whites.get(&c).copied().flatten();
+                let preset = &preset_for_target(st, own.as_ref().unwrap_or(preset), c, shot);
                 st.line_mut(c).is_some_and(|line| {
                     greycard_edit::apply_preset_to_line(line, preset, learned_from, label)
                 })
@@ -772,7 +809,9 @@ pub(crate) fn shift_of(
             Some(mired(shot.cct) - mired(*temperature)),
             Some(tint - shot.duv),
         ),
-        (WhiteBalance::Custom { .. }, None) => (None, None),
+        // A picture's offset, or a light with no As shot to measure it
+        // from: nothing to shift by.
+        (WhiteBalance::Custom { .. }, None) | (WhiteBalance::Offset { .. }, _) => (None, None),
     };
     Shift {
         temperature: temperature.filter(|_| white && modes.temperature),
@@ -807,6 +846,7 @@ pub(crate) fn shifted(
         let own = match &target.white_balance {
             WhiteBalance::Custom { temperature, tint } => Some((*temperature, *tint)),
             WhiteBalance::AsShot => target_shot.map(|t| (t.cct, t.duv)),
+            WhiteBalance::Offset { .. } => None,
         };
         p.edit.white_balance = match (&preset.edit.white_balance, own) {
             (WhiteBalance::Custom { temperature, tint }, Some((t, d))) if !unmoved => {
@@ -859,17 +899,7 @@ pub(crate) fn frame_shot(
 /// and Duv its As shot means. Read from the raw without a sample;
 /// `None` for a picture, or a raw that will not say.
 fn shot_at(path: &Path, camera: &greycard_edit::camera::Camera) -> Option<TempTint> {
-    if greycard_core::picture::is_picture_path(path) {
-        return None;
-    }
-    let white = greycard_core::decode::white_path(path)
-        .inspect_err(|e| tracing::warn!("{}: its as-shot white: {e}", file_name(path)))
-        .ok()?;
-    let profile = match camera.profile(&greycard_edit_io::Stores::user()) {
-        Some(p) => p.camera.clone(),
-        None => greycard_core::color::profile_from_calibrations(&white.calibrations).ok()?,
-    };
-    greycard_core::color::temp_tint_of_gains(&profile, white.as_shot_coefficients?).ok()
+    crate::preset_fit::as_shot_at(path, camera)
 }
 
 /// [`shot_at`] for each of `wanted` (a cell, its raw, the profile to
@@ -5232,7 +5262,7 @@ mod tests {
         // stop.
         let temperature = |e: &Edit| match e.white_balance {
             WhiteBalance::Custom { temperature, .. } => temperature,
-            WhiteBalance::AsShot => panic!("As shot after a shift"),
+            WhiteBalance::AsShot | WhiteBalance::Offset { .. } => panic!("As shot after a shift"),
         };
         let by = 1e6 / source_shot.cct - 1e6 / (source_shot.cct + 300.0);
         for (c, own) in [(1, 4200.0), (2, 5000.0), (3, c_shot.cct)] {

@@ -16,6 +16,8 @@ pub(crate) fn white_key(wb: &WhiteBalance) -> WhiteKey {
     match *wb {
         WhiteBalance::AsShot => (true, 0.0, 0.0),
         WhiteBalance::Custom { temperature, tint } => (false, temperature as f32, tint as f32),
+        // A picture's sliders are its offset, mired and Duv.
+        WhiteBalance::Offset { mired, tint } => (false, mired as f32, tint as f32),
     }
 }
 
@@ -380,6 +382,20 @@ pub(crate) fn white_profile(st: &mut State) -> Option<CameraProfile> {
 
 pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     const IDENTITY: Matrix3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    // A picture, by its name: from the light it was developed at to
+    // the one the sliders name, with no profile in it; nothing until
+    // its own develop has said what that light was.
+    if open_is_picture(st) {
+        return st
+            .develop
+            .base_white
+            .and_then(|b| b.picture)
+            .and_then(|(own, shown)| {
+                greycard_edit::white::picture_light(&panel_white(panel, true), own)
+                    .and_then(|light| greycard_edit::white::adaptation(shown, light))
+            })
+            .unwrap_or(IDENTITY);
+    }
     // Before the cache: resolving the profile is what notices a change
     // of profile, and that empties the cache.
     let Some(profile) = white_profile(st) else {
@@ -393,7 +409,7 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     let (Some(base), Some((frame, _))) = (st.develop.base_white, st.develop.frame.as_ref()) else {
         return IDENTITY;
     };
-    let white = panel_white(panel);
+    let white = panel_white(panel, false);
     let m = match resolve_white_balance(frame, &profile, white.white_point()) {
         // The arithmetic a mask's own white balance is made with too,
         // so the preview and a local cannot read one white two ways.
@@ -443,6 +459,11 @@ pub(crate) fn local_white_shift(st: &mut State, panel: WhiteKey) -> Option<White
         return st.develop.shown_white.clone();
     }
     let global = global_white(st, panel);
+    if open_is_picture(st) {
+        let shift = picture_own(st).and(global).map(WhiteShift::picture);
+        st.develop.shown_white = shift.clone();
+        return shift;
+    }
     let shift = match (white_profile(st), st.develop.base_white) {
         (Some(profile), Some(base)) => base.temp_tint.map(|own| {
             WhiteShift::from_parts(profile, base.gains, base.matrix, global.unwrap_or(own))
@@ -464,6 +485,10 @@ pub(crate) fn global_temp_tint(st: &mut State, panel: WhiteKey) -> Option<(f32, 
 /// resolves it, so a mask's offset at the develop's own white is from
 /// that white to the last bit.
 fn global_white(st: &mut State, panel: WhiteKey) -> Option<greycard_core::TempTint> {
+    if open_is_picture(st) {
+        let own = picture_own(st)?;
+        return greycard_edit::white::picture_light(&panel_white(panel, true), own);
+    }
     let (as_shot, temperature, tint) = panel;
     if !as_shot {
         return Some(greycard_core::TempTint {
@@ -514,6 +539,11 @@ fn panel_global(st: &mut State, app: &App) -> Option<greycard_core::TempTint> {
 /// Where a mask's sliders start that hold no light of their own: the
 /// global's white, held to their range; as an offset, none.
 fn start_at_global(st: &mut State, app: &App) {
+    // A picture's mask names no light: its white is an offset from the
+    // picture's, and Follow global is not offered.
+    if app.get_picture_open() {
+        app.set_local_wb_relative(true);
+    }
     if app.get_local_wb_relative() {
         app.set_local_temperature(0.0);
         app.set_local_tint(0.0);
@@ -570,15 +600,40 @@ pub(crate) fn slider_reset(
     }
 }
 
-pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalance {
+/// The panel's global white balance. On a `picture` the sliders are an
+/// offset from its own white, mired and Duv, and none is As shot.
+pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey, picture: bool) -> WhiteBalance {
     if as_shot {
         WhiteBalance::AsShot
+    } else if picture {
+        WhiteBalance::offset_of(temperature as f64, tint as f64)
     } else {
         WhiteBalance::Custom {
             temperature: temperature as f64,
             tint: tint as f64,
         }
     }
+}
+
+/// Whether the open file is a picture that is not a raw, by its name:
+/// known the moment it is chosen, where what its decode says lands
+/// later.
+pub(crate) fn open_is_picture(st: &State) -> bool {
+    st.current
+        .and_then(|c| st.path_at(c))
+        .is_some_and(|p| greycard_core::picture::is_picture_path(p))
+}
+
+/// The open picture's own white, the one its offset is from, once its
+/// develop has said it; none for a raw.
+pub(crate) fn picture_own(st: &State) -> Option<greycard_core::TempTint> {
+    if !open_is_picture(st) {
+        return None;
+    }
+    st.develop
+        .base_white
+        .and_then(|b| b.picture)
+        .map(|(own, _)| own)
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
@@ -1013,6 +1068,7 @@ mod tests {
             matrix: [[1.6, -0.4, -0.2], [-0.1, 1.3, -0.2], [0.0, -0.3, 1.3]],
             clip: 1.0,
             temp_tint: None,
+            picture: None,
         };
         let p = greycard_core::color::white_shift(base.gains, base.matrix, base.gains, base.matrix)
             .unwrap();

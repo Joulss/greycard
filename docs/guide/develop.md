@@ -77,7 +77,7 @@ panel". The word goes when you click, press a key or scroll.
   for when you turn it back on. Use it to compare before and after.
 - Some sections have a **Reset** button that puts the whole section
   back to its defaults.
-- A section marked "raw only" does nothing on a JPEG, PNG or TIFF.
+- A section marked "raw only" does nothing on a JPEG, PNG, or TIFF.
 
 ## Look
 
@@ -126,6 +126,12 @@ neutral.
 | **Tint** | −0.05 to +0.05. Positive makes it more magenta, negative more green. |
 | **Auto** | Reads the white balance from the picture. |
 | **Neutral** | A dropper: click something in the picture that should be grey. |
+
+On a JPEG, PNG, or TIFF there is no camera white to name, so the two
+sliders move the picture from its own white instead: **Temperature**
+in mired, plus warmer, and **Tint** as the same Duv difference, both
+0 under **As shot**. **Auto** and **Neutral** work the same way, and
+a mask's white balance adds to it.
 
 Under **As shot**, **Temperature** and **Tint** show the camera's own
 white. Move either and **As shot** turns off by itself, with the

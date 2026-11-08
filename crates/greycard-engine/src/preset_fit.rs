@@ -75,6 +75,62 @@ pub fn curve_fitted(preset: &Preset, file: &Path) -> Preset {
     out
 }
 
+/// `preset` as it reaches `file`: [`curve_fitted`], and its white
+/// balance as the frame's kind takes one ([`white_fitted`]), a raw's
+/// As shot read from the file only when an offset lands on it.
+pub fn frame_fitted(preset: &Preset, file: &Path, camera: &camera::Camera) -> Preset {
+    let preset = curve_fitted(preset, file);
+    white_fitted(&preset, file, || as_shot_at(file, camera))
+}
+
+/// `preset` with its white balance as `file` takes it: an offset onto a
+/// picture as it is, onto a raw as the light it names at the raw's As
+/// shot (`as_shot`); a kelvin light onto a raw as it is. Where the frame
+/// cannot take it, a light onto a picture or an offset onto a raw that
+/// will not say its As shot, the section is left out and the frame
+/// keeps its own, said in the log.
+pub fn white_fitted(
+    preset: &Preset,
+    file: &Path,
+    as_shot: impl FnOnce() -> Option<greycard_core::TempTint>,
+) -> Preset {
+    if !preset.sections.contains(&Section::WhiteBalance) {
+        return preset.clone();
+    }
+    let picture = greycard_core::picture::is_picture_path(file);
+    let mut out = preset.clone();
+    match greycard_edit::white::landing(&preset.edit.white_balance, picture, as_shot) {
+        Ok(wb) => out.edit.white_balance = wb,
+        Err(why) => {
+            tracing::info!(
+                "{}: white balance left as it was: {why}",
+                file.file_name().unwrap_or_default().to_string_lossy()
+            );
+            out.sections.retain(|s| *s != Section::WhiteBalance);
+        }
+    }
+    out
+}
+
+/// The light the raw at `path` recorded, as the develop reads it
+/// through `camera`'s profile (a DCP's, or the raw's own): the kelvin
+/// and Duv its As shot means. Read from the raw without a sample;
+/// `None` for a picture, or a raw that will not say.
+pub fn as_shot_at(path: &Path, camera: &camera::Camera) -> Option<greycard_core::TempTint> {
+    if greycard_core::picture::is_picture_path(path) {
+        return None;
+    }
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let white = greycard_core::decode::white_path(path)
+        .inspect_err(|e| tracing::warn!("{name}: its as-shot white: {e}"))
+        .ok()?;
+    let profile = match camera.profile(&greycard_edit_io::Stores::user()) {
+        Some(p) => p.camera.clone(),
+        None => greycard_core::color::profile_from_calibrations(&white.calibrations).ok()?,
+    };
+    greycard_core::color::temp_tint_of_gains(&profile, white.as_shot_coefficients?).ok()
+}
+
 /// `--preset`: lay `preset` over `file`'s edit as one step named for
 /// it, and write the sidecar where `placement` says (`None`: the run
 /// writes no sidecars). Written here and not left to the quit's
@@ -97,10 +153,15 @@ pub fn preset_at_start(
     preset: &Preset,
     placement: Option<greycard_edit::Placement>,
 ) -> bool {
-    let preset = &curve_fitted(preset, file);
     let Some(line) = sidecar.line_mut(version) else {
         return false;
     };
+    let camera = if preset.sections.contains(&Section::Camera) {
+        preset.edit.camera.clone()
+    } else {
+        line.current.camera.clone()
+    };
+    let preset = &frame_fitted(preset, file, &camera);
     let applied = preset.applied(&line.current);
     if applied == line.current {
         return false;
@@ -151,5 +212,50 @@ mod tests {
                 [Section::Light]
             );
         }
+    }
+
+    /// A preset's white balance as each frame takes it: a light onto a
+    /// picture is left out and the picture keeps its own; an offset onto
+    /// a raw is the light it names at the raw's As shot, or left out
+    /// when the raw will not say; onto a picture it goes as it is.
+    #[test]
+    fn a_white_balance_lands_as_the_frame_takes_one() {
+        use greycard_edit::WhiteBalance;
+        let with = |wb: WhiteBalance| {
+            let edit = greycard_edit::Edit {
+                white_balance: wb,
+                ..Default::default()
+            };
+            Preset::from_choice(
+                "p",
+                &edit,
+                &Choice::whole(&[Section::Light, Section::WhiteBalance]),
+            )
+        };
+        let light = with(WhiteBalance::Custom {
+            temperature: 3200.0,
+            tint: 0.0,
+        });
+        let offset = with(WhiteBalance::Offset {
+            mired: 25.0,
+            tint: 0.0,
+        });
+        let picture = Path::new("/a/scan.jpg");
+        let raw = Path::new("/a/IMG_0001.CR3");
+        let fitted = white_fitted(&light, picture, || None);
+        assert_eq!(fitted.sections, [Section::Light]);
+        assert_eq!(white_fitted(&light, raw, || None), light);
+        assert_eq!(white_fitted(&offset, picture, || None), offset);
+        let shot = greycard_core::TempTint::new(5000.0, 0.001);
+        let onto_raw = white_fitted(&offset, raw, || Some(shot));
+        let WhiteBalance::Custom { temperature, tint } = onto_raw.edit.white_balance else {
+            panic!("{:?}", onto_raw.edit.white_balance)
+        };
+        assert!((1e6 / 5000.0 - 1e6 / temperature - 25.0).abs() < 1e-9);
+        assert_eq!(tint, 0.001);
+        assert_eq!(
+            white_fitted(&offset, raw, || None).sections,
+            [Section::Light]
+        );
     }
 }

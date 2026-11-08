@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use greycard_core::TempTint;
 use greycard_core::color::Profile;
 use greycard_core::color::WhitePoint;
 use greycard_core::develop::ca::{self, CaFit, CaOptions};
@@ -157,8 +158,12 @@ pub enum InputKind {
         lens_corrected: bool,
     },
     /// A picture is turned by its tag at decode, so its size is the
-    /// size it stands at.
-    Picture { size: (usize, usize) },
+    /// size it stands at. Its white is its color space's, as a
+    /// temperature and tint: what its white balance is an offset from.
+    Picture {
+        size: (usize, usize),
+        white: TempTint,
+    },
 }
 
 /// What a file says of its body and its lens.
@@ -199,10 +204,18 @@ impl Facts {
         }
     }
 
-    /// A picture's facts at `turn`, its size as it was decoded.
-    pub fn picture(size: (usize, usize), make: &str, model: &str, shot: &Shot, turn: u8) -> Self {
+    /// A picture's facts at `turn`, its size as it was decoded and
+    /// `white` its color space's.
+    pub fn picture(
+        size: (usize, usize),
+        white: TempTint,
+        make: &str,
+        model: &str,
+        shot: &Shot,
+        turn: u8,
+    ) -> Self {
         Self {
-            input: InputKind::Picture { size },
+            input: InputKind::Picture { size, white },
             identity: Identity {
                 make: make.to_string(),
                 model: model.to_string(),
@@ -252,7 +265,7 @@ impl Facts {
                     *crop
                 }
             }
-            InputKind::Picture { size } => {
+            InputKind::Picture { size, .. } => {
                 if self.turn % 2 == 1 {
                     (size.1, size.0)
                 } else {
@@ -425,6 +438,14 @@ pub enum Stage {
         luma: f32,
         chroma: f32,
     },
+    /// A picture input's white balance: the adaptation from the light
+    /// its own white is (`own`) to the one its offset names (`light`),
+    /// a matrix on the linear picture, first, where a raw's white
+    /// balance sits.
+    White {
+        own: TempTint,
+        light: TempTint,
+    },
     /// A picture input's turn.
     Orient(Orientation),
     /// A picture input reduced by a whole factor, in place of the bin.
@@ -539,6 +560,7 @@ impl Stage {
             Stage::Warp(_) => "the file's warp",
             Stage::IntoWorking { .. } => "move into the working space",
             Stage::Blend { .. } => "blend",
+            Stage::White { .. } => "white balance",
             Stage::Orient(_) => "orient",
             Stage::Reduce(_) => "reduce",
             Stage::Lens(_) => "lens",
@@ -924,9 +946,19 @@ pub fn stages(
                 });
             }
         }
-        InputKind::Picture { .. } => {
+        InputKind::Picture { white, .. } => {
             s.op_if(quarters(facts.turn).map(Stage::Orient));
             s.op_if((bin > 1).then_some(Stage::Reduce(bin)));
+            // As shot is the offset of zero, which is no stage; a kelvin
+            // light is a raw's, and a picture has none to name. A matrix
+            // on each pixel, it commutes with the turn and the reduce, so
+            // it runs after them, on the fewest pixels, and before
+            // everything else.
+            s.op_if(
+                greycard_edit::white::picture_light(&edit.white_balance, *white)
+                    .filter(|light| light != white)
+                    .map(|light| Stage::White { own: *white, light }),
+            );
         }
     }
     let (w, h) = facts.binned(bin);
@@ -1259,7 +1291,14 @@ mod tests {
     }
 
     fn picture(turn: u8) -> Facts {
-        Facts::picture((6000, 4000), "Canon", "EOS R5", &Shot::default(), turn)
+        Facts::picture(
+            (6000, 4000),
+            greycard_core::picture::white_temp_tint(greycard_core::illuminant::D65),
+            "Canon",
+            "EOS R5",
+            &Shot::default(),
+            turn,
+        )
     }
 
     fn identity() -> Identity {
@@ -1591,6 +1630,58 @@ mod tests {
         );
         // A picture is not denoised, so nothing of that is skipped.
         assert_eq!(reduced.skipped, [("the capture sharpen", Skip::Reduced)]);
+    }
+
+    /// A picture's white balance is its first step after the turn and
+    /// the reduce when it names a light other than the picture's own; As shot, an offset of none, and a
+    /// kelvin light (a raw's) are no step, and a raw never takes one.
+    #[test]
+    fn a_pictures_white_balance_is_its_first_step() {
+        use greycard_edit::WhiteBalance;
+        let with = |wb: WhiteBalance, facts: &Facts| {
+            let mut edit = Edit::for_picture();
+            edit.white_balance = wb;
+            stages(&edit, &Purpose::Viewport, facts, None)
+        };
+        let warm = WhiteBalance::Offset {
+            mired: 25.0,
+            tint: 0.0,
+        };
+        let steps = with(warm.clone(), &picture(1));
+        assert_eq!(names(&steps)[..2], ["orient", "white balance"]);
+        let mut edit = Edit::for_picture();
+        edit.white_balance = warm.clone();
+        let reduced = stages(&edit, &Purpose::Reduced, &picture(1), None);
+        assert_eq!(
+            names(&reduced)[..3],
+            ["orient", "reduce 2", "white balance"]
+        );
+        let Some(Stage::White { own, light }) = steps.ops().nth(1) else {
+            panic!()
+        };
+        assert!((1e6 / own.cct - 1e6 / light.cct - 25.0).abs() < 1e-9);
+        for none in [
+            WhiteBalance::AsShot,
+            WhiteBalance::Offset {
+                mired: 0.0,
+                tint: 0.0,
+            },
+            WhiteBalance::Custom {
+                temperature: 3200.0,
+                tint: 0.0,
+            },
+        ] {
+            let steps = with(none.clone(), &picture(0));
+            assert!(
+                !steps.ops().any(|s| matches!(s, Stage::White { .. })),
+                "{none:?}"
+            );
+        }
+        assert!(
+            !with(warm, &raw(0))
+                .ops()
+                .any(|s| matches!(s, Stage::White { .. }))
+        );
     }
 
     /// A raw whose file corrects its lens with a warp.

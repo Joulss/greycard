@@ -257,6 +257,7 @@ pub fn develop_as(
                     | Stage::Denoise(_)
                     | Stage::Warp(_)
                     | Stage::IntoWorking { .. }
+                    | Stage::White { .. }
                     | Stage::Orient(_)
                     | Stage::Reduce(_)
             )

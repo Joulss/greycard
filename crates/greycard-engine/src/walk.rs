@@ -29,7 +29,7 @@ use greycard_core::develop::{
 use greycard_core::image::WorkingImage;
 use greycard_core::picture::Picture;
 use greycard_core::raw::{Orientation, RawFrame};
-use greycard_core::{CameraProfile, WhiteBalance};
+use greycard_core::{CameraProfile, TempTint, WhiteBalance};
 use greycard_edit::retouch::{Patch, Retouch};
 use greycard_edit::{DetailWants, WhiteShift};
 use greycard_gpu::wgpu;
@@ -56,6 +56,7 @@ impl Input {
             Input::Raw(frame) => Facts::raw(frame, turn),
             Input::Picture { image, meta } => Facts::picture(
                 (image.width, image.height),
+                meta.own_white(),
                 &meta.make,
                 &meta.model,
                 &meta.shot,
@@ -168,6 +169,9 @@ pub struct Meta {
     /// path stood in for it: carried with the picture, so a walk that
     /// starts past the stand-in still says so.
     pub stood_in: Option<NoLearned>,
+    /// A picture's own white and the light its white balance shows it
+    /// at, the same at As shot; none for a raw.
+    pub picture: Option<(TempTint, TempTint)>,
 }
 
 impl Meta {
@@ -183,12 +187,18 @@ impl Meta {
             bin: 1,
             gave_way: None,
             stood_in: None,
+            picture: None,
         }
     }
 
     /// The masks' white balances are made from this develop's white
     /// and the profile it was resolved through.
+    /// A picture's are made from the light its own white balance
+    /// shows it at.
     pub fn white_shift(&self) -> Option<WhiteShift> {
+        if let Some((_, light)) = self.picture {
+            return Some(WhiteShift::picture(light));
+        }
         let (profile, wb) = (self.profile.as_ref()?, self.white.as_ref()?);
         let cols = wb.matrix_f32();
         let rows = std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r]));
@@ -1339,6 +1349,7 @@ fn start(
                 bin: 1,
                 gave_way: None,
                 stood_in: None,
+                picture: None,
             },
         ),
         Input::Picture { image, meta } => (
@@ -1353,6 +1364,7 @@ fn start(
                 bin: 1,
                 gave_way: None,
                 stood_in: None,
+                picture: Some((meta.own_white(), meta.own_white())),
             },
         ),
     };
@@ -1884,6 +1896,17 @@ fn cpu_op(
             };
             st.buf = Buf::Working(blend(&model, &plain, *luma, *chroma));
         }
+        Stage::White { own, light } => {
+            let image = working(&mut st.buf);
+            let m = greycard_edit::white::adaptation(*own, *light).ok_or_else(|| {
+                failed(format!(
+                    "no white balance from {:.0} K {:+.4} to {:.0} K {:+.4}",
+                    own.cct, own.duv, light.cct, light.duv
+                ))
+            })?;
+            st.buf = Buf::Working(Arc::new(white_matrix(owned(image), &m)));
+            st.meta.picture = Some((*own, *light));
+        }
         Stage::Orient(o) => {
             let image = working(&mut st.buf);
             st.buf = Buf::Working(Arc::new(core_develop::orient(owned(image), *o)));
@@ -2360,6 +2383,18 @@ fn working(buf: &mut Buf) -> Arc<WorkingImage> {
 /// it, a copy otherwise.
 fn owned(image: Arc<WorkingImage>) -> WorkingImage {
     Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone())
+}
+
+/// A picture's white balance: the matrix `m` (rows) on every pixel of
+/// the linear picture. The CPU reference, and the only version: the
+/// stage runs where the picture's decode to linear does.
+pub fn white_matrix(mut image: WorkingImage, m: &greycard_core::color::Matrix3) -> WorkingImage {
+    use rayon::prelude::*;
+    image.data.par_chunks_mut(3).for_each(|px| {
+        let out = greycard_core::color::apply3(m, [px[0], px[1], px[2]]);
+        px.copy_from_slice(&out);
+    });
+    image
 }
 
 fn swaps(o: Orientation) -> bool {
@@ -3470,6 +3505,79 @@ mod tests {
         assert!(picture(&walked).data == picture(&reference).data);
     }
 
+    /// A grey picture, `white` its color space's.
+    fn grey_picture(white: greycard_core::Chromaticity) -> Input {
+        let mut image = WorkingImage::new(8, 6);
+        image.data.fill(0.18);
+        Input::Picture {
+            image: Arc::new(image),
+            meta: Arc::new(Picture {
+                image: WorkingImage::new(0, 0),
+                make: String::new(),
+                model: String::new(),
+                shot: Default::default(),
+                metadata: Default::default(),
+                space: "sRGB".into(),
+                bits: 16,
+                white,
+            }),
+        }
+    }
+
+    /// A picture's white balance on the CPU, the reference: an offset of
+    /// none is the picture at As shot to the bit, there being no step;
+    /// a warmer one makes a grey warm by the adaptation's own amount,
+    /// and the masks' white balances are made from the light it names.
+    #[test]
+    fn a_pictures_offset_warms_its_grey_by_the_adaptation() {
+        let input = grey_picture(greycard_core::illuminant::D65);
+        let go = |wb: greycard_edit::WhiteBalance| {
+            let mut edit = Edit::for_picture();
+            edit.white_balance = wb;
+            let steps = stages::stages(&edit, &Purpose::Reduced, &input.facts(0), None);
+            let plan = plan(&steps, &Purpose::Reduced, false);
+            walk(
+                &steps,
+                &plan,
+                &input,
+                &mut Kept::new(),
+                &mut NoModels,
+                &mut None,
+                &NoHold,
+            )
+            .unwrap()
+        };
+        let shot = go(greycard_edit::WhiteBalance::AsShot);
+        let none = go(greycard_edit::WhiteBalance::Offset {
+            mired: 0.0,
+            tint: 0.0,
+        });
+        assert!(picture(&shot).data == picture(&none).data);
+        assert!(picture(&shot).data.iter().all(|&v| v == 0.18));
+        let warm = go(greycard_edit::WhiteBalance::Offset {
+            mired: 25.0,
+            tint: 0.0,
+        });
+        let own = greycard_core::picture::white_temp_tint(greycard_core::illuminant::D65);
+        let light = greycard_edit::white::picture_light(
+            &greycard_edit::WhiteBalance::Offset {
+                mired: 25.0,
+                tint: 0.0,
+            },
+            own,
+        )
+        .unwrap();
+        let want = greycard_core::color::apply3(
+            &greycard_edit::white::adaptation(own, light).unwrap(),
+            [0.18; 3],
+        );
+        let px = &picture(&warm).data[..3];
+        assert_eq!(px, want);
+        assert!(px[0] > 0.18 && px[2] < 0.18, "{px:?}");
+        assert_eq!(warm.meta.white_shift().unwrap().global, light);
+        assert_eq!(shot.meta.white_shift().unwrap().global, own);
+    }
+
     /// A reduce drops the pixels past its last whole block, which a
     /// turn puts on another edge: an odd-sized picture's kept base is
     /// developed again at a new turn, not permuted, and is the picture
@@ -3490,6 +3598,7 @@ mod tests {
                 metadata: Default::default(),
                 space: "sRGB".into(),
                 bits: 16,
+                white: greycard_core::illuminant::D65,
             }),
         };
         let edit = Edit::default();

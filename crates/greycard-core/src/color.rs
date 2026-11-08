@@ -6,9 +6,10 @@
 
 use std::sync::Arc;
 
+use rawcolor::cct::temp_tint_to_chromaticity;
 use rawcolor::{
-    Calibration as ProfileCalibration, CalibrationIlluminant, CameraProfile, Cat, Mat3, RgbSpace,
-    TempTint, Vec3, WhiteBalance,
+    Calibration as ProfileCalibration, CalibrationIlluminant, CameraProfile, Cat, Chromaticity,
+    Mat3, RgbSpace, TempTint, Vec3, WhiteBalance,
 };
 
 use crate::dcp::{EmbedPolicy, HueSatMap, HueSatMaps};
@@ -350,6 +351,48 @@ impl Oklab {
         let lms = apply3(&LAB_TO_LMS, lab).map(|v| v * v * v);
         apply3(&self.from_lms, lms)
     }
+}
+
+/// The working-space matrix that takes a picture shown at the light
+/// `from` to one shown at `to`: the Bradford adaptation in XYZ from
+/// `to` to `from`, between the working space's own matrices, rows. A
+/// grey that read neutral under `from` reads as `from` seen by eyes
+/// adapted to `to`, so a higher `to` warms the picture, as a raw's
+/// higher kelvin does. A diagonal in the cone space, so two of them
+/// make the one between their ends, and `from` to itself is the
+/// identity to rounding.
+pub fn adaptation(from: TempTint, to: TempTint) -> Option<Matrix3> {
+    let (a, b) = (
+        temp_tint_to_chromaticity(from)?,
+        temp_tint_to_chromaticity(to)?,
+    );
+    let cat = rawcolor::cat::adaptation_matrix(b, a, CAT)?;
+    let to_xyz = WORKING_SPACE.to_xyz_matrix()?;
+    let from_xyz = WORKING_SPACE.from_xyz_matrix()?;
+    let m = from_xyz * cat * to_xyz;
+    Some(m.rows.map(|r| r.map(|v| v as f32)))
+}
+
+/// The light that makes `px` neutral on a picture shown at `shown`:
+/// what the Neutral dropper and Auto take on a picture, as a raw's go
+/// through its gains. `px` is a working-space pixel as shown; at the
+/// light found, [`adaptation`] from `shown` takes it to grey. `None`
+/// for a pixel with a cone response at nothing, which names no white.
+pub fn picture_neutral(px: [f32; 3], shown: TempTint) -> Option<TempTint> {
+    let cone = CAT.matrix();
+    let to_xyz = WORKING_SPACE.to_xyz_matrix()?;
+    let lms = |v: Vec3| cone * v;
+    let p = lms(to_xyz * Vec3(px.map(f64::from)));
+    let white = lms(to_xyz * Vec3([1.0; 3]));
+    let at = lms(temp_tint_to_chromaticity(shown)?.to_xyz()?);
+    if (0..3).any(|i| p.0[i] <= 1e-12 || white.0[i].abs() <= 1e-12) {
+        return None;
+    }
+    // Under the adaptation the pixel's cones are scaled by the shown
+    // light's over the target's; grey is the working white's.
+    let target = Vec3(std::array::from_fn(|i| at.0[i] * p.0[i] / white.0[i]));
+    let xyz = cone.inverse()? * target;
+    rawcolor::cct::chromaticity_to_temp_tint(Chromaticity::from_xyz(xyz)?)
 }
 
 /// A three by three matrix of the kind the color conversions are

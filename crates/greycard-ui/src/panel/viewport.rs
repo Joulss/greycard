@@ -145,6 +145,9 @@ pub(crate) fn white_from_neutral(
     px: [f32; 3],
 ) -> Result<(), NeutralMiss> {
     let base = own_white(&st)?;
+    if let Some((own, shown)) = base.picture {
+        return picture_from_neutral(st, app, px, own, shown);
+    }
     // Through the profile the develop used, not the file's own: a
     // neutral read through other matrices comes back as another
     // temperature, and the patch the user clicked would not go
@@ -180,6 +183,42 @@ pub(crate) fn white_from_neutral(
     app.set_as_shot(false);
     app.set_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
     app.set_tint((tt.duv as f32).clamp(-0.05, 0.05));
+    drop(st);
+    app.invoke_stop_placing();
+    app.invoke_develop_changed();
+    Ok(())
+}
+
+/// [`white_from_neutral`] on a picture: the light that makes the pixel
+/// grey from the one it was shown at, stored as the offset from the
+/// picture's own white (`own`), on the global or under a mask, where
+/// it is an offset from the global's and Follow global is not offered.
+fn picture_from_neutral(
+    mut st: crate::shared::HeldMut<'_>,
+    app: &App,
+    px: [f32; 3],
+    own: greycard_core::TempTint,
+    shown: greycard_core::TempTint,
+) -> Result<(), NeutralMiss> {
+    let light = greycard_edit::white::picture_neutral(px, shown).ok_or(NeutralMiss::NoWhite)?;
+    if st.develop.target.is_some() && app.get_panel_tab() == "Masks" {
+        app.set_local_wb_relative(true);
+        let Some((mired, tint)) = crate::panel::color::local_from_light(&mut st, app, light) else {
+            return Err(NeutralMiss::NoWhite);
+        };
+        app.set_local_wb_on(true);
+        app.set_local_wb_kept(true);
+        app.set_local_temperature(mired);
+        app.set_local_tint(tint);
+        drop(st);
+        app.invoke_stop_placing();
+        app.invoke_view_changed();
+        return Ok(());
+    }
+    let (mired, tint) = greycard_edit::white::offset_to(light, own);
+    app.set_as_shot(false);
+    app.set_temperature(mired as f32);
+    app.set_tint(tint as f32);
     drop(st);
     app.invoke_stop_placing();
     app.invoke_develop_changed();
@@ -232,6 +271,9 @@ fn auto_white_grid(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
 pub(crate) fn auto_white(mut st: crate::shared::HeldMut<'_>, app: &App) {
     let found = (|| {
         let base = own_white(&st)?;
+        if let Some((own, shown)) = base.picture {
+            return auto_picture(&st, base.clip, own, shown);
+        }
         let profile = white_profile(&mut st).ok_or(NeutralMiss::NoProfile)?;
         let (frame, _) = st.develop.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
         let as_shot = resolve_white_balance(frame, &profile, WhitePoint::AsShot)
@@ -259,6 +301,37 @@ pub(crate) fn auto_white(mut st: crate::shared::HeldMut<'_>, app: &App) {
         Err(miss) => miss,
     };
     app.set_status(miss.said(true).into());
+}
+
+/// The Auto white balance's read of a picture, as a pixel as shown: the
+/// grid taken back to the picture's own white first, so the prior is
+/// its own white wherever the sliders stand and a second press finds
+/// what the first did, then grey-world as on a raw with no gains and
+/// no matrix, and the answer brought forward to the light shown.
+fn auto_picture(
+    st: &State,
+    clip: f32,
+    own: greycard_core::TempTint,
+    shown: greycard_core::TempTint,
+) -> Result<Option<[f32; 3]>, NeutralMiss> {
+    const IDENTITY: greycard_core::color::Matrix3 =
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let (back, forward) = match (
+        greycard_edit::white::adaptation(shown, own),
+        greycard_edit::white::adaptation(own, shown),
+    ) {
+        (Some(b), Some(f)) => (b, f),
+        _ => return Err(NeutralMiss::NoWhite),
+    };
+    let (grid, width) = auto_white_grid(st).ok_or(NeutralMiss::Waiting)?;
+    let grid: Vec<[f32; 3]> = grid
+        .iter()
+        .map(|px| greycard_core::color::apply3(&back, *px))
+        .collect();
+    Ok(
+        greycard_core::color::auto_neutral(&grid, width, [1.0; 3], IDENTITY, clip, [1.0; 3])
+            .map(|px| greycard_core::color::apply3(&forward, px)),
+    )
 }
 
 /// The Light section's Auto: the Light section's exposure and its four
@@ -4448,7 +4521,7 @@ pub(crate) mod tests {
             crate::panel::color::local_white_shift(&mut st, (false, 6100.0, 0.001)).unwrap();
         assert_eq!(ahead.global.cct, 6100.0);
         assert_eq!(ahead.global.duv, 0.001f32 as f64);
-        assert_eq!((ahead.gains, ahead.rows), (own.gains, own.rows));
+        assert_eq!(ahead.camera(), own.camera());
         let own = crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0)).unwrap();
         // The next file chosen: the picture held, the frame gone and
         // the develop's white not yet the next one's.
@@ -4457,7 +4530,7 @@ pub(crate) mod tests {
         st.develop.base_white = None;
         let held = crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0))
             .expect("the held one's");
-        assert_eq!((held.gains, held.rows), (own.gains, own.rows));
+        assert_eq!(held.camera(), own.camera());
         // Its develop landed: the next frame's own, here none.
         st.develop.held = None;
         assert!(crate::panel::color::local_white_shift(&mut st, (true, 0.0, 0.0)).is_none());
@@ -4471,6 +4544,298 @@ pub(crate) mod tests {
     /// the global's alone.
     /// A daylight frame open with one mask, "Lamp", chosen on the Masks
     /// tab: the frame's As shot white as a temperature and tint.
+    /// The open frame as a picture whose develop has landed at As
+    /// shot: its own white D65, the sliders at the offset of zero.
+    fn a_picture_up(app: &App, state: &Rc<Shared>) -> greycard_core::TempTint {
+        app.invoke_select(0);
+        let own = greycard_core::picture::white_temp_tint(greycard_core::illuminant::D65);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.base_white = Some(WhiteBase {
+                clip: 1.0,
+                picture: Some((own, own)),
+                ..WhiteBase::IDENTITY
+            });
+            st.develop.frame = None;
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            st.develop.as_shot_white = Some((0.0, 0.0));
+        }
+        app.set_raw_input(false);
+        // As the decode's landing sets them, from the picture's white.
+        let ((m0, m1), (d0, d1)) = greycard_edit::white::picture_offset_range(own);
+        app.set_picture_mired_min(m0 as f32);
+        app.set_picture_mired_max(m1 as f32);
+        app.set_picture_tint_min(d0 as f32);
+        app.set_picture_tint_max(d1 as f32);
+        app.set_panel_tab("Develop".into());
+        app.set_as_shot(true);
+        app.set_temperature(0.0);
+        app.set_tint(0.0);
+        own
+    }
+
+    /// A JPEG and a raw beside it, in a directory that does not exist.
+    fn picture_and_raw() -> Vec<std::path::PathBuf> {
+        ["IMG_0000.JPG", "IMG_0001.CR3"]
+            .iter()
+            .map(|f| std::path::PathBuf::from("/nowhere").join(f))
+            .collect()
+    }
+
+    /// A picture's WHITE BALANCE is live, its sliders an offset from
+    /// the picture's own white read in mired and Duv: a drag is an
+    /// offset in the edit and one step; the double-click puts a slider
+    /// back to none; As shot is the offset of zero; the dropper and
+    /// Auto store the offset that makes the pick grey, the preview
+    /// moves the picture on the GPU from the light it was developed at,
+    /// and a raw's section reads as it did.
+    #[test]
+    fn a_pictures_white_balance_is_an_offset_from_its_own_white() {
+        use greycard_edit::white::{adaptation, picture_light};
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, picture_and_raw());
+        let own = a_picture_up(&app, &state);
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        wait();
+        assert!(app.get_picture_open());
+        assert_eq!(crate::testing::count_labeled(&app, "+0 mired"), 1);
+        let steps = state.borrow().sidecars[0].history.len();
+        // The span reaches the panel's lights from D65: about -346 to
+        // +70 mired.
+        let (m0, m1) = (app.get_picture_mired_min(), app.get_picture_mired_max());
+        assert!(
+            (-347.0..-345.0).contains(&m0) && (70.0..71.0).contains(&m1),
+            "{m0} {m1}"
+        );
+        // A drag from where none is on the track.
+        let (at, size) = crate::testing::labeled(&app, "Temperature");
+        let (left, right) = (at.x + 68.0, at.x + size.width - 60.0);
+        let x = left + (0.0 - m0) / (m1 - m0) * (right - left);
+        let y = at.y + size.height / 2.0;
+        crate::testing::drag(&app, &[(x, y), (x + 5.0, y), (x + 20.0, y)]);
+        wait();
+        assert!(!app.get_as_shot());
+        let mired = app.get_temperature();
+        assert!(mired > 0.0 && mired <= m1, "{mired}");
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::Offset {
+                mired: mired as f64,
+                tint: 0.0
+            }
+        );
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
+        let shown = format!("+{} mired", mired.round());
+        assert_eq!(crate::testing::count_labeled(&app, &shown), 1, "{shown}");
+        // The preview: from the light developed at to the sliders'.
+        let light = picture_light(
+            &WhiteBalance::Offset {
+                mired: mired as f64,
+                tint: 0.0,
+            },
+            own,
+        )
+        .unwrap();
+        let preview =
+            crate::panel::color::preview_white(&mut state.borrow_mut(), (false, mired, 0.0));
+        assert_eq!(preview, adaptation(own, light).unwrap());
+        // The double-click: the slider alone back to none, As shot
+        // left off; both at none is As shot, the offset of zero.
+        slint::platform::update_timers_and_animations();
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
+        slint::platform::update_timers_and_animations();
+        let (at, size) = crate::testing::labeled(&app, "Temperature");
+        let (x, y) = (at.x + 30.0, at.y + size.height / 2.0);
+        crate::testing::click(&app, x, y);
+        crate::testing::click(&app, x, y);
+        wait();
+        assert_eq!((app.get_temperature(), app.get_tint()), (0.0, 0.0));
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::AsShot
+        );
+
+        // The dropper on a warm patch: the offset that makes it grey,
+        // toward the lower kelvin, and the develop's light is shown.
+        white_from_neutral(state.borrow_mut(), &app, [0.4, 0.3, 0.2]).unwrap();
+        assert!(!app.get_as_shot());
+        let (m, d) = (app.get_temperature(), app.get_tint());
+        assert!(m < 0.0, "a warm patch wants a warmer light: {m}");
+        let edit = read_edit(&app, &state.borrow().develop.edit, None);
+        let light = picture_light(&edit.white_balance, own).unwrap();
+        let grey = greycard_core::color::apply3(&adaptation(own, light).unwrap(), [0.4, 0.3, 0.2]);
+        let mean = (grey[0] + grey[1] + grey[2]) / 3.0;
+        assert!(
+            grey.iter().all(|v| (v - mean).abs() < 2e-3),
+            "{grey:?} at {m} {d}"
+        );
+
+        // Auto from a picture all of one warm cast, from As shot and
+        // from the dropper's light: the same offset both times.
+        app.set_as_shot(true);
+        app.set_temperature(0.0);
+        app.set_tint(0.0);
+        let cast = vec![[0.36f32, 0.3, 0.22]; 1000];
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((cast.clone(), 40)));
+        app.invoke_wb_auto();
+        let first = (app.get_temperature(), app.get_tint());
+        assert!(first.0 < 0.0, "{first:?}");
+        // Developed at the first answer, the cast is the first answer's
+        // picture: a second press finds the same light.
+        let at = picture_light(
+            &WhiteBalance::Offset {
+                mired: first.0 as f64,
+                tint: first.1 as f64,
+            },
+            own,
+        )
+        .unwrap();
+        state.borrow_mut().develop.base_white = Some(WhiteBase {
+            clip: 1.0,
+            picture: Some((own, at)),
+            ..WhiteBase::IDENTITY
+        });
+        let m = adaptation(own, at).unwrap();
+        let shown: Vec<[f32; 3]> = cast
+            .iter()
+            .map(|px| greycard_core::color::apply3(&m, *px))
+            .collect();
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((shown, 40)));
+        app.invoke_wb_auto();
+        let second = (app.get_temperature(), app.get_tint());
+        assert!(
+            (second.0 - first.0).abs() < 0.5 && (second.1 - first.1).abs() < 1e-4,
+            "{first:?} then {second:?}"
+        );
+    }
+
+    /// The kind the sliders are read as is the open file's, by its
+    /// name, from the moment it is chosen: a raw chosen after a picture
+    /// and moved before its develop lands takes a light, never an
+    /// offset, and a picture chosen after a raw takes an offset. A
+    /// picture holding a kelvin light (a paste from before) shows As
+    /// shot, and showing it writes nothing.
+    #[test]
+    fn the_sliders_are_read_as_the_open_files_kind_before_its_develop() {
+        let app = window(2);
+        let (state, _worker) = crate::testing::state_for(&app, picture_and_raw());
+        a_picture_up(&app, &state);
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        // The raw chosen; its decode has not landed, so the last
+        // decode's word (a picture) and its develop still stand.
+        app.invoke_select(1);
+        assert!(!app.get_raw_input(), "the last decode's, still");
+        assert!(!app.get_picture_open());
+        app.set_as_shot(false);
+        app.set_temperature(4300.0);
+        app.invoke_develop_changed();
+        wait();
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::Custom {
+                temperature: 4300.0,
+                tint: 0.0
+            }
+        );
+        // And back to the picture, before its develop: an offset.
+        app.set_raw_input(true);
+        app.invoke_select(0);
+        assert!(app.get_picture_open());
+        app.set_as_shot(false);
+        app.set_temperature(20.0);
+        app.invoke_develop_changed();
+        wait();
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::Offset {
+                mired: 20.0,
+                tint: 0.0
+            }
+        );
+        // A picture holding a kelvin light shows As shot at none, and
+        // read back it is the light it was, not a step.
+        let light = WhiteBalance::Custom {
+            temperature: 3200.0,
+            tint: 0.0,
+        };
+        let mut edit = state.borrow().develop.edit.clone();
+        edit.white_balance = light.clone();
+        crate::panel::edit::show_edit(&state.borrow(), &edit, &app, None);
+        assert!(app.get_as_shot());
+        assert_eq!((app.get_temperature(), app.get_tint()), (0.0, 0.0));
+        assert_eq!(read_edit(&app, &edit, None).white_balance, light);
+        // Moved, it is an offset.
+        app.set_as_shot(false);
+        app.set_temperature(-15.0);
+        assert_eq!(
+            read_edit(&app, &edit, None).white_balance,
+            WhiteBalance::Offset {
+                mired: -15.0,
+                tint: 0.0
+            }
+        );
+    }
+
+    /// A mask on a picture: its white is an offset from the picture's
+    /// global, Follow global not offered and on from the start; the
+    /// dropper under it stores the offset from the global's light.
+    #[test]
+    fn a_masks_white_on_a_picture_adds_to_the_global() {
+        let app = window(2);
+        let (state, _worker) = crate::testing::state_for(&app, picture_and_raw());
+        let own = a_picture_up(&app, &state);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                name: "Wall".into(),
+                ..Default::default()
+            });
+            st.develop.target = Some(0);
+        }
+        app.set_panel_tab("Masks".into());
+        app.set_target(1);
+        // A warmer global, then the mask's white on.
+        app.set_as_shot(false);
+        app.set_temperature(30.0);
+        app.set_tint(0.0);
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        assert!(app.get_local_wb_relative());
+        assert_eq!(
+            (app.get_local_temperature(), app.get_local_tint()),
+            (0.0, 0.0)
+        );
+        assert_eq!(crate::testing::count_labeled(&app, "Follow global"), 0);
+        // The mask's +20 is the picture's light moved by 50.
+        app.set_local_temperature(20.0);
+        let edit = read_edit(&app, &state.borrow().develop.edit, Some(0));
+        let global = greycard_edit::white::picture_light(&edit.white_balance, own).unwrap();
+        let mask = edit.adjustments[0].look.white_balance;
+        let shift =
+            crate::panel::color::local_white_shift(&mut state.borrow_mut(), (false, 30.0, 0.0))
+                .expect("a picture's");
+        assert_eq!(shift.global, global);
+        let target = mask.temp_tint(global).unwrap();
+        assert!((1e6 / own.cct - 1e6 / target.cct - 50.0).abs() < 1e-3);
+        // The dropper under the mask: an offset from the global's, the
+        // global left alone.
+        white_from_neutral(state.borrow_mut(), &app, [0.4, 0.3, 0.2]).unwrap();
+        assert!(app.get_local_wb_relative() && app.get_local_wb_on());
+        assert!(app.get_local_temperature() < 0.0);
+        assert_eq!(app.get_temperature(), 30.0);
+    }
+
     fn a_lamp_mask(app: &App, state: &Rc<Shared>) -> greycard_core::TempTint {
         use greycard_core::color::profile_from_frame;
         app.invoke_select(0);

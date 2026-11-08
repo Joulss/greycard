@@ -178,7 +178,6 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
-- [ ] White balance on a picture (§602)
 - [ ] The left pane's sections share its height (issue 79, §603)
 - [ ] The Develop sections told apart (issue 80, §604)
 - [ ] The panes and the strip take a size (§605)

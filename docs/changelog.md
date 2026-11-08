@@ -16,6 +16,10 @@ design note behind it.
   with a GPU: the default demosaic keeps its intermediate result on
   the graphics card instead of sending it back and forth
   ([§606](https://github.com/jessolmstead/greycard/blob/master/docs/notes/606-the-gpu-duals-detail-stays-on-the-device.md)).
+- A JPEG, PNG, or rendered TIFF has a live WHITE BALANCE: the sliders
+  move the picture from its own white in mired and Duv, with As shot,
+  Auto, the dropper, and a mask's offset as on a raw
+  ([§602](https://github.com/jessolmstead/greycard/blob/master/docs/notes/602-white-balance-on-a-picture.md)).
 
 ### Models
 

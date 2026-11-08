@@ -1111,6 +1111,7 @@ mod tests {
                     metadata: Default::default(),
                     space: "sRGB".into(),
                     bits: 16,
+                    white: greycard_core::illuminant::D65,
                 }),
             },
             &Edit::for_picture(),

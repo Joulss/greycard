@@ -77,4 +77,7 @@ pub use raw::RawFrame;
 
 // Re-exported so consumers can name the color types without depending on
 // rawcolor directly.
-pub use rawcolor::{CalibrationIlluminant, CameraProfile, RgbSpace, TempTint, WhiteBalance};
+pub use rawcolor::{
+    CalibrationIlluminant, CameraProfile, Chromaticity, RgbSpace, TempTint, WhiteBalance,
+    illuminant,
+};

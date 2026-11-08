@@ -150,6 +150,7 @@ impl FrameKept {
             Some(wb) => WhiteBase::from(wb, self.meta.clip_level),
             None => WhiteBase {
                 clip: self.meta.clip_level,
+                picture: self.meta.picture,
                 ..WhiteBase::IDENTITY
             },
         }

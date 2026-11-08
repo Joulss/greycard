@@ -641,7 +641,25 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
             .get_bw_strength()
             .clamp(0.0, greycard_edit::bw::STRENGTH_MAX),
     };
-    edit.white_balance = panel_white((app.get_as_shot(), app.get_temperature(), app.get_tint()));
+    // A picture's sliders are an offset, a raw's a light: the kind is
+    // the open file's, by its name (`show_edit` sets it), never what the
+    // last decode said, which is the last frame's until this one's
+    // lands. A white of the other kind (a light on a picture, an offset
+    // on a raw), shown as As shot, is left as it was while As shot is
+    // on, so opening such a frame writes nothing.
+    let picture = app.get_picture_open();
+    let foreign = matches!(
+        (picture, &base.white_balance),
+        (true, WhiteBalance::Custom { .. }) | (false, WhiteBalance::Offset { .. })
+    );
+    edit.white_balance = if foreign && app.get_as_shot() {
+        base.white_balance.clone()
+    } else {
+        panel_white(
+            (app.get_as_shot(), app.get_temperature(), app.get_tint()),
+            picture,
+        )
+    };
     edit.noise.enabled = app.get_noise_enabled();
     edit.noise.profiled = app.get_denoise();
     edit.noise.strength = app.get_denoise_strength();
@@ -729,6 +747,82 @@ pub(crate) fn show_names(edit: &Edit, app: &App) {
     app.set_adjustment_names(ModelRc::new(VecModel::from(names)));
 }
 
+/// The global white balance on the panel, read as the open file's kind
+/// by its name. Called from `show_edit`, and again once the frame
+/// chosen is the open one (`st.current`), which an open sets after it
+/// shows the frame's edit.
+pub(crate) fn show_white(st: &State, edit: &Edit, app: &App) {
+    // The open file's kind, by its name: what `read_edit` reads the
+    // sliders as.
+    let picture = crate::panel::color::open_is_picture(st);
+    app.set_picture_open(picture);
+    // A white of the other kind develops as none, so it shows as As shot:
+    // a kelvin light on a picture (a paste from before a picture had a
+    // white balance of its own), an offset on a raw (a hand edit).
+    let foreign = matches!(
+        (picture, &edit.white_balance),
+        (true, WhiteBalance::Custom { .. }) | (false, WhiteBalance::Offset { .. })
+    );
+    if foreign {
+        said_foreign_white(st, &edit.white_balance);
+    }
+    // A picture's As shot is the offset of none, known before its decode.
+    let camera = st.develop.as_shot_white.or(picture.then_some((0.0, 0.0)));
+    match edit.white_balance {
+        _ if foreign => {
+            app.set_as_shot(true);
+            if let Some((temperature, tint)) = camera {
+                app.set_temperature(temperature);
+                app.set_tint(tint);
+            }
+        }
+        // The sliders show the camera's white under As shot, once the
+        // decode has read it; until then they wait for it.
+        WhiteBalance::AsShot => {
+            app.set_as_shot(true);
+            if let Some((temperature, tint)) = camera {
+                app.set_temperature(temperature);
+                app.set_tint(tint);
+            }
+        }
+        // A picture's offset, mired and Duv on the same sliders.
+        WhiteBalance::Custom { temperature, tint }
+        | WhiteBalance::Offset {
+            mired: temperature,
+            tint,
+        } => {
+            app.set_as_shot(false);
+            app.set_temperature(temperature as f32);
+            app.set_tint(tint as f32);
+        }
+    }
+}
+
+thread_local! {
+    /// The file whose white of the other kind was last said in the log,
+    /// so a frame shown again and again says it once.
+    static SAID_FOREIGN: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Says once per file that its white balance is of the other kind and
+/// shows as As shot.
+fn said_foreign_white(st: &State, wb: &WhiteBalance) {
+    let Some(path) = st.current.and_then(|c| st.path_at(c)) else {
+        return;
+    };
+    SAID_FOREIGN.with(|said| {
+        let mut said = said.borrow_mut();
+        if said.as_deref() != Some(path.as_path()) {
+            tracing::info!(
+                "{}: its white balance {wb:?} is not one this kind of file takes; shown and developed as As shot",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            );
+            *said = Some(path.to_path_buf());
+        }
+    });
+}
+
 /// Put an edit on the panel, its look that of `target`. As-shot
 /// temperature and tint arrive with the frame and are filled in then.
 pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize>) {
@@ -771,22 +865,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
         app.set_target_name("".into());
         app.set_has_feather(false);
     }
-    match edit.white_balance {
-        // The sliders show the camera's white under As shot, once the
-        // decode has read it; until then they wait for it.
-        WhiteBalance::AsShot => {
-            app.set_as_shot(true);
-            if let Some((temperature, tint)) = st.develop.as_shot_white {
-                app.set_temperature(temperature);
-                app.set_tint(tint);
-            }
-        }
-        WhiteBalance::Custom { temperature, tint } => {
-            app.set_as_shot(false);
-            app.set_temperature(temperature as f32);
-            app.set_tint(tint as f32);
-        }
-    }
+    show_white(st, edit, app);
     app.set_noise_enabled(edit.noise.enabled);
     app.set_denoise(edit.noise.profiled);
     app.set_denoise_strength(edit.noise.strength);

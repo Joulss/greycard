@@ -14,8 +14,14 @@
 //! [`WhiteShift`] holds what the matrix is made from — the develop's
 //! white and the profile it was resolved through — so the viewport and
 //! a headless export make the same matrices from the same two things.
+//!
+//! A picture that is not a raw has no camera: its white balance is an
+//! offset from its own white ([`crate::WhiteBalance::Offset`]), and its
+//! matrices, the global's and a mask's, are the Bradford adaptation in
+//! XYZ between two lights ([`adaptation`], [`WhiteShift::picture`]).
 
 use greycard_core::color::{Matrix3, matrix_rows, white_balance_at, white_shift};
+pub use greycard_core::color::{adaptation, picture_neutral};
 use greycard_core::{CameraProfile, TempTint, WhiteBalance};
 use serde::{Deserialize, Serialize};
 
@@ -320,27 +326,43 @@ impl LocalWhite {
     }
 }
 
-/// The develop's white balance and the camera profile it was resolved
-/// through: what a local white balance's matrix is made from.
+/// What a local white balance's matrix is made from: a raw's develop,
+/// its resolved white balance and the camera profile it was resolved
+/// through; or a picture's white and the light its own offset names.
 #[derive(Debug, Clone)]
 pub struct WhiteShift {
-    pub profile: CameraProfile,
-    /// The develop's gains, camera space, green at one.
-    pub gains: [f32; 3],
-    /// The develop's camera to working matrix, rows.
-    pub rows: Matrix3,
+    from: Base,
     /// The develop's white as a temperature and tint, As shot resolved
-    /// to what the camera's gains mean: what a mask's offset is from.
+    /// to what the camera's gains mean, or the light a picture's offset
+    /// names: what a mask's offset is from.
     pub global: TempTint,
+}
+
+#[derive(Debug, Clone)]
+enum Base {
+    /// A raw: back through the develop's matrix and gains, forward
+    /// through the ones the target asks of the profile.
+    Camera {
+        profile: Box<CameraProfile>,
+        /// The develop's gains, camera space, green at one.
+        gains: [f32; 3],
+        /// The develop's camera to working matrix, rows.
+        rows: Matrix3,
+    },
+    /// A picture: no camera, so the adaptation in XYZ from the light
+    /// it shows ([`WhiteShift::global`]) to the target.
+    Picture,
 }
 
 impl WhiteShift {
     /// From the develop's resolved white balance.
     pub fn new(profile: CameraProfile, base: &WhiteBalance) -> Self {
         Self {
-            profile,
-            gains: base.coefficients_f32(),
-            rows: matrix_rows(base),
+            from: Base::Camera {
+                profile: Box::new(profile),
+                gains: base.coefficients_f32(),
+                rows: matrix_rows(base),
+            },
             global: base.temp_tint,
         }
     }
@@ -354,39 +376,143 @@ impl WhiteShift {
         global: TempTint,
     ) -> Self {
         Self {
-            profile,
-            gains,
-            rows,
+            from: Base::Camera {
+                profile: Box::new(profile),
+                gains,
+                rows,
+            },
             global,
+        }
+    }
+
+    /// From a white point alone: a picture shown at `light`, its own
+    /// white moved by its offset (or its own white, at none).
+    pub fn picture(light: TempTint) -> Self {
+        Self {
+            from: Base::Picture,
+            global: light,
+        }
+    }
+
+    /// A raw's develop gains and camera to working matrix, rows, as
+    /// it was made from; none for a picture's.
+    pub fn camera(&self) -> Option<([f32; 3], Matrix3)> {
+        match &self.from {
+            Base::Camera { gains, rows, .. } => Some((*gains, *rows)),
+            Base::Picture => None,
         }
     }
 
     /// The matrix to a resolved white balance.
     pub fn to(&self, target: &WhiteBalance) -> Option<Matrix3> {
-        white_shift(
-            self.gains,
-            self.rows,
-            target.coefficients_f32(),
-            matrix_rows(target),
-        )
+        match &self.from {
+            Base::Camera { gains, rows, .. } => white_shift(
+                *gains,
+                *rows,
+                target.coefficients_f32(),
+                matrix_rows(target),
+            ),
+            Base::Picture => adaptation(self.global, target.temp_tint),
+        }
     }
 
     /// The matrix to a temperature and tint.
     pub fn to_temp_tint(&self, tt: TempTint) -> Option<Matrix3> {
-        match white_balance_at(&self.profile, tt) {
-            Ok(wb) => self.to(&wb),
-            Err(e) => {
-                log::debug!("white balance {} K {:+.4}: {e}", tt.cct, tt.duv);
-                None
-            }
+        match &self.from {
+            Base::Camera { profile, .. } => match white_balance_at(profile, tt) {
+                Ok(wb) => self.to(&wb),
+                Err(e) => {
+                    log::debug!("white balance {} K {:+.4}: {e}", tt.cct, tt.duv);
+                    None
+                }
+            },
+            Base::Picture => adaptation(self.global, tt),
         }
     }
 
     /// A look's white balance as a matrix on the developed picture, an
     /// offset taken from the develop's white: `None` when it is off,
     /// or cannot be resolved, which is the same thing to the finish.
+    ///
+    /// On a picture an absolute light is read as the offset it is from
+    /// the picture's white, which comes to the same adaptation: a
+    /// picture has no light of its own to name one against.
     pub fn local(&self, white: &LocalWhite) -> Option<Matrix3> {
         self.to_temp_tint(white.temp_tint(self.global)?)
+    }
+}
+
+/// The light a picture's white balance names from its own white
+/// `own`: itself at As shot, its offset added (held as a mask's offset
+/// is, [`LocalWhite::temp_tint`]), and `None` for a kelvin light,
+/// which is a raw's and no picture's.
+pub fn picture_light(wb: &crate::WhiteBalance, own: TempTint) -> Option<TempTint> {
+    match *wb {
+        crate::WhiteBalance::AsShot => Some(own),
+        crate::WhiteBalance::Offset { mired, tint } => {
+            LocalWhite::Relative { mired, tint }.temp_tint(own)
+        }
+        crate::WhiteBalance::Custom { .. } => None,
+    }
+}
+
+/// How far a picture's own offset goes either way from its white
+/// `own`: the mired and Duv that reach the panel's range of lights
+/// ([`TEMPERATURE_RANGE`], [`TINT_RANGE`]) from it, and no further,
+/// since the light is held there ([`LocalWhite::temp_tint`]). From D65
+/// that is about -346 to +70 mired; from D50 -300 to +117. Each takes
+/// in none, for a white past the range. A mask's offset keeps
+/// [`OFFSET_MIRED_RANGE`].
+pub fn picture_offset_range(own: TempTint) -> ((f64, f64), (f64, f64)) {
+    let to = |kelvin: f64| mired(own.cct) - mired(kelvin);
+    let m = (
+        to(TEMPERATURE_RANGE.0).min(0.0),
+        to(TEMPERATURE_RANGE.1).max(0.0),
+    );
+    let d = (
+        (-TINT_RANGE - own.duv).min(0.0),
+        (TINT_RANGE - own.duv).max(0.0),
+    );
+    (m, d)
+}
+
+/// The offset from a picture's own white `own` that names `light`, held
+/// to the picture's sliders' range ([`picture_offset_range`]): what the
+/// panel stores for a picture from the dropper or Auto.
+pub fn offset_to(light: TempTint, own: TempTint) -> (f64, f64) {
+    let ((m0, m1), (d0, d1)) = picture_offset_range(own);
+    let m = (mired(own.cct) - mired(light.cct)).clamp(m0, m1);
+    let d = (light.duv - own.duv).clamp(d0, d1);
+    (m, d)
+}
+
+/// A white balance as it lands on a frame, a picture or a raw: what a
+/// preset or the copy sheet lays. An offset applies to either, on a
+/// raw as the light it names at the raw's As shot (`as_shot`, read only
+/// then), since a raw's edit holds a light and never an offset; a
+/// kelvin light applies to a raw alone. `Err` says why the frame keeps
+/// its own: a light on a picture, or a raw whose As shot will not say.
+pub fn landing(
+    wb: &crate::WhiteBalance,
+    picture: bool,
+    as_shot: impl FnOnce() -> Option<TempTint>,
+) -> Result<crate::WhiteBalance, &'static str> {
+    use crate::WhiteBalance::{AsShot, Custom, Offset};
+    match (wb, picture) {
+        (Custom { .. }, true) => Err("a kelvin light is a raw's, and a picture has none"),
+        (Offset { mired, tint }, false) => {
+            let shot = as_shot().ok_or("the raw's as-shot white could not be read")?;
+            match (LocalWhite::Relative {
+                mired: *mired,
+                tint: *tint,
+            })
+            .to_absolute(shot)
+            {
+                LocalWhite::Absolute { temperature, tint } => Ok(Custom { temperature, tint }),
+                _ => Err("the offset names no light at the raw's as-shot white"),
+            }
+        }
+        (AsShot | Offset { .. }, true) | (AsShot | Custom { .. }, false) => Ok(wb.clone()),
     }
 }
 
@@ -915,5 +1041,308 @@ mod relative {
             let read: BeforeWire = serde_json::from_str(json).unwrap();
             assert_eq!(read.mode, Before::Off, "{json}");
         }
+    }
+}
+
+#[cfg(test)]
+mod picture {
+    use super::*;
+    use crate::WhiteBalance as Edited;
+    use rawcolor::cct::temp_tint_to_chromaticity;
+
+    type M = [[f64; 3]; 3];
+
+    fn mul(a: M, b: M) -> M {
+        std::array::from_fn(|r| std::array::from_fn(|c| (0..3).map(|k| a[r][k] * b[k][c]).sum()))
+    }
+
+    fn apply(m: M, v: [f64; 3]) -> [f64; 3] {
+        std::array::from_fn(|r| (0..3).map(|k| m[r][k] * v[k]).sum())
+    }
+
+    fn inverse(m: M) -> M {
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        let c = |r: usize, k: usize| {
+            let (r0, r1) = ((r + 1) % 3, (r + 2) % 3);
+            let (k0, k1) = ((k + 1) % 3, (k + 2) % 3);
+            m[r0][k0] * m[r1][k1] - m[r0][k1] * m[r1][k0]
+        };
+        std::array::from_fn(|r| std::array::from_fn(|k| c(k, r) / det))
+    }
+
+    /// Bradford's cone matrix and Rec.2020's to XYZ, written out here
+    /// from the standards rather than taken from the code under test.
+    const BRADFORD: M = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ];
+    const REC2020: M = [
+        [0.636958, 0.144617, 0.168881],
+        [0.262700, 0.677998, 0.059302],
+        [0.000000, 0.028073, 1.060985],
+    ];
+
+    fn xyz(tt: TempTint) -> [f64; 3] {
+        let c = temp_tint_to_chromaticity(tt).unwrap();
+        [c.x / c.y, 1.0, (1.0 - c.x - c.y) / c.y]
+    }
+
+    /// The working-space matrix from a picture shown at `from` to one
+    /// shown at `to`, by hand.
+    fn by_hand(from: TempTint, to: TempTint) -> M {
+        let (a, b) = (apply(BRADFORD, xyz(from)), apply(BRADFORD, xyz(to)));
+        let mut d = [[0.0; 3]; 3];
+        for i in 0..3 {
+            d[i][i] = a[i] / b[i];
+        }
+        let cat = mul(inverse(BRADFORD), mul(d, BRADFORD));
+        mul(inverse(REC2020), mul(cat, REC2020))
+    }
+
+    const D65: TempTint = TempTint {
+        cct: 6504.0,
+        duv: 0.0032,
+    };
+
+    /// An offset's matrix at a few lights, against Bradford by hand:
+    /// to a part in ten thousand, the standards' rounding.
+    #[test]
+    fn an_offset_is_bradford_between_the_two_lights() {
+        for (from, by, tint) in [
+            (D65, 25.0, 0.0),
+            (D65, -60.0, 0.004),
+            (TempTint::new(5003.0, 0.0033), 40.0, -0.01),
+            (TempTint::new(3200.0, 0.0), -100.0, 0.0),
+        ] {
+            let to = picture_light(&Edited::Offset { mired: by, tint }, from).unwrap();
+            assert!((mired(from.cct) - mired(to.cct) - by).abs() < 1e-9);
+            let got = adaptation(from, to).unwrap();
+            let want = by_hand(from, to);
+            for r in 0..3 {
+                for c in 0..3 {
+                    assert!(
+                        (got[r][c] as f64 - want[r][c]).abs() < 1e-4,
+                        "{from:?} {by} {tint}: {got:?} against {want:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A warmer offset warms a grey: red up, blue down, by the amount
+    /// the adaptation says; no offset is no light but the picture's
+    /// own, and As shot is that.
+    #[test]
+    fn a_warmer_offset_warms_a_grey() {
+        let to = picture_light(
+            &Edited::Offset {
+                mired: 25.0,
+                tint: 0.0,
+            },
+            D65,
+        )
+        .unwrap();
+        assert!(to.cct > D65.cct);
+        let m = adaptation(D65, to).unwrap();
+        let grey = greycard_core::color::apply3(&m, [0.18; 3]);
+        assert!(grey[0] > 0.18 && grey[2] < 0.18, "{grey:?}");
+        let want = apply(by_hand(D65, to), [0.18; 3]);
+        for i in 0..3 {
+            assert!((grey[i] as f64 - want[i]).abs() < 1e-5, "{grey:?} {want:?}");
+        }
+        assert_eq!(picture_light(&Edited::AsShot, D65), Some(D65));
+        assert_eq!(
+            picture_light(
+                &Edited::Offset {
+                    mired: 0.0,
+                    tint: 0.0
+                },
+                D65
+            ),
+            Some(D65)
+        );
+        assert_eq!(
+            picture_light(
+                &Edited::Custom {
+                    temperature: 3200.0,
+                    tint: 0.0
+                },
+                D65
+            ),
+            None
+        );
+        // The light to itself moves nothing.
+        let same = adaptation(D65, D65).unwrap();
+        for (r, row) in same.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                assert!(
+                    (v - if r == c { 1.0 } else { 0.0 }).abs() < 1e-6,
+                    "{same:?}"
+                );
+            }
+        }
+    }
+
+    /// The dropper's light makes the pixel grey, from wherever the
+    /// picture is shown; a pixel with a channel at nothing names none.
+    #[test]
+    fn the_neutral_light_makes_the_pick_grey() {
+        for shown in [D65, TempTint::new(7400.0, -0.002)] {
+            for px in [[0.30f32, 0.25, 0.18], [0.12, 0.15, 0.2]] {
+                let light = picture_neutral(px, shown).unwrap();
+                let out = greycard_core::color::apply3(&adaptation(shown, light).unwrap(), px);
+                let mean = (out[0] + out[1] + out[2]) / 3.0;
+                for v in out {
+                    assert!((v - mean).abs() < 1e-3 * mean, "{out:?}");
+                }
+            }
+        }
+        assert!(picture_neutral([0.0, 0.0, 0.0], D65).is_none());
+        // Past the range the light reaches, the dropper's offset is held
+        // to where it still does something.
+        let ((m0, m1), (d0, d1)) = picture_offset_range(D65);
+        assert!((m0 - (1e6 / 6504.0 - 500.0)).abs() < 1e-9 && m0 < -340.0);
+        assert!((m1 - (1e6 / 6504.0 - 1e6 / 12000.0)).abs() < 1e-9 && m1 < 71.0);
+        assert!((d0 + 0.0532).abs() < 1e-9 && (d1 - 0.0468).abs() < 1e-9);
+        let blue = offset_to(TempTint::new(20000.0, 0.0), D65);
+        assert_eq!(blue.0, m1);
+        let d50 = picture_offset_range(TempTint::new(5003.0, 0.0033));
+        assert!(d50.0.1 > m1, "a D50 picture reaches further toward blue");
+        // At the range's ends the light is the range's own.
+        let edge = picture_light(
+            &Edited::Offset {
+                mired: m1,
+                tint: 0.0,
+            },
+            D65,
+        )
+        .unwrap();
+        assert!((edge.cct - 12000.0).abs() < 1e-6);
+        let (m, d) = offset_to(TempTint::new(1e6 / (1e6 / 6504.0 - 30.0), 0.0052), D65);
+        assert!((m - 30.0).abs() < 1e-9 && (d - 0.002).abs() < 1e-12);
+    }
+
+    /// A mask's offset on a picture is from the picture's light, and
+    /// two adaptations make the one between their ends: the global's
+    /// then the mask's is the picture's own straight to the mask's.
+    #[test]
+    fn a_masks_offset_adds_to_the_pictures() {
+        let global = picture_light(
+            &Edited::Offset {
+                mired: 20.0,
+                tint: 0.002,
+            },
+            D65,
+        )
+        .unwrap();
+        let shift = WhiteShift::picture(global);
+        let mask = LocalWhite::Relative {
+            mired: 15.0,
+            tint: 0.0,
+        };
+        let local = shift.local(&mask).unwrap();
+        let first = adaptation(D65, global).unwrap();
+        let both = greycard_core::color::mul3(local, first);
+        let target = mask.temp_tint(global).unwrap();
+        let straight = adaptation(D65, target).unwrap();
+        for r in 0..3 {
+            for c in 0..3 {
+                assert!(
+                    (both[r][c] - straight[r][c]).abs() < 1e-5,
+                    "{both:?} {straight:?}"
+                );
+            }
+        }
+        // An absolute light is the offset it is from the picture's.
+        let lamp = LocalWhite::Absolute {
+            temperature: target.cct,
+            tint: target.duv,
+        };
+        assert_eq!(shift.local(&lamp), shift.local(&mask));
+    }
+
+    /// The camera profile path and the XYZ path agree on a raw: a
+    /// develop at its As shot, moved by an offset, through the profile
+    /// (gains and the matrices interpolated at the light) and through
+    /// Bradford alone. A tint alone they make to the same grey, the
+    /// profile's matrix being the same at the same kelvin; a move in
+    /// kelvin reads the profile's matrix at another light, whose
+    /// rendering of the old white is not quite Bradford's. Measured on
+    /// an ordinary sensor's two calibrations, the grey each makes is
+    /// within 0.0047 in CIE 1960 uv over offsets of ±60 mired (0.0017
+    /// at +25 mired; a just noticeable difference is about 0.004).
+    #[test]
+    fn a_raws_offset_through_the_profile_and_through_xyz_agree() {
+        use greycard_core::CalibrationIlluminant;
+        let mat = |m: [f64; 9]| {
+            rawcolor::Mat3::new([[m[0], m[1], m[2]], [m[3], m[4], m[5]], [m[6], m[7], m[8]]])
+        };
+        let p = CameraProfile::dual(
+            rawcolor::Calibration::new(
+                CalibrationIlluminant::StandardA,
+                mat([
+                    1.1564, -0.4626, -0.1081, -0.4229, 1.2260, 0.2187, -0.0711, 0.1500, 0.6268,
+                ]),
+            ),
+            rawcolor::Calibration::new(
+                CalibrationIlluminant::D65,
+                mat([
+                    0.9766, -0.2953, -0.1254, -0.4276, 1.2116, 0.2433, -0.0437, 0.1336, 0.5131,
+                ]),
+            ),
+        );
+        let uv = |rgb: [f32; 3]| {
+            let x = apply(REC2020, rgb.map(f64::from));
+            let s = x[0] + 15.0 * x[1] + 3.0 * x[2];
+            (4.0 * x[0] / s, 6.0 * x[1] / s)
+        };
+        let mut worst: f64 = 0.0;
+        for shot in [TempTint::new(5200.0, 0.002), TempTint::new(3300.0, -0.001)] {
+            let base = white_balance_at(&p, shot).unwrap();
+            let raw = WhiteShift::new(p.clone(), &base);
+            let xyz = WhiteShift::picture(base.temp_tint);
+            for (mired, tint) in [(25.0, 0.0), (-60.0, 0.0), (60.0, 0.004), (0.0, -0.004)] {
+                let off = LocalWhite::Relative { mired, tint };
+                let a = greycard_core::color::apply3(&raw.local(&off).unwrap(), [0.18; 3]);
+                let b = greycard_core::color::apply3(&xyz.local(&off).unwrap(), [0.18; 3]);
+                let (ua, va) = uv(a);
+                let (ub, vb) = uv(b);
+                let d = ((ua - ub).powi(2) + (va - vb).powi(2)).sqrt();
+                worst = worst.max(d);
+            }
+        }
+        eprintln!("profile path against XYZ path, worst grey: {worst:.5} uv");
+        assert!(worst < 0.006, "{worst}");
+    }
+
+    /// A white balance landing on a frame: an offset onto a picture as
+    /// it is and onto a raw as the light it names at the raw's As shot;
+    /// a light onto a raw as it is and onto a picture not at all.
+    #[test]
+    fn what_lands_on_a_picture_and_on_a_raw() {
+        let offset = Edited::Offset {
+            mired: 25.0,
+            tint: 0.002,
+        };
+        let light = Edited::Custom {
+            temperature: 3200.0,
+            tint: 0.0,
+        };
+        let never = || -> Option<TempTint> { panic!("a picture's As shot is never read") };
+        assert_eq!(landing(&offset, true, never), Ok(offset.clone()));
+        assert!(landing(&light, true, never).is_err());
+        assert_eq!(landing(&Edited::AsShot, true, never), Ok(Edited::AsShot));
+        let shot = TempTint::new(5000.0, 0.001);
+        let Ok(Edited::Custom { temperature, tint }) = landing(&offset, false, || Some(shot))
+        else {
+            panic!()
+        };
+        assert!((mired(5000.0) - mired(temperature) - 25.0).abs() < 1e-9);
+        assert!((tint - 0.003).abs() < 1e-12);
+        assert!(landing(&offset, false, || None).is_err());
+        assert_eq!(landing(&light, false, || None), Ok(light));
     }
 }

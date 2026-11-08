@@ -1657,6 +1657,15 @@ export component App inherits Window {
     // Whether the open file is a raw: the sections before the lens
     // have nothing to act on in a picture that is not.
     in property <bool> raw-input: true;
+    // Whether the open file is a picture that is not a raw, by its
+    // name, from the moment it is chosen: its white balance is an
+    // offset from its own white. And how far that offset reaches, from
+    // its own white to the ends of the panel's range of lights.
+    in property <bool> picture-open: false;
+    in property <float> picture-mired-min: -450;
+    in property <float> picture-mired-max: 450;
+    in property <float> picture-tint-min: -0.1;
+    in property <float> picture-tint-max: 0.1;
     // Why the noise section rests, or "" when it does not: a picture
     // that is not a raw.
     in property <string> noise-unavailable: "";
@@ -3128,7 +3137,7 @@ export component App inherits Window {
                 }
                 // The pipette is in the Develop tab, and in a mask's
                 // look on the Masks tab, where it works under the mask.
-                if (chord == "W" && root.raw-input) {
+                if (chord == "W") {
                     if (root.panel-tab != "Develop" && !(root.panel-tab == "Masks" && root.target > 0)) {
                         root.tab-chosen("Develop");
                     }
@@ -3682,6 +3691,11 @@ export component App inherits Window {
                             temperature <=> root.temperature;
                             tint <=> root.tint;
                             raw-input: root.raw-input;
+                            picture: root.picture-open;
+                            mired-min: root.picture-mired-min;
+                            mired-max: root.picture-mired-max;
+                            tint-min: root.picture-tint-min;
+                            tint-max: root.picture-tint-max;
                             develop-changed => { root.develop-changed(); }
                             as-shot-toggled => { root.as-shot-toggled(); }
                             wb-slider-reset(w) => { root.wb-slider-reset(w); }
@@ -3705,6 +3719,7 @@ export component App inherits Window {
                             temperature <=> root.local-temperature;
                             tint <=> root.local-tint;
                             raw-input: root.raw-input;
+                            picture: root.picture-open;
                             develop-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop": CameraSection {

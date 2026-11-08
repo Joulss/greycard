@@ -51,6 +51,11 @@ pub struct Picture {
     pub space: String,
     /// Bits a sample had in the file: 8, 16, or 32 for floats.
     pub bits: u8,
+    /// The white of the space the samples were in: D65 for sRGB and
+    /// for a file without a profile, the profile's own for one that
+    /// has it (ProPhoto's is D50). The decode adapts it to the working
+    /// white; a white balance offset on the picture is from it.
+    pub white: Chromaticity,
 }
 
 impl Picture {
@@ -59,6 +64,21 @@ impl Picture {
     pub fn clip_level(&self) -> f32 {
         crate::develop::CLIP_FRACTION
     }
+
+    /// The picture's white as a temperature and tint
+    /// ([`white_temp_tint`]).
+    pub fn own_white(&self) -> rawcolor::TempTint {
+        white_temp_tint(self.white)
+    }
+}
+
+/// A picture's white as a temperature and tint: what its white
+/// balance offset is from. D65 is about 6504 K and +0.0032; a white
+/// the search cannot place is taken as D65.
+pub fn white_temp_tint(white: Chromaticity) -> rawcolor::TempTint {
+    rawcolor::cct::chromaticity_to_temp_tint(white)
+        .or_else(|| rawcolor::cct::chromaticity_to_temp_tint(rawcolor::illuminant::D65))
+        .unwrap_or(rawcolor::TempTint::new(6504.0, 0.0032))
 }
 
 /// The extensions taken for a picture rather than a raw.
@@ -346,6 +366,7 @@ pub fn decode_picture(bytes: &[u8]) -> Result<Picture> {
         metadata,
         space,
         bits,
+        white: transform.white,
     })
 }
 
@@ -410,6 +431,8 @@ struct Transform {
     trc: [Trc; 3],
     /// Rows, the file's linear RGB to the working space's.
     matrix: [[f32; 3]; 3],
+    /// The white of the space the samples were in.
+    white: Chromaticity,
 }
 
 impl Transform {
@@ -417,6 +440,7 @@ impl Transform {
         Ok(Self {
             trc: [Trc::Srgb, Trc::Srgb, Trc::Srgb],
             matrix: rows(&space_matrix(&RgbSpace::SRGB)?),
+            white: RgbSpace::SRGB.white,
         })
     }
 
@@ -434,6 +458,7 @@ impl Transform {
         Ok(Self {
             trc: p.trc.clone(),
             matrix: rows(&(from_xyz * adapt * to_xyz)),
+            white: p.white_point(),
         })
     }
 }
@@ -585,6 +610,10 @@ pub struct MatrixTrc {
     pub blue: [f64; 3],
     trc: [Trc; 3],
     pub description: Option<String>,
+    /// The media white, XYZ: what the profile's chromatic adaptation
+    /// (`chad`) took to D50, or its `wtpt` without one; none when it
+    /// has neither.
+    pub white: Option<[f64; 3]>,
 }
 
 impl MatrixTrc {
@@ -623,8 +652,48 @@ impl MatrixTrc {
             blue: xyz(b"bXYZ")?,
             trc: [curve(b"rTRC")?, curve(b"gTRC")?, curve(b"bTRC")?],
             description: tags.get(b"desc").and_then(|d| parse_description(d)),
+            white: media_white(tags.get(b"chad").copied(), xyz(b"wtpt")),
         })
     }
+
+    /// The white of the profile's space as a chromaticity: its media
+    /// white, or the connection space's D50 when it names none. A white
+    /// no light could be (a channel at nothing or below, a sum that
+    /// names no chromaticity) is D50 too, said in the log, so a profile
+    /// with a broken `wtpt` opens as it did before the white was read.
+    pub fn white_point(&self) -> Chromaticity {
+        let d50 = || Chromaticity::from_xyz(Vec3(PCS_WHITE)).unwrap_or(rawcolor::illuminant::D50);
+        let Some(w) = self.white else {
+            return d50();
+        };
+        let usable = w.iter().all(|v| v.is_finite() && *v > 0.0);
+        match Chromaticity::from_xyz(Vec3(w)).filter(|_| usable) {
+            Some(c) => c,
+            None => {
+                log::warn!(
+                    "{}: its profile's white {w:?} is no light; taken as D50",
+                    self.description.as_deref().unwrap_or("embedded profile")
+                );
+                d50()
+            }
+        }
+    }
+}
+
+/// A profile's media white. A version 4 profile's `wtpt` is D50 by
+/// rule, the colorants adapted to it, and its `chad` the adaptation
+/// that did it, so the white is `chad` undone on D50 (Display P3's
+/// comes back D65); a version 2 profile's `wtpt` is the white itself.
+fn media_white(chad: Option<&[u8]>, wtpt: Option<[f64; 3]>) -> Option<[f64; 3]> {
+    let adapted = chad.and_then(|d| {
+        if d.len() < 44 || &d[0..4] != b"sf32" {
+            return None;
+        }
+        let v: [f64; 9] = std::array::from_fn(|i| s15f16(&d[8 + 4 * i..12 + 4 * i]));
+        let m = Mat3::new([[v[0], v[1], v[2]], [v[3], v[4], v[5]], [v[6], v[7], v[8]]]);
+        Some((m.inverse()? * Vec3(PCS_WHITE)).0)
+    });
+    adapted.or(wtpt)
 }
 
 fn s15f16(b: &[u8]) -> f64 {
@@ -761,14 +830,28 @@ mod tests {
     /// A matrix/TRC profile built by hand: the colorants given, a
     /// parametric sRGB curve, and a version 2 description.
     fn profile(red: [f64; 3], green: [f64; 3], blue: [f64; 3], name: &str) -> Vec<u8> {
-        let mut tags: Vec<([u8; 4], Vec<u8>)> = Vec::new();
-        let xyz = |v: [f64; 3]| {
-            let mut d = b"XYZ \0\0\0\0".to_vec();
-            for c in v {
-                d.extend(((c * 65536.0).round() as i32).to_be_bytes());
-            }
-            d
-        };
+        profile_with(red, green, blue, name, Vec::new())
+    }
+
+    /// An ICC `XYZ ` tag's data.
+    fn xyz_tag(v: [f64; 3]) -> Vec<u8> {
+        let mut d = b"XYZ \0\0\0\0".to_vec();
+        for c in v {
+            d.extend(((c * 65536.0).round() as i32).to_be_bytes());
+        }
+        d
+    }
+
+    /// [`profile`] with more tags.
+    fn profile_with(
+        red: [f64; 3],
+        green: [f64; 3],
+        blue: [f64; 3],
+        name: &str,
+        extra: Vec<([u8; 4], Vec<u8>)>,
+    ) -> Vec<u8> {
+        let mut tags: Vec<([u8; 4], Vec<u8>)> = extra;
+        let xyz = xyz_tag;
         tags.push((*b"rXYZ", xyz(red)));
         tags.push((*b"gXYZ", xyz(green)));
         tags.push((*b"bXYZ", xyz(blue)));
@@ -838,6 +921,61 @@ mod tests {
         lut[20..24].copy_from_slice(b"Lab ");
         assert!(MatrixTrc::parse(&lut).is_none());
         assert!(MatrixTrc::parse(b"short").is_none());
+    }
+
+    /// The picture's white: D65 for sRGB and a file without a profile,
+    /// a version 2 profile's `wtpt`, a version 4 profile's `chad`
+    /// undone, and D50 for a profile that names none.
+    #[test]
+    fn a_profiles_white_is_read() {
+        let near = |c: Chromaticity, want: Chromaticity| {
+            (c.x - want.x).abs() < 2e-4 && (c.y - want.y).abs() < 2e-4
+        };
+        assert!(near(
+            Transform::srgb().unwrap().white,
+            rawcolor::illuminant::D65
+        ));
+        let white_of = |extra| {
+            let p = MatrixTrc::parse(&profile_with(SRGB_RED, SRGB_GREEN, SRGB_BLUE, "w", extra))
+                .unwrap();
+            Transform::from_profile(&p).unwrap().white
+        };
+        // ProPhoto's white, a version 2 profile's own.
+        let d50 = [0.9642, 1.0, 0.8249];
+        assert!(near(
+            white_of(vec![(*b"wtpt", xyz_tag(d50))]),
+            rawcolor::illuminant::D50
+        ));
+        let d65 = [0.9505, 1.0, 1.089];
+        assert!(near(
+            white_of(vec![(*b"wtpt", xyz_tag(d65))]),
+            rawcolor::illuminant::D65
+        ));
+        // Version 4: `wtpt` is D50 and `chad` (Bradford, D65 to D50)
+        // says the white was D65.
+        let chad = rawcolor::cat::adaptation_matrix(
+            rawcolor::illuminant::D65,
+            rawcolor::illuminant::D50,
+            Cat::Bradford,
+        )
+        .unwrap();
+        let mut sf32 = b"sf32\0\0\0\0".to_vec();
+        for v in chad.rows.iter().flatten() {
+            sf32.extend(((v * 65536.0).round() as i32).to_be_bytes());
+        }
+        assert!(near(
+            white_of(vec![(*b"wtpt", xyz_tag(d50)), (*b"chad", sf32)]),
+            rawcolor::illuminant::D65
+        ));
+        assert!(near(white_of(Vec::new()), rawcolor::illuminant::D50));
+        // A white of nothing, as a broken profile writes one: D50, and the
+        // picture still opens.
+        for broken in [[0.0, 0.0, 0.0], [0.9642, 0.0, 0.8249], [-1.0, 1.0, 1.0]] {
+            assert!(near(
+                white_of(vec![(*b"wtpt", xyz_tag(broken))]),
+                rawcolor::illuminant::D50
+            ));
+        }
     }
 
     #[test]

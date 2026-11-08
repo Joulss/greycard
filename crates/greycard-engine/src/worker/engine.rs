@@ -911,8 +911,13 @@ pub(super) fn run(
                                     .unwrap_or((5500.0, 0.0));
                                 (as_shot, Some(f.clone()), profile, SourceKind::Raw)
                             }
+                            // A picture's "as shot" is its own white,
+                            // which its offset sliders are reckoned from.
                             Input::Picture { meta, .. } => (
-                                (5500.0, 0.0),
+                                {
+                                    let own = meta.own_white();
+                                    (own.cct, own.duv)
+                                },
                                 None,
                                 None,
                                 SourceKind::Picture {

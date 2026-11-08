@@ -208,9 +208,27 @@ fn switched(name: &str, on: bool) -> String {
 }
 
 fn white_balance(b: &Edit, a: &Edit) -> String {
-    use crate::WhiteBalance::{AsShot, Custom};
+    use crate::WhiteBalance::{AsShot, Custom, Offset};
     match (&b.white_balance, &a.white_balance) {
         (_, AsShot) => "White balance as shot".to_string(),
+        // A picture's offset, in the words of a mask's.
+        (
+            Offset {
+                mired: m0,
+                tint: d0,
+            },
+            Offset {
+                mired: m1,
+                tint: d1,
+            },
+        ) if m0 == m1 && d0 != d1 => format!("Tint {:+.3}", unsigned_zero(*d1, 1e3)),
+        // A tint alone, the first move from As shot: the tint's row.
+        (_, Offset { mired, tint }) if *mired == 0.0 => {
+            format!("Tint {:+.3}", unsigned_zero(*tint, 1e3))
+        }
+        (_, Offset { mired, .. }) => {
+            format!("White balance {:+.0} mired", unsigned_zero(*mired, 1.0))
+        }
         (
             Custom {
                 temperature: t0,
@@ -385,6 +403,9 @@ fn local_white(b: &crate::LocalWhite, a: &crate::LocalWhite) -> String {
                 tint: d1,
             },
         ) if m0 == m1 && d0 != d1 => format!("Tint {:+.3}", unsigned_zero(*d1, 1e3)),
+        (_, Relative { mired, tint }) if *mired == 0.0 && *tint != 0.0 => {
+            format!("Tint {:+.3}", unsigned_zero(*tint, 1e3))
+        }
         (_, Relative { mired, .. }) => {
             format!("White balance {:+.0} mired", unsigned_zero(*mired, 1.0))
         }
@@ -761,6 +782,19 @@ mod tests {
         };
         assert_eq!(describe(&e, &f, &[]), "Tint +0.004");
         assert_eq!(describe(&f, &base, &[]), "White balance as shot");
+        // A picture's offset: in mired, and a tint alone as the tint.
+        let mut warm = base.clone();
+        warm.white_balance = WhiteBalance::Offset {
+            mired: 25.0,
+            tint: 0.0,
+        };
+        assert_eq!(describe(&base, &warm, &[]), "White balance +25 mired");
+        let mut green = base.clone();
+        green.white_balance = WhiteBalance::Offset {
+            mired: 0.0,
+            tint: 0.004,
+        };
+        assert_eq!(describe(&base, &green, &[]), "Tint +0.004");
         let mut e = base.clone();
         e.noise.strength = 2.5;
         assert_eq!(describe(&base, &e, &[]), "Denoise 2.5");
@@ -948,6 +982,13 @@ mod tests {
             tint: 0.0,
         };
         assert_eq!(describe(&more, &nearly, &[]), "Sky: White balance +0 mired");
+        // A tint alone, from none, is the tint's row.
+        let mut green = follows.clone();
+        green.adjustments[0].look.white_balance = crate::LocalWhite::Relative {
+            mired: 0.0,
+            tint: 0.004,
+        };
+        assert_eq!(describe(&follows, &green, &[]), "Sky: Tint +0.004");
         let mut kept = more.clone();
         kept.adjustments[0].look.white_balance = crate::LocalWhite::KeptRelative {
             mired: 25.0,

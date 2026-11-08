@@ -295,6 +295,9 @@ pub struct WhiteBase {
     /// The same white as a temperature and tint, what a mask's offset
     /// is from; none for a picture already in the working space.
     pub temp_tint: Option<greycard_core::TempTint>,
+    /// A picture's own white and the light its white balance showed it
+    /// at; none for a raw.
+    pub picture: Option<(greycard_core::TempTint, greycard_core::TempTint)>,
 }
 
 impl WhiteBase {
@@ -304,6 +307,7 @@ impl WhiteBase {
         matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         clip: f32::INFINITY,
         temp_tint: None,
+        picture: None,
     };
 
     /// The white balance `wb`, with channels clipping at `clip`.
@@ -314,6 +318,7 @@ impl WhiteBase {
             matrix: std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r])),
             clip,
             temp_tint: Some(wb.temp_tint),
+            picture: None,
         }
     }
 }
@@ -356,7 +361,8 @@ pub enum SourceKind {
 pub enum Outcome {
     Opened {
         generation: u64,
-        /// The frame's own white balance as temperature and tint.
+        /// The frame's own white balance as temperature and tint: a
+        /// raw's As shot, a picture's own white.
         as_shot: (f64, f64),
         /// The frame and its profile, for the white balance preview;
         /// neither for a picture that is not a raw.

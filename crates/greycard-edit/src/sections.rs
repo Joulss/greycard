@@ -206,25 +206,129 @@ impl Default for Tone {
 }
 
 /// The scene white.
+///
+/// Written as a `mode`, `as_shot` or `custom`, with a light beside
+/// `custom`: `{"mode":"custom","temperature":3200.0,"tint":0.002}`. A
+/// picture's offset is written beside `as_shot`,
+/// `{"mode":"as_shot","offset":{"mired":10.0,"tint":0.0}}`, and not as
+/// a mode of its own: every build before it refuses a sidecar whose
+/// mode it does not know, and reads `as_shot` with the offset ignored,
+/// so an older build opens the picture with its white balance off and
+/// renders nothing wrong. A mode this build does not know reads as As
+/// shot, so the next new one costs nothing.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
+#[serde(try_from = "WhiteWire", into = "WhiteWire")]
 pub enum WhiteBalance {
-    /// What the camera recorded.
+    /// What the camera recorded; on a picture, its own white.
     #[default]
     AsShot,
     /// A correlated color temperature in kelvin and a tint as Duv,
-    /// positive toward green.
+    /// positive toward green. A raw's alone: a picture has no light to
+    /// name.
     Custom { temperature: f64, tint: f64 },
+    /// A picture's: its own white moved by `mired` toward the higher
+    /// kelvin and `tint` in Duv, as a mask's offset from the global
+    /// moves (`LocalWhite::Relative`). A raw's edit never holds one; a
+    /// preset carrying one onto a raw is laid as the light it names at
+    /// the raw's As shot, and one found on a raw anyway develops as As
+    /// shot, as an older build reads it.
+    Offset { mired: f64, tint: f64 },
+}
+
+/// How a [`WhiteBalance`] is written.
+#[derive(Serialize, Deserialize)]
+struct WhiteWire {
+    mode: WhiteMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tint: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offset: Option<WhiteOffset>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WhiteMode {
+    AsShot,
+    Custom,
+    /// A mode a later build writes: As shot here.
+    #[serde(other)]
+    Unknown,
+}
+
+/// An offset as written, each field none when left out.
+#[derive(Serialize, Deserialize)]
+struct WhiteOffset {
+    #[serde(default)]
+    mired: f64,
+    #[serde(default)]
+    tint: f64,
+}
+
+impl TryFrom<WhiteWire> for WhiteBalance {
+    type Error = String;
+
+    fn try_from(w: WhiteWire) -> std::result::Result<Self, String> {
+        Ok(match (w.mode, w.offset) {
+            // An offset of none is As shot, so a hand edit or a preset
+            // that writes one reads as the picture's own white, the
+            // same edit and no step.
+            (WhiteMode::AsShot, Some(o)) => Self::offset_of(o.mired, o.tint),
+            (WhiteMode::AsShot | WhiteMode::Unknown, _) => Self::AsShot,
+            // As before the offset: a light without its numbers is no
+            // light, and the sidecar says so rather than guessing one.
+            (WhiteMode::Custom, _) => Self::Custom {
+                temperature: w.temperature.ok_or("missing field `temperature`")?,
+                tint: w.tint.ok_or("missing field `tint`")?,
+            },
+        })
+    }
+}
+
+impl From<WhiteBalance> for WhiteWire {
+    fn from(wb: WhiteBalance) -> Self {
+        let wire = |mode, temperature, tint, offset| WhiteWire {
+            mode,
+            temperature,
+            tint,
+            offset,
+        };
+        match wb {
+            WhiteBalance::AsShot => wire(WhiteMode::AsShot, None, None, None),
+            WhiteBalance::Custom { temperature, tint } => {
+                wire(WhiteMode::Custom, Some(temperature), Some(tint), None)
+            }
+            WhiteBalance::Offset { mired, tint } => wire(
+                WhiteMode::AsShot,
+                None,
+                None,
+                Some(WhiteOffset { mired, tint }),
+            ),
+        }
+    }
 }
 
 impl WhiteBalance {
+    /// What the develop of a raw resolves: an offset, which no raw's
+    /// edit holds, is As shot there, as an older build reads it.
     pub fn white_point(&self) -> WhitePoint {
         match *self {
-            Self::AsShot => WhitePoint::AsShot,
+            Self::AsShot | Self::Offset { .. } => WhitePoint::AsShot,
             Self::Custom { temperature, tint } => WhitePoint::TempTint(TempTint {
                 cct: temperature,
                 duv: tint,
             }),
+        }
+    }
+
+    /// The offset of zero: As shot, which on a picture is its own
+    /// white.
+    pub fn offset_of(mired: f64, tint: f64) -> Self {
+        if mired == 0.0 && tint == 0.0 {
+            Self::AsShot
+        } else {
+            Self::Offset { mired, tint }
         }
     }
 }
@@ -602,6 +706,88 @@ impl Demosaic {
 
 #[cfg(test)]
 mod tests {
+    use super::WhiteBalance;
+
+    /// As shot and a light are written as they always were; an offset
+    /// rides beside As shot; a mode this build does not know is As
+    /// shot; and a light without its numbers is refused, as before.
+    #[test]
+    fn a_white_balance_is_written_as_it_was_and_an_offset_beside_as_shot() {
+        let cases = [
+            (WhiteBalance::AsShot, r#"{"mode":"as_shot"}"#),
+            (
+                WhiteBalance::Custom {
+                    temperature: 3200.0,
+                    tint: 0.002,
+                },
+                r#"{"mode":"custom","temperature":3200.0,"tint":0.002}"#,
+            ),
+            (
+                WhiteBalance::Offset {
+                    mired: 10.0,
+                    tint: 0.0,
+                },
+                r#"{"mode":"as_shot","offset":{"mired":10.0,"tint":0.0}}"#,
+            ),
+        ];
+        for (wb, json) in cases {
+            assert_eq!(serde_json::to_string(&wb).unwrap(), json);
+            assert_eq!(serde_json::from_str::<WhiteBalance>(json).unwrap(), wb);
+        }
+        let later = r#"{"mode":"from_a_card","temperature":1.0}"#;
+        assert_eq!(
+            serde_json::from_str::<WhiteBalance>(later).unwrap(),
+            WhiteBalance::AsShot
+        );
+        assert!(serde_json::from_str::<WhiteBalance>(r#"{"mode":"custom","tint":0.0}"#).is_err());
+        let none = r#"{"mode":"as_shot","offset":{"mired":0.0,"tint":0.0}}"#;
+        assert_eq!(
+            serde_json::from_str::<WhiteBalance>(none).unwrap(),
+            WhiteBalance::AsShot
+        );
+        let half = r#"{"mode":"as_shot","offset":{"tint":0.004}}"#;
+        assert_eq!(
+            serde_json::from_str::<WhiteBalance>(half).unwrap(),
+            WhiteBalance::Offset {
+                mired: 0.0,
+                tint: 0.004
+            }
+        );
+    }
+
+    /// A sidecar with an offset, read the way every build before it
+    /// reads the white balance (its enum, tagged by mode, as_shot or
+    /// custom and nothing else), opens with As shot and the rest of
+    /// the edit kept.
+    #[test]
+    fn an_older_build_reads_an_offset_as_as_shot() {
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        #[serde(tag = "mode", rename_all = "snake_case")]
+        enum Before {
+            AsShot,
+            Custom { temperature: f64, tint: f64 },
+        }
+        #[derive(serde::Deserialize)]
+        struct BeforeEdit {
+            white_balance: Before,
+            light: serde_json::Value,
+        }
+        let mut edit = crate::Edit::for_picture();
+        edit.white_balance = WhiteBalance::Offset {
+            mired: -35.0,
+            tint: 0.003,
+        };
+        edit.light.exposure = 0.5;
+        let json = edit.to_json();
+        let old: BeforeEdit = serde_json::from_str(&json).unwrap();
+        assert_eq!(old.white_balance, Before::AsShot);
+        assert_eq!(old.light["exposure"], 0.5);
+        // And this build reads it back whole, at the version it was.
+        let back = crate::Edit::from_json(&json).unwrap();
+        assert_eq!(back, edit);
+        assert_eq!(back.version, crate::VERSION);
+    }
+
     use super::*;
     use crate::{Edit, Error, Section, VERSION, describe};
 
