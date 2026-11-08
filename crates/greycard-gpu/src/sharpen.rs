@@ -35,8 +35,8 @@
 //! tried; the tests hold the pictures to 1e-4 and the threshold to
 //! equality, so if either ever does, the suite says so.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use greycard_core::develop::sharpen::{
@@ -217,7 +217,9 @@ pub(crate) struct Pipelines {
     spare_full: wgpu::Texture,
     spare_mask: wgpu::Texture,
     spare_delta: wgpu::Texture,
-    work: Mutex<Option<Work>>,
+    /// Shared with a [`crate::Releaser`], which may let it go from
+    /// another hold of the context.
+    work: Arc<Mutex<Option<Work>>>,
     pace: Pace,
 }
 
@@ -329,7 +331,7 @@ impl Pipelines {
             planes_layout,
             tiles_layout,
             apply_layout,
-            work: Mutex::new(None),
+            work: Arc::new(Mutex::new(None)),
             pace: Pace::default(),
         }
     }
@@ -337,6 +339,18 @@ impl Pipelines {
     /// Drop the working textures; see [`Context::release`].
     pub(crate) fn release(&self) {
         *self.work.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// A hold of the working textures that lets them go and says their
+    /// bytes, for a [`crate::Releaser`].
+    pub(crate) fn releaser(&self) -> crate::ReleaseOne {
+        let work = self.work.clone();
+        Box::new(move || {
+            let mut guard = work.lock().unwrap_or_else(|e| e.into_inner());
+            let bytes = guard.as_ref().map_or(0, Work::bytes);
+            *guard = None;
+            bytes
+        })
     }
 
     /// The picture size the kept working set was made for, if one is
@@ -350,15 +364,7 @@ impl Pipelines {
     /// [`Context::kept_bytes`].
     pub(crate) fn kept_bytes(&self) -> u64 {
         let guard = self.work.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_ref().map_or(0, |w| {
-            [&w.lum, &w.lstar, &w.blend, &w.tmp, &w.estimate, &w.ratio]
-                .into_iter()
-                .map(crate::plumbing::texture_bytes)
-                .sum::<u64>()
-                + w.settled.size()
-                + w.left.size()
-                + w.partials.size()
-        })
+        guard.as_ref().map_or(0, Work::bytes)
     }
 }
 
@@ -387,6 +393,23 @@ struct Work {
 }
 
 impl Work {
+    fn bytes(&self) -> u64 {
+        [
+            &self.lum,
+            &self.lstar,
+            &self.blend,
+            &self.tmp,
+            &self.estimate,
+            &self.ratio,
+        ]
+        .into_iter()
+        .map(crate::plumbing::texture_bytes)
+        .sum::<u64>()
+            + self.settled.size()
+            + self.left.size()
+            + self.partials.size()
+    }
+
     fn new(
         device: &wgpu::Device,
         max_dimension: u32,

@@ -261,6 +261,8 @@ pub(super) fn masks_for(
     let path = frame.path.as_path();
     let name = frame.said();
     let started = Instant::now();
+    // A short met on the frame before is not this one's.
+    ai.clear_shorts();
     let (mut sidecar, trouble) = greycard_edit_io::on_disk::read_sidecar_said(path);
     if trouble.is_some() {
         tracing::info!("the masks of {name}: its sidecar could not be read");
@@ -369,8 +371,10 @@ pub(super) fn person_on(
         &crate::stages::Purpose::ModelsSee,
     )
     .map_err(|why| why.to_string())?;
-    // Another file: its hash is the one a person found here records.
+    // Another file: its hash is the one a person found here records,
+    // and a short met on the frame before is not this one's.
     ai.forget(Some(job.frame.path.clone()));
+    ai.clear_shorts();
     let found = ai.person_on(
         &developed.image,
         developed.kind,

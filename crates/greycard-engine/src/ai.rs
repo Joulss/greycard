@@ -570,8 +570,27 @@ pub struct Ai {
     /// A fill was refused for the card's memory since the shorts were
     /// cleared ([`Ai::take_fill_short`]).
     fill_short: bool,
-    /// A learned mask was, likewise ([`Ai::take_mask_short`]).
+    /// A learned mask was, likewise ([`Ai::take_mask_short`]), and ran
+    /// on the CPU for it.
     mask_short: bool,
+    /// What the worker lets go of the card when a learned mask is
+    /// short of it ([`Ai::set_card_release`]).
+    card_release: Option<CardRelease>,
+    /// Told before a learned mask's run on the CPU for the card's
+    /// memory ([`Ai::set_on_cpu`]).
+    on_cpu: Option<OnCpu>,
+    /// This job's learned masks run on the CPU: the card was short of
+    /// them after it was given back and the engine let go of what it
+    /// could ([`Ai::mask_room`]). Cleared with the shorts.
+    mask_cpu: bool,
+    /// Which of the learned masks' sessions were loaded on the CPU for
+    /// the card's memory: dropped when the card has the room again, so
+    /// the next load is the card's. Set at each load, cleared where the
+    /// sessions go, and carried with a lent one.
+    cpu_chosen: CpuChosen,
+    /// A learned mask short of the card may run on the CPU rather than
+    /// be refused ([`Ai::set_cpu_fallback`]).
+    cpu_fallback: bool,
     /// How an export or a merge waits on a card that is short; none
     /// for the window's jobs ([`Ai::set_patience`]).
     patience: Option<Patience>,
@@ -1615,6 +1634,71 @@ pub fn short_of_memory(card: &str, free: u64, size: usize, held: bool) -> Option
     )
 }
 
+/// What the worker lets go of the card for a learned mask short of it,
+/// each named with its bytes: the engine's working sets that a develop
+/// makes again ([`Ai::set_card_release`]).
+pub type CardRelease = Box<dyn FnMut() -> Vec<(&'static str, u64)> + Send>;
+
+/// Told before a learned mask runs on the CPU for the card's memory
+/// ([`Ai::set_on_cpu`]).
+pub type OnCpu = Box<dyn Fn() + Send>;
+
+/// Which of the learned masks' sessions were loaded on the CPU for the
+/// card's memory ([`Ai::mask_room`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CpuChosen {
+    sam: bool,
+    sam3: bool,
+    subject: bool,
+    sky: bool,
+}
+
+/// What was let go for a learned mask, in words for the log: "the
+/// sharpen's working set (0.8 GiB) and the local contrast's (0.9 GiB)".
+fn freed_words(freed: &[(&'static str, u64)]) -> String {
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let items: Vec<String> = freed
+        .iter()
+        .map(|(what, bytes)| format!("{what} ({:.1} GiB)", gib(*bytes)))
+        .collect();
+    match items.as_slice() {
+        [] => "nothing".into(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
+}
+
+/// What the log says of a learned mask's second ask of the card, after
+/// the first found it short (`why`) and the engine let go of `freed`:
+/// the free memory before and after, and where the mask runs.
+fn second_ask_said(
+    why: &str,
+    freed: &[(&'static str, u64)],
+    before: Option<u64>,
+    after: Option<u64>,
+    fits: bool,
+) -> String {
+    let gib = |b: Option<u64>| b.unwrap_or(0) as f64 / (1u64 << 30) as f64;
+    match (fits, freed.is_empty()) {
+        (true, _) => format!(
+            "a learned mask: begun on the card once the engine let go of {}, {:.1} GiB free before and {:.1} after",
+            freed_words(freed),
+            gib(before),
+            gib(after)
+        ),
+        (false, true) => {
+            format!("{why}; nothing of the engine's to let go: the mask runs on the CPU")
+        }
+        (false, false) => format!(
+            "{why}; the engine let go of {}, {:.1} GiB free before and {:.1} after, short still: the mask runs on the CPU",
+            freed_words(freed),
+            gib(before),
+            gib(after)
+        ),
+    }
+}
+
 /// A model's run refused for the card's memory ([`short_of`]): an
 /// export or a merge fails its item on it, where a develop stands in.
 #[derive(Debug, Clone)]
@@ -1974,6 +2058,11 @@ impl Ai {
             fills_ran: false,
             fill_short: false,
             mask_short: false,
+            card_release: None,
+            on_cpu: None,
+            mask_cpu: false,
+            cpu_chosen: CpuChosen::default(),
+            cpu_fallback: false,
             patience: None,
             hit_short: false,
             denoiser_tiling: None,
@@ -2093,6 +2182,7 @@ impl Ai {
             tracing::debug!("the People model let go: no People shape on the picture");
         }
         self.sam3 = None;
+        self.cpu_chosen.sam3 = false;
         self.presets = None;
         self.encodings.clear();
         self.people = None;
@@ -2160,10 +2250,12 @@ impl Ai {
         if self.sam3.is_some() {
             other.sam3 = self.sam3.take();
             other.presets = self.presets.take();
+            other.cpu_chosen.sam3 = std::mem::take(&mut self.cpu_chosen.sam3);
         }
         // And the Subject model a Whole person's edge runs.
         if self.subject.is_some() {
             other.subject = self.subject.take();
+            other.cpu_chosen.subject = std::mem::take(&mut self.cpu_chosen.subject);
         }
     }
 
@@ -2185,6 +2277,7 @@ impl Ai {
     /// what the old model made.
     pub fn forget_subject(&mut self) {
         self.subject = None;
+        self.cpu_chosen.subject = false;
         self.subject_matte = None;
         self.other_side.subject_matte = None;
         // A Whole person made without Subject's edge is made again.
@@ -2521,21 +2614,155 @@ impl Ai {
         })
     }
 
-    /// Whether the card has the memory free a learned mask's model
-    /// needs ([`mask_needs`], [`Ai::room`]), on a machine whose models
-    /// run on WebGPU: asked before its load or a cold encoder run, and
-    /// the model loaded after. Refused, the mask is left out as for a
-    /// model that failed, and is asked for again; the worker is told
-    /// ([`Ai::take_mask_short`]).
-    fn mask_room(&mut self) -> Result<(), String> {
+    /// Room on the card for a learned mask's model ([`mask_needs`],
+    /// [`Ai::room`]), on a machine whose models run on WebGPU: asked
+    /// before its load or a cold encoder run, and the model loaded
+    /// after. Short after the card is given back, a mask that may fall
+    /// to the CPU ([`Ai::set_cpu_fallback`]) has the engine let go of
+    /// what a develop makes again ([`Ai::set_card_release`]) and asks
+    /// once more; short still, this job's masks run on the CPU
+    /// ([`Ai::mask_providers`]), the worker told before the run
+    /// ([`Ai::set_on_cpu`]) and after it ([`Ai::take_mask_short`]).
+    /// One that may not, or one whose export was canceled, is refused,
+    /// left out as for a model that failed and asked for again; the
+    /// worker is told ([`Ai::take_mask_short`]).
+    pub(crate) fn mask_room(&mut self) -> Result<(), String> {
         if self.providers.is_empty() {
             self.providers = Provider::available();
         }
-        if !self.providers.contains(&Provider::WebGpu) {
+        if !self.providers.contains(&Provider::WebGpu) || self.mask_cpu {
             return Ok(());
         }
-        self.room("a learned mask", &|_| mask_needs(), false)
-            .inspect_err(|_| self.mask_short = true)
+        let (short, hit_short) = (self.short.clone(), self.hit_short);
+        let Err(why) = self.room("a learned mask", &|_| mask_needs(), false) else {
+            self.leave_cpu();
+            return Ok(());
+        };
+        self.mask_short = true;
+        if !self.cpu_fallback || self.patience.as_ref().is_some_and(|p| (p.canceled)()) {
+            return Err(why);
+        }
+        let before = self.free_memory().map(|(b, _)| b);
+        let freed = self.release_card();
+        let after = self.free_memory().map(|(b, _)| b);
+        // A second read not known fits, as `room` has it.
+        let fits = after.is_none_or(|b| b >= mask_needs());
+        tracing::info!("{}", second_ask_said(&why, &freed, before, after, fits));
+        // Not refused, the short is not the develop's or the export's
+        // to fail on; a patient walk keeps it met, so its later frames
+        // ask once.
+        self.short = short;
+        if fits || self.patience.is_none() {
+            self.hit_short = hit_short;
+        }
+        if fits {
+            self.mask_short = false;
+            self.leave_cpu();
+            return Ok(());
+        }
+        self.mask_cpu = true;
+        // Sessions on the card the give-back left go now, so the run is
+        // the CPU's whole.
+        self.drop_card_masks();
+        if let Some(told) = &self.on_cpu {
+            told();
+        }
+        Ok(())
+    }
+
+    /// The card has the room for a learned mask: the masks' sessions
+    /// loaded on the CPU for its memory go, so the next is the card's.
+    /// A session loaded on the card since, or one on the CPU of its own
+    /// accord, stays.
+    fn leave_cpu(&mut self) {
+        let chosen = std::mem::take(&mut self.cpu_chosen);
+        let on_cpu = |p: Provider| p == Provider::Cpu;
+        if chosen.sam && self.sam.as_ref().is_some_and(|s| on_cpu(s.providers().0)) {
+            self.sam = None;
+        }
+        if chosen.sam3 && self.sam3.as_ref().is_some_and(|s| on_cpu(s.providers().0)) {
+            self.sam3 = None;
+        }
+        if chosen.subject && self.subject.as_ref().is_some_and(|s| on_cpu(s.provider())) {
+            self.subject = None;
+        }
+        if chosen.sky && self.sky.as_ref().is_some_and(|s| on_cpu(s.provider())) {
+            self.sky = None;
+        }
+    }
+
+    /// The learned masks' sessions on the card dropped, by each one's
+    /// own provider: SAM's, the People model's, Subject's, and the sky
+    /// model's. What they made is kept.
+    fn drop_card_masks(&mut self) {
+        let on_card = |p: Provider| p != Provider::Cpu;
+        if self.sam.as_ref().is_some_and(|s| on_card(s.providers().0)) {
+            self.sam = None;
+        }
+        if self.sam3.as_ref().is_some_and(|s| on_card(s.providers().0)) {
+            self.sam3 = None;
+        }
+        if self.subject.as_ref().is_some_and(|s| on_card(s.provider())) {
+            self.subject = None;
+        }
+        if self.sky.as_ref().is_some_and(|s| on_card(s.provider())) {
+            self.sky = None;
+        }
+    }
+
+    /// Whether a learned mask short of the card may run on the CPU
+    /// rather than be refused: on for the open frame's mask, People and
+    /// Landscape jobs and an export's frame tried again; off for the
+    /// rest, which refuse as before. Off, this job's CPU choice goes.
+    pub fn set_cpu_fallback(&mut self, on: bool) {
+        self.cpu_fallback = on;
+        if !on {
+            self.mask_cpu = false;
+        }
+    }
+
+    /// What the engine lets go of the card for a learned mask
+    /// ([`Ai::set_card_release`]), each named with its bytes; a test's
+    /// card gets them back.
+    fn release_card(&mut self) -> Vec<(&'static str, u64)> {
+        let Some(release) = self.card_release.as_mut() else {
+            return Vec::new();
+        };
+        let freed: Vec<_> = release().into_iter().filter(|(_, b)| *b > 0).collect();
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(free) = self.free_memory_by_test.as_mut() {
+            *free += freed.iter().map(|(_, b)| b).sum::<u64>();
+        }
+        freed
+    }
+
+    /// What the worker lets go of the card when a learned mask is short
+    /// of it, or none: the engine's working sets, for the open frame's
+    /// masks on the worker's thread.
+    pub fn set_card_release(&mut self, release: Option<CardRelease>) {
+        self.card_release = release;
+    }
+
+    /// Told before a learned mask runs on the CPU for the card's
+    /// memory, or none.
+    pub fn set_on_cpu(&mut self, told: Option<OnCpu>) {
+        self.on_cpu = told;
+    }
+
+    /// The providers a learned mask's model is loaded on: the CPU alone
+    /// when this job's masks run there for the card's memory.
+    fn mask_providers(&self) -> Vec<Provider> {
+        if self.mask_cpu {
+            vec![Provider::Cpu]
+        } else {
+            self.providers.clone()
+        }
+    }
+
+    /// Whether this job's learned masks run on the CPU for the card's
+    /// memory.
+    pub fn masks_on_cpu(&self) -> bool {
+        self.mask_cpu
     }
 
     /// Whether the learned denoiser `model`, loaded, has the card's
@@ -2692,6 +2919,7 @@ impl Ai {
     pub fn clear_shorts(&mut self) {
         self.fill_short = false;
         self.mask_short = false;
+        self.mask_cpu = false;
         self.short = None;
     }
 
@@ -2777,12 +3005,18 @@ impl Ai {
             fills_ran: _,
             fill_short: _,
             mask_short: _,
+            card_release: _,
+            on_cpu: _,
+            mask_cpu: _,
+            cpu_chosen,
+            cpu_fallback: _,
             patience: _,
             hit_short: _,
         } = self;
         *subject = None;
         *sam = None;
         *sky = None;
+        *cpu_chosen = CpuChosen::default();
         *fill = None;
         *remove = None;
         *denoiser = None;
@@ -2851,6 +3085,11 @@ impl Ai {
             fills_ran: _,
             fill_short: _,
             mask_short: _,
+            card_release: _,
+            on_cpu: _,
+            mask_cpu: _,
+            cpu_chosen: _,
+            cpu_fallback: _,
             patience: _,
             hit_short: _,
         } = self;
@@ -3995,11 +4234,15 @@ impl Ai {
         let (_, rgb, luma) = self.preview.as_ref().expect("a preview was just made");
         let (mask, provider) = match shape {
             Shape::Object { picks, boxes } => {
+                let on = self.mask_providers();
+                if self.sam.is_none() {
+                    self.cpu_chosen.sam = self.mask_cpu;
+                }
                 let sam = match &mut self.sam {
                     Some(s) => s,
                     None => self
                         .sam
-                        .insert(Sam::load(&store, &self.providers).map_err(|e| e.to_string())?),
+                        .insert(Sam::load(&store, &on).map_err(|e| e.to_string())?),
                 };
                 if self.embedding.as_ref().is_none_or(|e| e.0 != stamp) {
                     let e = sam.embed(rgb).map_err(|e| e.to_string())?;
@@ -4075,7 +4318,8 @@ impl Ai {
         }
         if self.sam3.is_none() {
             self.mask_room()?;
-            self.sam3 = Some(Sam3::load(store, &self.providers).map_err(|e| e.to_string())?);
+            self.sam3 = Some(Sam3::load(store, &self.mask_providers()).map_err(|e| e.to_string())?);
+            self.cpu_chosen.sam3 = self.mask_cpu;
         }
         Ok(())
     }
@@ -4418,11 +4662,12 @@ impl Ai {
             return Ok((base.clone(), *provider));
         }
         self.mask_room()?;
+        let providers = &self.mask_providers();
+        if self.subject.is_none() {
+            self.cpu_chosen.subject = self.mask_cpu;
+        }
         let Ai {
-            subject,
-            preview,
-            providers,
-            ..
+            subject, preview, ..
         } = self;
         let (_, rgb, luma) = preview.as_ref().expect("a preview is made before a mask");
         let subject = match subject {
@@ -4534,11 +4779,14 @@ impl Ai {
             return Ok((*provider, 0.0, 0.0));
         }
         self.mask_room()?;
+        let providers = &self.mask_providers();
+        if self.sky.is_none() {
+            self.cpu_chosen.sky = self.mask_cpu;
+        }
         let Ai {
             sky: loaded,
             scene,
             preview,
-            providers,
             ..
         } = self;
         let (_, rgb, _) = preview.as_ref().expect("a preview is made before a mask");
@@ -4716,28 +4964,30 @@ impl Ai {
         report.prior_on = Some(provider);
         report.load = load;
         report.prior = run;
-        // SAM's load or its encoder's run is checked once the gate has
-        // passed, inside the decode, which borrows the models; the
-        // card is not given back there, the worker does after.
-        let webgpu = self.providers.contains(&Provider::WebGpu);
-        let free_now = {
-            #[cfg(any(test, feature = "testing"))]
-            let seam = (self.free_memory_by_test.is_some() || self.fill_by_test.is_some())
-                .then(|| self.free_memory());
-            #[cfg(not(any(test, feature = "testing")))]
-            let seam: Option<Option<(u64, String)>> = None;
-            move || seam.clone().unwrap_or_else(card_free_now)
+        // SAM's load or its encoder's run asks the card as the Object
+        // shape's does, before the decode, and only when the gate
+        // passes, so a frame with no sky never pays for it. Refused,
+        // the prior's own labels are the outline, as for SAM failing.
+        let cold = self.sam.is_none() || self.embedding.as_ref().is_none_or(|e| e.0 != stamp);
+        let gated = self
+            .scene
+            .as_ref()
+            .is_some_and(|(_, s, _)| sky::gate(&s.prior).is_ok());
+        let refused = if cold && gated && store.have(&SAM) {
+            self.mask_room().err()
+        } else {
+            None
         };
-        let mut refused: Option<String> = None;
+        let on = self.mask_providers();
+        if self.sam.is_none() {
+            self.cpu_chosen.sam = self.mask_cpu;
+        }
         let Ai {
             scene,
             sam,
             embedding,
             preview,
-            providers,
             file,
-            short,
-            mask_short,
             ..
         } = self;
         let (_, rgb, luma) = preview.as_ref().expect("a preview is made before a mask");
@@ -4755,19 +5005,12 @@ impl Ai {
         let found = {
             let mut decode =
                 |prompts: &[Prompt]| -> greycard_ai::runtime::Result<greycard_ai::Mask> {
-                    let cold = sam.is_none() || embedding.as_ref().is_none_or(|e| e.0 != stamp);
-                    if cold
-                        && webgpu
-                        && let Some(why) = free_now().and_then(|(free, card)| {
-                            short_of(&card, free, mask_needs(), "a learned mask")
-                        })
-                    {
-                        refused = Some(why.clone());
-                        return Err(greycard_ai::runtime::Error::Short(why));
+                    if let Some(why) = &refused {
+                        return Err(greycard_ai::runtime::Error::Short(why.clone()));
                     }
                     if sam.is_none() {
                         let t = Instant::now();
-                        *sam = Some(Sam::load(store, providers)?);
+                        *sam = Some(Sam::load(store, &on)?);
                         report.sam_load = t.elapsed().as_secs_f64();
                     }
                     let s = sam.as_mut().expect("SAM was just loaded");
@@ -4789,10 +5032,6 @@ impl Ai {
             let mut times = sky::Times::default();
             let found = sky::find(prior, &frame, &picks, decode, size, &mut times);
             report.stages = times;
-            if let Some(why) = refused.take() {
-                *short = Some(why);
-                *mask_short = true;
-            }
             found.map_err(|e| e.to_string())?
         };
         let name = file
@@ -8528,23 +8767,240 @@ mod tests {
         );
     }
 
-    /// A learned mask's model on WebGPU is not begun on a card short of
-    /// the memory, and is with the memory back or not known; on the CPU
-    /// the card is not asked.
-    #[test]
-    fn a_mask_the_card_cannot_hold_is_refused_and_asked_again() {
+    /// A test's Ai on a card with `free` free, its masks' release
+    /// letting go of `freed` and counting its calls, and its CPU runs
+    /// counted.
+    fn mask_on_card(
+        free: u64,
+        freed: Vec<(&'static str, u64)>,
+    ) -> (
+        Ai,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
-        ai.free_memory_by_test = Some(1 << 30);
-        let why = ai.mask_room().expect_err("short");
-        assert!(why.contains("a learned mask"), "{why}");
+        ai.free_memory_by_test = Some(free);
+        ai.set_cpu_fallback(true);
+        let (released, told) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let r = released.clone();
+        let mut left = Some(freed);
+        ai.set_card_release(Some(Box::new(move || {
+            r.fetch_add(1, Ordering::Relaxed);
+            left.take().unwrap_or_default()
+        })));
+        let t = told.clone();
+        ai.set_on_cpu(Some(Box::new(move || {
+            t.fetch_add(1, Ordering::Relaxed);
+        })));
+        (ai, released, told)
+    }
+
+    /// A learned mask on a card short of it after the give-back, with
+    /// nothing of the engine's to let go, runs on the CPU: never
+    /// refused, the worker told before the run and after it, and the
+    /// models loaded on the CPU alone. Asked again in the next job with
+    /// the memory back, or not known, it is the card's; on a machine
+    /// without WebGPU the card is not asked.
+    #[test]
+    fn a_mask_the_card_is_short_of_runs_on_the_cpu() {
+        use std::sync::atomic::Ordering;
+        let (mut ai, released, told) = mask_on_card(1 << 30, Vec::new());
+        ai.mask_room().expect("not refused");
+        assert!(ai.masks_on_cpu());
+        assert_eq!(ai.mask_providers(), [Provider::Cpu]);
+        assert_eq!(released.load(Ordering::Relaxed), 1, "the engine asked");
+        assert_eq!(told.load(Ordering::Relaxed), 1, "said before the run");
+        assert!(ai.take_short().is_none(), "not a refusal");
+        assert!(ai.take_mask_short(), "the worker gives the card back after");
+        // The same job asks no more.
+        ai.mask_room().expect("not refused");
+        assert_eq!(told.load(Ordering::Relaxed), 1);
+        assert_eq!(released.load(Ordering::Relaxed), 1);
+        ai.clear_shorts();
         ai.free_memory_by_test = Some(8 << 30);
-        assert!(ai.mask_room().is_ok());
+        ai.mask_room().expect("not refused");
+        assert!(!ai.masks_on_cpu());
+        assert_eq!(ai.mask_providers(), [Provider::WebGpu, Provider::Cpu]);
         ai.free_memory_by_test = None;
         ai.fill_by_test = Some(0.5);
-        assert!(ai.mask_room().is_ok());
+        ai.mask_room().expect("not refused");
+        assert!(!ai.masks_on_cpu());
         let mut cpu = Ai::for_test(Store::at("no-store"), vec![Provider::Cpu]);
         cpu.free_memory_by_test = Some(1 << 30);
-        assert!(cpu.mask_room().is_ok());
+        cpu.mask_room().expect("not refused");
+        assert!(!cpu.masks_on_cpu() && !cpu.take_mask_short());
+    }
+
+    /// A card short of a learned mask until the engine lets go of its
+    /// working sets runs the mask on it, and the log names what went
+    /// and the free memory before and after; one short still after it
+    /// runs the mask on the CPU and says so. A card with the room from
+    /// the start lets nothing go.
+    #[test]
+    fn the_engine_lets_go_for_a_mask_before_the_cpu_is_asked() {
+        use std::sync::atomic::Ordering;
+        const GIB: u64 = 1 << 30;
+        let need = mask_needs();
+        let sets = vec![
+            ("the sharpen's working set", GIB / 2),
+            ("the local contrast's working set", GIB),
+        ];
+        // Short by a half, a gigabyte and a half let go: the card's.
+        let (mut ai, released, told) = mask_on_card(need - GIB / 2, sets.clone());
+        ai.mask_room().expect("not refused");
+        assert!(!ai.masks_on_cpu());
+        assert_eq!(released.load(Ordering::Relaxed), 1);
+        assert_eq!(told.load(Ordering::Relaxed), 0);
+        assert_eq!(ai.free_memory_by_test, Some(need + GIB));
+        assert!(!ai.take_mask_short() && ai.take_short().is_none());
+        // Short by two, a gigabyte and a half let go: the CPU's.
+        let (mut ai, released, told) = mask_on_card(need - 2 * GIB, sets.clone());
+        ai.mask_room().expect("not refused");
+        assert!(ai.masks_on_cpu());
+        assert_eq!(released.load(Ordering::Relaxed), 1);
+        assert_eq!(told.load(Ordering::Relaxed), 1);
+        assert!(ai.take_mask_short());
+        // The room from the start: nothing let go.
+        let (mut ai, released, told) = mask_on_card(need, sets.clone());
+        ai.mask_room().expect("not refused");
+        assert!(!ai.masks_on_cpu());
+        assert_eq!(released.load(Ordering::Relaxed), 0);
+        assert_eq!(told.load(Ordering::Relaxed), 0);
+        // What the log says of each.
+        let why = short_of("the card", need - GIB / 2, need, "a learned mask").unwrap();
+        assert_eq!(
+            second_ask_said(&why, &sets, Some(GIB), Some(5 * GIB / 2), true),
+            "a learned mask: begun on the card once the engine let go of the sharpen's \
+             working set (0.5 GiB) and the local contrast's working set (1.0 GiB), \
+             1.0 GiB free before and 2.5 after"
+        );
+        let said = second_ask_said(&why, &sets, Some(GIB / 2), Some(2 * GIB), false);
+        assert!(said.starts_with(&why), "{said}");
+        assert!(
+            said.ends_with(
+                "the engine let go of the sharpen's working set (0.5 GiB) and the local \
+                 contrast's working set (1.0 GiB), 0.5 GiB free before and 2.0 after, \
+                 short still: the mask runs on the CPU"
+            ),
+            "{said}"
+        );
+        assert!(
+            second_ask_said(&why, &[], Some(GIB), Some(GIB), false)
+                .ends_with("nothing of the engine's to let go: the mask runs on the CPU")
+        );
+        assert_eq!(
+            freed_words(&[("a", 0), ("b", GIB), ("c", 3 * GIB)]),
+            "a (0.0 GiB), b (1.0 GiB), and c (3.0 GiB)"
+        );
+    }
+
+    /// What records which sessions were loaded on the CPU for the
+    /// card's memory goes wherever those sessions go, so a session
+    /// loaded on the card after is never taken for one of them.
+    #[test]
+    fn a_dropped_cpu_session_clears_the_cpu_choice() {
+        let all = CpuChosen {
+            sam: true,
+            sam3: true,
+            subject: true,
+            sky: true,
+        };
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
+        ai.cpu_chosen = all;
+        ai.drop_sessions();
+        assert_eq!(ai.cpu_chosen, CpuChosen::default());
+        ai.cpu_chosen = all;
+        ai.free_memory_by_test = Some(8 << 30);
+        assert!(!give_back_card(&mut [&mut ai], true), "nothing held");
+        ai.drop_sessions();
+        assert_eq!(ai.cpu_chosen, CpuChosen::default(), "given back");
+        ai.cpu_chosen = all;
+        ai.release_parts();
+        assert!(!ai.cpu_chosen.sam3 && ai.cpu_chosen.sam);
+        ai.forget_subject();
+        assert!(!ai.cpu_chosen.subject);
+        // With the room again the choice is spent, nothing held to drop.
+        ai.mask_room().expect("the room");
+        assert_eq!(ai.cpu_chosen, CpuChosen::default());
+    }
+
+    /// A learned mask that may not fall to the CPU (a frame's masks made
+    /// in the background, a person looked for on another frame, a save)
+    /// is refused on a short card as before, and nothing is let go.
+    #[test]
+    fn a_mask_that_may_not_fall_to_the_cpu_is_refused() {
+        use std::sync::atomic::Ordering;
+        let (mut ai, released, told) = mask_on_card(1 << 30, vec![("a", 1 << 30)]);
+        ai.set_cpu_fallback(false);
+        let why = ai.mask_room().expect_err("refused");
+        assert!(why.contains("a learned mask"), "{why}");
+        assert!(!ai.masks_on_cpu());
+        assert_eq!(released.load(Ordering::Relaxed), 0);
+        assert_eq!(told.load(Ordering::Relaxed), 0);
+        assert!(ai.take_mask_short() && ai.take_short().is_some());
+        // Turned off, a CPU choice made under it goes.
+        ai.set_cpu_fallback(true);
+        ai.mask_room().expect("on the CPU");
+        assert!(ai.masks_on_cpu());
+        ai.set_cpu_fallback(false);
+        assert!(!ai.masks_on_cpu());
+        assert_eq!(ai.mask_providers(), [Provider::WebGpu, Provider::Cpu]);
+    }
+
+    /// An export's frame short of a mask: refused on the first pass
+    /// after its tries, the short met; tried again once the card is
+    /// given back, it runs on the CPU, the short still met so the set's
+    /// later frames ask once, and those go to the CPU after one try. A
+    /// canceled export runs no mask on the CPU.
+    #[test]
+    fn an_export_falls_to_the_cpu_only_when_tried_again() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let asked = Arc::new(AtomicUsize::new(0));
+        let patience = |tries: u32, canceled: bool| {
+            let asked = asked.clone();
+            Patience {
+                tries,
+                wait: std::time::Duration::ZERO,
+                canceled: Arc::new(move || {
+                    asked.fetch_add(1, Ordering::Relaxed);
+                    canceled
+                }),
+            }
+        };
+        let (mut ai, _, told) = mask_on_card(1 << 30, Vec::new());
+        // The first pass: three asks, refused.
+        ai.set_patience(Some(patience(PATIENT_TRIES, false)));
+        ai.set_cpu_fallback(false);
+        assert!(ai.mask_room().is_err());
+        assert!(ai.hit_short(), "the short is met");
+        assert_eq!(asked.swap(0, Ordering::Relaxed), 2, "waited its tries");
+        // Given back and tried again: the CPU.
+        ai.retry_patiently();
+        ai.set_cpu_fallback(true);
+        ai.mask_room().expect("on the CPU");
+        assert!(ai.masks_on_cpu());
+        assert!(ai.hit_short(), "a patient walk keeps it met");
+        assert!(ai.take_short().is_none(), "the frame does not fail on it");
+        assert!(ai.take_mask_short(), "the worker gives back after");
+        assert_eq!(told.load(Ordering::Relaxed), 1);
+        // The set's next frame, at one try: the CPU without waiting.
+        asked.store(0, Ordering::Relaxed);
+        ai.set_patience(Some(patience(1, false)));
+        ai.mask_room().expect("on the CPU");
+        assert!(ai.masks_on_cpu());
+        assert_eq!(
+            asked.load(Ordering::Relaxed),
+            1,
+            "no wait, the cancel looked at"
+        );
+        // A canceled export runs nothing on the CPU.
+        let (mut ai, released, told) = mask_on_card(1 << 30, vec![("a", 1 << 30)]);
+        ai.set_patience(Some(patience(PATIENT_TRIES, true)));
+        assert!(ai.mask_room().is_err());
+        assert!(!ai.masks_on_cpu());
+        assert_eq!(released.load(Ordering::Relaxed), 0);
+        assert_eq!(told.load(Ordering::Relaxed), 0);
     }
 
     /// A remove's fill the card has not the memory for is refused

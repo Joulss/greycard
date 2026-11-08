@@ -1094,6 +1094,22 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.invoke_view_changed();
             }
         }
+        // The card short of a learned mask asked for: it runs on the
+        // CPU, which takes a while, and the line says so as a part's
+        // run there does.
+        Outcome::MaskOnCpu { key, file, status } => {
+            let st = state.borrow();
+            // Of a frame opened before this one: not this one's to say.
+            if file.is_some() && st.develop.learned_of.is_some() && file != st.develop.learned_of {
+                return;
+            }
+            let asked = key.is_none_or(|key| {
+                st.develop.asked.contains_key(&key) && !st.develop.quiet.contains(&key)
+            });
+            if asked {
+                app.set_status(status.into());
+            }
+        }
         Outcome::MaskFailed { key, message } => {
             let mut st = state.borrow_mut();
             st.develop.quiet.remove(&key);

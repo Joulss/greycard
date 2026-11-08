@@ -41,7 +41,7 @@
 //! the viewport's half-float texture when the sharpen is off.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use greycard_core::develop::local_contrast::{
     self as reference, LocalContrastOptions, LocalContrastStats,
@@ -127,7 +127,9 @@ pub(crate) struct Pipelines {
     spare_half: wgpu::Texture,
     spare_full: wgpu::Texture,
     keep: AtomicBool,
-    work: Mutex<Option<Work>>,
+    /// Shared with a [`crate::Releaser`], which may let it go from
+    /// another hold of the context.
+    work: Arc<Mutex<Option<Work>>>,
 }
 
 impl Pipelines {
@@ -271,13 +273,25 @@ impl Pipelines {
             top_layout,
             apply_layout,
             keep: AtomicBool::new(keep),
-            work: Mutex::new(None),
+            work: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Drop the working planes; see [`Context::release`].
     pub(crate) fn release(&self) {
         *self.work.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// A hold of the working planes that lets them go and says their
+    /// bytes, for a [`crate::Releaser`].
+    pub(crate) fn releaser(&self) -> crate::ReleaseOne {
+        let work = self.work.clone();
+        Box::new(move || {
+            let mut guard = work.lock().unwrap_or_else(|e| e.into_inner());
+            let bytes = guard.as_ref().map_or(0, Work::bytes);
+            *guard = None;
+            bytes
+        })
     }
 
     /// The picture size the kept working set was made for, if one is

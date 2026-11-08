@@ -59,6 +59,8 @@ design note behind it.
   settings with only the masks checked, so Paste settings on other
   frames carries every mask, and you can uncheck one on the sheet
   ([§597](https://github.com/jessolmstead/greycard/blob/master/docs/notes/597-copy-masks-on-a-mask-rows-menu.md)).
+- On a card the editor has filled, a Sky, Subject, or Background mask is no longer refused: the editor first lets go of its own working memory on the card, and if the card is still short the mask runs on the CPU, slower but made (issue 91)
+  ([§610](https://github.com/jessolmstead/greycard/blob/master/docs/notes/610-a-learned-mask-on-a-card-the-editor-has-filled.md)).
 
 ### The window
 

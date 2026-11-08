@@ -1265,6 +1265,75 @@ fn the_detail_section_runs_on_the_gpu_from_the_kept_upload() {
     }
 }
 
+/// What a learned mask short of the card has the worker let go
+/// ([`super::engine::card_release`]) is the context's working sets, both
+/// emptied and their bytes said, and nothing of the open frame's: its
+/// picture before the sharpen and its upload stay on the device, and
+/// the next develop makes the sets again. The test's card figure takes
+/// back what the release says it let go; that the driver's budget rises
+/// is for a real card to show.
+#[test]
+fn a_masks_release_keeps_the_open_frames_device_points() {
+    use greycard_ai::{Provider, Store};
+    let Some(ctx) = greycard_gpu::Context::own().ok() else {
+        skipped("a learned mask's release");
+        return;
+    };
+    ctx.keep_local_contrast_planes(true);
+    let frame = Arc::new(aberrated_frame(400, 320));
+    let mut gpu = Some(ctx);
+    let mut base = None;
+    let mut edit = Edit::default();
+    edit.detail.clarity = 0.5;
+    let (outcome, _) = develop_with(&frame, &edit, &mut base, &mut gpu);
+    assert!(matches!(
+        outcome,
+        Outcome::Developed {
+            image: Developed::Texture(_),
+            detail: Some((_, DetailRan::Gpu)),
+            sharpen: Some(_),
+            ..
+        }
+    ));
+    let held = gpu.as_ref().unwrap().kept_bytes();
+    assert!(held.sharpen > 0 && held.local_contrast > 0, "{held:?}");
+    let upload = base.as_ref().unwrap().kept.upload().unwrap().clone();
+    // Short by a byte, until the sets go.
+    let short = crate::ai::mask_needs() - 1;
+    let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
+    ai.free_memory_by_test = Some(short);
+    ai.set_cpu_fallback(true);
+    ai.set_card_release(gpu.as_ref().map(super::engine::card_release));
+    ai.mask_room().expect("not refused");
+    assert!(!ai.masks_on_cpu(), "the card's once the sets went");
+    assert_eq!(
+        ai.free_memory_by_test,
+        Some(short + held.sharpen + held.local_contrast)
+    );
+    assert_eq!(
+        gpu.as_ref().unwrap().kept_bytes(),
+        greycard_gpu::KeptBytes::default()
+    );
+    let b = base.as_ref().unwrap();
+    assert!(b.kept.on_device(Keep::PreSharpen), "the open frame's point");
+    assert!(Arc::ptr_eq(b.kept.upload().unwrap(), &upload));
+    // The next develop makes the sets again.
+    edit.detail.clarity = -0.5;
+    let (outcome, _) = develop_with(&frame, &edit, &mut base, &mut gpu);
+    assert!(matches!(
+        outcome,
+        Outcome::Developed {
+            image: Developed::Texture(_),
+            detail: Some((_, DetailRan::Gpu)),
+            ..
+        }
+    ));
+    assert_eq!(
+        gpu.as_ref().unwrap().kept_bytes().local_contrast,
+        held.local_contrast
+    );
+}
+
 fn detail_section_on_the_gpu(ctx: greycard_gpu::Context, keep: bool) {
     let frame = Arc::new(aberrated_frame(400, 320));
     let deliver: Deliver = Arc::new(|_| {});

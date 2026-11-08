@@ -117,3 +117,7 @@ required-features = ["webgpu"]
 [[example]]
 name = "denoise_tiles"
 required-features = ["webgpu"]
+
+[[example]]
+name = "mask_peak"
+required-features = ["webgpu"]

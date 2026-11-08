@@ -526,6 +526,16 @@ pub enum Outcome {
         key: Key,
         message: String,
     },
+    /// A learned mask of `file`, the picture open, runs on the CPU, the
+    /// card short of it once the engine let go of what it could: the
+    /// mask at `key`, or the People or Landscape model (none). `status`
+    /// is the line the parts' runs on the CPU say
+    /// ([`crate::ai::part_on_cpu`]), said before the run.
+    MaskOnCpu {
+        key: Option<Key>,
+        file: Option<PathBuf>,
+        status: &'static str,
+    },
     /// The people on the open picture, `file`, for a Part to be
     /// picked among; or why they could not be found.
     People {

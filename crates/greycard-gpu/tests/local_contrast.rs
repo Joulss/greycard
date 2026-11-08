@@ -834,6 +834,19 @@ fn the_planes_are_those_the_sliders_need_kept_or_not() {
             out
         })
         .collect();
+    // Let go from a hold apart from the context, it says what it let
+    // go, and the next run makes the planes again to the same answer.
+    let releaser = ctx.releaser();
+    assert_eq!(
+        releaser.release().local_contrast,
+        cases[cases.len() - 1].1,
+        "the last run's planes let go"
+    );
+    assert_eq!(ctx.kept_bytes().local_contrast, 0);
+    assert_eq!(releaser.release().local_contrast, 0, "nothing twice");
+    let (options, bytes) = &cases[0];
+    assert_eq!(run(options), kept[0], "made again after the release");
+    assert_eq!(ctx.kept_bytes().local_contrast, *bytes);
     ctx.release_local_contrast();
     assert_eq!(ctx.kept_bytes().local_contrast, 0);
     ctx.keep_local_contrast_planes(false);

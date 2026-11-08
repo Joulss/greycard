@@ -551,7 +551,10 @@ impl crate::walk::Models for WorkerModels<'_> {
             return crate::walk::Rasters::new();
         }
         // A mask the card is short of waits as the Ai's patience says
-        // (an export's); still short, the export fails on it.
+        // (an export's); still short, the frame fails on it, and is
+        // tried again with the card given back across the worker's
+        // models, when the mask may run on the CPU instead
+        // (`Ai::set_cpu_fallback`).
         self.ai.take_short();
         let (rasters, left_out) = super::masks::learned_rasters(&self.edit, self.ai, &on);
         if let Some(why) = self.ai.take_short()

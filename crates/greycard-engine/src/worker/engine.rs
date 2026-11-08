@@ -675,6 +675,14 @@ pub(super) fn run(
                     // the editor's own may hold what this frame wants.
                     let mut tried_again = false;
                     let held = loop {
+                        // A mask short of the card falls to the CPU only
+                        // once the card was given back and the frame tried
+                        // again, or in a set whose frame before met a short.
+                        let fall = tried_again || short_sets.contains(&set);
+                        ai.set_cpu_fallback(fall);
+                        if let Some(o) = set_ai.as_mut() {
+                            o.set_cpu_fallback(fall);
+                        }
                         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let note = resolved.note();
                             let Some(path) = resolved.path().map(std::path::Path::to_path_buf)
@@ -727,6 +735,7 @@ pub(super) fn run(
                                 // frame rather than a second one loaded.
                                 let other = set_ai.get_or_insert_with(Ai::new);
                                 other.set_patience(Some(patience.clone()));
+                                other.set_cpu_fallback(fall);
                                 ai.lend_parts(other);
                                 let written = export_other(
                                     &frame,
@@ -795,9 +804,15 @@ pub(super) fn run(
                 b.kept.forget_device();
             }
             let hit = ai.hit_short() || set_ai.as_ref().is_some_and(Ai::hit_short);
+            // A mask the frame made on the CPU, or refused: the card is
+            // given back across the worker's models after it.
+            let mask_short =
+                ai.take_mask_short() | set_ai.as_mut().is_some_and(Ai::take_mask_short);
             ai.set_patience(None);
+            ai.set_cpu_fallback(false);
             if let Some(o) = set_ai.as_mut() {
                 o.set_patience(None);
+                o.set_cpu_fallback(false);
             }
             if hit {
                 short_sets.insert(&set);
@@ -826,7 +841,7 @@ pub(super) fn run(
             give_back(
                 &mut ai,
                 [&mut people_ai, &mut set_ai, &mut masks_ai],
-                false,
+                mask_short,
                 lock,
             );
             if finished {
@@ -1150,6 +1165,18 @@ pub(super) fn run(
                 if matches!(shape, Shape::Part { .. }) {
                     picking = false;
                 }
+                let status = match &shape {
+                    Shape::Part { route, .. } => crate::ai::part_on_cpu(route),
+                    _ => crate::ai::part_on_cpu(&greycard_edit::mask::Route::Whole),
+                };
+                open_frame_masks(
+                    &mut ai,
+                    gpu.as_ref(),
+                    &deliver,
+                    Some(key),
+                    opened_path.clone(),
+                    status,
+                );
                 let outcome = match &base {
                     Some(b) => {
                         match ai.raster_retouched(
@@ -1184,9 +1211,11 @@ pub(super) fn run(
                         message: "nothing developed yet".into(),
                     },
                 };
+                open_frame_masks_done(&mut ai);
                 deliver(outcome);
-                // A mask the card was short of: given back across the
-                // worker's models, so the next run finds the room.
+                // A mask the card was short of, made on the CPU: given
+                // back across the worker's models, so the next run
+                // finds the room.
                 if ai.take_mask_short() {
                     give_back(
                         &mut ai,
@@ -1232,28 +1261,64 @@ pub(super) fn run(
             }
             Job::People => {
                 picking = true;
+                ai.clear_shorts();
+                open_frame_masks(
+                    &mut ai,
+                    gpu.as_ref(),
+                    &deliver,
+                    None,
+                    opened_path.clone(),
+                    crate::ai::part_on_cpu(&greycard_edit::mask::Route::Whole),
+                );
                 let people = match &base {
                     Some(b) => ai
                         .people(b.stamp, &b.image, b.meta.source, b.turn)
                         .map(|(found, provider, seconds)| (found, provider.label(), seconds)),
                     None => Err("nothing developed yet".into()),
                 };
+                open_frame_masks_done(&mut ai);
                 deliver(Outcome::People {
                     file: opened_path.clone(),
                     people,
                 });
+                if ai.take_mask_short() {
+                    give_back(
+                        &mut ai,
+                        [&mut people_ai, &mut set_ai, &mut masks_ai],
+                        true,
+                        lock,
+                    );
+                }
             }
             Job::Landscape => {
+                ai.clear_shorts();
+                open_frame_masks(
+                    &mut ai,
+                    gpu.as_ref(),
+                    &deliver,
+                    None,
+                    opened_path.clone(),
+                    crate::ai::part_on_cpu(&greycard_edit::mask::Route::Whole),
+                );
                 let offers = match &base {
                     Some(b) => ai
                         .landscape(b.stamp, &b.image, &b.edit, b.meta.source)
                         .map(|(found, provider, seconds)| (found, provider.label(), seconds)),
                     None => Err("nothing developed yet".into()),
                 };
+                open_frame_masks_done(&mut ai);
                 deliver(Outcome::Landscape {
                     file: opened_path.clone(),
                     offers,
                 });
+                if ai.take_mask_short() {
+                    give_back(
+                        &mut ai,
+                        [&mut people_ai, &mut set_ai, &mut masks_ai],
+                        true,
+                        lock,
+                    );
+                }
             }
             Job::MaskPicture { edit, generation } => {
                 // An ask behind a newer develop is that develop's to
@@ -1286,6 +1351,10 @@ pub(super) fn run(
         if let Err(payload) = held {
             fills_due = None;
             ai.release_fills();
+            // A mask's job that panicked leaves nothing of its own
+            // behind for a develop's or a save's masks to call, nor its
+            // choice of the CPU.
+            open_frame_masks_done(&mut ai);
             give_back(
                 &mut ai,
                 [&mut people_ai, &mut set_ai, &mut masks_ai],
@@ -1612,6 +1681,59 @@ pub(super) fn ask_again(
             q.masks.push_back((key, shape, model));
         }
     }
+}
+
+/// The open frame's Mask, People, or Landscape job begins: a learned
+/// mask short of the card may run on the CPU, after the engine lets go
+/// of what it can ([`card_release`]), and the window is told before
+/// the run with `status`, the line the parts' runs on the CPU say,
+/// for the mask at `key` (none for People and Landscape) of `file`.
+fn open_frame_masks(
+    ai: &mut Ai,
+    gpu: Option<&greycard_gpu::Context>,
+    deliver: &Deliver,
+    key: Option<crate::ai::Key>,
+    file: Option<PathBuf>,
+    status: &'static str,
+) {
+    ai.set_cpu_fallback(true);
+    ai.set_card_release(gpu.map(card_release));
+    let told = deliver.clone();
+    ai.set_on_cpu(Some(Box::new(move || {
+        told(Outcome::MaskOnCpu {
+            key,
+            file: file.clone(),
+            status,
+        })
+    })));
+}
+
+/// The open frame's mask job is over, or panicked: the CPU is not to be
+/// fallen to again until the next, and nothing of it is left to call.
+fn open_frame_masks_done(ai: &mut Ai) {
+    ai.set_cpu_fallback(false);
+    ai.set_card_release(None);
+    ai.set_on_cpu(None);
+}
+
+/// What the open frame's learned masks may let go of the card when it
+/// is short of them ([`Ai::set_card_release`]): the context's kept
+/// working sets, the sharpen's and the local contrast's, which the next
+/// develop makes again, as after an export of another size. The open
+/// frame's own points on the device and the picture on screen are not
+/// the context's and stay; the shelf and the prefetch hold nothing on
+/// the device ([`crate::walk::Kept::shelve`]). Called on the worker's
+/// thread inside a mask's job, so no develop is running; it takes each
+/// op's lock on its set, never the queue's.
+pub(super) fn card_release(ctx: &greycard_gpu::Context) -> crate::ai::CardRelease {
+    let releaser = ctx.releaser();
+    Box::new(move || {
+        let freed = releaser.release();
+        vec![
+            ("the sharpen's working set", freed.sharpen),
+            ("the local contrast's working set", freed.local_contrast),
+        ]
+    })
 }
 
 /// [`crate::ai::give_back_card`] over the worker's models: its own and

@@ -488,6 +488,17 @@ impl Context {
         self.release_local_contrast();
     }
 
+    /// A hold of the ops' kept working sets that lets them go without
+    /// the context in hand ([`Releaser`]).
+    pub fn releaser(&self) -> Releaser {
+        Releaser {
+            sharpen: self.sharpen.releaser(),
+            local_contrast: self.local_contrast.releaser(),
+            device: self.device.clone(),
+            lost: self.lost.clone(),
+        }
+    }
+
     /// Let go of the sharpen's working textures alone: for a develop
     /// that runs the local contrast here with the sharpen off.
     pub fn release_sharpen(&self) {
@@ -896,6 +907,40 @@ fn built<'a, T>(
         what,
         error: error.clone(),
     })
+}
+
+/// Lets one op's kept working set go and says its bytes.
+pub(crate) type ReleaseOne = Box<dyn Fn() -> u64 + Send + Sync>;
+
+/// What [`Context::release`] lets go, held apart from the context
+/// ([`Context::releaser`]): for a caller that holds the context
+/// elsewhere, such as a learned model asking the card for room while
+/// the engine's thread has it. Each op's set is behind the lock its
+/// run holds, so a release waits for a run in progress and the next
+/// run makes the set again.
+pub struct Releaser {
+    sharpen: ReleaseOne,
+    local_contrast: ReleaseOne,
+    device: wgpu::Device,
+    lost: Arc<AtomicBool>,
+}
+
+impl Releaser {
+    /// Let go of the ops' kept working sets, and wait for the device to
+    /// finish what used them, so their memory is the driver's again
+    /// when this returns: the bytes each held.
+    pub fn release(&self) -> KeptBytes {
+        let freed = KeptBytes {
+            sharpen: (self.sharpen)(),
+            local_contrast: (self.local_contrast)(),
+        };
+        if freed.sharpen + freed.local_contrast > 0
+            && let Err(e) = wait_on(&self.device, &self.lost)
+        {
+            log::warn!("greycard-gpu: after letting the working sets go: {e}");
+        }
+        freed
+    }
 }
 
 /// The picture sizes the ops' kept working sets were made for

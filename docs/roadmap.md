@@ -228,7 +228,6 @@ seconds.
       times Core ML's difference though still invisible; kept at
       fp32 for now, the user's call. CUDA unmeasured, no toolkit on
       the machine
-- [ ] A learned mask on a card the editor has filled (issue 91, §610)
 - [ ] The GPU's memory on an 8 GB Mac: the local contrast's planes
       are made per run on unified memory already, and a Clarity move at
       102 MP peaks at 12.1 GB on a 24 GB M5 (§479). Waits on an 8 GB
