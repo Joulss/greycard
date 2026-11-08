@@ -175,3 +175,21 @@ reaches it today, and we record it beside §600's gap.
 - The local contrast's kept planes in a whole export on a discrete
   card. Lavapipe keeps none by default, so only the walk test, which
   turns them on, exercises them.
+
+## Measured on the card
+
+`greycard export` of a 24 MP frame on the RTX 5070 Ti against the CPU
+on 32 threads, 16-bit TIFF, the machine under the evening's agent
+builds:
+
+| 24 MP | GPU | CPU | GPU against CPU |
+|---|---|---|---|
+| Default edit | 1.19 s | 1.63 s | at most 544 of 65535, 552 of 72 M past a thousandth |
+| Detail, dehaze, and sharpen on | 1.17 s | 1.84 s | at most 796 of 65535, 782 of 72 M past a thousandth |
+
+The default edit's GPU export is master's before this section to
+within one level (at most 1 of 65535, none past a thousandth), and
+its difference from the CPU is unchanged from §600's: the demosaic's
+decision flips carried through the sharpen, not the three ops' own
+rounding. The CPU export is bit-identical to master's. Both rows sit
+well inside the identity test's bound of one sample in ten thousand.
