@@ -179,8 +179,8 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
 - [ ] White balance on a picture (§602)
-- [ ] Resizeable panes and panels inside them (issue 79), and the
-      Develop panel's sections told apart (issue 80)
+- [ ] The left pane's sections share its height (issue 79, §603)
+- [ ] The Develop sections told apart (issue 80, §604)
 - [ ] i18n (issue 75)
 - [ ] Handheld HDR and focus stacking
 

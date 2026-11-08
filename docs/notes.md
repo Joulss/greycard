@@ -614,3 +614,5 @@ in its section; the roadmap and the changelog only point at it.
 - [§600. The command line's export on the GPU](notes/600-the-command-lines-export-on-the-gpu.md) (2026-11-07)
 - [§601. The prefetch deeper in the walk's direction](notes/601-the-prefetch-deeper-in-the-walks-direction.md) (2026-11-07)
 - [§602. White balance on a picture](notes/602-white-balance-on-a-picture.md) (2026-11-07)
+- [§603. The left pane's sections share its height](notes/603-the-left-panes-sections-share-its-height.md) (2026-11-07)
+- [§604. The Develop sections told apart](notes/604-the-develop-sections-told-apart.md) (2026-11-07)
