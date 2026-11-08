@@ -1301,12 +1301,13 @@ fn a_masks_release_keeps_the_open_frames_device_points() {
     assert!(held.sharpen > 0 && held.local_contrast > 0, "{held:?}");
     let upload = base.as_ref().unwrap().kept.upload().unwrap().clone();
     // Short by a byte, until the sets go.
-    let short = crate::ai::mask_needs() - 1;
+    let short = crate::ai::mask_needs(crate::ai::MaskModel::People) - 1;
     let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
     ai.free_memory_by_test = Some(short);
     ai.set_cpu_fallback(true);
     ai.set_card_release(gpu.as_ref().map(super::engine::card_release));
-    ai.mask_room().expect("not refused");
+    ai.mask_room(crate::ai::MaskModel::People)
+        .expect("not refused");
     assert!(!ai.masks_on_cpu(), "the card's once the sets went");
     assert_eq!(
         ai.free_memory_by_test,

@@ -126,8 +126,15 @@ there is no new wording.
 - After Mask, People, and Landscape jobs alike, the worker takes the
   mask short and gives the card back across its models.
 
-**Measurement.** `crates/greycard-ai/examples/mask_peak.rs`. We left
-`MASK_PEAK` at 2.0 GiB.
+**Measurement.** `crates/greycard-ai/examples/mask_peak.rs`, run on
+the RTX 5070 Ti on 2026-11-08, each model in a process of its own,
+the preview-sized picture, two runs: Sky peaks at 0.80 GiB and holds
+0.76 after; Subject (BiRefNet, fp16) 5.92 and 3.24; SAM 2.46 and
+1.84; People (SAM 3) 4.40 and 2.65. The 2.0 GiB we had inferred was
+a third of the largest. One figure would refuse the Sky on a card
+with room for it, so `mask_needs` takes a `MaskModel` and each of
+the seven asks names its own: 0.9, 6.0, 2.5, and 4.5 GiB over the
+margin.
 
 ## Verified
 
@@ -168,8 +175,6 @@ tests on lavapipe; ui tests.
 
 ## Not verified
 
-- The mask models' real peak: `mask_peak` on the real card, then
-  `MASK_PEAK` set from it.
 - That Vulkan's budget actually rises after a release, rather than wgpu
   keeping the memory pooled.
 - That the CPU mask matches the GPU mask. These ignored reference tests
