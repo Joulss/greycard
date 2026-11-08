@@ -261,6 +261,9 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // The hairline along the section's top; off where a rule is drawn
+    // there already (under the Masks tab's pinned list).
+    in property <bool> line-above: true;
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -316,117 +319,129 @@ export component Section inherits VerticalLayout {
     callback switched();
     spacing: 6px;
     padding-top: Theme.space-1;
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        Rectangle {
-            horizontal-stretch: 1;
-            height: Theme.icon + Theme.space-1;
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                alignment: start;
-                Image {
-                    source: @image-url("icons/chevron-down.svg");
-                    colorize: head.has-hover ? Theme.text : Theme.text-muted;
-                    width: Theme.icon;
-                    height: Theme.icon;
-                    y: (parent.height - self.height) / 2;
-                    transform-rotation: root.collapsed ? -90deg : 0deg;
-                    animate transform-rotation { duration: root.fold-time; easing: ease-out; }
+    // The header, with a hairline along the section's top, in the
+    // padding above it: a run of folded sections reads as a list of
+    // headers. Drawn outside the header's box, so it takes no room.
+    Rectangle {
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            Rectangle {
+                horizontal-stretch: 1;
+                height: Theme.icon + Theme.space-1;
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    alignment: start;
+                    Image {
+                        source: @image-url("icons/chevron-down.svg");
+                        colorize: head.has-hover ? Theme.text : Theme.text-muted;
+                        width: Theme.icon;
+                        height: Theme.icon;
+                        y: (parent.height - self.height) / 2;
+                        transform-rotation: root.collapsed ? -90deg : 0deg;
+                        animate transform-rotation { duration: root.fold-time; easing: ease-out; }
+                    }
+                    if root.icon.width > 0: Image {
+                        source: root.icon;
+                        colorize: Theme.text-secondary;
+                        width: Theme.icon;
+                        height: Theme.icon;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    if root.owner != "": Text {
+                        text: root.owner;
+                        color: head.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
+                        color: head.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-semibold;
+                        letter-spacing: 0.8px;
+                        vertical-alignment: center;
+                        // A long title is cut, not the panel widened;
+                        // after an owner, the owner is cut instead.
+                        overflow: elide;
+                        min-width: root.owner == "" ? 0px : self.preferred-width;
+                    }
+                    // Cut first, so a long one (a version's name) never
+                    // pushes the header's action off the panel.
+                    if root.hint != "": Text {
+                        text: root.hint;
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        min-width: 0px;
+                    }
                 }
-                if root.icon.width > 0: Image {
-                    source: root.icon;
-                    colorize: Theme.text-secondary;
-                    width: Theme.icon;
-                    height: Theme.icon;
-                    y: (parent.height - self.height) / 2;
-                }
-                if root.owner != "": Text {
-                    text: root.owner;
-                    color: head.has-hover ? Theme.text : Theme.text-secondary;
-                    font-size: Theme.font-xs;
-                    font-weight: Theme.weight-semibold;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                Text {
-                    text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
-                    color: head.has-hover ? Theme.text : Theme.text-secondary;
-                    font-size: Theme.font-xs;
-                    font-weight: Theme.weight-semibold;
-                    letter-spacing: 0.8px;
-                    vertical-alignment: center;
-                    // A long title is cut, not the panel widened;
-                    // after an owner, the owner is cut instead.
-                    overflow: elide;
-                    min-width: root.owner == "" ? 0px : self.preferred-width;
-                }
-                // Cut first, so a long one (a version's name) never
-                // pushes the header's action off the panel.
-                if root.hint != "": Text {
-                    text: root.hint;
+                if root.note != "": Text {
+                    x: parent.width - self.width;
+                    text: root.note;
                     color: Theme.text-muted;
                     font-size: Theme.font-xs;
                     vertical-alignment: center;
-                    overflow: elide;
-                    min-width: 0px;
+                    height: 100%;
                 }
-            }
-            if root.note != "": Text {
-                x: parent.width - self.width;
-                text: root.note;
-                color: Theme.text-muted;
-                font-size: Theme.font-xs;
-                vertical-alignment: center;
-                height: 100%;
-            }
-            head := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                // A focused slider elsewhere in the panel keeps the
-                // keys, and the panel keeps it in view as this
-                // section opens or folds; one in this section lets
-                // go, since the fold takes it out of view, as does
-                // one anywhere in the panel when this one opens under
-                // One section open at a time, which folds all others.
-                clicked => {
-                    let folds-the-rest = root.collapsed && root.one-of-panel && Folds.one-open;
-                    if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
-                        Typing.close-all();
-                    }
-                    root.animated = true;
-                    root.collapsed = !root.collapsed;
-                    if (!root.collapsed && root.one-of-panel && Folds.one-open) {
-                        root.chased = true;
-                        Folds.reveal-first = true;
-                        root.show-opened();
+                head := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    // A focused slider elsewhere in the panel keeps the
+                    // keys, and the panel keeps it in view as this
+                    // section opens or folds; one in this section lets
+                    // go, since the fold takes it out of view, as does
+                    // one anywhere in the panel when this one opens under
+                    // One section open at a time, which folds all others.
+                    clicked => {
+                        let folds-the-rest = root.collapsed && root.one-of-panel && Folds.one-open;
+                        if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
+                            Typing.close-all();
+                        }
+                        root.animated = true;
+                        root.collapsed = !root.collapsed;
+                        if (!root.collapsed && root.one-of-panel && Folds.one-open) {
+                            root.chased = true;
+                            Folds.reveal-first = true;
+                            root.show-opened();
+                        }
                     }
                 }
             }
-        }
-        if root.action != "": Rectangle {
-            width: action-text.preferred-width + 2 * Theme.space-1;
-            border-radius: Theme.radius-sm;
-            background: action-area.pressed ? Theme.pressed : action-area.has-hover ? Theme.hover : transparent;
-            animate background { duration: Theme.quick; }
-            accessible-role: button;
-            accessible-label: root.action;
-            accessible-action-default => { root.action-clicked(); }
-            action-text := Text {
-                text: root.action;
-                color: action-area.has-hover ? Theme.text : Theme.text-secondary;
-                font-size: Theme.font-xs;
-                vertical-alignment: center;
+            if root.action != "": Rectangle {
+                width: action-text.preferred-width + 2 * Theme.space-1;
+                border-radius: Theme.radius-sm;
+                background: action-area.pressed ? Theme.pressed : action-area.has-hover ? Theme.hover : transparent;
+                animate background { duration: Theme.quick; }
+                accessible-role: button;
+                accessible-label: root.action;
+                accessible-action-default => { root.action-clicked(); }
+                action-text := Text {
+                    text: root.action;
+                    color: action-area.has-hover ? Theme.text : Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                action-area := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { root.action-clicked(); }
+                }
             }
-            action-area := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.action-clicked(); }
+            if root.switchable: Switch {
+                checked <=> root.on;
+                enabled: !root.superseded;
+                force-off: root.superseded;
+                y: (parent.height - self.height) / 2;
+                toggled => { root.switched(); }
             }
         }
-        if root.switchable: Switch {
-            checked <=> root.on;
-            enabled: !root.superseded;
-            force-off: root.superseded;
-            y: (parent.height - self.height) / 2;
-            toggled => { root.switched(); }
+        Rectangle {
+            y: -root.padding-top;
+            height: 1px;
+            width: 100%;
+            background: Theme.border;
+            visible: root.line-above;
         }
     }
     Rectangle {

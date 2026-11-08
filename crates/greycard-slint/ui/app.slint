@@ -3616,6 +3616,8 @@ export component App inherits Window {
                         }
                         if root.shown-tab == "Masks" && root.target > 0: AdjustmentsSection {
                             one-of-panel: !root.grid-open;
+                            // The list's foot above is its line.
+                            line-above: false;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
