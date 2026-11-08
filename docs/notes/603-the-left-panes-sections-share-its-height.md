@@ -31,8 +31,16 @@ today for every window.
 The gap between two open sharing sections is the drag: moving it
 takes room from the one and gives it to the other, and the two
 weights are set from the heights that result, so the division holds
-as the window changes. The gap shows its hand on hover and nothing
-else is added. A double-click on a gap evens the two. The weights are
+as the window changes. A drag never pushes a list past what it has
+to show, so it moves room only from a list grown past its floor to
+one cut short; on a window where every list fits, no gap has
+anything to move, and the gap shows its hand only where a drag can
+move room. This is the automatic rule kept whole, chosen over a drag
+that wins (the two lists held where the pointer leaves them, blank
+room under a short one, double-click back to automatic). The two
+doors store the same weights, so the other costs one rule in the
+layout if the live gaps turn out too rare to be worth a handle; it
+is on the roadmap. A double-click on a gap evens the two. The weights are
 remembered in the settings file by section name, as the folded
 sections are (`collapsed`), and a section never dragged weighs one.
 

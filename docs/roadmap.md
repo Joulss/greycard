@@ -169,6 +169,13 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The NOISE section's chroma denoiser on a picture: it works on
       RGB where the learned tier wants a mosaic, so a JPEG could have
       it; the section says "raw only" today (§602, 2026-11-07)
+- [ ] The left pane's gaps as a drag that wins: today a drag moves
+      room only between a list cut short and one grown past its floor,
+      so on a window where every list fits no gap is live (§603). The
+      other door holds the two lists where the pointer leaves them,
+      blank room under a short one, double-click back to automatic;
+      same weights, one rule in the layout. Pick it up if the live
+      gaps turn out too rare (2026-11-08)
 
 ## Next
 
