@@ -38,17 +38,31 @@ not offered.
 
 ## The schema
 
-`WhiteBalance` gains a mode, `Offset { mired, tint }`, beside
-`AsShot` and `Custom`. A new mode and not a reuse of `Custom` with
-a flag, for §400's reason: every build since 0.4.0 reads a mode it
-does not know as the default, so an older build opens the sidecar
-with the picture's white balance off and renders nothing wrong,
-where a flag beside kelvin would have read "-150" as a light and
-clamped it to 2000 K. The schema version stays, since no existing
-field changes meaning. A raw's edit never stores `Offset`, and a
-picture's never stores `Custom`; a preset or the copy sheet carries
-whichever it has, and the receiving frame's kind decides what
-applies: an offset applies to either, a kelvin light to a raw alone.
+The edit's `WhiteBalance` is tagged by mode, `as_shot` or `custom`,
+and its reader has no fallback: every released build refuses a
+sidecar with a mode it does not know, and the frame opens with the
+default edit (the mask's white has the fallback, §400; the global
+never got one). So a new mode would cost a picture's sidecar every
+older build, and a flag beside `custom` would have an old build read
+"-150" as a light and clamp it to 2000 K.
+
+The offset is written beside `as_shot` instead: `{"mode": "as_shot",
+"offset": {"mired": 10, "tint": 0}}`. An older build reads the mode
+it knows and ignores the field, so it opens the sidecar with the
+picture's white balance off and renders nothing wrong. The schema
+version stays. A raw's edit never writes an offset, and a picture's
+never writes `custom`; a preset or the copy sheet carries whichever
+it has, and the receiving frame's kind decides what applies: an
+offset applies to either, a kelvin light to a raw alone. From this
+build on the reader also takes a mode it does not know as As shot,
+so the next new mode costs nothing.
+
+The decode already adapts every picture's white to the working
+white: sRGB, Adobe RGB, and Display P3 through their matrices, an
+ICC profile's colorants from D50. The profile's own white point
+(`wtpt`) is not read today, so the picture's white, which the offset
+is from, comes with it: D65 for the named spaces, the profile's for
+a tagged TIFF (ProPhoto's is D50).
 
 ## The mechanism
 
