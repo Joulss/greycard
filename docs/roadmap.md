@@ -112,6 +112,10 @@ the reasoning lives in `docs/notes.md`.
       `BaselineExposure` from a DNG per body as the second yardstick;
       the fitted looks' own brightness (the GFX's 0.16 most); the
       import's offset on unedited frames (now 0.62 stops apart, §342)
+- [ ] A dynamic contrast: one slider over Texture, Clarity, and
+      Structure, each band's gain eased back where that band is already
+      strong, so a flat area gains depth and a busy one is not crunched
+      (discussion 95; Nik's Dynamic Contrast is the reference)
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a
