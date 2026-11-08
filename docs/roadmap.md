@@ -811,6 +811,11 @@ clears or a tester asks for it.
 
 #### Library
 
+- [ ] Move frames between folders and roots: a drag onto a folder in
+      the tree, and Move to folder on the menu, carrying the sidecar,
+      the catalog row, the versions, and the collections; a root on an
+      unplugged drive stays listed offline and comes back when it is
+      plugged in (issue 99)
 - [ ] Geotagging from a GPX track: the camera's UTC offset, a manual
       offset for a clock left on the wrong time, a matching tolerance,
       the position written to the sidecar and the XMP, as digiKam and
