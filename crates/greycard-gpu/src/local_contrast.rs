@@ -280,6 +280,13 @@ impl Pipelines {
         *self.work.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// The picture size the kept working set was made for, if one is
+    /// kept; see [`Context::kept_sizes`].
+    pub(crate) fn kept_size(&self) -> Option<(u32, u32)> {
+        let guard = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map(|w| (w.width, w.height))
+    }
+
     pub(crate) fn keeps(&self) -> bool {
         self.keep.load(Ordering::Relaxed)
     }
@@ -818,14 +825,7 @@ impl Context {
     ) -> Result<LocalContrastStats> {
         let uploaded = self.upload(image)?;
         let (out, stats) = self.local_contrast(&uploaded, options, clip_level)?;
-        let (w, h) = (out.width, out.height);
-        let rgba = self.read_texture(&out.texture, 0, 0, w, h, 16)?;
-        let rgba: &[f32] = bytemuck::cast_slice(&rgba);
-        let (pixels, _) = image.data.as_chunks_mut::<3>();
-        let (fours, _) = rgba.as_chunks::<4>();
-        for (px, four) in pixels.iter_mut().zip(fours) {
-            px.copy_from_slice(&four[..3]);
-        }
+        *image = self.download(&out)?;
         Ok(stats)
     }
 

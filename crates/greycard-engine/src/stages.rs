@@ -40,9 +40,10 @@ pub enum Purpose {
     /// The open frame on screen: on the GPU where one is lent, ending
     /// at the viewport's shader.
     Viewport,
-    /// A file under the sheet's settings, ending at the file: the CA,
-    /// the demosaic, and the lens on the GPU where one is lent, as the
-    /// viewport runs them, the rest on the CPU.
+    /// A file under the sheet's settings, ending at the file: every
+    /// stage with a device version on the GPU where one is lent, as the
+    /// viewport runs them, read back in full floats for the finish on
+    /// the CPU.
     Export(Box<export::Settings>),
     /// The edit's pictures of a frame not open: binned, the masks from
     /// the cache, finished to a 2048 sRGB picture.
@@ -1423,14 +1424,13 @@ mod tests {
         ));
     }
 
-    /// An export lent a device runs its CA, demosaic, and lens there,
-    /// as the viewport does, and the rest on the CPU: the Detail
-    /// section, the dehaze, and the sharpen, whose device versions end
-    /// at the viewport's half floats, and its own finish. Without a
-    /// device (`--cpu`, or a machine with none) every step is the
-    /// CPU's.
+    /// An export lent a device runs there every stage with a device
+    /// version: its CA, demosaic, and lens, as the viewport does, and
+    /// the Detail section, the dehaze, and the sharpen, whose run it
+    /// reads back for its own finish on the CPU. Without a device
+    /// (`--cpu`, or a machine with none) every step is the CPU's.
     #[test]
-    fn an_export_lent_a_device_runs_the_ca_demosaic_and_lens_there() {
+    fn an_export_lent_a_device_runs_every_device_stage_there() {
         use crate::walk::{Place, plan};
         let mut edit = everything();
         edit.lens.chromatic_aberration = true;
@@ -1443,18 +1443,22 @@ mod tests {
                 if *place == Place::Gpu {
                     on.push(stage.name());
                 }
-                if matches!(
-                    stage,
-                    Stage::LocalContrast(_)
-                        | Stage::Dehaze(_)
-                        | Stage::Sharpen(..)
-                        | Stage::Finish(_)
-                ) {
+                if matches!(stage, Stage::Finish(_)) {
                     assert_eq!(*place, Place::Cpu, "{}", stage.name());
                 }
             }
         }
-        assert_eq!(on, ["CA", "demosaic", "lens"]);
+        assert_eq!(
+            on,
+            [
+                "CA",
+                "demosaic",
+                "lens",
+                "local contrast",
+                "dehaze",
+                "sharpen"
+            ]
+        );
         // The viewport's own puts the same three there.
         let viewport = stages(&edit, &Purpose::Viewport, &raw(0), None);
         let in_memory = |s: &Steps, p: &[Place]| {

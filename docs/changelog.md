@@ -68,6 +68,11 @@ design note behind it.
   render, use `--cpu` on `greycard export` or `--cpu-ops` on the
   editor's `--export`
   ([§600](https://github.com/jessolmstead/greycard/blob/master/docs/notes/600-the-command-lines-export-on-the-gpu.md)).
+- An export on a machine with a GPU now runs the Detail section, the
+  dehaze, and the sharpen there too, so the editor's export of the
+  open frame reuses the viewport's work; `--cpu` still renders on the
+  CPU alone
+  ([§607](https://github.com/jessolmstead/greycard/blob/master/docs/notes/607-the-exports-detail-dehaze-and-sharpen-on-the-gpu.md)).
 
 ## 0.10.1
 

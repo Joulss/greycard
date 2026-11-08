@@ -196,11 +196,6 @@ seconds.
       threshold's search reads back the full detail result where the
       GPU's lightness would be a third the bytes, if its cube root
       can be held to the CPU's one-step bound
-- [ ] An export's Detail, dehaze, and sharpen on the device as the
-      viewport's are (§600): their GPU forms end in the viewport's
-      half-float texture, and an export finishes in full floats, so
-      they want a full-float download path and a sharpen that writes
-      full floats
 - [ ] A proxy develop for the fit view, as a placeholder and not a
       mode: 2x2 Bayer quads binned to one RGB pixel, shown only while
       the full develop is pending and replaced by it when it lands, so

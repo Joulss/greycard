@@ -9,8 +9,8 @@ use crate::walk::NoLearned;
 /// resumes from a copy of the window's points, sharing their pictures:
 /// what it keeps and lets go of in resuming is the copy's, so the
 /// window's points (on the device too) are as they were for its next
-/// develop. With `gpu` the export's CA, demosaic, and lens run there as
-/// the viewport's do, so the viewport's base serves it; without one it
+/// develop. With `gpu` the export's device stages run there as the
+/// viewport's do, so the viewport's points serve it; without one it
 /// resumes only from a point the CPU made. What of the edit was left
 /// out.
 #[allow(clippy::too_many_arguments)]
@@ -99,7 +99,7 @@ pub(super) fn seeded(edit: &Edit, seed: bool, input: Option<&Input>) -> Edit {
 /// its stage list for the export ([`walk_export`]), and written to
 /// `path`, the open file's base and learned pair left as they were for
 /// the next develop. The edit it was written under, and what of it
-/// was left out. With `gpu`, its CA, demosaic, and lens run there.
+/// was left out. With `gpu`, its device stages run there.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn export_other(
     frame: &crate::queue::Frame,
@@ -174,8 +174,8 @@ pub(super) fn walk_export(
 }
 
 /// `input` walked under `edit` at `turn` through its stage list for
-/// the export, from what `kept` holds, with `models`'s models, its CA,
-/// demosaic, and lens on `gpu` where one is lent (a declined or failed
+/// the export, from what `kept` holds, with `models`'s models, its
+/// device stages on `gpu` where one is lent (a declined or failed
 /// op runs on the CPU, as the viewport's does): the picture before the
 /// finish and what the finish reads beside it. Beside them, what of the edit was left out, in
 /// [`left_out_of`]'s words and then [`learned_masks`]'. The walk keeps

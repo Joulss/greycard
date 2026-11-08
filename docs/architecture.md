@@ -112,10 +112,13 @@ Every develop of an edit is one list of steps,
 facts, and the `Purpose` (the viewport, an export, the reduced
 picture, what the models see, a prefetch, a merge's frame). `greycard_engine::walk::walk`
 runs it. `walk::plan` places a step on the device only for the
-viewport and the prefetch with a device lent, and only for a stage
-whose `Stage::device` says it has a device version, and the
-viewport's `Finish::Shader`; everything else, and every export, runs
-the CPU reference.
+viewport, the prefetch, and an export with a device lent: the CA, the
+lens, and a demosaic with a device version
+(`Stage::in_memory_on_device`), the local contrast, the dehaze, and
+the sharpen (`Stage::device`), and the viewport's `Finish::Shader`.
+An export's run of the Detail section, the dehaze, and the sharpen
+writes full floats and is read back for the CPU's finish. Everything
+else, and an export with no device, runs the CPU reference.
 
 The decode comes first and is not a step: `greycard_core::decode`
 reads a raw through `RawlerDecoder` into a `RawFrame`, or a picture

@@ -6,8 +6,8 @@
 //! picture, what the develop measured of it, the taps so far, the
 //! steps up to there, and where each ran. The next walk starts from
 //! the last kept point whose steps are its own and whose places its
-//! plan allows, so an export, whose plan is all CPU, never starts from
-//! a picture the device touched.
+//! plan allows, so an export with no device, whose plan is all CPU,
+//! never starts from a picture the device touched.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,24 +78,25 @@ pub enum Place {
 /// lens: [`Stage::in_memory_on_device`]): the viewport, the prefetch,
 /// and the export, so a base one makes is the base the others would,
 /// and the editor's export and the command line's are one picture on
-/// one machine. The viewport's runs on the device (the Detail section,
-/// the dehaze, and the sharpen, [`Stage::device`]), which end at its
-/// half-float texture, and its shader are the viewport's and the
-/// prefetch's alone: the export finishes in full floats on the CPU.
-/// The reduced pictures, the models' pictures, and a merge's frames are
-/// all the CPU's.
+/// one machine. The viewport and the export also run there the Detail
+/// section, the dehaze, and the sharpen ([`Stage::device`]): the
+/// viewport's run ends at its half-float texture and its shader, the
+/// export's in full floats read back for the CPU's finish. The reduced
+/// pictures, the models' pictures, and a merge's frames are all the
+/// CPU's.
 pub fn plan(steps: &Steps, purpose: &Purpose, lent: bool) -> Vec<Place> {
-    let runs = lent && matches!(purpose, Purpose::Viewport | Purpose::Prefetch);
-    let in_memory = runs || (lent && matches!(purpose, Purpose::Export(_)));
-    places(steps, runs, in_memory)
+    let shader = lent && matches!(purpose, Purpose::Viewport | Purpose::Prefetch);
+    let runs = shader || (lent && matches!(purpose, Purpose::Export(_)));
+    places(steps, shader, runs, runs)
 }
 
-/// The places of `steps` with the viewport's runs on the device where
-/// `runs` says, and the stages on pictures in memory where `in_memory`
-/// does. The learned denoiser runs on its own providers, never as a
-/// device step; its place is the one the demosaic standing in for it
-/// would take, so a walk that drops it ([`replan`]) keeps the plan.
-fn places(steps: &Steps, runs: bool, in_memory: bool) -> Vec<Place> {
+/// The places of `steps` with the shader on the device where `shader`
+/// says, the stages on pictures in memory where `in_memory` does, and
+/// the rest with a device version where `runs` does. The
+/// learned denoiser runs on its own providers, never as a device step;
+/// its place is the one the demosaic standing in for it would take, so
+/// a walk that drops it ([`replan`]) keeps the plan.
+fn places(steps: &Steps, shader: bool, in_memory: bool, runs: bool) -> Vec<Place> {
     let stand_in = steps.ops().find_map(|s| match s {
         Stage::Prepare(p) => Some(
             Stage::Demosaic(p.settings.demosaic, p.settings.dual_contrast).in_memory_on_device(),
@@ -106,7 +107,7 @@ fn places(steps: &Steps, runs: bool, in_memory: bool) -> Vec<Place> {
         .steps
         .iter()
         .map(|step| match step {
-            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if runs => Place::Gpu,
+            Step::Op(Stage::Finish(crate::stages::Finish::Shader)) if shader => Place::Gpu,
             Step::Op(stage) if in_memory && stage.in_memory_on_device() => Place::Gpu,
             Step::Op(Stage::Learned(_)) if in_memory && stand_in == Some(true) => Place::Gpu,
             Step::Op(stage) if runs && stage.device() => Place::Gpu,
@@ -2010,7 +2011,8 @@ fn lens_in_camera(
 /// A run of stages on the device, `i..end` of `steps`: the CA and the
 /// lens one at a time on pictures in memory, the Detail section and the
 /// sharpen as one run with one upload at its head and the device's
-/// picture between, a run ending at the shader writing its texture.
+/// picture between, a run ending at the shader writing its texture and
+/// one ending at the CPU's finish read back in full floats.
 fn device_run(
     steps: &Steps,
     std::ops::Range { start: i, end }: std::ops::Range<usize>,
@@ -2117,12 +2119,27 @@ fn device_run(
         steps.steps.get(end),
         Some(Step::Op(Stage::Finish(crate::stages::Finish::Shader)))
     );
+    // An export's run: its picture is read back for the CPU's finish,
+    // and nothing of it is kept on the device past the run: no upload,
+    // no point, and no working set of a size the context did not hold.
+    let download = matches!(
+        steps.steps.get(end),
+        Some(Step::Op(Stage::Finish(crate::stages::Finish::Cpu { .. })))
+    );
     // The last op of the run writes the viewport's texture when the
     // shader is next.
     let last = (i..end)
         .rev()
         .find(|&j| matches!(steps.steps[j], Step::Op(_)))
         .expect("a run holds an op");
+    // The picture in memory the run began at, while nothing in the
+    // run has changed it: an export's run that only reads it (the
+    // sharpen's delta alone) gives it back rather than its copy.
+    let mut unchanged = match &st.buf {
+        Buf::Working(picture) => Some(picture.clone()),
+        _ => None,
+    };
+    let sets = ctx.kept_sizes();
     let mut image = match &st.buf {
         Buf::Device(image) => image.clone(),
         Buf::Working(picture) => match &kept.uploaded {
@@ -2136,7 +2153,11 @@ fn device_run(
                 walked
                     .seconds
                     .push(("upload", started.elapsed().as_secs_f64()));
-                kept.uploaded = Some((picture.clone(), image.clone()));
+                // Held past the first op it would hold a frame's
+                // picture on the card for nothing.
+                if !download {
+                    kept.uploaded = Some((picture.clone(), image.clone()));
+                }
                 image
             }
         },
@@ -2145,9 +2166,10 @@ fn device_run(
     let texture = shader.then(|| ctx.viewport_texture(image.width(), image.height()));
     // Once the texture is written there is no picture to keep.
     let mut written = None;
+    let run_started = Instant::now();
     for j in i..end {
         match &steps.steps[j] {
-            Step::Keep(_) if written.is_some() => places.push(Place::Cpu),
+            Step::Keep(_) if written.is_some() || download => places.push(Place::Cpu),
             Step::Keep(keep) => {
                 places.push(Place::Cpu);
                 kept.put(Point {
@@ -2177,6 +2199,7 @@ fn device_run(
                             ctx.local_contrast(&image, options, st.meta.clip_level)?;
                         walked.detail = Some(stats);
                         image = Arc::new(out);
+                        unchanged = None;
                     }
                 }
                 places.push(Place::Gpu);
@@ -2207,7 +2230,34 @@ fn device_run(
                         let (out, stats) = ctx.dehaze(&image, &model)?;
                         walked.dehaze = Some(stats);
                         image = Arc::new(out);
+                        unchanged = None;
                     }
+                }
+                places.push(Place::Gpu);
+            }
+            Step::Op(Stage::Sharpen(options, delta)) if texture.is_none() && download => {
+                let (radius, clip) = (st.meta.radius, st.meta.clip_level);
+                let (out, stats, d) = ctx.sharpen_to_image(
+                    &image,
+                    options,
+                    radius,
+                    clip,
+                    delta.sharpens(),
+                    delta.made(),
+                )?;
+                if let Some(d) = d {
+                    st.taps.sharpen = Some(SharpenTap {
+                        width: image.width() as usize,
+                        height: image.height() as usize,
+                        options: *options,
+                        sharpened: delta.sharpens(),
+                        delta: greycard_render::detail::sharpen_delta(&d),
+                    });
+                }
+                if let Some(out) = out {
+                    walked.sharpen = Some(stats);
+                    image = Arc::new(out);
+                    unchanged = None;
                 }
                 places.push(Place::Gpu);
             }
@@ -2247,6 +2297,32 @@ fn device_run(
             Step::Tap(_) => unreachable!("a run holds no tap"),
         }
     }
+    // Timed whole: an op returns once its work is queued, and the next
+    // one's read back waits for it. The viewport's run is timed by its
+    // frame.
+    if download {
+        walked.seconds.push((
+            "the local contrast, dehaze, and sharpen on the GPU",
+            run_started.elapsed().as_secs_f64(),
+        ));
+        // A set made here for a picture of another size than the one
+        // the context held (a frame not open, or a set's) goes with
+        // the run, rather than stay on the card where the viewport's
+        // was until its next develop. One of the size held stays: the
+        // open frame's export shares it with the viewport.
+        let size = Some((image.width(), image.height()));
+        let ran = |f: &dyn Fn(&Stage) -> bool| {
+            steps.steps[i..end]
+                .iter()
+                .any(|s| matches!(s, Step::Op(op) if f(op)))
+        };
+        if ran(&|s| matches!(s, Stage::Sharpen(..))) && sets.sharpen != size {
+            ctx.release_sharpen();
+        }
+        if ran(&|s| matches!(s, Stage::LocalContrast(_))) && sets.local_contrast != size {
+            ctx.release_local_contrast();
+        }
+    }
     st.buf = match (written, texture) {
         (Some(out), _) => Buf::Texture(out),
         // Neither the Detail section nor the sharpen wrote it: the
@@ -2255,6 +2331,17 @@ fn device_run(
             return Err(greycard_gpu::Error::Unsupported(
                 "nothing on the device to write the viewport's texture".into(),
             ));
+        }
+        (None, None) if download && unchanged.is_some() => {
+            Buf::Working(unchanged.expect("checked"))
+        }
+        (None, None) if download => {
+            let started = Instant::now();
+            let picture = ctx.download(&image)?;
+            walked
+                .seconds
+                .push(("download", started.elapsed().as_secs_f64()));
+            Buf::Working(Arc::new(picture))
         }
         (None, None) => Buf::Device(image),
     };
@@ -3060,11 +3147,23 @@ mod tests {
             &mut viewport_kept.clone(),
             &mut gpu,
         );
-        assert!(
-            matches!(export.from, Some(Keep::Base | Keep::Patched)),
-            "the viewport's points serve: {:?}",
-            export.from
+        // The viewport's picture before the sharpen, on the device,
+        // serves an export whose sharpen runs there too.
+        assert_eq!(
+            export.from,
+            Some(Keep::PreSharpen),
+            "the viewport's points serve"
         );
+        let sharpen = |w: &Walked| {
+            let steps = stages::stages(&e, &Purpose::Export(Box::default()), &input.facts(0), None);
+            let i = steps
+                .steps
+                .iter()
+                .position(|s| matches!(s, Step::Op(Stage::Sharpen(..))))
+                .unwrap();
+            w.places[i]
+        };
+        assert_eq!(sharpen(&export), Place::Gpu);
         let fresh = go(&Purpose::Export(Box::default()), &mut Kept::new(), &mut gpu);
         assert_eq!(fresh.from, None);
         assert!(
@@ -3077,6 +3176,223 @@ mod tests {
             &mut None,
         );
         assert_eq!(cpu.from, None, "with no device the export makes its own");
+    }
+
+    /// [`an_export_on_a_device_runs_the_detail_and_the_sharpen_there`]
+    /// on every raw in the folder `GREYCARD_SAMPLES` names: the device's
+    /// run of the Detail section, the dehaze, and the sharpen against
+    /// the CPU's on the same base, so the difference is theirs alone,
+    /// and not the demosaic's carried through them.
+    #[test]
+    #[ignore = "reads the folder named by GREYCARD_SAMPLES"]
+    fn the_detail_and_the_sharpen_on_a_device_on_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_SAMPLES") else {
+            eprintln!("set GREYCARD_SAMPLES to a folder of raws");
+            return;
+        };
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let mut frames: Vec<_> = std::fs::read_dir(&dir)
+            .expect("read GREYCARD_SAMPLES")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .filter(|p| greycard_core::decode::decode_path(p).is_ok())
+            .collect();
+        frames.sort();
+        let mut e = Edit::default();
+        e.detail.texture = 0.3;
+        e.detail.clarity = 0.4;
+        e.detail.structure = 0.2;
+        e.detail.dehaze = 0.25;
+        e.sharpen.iterations = 30;
+        let purpose = Purpose::Export(Box::default());
+        for path in &frames {
+            let input = Input::Raw(Arc::new(greycard_core::decode::decode_path(path).unwrap()));
+            let mut steps = stages::stages(&e, &purpose, &input.facts(0), None);
+            steps.steps.retain(|s| !matches!(s, Step::Keep(_)));
+            let lent = plan(&steps, &purpose, true);
+            let mut cpu_plan = lent.clone();
+            for (s, p) in steps.steps.iter().zip(&mut cpu_plan) {
+                if matches!(
+                    s,
+                    Step::Op(Stage::LocalContrast(_) | Stage::Dehaze(_) | Stage::Sharpen(..))
+                ) {
+                    *p = Place::Cpu;
+                }
+            }
+            let mut go = |plan: &[Place]| {
+                let w = walk(
+                    &steps,
+                    plan,
+                    &input,
+                    &mut Kept::new(),
+                    &mut NoModels,
+                    &mut gpu,
+                    &NoHold,
+                )
+                .unwrap();
+                picture(&w)
+            };
+            let (device, cpu) = (go(&lent), go(&cpu_plan));
+            let mut worst = 0f32;
+            let mut past = 0usize;
+            for (a, b) in cpu.data.iter().zip(&device.data) {
+                let r = (a - b).abs() / a.abs().max(1e-2);
+                worst = worst.max(r);
+                past += usize::from(r > 1e-4);
+            }
+            println!(
+                "{}: {worst:.3e} relative at worst, {past} of {} past 1e-4",
+                path.file_name().unwrap().to_string_lossy(),
+                cpu.data.len()
+            );
+            assert!(worst <= 1e-4, "{worst:.3e}");
+        }
+    }
+
+    /// An export lent a device runs the Detail section, the dehaze, and
+    /// the sharpen there and reads the picture back in full floats for
+    /// the CPU's finish. It keeps nothing of the run on the device: no
+    /// upload, no point (its list's keeps included), and no working set
+    /// of a size the context did not hold, while one of the size the
+    /// viewport left stays. Against the same run on the CPU from the
+    /// same base it is within the sharpen's GPU test tolerance.
+    #[test]
+    fn an_export_on_a_device_runs_the_detail_and_the_sharpen_there() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let input = Input::Raw(frame());
+        let mut e = edit();
+        e.lens.defringe = false;
+        e.detail.structure = 0.2;
+        let purpose = Purpose::Export(Box::default());
+        let steps = stages::stages(&e, &purpose, &input.facts(0), None);
+        let at = |f: &dyn Fn(&Stage) -> bool| {
+            steps
+                .steps
+                .iter()
+                .position(|s| matches!(s, Step::Op(op) if f(op)))
+                .unwrap()
+        };
+        let ops = [
+            at(&|s| matches!(s, Stage::LocalContrast(_))),
+            at(&|s| matches!(s, Stage::Dehaze(_))),
+            at(&|s| matches!(s, Stage::Sharpen(..))),
+        ];
+        let lent = plan(&steps, &purpose, true);
+        assert!(ops.iter().all(|&i| lent[i] == Place::Gpu));
+        let mut kept = Kept::new();
+        let walked = walk(
+            &steps,
+            &lent,
+            &input,
+            &mut kept,
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .expect("the export walks");
+        assert!(gpu.is_some());
+        assert!(ops.iter().all(|&i| walked.places[i] == Place::Gpu));
+        assert!(walked.sharpen.is_some() && walked.detail.is_some() && walked.dehaze.is_some());
+        assert!(
+            walked.seconds.iter().any(|(name, _)| *name == "download"),
+            "{:?}",
+            walked.seconds
+        );
+        assert!(kept.uploaded.is_none(), "no upload stays");
+        assert!(
+            !kept
+                .points
+                .iter()
+                .any(|p| matches!(p.buf, KeptBuf::Device(_))),
+            "no point on the device"
+        );
+        let none = greycard_gpu::KeptSizes {
+            sharpen: None,
+            local_contrast: None,
+        };
+        assert_eq!(
+            gpu.as_ref().unwrap().kept_sizes(),
+            none,
+            "no set the context did not hold"
+        );
+        let device = picture(&walked);
+
+        // The viewport's sets at this size stay through an export.
+        let viewport = stages::stages(&e, &Purpose::Viewport, &input.facts(0), None);
+        let viewport_plan = plan(&viewport, &Purpose::Viewport, true);
+        let ctx_keeps = |gpu: &Option<greycard_gpu::Context>| gpu.as_ref().unwrap().kept_sizes();
+        gpu.as_ref().unwrap().keep_local_contrast_planes(true);
+        walk(
+            &viewport,
+            &viewport_plan,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .unwrap();
+        let held = ctx_keeps(&gpu);
+        assert!(held.sharpen.is_some() && held.local_contrast.is_some());
+        walk(
+            &steps,
+            &lent,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .unwrap();
+        assert_eq!(ctx_keeps(&gpu), held, "the viewport's sets stay");
+        // An export of a frame of another size makes its own sets and
+        // lets them go: the viewport's were evicted either way, and its
+        // next develop makes them again.
+        let other = Input::Raw(frame_of(200, 140, [1.0, 1.0]));
+        let other_steps = stages::stages(&e, &purpose, &other.facts(0), None);
+        let other_plan = plan(&other_steps, &purpose, true);
+        walk(
+            &other_steps,
+            &other_plan,
+            &other,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .unwrap();
+        assert_eq!(ctx_keeps(&gpu), none, "a set of another size goes");
+        gpu.as_ref().unwrap().keep_local_contrast_planes(false);
+
+        // The stages before the run as the device ran them, the run on
+        // the CPU: the ops' rounding alone.
+        let mut cpu_plan = lent.clone();
+        ops.iter().for_each(|&i| cpu_plan[i] = Place::Cpu);
+        let cpu = walk(
+            &steps,
+            &cpu_plan,
+            &input,
+            &mut Kept::new(),
+            &mut NoModels,
+            &mut gpu,
+            &NoHold,
+        )
+        .unwrap();
+        let cpu = picture(&cpu);
+        assert_eq!(cpu.data.len(), device.data.len());
+        let worst = cpu
+            .data
+            .iter()
+            .zip(&device.data)
+            .map(|(a, b)| (a - b).abs() / a.abs().max(1e-2))
+            .fold(0f32, f32::max);
+        println!("the device's run against the CPU's: {worst:.3e} relative at worst");
+        assert!(worst <= 1e-4, "{worst:.3e}");
+        assert!(device.data != cpu.data, "did the device run?");
     }
 
     /// An export lent a device whose ops fail goes on on the CPU, as
@@ -3126,6 +3442,10 @@ mod tests {
         let small = Input::Raw(frame_of(14, 12, [1.0, 1.0]));
         let mut e = Edit::default();
         e.lens.chromatic_aberration = false;
+        // The sharpen would run on the device and differ from the
+        // reference by its rounding; what is checked here is the
+        // demosaic's fall to the CPU, so the picture must be exact.
+        e.sharpen.enabled = false;
         let steps = stages::stages(&e, &purpose, &small.facts(0), None);
         let i = steps
             .steps
@@ -3249,7 +3569,7 @@ mod tests {
         );
         // Everything on the CPU but the demosaic, which is the
         // device's picture whatever runs after it.
-        let cpu_plan = places(&steps, false, true);
+        let cpu_plan = places(&steps, false, true, false);
         let cpu = walk(
             &steps,
             &cpu_plan,

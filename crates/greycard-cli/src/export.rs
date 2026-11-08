@@ -124,7 +124,7 @@ pub(crate) fn export(args: ExportArgs) -> Result<u8> {
     Ok(finished.code())
 }
 
-/// The context the run's CA, demosaic, and lens go on: none under
+/// The context the run's device stages go on: none under
 /// `--cpu`, else one of our own where the machine has a GPU, a
 /// software adapter taken only when asked for by hand, as the editor
 /// takes one.

@@ -511,6 +511,17 @@ impl Context {
         }
     }
 
+    /// The picture sizes the kept working sets were made for, the
+    /// sharpen's and the local contrast's, where one is kept: so a
+    /// caller that ran a picture of another size can let its sets go
+    /// rather than leave them where another's were.
+    pub fn kept_sizes(&self) -> KeptSizes {
+        KeptSizes {
+            sharpen: self.sharpen.kept_size(),
+            local_contrast: self.local_contrast.kept_size(),
+        }
+    }
+
     /// Whether the local contrast keeps its planes between runs: on a
     /// discrete GPU by default, else made for each run and let go.
     pub fn keeps_local_contrast_planes(&self) -> bool {
@@ -572,7 +583,10 @@ impl Context {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            // Read back as it is when nothing after the upload changed it.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         // A band of rows at a time, each submitted before the next: the
@@ -630,17 +644,25 @@ impl Context {
     }
 
     /// A picture on the GPU read back as a working image, its alpha
-    /// dropped: for the CLI and the tests, not a slider.
+    /// dropped: for an export's finish on the CPU, the CLI, and the
+    /// tests, not a slider. A band of rows at a time, so the four
+    /// channels' copy is never the whole picture's: at 45 MP that
+    /// would be 720 MB beside the 540 MB result.
     pub fn download(&self, image: &Image) -> Result<WorkingImage> {
         let (w, h) = (image.width, image.height);
-        let rgba = self.read_texture(&image.texture, 0, 0, w, h, 16)?;
-        let rgba: &[f32] = bytemuck::cast_slice(&rgba);
-        let data = rgba
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .flat_map(|px| [px[0], px[1], px[2]])
-            .collect();
+        let band = ((64u32 << 20) / (w * 16)).max(1);
+        let mut data = Vec::with_capacity(w as usize * h as usize * 3);
+        for y0 in (0..h).step_by(band as usize) {
+            let rows = band.min(h - y0);
+            let rgba = self.read_texture(&image.texture, 0, y0, w, rows, 16)?;
+            let rgba: &[f32] = bytemuck::cast_slice(&rgba);
+            data.extend(
+                rgba.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|px| [px[0], px[1], px[2]]),
+            );
+        }
         WorkingImage::from_data(w as usize, h as usize, data)
             .map_err(|e| Error::ReadBack(e.to_string()))
     }
@@ -874,6 +896,14 @@ fn built<'a, T>(
         what,
         error: error.clone(),
     })
+}
+
+/// The picture sizes the ops' kept working sets were made for
+/// ([`Context::kept_sizes`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeptSizes {
+    pub sharpen: Option<(u32, u32)>,
+    pub local_contrast: Option<(u32, u32)>,
 }
 
 /// A developed picture on the GPU, as [`Context::upload`] put it.

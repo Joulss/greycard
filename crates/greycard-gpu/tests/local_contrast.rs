@@ -44,6 +44,26 @@ fn require_gpu(why: &str) {
     );
 }
 
+/// A picture in full floats read back whole, a band of rows at a
+/// time, to the bit: one taller than a band, and one a row high.
+#[test]
+fn a_picture_taller_than_a_band_downloads_whole() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    for (w, h) in [(4096, 1100), (37, 1)] {
+        let mut r = Rng::new(w as u64, h as u64);
+        let data = (0..w * h * 3).map(|_| r.range(-0.5, 4.0)).collect();
+        let image = WorkingImage::from_data(w, h, data).unwrap();
+        let uploaded = ctx.upload(&image).expect("the upload");
+        let back = ctx.download(&uploaded).expect("the read back");
+        assert!(
+            back == image,
+            "{w}x{h}: the picture read back is the one sent"
+        );
+    }
+}
+
 /// A picture with structure at every scale Clarity and Texture read:
 /// a slow gradient, broad soft shapes the size of Clarity's window, a
 /// hard four-stop edge, fine bars, grain, a color cast, a deep shadow

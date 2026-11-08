@@ -7,8 +7,8 @@
 //! The export never needed the window: its part was only to read the
 //! sidecar, lay the overrides on it, fill the sheet, and wait, and all
 //! of that is here. What it lent was its device, and the export runs
-//! its CA, demosaic, and lens there as the viewport does. The engine
-//! makes no device: the caller lends the run one ([`Lent`]), the
+//! there every stage with a device version, as the viewport does. The
+//! engine makes no device: the caller lends the run one ([`Lent`]), the
 //! command line's own made by `Context::for_export` where the machine
 //! has a GPU, and the run lends it to its worker as the window lends
 //! its own, so the editor's export and this one are one picture on one
@@ -364,7 +364,7 @@ pub fn plan(
     })
 }
 
-/// The context a run's CA, demosaic, and lens run on, made by the
+/// The context a run's device stages run on, made by the
 /// caller on a device of its own; or why there is none, in the
 /// caller's words (`--cpu`, or [`greycard_gpu::Declined`]'s), for the
 /// run's first line.
@@ -1914,6 +1914,75 @@ mod tests {
     /// within the bound the GPU's demosaic is held to against it.
     #[test]
     fn a_mosaic_exports_alike_from_the_window_and_the_command_line() {
+        exports_alike("mosaic", |_| {});
+    }
+
+    /// The same with the Detail section, the dehaze, and the sharpen
+    /// on, which an export lent a device runs there too and reads back
+    /// in full floats: the window's file is still the command line's,
+    /// and both are the CPU's within the same bound.
+    #[test]
+    fn a_mosaic_with_detail_dehaze_and_sharpen_exports_alike() {
+        exports_alike("mosaic-detail", |edit| {
+            edit.detail.texture = 0.3;
+            edit.detail.clarity = 0.4;
+            edit.detail.structure = 0.2;
+            edit.detail.dehaze = 0.25;
+            edit.sharpen.iterations = 30;
+        });
+    }
+
+    /// A mask over the whole frame whose Detail has a Sharpen, which
+    /// reads the sharpen's delta, with the global sharpen on (the
+    /// delta beside the sharpened picture) or off (the delta alone, the
+    /// picture read back unsharpened): the window's file is still the
+    /// command line's, and another file than the frame's without the
+    /// mask, so the mask's Sharpen took.
+    #[test]
+    fn a_mask_s_sharpen_exports_alike_with_the_global_sharpen_on_and_off() {
+        for global in [true, false] {
+            let plain = exports_alike(
+                if global {
+                    "mask-sharpen-plain-on"
+                } else {
+                    "mask-sharpen-plain-off"
+                },
+                |edit| edit.sharpen.enabled = global,
+            );
+            let masked = exports_alike(
+                if global {
+                    "mask-sharpen-on"
+                } else {
+                    "mask-sharpen-off"
+                },
+                |edit| {
+                    edit.sharpen.enabled = global;
+                    let mut a = greycard_edit::Adjustment {
+                        id: 1,
+                        ..Default::default()
+                    };
+                    a.mask.components.push(greycard_edit::mask::Component {
+                        shape: greycard_edit::mask::Shape::Linear {
+                            from: [0.5, 10.0],
+                            to: [0.5, 11.0],
+                        },
+                        ..Default::default()
+                    });
+                    a.look.detail.sharpen = 0.8;
+                    edit.adjustments.push(a);
+                },
+            );
+            assert!(
+                masked != plain,
+                "the mask's Sharpen changed nothing (global sharpen {global})"
+            );
+        }
+    }
+
+    /// [`a_mosaic_exports_alike_from_the_window_and_the_command_line`]'s
+    /// check, on the edit `with` makes of the frame's: the file's
+    /// pixels, which both exports wrote.
+    fn exports_alike(name: &str, with: impl Fn(&mut Edit)) -> Rgb16 {
         let on_device = match lent() {
             Ok(ctx) => {
                 println!("{}", lent_line(&Ok(ctx)));
@@ -1927,7 +1996,7 @@ mod tests {
                 false
             }
         };
-        let scratch = Scratch::new("mosaic");
+        let scratch = Scratch::new(name);
         let source = scratch.0.join("frame.dng");
         mosaic(&source, 480, 320);
         let out = scratch.0.join("headless.tif");
@@ -1936,7 +2005,8 @@ mod tests {
             ..to(&[&source], &out)
         };
         let remembered = Shared::default();
-        let plan = plan(&req, &remembered, None, None).unwrap();
+        let mut plan = plan(&req, &remembered, None, None).unwrap();
+        plan.frames.iter_mut().for_each(|f| with(&mut f.edit));
         let window = queue::Frame {
             out: scratch.0.join("window.tif"),
             ..plan.frames[0].clone()
@@ -1951,7 +2021,8 @@ mod tests {
         assert!(a == b, "the window's export and the command line's differ");
 
         let cpu_out = scratch.0.join("cpu.tif");
-        let cpu_plan = super::plan(&to(&[&source], &cpu_out), &remembered, None, None).unwrap();
+        let mut cpu_plan = super::plan(&to(&[&source], &cpu_out), &remembered, None, None).unwrap();
+        cpu_plan.frames.iter_mut().for_each(|f| with(&mut f.edit));
         let none: Lent = Err("--cpu".into());
         assert_eq!(lent_line(&none), "export: on the CPU (--cpu)");
         let finished = run(cpu_plan, none);
@@ -1960,7 +2031,7 @@ mod tests {
         assert_eq!(a.dimensions(), c.dimensions());
         if !on_device {
             assert!(a == c);
-            return;
+            return a;
         }
         // The device ran: its demosaic is not the CPU's to the bit.
         assert!(a != c, "the device's export is the CPU's: did the GPU run?");
@@ -1968,20 +2039,133 @@ mod tests {
         // real-frame test bounds it: no sample past a tenth of the
         // frame's largest value, and at most one in ten thousand past a
         // thousandth of it.
-        let largest = f64::from(*c.as_raw().iter().max().unwrap());
-        let diffs: Vec<f64> = a
-            .as_raw()
-            .iter()
-            .zip(c.as_raw())
-            .map(|(x, y)| f64::from(x.abs_diff(*y)))
+        let apart = Apart::of(&a, &c);
+        println!("the device's export against the CPU's: {apart}");
+        assert!(apart.most <= apart.largest / 10, "{apart}");
+        assert!(apart.past * 10_000 <= apart.samples, "{apart}");
+        a
+    }
+
+    type Rgb16 = image::ImageBuffer<image::Rgb<u16>, Vec<u16>>;
+
+    /// How far a device's 16-bit file is from the CPU's: its largest
+    /// difference, the CPU's largest value, and how many of its samples
+    /// are past a thousandth of that.
+    struct Apart {
+        most: u16,
+        largest: u16,
+        past: usize,
+        samples: usize,
+    }
+
+    impl Apart {
+        fn of(device: &Rgb16, cpu: &Rgb16) -> Self {
+            let largest = *cpu.as_raw().iter().max().unwrap();
+            let mut most = 0;
+            let mut past = 0;
+            for (x, y) in device.as_raw().iter().zip(cpu.as_raw()) {
+                let d = x.abs_diff(*y);
+                most = most.max(d);
+                past += usize::from(f64::from(d) > f64::from(largest) / 1000.0);
+            }
+            Self {
+                most,
+                largest,
+                past,
+                samples: cpu.as_raw().len(),
+            }
+        }
+    }
+
+    impl std::fmt::Display for Apart {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "at most {} of {}, {} of {} past a thousandth",
+                self.most, self.largest, self.past, self.samples
+            )
+        }
+    }
+
+    /// The device's export against the CPU's on every raw in the folder
+    /// `GREYCARD_SAMPLES` names, with the sharpen off, with the frame's
+    /// default edit (its sharpen on), and with the Detail section, the
+    /// dehaze, and the sharpen on, in the
+    /// measure and bound [`exports_alike`] holds a mosaic to. Nothing is
+    /// read or written beside the raws.
+    #[test]
+    #[ignore = "reads the folder named by GREYCARD_SAMPLES"]
+    fn the_device_s_export_against_the_cpu_s_on_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_SAMPLES").map(PathBuf::from) else {
+            eprintln!("set GREYCARD_SAMPLES to a folder of raws");
+            return;
+        };
+        let raw = |p: &Path| {
+            p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                [
+                    "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "rw2", "pef",
+                ]
+                .contains(&e.to_ascii_lowercase().as_str())
+            })
+        };
+        let mut frames: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .expect("read GREYCARD_SAMPLES")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file() && raw(p))
             .collect();
-        let most = diffs.iter().copied().fold(0.0, f64::max);
-        let past = diffs.iter().filter(|d| **d > largest / 1000.0).count();
-        println!(
-            "the device's export against the CPU's: at most {most} of {largest}, {past} of {} past a thousandth",
-            diffs.len()
-        );
-        assert!(most <= largest / 10.0, "{most} of {largest}");
-        assert!(past * 10_000 <= diffs.len(), "{past} of {}", diffs.len());
+        frames.sort();
+        assert!(!frames.is_empty(), "no raw in GREYCARD_SAMPLES");
+        let scratch = Scratch::new("samples");
+        let detail = |edit: &mut Edit| {
+            edit.detail.texture = 0.3;
+            edit.detail.clarity = 0.4;
+            edit.detail.structure = 0.2;
+            edit.detail.dehaze = 0.25;
+            edit.sharpen.iterations = 30;
+        };
+        // The sharpen off: the CA, the demosaic, and the lens alone on
+        // the device, as an export had them before the Detail section
+        // and the sharpen joined them.
+        let bare = |edit: &mut Edit| edit.sharpen.enabled = false;
+        let plain = |_: &mut Edit| {};
+        type With<'a> = &'a dyn Fn(&mut Edit);
+        let edits: [(&str, With); 3] = [
+            ("sharpen off", &bare),
+            ("default", &plain),
+            ("detail", &detail),
+        ];
+        for frame in &frames {
+            let name = frame.file_name().unwrap().to_string_lossy().into_owned();
+            for (what, with) in edits {
+                let export = |lent: Lent, out: &Path| {
+                    let req = Request {
+                        no_sidecars: true,
+                        ..to(&[frame.as_path()], out)
+                    };
+                    let mut plan = plan(&req, &Shared::default(), None, None).unwrap();
+                    plan.frames.iter_mut().for_each(|f| with(&mut f.edit));
+                    let started = std::time::Instant::now();
+                    let finished = run(plan, lent);
+                    assert!(finished.succeeded(), "{}", finished.line);
+                    // A 45 MP file is past the reader's default limits.
+                    let mut reader = image::ImageReader::open(out).unwrap();
+                    reader.no_limits();
+                    let pixels = reader.decode().unwrap().to_rgb16();
+                    std::fs::remove_file(out).unwrap();
+                    (pixels, started.elapsed().as_secs_f64())
+                };
+                let (device, on) = export(lent(), &scratch.0.join("device.tif"));
+                let (cpu, off) = export(Err("--cpu".into()), &scratch.0.join("cpu.tif"));
+                let apart = Apart::of(&device, &cpu);
+                println!("{name} {what}: {apart} (device {on:.1} s, CPU {off:.1} s)");
+                // The mosaic's bound, which the demosaic's own
+                // real-frame test sets.
+                assert!(apart.most <= apart.largest / 10, "{name} {what}: {apart}");
+                assert!(
+                    apart.past * 10_000 <= apart.samples,
+                    "{name} {what}: {apart}"
+                );
+            }
+        }
     }
 }

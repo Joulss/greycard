@@ -423,6 +423,69 @@ fn the_delta_matches_the_reference_sharpened_or_not() {
     }
 }
 
+/// The sharpen an export runs: a picture on the device into a new one
+/// in full floats, read back, with the delta beside it or not, and no
+/// new picture without `apply`, the delta alone. It is the reference's to
+/// the tolerance the sharpen's other tests hold, and the same floats
+/// as [`Context::sharpen_image`] gives, which reads its own texture.
+#[test]
+fn the_full_float_picture_is_the_reference_s() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let image = textured(523, 389, 1.0);
+    let options = SharpenOptions {
+        radius: Radius::Fixed(1.0),
+        iterations: 20,
+        contrast: Threshold::Auto,
+        stop_early: true,
+    };
+    let uploaded = ctx.upload(&image).expect("the upload");
+    for (apply, with_delta) in [(true, false), (true, true), (false, true)] {
+        let mut cpu = image.clone();
+        let (cpu_stats, _, cpu_delta) = if apply {
+            reference::sharpen_with_delta(&mut cpu, &options, Some(0.8), 2.0)
+        } else {
+            reference::sharpen_delta(&cpu, &options, Some(0.8), 2.0)
+        };
+        let (out, stats, delta) = ctx
+            .sharpen_to_image(&uploaded, &options, Some(0.8), 2.0, apply, with_delta)
+            .expect("the GPU sharpen runs");
+        assert_eq!(out.is_some(), apply, "a new picture only when sharpened");
+        let gpu = match &out {
+            Some(out) => ctx.download(out).expect("the read back"),
+            None => image.clone(),
+        };
+        let picture = apart(&cpu.data, &gpu.data);
+        println!(
+            "apply {apply}, delta {with_delta}: picture max {:.3e} (relative {:.3e})",
+            picture.max, picture.relative
+        );
+        assert!(picture.relative <= TOLERANCE, "{:.3e}", picture.relative);
+        assert_eq!(cpu_stats.radius, stats.radius);
+        assert_eq!(cpu_stats.iterations, stats.iterations);
+        assert!((cpu_stats.threshold - stats.threshold).abs() < 1e-6);
+        if apply {
+            let mut whole = image.clone();
+            ctx.sharpen_image(&mut whole, &options, Some(0.8), 2.0)
+                .expect("the GPU sharpen runs");
+            assert!(whole.data == gpu.data, "one sharpen, read back either way");
+        }
+        match delta {
+            Some(delta) => {
+                let worst = cpu_delta
+                    .iter()
+                    .zip(&delta)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                assert_eq!(delta.len(), cpu_delta.len());
+                assert!(worst <= TOLERANCE, "the delta {worst:.3e} stops apart");
+            }
+            None => assert!(!with_delta),
+        }
+    }
+}
+
 /// The automatic threshold: found on the GPU's tile statistics from
 /// the same flattest patch the reference finds, on noise at mid grey
 /// and on a picture where the coarse pass finds nothing flat.

@@ -339,6 +339,13 @@ impl Pipelines {
         *self.work.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// The picture size the kept working set was made for, if one is
+    /// kept; see [`Context::kept_sizes`].
+    pub(crate) fn kept_size(&self) -> Option<(u32, u32)> {
+        let guard = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map(|w| (w.width, w.height))
+    }
+
     /// The bytes the kept working textures and buffers take; see
     /// [`Context::kept_bytes`].
     pub(crate) fn kept_bytes(&self) -> u64 {
@@ -471,6 +478,9 @@ enum Output<'a> {
         rgb: &'a wgpu::Texture,
         mask: &'a wgpu::Texture,
     },
+    /// No picture: the delta alone, for a picture left as it was.
+    /// The apply pass writes to the spares.
+    Nothing,
 }
 
 /// What the run writes beside its output: whether the picture is
@@ -664,17 +674,63 @@ impl Context {
         self.sharpen_image_into(image, options, measured, clip_level, apply, true)
     }
 
-    fn sharpen_image_into(
+    /// [`Context::sharpen`] in full floats: the result a new [`Image`]
+    /// to read back or work on, as the reference makes it, for a
+    /// develop that finishes on the CPU. Without `apply` there is no
+    /// new picture, the one given being the picture, and the delta is
+    /// what the sharpen would have done; the delta is read back only
+    /// `with_delta`. The blend mask is not kept: only the viewport
+    /// paints it.
+    pub fn sharpen_to_image(
         &self,
-        image: &mut WorkingImage,
+        image: &Image,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
         apply: bool,
         with_delta: bool,
-    ) -> Result<(SharpenStats, Vec<f32>, Vec<f32>)> {
-        let uploaded = self.upload(image)?;
-        let (w, h) = (uploaded.width, uploaded.height);
+    ) -> Result<(Option<Image>, SharpenStats, Option<Vec<f32>>)> {
+        let delta = with_delta.then(|| self.delta_texture(image.width, image.height));
+        let also = Also {
+            apply,
+            delta: delta.as_ref(),
+        };
+        let (rgb, stats) = if apply {
+            let (rgb, _, stats) = self.sharpen_full(image, options, measured, clip_level, also)?;
+            (Some(rgb), stats)
+        } else {
+            let stats = self.scoped("sharpening", || {
+                self.sharpen_into(image, options, measured, clip_level, Output::Nothing, also)
+            })?;
+            (None, stats)
+        };
+        let delta = match &delta {
+            Some(d) => {
+                let read = self.read_texture(d, 0, 0, image.width, image.height, 4)?;
+                Some(bytemuck::cast_slice(&read).to_vec())
+            }
+            None => None,
+        };
+        let out = rgb.map(|texture| Image {
+            texture,
+            width: image.width,
+            height: image.height,
+            threshold: std::sync::OnceLock::new(),
+        });
+        Ok((out, stats, delta))
+    }
+
+    /// The sharpen of `image` into a full-float picture and mask of
+    /// its size, made here.
+    fn sharpen_full(
+        &self,
+        image: &Image,
+        options: &SharpenOptions,
+        measured: Option<f32>,
+        clip_level: f32,
+        also: Also<'_>,
+    ) -> Result<(wgpu::Texture, wgpu::Texture, SharpenStats)> {
+        let (w, h) = (image.width, image.height);
         let make = |label: &str, format: wgpu::TextureFormat| {
             self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -687,16 +743,17 @@ impl Context {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             })
         };
-        let delta = with_delta.then(|| self.delta_texture(w, h));
-        let (rgb, mask, stats) = self.scoped("sharpening", || {
+        self.scoped("sharpening", || {
             let rgb = make("sharpened, full floats", wgpu::TextureFormat::Rgba32Float);
             let mask = make("sharpen mask", wgpu::TextureFormat::R32Float);
             let stats = self.sharpen_into(
-                &uploaded,
+                image,
                 options,
                 measured,
                 clip_level,
@@ -704,13 +761,34 @@ impl Context {
                     rgb: &rgb,
                     mask: &mask,
                 },
-                Also {
-                    apply,
-                    delta: delta.as_ref(),
-                },
+                also,
             )?;
             Ok((rgb, mask, stats))
-        })?;
+        })
+    }
+
+    fn sharpen_image_into(
+        &self,
+        image: &mut WorkingImage,
+        options: &SharpenOptions,
+        measured: Option<f32>,
+        clip_level: f32,
+        apply: bool,
+        with_delta: bool,
+    ) -> Result<(SharpenStats, Vec<f32>, Vec<f32>)> {
+        let uploaded = self.upload(image)?;
+        let (w, h) = (uploaded.width, uploaded.height);
+        let delta = with_delta.then(|| self.delta_texture(w, h));
+        let (rgb, mask, stats) = self.sharpen_full(
+            &uploaded,
+            options,
+            measured,
+            clip_level,
+            Also {
+                apply,
+                delta: delta.as_ref(),
+            },
+        )?;
         let rgba = self.read_texture(&rgb, 0, 0, w, h, 16)?;
         let rgba: &[f32] = bytemuck::cast_slice(&rgba);
         let (pixels, _) = image.data.as_chunks_mut::<3>();
@@ -907,6 +985,7 @@ impl Context {
         let (out_half, out_full, out_mask) = match out {
             Output::Half(t) => (t, &p.spare_full, &p.spare_mask),
             Output::Full { rgb, mask } => (&p.spare_half, rgb, mask),
+            Output::Nothing => (&p.spare_half, &p.spare_full, &p.spare_mask),
         };
         let apply_slot = uniforms.push(&self.queue, &base);
         let apply_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1121,14 +1200,18 @@ impl Context {
         }
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(match (&out, also.apply) {
-                (Output::Half(_), true) => &p.apply_half,
-                (Output::Full { .. }, true) => &p.apply_full,
-                (Output::Half(_), false) => &p.keep_half,
-                (Output::Full { .. }, false) => &p.keep_full,
-            });
             pass.set_bind_group(0, &apply_group, &[]);
-            pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+            let apply = match (&out, also.apply) {
+                (Output::Half(_), true) => Some(&p.apply_half),
+                (Output::Full { .. }, true) => Some(&p.apply_full),
+                (Output::Half(_), false) => Some(&p.keep_half),
+                (Output::Full { .. }, false) => Some(&p.keep_full),
+                (Output::Nothing, _) => None,
+            };
+            if let Some(pipeline) = apply {
+                pass.set_pipeline(pipeline);
+                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+            }
             if also.delta.is_some() {
                 pass.set_pipeline(&p.delta);
                 pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);

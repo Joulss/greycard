@@ -57,7 +57,7 @@ pub(crate) fn request(cli: &Cli, target: &Path) -> Request {
     }
 }
 
-/// The context the run's CA, demosaic, and lens go on: none under
+/// The context the run's device stages go on: none under
 /// `--cpu-ops`, the editor's own switch for its ops, else one of our
 /// own where the machine has a GPU, a software adapter taken only when
 /// asked for by hand, as the window takes one.
