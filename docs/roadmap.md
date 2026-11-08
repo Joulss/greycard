@@ -227,6 +227,15 @@ seconds.
       times Core ML's difference though still invisible; kept at
       fp32 for now, the user's call. CUDA unmeasured, no toolkit on
       the machine
+- [ ] A learned mask refused on a 4 GB card the editor itself has
+      filled: on an RTX 3050 Ti Laptop (issue 91) Vulkan's budget read
+      1.9 GiB free against the 2.5 GiB a mask asks, with greycard's
+      own base, planes, and kept points on the card. Before refusing,
+      give back what the engine holds (working sets, prefetch bases,
+      kept device points), read the budget again, and only then say
+      short; and when still short, run the mask on the CPU with the
+      status saying so rather than an error. Measure the mask's real
+      peak on a 4 GB card (2026-11-08)
 - [ ] The GPU's memory on an 8 GB Mac: the local contrast's planes
       are made per run on unified memory already, and a Clarity move at
       102 MP peaks at 12.1 GB on a 24 GB M5 (§479). Waits on an 8 GB
