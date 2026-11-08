@@ -14,10 +14,12 @@ for the division remembered.
 The open sections' lists share the room the pane has after its fixed
 parts: the headers, the Navigator (which keeps the picture's shape),
 and the roots list (which is short and does not grow). Each sharing
-section has a weight; a list's share is its weight's part of the
-room, held to a floor of three rows and to a ceiling of what the list
-has to show, and what a list gives back under its ceiling goes round
-again to the others. So collapsing Snapshots and History hands their
+section has a weight; every list gets its floor of three rows first,
+and the room past the floors is divided by weight, each list held to
+a ceiling of what it has to show, and what a list gives back under
+its ceiling goes round again to the others. The floors differ a
+little in pixels (a snapshot's row is taller than a preset's), so
+equal weights leave equal growth, not equal heights. So collapsing Snapshots and History hands their
 room to Folders and Presets, a lone Presets takes it all, and a
 Folders of six rows takes six rows' worth and no more. A list within
 its share scrolls on its own, as each does today.
