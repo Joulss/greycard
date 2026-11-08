@@ -112,8 +112,9 @@ thing you can send.
 
 - [User guide](docs/user-guide.md)
 - [Where greycard fits](docs/where-greycard-fits.md) next to Lightroom,
-  Capture One, darktable, RawTherapee and others
+  Capture One, darktable, RawTherapee, and others
 - [Changelog](docs/changelog.md)
 - [Design notes](docs/notes.md)
+- [Contributing](CONTRIBUTING.md)
 
 GPL-3.0-or-later.
