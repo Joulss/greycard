@@ -13,11 +13,16 @@ export global Tips {
     out property <length> x;
     out property <length> y;
     out property <int> serial;
+    /// How long the pointer rests before a tip comes up.
+    out property <duration> rest: 600ms;
     public function show(words: string, at-x: length, at-y: length) {
         self.text = words;
         self.x = at-x;
         self.y = at-y;
         self.serial += 1;
+    }
+    public function hide() {
+        self.show("", 0, 0);
     }
 }
 
@@ -32,11 +37,11 @@ export component TipArea inherits TouchArea {
     function untip() {
         if (root.tipped) {
             root.tipped = false;
-            Tips.show("", 0, 0);
+            Tips.hide();
         }
     }
     Timer {
-        interval: 600ms;
+        interval: Tips.rest;
         running: root.has-hover && !root.tipped && root.words != "";
         triggered => {
             root.tipped = true;
@@ -54,6 +59,91 @@ export component TipArea inherits TouchArea {
             root.down(e);
         } else if (e.kind == PointerEventKind.up) {
             root.up(e);
+        }
+    }
+}
+
+// The whole of a name its row cuts short, through `Tips` after the
+// same rest a `TipArea` takes; a name that fits says nothing. It lies
+// over the name's own text, and the row's TouchArea says when the
+// pointer is over it, where over it, and counts its presses of any
+// button, a right one too, which a TouchArea's `pressed` leaves out. A
+// press keeps the name down until the pointer leaves, since a menu or
+// a drag may follow it. A scroll of the view the row is in, which
+// carries the row from under a still pointer that never hears it as a
+// leaving, takes the name down until the pointer moves and rests
+// again, and so does a re-flow of the view; a row given another name
+// takes the old one down. We watch the
+// view's scroll rather than the row's absolute position, since a change
+// handler on the absolute position left a click in the folder tree
+// unheard. A row a list reset destroys never hears the pointer leave,
+// so the window takes the text down when its lists are replaced.
+export component NameTip {
+    in property <string> name;
+    /// The row cuts the name short.
+    in property <bool> cut;
+    /// The pointer is over the row at all, and over the part of it
+    /// that counts as the name (the row's choice; the whole row for a
+    /// row that is little else). A press, a scroll or a re-flow keeps
+    /// the name down until the pointer leaves the row, not the name: a
+    /// held press slid from a picture onto its name is a drag.
+    in property <bool> row-hover;
+    in property <bool> hover;
+    /// The pointer's place over the row, which moves only when the
+    /// pointer does.
+    in property <length> pointer-x;
+    in property <length> pointer-y;
+    /// The scroll of the view the row is in, whichever axis.
+    in property <length> scroll;
+    /// The number of the view's layout, which moves on a re-flow.
+    in property <int> shape;
+    /// The row's presses so far: each one takes the name down.
+    in property <int> downs;
+    /// A menu or a sheet is up: nothing is put up.
+    in property <bool> quiet;
+    property <bool> tipped;
+    property <bool> spent;
+    property <bool> moved;
+    function untip() {
+        if (root.tipped) {
+            root.tipped = false;
+            Tips.hide();
+        }
+    }
+    function press() {
+        root.untip();
+        root.spent = true;
+    }
+    changed downs => { root.press(); }
+    // Only under the pointer: a row moved while the pointer is
+    // elsewhere is entered afresh, maybe at the very spot it was left,
+    // which would not move `pointer-x` to clear the mark.
+    function shift() {
+        root.untip();
+        if (root.row-hover) {
+            root.moved = true;
+        }
+    }
+    changed hover => { root.untip(); }
+    changed row-hover => {
+        if (!root.row-hover) {
+            root.untip();
+            root.spent = false;
+            root.moved = false;
+        }
+    }
+    changed scroll => { root.shift(); }
+    changed shape => { root.shift(); }
+    changed pointer-x => { root.moved = false; }
+    changed pointer-y => { root.moved = false; }
+    changed name => { root.untip(); }
+    Timer {
+        interval: Tips.rest;
+        running: root.hover && root.cut && !root.quiet && !root.tipped && !root.spent && !root.moved
+            && root.name != "";
+        triggered => {
+            root.tipped = true;
+            Tips.show(root.name, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
         }
     }
 }

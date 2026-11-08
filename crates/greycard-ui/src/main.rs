@@ -29,6 +29,8 @@ mod headless;
 mod keys;
 mod library;
 mod lightbox;
+#[cfg(test)]
+mod name_tips;
 mod owners;
 mod panel;
 mod placeholder;

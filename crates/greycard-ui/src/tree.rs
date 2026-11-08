@@ -223,8 +223,9 @@ pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
 }
 
 /// The grid's tiles as the state has them, replaced only when they
-/// change.
-fn show_tiles(st: &State) {
+/// change; a tile's name tip goes with them, since a tile destroyed
+/// never hears the pointer leave.
+fn show_tiles(st: &State, app: &App) {
     let nodes = tiles_for(st);
     let offline = shown_for(st).is_some_and(|(r, _)| st.views.library.offline.contains(r));
     *st.views.tree.tile_folders.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
@@ -239,6 +240,7 @@ fn show_tiles(st: &State) {
     let model = &st.views.tree.tiles;
     if !model.iter().eq(tiles.iter().cloned()) {
         model.set_vec(tiles);
+        app.invoke_hide_tip();
     }
 }
 
@@ -347,7 +349,7 @@ fn want_loose(st: &mut State, app: &App) {
             st.views.tree.loose = None;
             st.views.tree.loose_asked = None;
             st.views.tree.loose_token += 1;
-            show_tiles(st);
+            show_tiles(st, app);
         }
         return;
     };
@@ -364,7 +366,7 @@ fn want_loose(st: &mut State, app: &App) {
     }
     if !held {
         st.views.tree.loose = None;
-        show_tiles(st);
+        show_tiles(st, app);
     }
     st.views.tree.loose_stale = false;
     st.views.tree.loose_token += 1;
@@ -644,7 +646,7 @@ fn land(st: &mut State, app: &App, built: Built) {
         // A folder that cannot be read (gone, or its share away) shows
         // no tiles rather than the ones it had.
         st.views.tree.loose = Some((built.root, built.nodes.unwrap_or_default()));
-        show_tiles(st);
+        show_tiles(st, app);
         if st.views.tree.loose_stale {
             want_loose(st, app);
         }
@@ -730,9 +732,11 @@ pub(crate) fn show(st: &State, app: &App) {
         .collect();
     let model = &st.views.tree.rows;
     if !model.iter().eq(rows.iter().cloned()) {
+        // Every row made again: a name's tip goes with them.
         model.set_vec(rows);
+        app.invoke_hide_tip();
     }
-    show_tiles(st);
+    show_tiles(st, app);
 }
 
 /// The folder of the row shown at `row`.

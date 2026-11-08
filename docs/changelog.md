@@ -63,6 +63,10 @@ design note behind it.
   middle click on the panel's Sync button syncs on your last choice
   without the sheet
   ([§599](https://github.com/jessolmstead/greycard/blob/master/docs/notes/599-the-middle-button.md)).
+- A file or folder name cut short in the strip, the grid and its
+  header, the Develop panel's head, or the folder tree shows whole at
+  the pointer after a moment's rest (issue 88)
+  ([§609](https://github.com/jessolmstead/greycard/blob/master/docs/notes/609-a-name-cut-short-whole-at-the-pointer.md)).
 
 ### Export
 

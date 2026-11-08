@@ -166,10 +166,6 @@ the reasoning lives in `docs/notes.md`.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
-- [ ] The full name at the pointer over a cut-short one: the strip's
-      and the grid's file names, the Develop panel's header, and the
-      folder tree, on the hover text layer the roots list already uses
-      (§311) (issue 88, 2026-11-07)
 - [ ] The NOISE section's chroma denoiser on a picture: it works on
       RGB where the learned tier wants a mosaic, so a JPEG could have
       it; the section says "raw only" today (§602, 2026-11-07)

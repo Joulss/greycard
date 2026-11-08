@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { StripPlace, Thumb, ThumbCell } from "../structs.slint";
-import { ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
+import { NameTip, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 
 export component Filmstrip inherits Rectangle {
     /// Every row; the cells are drawn from `cells`, the rows on screen
@@ -232,7 +232,7 @@ export component Filmstrip inherits Rectangle {
                         background: Theme.label-color(t.label);
                     }
                 }
-                Text {
+                name-text := Text {
                     x: 0;
                     y: frame.height + 2px;
                     width: parent.width;
@@ -244,6 +244,22 @@ export component Filmstrip inherits Rectangle {
                     horizontal-alignment: center;
                     vertical-alignment: top;
                     overflow: elide;
+                    // Cut short, the whole name at the pointer.
+                    NameTip {
+                        width: 100%;
+                        height: 100%;
+                        name: t.name;
+                        cut: name-text.preferred-width > name-text.width;
+                        row-hover: tt.has-hover;
+                        shape: root.shape;
+                        // Over the name, not the picture.
+                        hover: tt.has-hover && tt.mouse-y >= name-text.y;
+                        pointer-x: tt.mouse-x;
+                        pointer-y: tt.mouse-y;
+                        downs: tt.downs;
+                        scroll: strip.content-x;
+                        quiet: root.menu-shown();
+                    }
                 }
                 // `clicked` carries no modifiers, so the press
                 // says which were held and the click reads them.
@@ -255,9 +271,12 @@ export component Filmstrip inherits Rectangle {
                     property <bool> ctrl;
                     property <bool> shift;
                     property <bool> menu;
+                    /// Presses of any button, for the name's tip.
+                    property <int> downs;
                     mouse-cursor: MouseCursor.pointer;
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) {
+                            self.downs += 1;
                             let closing = root.menu-shown();
                             self.menu = closing || e.button == PointerEventButton.right
                                 || (root.ctrl-click-menu && e.button == PointerEventButton.left

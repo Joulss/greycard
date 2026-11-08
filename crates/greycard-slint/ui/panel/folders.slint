@@ -6,7 +6,7 @@
 // from the index, so a root that is offline still shows its shape.
 
 import { Theme } from "../theme.slint";
-import { Section, Toggle, ScrollPane } from "../controls.slint";
+import { NameTip, Section, Toggle, ScrollPane } from "../controls.slint";
 import { FolderRow } from "../structs.slint";
 
 export component FoldersSection inherits Section {
@@ -41,7 +41,7 @@ export component FoldersSection inherits Section {
         max-height: self.preferred-height;
         min-height: min(folder-list.preferred-height, 3 * (Theme.control-height - 6px) + 4px);
         vertical-stretch: 1;
-        ScrollPane {
+        folder-pane := ScrollPane {
             folder-list := VerticalLayout {
                 padding: 2px;
                 spacing: 1px;
@@ -56,7 +56,12 @@ export component FoldersSection inherits Section {
                     accessible-action-default => { root.picked(i); }
                     animate background { duration: Theme.quick; }
                     folder-row := TouchArea {
+                        /// Presses of any button, for the name's tip.
+                        property <int> downs;
                         mouse-cursor: MouseCursor.pointer;
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) { self.downs += 1; }
+                        }
                         clicked => { root.picked(i); root.focus-keys(); }
                     }
                     HorizontalLayout {
@@ -86,7 +91,7 @@ export component FoldersSection inherits Section {
                                 clicked => { root.folded(i); root.focus-keys(); }
                             }
                         }
-                        Text {
+                        folder-name := Text {
                             text: row.name;
                             color: row.open || folder-row.has-hover ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
@@ -94,6 +99,20 @@ export component FoldersSection inherits Section {
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                             overflow: elide;
+                            // Cut short, the whole name at the pointer;
+                            // the path is the row's description.
+                            NameTip {
+                                width: 100%;
+                                height: 100%;
+                                name: row.name;
+                                cut: folder-name.preferred-width > folder-name.width;
+                                row-hover: folder-row.has-hover;
+                                hover: folder-row.has-hover;
+                                pointer-x: folder-row.mouse-x;
+                                pointer-y: folder-row.mouse-y;
+                                downs: folder-row.downs;
+                                scroll: folder-pane.content-y;
+                            }
                         }
                         if row.count >= 0: Text {
                             text: row.count;

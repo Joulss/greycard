@@ -578,6 +578,9 @@ export component App inherits Window {
     // as the strip does from its content width. A list changed in
     // place holds the sheet where it was, as it does the strip.
     changed thumbs => {
+        // A new list makes every cell again, and a cell destroyed
+        // never hears the pointer leave: a name's tip goes with it.
+        root.tip-text = "";
         if (root.rows-held) {
             root.grid-scroll = clamp(root.grid-scroll, 0px, root.grid-max);
             root.grid-reveal();
@@ -978,6 +981,16 @@ export component App inherits Window {
     property <int> tips-serial: Tips.serial;
     changed tips-serial => { root.tip-at(Tips.text, Tips.x, Tips.y); }
     changed panel-scroll => { root.tip-text = ""; }
+    // A scroll or a re-flow moves cells without destroying the one
+    // under a still pointer (a whole-window jump, which does, comes
+    // from a key or the scroll bar), so each name's own tip watches
+    // for those; the window clears the text only for a new list
+    // (`changed thumbs`) and a list replaced in place (`hide-tip`).
+    /// The hover text taken down, for a list replaced from Rust in
+    /// place (the folder tree's rows, the grid's tiles).
+    public function hide-tip() {
+        root.tip-text = "";
+    }
     function recent-menu-at(x: length, y: length) {
         root.tip-text = "";
         if (root.sheet-open()) { return; }
@@ -5532,12 +5545,13 @@ export component App inherits Window {
         chosen(p) => { root.recent-chosen(p); root.menu-done(); }
     }
 
-    // The hover text, over everything and kept inside the window; not
-    // over a sheet, which a key can open while the pointer rests on a
-    // name.
+    // The hover text, over everything and kept inside the window (a
+    // name in the strip, at the window's foot, has it over the name
+    // rather than under); not over a sheet, which a key can open while
+    // the pointer rests on a name.
     if root.tip-text != "" && !root.sheet-open(): Rectangle {
         x: max(0px, min(root.tip-x, root.width - self.width - Theme.space-1));
-        y: root.tip-y;
+        y: max(0px, min(root.tip-y, root.height - self.height - Theme.space-1));
         width: min(tip-label.preferred-width + 2 * Theme.space-2, root.width);
         height: tip-label.preferred-height + 2 * Theme.space-1;
         background: Theme.raised;

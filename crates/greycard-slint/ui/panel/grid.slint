@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
-import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
+import { NameTip, PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 import { FilterBar, SortButton } from "filter.slint";
 import { LoadingCard } from "loading.slint";
 
@@ -298,7 +298,7 @@ export component GridSheet inherits Rectangle {
                         horizontal-stretch: 1;
                         overflow: elide;
                     }
-                    if root.import-line == "": Text {
+                    if root.import-line == "": chosen-name := Text {
                         text: root.selected >= 0 && root.selected < root.thumbs.length
                             ? root.thumbs[root.selected].name
                                 + (root.set-count > 1 ? " and " + (root.set-count - 1)
@@ -309,6 +309,25 @@ export component GridSheet inherits Rectangle {
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                         overflow: elide;
+                        // Cut short, the whole line at the pointer.
+                        chosen-ta := TouchArea {
+                            property <int> downs;
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down) { self.downs += 1; }
+                            }
+                        }
+                        NameTip {
+                            width: 100%;
+                            height: 100%;
+                            name: chosen-name.text;
+                            cut: chosen-name.preferred-width > chosen-name.width;
+                            row-hover: chosen-ta.has-hover;
+                            hover: chosen-ta.has-hover;
+                            pointer-x: chosen-ta.mouse-x;
+                            pointer-y: chosen-ta.mouse-y;
+                            downs: chosen-ta.downs;
+                            quiet: root.menu-shown();
+                        }
                     }
                     if root.import-line == "" && root.status-line != "": Text {
                         text: root.status-line;
@@ -529,8 +548,11 @@ export component GridSheet inherits Rectangle {
                     // has an item only while the root is online.
                     tile-ta := TouchArea {
                         property <bool> skip;
+                        /// Presses of any button, for the name's tip.
+                        property <int> downs;
                         mouse-cursor: MouseCursor.pointer;
                         pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) { self.downs += 1; }
                             if (e.kind != PointerEventKind.down || root.side-press(e)) { return; }
                             let closing = root.menu-shown();
                             let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
@@ -560,13 +582,33 @@ export component GridSheet inherits Rectangle {
                             height: 16px;
                             y: (parent.height - self.height) / 2;
                         }
-                        VerticalLayout {
+                        tile-words := VerticalLayout {
                             alignment: center;
-                            Text {
+                            tile-name := Text {
                                 text: t.name;
                                 color: tile-ta.has-hover ? Theme.text : Theme.text-secondary;
                                 font-size: Theme.font-xs;
                                 overflow: elide;
+                                // Cut short, the whole name at the pointer.
+                                NameTip {
+                                    width: 100%;
+                                    height: 100%;
+                                    name: t.name;
+                                    cut: tile-name.preferred-width > tile-name.width;
+                                    row-hover: tile-ta.has-hover;
+                                    shape: root.grid-shape;
+                                    // Over the name, not the icon or the count.
+                                    hover: tile-ta.has-hover
+                                        && tile-ta.mouse-x >= tile-words.x + tile-name.x
+                                        && tile-ta.mouse-x < tile-words.x + tile-name.x + tile-name.width
+                                        && tile-ta.mouse-y >= tile-words.y + tile-name.y
+                                        && tile-ta.mouse-y < tile-words.y + tile-name.y + tile-name.height;
+                                    pointer-x: tile-ta.mouse-x;
+                                    pointer-y: tile-ta.mouse-y;
+                                    downs: tile-ta.downs;
+                                    scroll: root.grid-scroll;
+                                    quiet: root.menu-shown();
+                                }
                             }
                             Text {
                                 text: t.count;
@@ -731,7 +773,7 @@ export component GridSheet inherits Rectangle {
                     }
                     // A version is named by its own name, the file's
                     // own by the file's.
-                    if !root.lightbox: Text {
+                    if !root.lightbox: cell-name := Text {
                         y: parent.p.pic;
                         width: 100%;
                         height: root.grid-label;
@@ -741,6 +783,23 @@ export component GridSheet inherits Rectangle {
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         overflow: elide;
+                        // Cut short, the whole name at the pointer.
+                        NameTip {
+                            width: 100%;
+                            height: 100%;
+                            name: cell-name.text;
+                            cut: cell-name.preferred-width > cell-name.width;
+                            row-hover: ct.has-hover;
+                            shape: root.grid-shape;
+                            // Over the name, not the picture.
+                            hover: ct.has-hover && ct.mouse-y >= cell-name.y
+                                && ct.mouse-y < cell-name.y + cell-name.height;
+                            pointer-x: ct.mouse-x;
+                            pointer-y: ct.mouse-y;
+                            downs: ct.downs;
+                            scroll: root.grid-scroll;
+                            quiet: root.menu-shown();
+                        }
                     }
                     // The picture's own box inside the cell, as wide
                     // as the cell and as tall as the layout made its
@@ -878,6 +937,8 @@ export component GridSheet inherits Rectangle {
                         property <bool> dragged;
                         property <length> down-x;
                         property <length> down-y;
+                        /// Presses of any button, for the name's tip.
+                        property <int> downs;
                         mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.pointer;
                         moved => {
                             if (!root.reorder || self.menu || !self.pressed) { return; }
@@ -889,6 +950,7 @@ export component GridSheet inherits Rectangle {
                             }
                         }
                         pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) { self.downs += 1; }
                             if (root.side-press(e)) { return; }
                             if (e.kind == PointerEventKind.up && self.dragging) {
                                 self.dragging = false;

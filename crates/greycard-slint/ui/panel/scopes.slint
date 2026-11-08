@@ -2,7 +2,7 @@
 // was shot at, the undo and redo buttons, and the scopes.
 
 import { Theme } from "../theme.slint";
-import { PanelButton, Segmented, ClipMark } from "../controls.slint";
+import { NameTip, PanelButton, Segmented, ClipMark } from "../controls.slint";
 import { ScopeMark } from "../structs.slint";
 
 export component PanelHead inherits VerticalLayout {
@@ -76,13 +76,31 @@ export component PanelHead inherits VerticalLayout {
         spacing: 2px;
         HorizontalLayout {
             spacing: Theme.space-2;
-            Text {
+            file-text := Text {
                 text: root.file-name;
                 color: Theme.text;
                 font-size: Theme.font-lg;
                 font-weight: Theme.weight-semibold;
                 overflow: elide;
                 vertical-alignment: center;
+                // Cut short, the whole name at the pointer.
+                file-ta := TouchArea {
+                    property <int> downs;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) { self.downs += 1; }
+                    }
+                }
+                NameTip {
+                    width: 100%;
+                    height: 100%;
+                    name: root.file-name;
+                    cut: file-text.preferred-width > file-text.width;
+                    row-hover: file-ta.has-hover;
+                    hover: file-ta.has-hover;
+                    pointer-x: file-ta.mouse-x;
+                    pointer-y: file-ta.mouse-y;
+                    downs: file-ta.downs;
+                }
             }
             PanelButton {
                 icon: @image-url("../icons/rotate-ccw.svg");
