@@ -3235,11 +3235,24 @@ export component App inherits Window {
                 && root.meta-key(e.text)) {
                 return accept;
             }
+            // With the brush or a repair's patch in hand in Develop,
+            // the brackets themselves size it, as Photoshop's and
+            // Lightroom's do, by the wheel's step and held to its
+            // range, whatever the turn is bound to: the key table names
+            // those presses apart (`keys.rs`).
+            if (!root.sheet-open() && (chord == "Brush[" || chord == "Brush]")) {
+                let by = chord == "Brush]" ? 1.1 : 1 / 1.1;
+                if (root.placing == "Brush") {
+                    root.brush-size = clamp(root.brush-size * by, 0.002, 0.5);
+                } else {
+                    root.patch-size = clamp(root.patch-size * by, 0.002, 0.3);
+                    root.patch-edited();
+                }
+                return accept;
+            }
             // The frame's own turn, a quarter left and a quarter
-            // right. Unmodified, as the culling keys are: nothing
-            // else in the window binds a bracket, so Lightroom's
-            // Ctrl+[ and Ctrl+] are not needed to keep out of the
-            // way, and a hand on the arrows reaches these.
+            // right. Unmodified, as the culling keys are, so a hand on
+            // the arrows reaches these.
             if (!root.sheet-open() && (chord == "[" || chord == "]")) {
                 root.frame-turned(chord == "[" ? -1 : 1);
                 return accept;
@@ -3249,8 +3262,10 @@ export component App inherits Window {
             // source would go stale under an arrow. Under a sheet they
             // do nothing.
             if (root.sheet-open()) { return reject; }
-            if (chord == "Left" || chord == "Shift+Left") { root.step(-1, e.modifiers.shift); return accept; }
-            if (chord == "Right" || chord == "Shift+Right") { root.step(1, e.modifiers.shift); return accept; }
+            // Shift as the chord says it: the step may be bound to a
+            // chord with Shift on it, which is no Shift form.
+            if (chord == "Left" || chord == "Shift+Left") { root.step(-1, chord == "Shift+Left"); return accept; }
+            if (chord == "Right" || chord == "Shift+Right") { root.step(1, chord == "Shift+Right"); return accept; }
             // The strip's ends, as the grid's above.
             if (chord == "Home" || chord == "End" || chord == "Shift+Home" || chord == "Shift+End"
                 || chord == "Ctrl+Home" || chord == "Ctrl+End" || chord == "Ctrl+Shift+Home"
@@ -3308,11 +3323,12 @@ export component App inherits Window {
                 return accept;
             }
             // The brush in hand: Shift and a bracket its feather, Ctrl
-            // and one its flow, a tenth a press, held to the sliders'
-            // range. Held, they run on as an arrow on a slider does.
+            // and one its flow, a twentieth a press, held to the
+            // sliders' range. Held, they run on as an arrow on a
+            // slider does.
             if (root.placing == "Brush" && !root.grid-open && !root.cull-mode
                 && (chord == "{" || chord == "}" || chord == "Ctrl+[" || chord == "Ctrl+]")) {
-                let by = chord == "}" || chord == "Ctrl+]" ? 0.1 : -0.1;
+                let by = chord == "}" || chord == "Ctrl+]" ? 0.05 : -0.05;
                 if (chord == "{" || chord == "}") {
                     root.brush-feather = max(0, min(1, round((root.brush-feather + by) * 100) / 100));
                 } else {

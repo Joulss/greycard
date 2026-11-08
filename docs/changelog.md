@@ -41,6 +41,13 @@ design note behind it.
   also sets its amount from the color's saturation; a wheel with an
   amount keeps it (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
+- With a brush or a repair's patch in hand, `[` and `]` size it as the
+  wheel does, wherever the turn is bound; with nothing in hand they
+  still turn the frame (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
+- Shift or Ctrl and a bracket step the brush's feather or flow by
+  0.05, half the old step (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ### Models
 
@@ -84,6 +91,11 @@ design note behind it.
 
 ### The window
 
+- Settings > Keys can move the Loupe's frame step (← →) and the turn
+  ([ ]), and Backspace or Delete while a key listens leaves an action
+  on no key; the grid and the lightbox keep their arrows (discussion
+  59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 - The middle button: a middle drag moves the picture under any tool,
   a middle click zooms to 200% there and back, held during a
   gradient's or a brush's drag it keeps the line straight, and a

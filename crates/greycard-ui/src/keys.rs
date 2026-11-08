@@ -39,6 +39,12 @@ pub(crate) struct Binding {
     /// The name settings.json keeps a rebinding under, for a line the
     /// user may bind to another chord; `None` for one whose keys stay.
     pub(crate) action: Option<&'static str>,
+    /// A pair of actions on one line, one a chord: the line's first
+    /// chord is the first's default, its second the second's.
+    pub(crate) pair: Option<[&'static str; 2]>,
+    /// Keys the line holds as pressed, whatever an action with the
+    /// same default is bound to: the brush's size on the brackets.
+    pub(crate) raw: bool,
 }
 
 /// A heading of the sheet and its lines, in the order the guide's
@@ -54,6 +60,8 @@ const fn line(chords: &'static [&'static str], does: &'static str) -> Binding {
         shown: None,
         does,
         action: None,
+        pair: None,
+        raw: false,
     }
 }
 
@@ -70,6 +78,38 @@ const fn act(
         shown: None,
         does,
         action: Some(action),
+        pair: None,
+        raw: false,
+    }
+}
+
+/// A line on the keys as pressed (`Binding::raw`).
+const fn raw(chords: &'static [&'static str], shown: &'static str, does: &'static str) -> Binding {
+    Binding {
+        chords,
+        shown: Some(shown),
+        does,
+        action: None,
+        pair: None,
+        raw: true,
+    }
+}
+
+/// Two actions on one line, a direction each (the turn's left and
+/// right), shown as the line's `shown` while neither has moved.
+const fn pair(
+    actions: [&'static str; 2],
+    chords: &'static [&'static str; 2],
+    shown: &'static str,
+    does: &'static str,
+) -> Binding {
+    Binding {
+        chords,
+        shown: Some(shown),
+        does,
+        action: None,
+        pair: Some(actions),
+        raw: false,
     }
 }
 
@@ -83,6 +123,8 @@ const fn shown(
         shown: Some(shown),
         does,
         action: None,
+        pair: None,
+        raw: false,
     }
 }
 
@@ -106,7 +148,16 @@ pub(crate) const TABLE: &[Group] = &[
     Group {
         title: "Moving around",
         lines: &[
-            shown(&["Left", "Right"], "← →", "Previous or next frame"),
+            // The Loupe's step: the grid's and the lightbox's arrows
+            // move their selection by the defaults whatever is bound
+            // (`LOUPE_ONLY`).
+            pair(
+                ["previous-frame", "next-frame"],
+                &["Left", "Right"],
+                "← →",
+                "Previous or next frame",
+            ),
+            // These follow the pair above (`SHIFT_FORMS`).
             shown(
                 &["Shift+Left", "Shift+Right"],
                 "Shift+← →",
@@ -223,7 +274,8 @@ pub(crate) const TABLE: &[Group] = &[
                 "6 to 9",
                 "Red, yellow, green or blue label (again to clear)",
             ),
-            shown(
+            pair(
+                ["turn-left", "turn-right"],
                 &["[", "]"],
                 "[ ]",
                 "Turn the frame a quarter left or right; not part of the edit",
@@ -285,8 +337,11 @@ pub(crate) const TABLE: &[Group] = &[
                 &["Shift+M"],
                 "New mask with a Radial, placed by the next drag",
             ),
-            // The brush in hand's, as its sliders: Shift and a
-            // bracket feather Lightroom's brush too.
+            // The brush in hand's, as its sliders: the brackets size
+            // Lightroom's brush, and Shift and one feather it. The
+            // size is the brackets themselves with a brush or a patch
+            // in hand, wherever the turn is bound (`BRUSH`).
+            raw(&["[", "]"], "[ ]", "Brush size, smaller and bigger"),
             shown(
                 &["{", "}"],
                 "Shift+[ Shift+]",
@@ -380,31 +435,93 @@ fn bound(name: &str, mac: bool) -> bool {
 /// name in settings.json, its default chord, which is also the name
 /// the window's key handler compares it by, what its lines do, and
 /// the group of its first line.
+#[derive(Debug)]
 pub(crate) struct Action {
     pub(crate) id: &'static str,
     pub(crate) default: &'static str,
     pub(crate) does: Vec<&'static str>,
     pub(crate) group: usize,
+    /// The second of a pair's actions, on the first: the two are one
+    /// row of the Settings sheet.
+    pub(crate) second: Option<&'static str>,
+    /// Whether it is a pair's second, whose row is its first's.
+    pub(crate) paired: bool,
+}
+
+/// A line's actions, each with its default chord.
+fn actions_of(b: &Binding) -> Vec<(&'static str, &'static str)> {
+    match (b.action, b.pair) {
+        (Some(id), _) => vec![(id, b.chords[0])],
+        (None, Some([one, two])) => vec![(one, b.chords[0]), (two, b.chords[1])],
+        (None, None) => Vec::new(),
+    }
 }
 
 static ACTIONS: LazyLock<Vec<Action>> = LazyLock::new(|| {
     let mut out: Vec<Action> = Vec::new();
     for (group, g) in TABLE.iter().enumerate() {
         for b in g.lines {
-            let Some(id) = b.action else { continue };
-            match out.iter_mut().find(|a| a.id == id) {
-                Some(a) => a.does.push(b.does),
-                None => out.push(Action {
-                    id,
-                    default: b.chords[0],
-                    does: vec![b.does],
-                    group,
-                }),
+            for (i, (id, default)) in actions_of(b).into_iter().enumerate() {
+                match out.iter_mut().find(|a| a.id == id) {
+                    Some(a) => a.does.push(b.does),
+                    None => out.push(Action {
+                        id,
+                        default,
+                        does: vec![b.does],
+                        group,
+                        second: b.pair.filter(|_| i == 0).map(|p| p[1]),
+                        paired: i == 1,
+                    }),
+                }
             }
         }
     }
     out
 });
+
+/// The actions the Loupe alone goes by: in the grid and the lightbox
+/// the arrows move the selection by their defaults, whatever is
+/// bound here.
+const LOUPE_ONLY: &[&str] = &["previous-frame", "next-frame"];
+
+/// The fixed chords that follow an action as its Shift form: the
+/// step's Shift adds to the selection, on whatever key steps.
+const SHIFT_FORMS: &[(&str, &str)] = &[
+    ("Shift+Left", "previous-frame"),
+    ("Shift+Right", "next-frame"),
+];
+
+/// The chord with Shift on it, `None` for none bound, a chord that
+/// holds Shift already, or a key that carries its own.
+fn shift_form(chord: &str) -> Option<String> {
+    if chord.is_empty() || chord.contains("Shift+") {
+        return None;
+    }
+    parse(&format!("Shift+{chord}"))
+}
+
+/// The brackets as pressed with a brush or a patch in hand, and the
+/// names the handler reads them by: apart from the turn's `[` and
+/// `]`, so the turn's binding never moves the sizing.
+const BRUSH: &[(&str, &str)] = &[("[", "Brush["), ("]", "Brush]")];
+
+/// Where a press lands: whether the Loupe has the keys (not the grid
+/// or the lightbox, which step by the arrows' defaults), and whether
+/// a brush or a repair's patch is in hand in Develop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct View {
+    pub(crate) loupe: bool,
+    pub(crate) brush: bool,
+}
+
+#[cfg(test)]
+const LOUPE: View = View {
+    loupe: true,
+    brush: false,
+};
+
+/// What the sheets write for an action bound to no key.
+const NONE: &str = "None";
 
 /// The rebindable actions, in the table's order.
 pub(crate) fn actions() -> &'static [Action] {
@@ -443,9 +560,38 @@ pub(crate) struct Keymap {
 }
 
 impl Keymap {
-    /// The chord `a` is bound to.
+    /// The chord `a` is bound to, empty for none.
     pub(crate) fn chord_of(&self, a: &Action) -> &str {
         self.moved.get(a.id).map_or(a.default, String::as_str)
+    }
+
+    fn chord_of_id(&self, id: &str) -> &str {
+        actions()
+            .iter()
+            .find(|a| a.id == id)
+            .map_or("", |a| self.chord_of(a))
+    }
+
+    /// Bind action `id` to no key; false for an unknown action.
+    pub(crate) fn clear(&mut self, id: &str) -> bool {
+        let Some(a) = actions().iter().find(|a| a.id == id) else {
+            return false;
+        };
+        self.moved.insert(a.id, String::new());
+        true
+    }
+
+    /// The bindings a view goes by: outside the Loupe its own actions
+    /// are at their defaults.
+    fn in_view(&self, loupe: bool) -> std::borrow::Cow<'_, Self> {
+        if loupe || !LOUPE_ONLY.iter().any(|id| self.moved.contains_key(id)) {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut map = self.clone();
+        for id in LOUPE_ONLY {
+            map.moved.remove(id);
+        }
+        std::borrow::Cow::Owned(map)
     }
 
     /// Bind action `id` to `chord`, a chord's name as [`parse`] gives
@@ -470,13 +616,17 @@ impl Keymap {
         self.moved.clear();
     }
 
-    /// From settings.json's `keys`: each action to its chord, parsed;
-    /// a name that is no action or a chord that does not parse is
-    /// logged and left at its default.
+    /// From settings.json's `keys`: each action to its chord, parsed,
+    /// or to none for an empty one; a name that is no action or a
+    /// chord that does not parse is logged and left at its default.
     pub(crate) fn from_saved(saved: &BTreeMap<String, String>) -> Self {
         let mut map = Self::default();
         for (id, text) in saved {
-            let taken = parse(text).is_some_and(|c| map.set(id, &c));
+            let taken = if text.trim().is_empty() {
+                map.clear(id)
+            } else {
+                parse(text).is_some_and(|c| map.set(id, &c))
+            };
             if !taken {
                 tracing::warn!(
                     "keys: settings.json binds {id:?} to {text:?}, not an action and a chord; left as it was"
@@ -494,18 +644,41 @@ impl Keymap {
             .collect()
     }
 
-    /// What the handler reads for a press named `name`: the default
-    /// of the action bound to it, the first in the table when two
-    /// are; the name itself when it is one of the table's fixed
-    /// chords; empty when nothing has it.
-    fn resolve(&self, name: &str, mac: bool) -> String {
+    /// What the handler reads for a press named `name` in `view`: a
+    /// bracket's brush name with a brush in hand; the default of the
+    /// action bound to it, the first in the table when two are; an
+    /// action's Shift form for that chord with Shift; the name itself
+    /// when it is one of the table's fixed chords; empty when nothing
+    /// has it.
+    fn resolve(&self, name: &str, mac: bool, view: View) -> String {
         if name.is_empty() {
             return String::new();
         }
-        if let Some(a) = actions().iter().find(|a| self.chord_of(a) == name) {
+        if view.brush
+            && let Some((_, n)) = BRUSH.iter().find(|(k, _)| *k == name)
+        {
+            return n.to_string();
+        }
+        let map = self.in_view(view.loupe);
+        let form = SHIFT_FORMS
+            .iter()
+            .find(|(_, id)| shift_form(map.chord_of_id(id)).as_deref() == Some(name))
+            .map(|(form, _)| form.to_string());
+        // Outside the Loupe the step is the selection's, on its
+        // defaults: its Shift form comes before an action there.
+        if !view.loupe
+            && let Some(form) = form
+        {
+            return form;
+        }
+        if let Some(a) = actions().iter().find(|a| map.chord_of(a) == name) {
             return a.default.to_string();
         }
-        if !is_default(name) && bound(name, mac) {
+        if let Some(form) = form {
+            return form;
+        }
+        let follows = SHIFT_FORMS.iter().any(|(form, _)| *form == name);
+        if !is_default(name) && !follows && bound(name, mac) {
             name.to_string()
         } else {
             String::new()
@@ -513,11 +686,15 @@ impl Keymap {
     }
 
     /// A chord of the table as bound now: an action's default as
-    /// its action is, any other as itself.
-    fn now(&self, chord: &'static str) -> &str {
-        match actions().iter().find(|a| a.default == chord) {
-            Some(a) => self.chord_of(a),
-            None => chord,
+    /// its action is, a Shift form as its action's chord with Shift,
+    /// any other as itself; empty for none.
+    fn now(&self, chord: &'static str) -> String {
+        if let Some(a) = actions().iter().find(|a| a.default == chord) {
+            return self.chord_of(a).to_string();
+        }
+        match SHIFT_FORMS.iter().find(|(form, _)| *form == chord) {
+            Some((_, id)) => shift_form(self.chord_of_id(id)).unwrap_or_default(),
+            None => chord.to_string(),
         }
     }
 
@@ -525,23 +702,72 @@ impl Keymap {
     /// others do: another action's first line, or a fixed line the
     /// action takes the chord from.
     pub(crate) fn conflicts(&self, mac: bool) -> Vec<(&'static Action, Vec<&'static str>)> {
+        // The actions on `chord` but `a`, and the fixed lines on it
+        // that `a` would take it from.
+        let on = |a: &Action, chord: &str, others: &mut Vec<&'static str>| {
+            for b in actions() {
+                if b.id != a.id && self.chord_of(b) == chord {
+                    others.push(b.does[0]);
+                }
+            }
+            for b in TABLE.iter().flat_map(|g| g.lines) {
+                // The Shift forms' line is the step's, below.
+                let forms = b
+                    .chords
+                    .iter()
+                    .any(|c| SHIFT_FORMS.iter().any(|(f, _)| f == c));
+                if b.action.is_some() || b.pair.is_some() || forms {
+                    continue;
+                }
+                if !b.chords.contains(&chord) {
+                    continue;
+                }
+                // A raw line holds its keys whatever is bound, but an
+                // action whose default is one of them (the turn) shares
+                // them by design, wherever it is moved among them.
+                let taken = if b.raw {
+                    !b.chords.contains(&a.default)
+                } else {
+                    !is_default(chord) && bound(chord, mac)
+                };
+                if taken {
+                    others.push(b.does);
+                }
+            }
+            // A step's Shift form on the chord.
+            for (form, id) in SHIFT_FORMS {
+                if *id != a.id && shift_form(self.chord_of_id(id)).as_deref() == Some(chord) {
+                    others.extend(
+                        TABLE
+                            .iter()
+                            .flat_map(|g| g.lines)
+                            .filter(|b| b.chords.contains(form))
+                            .map(|b| b.does),
+                    );
+                }
+            }
+        };
         let mut out = Vec::new();
         for a in actions() {
             let c = self.chord_of(a);
-            let mut others: Vec<&'static str> = actions()
-                .iter()
-                .filter(|b| b.id != a.id && self.chord_of(b) == c)
-                .map(|b| b.does[0])
-                .collect();
-            if !is_default(c) && bound(c, mac) {
-                others.extend(
-                    TABLE
-                        .iter()
-                        .flat_map(|g| g.lines)
-                        .filter(|b| b.action.is_none() && b.chords.contains(&c))
-                        .map(|b| b.does),
-                );
+            // Two actions on no key share nothing.
+            if c.is_empty() {
+                continue;
             }
+            let mut others = Vec::new();
+            on(a, c, &mut others);
+            // A step's own Shift form takes its chord too.
+            if SHIFT_FORMS.iter().any(|(_, id)| *id == a.id)
+                && let Some(f) = shift_form(c)
+            {
+                on(a, &f, &mut others);
+            }
+            let mut seen = Vec::new();
+            others.retain(|o| {
+                let fresh = !seen.contains(o);
+                seen.push(*o);
+                fresh
+            });
             if !others.is_empty() {
                 out.push((a, others));
             }
@@ -711,17 +937,44 @@ fn bindable(chord: &str) -> bool {
 /// What the window's key handler reads: the press by the name the
 /// handler compares, by the bindings in force, empty when nothing
 /// has it. A rebound action's press reads as the action's default.
-pub(crate) fn chord(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool) -> String {
-    chord_on(text, ctrl, shift, alt, meta, cfg!(target_os = "macos"))
+/// `view` is where the press lands ([`View`]).
+pub(crate) fn chord(
+    text: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+    view: View,
+) -> String {
+    chord_on(
+        text,
+        ctrl,
+        shift,
+        alt,
+        meta,
+        cfg!(target_os = "macos"),
+        view,
+    )
 }
 
-fn chord_on(text: &str, ctrl: bool, shift: bool, alt: bool, meta: bool, mac: bool) -> String {
+fn chord_on(
+    text: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+    mac: bool,
+    view: View,
+) -> String {
     let n = name(text, ctrl, shift, alt, meta);
-    with_map(|m| m.resolve(&n, mac))
+    with_map(|m| m.resolve(&n, mac, view))
 }
 
-/// A chord as the sheet writes it on this platform.
+/// A chord as the sheet writes it on this platform; "None" for none.
 fn said(chord: &str, mac: bool) -> String {
+    if chord.is_empty() {
+        return NONE.to_string();
+    }
     // The key is after the last "+", unless "+" is the key.
     let (mods, key) = match chord.strip_suffix("++") {
         Some(m) => (&chord[..m.len() + 1], "+"),
@@ -754,7 +1007,7 @@ fn platform(text: &str, mac: bool) -> String {
 /// A line's keys as the sheet writes them, as bound now: a line with
 /// a chord moved is written chord by chord.
 fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
-    let moved = b.chords.iter().any(|c| map.now(c) != *c);
+    let moved = !b.raw && b.chords.iter().any(|c| map.now(c) != *c);
     match b.shown {
         Some(s) if !moved => {
             let s = platform(s, mac);
@@ -769,7 +1022,7 @@ fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
             .chords
             .iter()
             .filter(|c| here(c, mac))
-            .map(|c| said(map.now(c), mac))
+            .map(|c| said(&map.now(c), mac))
             .collect::<Vec<_>>()
             .join(", "),
     }
@@ -825,13 +1078,25 @@ fn rows_in(map: &Keymap, query: &str, mac: bool) -> Vec<KeyRow> {
 }
 
 /// The Settings sheet's Keys rows: each group's heading over its
-/// actions, each with its chord as bound, what it does, and what else
-/// has its chord ("Also: ..."), empty when nothing does.
+/// actions, each with its chord as bound ("None" for none), what it
+/// does, and what else has its chord ("Also: ..."), empty when nothing
+/// does. A pair is one row, its second action's chord beside the
+/// first's.
 pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
     let conflicts = map.conflicts(mac);
+    let also_of = |id: &str| {
+        conflicts
+            .iter()
+            .find(|(c, _)| c.id == id)
+            .map(|(_, others)| others.clone())
+            .unwrap_or_default()
+    };
     let mut out = Vec::new();
     for (group, g) in TABLE.iter().enumerate() {
-        let mut mine = actions().iter().filter(|a| a.group == group).peekable();
+        let mut mine = actions()
+            .iter()
+            .filter(|a| a.group == group && !a.paired)
+            .peekable();
         if mine.peek().is_none() {
             continue;
         }
@@ -841,17 +1106,36 @@ pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
             ..Default::default()
         });
         for a in mine {
-            let also = conflicts
-                .iter()
-                .find(|(c, _)| c.id == a.id)
-                .map(|(_, others)| platform(&format!("Also: {}", others.join("; ")), mac))
-                .unwrap_or_default();
+            let mut others = also_of(a.id);
+            let (id2, keys2) = match a.second {
+                Some(id) => {
+                    for o in also_of(id) {
+                        if !others.contains(&o) {
+                            others.push(o);
+                        }
+                    }
+                    (id, said(map.chord_of_id(id), mac))
+                }
+                None => ("", String::new()),
+            };
+            // The row's own partner on the chord: red, and no words,
+            // which would be the row's own.
+            let warn = !others.is_empty();
+            others.retain(|o| a.second.is_none() || *o != a.does[0]);
+            let also = if others.is_empty() {
+                String::new()
+            } else {
+                platform(&format!("Also: {}", others.join("; ")), mac)
+            };
             out.push(BindRow {
                 heading: false,
                 id: a.id.into(),
                 keys: said(map.chord_of(a), mac).into(),
+                id2: id2.into(),
+                keys2: keys2.into(),
                 does: platform(&does_of(a), mac).into(),
                 also: also.into(),
+                warn,
             });
         }
     }
@@ -923,6 +1207,7 @@ pub(crate) fn install_sheet(app: &App, state: &Rc<Shared>) {
         let (state, app_weak) = (state.clone(), app.as_weak());
         // True when the press ends the listening: a chord, taken or
         // not; false for a modifier alone, which waits on.
+        // Backspace or Delete alone binds the action to no key.
         app.on_key_rebound(move |id, text, ctrl, shift, alt, meta| {
             let n = name(&text, ctrl, shift, alt, meta);
             if n.is_empty() {
@@ -931,8 +1216,17 @@ pub(crate) fn install_sheet(app: &App, state: &Rc<Shared>) {
             let Some(app) = app_weak.upgrade() else {
                 return true;
             };
-            if KEYMAP.with(|m| m.borrow_mut().set(&id, &n)) {
-                tracing::info!("keys: {id} bound to {n}");
+            let none = n == "Backspace" || n == "Delete";
+            let taken = KEYMAP.with(|m| {
+                let mut m = m.borrow_mut();
+                if none { m.clear(&id) } else { m.set(&id, &n) }
+            });
+            if taken {
+                if none {
+                    tracing::info!("keys: {id} bound to no key");
+                } else {
+                    tracing::info!("keys: {id} bound to {n}");
+                }
                 changed(&app, &state);
             }
             true
@@ -957,7 +1251,27 @@ pub(crate) fn install_sheet(app: &App, state: &Rc<Shared>) {
 /// defaults; [`load`] puts settings.json's in.
 pub(crate) fn install(app: &App) {
     KEYMAP.with(|m| m.borrow_mut().reset());
-    app.on_key_chord(|text, ctrl, shift, alt, meta| chord(&text, ctrl, shift, alt, meta).into());
+    {
+        // The Loupe's keys whenever the grid (the lightbox's too) is
+        // not up; the brush's as the handler's tools have it, in
+        // Develop with the brush or a repair in hand.
+        let app_weak = app.as_weak();
+        app.on_key_chord(move |text, ctrl, shift, alt, meta| {
+            let view = app_weak.upgrade().map_or(
+                View {
+                    loupe: true,
+                    brush: false,
+                },
+                |a| View {
+                    loupe: !a.get_grid_open(),
+                    brush: !a.get_grid_open()
+                        && !a.get_cull_mode()
+                        && (a.get_placing() == "Brush" || !a.get_retouch_mode().is_empty()),
+                },
+            );
+            chord(&text, ctrl, shift, alt, meta, view).into()
+        });
+    }
     show(app, "");
     show_bindings(app);
     {
@@ -1003,6 +1317,15 @@ mod tests {
     use slint::Model;
     use slint::platform::WindowEvent;
     use std::collections::BTreeSet;
+
+    const GRID: View = View {
+        loupe: false,
+        brush: false,
+    };
+    const IN_HAND: View = View {
+        loupe: true,
+        brush: true,
+    };
 
     /// Every chord the table holds.
     fn table_chords() -> BTreeSet<&'static str> {
@@ -1146,7 +1469,11 @@ mod tests {
             !handler.contains("e.text =="),
             "the key handler compares the event's text: bind the key in keys::TABLE and compare the chord"
         );
-        let table: BTreeSet<String> = table_chords().into_iter().map(String::from).collect();
+        let table: BTreeSet<String> = table_chords()
+            .into_iter()
+            .chain(BRUSH.iter().map(|(_, n)| *n))
+            .map(String::from)
+            .collect();
         let compared = handler_chords();
         let unbound: Vec<_> = compared.difference(&table).collect();
         assert!(
@@ -1224,29 +1551,38 @@ mod tests {
         assert_eq!(name("'", true, false, false, false), "Ctrl+'");
         assert_eq!(name("g", false, false, true, false), "Alt+G");
         // Bound or not.
-        assert_eq!(chord_on("g", false, false, false, false, false), "G");
+        assert_eq!(chord_on("g", false, false, false, false, false, LOUPE), "G");
         assert_eq!(
-            chord_on("g", false, false, true, false, false),
+            chord_on("g", false, false, true, false, false, LOUPE),
             "",
             "Alt+G is nobody's"
         );
-        assert_eq!(chord_on("q", false, false, false, false, false), "");
+        assert_eq!(chord_on("q", false, false, false, false, false, LOUPE), "");
         // What master took, kept: the flags with Shift, the tiles' size
         // and the ends with Ctrl.
-        assert_eq!(chord_on("P", false, true, false, false, false), "Shift+P");
-        assert_eq!(chord_on("=", true, false, false, false, false), "Ctrl+=");
+        assert_eq!(
+            chord_on("P", false, true, false, false, false, LOUPE),
+            "Shift+P"
+        );
+        assert_eq!(
+            chord_on("=", true, false, false, false, false, LOUPE),
+            "Ctrl+="
+        );
         let home = SharedString::from(Key::Home);
         assert_eq!(
-            chord_on(&home, true, false, false, false, false),
+            chord_on(&home, true, false, false, false, false, LOUPE),
             "Ctrl+Home"
         );
         // And what is gone on purpose.
-        assert_eq!(chord_on("l", false, true, false, false, false), "");
-        assert_eq!(chord_on("z", true, false, true, false, false), "");
+        assert_eq!(chord_on("l", false, true, false, false, false, LOUPE), "");
+        assert_eq!(chord_on("z", true, false, true, false, false, LOUPE), "");
         let back = SharedString::from(Key::Backspace);
-        assert_eq!(chord_on(&back, false, false, false, false, false), "");
         assert_eq!(
-            chord_on(&back, false, false, false, false, true),
+            chord_on(&back, false, false, false, false, false, LOUPE),
+            ""
+        );
+        assert_eq!(
+            chord_on(&back, false, false, false, false, true, LOUPE),
             "Backspace"
         );
     }
@@ -1258,8 +1594,11 @@ mod tests {
     fn f11_is_bound_everywhere_but_a_mac() {
         KEYMAP.with(|m| m.borrow_mut().reset());
         let f11 = SharedString::from(Key::F11);
-        assert_eq!(chord_on(&f11, false, false, false, false, false), "F11");
-        assert_eq!(chord_on(&f11, false, false, false, false, true), "");
+        assert_eq!(
+            chord_on(&f11, false, false, false, false, false, LOUPE),
+            "F11"
+        );
+        assert_eq!(chord_on(&f11, false, false, false, false, true, LOUPE), "");
         let full = |mac| {
             rows("full screen", mac)
                 .iter()
@@ -1495,7 +1834,7 @@ mod tests {
     }
 
     /// With the brush in hand, Shift and a bracket take its feather a
-    /// tenth down or up and Ctrl and one its flow, held to the
+    /// twentieth down or up and Ctrl and one its flow, held to the
     /// sliders' range; with no brush they do neither. O is the chosen
     /// mask's Show mask, as a click on it.
     #[test]
@@ -1519,13 +1858,13 @@ mod tests {
         app.invoke_add_shape("Brush".into(), "Add".into());
         assert_eq!(app.get_placing(), "Brush");
         shifted(&app, "}");
-        assert!((app.get_brush_feather() - 0.6).abs() < 1e-6);
+        assert!((app.get_brush_feather() - 0.55).abs() < 1e-6);
         shifted(&app, "{");
         shifted(&app, "{");
-        assert!((app.get_brush_feather() - 0.4).abs() < 1e-6);
+        assert!((app.get_brush_feather() - 0.45).abs() < 1e-6);
         ctrl("[");
-        assert!((app.get_brush_flow() - 0.9).abs() < 1e-6);
-        for _ in 0..12 {
+        assert!((app.get_brush_flow() - 0.95).abs() < 1e-6);
+        for _ in 0..24 {
             ctrl("]");
         }
         assert_eq!(app.get_brush_flow(), 1.0, "held at the top");
@@ -1535,6 +1874,302 @@ mod tests {
         assert_eq!(app.get_show_mask(), !shown);
         press(&app, "o");
         assert_eq!(app.get_show_mask(), shown);
+    }
+
+    /// The brackets turn the frame with nothing in hand; with the
+    /// brush in hand they size it, and with a repair's patch the
+    /// patch, by the wheel's step, and the frame stays as it was.
+    #[test]
+    fn the_brackets_size_the_brush_in_hand_and_else_turn_the_frame() {
+        let (app, _state, _worker) = develop_window();
+        let turns = std::rc::Rc::new(std::cell::Cell::new(0));
+        {
+            let turns = turns.clone();
+            app.on_frame_turned(move |_| turns.set(turns.get() + 1));
+        }
+        press(&app, "]");
+        assert_eq!(turns.get(), 1, "nothing in hand: a turn");
+        press(&app, "m");
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Brush");
+        let size = app.get_brush_size();
+        press(&app, "]");
+        assert!((app.get_brush_size() - size * 1.1).abs() < 1e-6);
+        assert_eq!(turns.get(), 1, "the brush sized, the frame not turned");
+        press(&app, "[");
+        press(&app, "[");
+        assert!((app.get_brush_size() - size / 1.1).abs() < 1e-6);
+        for _ in 0..80 {
+            press(&app, "[");
+        }
+        assert_eq!(app.get_brush_size(), 0.002, "held at the wheel's floor");
+        assert_eq!(turns.get(), 1);
+        // Put down: the brackets turn again.
+        press(&app, Key::Escape);
+        assert_eq!(app.get_placing(), "");
+        press(&app, "[");
+        assert_eq!(turns.get(), 2);
+        // A repair's patch in hand.
+        let edited = std::rc::Rc::new(std::cell::Cell::new(0));
+        {
+            let edited = edited.clone();
+            app.on_patch_edited(move || edited.set(edited.get() + 1));
+        }
+        app.set_retouch_mode("Heal".into());
+        let patch = app.get_patch_size();
+        press(&app, "]");
+        assert!((app.get_patch_size() - patch * 1.1).abs() < 1e-6);
+        assert_eq!(edited.get(), 1, "edited as the wheel's sizing is");
+        assert_eq!(turns.get(), 2);
+        app.set_retouch_mode("".into());
+
+        // The turn on no key: the bracket still sizes the brush in
+        // hand, and turns nothing without it.
+        KEYMAP.with(|m| m.borrow_mut().clear("turn-right"));
+        press(&app, "m");
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        let size = app.get_brush_size();
+        press(&app, "]");
+        assert!((app.get_brush_size() - size * 1.1).abs() < 1e-6);
+        assert_eq!(turns.get(), 2);
+        // The turn on Q: the bracket sizes, Q turns, the brush in hand
+        // or not.
+        KEYMAP.with(|m| m.borrow_mut().set("turn-right", "Q"));
+        let size = app.get_brush_size();
+        press(&app, "]");
+        assert!((app.get_brush_size() - size * 1.1).abs() < 1e-6);
+        assert_eq!(turns.get(), 2);
+        press(&app, "q");
+        assert_eq!(turns.get(), 3, "Q turns");
+        assert!(
+            (app.get_brush_size() - size * 1.1).abs() < 1e-6,
+            "and sizes nothing"
+        );
+        press(&app, Key::Escape);
+        press(&app, "]");
+        assert_eq!(turns.get(), 3, "] is nobody's with nothing in hand");
+        press(&app, "q");
+        assert_eq!(turns.get(), 4);
+        // The table's names for it.
+        let mut map = Keymap::default();
+        assert_eq!(map.resolve("]", false, IN_HAND), "Brush]");
+        assert_eq!(map.resolve("]", false, LOUPE), "]");
+        assert!(map.set("turn-right", "Q"));
+        assert_eq!(map.resolve("Q", false, IN_HAND), "]");
+        assert_eq!(map.resolve("]", false, IN_HAND), "Brush]");
+    }
+
+    /// The step on a chord with Shift in it steps without adding to
+    /// the selection: the Shift is the chord's, not a Shift form.
+    #[test]
+    fn the_step_on_a_shifted_chord_is_a_plain_step() {
+        let app = window(11);
+        KEYMAP.with(|m| m.borrow_mut().set("previous-frame", "Shift+A"));
+        let steps = Rc::new(RefCell::new(Vec::new()));
+        let flat = steps.clone();
+        app.on_step(move |by, extend| flat.borrow_mut().push((by, extend)));
+        shifted(&app, "A");
+        shifted(&app, &SharedString::from(Key::RightArrow));
+        assert_eq!(*steps.borrow(), vec![(-1, false), (1, true)]);
+    }
+
+    /// The step's Shift form conflicts as a chord does: on M it takes
+    /// Shift+M from the Radial, and both say so; moved, its old
+    /// Shift+Left is free, and an action there conflicts with nothing.
+    #[test]
+    fn the_steps_shift_form_is_in_the_conflicts() {
+        let added = "Previous or next frame, added to the selection";
+        let mut map = Keymap::default();
+        assert!(map.set("previous-frame", "M"));
+        let found = map.conflicts(false);
+        fn of(found: &[(&'static Action, Vec<&'static str>)], id: &str) -> Vec<&'static str> {
+            found
+                .iter()
+                .find(|(a, _)| a.id == id)
+                .map(|(_, o)| o.clone())
+                .unwrap_or_default()
+        }
+        assert!(
+            of(&found, "previous-frame")
+                .contains(&"New mask with a Radial, placed by the next drag"),
+            "{found:?}"
+        );
+        assert!(of(&found, "radial-mask").contains(&added), "{found:?}");
+        // Moved: Shift+Left is nobody's, so the crop there is alone.
+        let mut map = Keymap::default();
+        assert!(map.set("previous-frame", "A"));
+        assert!(map.set("crop", "Shift+Left"));
+        assert!(
+            map.conflicts(false).is_empty(),
+            "{:?}",
+            map.conflicts(false)
+        );
+        // Unmoved, the crop takes it from the step.
+        let mut map = Keymap::default();
+        assert!(map.set("crop", "Shift+Left"));
+        assert_eq!(of(&map.conflicts(false), "crop"), vec![added]);
+    }
+
+    /// The turn moved among the brackets conflicts with nothing: the
+    /// brush's line shares them with the turn by design.
+    #[test]
+    fn the_turn_on_the_other_bracket_conflicts_with_nothing() {
+        let mut map = Keymap::default();
+        assert!(map.set("turn-right", "Q"));
+        assert!(map.set("turn-left", "]"));
+        assert!(
+            map.conflicts(false).is_empty(),
+            "{:?}",
+            map.conflicts(false)
+        );
+        // Another action on a bracket is the brush's conflict.
+        assert!(map.set("crop", "["));
+        assert_eq!(
+            map.conflicts(false)
+                .iter()
+                .find(|(a, _)| a.id == "crop")
+                .map(|(_, o)| o.clone()),
+            Some(vec!["Brush size, smaller and bigger"])
+        );
+    }
+
+    /// The step moved and an action on Shift+Left: the Loupe gives it
+    /// to the action, the grid keeps it for adding to the selection.
+    #[test]
+    fn the_grid_keeps_shift_left_from_an_action_there() {
+        let mut map = Keymap::default();
+        assert!(map.set("previous-frame", "A"));
+        assert!(map.set("crop", "Shift+Left"));
+        assert_eq!(map.resolve("Shift+Left", false, LOUPE), "R");
+        assert_eq!(map.resolve("Shift+Left", false, GRID), "Shift+Left");
+        assert_eq!(map.resolve("Shift+A", false, LOUPE), "Shift+Left");
+        assert_eq!(map.resolve("Left", false, GRID), "Left");
+    }
+
+    /// A pair's two on one chord: the row is red, with no words of its
+    /// own; a third action on it is named.
+    #[test]
+    fn a_pairs_own_partner_is_red_without_words() {
+        let mut map = Keymap::default();
+        assert!(map.set("turn-left", "Q"));
+        assert!(map.set("turn-right", "Q"));
+        let rows = binding_rows(&map, false);
+        let turn = rows.iter().find(|r| r.id == "turn-left").unwrap();
+        assert!(turn.warn);
+        assert_eq!(turn.also, "");
+        assert!(map.set("crop", "Q"));
+        let rows = binding_rows(&map, false);
+        let turn = rows.iter().find(|r| r.id == "turn-left").unwrap();
+        assert!(turn.warn);
+        assert_eq!(turn.also, "Also: Crop, and Done");
+        let fine = rows.iter().find(|r| r.id == "library").unwrap();
+        assert!(!fine.warn && fine.also.is_empty());
+    }
+
+    /// The step moved off the arrows: the Loupe steps on its new key,
+    /// with Shift on it too, and not on the arrow; the grid and the
+    /// lightbox keep the arrows for their selection.
+    #[test]
+    fn the_loupes_step_rebound_leaves_the_grids_arrows() {
+        let mut map = Keymap::default();
+        assert!(map.set("previous-frame", "A"));
+        assert_eq!(map.resolve("A", false, LOUPE), "Left");
+        assert_eq!(map.resolve("Left", false, LOUPE), "", "the arrow is free");
+        assert_eq!(map.resolve("Shift+A", false, LOUPE), "Shift+Left");
+        assert_eq!(map.resolve("Shift+Left", false, LOUPE), "");
+        assert_eq!(map.resolve("Right", false, LOUPE), "Right", "not moved");
+        assert_eq!(map.resolve("Shift+Right", false, LOUPE), "Shift+Right");
+        // Out of the Loupe, the defaults.
+        assert_eq!(map.resolve("Left", false, GRID), "Left");
+        assert_eq!(map.resolve("Shift+Left", false, GRID), "Shift+Left");
+        assert_eq!(map.resolve("A", false, GRID), "");
+        // The help says the keys as bound.
+        let sheet = rows_in(&map, "", false);
+        let keys = |does: &str| {
+            sheet
+                .iter()
+                .find(|r| r.does == does)
+                .map(|r| r.keys.to_string())
+        };
+        assert_eq!(keys("Previous or next frame").as_deref(), Some("A, →"));
+        assert_eq!(
+            keys("Previous or next frame, added to the selection").as_deref(),
+            Some("Shift+A, Shift+→")
+        );
+        // A key that carries its Shift has no Shift form.
+        assert!(map.set("previous-frame", "?"));
+        assert_eq!(map.resolve("Shift+Left", false, LOUPE), "");
+        // And through the window.
+        let app = window(11);
+        KEYMAP.with(|m| m.borrow_mut().set("previous-frame", "A"));
+        let steps = Rc::new(RefCell::new(Vec::new()));
+        let flat = steps.clone();
+        app.on_step(move |by, extend| flat.borrow_mut().push((by, extend)));
+        let grid = Rc::new(RefCell::new(Vec::new()));
+        let two = grid.clone();
+        app.on_grid_step(move |dx, dy, _, _| two.borrow_mut().push((dx, dy)));
+        press(&app, "a");
+        press(&app, Key::LeftArrow);
+        shifted(&app, "A");
+        press(&app, Key::RightArrow);
+        assert_eq!(*steps.borrow(), vec![(-1, false), (-1, true), (1, false)]);
+        press(&app, "g");
+        press(&app, Key::LeftArrow);
+        press(&app, "a");
+        assert_eq!(*grid.borrow(), vec![(-1, 0)], "the grid's arrow, as ever");
+        assert_eq!(steps.borrow().len(), 3);
+        press(&app, "l");
+        assert!(app.get_lightbox());
+        press(&app, Key::LeftArrow);
+        assert_eq!(grid.borrow().len(), 2, "the lightbox's too");
+        press(&app, "l");
+        press(&app, "g");
+        assert!(!app.get_grid_open());
+        // Bound to no key: the arrow does nothing in the Loupe.
+        KEYMAP.with(|m| m.borrow_mut().clear("previous-frame"));
+        steps.borrow_mut().clear();
+        press(&app, Key::LeftArrow);
+        press(&app, "a");
+        shifted(&app, &SharedString::from(Key::LeftArrow));
+        assert!(steps.borrow().is_empty(), "{:?}", steps.borrow());
+        press(&app, "g");
+        press(&app, Key::LeftArrow);
+        assert_eq!(grid.borrow().len(), 3);
+    }
+
+    /// No key for an action: its rows say None, nothing conflicts
+    /// over it, and two of them share nothing.
+    #[test]
+    fn an_action_bound_to_no_key_reads_none() {
+        let mut map = Keymap::default();
+        assert!(map.clear("turn-left"));
+        assert!(map.clear("crop"));
+        assert!(!map.clear("fly"));
+        assert!(map.conflicts(false).is_empty());
+        assert_eq!(map.resolve("[", false, LOUPE), "");
+        assert_eq!(map.resolve("]", false, LOUPE), "]");
+        let rows = binding_rows(&map, false);
+        let turn = rows.iter().find(|r| r.id == "turn-left").unwrap();
+        assert_eq!((turn.keys.as_str(), turn.keys2.as_str()), ("None", "]"));
+        let crop = rows.iter().find(|r| r.id == "crop").unwrap();
+        assert_eq!(crop.keys, "None");
+        let sheet = rows_in(&map, "", false);
+        assert!(
+            sheet
+                .iter()
+                .any(|r| r.keys == "None, ]" && r.does.starts_with("Turn the frame")),
+            "the turn's help line"
+        );
+        assert!(
+            sheet
+                .iter()
+                .any(|r| r.keys == "[ ]" && r.does == "Brush size, smaller and bigger"),
+            "the brush's size stays on the brackets"
+        );
+        assert_eq!(map.saved().get("turn-left").map(String::as_str), Some(""));
+        assert_eq!(Keymap::from_saved(&map.saved()), map);
+        map.reset();
+        assert_eq!(map, Keymap::default());
     }
 
     /// R in the middle of a crop's drag: the crop as dragged so far is
@@ -1692,23 +2327,28 @@ mod tests {
         assert!(!bindable("Esc"), "Escape cancels, and is nobody's to bind");
     }
 
-    /// The actions are the table's: one chord a line, one default an
-    /// action, none shared, and none in conflict as shipped.
+    /// The actions are the table's: one chord a line, or a pair's two,
+    /// one default an action, none shared, and none in conflict as
+    /// shipped.
     #[test]
     fn the_actions_are_the_tables_lines() {
         let lines: Vec<&Binding> = TABLE
             .iter()
             .flat_map(|g| g.lines)
-            .filter(|b| b.action.is_some())
+            .filter(|b| b.action.is_some() || b.pair.is_some())
             .collect();
         for b in &lines {
-            assert_eq!(b.chords.len(), 1, "{}", b.does);
-            let a = actions()
-                .iter()
-                .find(|a| Some(a.id) == b.action)
-                .expect("each line's action");
-            assert_eq!(a.default, b.chords[0], "{}: one default", a.id);
-            assert!(bindable(a.default) && here(a.default, false) && here(a.default, true));
+            assert!(b.action.is_none() || b.pair.is_none(), "{}", b.does);
+            let ids = actions_of(b);
+            assert_eq!(b.chords.len(), ids.len(), "{}", b.does);
+            for (i, (id, _)) in ids.into_iter().enumerate() {
+                let a = actions()
+                    .iter()
+                    .find(|a| a.id == id)
+                    .expect("each line's action");
+                assert_eq!(a.default, b.chords[i], "{}: one default", a.id);
+                assert!(bindable(a.default) && here(a.default, false) && here(a.default, true));
+            }
         }
         let defaults: BTreeSet<&str> = actions().iter().map(|a| a.default).collect();
         assert_eq!(defaults.len(), actions().len(), "two actions, one default");
@@ -1718,9 +2358,18 @@ mod tests {
         assert!(does_of(j).contains("; in the Loupe"), "{}", does_of(j));
         assert!(Keymap::default().conflicts(false).is_empty());
         assert!(Keymap::default().conflicts(true).is_empty());
-        // The sheet's rows: each action once, under the headings.
+        // The sheet's rows: each action once, a pair's two on one row,
+        // under the headings.
         let rows = binding_rows(&Keymap::default(), false);
-        assert_eq!(rows.iter().filter(|r| !r.heading).count(), actions().len());
+        let pairs = actions().iter().filter(|a| a.paired).count();
+        assert_eq!(pairs, 2, "the step and the turn");
+        assert_eq!(
+            rows.iter().filter(|r| !r.heading).count(),
+            actions().len() - pairs
+        );
+        let turn = rows.iter().find(|r| r.id == "turn-left").unwrap();
+        assert_eq!((turn.keys.as_str(), turn.id2.as_str()), ("[", "turn-right"));
+        assert_eq!(turn.keys2, "]");
         assert!(rows[0].heading);
     }
 
@@ -1732,9 +2381,13 @@ mod tests {
         assert!(map.set("proof", "Q"));
         assert!(!map.set("fly", "Q"), "no such action");
         assert!(!map.set("crop", "Shift+?"), "no such chord");
-        assert_eq!(map.resolve("Q", false), "S", "the handler's name for it");
-        assert_eq!(map.resolve("S", false), "", "S is free");
-        assert_eq!(map.resolve("Shift+S", false), "Shift+S", "fixed");
+        assert_eq!(
+            map.resolve("Q", false, LOUPE),
+            "S",
+            "the handler's name for it"
+        );
+        assert_eq!(map.resolve("S", false, LOUPE), "", "S is free");
+        assert_eq!(map.resolve("Shift+S", false, LOUPE), "Shift+S", "fixed");
         let sheet = rows_in(&map, "", false);
         let keys = |does: &str| {
             sheet
@@ -1784,7 +2437,11 @@ mod tests {
         assert_eq!(of("crop"), Some(vec!["Undo"]));
         assert_eq!(of("undo"), Some(vec!["Crop, and Done"]));
         assert_eq!(found.len(), 2);
-        assert_eq!(map.resolve("Ctrl+Z", false), "Ctrl+Z", "undo is first");
+        assert_eq!(
+            map.resolve("Ctrl+Z", false, LOUPE),
+            "Ctrl+Z",
+            "undo is first"
+        );
         let rows = binding_rows(&map, false);
         let also = |id: &str| rows.iter().find(|r| r.id == id).unwrap().also.to_string();
         assert_eq!(also("crop"), "Also: Undo");
@@ -1792,15 +2449,15 @@ mod tests {
         assert_eq!(also("library"), "");
         // On a fixed key the action has it, and says so.
         assert!(map.set("crop", "1"));
-        assert_eq!(map.resolve("1", false), "R");
+        assert_eq!(map.resolve("1", false, LOUPE), "R");
         let found = map.conflicts(false);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].1, vec!["Set a rating, or clear it"]);
         // Reset to defaults: no conflict, every press as shipped.
         map.reset();
         assert!(map.conflicts(false).is_empty());
-        assert_eq!(map.resolve("R", false), "R");
-        assert_eq!(map.resolve("1", false), "1");
+        assert_eq!(map.resolve("R", false, LOUPE), "R");
+        assert_eq!(map.resolve("1", false, LOUPE), "1");
     }
 
     /// Through the window: the Settings sheet's row listens for the
@@ -1968,6 +2625,68 @@ mod tests {
         assert!(!app.get_crop_mode());
         press(&app, "r");
         assert!(app.get_crop_mode());
+    }
+
+    /// A pair's two chord buttons on its one row, left to right.
+    fn chips_of(app: &App, does: &'static str) -> Vec<i_slint_backend_testing::ElementHandle> {
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        let mut chips: Vec<_> =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(app, "BindChip")
+                .filter(|e| e.accessible_label().as_deref() == Some(does))
+                .collect();
+        chips.sort_by(|a, b| a.absolute_position().x.total_cmp(&b.absolute_position().x));
+        chips
+    }
+
+    fn value(e: &i_slint_backend_testing::ElementHandle) -> String {
+        e.accessible_value().unwrap_or_default().to_string()
+    }
+
+    /// The step's row holds both its chords; Backspace or Delete while
+    /// one listens binds it to no key and the row says None, Escape
+    /// keeps the chord, and Reset to defaults brings the arrows back.
+    #[test]
+    fn backspace_or_delete_binds_an_action_to_no_key() {
+        let (app, _state, _worker) = settings_window();
+        let step = "Previous or next frame";
+        let chips = chips_of(&app, step);
+        assert_eq!(chips.len(), 2, "one row, two chords");
+        assert_eq!(
+            (value(&chips[0]), value(&chips[1])),
+            ("←".into(), "→".into())
+        );
+        chips[0].invoke_accessible_default_action();
+        assert_eq!(value(&chips_of(&app, step)[0]), "Press a key");
+        press(&app, Key::Backspace);
+        assert_eq!(value(&chips_of(&app, step)[0]), "None");
+        assert!(app.get_settings_open());
+        // The second by Delete, after an Escape that kept it.
+        chips_of(&app, step)[1].invoke_accessible_default_action();
+        press(&app, Key::Escape);
+        assert_eq!(value(&chips_of(&app, step)[1]), "→");
+        chips_of(&app, step)[1].invoke_accessible_default_action();
+        press(&app, Key::Delete);
+        assert_eq!(value(&chips_of(&app, step)[1]), "None");
+        // The second chip binds its own action to a chord.
+        chips_of(&app, step)[1].invoke_accessible_default_action();
+        press(&app, "k");
+        assert_eq!(value(&chips_of(&app, step)[1]), "K");
+        assert_eq!(value(&chips_of(&app, step)[0]), "None");
+        assert_eq!(
+            with_map(|m| m.saved()),
+            BTreeMap::from([
+                ("next-frame".to_string(), "K".to_string()),
+                ("previous-frame".to_string(), String::new()),
+            ])
+        );
+        app.invoke_keys_reset();
+        let chips = chips_of(&app, step);
+        assert_eq!(
+            (value(&chips[0]), value(&chips[1])),
+            ("←".into(), "→".into())
+        );
     }
 
     /// The sheet closed while a row listens (Done, a click beside it,

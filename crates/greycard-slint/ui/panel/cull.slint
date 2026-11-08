@@ -104,15 +104,15 @@ export component CullSection inherits Section {
         spacing: Theme.space-2;
         Text { text: "Turn"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         PanelButton {
-            text: "[";
+            text: "Left";
             icon: @image-url("../icons/rotate-ccw.svg");
-            words: "Turn the frame left: not part of the edit";
+            words: "Turn the frame left";
             clicked => { root.frame-turned(-1); }
         }
         PanelButton {
-            text: "]";
+            text: "Right";
             icon: @image-url("../icons/rotate-cw.svg");
-            words: "Turn the frame right: not part of the edit";
+            words: "Turn the frame right";
             clicked => { root.frame-turned(1); }
         }
     }

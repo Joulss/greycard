@@ -251,8 +251,9 @@ pub struct Settings {
     /// it, which the scale multiplies. Zero for none seen.
     pub ui_scale_system: f64,
     /// The keys rebound from the Settings sheet, each action's name
-    /// (`keys::TABLE`) to its chord ("crop": "Ctrl+R"); an action at
-    /// its default is not here. Written as a key is bound.
+    /// (`keys::TABLE`) to its chord ("crop": "Ctrl+R"), or to "" for
+    /// none; an action at its default is not here. Written as a key is
+    /// bound.
     #[serde(
         skip_serializing_if = "std::collections::BTreeMap::is_empty",
         deserialize_with = "keys_leniently"
@@ -1295,6 +1296,20 @@ mod tests {
         assert!(text.contains(r#""keys":{"crop":"Ctrl+R"}"#), "{text}");
         let read: Settings = serde_json::from_str(&text).unwrap();
         assert_eq!(crate::keys::Keymap::from_saved(&read.keys), map);
+        // An action bound to no key is kept as an empty chord.
+        let mut none = map.clone();
+        assert!(none.clear("previous-frame"));
+        let text = serde_json::to_string(&Settings {
+            keys: none.saved(),
+            ..Settings::default()
+        })
+        .unwrap();
+        assert!(
+            text.contains(r#""keys":{"crop":"Ctrl+R","previous-frame":""}"#),
+            "{text}"
+        );
+        let read: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(crate::keys::Keymap::from_saved(&read.keys), none);
         // A name that is no action and a chord that is none are left
         // out as the file is read, and the rest kept.
         let read: Settings =

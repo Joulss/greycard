@@ -99,3 +99,52 @@ lavapipe checks the amount is the chroma over 0.1.
 
 *Not verified.* None of it by hand in the running editor; whether
 the tester pressed Shift mid-drag.
+
+**Brackets, steps, and keys that can be taken away.** With the brush
+or a repair's patch in hand in the Loupe (not the grid, not Cull) the
+brackets multiply its size by 1.1 or its inverse, the wheel's step,
+held to the wheel's ranges. The key table names those presses
+`Brush[` and `Brush]`, read off a `View` the chord callback builds
+from `grid-open`, `cull-mode`, `placing`, and `retouch-mode`, apart
+from the turn's `[` and `]`, so the turn's binding, moved or None,
+never moves the sizing. The keys sheet's brush line is a raw line that
+always reads "[ ]". Shift or Ctrl and a bracket step feather and flow
+by 0.05.
+
+A table line can be a pair (`pair()`): two actions, one chord a
+direction. The turn (`turn-left`, `turn-right`) and the Loupe's step
+(`previous-frame`, `next-frame`) are pairs, one row of Settings >
+Keys with two chord buttons (`BindChip`), one line of the keys sheet.
+Shift+Left and Shift+Right follow the step's chords (`SHIFT_FORMS`);
+a chord with Shift already, or a key carrying its own, has no Shift
+form; the selection's extension is read from the resolved chord, not
+the event's Shift. Conflicts check the Shift form as a chord, skip the
+fixed Shift+Left line once the step has moved, exempt the turn moved
+among the brackets, and mark a pair's two on one chord red without
+"Also:" words. The step's rebinding holds while the grid is not up,
+which is the Loupe and Cull's single-frame view; the grid's and the
+lightbox's arrows move their selection by the defaults, and outside
+the Loupe the step's Shift form comes before an action. While a chord
+listens, Backspace or Delete alone binds the action to no key, kept
+as `""` in settings.json and read "None"; Reset restores the chord.
+The cost: Backspace and Delete alone can no longer be bound (with a
+modifier they can). The crop's and Cull's turn tooltips lose their
+key names and Cull's Turn buttons read Left and Right, since nothing
+feeds a panel label from the keymap.
+
+*Verified.* Tests in keys.rs and settings.rs: `]` turns with nothing
+in hand, grows the brush or a Heal patch with one in hand and leaves
+the turn count, holds at the floor; with the turn on None or on Q,
+`]` sizes and Q turns; feather and flow at 0.05; the step on A steps
+on A and Shift+A in the Loupe and not on Left while the grid and the
+lightbox step on Left; None leaves Left, A, and Shift+Left idle in
+the Loupe; a step on Shift+A is a plain step; the conflict cases
+above; pair rows, "None" by Backspace and Delete, Escape keeping the
+chord, Reset, and a settings.json round trip of `""`.
+
+*Not verified.* Nothing by hand in a real window: the two-chip rows
+and Cull's Left and Right buttons at their fixed widths. Two chips of
+one row share one accessible label. A step rebound onto a key the
+grid uses is reported as a conflict though the views never overlap.
+An action bound to a raw bracket loses to the brush while one is in
+hand, reported as a conflict.

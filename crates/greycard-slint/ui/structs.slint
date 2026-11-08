@@ -13,13 +13,19 @@ export struct KeyRow {
 /// A row of the Settings sheet's Keys section (`keys.rs`): a group's
 /// heading in `does`, or an action by its settings name, its chord as
 /// the platform names it, what it does, and what else has the chord,
-/// empty when nothing does.
+/// empty when nothing does; `warn` when anything does, the row's own
+/// pair among them, which has no words. A pair's second action (the
+/// turn's right) and its chord are `id2` and `keys2`, empty on a row
+/// of one.
 export struct BindRow {
     heading: bool,
     id: string,
     keys: string,
+    id2: string,
+    keys2: string,
     does: string,
     also: string,
+    warn: bool,
 }
 
 /// A line of the Settings sheet's Models category: the model as the

@@ -161,8 +161,9 @@ is put down.
 Press the **middle button** during a stroke to make it a straight
 line from where it began to where you let go.
 
-With the brush in hand, **Shift+[** and **Shift+]** take the feather
-down or up a tenth, and **Ctrl+[** and **Ctrl+]** the flow.
+With the brush in hand, **[** and **]** make it smaller or bigger,
+**Shift+[** and **Shift+]** take the feather down or up by 0.05, and
+**Ctrl+[** and **Ctrl+]** the flow.
 
 ### Subject and Background
 

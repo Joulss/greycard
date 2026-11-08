@@ -140,14 +140,19 @@ bug form.
 To change a key, open **Settings** (Ctrl+,) and choose **Keys**:
 click an action's key, then press the new one, modifiers and all;
 **Esc** keeps the old. The grid's stack key follows the soft proof's
-(S). The lines with more than one key (the arrows, the ratings, flags,
-and labels, + −, F6 to F8, Redo, and the filter's), **Enter**,
-**Tab**, **F11**, and **Delete** cannot be moved, but an action can take one;
-a focused slider keeps its own keys. **Esc** cannot be taken. A key
-that does two things says so in red; of two actions, the higher in
-the list gets the press. **Reset to defaults** puts every
-key back. The tables below are the defaults; the **?** sheet shows
-your own.
+(S). The frame step (← →) and the turn ([ ]) are a key each way; the
+step's Shift form follows its keys, and the step moved is the
+Loupe's: the grid and the lightbox keep the arrows. With a brush or a
+repair in hand the brackets size it wherever the turn is bound. The
+other lines with more than one key (the up and down arrows, the
+ratings, flags, and labels, + −, F6 to F8, Redo, and the filter's),
+**Enter**, **Tab**, and **F11** cannot be moved, but an action can
+take one; **Delete** or **Backspace** alone, while a key listens,
+means None; a focused slider keeps its own keys. **Esc** cannot be
+taken. A key that does two things says so in red; of two actions,
+the higher in the list gets the press. **Reset to defaults** puts
+every key back. The tables below are the defaults; the **?** sheet
+shows your own.
 
 ### Moving around
 
@@ -222,6 +227,7 @@ with a drag moves the picture; a tap of **Space** still zooms.
 | W | White balance from a neutral patch: the pipette |
 | M | New mask with a Linear, placed by the next drag |
 | Shift+M | New mask with a Radial, placed by the next drag |
+| [ ] | Brush size, smaller and bigger |
 | Shift+[ Shift+] | Brush feather, less and more |
 | Ctrl+[ Ctrl+] | Brush flow, less and more |
 | O | Show the mask |

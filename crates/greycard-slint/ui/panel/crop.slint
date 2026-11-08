@@ -216,18 +216,18 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "Turn left";
             icon: @image-url("../icons/rotate-ccw.svg");
-            words: "Turn the frame left ([): not part of the edit";
+            words: "Turn the frame left";
             clicked => { root.frame-turned(-1); }
         }
         PanelButton {
             text: "Turn right";
             icon: @image-url("../icons/rotate-cw.svg");
-            words: "Turn the frame right (]): not part of the edit";
+            words: "Turn the frame right";
             clicked => { root.frame-turned(1); }
         }
     }
     Text {
-        text: "[ and ] rotate. Not part of the edit.";
+        text: "Not part of the edit.";
         font-size: Theme.font-xs;
         color: Theme.text-secondary;
         wrap: word-wrap;

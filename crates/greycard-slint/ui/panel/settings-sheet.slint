@@ -18,13 +18,48 @@
 // every model the registry knows, its size and where it stands, and
 // Fetch all, which fetches those this machine runs. Keys:
 // each rebindable action of the key table (`keys.rs`), a click on its
-// chord to press a new one, Escape to keep the old. About: the check
+// chord to press a new one, Backspace or Delete for none, Escape to
+// keep the old. About: the check
 // for a newer release, the version, and where greycard keeps its
 // files.
 import { Theme } from "../theme.slint";
 import { BindRow, ModelLine } from "../structs.slint";
 import { Toggle, PanelButton, Segmented, ScrollPane } from "../controls.slint";
 import { LineEdit } from "std-widgets.slint";
+
+/// An action's chord on the Keys category's row, a click to listen
+/// for a new one; red when another action or a fixed key has it too.
+component BindChip inherits Rectangle {
+    in property <bool> on;
+    in property <string> keys;
+    in property <string> does;
+    in property <bool> warn;
+    callback listen();
+    property <string> shown: self.on ? "Press a key" : root.keys;
+    width: 112px;
+    height: Theme.control-height;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: self.on ? Theme.focus-ring : root.warn ? Theme.warn-red : Theme.border-strong;
+    background: chip.pressed ? Theme.pressed : chip.has-hover ? Theme.hover : Theme.raised;
+    accessible-role: button;
+    accessible-label: root.does;
+    accessible-value: self.shown;
+    accessible-action-default => { root.listen(); }
+    Text {
+        text: root.shown;
+        font-size: Theme.font-sm;
+        font-weight: Theme.weight-medium;
+        color: root.on ? Theme.text-secondary : Theme.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    chip := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.listen(); }
+    }
+}
 
 export component SettingsSheet inherits Rectangle {
     in-out property <bool> settings-open;
@@ -176,9 +211,9 @@ export component SettingsSheet inherits Rectangle {
     property <length> models-text-w: root.pane-w - 2 * Theme.space-5 - Theme.scrollbar-band
         - root.models-status-w - Theme.space-2;
     /// The keys: each action and its chord, under its group's heading;
-    /// a press taken as the listening action's chord, true once the
-    /// listening is over; every action back to its default; and the
-    /// window told as the listening ends.
+    /// a press taken as the listening action's chord (Backspace or
+    /// Delete for none), true once the listening is over; every action
+    /// back to its default; and the window told as the listening ends.
     in property <[BindRow]> key-bindings;
     callback key-rebound(string, string, bool, bool, bool, bool) -> bool;
     callback keys-reset();
@@ -309,7 +344,8 @@ export component SettingsSheet inherits Rectangle {
                 return reject;
             }
             // The press a chord is listened for by: every key while an
-            // action listens, Escape keeping its old chord.
+            // action listens, Escape keeping its old chord, Backspace or
+            // Delete binding it to none (`keys.rs`).
             catcher := FocusScope {
                 width: 0;
                 height: 0;
@@ -1100,34 +1136,25 @@ export component SettingsSheet inherits Rectangle {
                                         wrap: word-wrap;
                                         // Its own width, so a wrapped line counts in the
                                         // sheet's height and Reset to defaults stays in reach.
-                                        width: root.pane-w - 2 * Theme.space-5 - Theme.scrollbar-band - 112px - Theme.space-2;
+                                        // A pair's second chord takes another chip's.
+                                        width: root.pane-w - 2 * Theme.space-5 - Theme.scrollbar-band - 112px - Theme.space-2
+                                            - (row.id2 != "" ? 112px + Theme.space-1 : 0);
                                     }
-                                    Rectangle {
-                                        property <bool> on: root.listening == row.id;
-                                        property <string> shown: self.on ? "Press a key" : row.keys;
-                                        width: 112px;
-                                        height: Theme.control-height;
-                                        border-radius: Theme.radius-md;
-                                        border-width: 1px;
-                                        border-color: self.on ? Theme.focus-ring
-                                            : row.also != "" ? Theme.warn-red : Theme.border-strong;
-                                        background: chip.pressed ? Theme.pressed : chip.has-hover ? Theme.hover : Theme.raised;
-                                        accessible-role: button;
-                                        accessible-label: row.does;
-                                        accessible-value: self.shown;
-                                        accessible-action-default => { root.listen(row.id); }
-                                        Text {
-                                            text: parent.shown;
-                                            font-size: Theme.font-sm;
-                                            font-weight: Theme.weight-medium;
-                                            color: parent.on ? Theme.text-secondary : Theme.text;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                            overflow: elide;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-1;
+                                        BindChip {
+                                            on: root.listening == row.id;
+                                            keys: row.keys;
+                                            does: row.does;
+                                            warn: row.warn;
+                                            listen => { root.listen(row.id); }
                                         }
-                                        chip := TouchArea {
-                                            mouse-cursor: MouseCursor.pointer;
-                                            clicked => { root.listen(row.id); }
+                                        if row.id2 != "": BindChip {
+                                            on: root.listening == row.id2;
+                                            keys: row.keys2;
+                                            does: row.does;
+                                            warn: row.warn;
+                                            listen => { root.listen(row.id2); }
                                         }
                                     }
                                 }

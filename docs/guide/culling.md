@@ -200,10 +200,11 @@ that aren't reachable right now, or are slow to read.
 
 ### The CULLING section
 
-- **Turn** with its **[** and **]** buttons turns the selected frames a
-  quarter left or right, for a shot the camera recorded the wrong way
-  up. The **[** and **]** keys do the same, in culling, the grid and
-  the loupe. In culling nothing is developed.
+- **Turn** with its **Left** and **Right** buttons turns the selected
+  frames a quarter left or right, for a shot the camera recorded the
+  wrong way up. The **[** and **]** keys do the same, in culling, the
+  grid, and the loupe, unless a brush or a repair tool is in hand,
+  when they size it. In culling nothing is developed.
 - **Show** filters the folder by rating, flag, label or words, the
   same filter as the grid's header. See [the library](library.md).
 - **Move on after a rating, flag or label** steps to the next frame
