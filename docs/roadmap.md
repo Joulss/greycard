@@ -816,11 +816,15 @@ clears or a tester asks for it.
       lens section) instead of our default; the flag off on a lens with
       built-in corrections still means on, and no flag at all falls to
       the Lens corrections on new edits setting (§613)
-- [ ] Move frames between folders and roots: a drag onto a folder in
-      the tree, and Move to folder on the menu, carrying the sidecar,
-      the catalog row, the versions, and the collections; a root on an
-      unplugged drive stays listed offline and comes back when it is
-      plugged in (issue 99)
+- [ ] Move frames or folders between folders and roots: a drag onto a
+      folder in the tree, and Move to folder on the menu, carrying the
+      sidecar, the catalog row, the versions, and the collections; a
+      folder goes as a sequence of frame moves with its subfolders made
+      first and the source removed last, so a drive that fills or
+      unplugs midway leaves nothing lost, and a name already at the
+      destination asks whether to merge; a root on an unplugged drive
+      stays listed offline and comes back when it is plugged in
+      (issue 99)
 - [ ] Geotagging from a GPX track: the camera's UTC offset, a manual
       offset for a clock left on the wrong time, a matching tolerance,
       the position written to the sidecar and the XMP, as digiKam and
