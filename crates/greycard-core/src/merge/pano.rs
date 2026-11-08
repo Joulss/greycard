@@ -35,6 +35,7 @@ use rayon::prelude::*;
 
 use crate::develop::lens::LensCorrection;
 use crate::register::Homography;
+pub use crate::register::Kernel;
 
 /// A 3x3 matrix, row-major.
 pub type Mat3 = [f64; 9];
@@ -1316,111 +1317,6 @@ pub fn largest_rectangle(covered: &[bool], width: usize, height: usize) -> Rect 
         }
     }
     best
-}
-
-/// How a frame is resampled onto the canvas.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kernel {
-    Bilinear,
-    /// Catmull-Rom, four taps a side.
-    Cubic,
-    /// Lanczos with three lobes, six taps a side.
-    Lanczos3,
-}
-
-impl Kernel {
-    /// Its name in a merge's tag.
-    pub fn name(self) -> &'static str {
-        match self {
-            Kernel::Bilinear => "bilinear",
-            Kernel::Cubic => "cubic",
-            Kernel::Lanczos3 => "lanczos3",
-        }
-    }
-
-    /// The kernel of that name.
-    pub fn named(name: &str) -> Option<Kernel> {
-        [Kernel::Bilinear, Kernel::Cubic, Kernel::Lanczos3]
-            .into_iter()
-            .find(|k| k.name() == name)
-    }
-
-    fn reach(self) -> isize {
-        match self {
-            Kernel::Bilinear => 1,
-            Kernel::Cubic => 2,
-            Kernel::Lanczos3 => 3,
-        }
-    }
-
-    /// The weights of the taps about a position `t` (0 to 1) past the
-    /// sample before it: the taps from `1 - reach` to `reach` samples
-    /// on. Lanczos's from three sines a position rather than two a tap:
-    /// `sin(pi (t - o)) = (-1)^o sin(pi t)`, and the third-period sine
-    /// of `t - o` by the angle-difference rule.
-    #[inline]
-    fn taps(self, t: f64) -> [f64; 6] {
-        let mut w = [0.0f64; 6];
-        let reach = self.reach();
-        if self == Kernel::Lanczos3 {
-            use std::f64::consts::PI;
-            // cos and sin of pi o / 3, o from -2 to 3.
-            const COS: [f64; 6] = [-0.5, 0.5, 1.0, 0.5, -0.5, -1.0];
-            const SIN: [f64; 6] = [
-                -0.866_025_403_784_438_6,
-                -0.866_025_403_784_438_6,
-                0.0,
-                0.866_025_403_784_438_6,
-                0.866_025_403_784_438_6,
-                0.0,
-            ];
-            let s1 = (PI * t).sin();
-            let (s3, c3) = (PI * t / 3.0).sin_cos();
-            for (i, w) in w.iter_mut().enumerate() {
-                let o = i as f64 - 2.0;
-                let a = t - o;
-                if a.abs() < 1e-9 {
-                    *w = 1.0;
-                    continue;
-                }
-                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
-                let third = s3 * COS[i] - c3 * SIN[i];
-                *w = 3.0 * sign * s1 * third / (PI * PI * a * a);
-            }
-            return w;
-        }
-        for (i, w) in w.iter_mut().enumerate().take((2 * reach) as usize) {
-            *w = self.weight(t - (i as isize - reach + 1) as f64);
-        }
-        w
-    }
-
-    #[inline]
-    fn weight(self, t: f64) -> f64 {
-        let a = t.abs();
-        match self {
-            Kernel::Bilinear => (1.0 - a).max(0.0),
-            Kernel::Cubic => {
-                if a < 1.0 {
-                    1.5 * a * a * a - 2.5 * a * a + 1.0
-                } else if a < 2.0 {
-                    -0.5 * a * a * a + 2.5 * a * a - 4.0 * a + 2.0
-                } else {
-                    0.0
-                }
-            }
-            Kernel::Lanczos3 => {
-                if a < 1e-9 {
-                    1.0
-                } else if a < 3.0 {
-                    let p = std::f64::consts::PI * a;
-                    3.0 * p.sin() * (p / 3.0).sin() / (p * p)
-                } else {
-                    0.0
-                }
-            }
-        }
-    }
 }
 
 /// One channel of interleaved RGB (`width` by `height`) at a

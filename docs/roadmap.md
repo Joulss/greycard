@@ -182,7 +182,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
 - [ ] i18n (issue 75)
-- [ ] Handheld HDR and focus stacking (§612)
 
 ### Speed
 
@@ -573,9 +572,11 @@ brackets and the panorama to shoot for testing are in
       a sphere; the uncropped canvas; the learned denoise on by default
       once the store offers the tier; the lock check against a merge
       started in the same microseconds
-- [ ] Phase 3, the handheld bracket (§523, §612): the similarity fit,
-      the Lanczos kernel in `stack.rs` and `register.rs`, and
-      reference-frame deghosting; building for 0.11.0
+- [ ] Phase 3's leftovers (§612): the merge on a real handheld bracket
+      and a hand-stepped focus stack once they are shot; the deghost
+      ledger's seam where its hard rejection meets the soft one at the
+      reference's clip edge; the budget's row boundary on a mover; the
+      4σ test against the demosaic's correlated chroma noise
 - [ ] A bracket finder: a burst whose EXIF exposures step marked as a
       bracket, so the merge can be asked of a whole card (§523)
 - [ ] A center for the vignette: two sliders or a drag on the picture

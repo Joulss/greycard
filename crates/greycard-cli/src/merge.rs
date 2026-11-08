@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use greycard_core::output::OnExists;
-use greycard_engine::merge::{self, CaFits, Options, Step};
+use greycard_engine::merge::{self, CaFits, Deghost, Options, Step};
 
 use crate::common;
 
@@ -100,6 +100,17 @@ pub(crate) struct HdrArgs {
     #[arg(long, value_name = "WHAT", default_value = "increment",
           value_parser = common::on_exists_named)]
     on_exists: OnExists,
+    /// Take what moved in the scene from the middle frame alone, so it
+    /// does not double: on, off, or auto (only when the camera moved
+    /// between frames)
+    #[arg(long, value_name = "WHEN", default_value = "auto",
+          value_parser = deghost_named)]
+    deghost: Deghost,
+}
+
+/// A `--deghost` by its name.
+fn deghost_named(name: &str) -> Result<Deghost, String> {
+    Deghost::named(name).ok_or_else(|| format!("want on, off, or auto, not {name}"))
 }
 
 /// The merge, to its exit code: 0 merged, 2 merged with something
@@ -281,6 +292,8 @@ fn hdr(args: HdrArgs) -> Result<u8> {
         noise: None,
         ca: CaFits::Once,
         registration: None,
+        deghost: args.deghost,
+        kernel: None,
     };
     let report = merge::hdr(
         &args.frames,
@@ -309,6 +322,10 @@ fn said_hdr(report: &merge::Report) -> u8 {
             (Some(by), true) => format!(", moved {by:.2} px, resampled"),
             (Some(by), false) => format!(", moved {by:.3} px"),
             (None, _) => String::new(),
+        };
+        let moved = match f.rejected {
+            Some(r) => format!("{moved}, {:.2}% deghosted", r * 100.0),
+            None => moved,
         };
         let role = if i == report.reference {
             "the reference".to_string()

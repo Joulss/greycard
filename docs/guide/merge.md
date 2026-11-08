@@ -6,9 +6,9 @@ into a focus stack. Each merge is a DNG you edit like any other frame.
 
 ## Merge to HDR
 
-A bracket shot on a tripod, the same picture at several exposures, can
-be merged into one frame that holds the shadows of the brightest frame
-and the highlights of the darkest.
+A bracket, the same picture at several exposures, on a tripod or by
+hand, can be merged into one frame that holds the shadows of the
+brightest frame and the highlights of the darkest.
 
 - Select the bracket's frames, two or more, of one camera and one
   size, and choose **Merge to HDR** on the frame menu. The status line
@@ -25,8 +25,11 @@ and the highlights of the darkest.
   lost are there to bring down with **Highlights** or the exposure.
   **Highlights** at −100 brings the brightest of them just under
   white.
-- The frames should not move between shots. A frame that moved a
-  little is put back in place, and the log says so.
+- A frame that moved between shots, by a hand's shift, turn, or
+  lean-in, is put back in place, and the log says how far. When one
+  did, whatever moved in the scene itself (a person, a branch, a
+  wave) is taken from the middle frame alone rather than doubled. A
+  near scene shot by hand still shows parallax no merge removes.
 - Asking for a second merge while one runs starts it when the first is
   done, and the status line says so.
 - The file is never seen half-written: it is written under a hidden

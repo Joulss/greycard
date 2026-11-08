@@ -1489,7 +1489,158 @@ pub enum Edge {
     Clamp,
 }
 
-/// `src` resampled through `t`, bilinearly: the output's `(x, y)` is
+/// How a warp resamples a frame: every warp here and the panorama's
+/// canvas take one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kernel {
+    Bilinear,
+    /// Catmull-Rom, four taps an axis.
+    Cubic,
+    /// Lanczos with three lobes, six taps an axis: what a merge
+    /// resamples a frame it keeps with, since bilinear softens more
+    /// than a merge's weighting gains back. It rings at a hard edge,
+    /// a few percent of the step; a merge clamps the warp to the
+    /// frame's range ([`sample_range`]).
+    Lanczos3,
+}
+
+impl Kernel {
+    /// Its name in a merge's tag.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kernel::Bilinear => "bilinear",
+            Kernel::Cubic => "cubic",
+            Kernel::Lanczos3 => "lanczos3",
+        }
+    }
+
+    /// The kernel of that name.
+    pub fn named(name: &str) -> Option<Kernel> {
+        [Kernel::Bilinear, Kernel::Cubic, Kernel::Lanczos3]
+            .into_iter()
+            .find(|k| k.name() == name)
+    }
+
+    /// Taps a side.
+    pub fn reach(self) -> isize {
+        match self {
+            Kernel::Bilinear => 1,
+            Kernel::Cubic => 2,
+            Kernel::Lanczos3 => 3,
+        }
+    }
+
+    /// The weights of the taps about a position `t` (0 to 1) past the
+    /// sample before it: the taps from `1 - reach` to `reach` samples
+    /// on. Lanczos's from three sines a position rather than two a tap:
+    /// `sin(pi (t - o)) = (-1)^o sin(pi t)`, and the third-period sine
+    /// of `t - o` by the angle-difference rule.
+    #[inline]
+    pub(crate) fn taps(self, t: f64) -> [f64; 6] {
+        let mut w = [0.0f64; 6];
+        let reach = self.reach();
+        if self == Kernel::Lanczos3 {
+            use std::f64::consts::PI;
+            // cos and sin of pi o / 3, o from -2 to 3.
+            const COS: [f64; 6] = [-0.5, 0.5, 1.0, 0.5, -0.5, -1.0];
+            const SIN: [f64; 6] = [
+                -0.866_025_403_784_438_6,
+                -0.866_025_403_784_438_6,
+                0.0,
+                0.866_025_403_784_438_6,
+                0.866_025_403_784_438_6,
+                0.0,
+            ];
+            let s1 = (PI * t).sin();
+            let (s3, c3) = (PI * t / 3.0).sin_cos();
+            for (i, w) in w.iter_mut().enumerate() {
+                let o = i as f64 - 2.0;
+                let a = t - o;
+                if a.abs() < 1e-9 {
+                    *w = 1.0;
+                    continue;
+                }
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                let third = s3 * COS[i] - c3 * SIN[i];
+                *w = 3.0 * sign * s1 * third / (PI * PI * a * a);
+            }
+            return w;
+        }
+        for (i, w) in w.iter_mut().enumerate().take((2 * reach) as usize) {
+            *w = self.weight(t - (i as isize - reach + 1) as f64);
+        }
+        w
+    }
+
+    #[inline]
+    pub(crate) fn weight(self, t: f64) -> f64 {
+        let a = t.abs();
+        match self {
+            Kernel::Bilinear => (1.0 - a).max(0.0),
+            Kernel::Cubic => {
+                if a < 1.0 {
+                    1.5 * a * a * a - 2.5 * a * a + 1.0
+                } else if a < 2.0 {
+                    -0.5 * a * a * a + 2.5 * a * a - 4.0 * a + 2.0
+                } else {
+                    0.0
+                }
+            }
+            Kernel::Lanczos3 => {
+                if a < 1e-9 {
+                    1.0
+                } else if a < 3.0 {
+                    let p = std::f64::consts::PI * a;
+                    3.0 * p.sin() * (p / 3.0).sin() / (p * p)
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+
+    /// The taps about `t` as `f32`, normalized to sum to one, so a
+    /// flat picture stays flat whatever the position.
+    #[inline]
+    fn normalized(self, t: f64) -> [f32; 6] {
+        let w = self.taps(t);
+        let n = (2 * self.reach()) as usize;
+        let sum: f64 = w[..n].iter().sum();
+        let mut out = [0.0f32; 6];
+        for (o, w) in out.iter_mut().zip(&w[..n]) {
+            *o = (w / sum) as f32;
+        }
+        out
+    }
+}
+
+/// The least and the most finite sample of `src`: what a merge clamps
+/// a frame it warped with a ringing kernel to ([`clamp_samples`]), so
+/// a ring at a hard edge puts no sample below the frame's darkest or
+/// over its brightest. `(0, 0)` for a source with none.
+pub fn sample_range(src: &[f32]) -> (f32, f32) {
+    let (lo, hi) = src
+        .par_iter()
+        .filter(|v| v.is_finite())
+        .fold(
+            || (f32::INFINITY, f32::NEG_INFINITY),
+            |(lo, hi), &v| (lo.min(v), hi.max(v)),
+        )
+        .reduce(
+            || (f32::INFINITY, f32::NEG_INFINITY),
+            |a, b| (a.0.min(b.0), a.1.max(b.1)),
+        );
+    if lo <= hi { (lo, hi) } else { (0.0, 0.0) }
+}
+
+/// Every sample of `samples` held to `range`; one not a number (an
+/// [`Edge::Fill`] of it) stays as it is.
+pub fn clamp_samples(samples: &mut [f32], range: (f32, f32)) {
+    let (lo, hi) = range;
+    samples.par_iter_mut().for_each(|v| *v = v.clamp(lo, hi));
+}
+
+/// `src` resampled through `t` by `kernel`: the output's `(x, y)` is
 /// `src` at `t.apply(x, y)`.
 ///
 /// With the transform a [`fit`] returned, this is the moving frame put
@@ -1498,6 +1649,7 @@ pub enum Edge {
 /// An output with no width or no height is empty; a source with no
 /// width or no height puts [`Edge`] everywhere, since every sample of
 /// it is outside.
+#[allow(clippy::too_many_arguments)]
 pub fn warp_plane(
     src: &[f32],
     width: usize,
@@ -1506,9 +1658,17 @@ pub fn warp_plane(
     out_height: usize,
     t: &Transform,
     edge: Edge,
+    kernel: Kernel,
 ) -> Vec<f32> {
     assert_eq!(src.len(), width * height);
-    warp_interleaved(src, width, height, 1, (out_width, out_height), t, edge)
+    warp_interleaved(
+        src,
+        (width, height, 1),
+        (out_width, out_height),
+        t,
+        edge,
+        kernel,
+    )
 }
 
 /// [`warp_plane`] for interleaved samples of any channel count, at
@@ -1521,21 +1681,28 @@ pub fn warp_samples(
     channels: usize,
     t: &Transform,
     edge: Edge,
+    kernel: Kernel,
 ) -> Vec<f32> {
     assert_eq!(src.len(), width * height * channels);
-    warp_interleaved(src, width, height, channels, (width, height), t, edge)
+    warp_interleaved(
+        src,
+        (width, height, channels),
+        (width, height),
+        t,
+        edge,
+        kernel,
+    )
 }
 
 /// [`warp_plane`] for a working-space image, at its own size.
-pub fn warp_image(src: &WorkingImage, t: &Transform, edge: Edge) -> WorkingImage {
+pub fn warp_image(src: &WorkingImage, t: &Transform, edge: Edge, kernel: Kernel) -> WorkingImage {
     let data = warp_interleaved(
         &src.data,
-        src.width,
-        src.height,
-        WorkingImage::CHANNELS,
+        (src.width, src.height, WorkingImage::CHANNELS),
         (src.width, src.height),
         t,
         edge,
+        kernel,
     );
     WorkingImage {
         width: src.width,
@@ -1546,15 +1713,19 @@ pub fn warp_image(src: &WorkingImage, t: &Transform, edge: Edge) -> WorkingImage
 
 /// [`warp_plane`] for a camera-space image, at its own size: where a
 /// stack is merged.
-pub fn warp_camera_image(src: &CameraImage, t: &Transform, edge: Edge) -> CameraImage {
+pub fn warp_camera_image(
+    src: &CameraImage,
+    t: &Transform,
+    edge: Edge,
+    kernel: Kernel,
+) -> CameraImage {
     let data = warp_interleaved(
         &src.data,
-        src.width,
-        src.height,
-        CameraImage::CHANNELS,
+        (src.width, src.height, CameraImage::CHANNELS),
         (src.width, src.height),
         t,
         edge,
+        kernel,
     );
     CameraImage {
         width: src.width,
@@ -1563,16 +1734,17 @@ pub fn warp_camera_image(src: &CameraImage, t: &Transform, edge: Edge) -> Camera
     }
 }
 
-/// `out` is the warped picture's width and height.
+/// `size` is the source's width, height, and channels; `out` the
+/// warped picture's width and height.
 fn warp_interleaved(
     src: &[f32],
-    width: usize,
-    height: usize,
-    channels: usize,
+    size: (usize, usize, usize),
     out: (usize, usize),
     t: &Transform,
     edge: Edge,
+    kernel: Kernel,
 ) -> Vec<f32> {
+    let (width, height, channels) = size;
     let (out_width, out_height) = out;
     assert_eq!(src.len(), width * height * channels);
     if out_width == 0 || out_height == 0 {
@@ -1587,6 +1759,7 @@ fn warp_interleaved(
         return vec![outside; out_width * out_height * channels];
     }
     let mut out = vec![0.0f32; out_width * out_height * channels];
+    let wide = kernel != Kernel::Bilinear;
     out.par_chunks_mut(out_width * channels)
         .enumerate()
         .for_each(|(y, line)| {
@@ -1596,6 +1769,11 @@ fn warp_interleaved(
                     u >= 0.0 && v >= 0.0 && u <= (width - 1) as f64 && v <= (height - 1) as f64;
                 match (inside, edge) {
                     (false, Edge::Fill(value)) => px.fill(value),
+                    _ if wide => {
+                        let cu = u.clamp(0.0, (width - 1) as f64);
+                        let cv = v.clamp(0.0, (height - 1) as f64);
+                        wide_sample(src, size, (cu, cv), kernel, px);
+                    }
                     _ => {
                         let cu = u.clamp(0.0, (width - 1) as f64);
                         let cv = v.clamp(0.0, (height - 1) as f64);
@@ -1624,6 +1802,50 @@ fn warp_interleaved(
             }
         });
     out
+}
+
+/// One pixel of `src` (`size` its width, height, and channels) at
+/// `at`, inside it, by a kernel wider than bilinear: the 2-D sum of
+/// the separable kernel's taps, the taps past the edge held to it.
+/// Direct for any transform; a translation's taps are the same at
+/// every pixel, and computing them each time costs a few trig calls a
+/// pixel, which measured under a second on a 45 MP frame.
+// Grid code: the indices are the mathematics.
+#[allow(clippy::needless_range_loop)]
+#[inline]
+fn wide_sample(
+    src: &[f32],
+    size: (usize, usize, usize),
+    at: (f64, f64),
+    kernel: Kernel,
+    px: &mut [f32],
+) {
+    let (width, height, channels) = size;
+    let (u, v) = at;
+    let (x0, y0) = (u.floor(), v.floor());
+    let (wx, wy) = (kernel.normalized(u - x0), kernel.normalized(v - y0));
+    let reach = kernel.reach();
+    let n = (2 * reach) as usize;
+    let (ix, iy) = (x0 as isize - reach + 1, y0 as isize - reach + 1);
+    let (w, h) = (width as isize, height as isize);
+    let mut cols = [0usize; 6];
+    let mut rows = [0usize; 6];
+    for k in 0..n {
+        cols[k] = (ix + k as isize).clamp(0, w - 1) as usize * channels;
+        rows[k] = (iy + k as isize).clamp(0, h - 1) as usize * width * channels;
+    }
+    for (c, o) in px.iter_mut().enumerate() {
+        let mut sum = 0.0f32;
+        for j in 0..n {
+            let row = &src[rows[j] + c..];
+            let mut acc = 0.0f32;
+            for i in 0..n {
+                acc += wx[i] * row[cols[i]];
+            }
+            sum += wy[j] * acc;
+        }
+        *o = sum;
+    }
 }
 
 #[cfg(test)]
@@ -2105,16 +2327,23 @@ mod tests {
         let src = vec![1.0f32, 2.0, 3.0, 4.0];
         let t = Transform::translation(1.0, 1.0);
         // No output asked for.
-        assert!(warp_plane(&src, 2, 2, 0, 5, &t, Edge::Clamp).is_empty());
-        assert!(warp_plane(&src, 2, 2, 5, 0, &t, Edge::Clamp).is_empty());
+        assert!(warp_plane(&src, 2, 2, 0, 5, &t, Edge::Clamp, Kernel::Bilinear).is_empty());
+        assert!(warp_plane(&src, 2, 2, 5, 0, &t, Edge::Clamp, Kernel::Bilinear).is_empty());
         // Nothing to sample: every output pixel is outside.
         assert_eq!(
-            warp_plane(&[], 0, 0, 2, 2, &t, Edge::Fill(-3.0)),
+            warp_plane(&[], 0, 0, 2, 2, &t, Edge::Fill(-3.0), Kernel::Bilinear),
             vec![-3.0; 4]
         );
-        assert_eq!(warp_plane(&[], 0, 0, 2, 2, &t, Edge::Clamp), vec![0.0; 4]);
+        assert_eq!(
+            warp_plane(&[], 0, 0, 2, 2, &t, Edge::Clamp, Kernel::Bilinear),
+            vec![0.0; 4]
+        );
         let empty = WorkingImage::new(0, 0);
-        assert!(warp_image(&empty, &t, Edge::Clamp).data.is_empty());
+        assert!(
+            warp_image(&empty, &t, Edge::Clamp, Kernel::Bilinear)
+                .data
+                .is_empty()
+        );
         // And a frame with no corners is one point.
         assert_eq!(t.corner_distance(&Transform::IDENTITY, 0, 0), 2.0f64.sqrt());
     }
@@ -2197,7 +2426,16 @@ mod tests {
         let (w, h) = (64usize, 48usize);
         let ramp = plane_of(w, h, |x, y| (0.25 * x + 0.5 * y + 3.0) as f32);
         let t = Transform::similarity(0.9, 0.3, [20.0, 20.0], [4.0, -2.0]);
-        let out = warp_plane(&ramp, w, h, w, h, &t, Edge::Fill(f32::NAN));
+        let out = warp_plane(
+            &ramp,
+            w,
+            h,
+            w,
+            h,
+            &t,
+            Edge::Fill(f32::NAN),
+            Kernel::Bilinear,
+        );
         let mut checked = 0;
         for y in 0..h {
             for x in 0..w {
@@ -2219,9 +2457,9 @@ mod tests {
         let (w, h) = (16usize, 16usize);
         let src = plane_of(w, h, |x, y| (x + y) as f32);
         let away = Transform::translation(-100.0, 0.0);
-        let filled = warp_plane(&src, w, h, w, h, &away, Edge::Fill(-1.0));
+        let filled = warp_plane(&src, w, h, w, h, &away, Edge::Fill(-1.0), Kernel::Bilinear);
         assert!(filled.iter().all(|v| *v == -1.0));
-        let clamped = warp_plane(&src, w, h, w, h, &away, Edge::Clamp);
+        let clamped = warp_plane(&src, w, h, w, h, &away, Edge::Clamp, Kernel::Bilinear);
         assert!(clamped[0].abs() < 1e-6);
         assert!((clamped[5 * w] - 5.0).abs() < 1e-6);
     }
@@ -2236,7 +2474,7 @@ mod tests {
         // Over the interior, where the resampling has neighbors on
         // every side, the warped frame is the reference's own picture.
         let difference = |t: &Transform| {
-            let aligned = warp_plane(&m, w, h, w, h, t, Edge::Clamp);
+            let aligned = warp_plane(&m, w, h, w, h, t, Edge::Clamp, Kernel::Bilinear);
             let mut sse = 0.0f64;
             let mut n = 0u32;
             for y in 24..h - 24 {
@@ -2258,7 +2496,7 @@ mod tests {
         );
         // And the inverse takes the reference the other way.
         let there = got.transform.inverse().expect("invertible");
-        let back = warp_plane(&r, w, h, w, h, &there, Edge::Clamp);
+        let back = warp_plane(&r, w, h, w, h, &there, Edge::Clamp, Kernel::Bilinear);
         let (cx, cy) = (w / 2, h / 2);
         assert!((back[cy * w + cx] - m[cy * w + cx]).abs() < 5e-3);
     }
@@ -2278,6 +2516,7 @@ mod tests {
             h,
             &truth.inverse().expect("invertible"),
             Edge::Clamp,
+            Kernel::Bilinear,
         );
         let got = fit(&r, &m, w, h, &Options::default()).expect("a fit");
         let e = error(&got, &truth, w, h);
@@ -2335,10 +2574,10 @@ mod tests {
             }
         }
         let t = Transform::translation(2.0, 3.0);
-        let out = warp_image(&image, &t, Edge::Clamp);
+        let out = warp_image(&image, &t, Edge::Clamp, Kernel::Bilinear);
         assert_eq!(out.pixel(5, 5), [7.0, 8.0, 15.0]);
         let camera = CameraImage::from_data(w, h, image.data.clone()).expect("a camera image");
-        let out = warp_camera_image(&camera, &t, Edge::Clamp);
+        let out = warp_camera_image(&camera, &t, Edge::Clamp, Kernel::Bilinear);
         assert_eq!(out.pixel(5, 5), [7.0, 8.0, 15.0]);
     }
 
@@ -2401,7 +2640,16 @@ mod tests {
             // The first warp pays for the output's pages; the
             // second is the one worth printing.
             let m = moved(w, h, &Transform::translation(12.0, -8.0));
-            let _ = warp_plane(&m, w, h, w, h, &Transform::IDENTITY, Edge::Clamp);
+            let _ = warp_plane(
+                &m,
+                w,
+                h,
+                w,
+                h,
+                &Transform::IDENTITY,
+                Edge::Clamp,
+                Kernel::Bilinear,
+            );
             let start = std::time::Instant::now();
             let warped = warp_plane(
                 &m,
@@ -2411,12 +2659,177 @@ mod tests {
                 h,
                 &Transform::similarity(1.004, 0.4f64.to_radians(), middle(w, h), [12.0, -8.0]),
                 Edge::Clamp,
+                Kernel::Bilinear,
             );
             println!(
                 "{w}x{h} warp of one plane: {:>7.0} ms ({} samples)",
                 start.elapsed().as_secs_f64() * 1000.0,
                 warped.len()
             );
+        }
+    }
+
+    /// A grating across `x` of `f` cycles a pixel, its phase moved by
+    /// `shift` pixels, `w` by `h`.
+    fn grating(w: usize, h: usize, f: f64, shift: f64) -> Vec<f32> {
+        (0..w * h)
+            .map(|i| {
+                let x = (i % w) as f64 + shift;
+                (0.5 + 0.4 * (std::f64::consts::TAU * f * x).sin()) as f32
+            })
+            .collect()
+    }
+
+    /// The amplitude of the grating of `f` in `plane` over its middle,
+    /// against the true one: the share of the contrast a warp kept.
+    fn kept(plane: &[f32], w: usize, h: usize, f: f64) -> f64 {
+        let (mut s, mut c, mut n) = (0.0, 0.0, 0.0);
+        for y in h / 4..3 * h / 4 {
+            for x in 16..w - 16 {
+                let a = std::f64::consts::TAU * f * x as f64;
+                let v = f64::from(plane[y * w + x]) - 0.5;
+                s += v * a.sin();
+                c += v * a.cos();
+                n += 1.0;
+            }
+        }
+        2.0 * (s * s + c * c).sqrt() / n / 0.4
+    }
+
+    /// A grating drawn half a pixel off each way and warped back: the
+    /// contrast Lanczos-3 keeps at a quarter and a half of Nyquist
+    /// against bilinear's (which is `cos(pi f)` at a half-pixel phase),
+    /// and the ring a step makes under it, as a share of the step.
+    #[test]
+    fn lanczos_keeps_what_bilinear_softens_and_rings_a_little() {
+        let (w, h) = (128usize, 32usize);
+        let back = Transform::translation(0.5, 0.5);
+        let mut said = Vec::new();
+        for f in [0.125, 0.25] {
+            let off = grating(w, h, f, -0.5);
+            let k = |kernel| {
+                kept(
+                    &warp_plane(&off, w, h, w, h, &back, Edge::Clamp, kernel),
+                    w,
+                    h,
+                    f,
+                )
+            };
+            let (bilinear, lanczos) = (k(Kernel::Bilinear), k(Kernel::Lanczos3));
+            said.push(format!(
+                "at {f} cycles a pixel: bilinear keeps {bilinear:.3}, Lanczos-3 {lanczos:.3}"
+            ));
+            let cos = (std::f64::consts::PI * f).cos();
+            assert!((bilinear - cos).abs() < 0.01, "{bilinear} against {cos}");
+            // Lanczos-3's response rises a little over one below
+            // half of Nyquist.
+            assert!(lanczos > 0.97 && lanczos < 1.05, "{lanczos}");
+        }
+        // A step from 0.1 to 0.9, half a pixel off.
+        let step: Vec<f32> = (0..w * h)
+            .map(|i| if (i % w) < w / 2 { 0.1 } else { 0.9 })
+            .collect();
+        let out = warp_plane(&step, w, h, w, h, &back, Edge::Clamp, Kernel::Lanczos3);
+        let (lo, hi) = out
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        let ring = f64::from((hi - 0.9).max(0.1 - lo)) / 0.8;
+        said.push(format!(
+            "a hard step's ring under Lanczos-3: {:.2}% of the step",
+            ring * 100.0
+        ));
+        // The same step as a lens draws it, over about a pixel.
+        let soft: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let d = (i % w) as f64 - (w / 2) as f64 + 0.5;
+                (0.1 + 0.8 / (1.0 + (-d / 0.5).exp())) as f32
+            })
+            .collect();
+        let out_soft = warp_plane(&soft, w, h, w, h, &back, Edge::Clamp, Kernel::Lanczos3);
+        let (slo, shi) = out_soft
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        let (tlo, thi) = sample_range(&soft);
+        let soft_ring = f64::from((shi - thi).max(tlo - slo).max(0.0)) / 0.8;
+        said.push(format!(
+            "a soft step's ring under Lanczos-3: {:.2}% of the step",
+            soft_ring * 100.0
+        ));
+        println!("{}", said.join("\n"));
+        assert!(ring > 0.0 && ring < 0.15, "{ring}");
+        assert!(soft_ring < 0.03, "{soft_ring}");
+        // Held to the source's range, nothing is past it.
+        let mut held = out.clone();
+        clamp_samples(&mut held, sample_range(&step));
+        assert!(held.iter().all(|v| (0.1..=0.9).contains(v)));
+    }
+
+    /// Lanczos-3 puts a flat picture back flat, an integer move exactly,
+    /// and an edge's fill where the point is outside.
+    #[test]
+    fn lanczos_is_flat_exact_on_the_grid_and_fills_outside() {
+        let (w, h) = (40usize, 30usize);
+        let flat = vec![0.37f32; w * h * 3];
+        let t = Transform::similarity(1.01, 0.3f64.to_radians(), [20.0, 15.0], [0.3, -0.7]);
+        let out = warp_samples(&flat, w, h, 3, &t, Edge::Clamp, Kernel::Lanczos3);
+        assert!(out.iter().all(|v| (v - 0.37).abs() < 1e-5));
+        let r = reference(w, h);
+        let moved = warp_plane(
+            &r,
+            w,
+            h,
+            w,
+            h,
+            &Transform::translation(3.0, -2.0),
+            Edge::Fill(f32::NAN),
+            Kernel::Lanczos3,
+        );
+        for y in 0..h - 2 {
+            for x in 0..w - 3 {
+                if y < 2 {
+                    assert!(moved[y * w + x].is_nan());
+                    continue;
+                }
+                assert_eq!(moved[y * w + x], r[(y - 2) * w + x + 3]);
+            }
+        }
+        let mut with_nan = vec![2.0f32, f32::NAN, -1.0, 5.0];
+        assert_eq!(sample_range(&with_nan), (-1.0, 5.0));
+        clamp_samples(&mut with_nan, (0.0, 3.0));
+        assert_eq!(with_nan[0], 2.0);
+        assert!(with_nan[1].is_nan());
+        assert_eq!((with_nan[2], with_nan[3]), (0.0, 3.0));
+        assert_eq!(sample_range(&[f32::NAN]), (0.0, 0.0));
+    }
+
+    /// The time a 45 MP frame of three channels takes to warp by a
+    /// similarity, bilinear and Lanczos-3, on the threads rayon has.
+    /// Ignored: a timing, not a check. `RAYON_NUM_THREADS=4 cargo test
+    /// --release -p greycard-core -- --ignored --nocapture
+    /// a_45_mp_warp`.
+    #[test]
+    #[ignore]
+    fn a_45_mp_warp() {
+        let (w, h) = (8256usize, 5504usize);
+        let src: Vec<f32> = (0..w * h * 3)
+            .map(|i| ((i * 7919) % 1000) as f32 / 1000.0)
+            .collect();
+        let t = Transform::similarity(1.002, 0.5f64.to_radians(), middle(w, h), [2.0, -1.5]);
+        for kernel in [
+            Kernel::Bilinear,
+            Kernel::Lanczos3,
+            Kernel::Bilinear,
+            Kernel::Lanczos3,
+        ] {
+            let start = std::time::Instant::now();
+            let out = warp_samples(&src, w, h, 3, &t, Edge::Fill(f32::NAN), kernel);
+            println!(
+                "{w}x{h}x3 {}: {:.2} s ({} threads)",
+                kernel.name(),
+                start.elapsed().as_secs_f64(),
+                rayon::current_num_threads()
+            );
+            drop(out);
         }
     }
 }

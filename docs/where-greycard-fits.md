@@ -185,8 +185,8 @@ Built, as of 0.10.0:
 - **Export.** Embedded profiles and EXIF, Adobe RGB beside sRGB,
   Display P3 and Rec.2020, presets, watermark, border,
   a queue that survives a restart, a headless `--export`.
-- **Merge.** A tripod bracket to HDR, frames shot turning to a
-  panorama, and a focus stack, each to a linear DNG that edits as a
+- **Merge.** A bracket to HDR, on a tripod or by hand, frames shot
+  turning to a panorama, and a focus stack, each to a linear DNG that edits as a
   raw, with the frames denoised first if asked.
 - **Around it.** Packages for Linux, macOS, and Windows, with Intel
   Mac and Windows on ARM builds that are new and tentative. A Report a

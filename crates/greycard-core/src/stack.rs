@@ -155,7 +155,7 @@ use rayon::prelude::*;
 
 use crate::error::{Error, Result};
 use crate::image::{CameraImage, WorkingImage};
-use crate::register::{self, Edge, Fit, Transform};
+use crate::register::{self, Edge, Fit, Kernel, Transform};
 use crate::sharpness;
 
 /// Which frame the others are put onto.
@@ -586,10 +586,22 @@ fn merge(
         // gigabyte live beside the pyramid it is being copied into.
         // The reference is the one frame that has to be copied, since
         // the caller's own frame is not the merge's to consume.
+        // Lanczos-3, which keeps the detail a stack is for; its ring
+        // at a hard edge is held to the frame's own range.
         let warped: Vec<f32> = if identity {
             frame.to_vec()
         } else {
-            register::warp_samples(frame, width, height, CHANNELS, &transform, Edge::Clamp)
+            let mut warped = register::warp_samples(
+                frame,
+                width,
+                height,
+                CHANNELS,
+                &transform,
+                Edge::Clamp,
+                Kernel::Lanczos3,
+            );
+            register::clamp_samples(&mut warped, register::sample_range(frame));
+            warped
         };
         let mask = if identity {
             vec![1.0f32; width * height]
@@ -602,6 +614,7 @@ fn merge(
                 height,
                 &transform,
                 Edge::Fill(0.0),
+                Kernel::Bilinear,
             )
         };
         // A frame covers a pixel when it contributes to it at all,
@@ -1228,6 +1241,49 @@ mod tests {
         );
     }
 
+    /// A stack of sharp frames each seen through a known similarity, as
+    /// a hand steps a focus: each frame's similarity comes back within a
+    /// quarter of a pixel at the corners (measured: 0.03 and 0.11, the
+    /// stack's fit as it was; the kernel does not enter it), and the
+    /// frames resampled by Lanczos-3 merge back to the scene.
+    #[test]
+    fn a_stacks_known_similarity_is_recovered() {
+        let (width, height) = (400usize, 300);
+        let scenes: Vec<Transform> = (0..3)
+            .map(|k| {
+                let step = k as f64 - 1.0;
+                Transform::similarity(
+                    1.0 + 0.002 * step,
+                    (0.5 * step).to_radians(),
+                    middle(width, height),
+                    [2.0 * step, -1.5 * step],
+                )
+            })
+            .collect();
+        let frames: Vec<WorkingImage> = scenes
+            .iter()
+            .map(|scene| {
+                let scene = *scene;
+                frame_of(width, height, move |x, y| {
+                    let (u, v) = scene.apply(x, y);
+                    texture(u, v, 0.0)
+                })
+            })
+            .collect();
+        let (merged, report) = stack(&frames, &Options::default()).expect("a stack");
+        assert_eq!((report.reference, report.used()), (1, 3));
+        for f in &report.frames {
+            let truth = scenes[f.index].inverse().unwrap();
+            let off = f.transform.corner_distance(&truth, width, height);
+            println!("frame {}: {off:.3} px at the corners", f.index);
+            assert!(off < 0.25, "frame {}: {off} px", f.index);
+        }
+        let truth = frame_of(width, height, |x, y| texture(x, y, 0.0));
+        let error = error_against(&merged, &truth, 24);
+        println!("a sharp stack merged back to {error:.5} of the scene");
+        assert!(error < 0.01, "{error}");
+    }
+
     /// Two frames, each sharp in one half, and one of them a twentieth
     /// brighter than the other. A merge that switched frames at the
     /// boundary would leave that twentieth as a step; the pyramid has
@@ -1507,8 +1563,13 @@ mod tests {
             without > 0.05,
             "the fixture has no halo to take out: {without}"
         );
+        // The fit reads the near frame's growing discs as a scale of
+        // about 2% and warps it; under Lanczos-3 that warp no longer
+        // softens the no-pyramid baseline into a larger halo (13% under
+        // bilinear, 9% now), so the pyramid's share of it is measured
+        // against a smaller one: 4.3% of 9.1%.
         assert!(
-            with.abs() < 0.05 && with < without * 0.4,
+            with.abs() < 0.05 && with < without * 0.5,
             "the blend leaves a halo of {:.1}% of the step, against {:.1}% with no \
              pyramid",
             with * 100.0,

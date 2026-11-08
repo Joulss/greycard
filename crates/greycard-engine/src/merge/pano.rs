@@ -1091,6 +1091,8 @@ fn laid(
                 .and_then(greycard_ai::tier_of)
                 .map(Into::into),
             noise: None,
+            deghost: None,
+            kernel: None,
             geometry: Geometry::Pano(Box::new(merge::Laid {
                 anchor,
                 kernel: options.kernel,

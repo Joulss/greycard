@@ -103,6 +103,21 @@ design note behind it.
   CPU alone
   ([§607](https://github.com/jessolmstead/greycard/blob/master/docs/notes/607-the-exports-detail-dehaze-and-sharpen-on-the-gpu.md)).
 
+### Merge
+
+- A bracket shot by hand merges: each frame is fitted onto the
+  reference as a shift, a turn, and a scale, not a shift alone, so the
+  corners line up as the middle does
+  ([§612](https://github.com/jessolmstead/greycard/blob/master/docs/notes/612-the-handheld-bracket-and-stack.md)).
+- When a frame of a bracket had moved, what moved in the scene between
+  frames (a person, a branch, a wave) is taken from the reference
+  alone instead of doubled; `greycard merge hdr --deghost on|off|auto`
+  sets it on the command line
+  ([§612](https://github.com/jessolmstead/greycard/blob/master/docs/notes/612-the-handheld-bracket-and-stack.md)).
+- Frames a bracket or a focus stack moves are resampled with Lanczos-3
+  instead of bilinear, so they keep their detail
+  ([§612](https://github.com/jessolmstead/greycard/blob/master/docs/notes/612-the-handheld-bracket-and-stack.md)).
+
 ### Fixes
 
 - Canon EOS R8 Mark II raws open

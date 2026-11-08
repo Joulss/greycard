@@ -30,10 +30,12 @@
 
 pub mod blend;
 pub mod features;
+pub mod ghost;
 pub mod pano;
 pub mod seam;
 mod tag;
 
+pub use ghost::{Ghosts, Judge};
 pub use tag::{Geometry, Laid, Placed, Recipe, Registration, Tag};
 
 use rayon::prelude::*;
@@ -501,6 +503,13 @@ impl Accumulator {
     /// luminance `l`. One weight a pixel for all three channels, so a
     /// pixel's color comes from the same frames as its brightness.
     pub fn add(&mut self, frame: &Frame<'_>) {
+        self.add_kept(frame, None);
+    }
+
+    /// [`Accumulator::add`] with each pixel's weight multiplied by
+    /// `keep`'s, 0 to 1: what the deghosting leaves of a frame. A keep
+    /// of one adds the pixel exactly as `add` does.
+    fn add_kept(&mut self, frame: &Frame<'_>, keep: Option<&[f32]>) {
         let w = self.width;
         assert_eq!(frame.rgb.len(), w * self.height * 3);
         assert_eq!(frame.mask.len(), w * self.height);
@@ -511,7 +520,9 @@ impl Accumulator {
             .zip(self.weight.par_chunks_mut(w))
             .zip(frame.rgb.par_chunks(w * 3))
             .zip(frame.mask.par_chunks(w))
-            .for_each(|(((sum, weight), rgb), mask)| {
+            .enumerate()
+            .for_each(|(y, (((sum, weight), rgb), mask))| {
+                let keep = keep.map(|k| &k[y * w..(y + 1) * w]);
                 for x in 0..w {
                     if mask[x] || weight[x] < 0.0 {
                         continue;
@@ -520,7 +531,13 @@ impl Accumulator {
                     if !p.iter().all(|v| v.is_finite()) {
                         continue;
                     }
-                    let wt = (e * e / f64::from(noise.variance(luma(p)))) as f32;
+                    let mut wt = (e * e / f64::from(noise.variance(luma(p)))) as f32;
+                    if let Some(keep) = keep {
+                        if keep[x] <= 0.0 {
+                            continue;
+                        }
+                        wt *= keep[x];
+                    }
                     for c in 0..3 {
                         sum[x * 3 + c] += wt * (f64::from(p[c]) / e) as f32;
                     }

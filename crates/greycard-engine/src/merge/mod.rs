@@ -31,7 +31,7 @@ use greycard_core::merge::{
 };
 use greycard_core::output::OnExists;
 use greycard_core::raw::{RawFrame, Samples, Shot};
-use greycard_core::register::{self, Edge, Model};
+use greycard_core::register::{self, Edge, Kernel, Model};
 use greycard_core::{CameraImage, WhiteBalance};
 use greycard_edit::Edit;
 
@@ -65,6 +65,44 @@ pub struct Options {
     /// measuring: its exposure and its move, the frames' order. For a
     /// merge made again ([`again`]).
     pub registration: Option<Vec<Registration>>,
+    /// Whether what moved in the scene is taken from the reference
+    /// alone.
+    pub deghost: Deghost,
+    /// The kernel a moved frame is resampled with; none for Lanczos-3.
+    /// A recipe written before it was kept resampled bilinearly.
+    pub kernel: Option<Kernel>,
+}
+
+/// Whether a merge takes what moved in the scene between its frames
+/// from the reference alone (the core's `merge::ghost`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Deghost {
+    On,
+    /// Never: a tripod's bracket of a still scene.
+    Off,
+    /// When any frame's fit was believed moved: a bracket shot by
+    /// hand. A tripod's has no ghost a four-sigma test should be let
+    /// find in its noise.
+    #[default]
+    Auto,
+}
+
+impl Deghost {
+    /// Its name in a merge's recipe and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Deghost::On => "on",
+            Deghost::Off => "off",
+            Deghost::Auto => "auto",
+        }
+    }
+
+    /// The setting of that name.
+    pub fn named(name: &str) -> Option<Deghost> {
+        [Deghost::On, Deghost::Off, Deghost::Auto]
+            .into_iter()
+            .find(|d| d.name() == name)
+    }
 }
 
 /// How a merge fits its frames' lateral CA.
@@ -141,6 +179,9 @@ pub struct FrameReport {
     pub moved: Option<f64>,
     /// Whether it was resampled onto the reference.
     pub resampled: bool,
+    /// The share of its pixels the deghosting took from the reference
+    /// instead; none for the reference, or when it did not run.
+    pub rejected: Option<f64>,
     /// Its noise as the weights read it.
     pub noise: Noise,
 }
@@ -579,6 +620,7 @@ pub fn hdr_of(
         warnings.push(format!("the learned denoiser stood down: {why}"));
     }
     let (w, h) = (r.width, r.height);
+    let kernel = options.kernel.unwrap_or(Kernel::Lanczos3);
     let size = Some((ref_frame.width, ref_frame.height));
     let white = r.gains.map(f64::from);
     let mut denoised = r.denoised;
@@ -597,6 +639,13 @@ pub fn hdr_of(
     let mut pairs = merge::PairNoise::default();
     let model = |pairs: &merge::PairNoise| options.noise.or_else(|| pairs.fit()).unwrap_or(r.noise);
     let mut acc = Accumulator::new(w, h);
+    // The deghosting, judged against the reference: from the start when
+    // asked, or from the first frame believed moved under auto.
+    let mut ghosts = match options.deghost {
+        Deghost::Off => None,
+        Deghost::On => Some(merge::Ghosts::new(w, h, true)),
+        Deghost::Auto => Some(merge::Ghosts::new(w, h, false)),
+    };
     // The reference goes in once the pairs have said what they can: just
     // before the darkest frame, which fills what every frame clipped.
     let mut reference_in = false;
@@ -654,7 +703,7 @@ pub fn hdr_of(
             Some(g) => {
                 let t = Instant::now();
                 let moved = g.shift.map(|shift| {
-                    resample(&mut f, &shift, w, h);
+                    resample(&mut f, &shift, w, h, kernel);
                     shift.corner_distance(&register::Transform::IDENTITY, w, h)
                 });
                 (
@@ -680,8 +729,9 @@ pub fn hdr_of(
                 // A tripod's frames should not move; a fit says
                 // whether they did.
                 let t = Instant::now();
-                let (moved, shift) = check_moved(&ref_rgb, &mut f, rough, w, h, &sources.name(k));
-                if shift.is_some() {
+                let (moved, shift) = check_moved(&ref_rgb, &f, rough, w, h, &sources.name(k));
+                if let Some(shift) = &shift {
+                    resample(&mut f, shift, w, h, kernel);
                     measured = measure(&f);
                 }
                 let fit_s = t.elapsed().as_secs_f64();
@@ -704,6 +754,9 @@ pub fn hdr_of(
             }
         };
         let resampled = shift.is_some();
+        if resampled && let Some(g) = ghosts.as_mut() {
+            g.run(&mut acc);
+        }
         if resampled {
             warnings.push(format!(
                 "{} had moved {:.2} px and was resampled onto the reference",
@@ -731,7 +784,19 @@ pub fn hdr_of(
             exposure,
             noise,
         };
-        acc.add(&frame);
+        match ghosts.as_mut() {
+            Some(g) => g.add(
+                &mut acc,
+                &frame,
+                &merge::Judge {
+                    rgb: &ref_rgb,
+                    mask: &ref_mask,
+                    noise: sensor,
+                },
+                k,
+            ),
+            None => acc.add(&frame),
+        }
         if k == darkest {
             all_clipped = acc.fill_clipped(&frame);
         }
@@ -745,6 +810,7 @@ pub fn hdr_of(
             exposure,
             moved,
             resampled,
+            rejected: None,
             noise,
         });
     }
@@ -767,10 +833,38 @@ pub fn hdr_of(
         exposure: 1.0,
         moved: None,
         resampled: false,
+        rejected: None,
         noise: sensor,
     });
     drop(ref_rgb);
     drop(ref_mask);
+    if let Some(g) = ghosts {
+        let t = Instant::now();
+        let (ledger, pending) = g.peak();
+        log::info!(
+            "merge: deghosting held at most {:.1} MB of samples where the reference \
+             clipped and {:.1} MB set aside before a move",
+            ledger as f64 / 1e6,
+            pending as f64 / 1e6
+        );
+        for (k, rejected) in g.finish(&mut acc) {
+            if let Some(r) = reports[k].as_mut() {
+                r.rejected = rejected;
+            }
+        }
+        seconds.push(("deghost", t.elapsed().as_secs_f64()));
+    }
+    for r in reports.iter().flatten() {
+        if let Some(by) = r.moved {
+            log::info!(
+                "merge: {}: moved {by:.2} px{}{}",
+                r.name,
+                if r.resampled { ", resampled" } else { "" },
+                r.rejected
+                    .map_or(String::new(), |f| format!(", {:.2}% deghosted", f * 100.0))
+            );
+        }
+    }
     let image = acc.finish();
 
     progress.step(Step::Writing);
@@ -801,6 +895,8 @@ pub fn hdr_of(
                 .and_then(greycard_ai::tier_of)
                 .map(Into::into),
             noise: options.noise,
+            deghost: Some(options.deghost.name().into()),
+            kernel: Some(kernel),
             geometry: Geometry::Bracket(registration),
         }),
     };
@@ -1040,6 +1136,13 @@ pub fn again(
     };
     let ca = CaFits::named(&recipe.ca)
         .with_context(|| format!("the recipe's CA fit, {}, is not one we know", recipe.ca))?;
+    // A bracket written before the setting was kept was not deghosted:
+    // read as off, so it is made again as it was.
+    let deghost = match recipe.deghost.as_deref() {
+        None => Deghost::Off,
+        Some(d) => Deghost::named(d)
+            .with_context(|| format!("the recipe's deghosting, {d}, is not one we know"))?,
+    };
     match recipe.geometry {
         Geometry::Bracket(registration) => hdr_of(
             &Files(&frames),
@@ -1053,6 +1156,10 @@ pub fn again(
                 noise: recipe.noise,
                 ca,
                 registration: Some(registration),
+                deghost,
+                // A recipe written before the kernel was kept resampled
+                // bilinearly.
+                kernel: Some(recipe.kernel.unwrap_or(Kernel::Bilinear)),
             },
             models,
             progress,
@@ -1254,7 +1361,8 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Whether frame `f` moved off the reference, and if it did, `f`
-/// resampled onto it: a translation fit on the band both hold, taken
+/// resampled onto it: a similarity fit (a shift, a turn, and a scale,
+/// what a hand adds) on the band both hold, taken
 /// only past a tenth of a pixel, and believed only where the picture
 /// has structure every way and the move fits clearly better than none.
 /// A still frame of a flat horizon otherwise reads motion along it from
@@ -1262,7 +1370,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// move it was resampled by.
 fn check_moved(
     reference: &[f32],
-    f: &mut Walked,
+    f: &Walked,
     e: f64,
     w: usize,
     h: usize,
@@ -1279,7 +1387,7 @@ fn check_moved(
         w,
         h,
         &register::Options {
-            model: Model::Translation,
+            model: Model::Similarity,
             ..Default::default()
         },
     ) {
@@ -1296,7 +1404,16 @@ fn check_moved(
         return (Some(by), None);
     }
     let condition = merge::condition(&a, w, h);
-    let back = register::warp_plane(&b, w, h, w, h, &fit.transform, Edge::Fill(f32::NAN));
+    let back = register::warp_plane(
+        &b,
+        w,
+        h,
+        w,
+        h,
+        &fit.transform,
+        Edge::Fill(f32::NAN),
+        Kernel::Bilinear,
+    );
     let (before, after) = (merge::residual(&a, &b), merge::residual(&a, &back));
     if condition < merge::MIN_CONDITION || after > merge::BETTER * before {
         log::info!(
@@ -1306,19 +1423,51 @@ fn check_moved(
         );
         return (None, None);
     }
-    resample(f, &fit.transform, w, h);
     (Some(by), Some(fit.transform))
 }
 
-/// Frame `f` resampled by `shift` onto the reference, and masked again.
-fn resample(f: &mut Walked, shift: &register::Transform, w: usize, h: usize) {
+/// Frame `f` resampled by `shift` onto the reference by `kernel`, and
+/// masked again ([`resampled`]).
+fn resample(f: &mut Walked, shift: &register::Transform, w: usize, h: usize, kernel: Kernel) {
+    let (rgb, mask) = resampled(std::mem::take(&mut f.rgb), shift, w, h, kernel);
+    f.rgb = rgb;
+    f.mask = mask;
+}
+
+/// Camera RGB `rgb` (`w` by `h`) resampled by `shift` with `kernel`,
+/// held to its own range so a wide kernel's ring at a hard edge puts
+/// nothing under its darkest or over its brightest, and its clip mask.
+/// A wide kernel's ring reaches its reach from a clipped edge, past
+/// the mask's own growth by the demosaic's reach: the mask is grown by
+/// the kernel's taps past bilinear's as well, so the ring is not
+/// merged.
+fn resampled(
+    rgb: Vec<f32>,
+    shift: &register::Transform,
+    w: usize,
+    h: usize,
+    kernel: Kernel,
+) -> (Vec<f32>, Vec<bool>) {
+    let range = register::sample_range(&rgb);
     let image = CameraImage {
         width: w,
         height: h,
-        data: std::mem::take(&mut f.rgb),
+        data: rgb,
     };
-    f.rgb = register::warp_camera_image(&image, shift, Edge::Fill(f32::NAN)).data;
-    f.mask = merge::clip_mask(&f.rgb, w, h);
+    let mut rgb = register::warp_camera_image(&image, shift, Edge::Fill(f32::NAN), kernel).data;
+    drop(image);
+    if kernel == Kernel::Bilinear {
+        let mask = merge::clip_mask(&rgb, w, h);
+        return (rgb, mask);
+    }
+    register::clamp_samples(&mut rgb, range);
+    let mask = merge::grow(
+        &merge::clip_mask(&rgb, w, h),
+        w,
+        h,
+        (kernel.reach() - 1) as usize,
+    );
+    (rgb, mask)
 }
 
 /// The models a merge runs from the command line or the window's merge
@@ -1636,6 +1785,124 @@ mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A bracket's frame turned half a degree, scaled by a part in five
+    /// hundred, and shifted two pixels, as a hand holds a camera: the
+    /// similarity the recipe keeps is the truth to a tenth of a pixel at
+    /// every corner, the frame is deghosted (its fit was believed), and
+    /// the frame that did not move is left alone.
+    #[test]
+    fn a_frame_turned_and_scaled_by_a_hand_is_found_at_the_corners() {
+        let light = |u: f64, v: f64, c: usize| {
+            let wave = |t: f64| (std::f64::consts::PI * t / 13.0).cos();
+            let fine = 0.5 + 0.5 * wave(u) * wave(v * 1.3 + 0.4 * u);
+            let drift = 0.5 + 0.5 * (u * 0.071 + v * 0.113).sin();
+            ((0.03 + 0.12 * fine + 0.04 * drift) * [0.55, 1.0, 0.7][c]) as f32
+        };
+        let middle = [(W - 1) as f64 / 2.0, (H - 1) as f64 / 2.0];
+        let hand = register::Transform::similarity(1.002, 0.5f64.to_radians(), middle, [2.0, -1.0]);
+        let (dir, files) = bracket_of("turned", 29, &|x, y, c, k| {
+            let (u, v) = if k == 2 {
+                hand.apply(x as f64, y as f64)
+            } else {
+                (x as f64, y as f64)
+            };
+            light(u, v, c)
+        });
+        let report = merged(&files, &Options::default());
+        let (_, tag) = samples_and_tag(&report.out);
+        let Some(Recipe {
+            geometry: Geometry::Bracket(registration),
+            deghost,
+            ..
+        }) = tag.recipe
+        else {
+            panic!("a bracket's recipe");
+        };
+        assert_eq!(deghost.as_deref(), Some("auto"));
+        let found = registration[2].shift.expect("the turned frame moved");
+        let truth = hand.inverse().unwrap();
+        let off = found.corner_distance(&truth, W, H);
+        println!("a hand's similarity found to {off:.3} px at the corners");
+        assert!(
+            off < 0.1,
+            "{off} px at the corners: {found:?} against {truth:?}"
+        );
+        assert!(registration[0].shift.is_none() && !report.frames[0].resampled);
+        assert!(report.frames[2].rejected.is_some());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A step from a clipped region to a dark one, resampled half a
+    /// pixel by Lanczos-3: the kernel's last lobe lands past the clip
+    /// mask's growth by the demosaic's reach, and the mask grown by the
+    /// kernel's reach covers it. Bilinear is masked as it was.
+    #[test]
+    fn a_clipped_edges_ring_is_masked() {
+        let (w, h) = (64usize, 16usize);
+        let rgb: Vec<f32> = (0..w * h)
+            .flat_map(|i| [if i % w < w / 2 { 1.0f32 } else { 0.05 }; 3])
+            .collect();
+        let shift = register::Transform::translation(0.5, 0.0);
+        let (out, mask) = resampled(rgb.clone(), &shift, w, h, Kernel::Lanczos3);
+        let before = merge::clip_mask(&out, w, h);
+        let y = h / 2;
+        let newly: Vec<usize> = (0..w)
+            .filter(|&x| mask[y * w + x] && !before[y * w + x])
+            .collect();
+        assert!(!newly.is_empty());
+        let ring = newly
+            .iter()
+            .map(|&x| (out[(y * w + x) * 3 + 1] - 0.05).abs())
+            .fold(0.0f32, f32::max);
+        assert!(ring > 0.01, "{ring}");
+        // Past the newly masked pixels the ring is under a part in a
+        // thousand of the step, up to the last column, which the move
+        // takes off the frame.
+        let past = newly.iter().max().unwrap() + 1;
+        for x in past..w - 1 {
+            assert!((out[(y * w + x) * 3 + 1] - 0.05).abs() < 1e-3 * 0.95, "{x}");
+        }
+        let (out, mask) = resampled(rgb, &shift, w, h, Kernel::Bilinear);
+        assert_eq!(mask, merge::clip_mask(&out, w, h));
+    }
+
+    /// A still bracket under auto runs no deghosting and merges to the
+    /// bit as with it off; a moved one under off rejects nothing, and
+    /// under auto says what it rejected.
+    #[test]
+    fn deghosting_runs_only_when_asked_or_a_frame_moved() {
+        let (dir, files) = bracket("still-ghost", [0, 0, 0]);
+        let off = merged(
+            &files,
+            &Options {
+                deghost: Deghost::Off,
+                ..Default::default()
+            },
+        );
+        let auto = merged(&files, &Options::default());
+        let (a, tag) = samples_and_tag(&off.out);
+        let (b, _) = samples_and_tag(&auto.out);
+        assert!(a.iter().zip(&b).all(|(a, b)| a.to_bits() == b.to_bits()));
+        assert!(auto.frames.iter().all(|f| f.rejected.is_none()));
+        assert_eq!(tag.recipe.unwrap().deghost.as_deref(), Some("off"));
+        greycard_core::testing::remove_dir_retry(&dir);
+
+        let (dir, files) = bracket("moved-ghost", [0, 0, 2]);
+        let off = merged(
+            &files,
+            &Options {
+                deghost: Deghost::Off,
+                ..Default::default()
+            },
+        );
+        assert!(off.frames[2].resampled);
+        assert!(off.frames.iter().all(|f| f.rejected.is_none()));
+        let auto = merged(&files, &Options::default());
+        assert!(auto.frames[0].rejected.is_some() && auto.frames[2].rejected.is_some());
+        assert_eq!(auto.frames[1].rejected, None);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A merged file's samples and its tag.
     fn samples_and_tag(file: &Path) -> (Vec<f32>, merge::Tag) {
         let back = greycard_core::decode::decode_path(file).unwrap();
@@ -1664,6 +1931,8 @@ mod tests {
         );
         let recipe = tag.recipe.clone().expect("a recipe");
         assert_eq!((recipe.ca.as_str(), recipe.denoise), ("once", None));
+        assert_eq!(recipe.deghost.as_deref(), Some("auto"));
+        assert_eq!(recipe.kernel, Some(Kernel::Lanczos3));
         let Geometry::Bracket(registration) = &recipe.geometry else {
             panic!("a bracket's geometry");
         };
@@ -1873,6 +2142,8 @@ mod tests {
                 ca: "once".into(),
                 denoise: None,
                 noise: None,
+                deghost: None,
+                kernel: None,
                 geometry: Geometry::Bracket(vec![
                     Registration {
                         exposure: 1.0,

@@ -80,6 +80,15 @@ pub struct Recipe {
     /// The sensor's noise a bracket's weights were given in place of
     /// what its pairs measure; none for measured.
     pub noise: Option<Noise>,
+    /// Whether a bracket's frames were deghosted, in the engine's
+    /// words: `on`, `off`, or `auto`. None for a panorama, and for a
+    /// bracket written before it was kept, which the engine reads as
+    /// `off`: what such a merge ran.
+    pub deghost: Option<String>,
+    /// How a bracket's moved frames were resampled. None for a
+    /// panorama, whose [`Laid`] keeps its own; a bracket written before
+    /// it was kept reads as bilinear, what such a merge ran.
+    pub kernel: Option<Kernel>,
     pub geometry: Geometry,
 }
 
@@ -345,8 +354,14 @@ impl Recipe {
         if let Some(n) = self.noise {
             fact("noise", join(&[n.shot, n.read]));
         }
+        if let Some(d) = &self.deghost {
+            fact("deghost", d.clone());
+        }
         match &self.geometry {
             Geometry::Bracket(frames) => {
+                if let Some(k) = self.kernel {
+                    fact("kernel", k.name().into());
+                }
                 for (k, r) in frames.iter().enumerate() {
                     fact("exposure", format!("{k} {}", r.exposure));
                     if let Some(t) = r.shift {
@@ -414,6 +429,7 @@ struct Read {
     ca: Option<String>,
     denoise: Option<Option<String>>,
     noise: Option<Noise>,
+    deghost: Option<String>,
     exposures: Vec<(usize, f64)>,
     shifts: Vec<(usize, Transform)>,
     anchor: Option<usize>,
@@ -451,6 +467,10 @@ impl Read {
             "noise" => numbers::<2, f32>(value, ' ')
                 .map(|[shot, read]| self.noise = Some(Noise { shot, read }))
                 .is_some(),
+            "deghost" => {
+                self.deghost = Some(value.to_string());
+                true
+            }
             "exposure" => of_frame::<1>(value)
                 .map(|(k, [e])| self.exposures.push((k, e)))
                 .is_some(),
@@ -522,6 +542,7 @@ impl Read {
         }
         let one = |key: &str| format!("no {key}=");
         let every = |key: &str| format!("not one {key}= a frame");
+        let mut kernel = None;
         let geometry = match kind {
             "hdr" => {
                 let exposures = each(self.exposures, n).ok_or_else(|| every("exposure"))?;
@@ -538,6 +559,7 @@ impl Read {
                         .ok_or_else(|| format!("shift={k} past the frames"))?
                         .shift = Some(t);
                 }
+                kernel = Some(self.kernel.unwrap_or(Kernel::Bilinear));
                 Geometry::Bracket(frames)
             }
             "pano" => {
@@ -584,6 +606,8 @@ impl Read {
             ca: self.ca.ok_or_else(|| one("ca"))?,
             denoise: self.denoise.ok_or_else(|| one("denoise"))?,
             noise: self.noise,
+            deghost: self.deghost,
+            kernel,
             geometry,
         })
     }
@@ -710,6 +734,8 @@ mod tests {
                     shot: 1.234_567_8e-5,
                     read: 3.0e-8,
                 }),
+                deghost: Some("auto".into()),
+                kernel: Some(Kernel::Lanczos3),
                 geometry: Geometry::Bracket(vec![
                     Registration {
                         exposure: 0.263_157_894_736_842_1,
@@ -745,6 +771,8 @@ mod tests {
                 ca: "per-frame".into(),
                 denoise: None,
                 noise: None,
+                deghost: None,
+                kernel: None,
                 geometry: Geometry::Pano(Box::new(Laid {
                     anchor: 1,
                     kernel: Kernel::Lanczos3,
@@ -905,6 +933,18 @@ mod tests {
         assert_eq!((back.reference, back.recipe), (1, None));
         assert_eq!(back.unread.as_deref(), Some("exposure=2 lots"));
         assert_eq!(back.heads[0].as_deref(), Some("0f".repeat(32).as_str()));
+        // A bracket written before its deghosting was kept reads with
+        // none, which the engine makes again as off.
+        let before = full.replace("deghost=auto\n", "");
+        assert_ne!(before, full);
+        let back = Tag::parse(before.as_bytes()).unwrap();
+        assert_eq!(back.recipe.map(|r| r.deghost), Some(None));
+        // And one written before its kernel was kept was resampled
+        // bilinearly.
+        let before = full.replace("kernel=lanczos3\n", "");
+        assert_ne!(before, full);
+        let back = Tag::parse(before.as_bytes()).unwrap();
+        assert_eq!(back.recipe.and_then(|r| r.kernel), Some(Kernel::Bilinear));
         let no_ca = full.replace("ca=once\n", "");
         let back = Tag::parse(no_ca.as_bytes()).unwrap();
         assert_eq!(back.unread.as_deref(), Some("no ca="));
