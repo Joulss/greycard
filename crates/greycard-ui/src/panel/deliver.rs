@@ -314,15 +314,19 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
             st.views.thumb_base[index] = Some((width, height, rgb));
             st.views.thumb_made[index] = size;
             st.views.thumb_failed[index] = false;
-            // One that was being made when the cells grew comes back
-            // at the old size. Nothing else would ask for it again
-            // until the grid next moved, and a snapshot waiting on
-            // the grid would wait for ever, so ask here.
+            // One that was being made when the cells grew, the grid's
+            // or the strip's, comes back at the old size. Nothing else
+            // would ask for it again until the view next moved, and a
+            // snapshot waiting on the grid would wait for ever, so ask
+            // here, once at each size.
+            let shown = if app.get_grid_open() {
+                st.views.grid_shown
+            } else {
+                st.views.strip_shown
+            };
             if grid::wants_bigger(size, st.views.thumb_want)
-                && st
-                    .views
-                    .grid_shown
-                    .is_some_and(|(f, l)| (f..=l).contains(&(index as i32)))
+                && st.views.thumb_asked[index] < st.views.thumb_want
+                && shown.is_some_and(|(f, l)| (f..=l).contains(&(index as i32)))
             {
                 st.views.thumb_asked[index] = st.views.thumb_want;
                 let job = crate::rows::thumb_job(st, index);

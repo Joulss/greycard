@@ -274,8 +274,23 @@ export component App inherits Window {
     // set from the Rust side's own constants (`strip.rs`) so the cells
     // drawn here and the arithmetic there cannot drift apart: the
     // pictures' height, the ring around each, and the pad at the ends
-    // and above the cells.
-    in property <length> strip-photo: 91px;
+    // and above the cells. The pictures' height is the one a drag on
+    // the strip's top edge asked for, `strip-size`, held to its floor
+    // and to the strip's ceiling of a third of the window's height
+    // (never under the default's), and read back by the arithmetic.
+    in-out property <length> strip-size: 91px;
+    in property <length> strip-photo-default: 91px;
+    in property <length> strip-photo-least: 60px;
+    // The ceilings follow the window by its `changed` handlers, not by
+    // binding: the window's own least size is laid out from the panes',
+    // and a binding on its size would loop through it.
+    property <length> strip-photo-most: root.strip-photo-default;
+    out property <length> strip-photo: clamp(root.strip-size, root.strip-photo-least, root.strip-photo-most);
+    /// The pictures took another height: Rust lays the strip out at it,
+    /// holds it still, and asks the thumbnail pool for the long edge it
+    /// needs.
+    callback strip-sized();
+    changed strip-photo => { root.strip-sized(); }
     in property <length> strip-ring: 2px;
     in property <length> strip-pad: 12px;
     property <length> strip-foot: max(root.strip-pad, ScrollBars.band - 2px);
@@ -283,7 +298,8 @@ export component App inherits Window {
     /// a color label's band, and under the ring, 2 px clear of it, the
     /// name's line, 13 px for its 11 px text and a `space-1` under it
     /// for the descenders.
-    property <length> strip-cell-h: 2 * root.strip-ring + root.strip-photo + Theme.space-1 + 2px + 13px + Theme.space-1;
+    property <length> strip-cell-h: root.strip-photo + root.strip-cell-rest;
+    property <length> strip-cell-rest: 2 * root.strip-ring + Theme.space-1 + 2px + 13px + Theme.space-1;
     /// The strip's cells, each its picture's shape: where a row's cell
     /// is along the row, how long the row is, the rows a scroll shows,
     /// and the scroll that shows a row, asked of the arithmetic in
@@ -2673,10 +2689,30 @@ export component App inherits Window {
     in-out property <bool> left-hidden: false;
     in-out property <bool> right-hidden: false;
     in-out property <bool> strip-hidden: false;
+    // The widths a drag on the panes' inner edges asked for, kept in
+    // the settings beside the hidden flags; a double-click on an edge
+    // goes back to the default.
+    in-out property <length> left-size: 240px;
+    in-out property <length> right-size: 320px;
     // The three widths, read by the layout and by the arrows on the
-    // viewport's edges.
-    property <length> left-w: root.left-hidden ? 0px : 240px;
-    property <length> right-w: root.right-hidden ? 0px : 320px;
+    // viewport's edges: each pane's size held to its floor and to a
+    // third of the window's width, never under its default, so a
+    // narrow window lays out as it did before the panes took a size.
+    property <length> left-most: 240px;
+    property <length> right-most: 320px;
+    function ceilings() {
+        root.left-most = max(240px, root.width / 3);
+        root.right-most = max(320px, root.width / 3);
+        root.strip-photo-most = max(root.strip-photo-default,
+            root.height / 3 - root.strip-pad - root.strip-cell-rest - root.strip-foot);
+    }
+    init => { root.ceilings(); }
+    changed width => { root.ceilings(); }
+    changed height => { root.ceilings(); }
+    changed strip-photo-default => { root.ceilings(); }
+    changed strip-foot => { root.ceilings(); }
+    property <length> left-w: root.left-hidden ? 0px : clamp(root.left-size, 200px, root.left-most);
+    property <length> right-w: root.right-hidden ? 0px : clamp(root.right-size, 280px, root.right-most);
     // The strip's foot grows with the scroll bar's size, so a wider
     // thumb still keeps off the frames.
     out property <length> strip-h: root.strip-hidden ? 0px : root.strip-pad + root.strip-cell-h + root.strip-foot;
@@ -5176,6 +5212,47 @@ export component App inherits Window {
             }
         }
         }
+    }
+
+    // The panes' inner edges and the strip's top edge: a drag sets the
+    // pane's width or the strip's pictures' height, held to its floor
+    // and ceiling, and a double-click goes back to the default. Inside
+    // the pane, 4 px along its edge, so the viewport keeps every pixel
+    // of its presses; a scroll band's thumb is 4 px in from its outer
+    // edge, so the left pane's keeps its own. Under the arrows,
+    // declared after, and the sheets. The Develop panel's and the
+    // strip's are the Loupe's: the grid covers both.
+    property <length> size-from;
+    if !root.left-hidden: left-edge := DragEdge {
+        along-y: false;
+        x: root.left-w - 4px;
+        y: 0;
+        width: 4px;
+        height: root.grid-open ? root.height : root.height - root.strip-h;
+        started => { root.size-from = root.left-w; }
+        dragged(d) => { root.left-size = clamp(root.size-from + d, 200px, root.left-most); }
+        evened => { root.left-size = 240px; }
+    }
+    if !root.right-hidden && !root.grid-open: right-edge := DragEdge {
+        along-y: false;
+        x: root.width - root.right-w;
+        y: 0;
+        width: 4px;
+        height: root.height - root.strip-h;
+        started => { root.size-from = root.right-w; }
+        dragged(d) => { root.right-size = clamp(root.size-from - d, 280px, root.right-most); }
+        evened => { root.right-size = 320px; }
+    }
+    if !root.strip-hidden && !root.grid-open: strip-edge := DragEdge {
+        x: 0;
+        y: root.height - root.strip-h;
+        width: root.width;
+        height: 4px;
+        started => { root.size-from = root.strip-photo; }
+        dragged(d) => {
+            root.strip-size = clamp(root.size-from - d, root.strip-photo-least, root.strip-photo-most);
+        }
+        evened => { root.strip-size = root.strip-photo-default; }
     }
 
     // The left pane's arrow, over the grid too, at the grid's edge

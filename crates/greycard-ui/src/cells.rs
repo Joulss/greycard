@@ -91,7 +91,10 @@ struct Shape {
     pending: Vec<(usize, f32)>,
     serial: i32,
     cache: Option<(Key, Rc<grid::Layout>)>,
-    strip: Option<(i32, Rc<strip::Layout>)>,
+    strip: Option<((i32, u32), Rc<strip::Layout>)>,
+    /// The strip's pictures' height as last seen, to lay the strip out
+    /// at when the height changes and hold it still against.
+    strip_photo: Option<f32>,
 }
 
 /// What a layout is made from.
@@ -404,20 +407,57 @@ pub(crate) fn layout(
     made
 }
 
-/// The strip's layout of the rows by their shapes: the one last made
-/// when no shape has changed since, else made now.
+/// The strip's layout of the rows by their shapes, at the pictures'
+/// height the window has now: the one last made when neither has
+/// changed since, else made now.
 pub(crate) fn strip_layout(app: &App) -> Rc<strip::Layout> {
+    let photo = app.get_strip_photo();
     let shared = shared(app);
     let mut store = shared.shape.borrow_mut();
-    if let Some((serial, l)) = &store.strip
-        && *serial == store.serial
+    let key = (store.serial, photo.to_bits());
+    if let Some((made_at, l)) = &store.strip
+        && *made_at == key
     {
         return l.clone();
     }
+    // The first layout's height is the one a first resize holds the
+    // strip still against.
+    store.strip_photo.get_or_insert(photo);
     let aspects = &store.aspects;
-    let made = Rc::new(strip::Layout::new(aspects.len(), |i| aspects[i]));
-    store.strip = Some((store.serial, made.clone()));
+    let made = Rc::new(strip::Layout::new(aspects.len(), photo, |i| aspects[i]));
+    store.strip = Some((key, made.clone()));
     made
+}
+
+/// The strip's pictures took another height: the layout at the height
+/// they had, to hold the strip still against, none at the first or
+/// when the height is the one already seen. The height now is noted
+/// for the next.
+pub(crate) fn strip_resized(app: &App) -> Option<Rc<strip::Layout>> {
+    let photo = app.get_strip_photo();
+    let shared = shared(app);
+    let mut store = shared.shape.borrow_mut();
+    let was = store.strip_photo.replace(photo)?;
+    if was == photo {
+        return None;
+    }
+    let aspects = &store.aspects;
+    Some(Rc::new(strip::Layout::new(aspects.len(), was, |i| {
+        aspects[i]
+    })))
+}
+
+/// The layout's number moved on with no shape changed: the strip's
+/// pictures took another height, and every binding that asks the
+/// layout with the number asks again.
+pub(crate) fn renumber(app: &App) {
+    let serial = {
+        let shared = shared(app);
+        let mut shape = shared.shape.borrow_mut();
+        shape.serial = shape.serial.wrapping_add(1).max(0);
+        shape.serial
+    };
+    app.set_grid_shape(serial);
 }
 
 /// Row `row`'s shape as the layout has it, zero for not known.

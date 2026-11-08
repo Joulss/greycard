@@ -301,7 +301,7 @@ pub(crate) fn strip_cell(app: &App, i: usize) -> (f32, f32) {
         height - app.get_strip_h()
             + crate::strip::PAD
             + crate::strip::RING
-            + crate::strip::PHOTO / 2.0,
+            + app.get_strip_photo() / 2.0,
     )
 }
 

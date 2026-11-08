@@ -102,6 +102,26 @@ pub struct Settings {
     pub hide_left: bool,
     pub hide_right: bool,
     pub hide_strip: bool,
+    /// The left pane's and the develop panel's widths and the strip's
+    /// pictures' height, logical pixels, as their edges were last
+    /// dragged; none for the default, and only a size dragged from its
+    /// default is written. Read leniently: a size that is no positive
+    /// number reads as none. The window holds each to its range.
+    #[serde(
+        deserialize_with = "size_leniently",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub left_width: Option<f32>,
+    #[serde(
+        deserialize_with = "size_leniently",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub right_width: Option<f32>,
+    #[serde(
+        deserialize_with = "size_leniently",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub strip_photo: Option<f32>,
     /// Whether a rating, flag or label key in culling moves the
     /// selection on to the next frame. Off by default: the key and
     /// the arrow are two presses until a culler asks for one.
@@ -440,6 +460,23 @@ where
     }
 }
 
+/// A pane's size: a positive number, else none, so a hand edit never
+/// sets the whole file aside.
+fn size_leniently<'de, D>(d: D) -> Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    let size = v
+        .as_f64()
+        .map(|w| w as f32)
+        .filter(|w| w.is_finite() && *w > 0.0);
+    if size.is_none() && !v.is_null() {
+        tracing::warn!("settings: {v} is not a size; the default");
+    }
+    Ok(size)
+}
+
 /// The left pane's weights by name, a weight that is no number read as
 /// one and a `shares` that is no map as none, so a hand edit never sets
 /// the whole file aside.
@@ -671,6 +708,9 @@ impl Default for Settings {
             hide_left: false,
             hide_right: false,
             hide_strip: false,
+            left_width: None,
+            right_width: None,
+            strip_photo: None,
             cull_move_on: false,
             loupe_cull: false,
             cull_developed: false,
@@ -1087,6 +1127,9 @@ mod tests {
             hide_left: true,
             hide_right: false,
             hide_strip: true,
+            left_width: Some(300.0),
+            right_width: Some(420.0),
+            strip_photo: Some(150.0),
             cull_move_on: true,
             loupe_cull: true,
             cull_developed: true,
@@ -1419,6 +1462,27 @@ mod tests {
             assert_eq!(read.ui_scale, 150, "{text}");
             assert!(read.grid_wheel, "{text}");
         }
+    }
+
+    /// The panes' sizes: written only when dragged from the default,
+    /// and a size that is no positive number read as the default, the
+    /// rest of the file standing.
+    #[test]
+    fn the_pane_sizes_are_read_leniently_and_written_when_set() {
+        let text = serde_json::to_string(&Settings::default()).unwrap();
+        for key in ["left_width", "right_width", "strip_photo"] {
+            assert!(!text.contains(key), "{key} in {text}");
+        }
+        let read: Settings = serde_json::from_str(
+            r#"{"ui_scale": 150, "left_width": 300, "right_width": "wide", "strip_photo": -4}"#,
+        )
+        .unwrap();
+        assert_eq!(read.ui_scale, 150);
+        assert_eq!(read.left_width, Some(300.0));
+        assert_eq!(read.right_width, None);
+        assert_eq!(read.strip_photo, None);
+        let read: Settings = serde_json::from_str(r#"{"left_width": null}"#).unwrap();
+        assert_eq!(read.left_width, None);
     }
 
     /// A hand-edited weight that is no number reads as one, and a

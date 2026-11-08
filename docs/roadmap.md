@@ -174,7 +174,6 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
-- [ ] The panes and the strip take a size (§605)
 - [ ] i18n (issue 75)
 - [ ] Handheld HDR and focus stacking
 

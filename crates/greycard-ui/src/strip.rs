@@ -20,8 +20,13 @@ pub const GAP: f32 = 8.0;
 /// How far a picture is inset from its cell's edges: the selection
 /// ring's width, so the ring and the hover's ground hug the picture.
 pub const RING: f32 = 2.0;
-/// The pictures' height, the row's.
+/// The pictures' height, the row's, until a drag on the strip's top
+/// edge sets another: the default the window starts at and a
+/// double-click on the edge goes back to.
 pub const PHOTO: f32 = 91.0;
+/// The least the pictures' height is dragged to, so the names under
+/// them stay readable.
+pub const LEAST_PHOTO: f32 = 60.0;
 /// The narrowest and the widest a picture is drawn, width over height:
 /// a frame past either is fitted inside a cell of that shape, so a
 /// sliver keeps a cell that can be clicked and a panorama does not
@@ -38,23 +43,32 @@ pub const FLOOR: f32 = 96.0;
 
 /// A picture's width for `aspect`, height over width as the grid's
 /// shapes are (zero or less for not known, which is laid out as most
-/// cameras' 3:2 on its side): its width at the row's height, held to
-/// [`NARROWEST`] and [`WIDEST`], in whole pixels.
-pub fn photo_width(aspect: f32) -> f32 {
+/// cameras' 3:2 on its side): its width at the row's height `photo`,
+/// held to [`NARROWEST`] and [`WIDEST`], in whole pixels.
+pub fn photo_width(aspect: f32, photo: f32) -> f32 {
     let aspect = if aspect.is_finite() && aspect > 0.0 {
         aspect
     } else {
         UNKNOWN_ASPECT
     };
     let wide = (1.0 / aspect).clamp(NARROWEST, WIDEST);
-    (PHOTO * wide).round()
+    (photo * wide).round()
+}
+
+/// The long edge a strip whose pictures are `photo` high asks the
+/// thumbnail pool for, as the grid asks for its cells': a landscape's
+/// width at that height, most frames' longest, and never less than the
+/// default strip's [`THUMB_WIDTH`](crate::worker::THUMB_WIDTH), so a
+/// shorter strip keeps the pictures it has.
+pub fn render_size(photo: f32) -> u32 {
+    crate::grid::render_size(photo / UNKNOWN_ASPECT).max(crate::worker::THUMB_WIDTH)
 }
 
 /// A cell's width for a picture of `aspect`: the picture's
 /// [`photo_width`] and the ring either side, or [`FLOOR`] when that is
 /// wider.
-pub fn cell_width(aspect: f32) -> f32 {
-    (photo_width(aspect) + 2.0 * RING).max(FLOOR)
+pub fn cell_width(aspect: f32, photo: f32) -> f32 {
+    (photo_width(aspect, photo) + 2.0 * RING).max(FLOOR)
 }
 
 /// The cells of a strip: each one's left edge along the row, from the
@@ -67,18 +81,19 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// `count` cells, row `i`'s picture of shape `aspect(i)`.
-    pub fn new(count: usize, aspect: impl Fn(usize) -> f32) -> Self {
+    /// `count` cells, row `i`'s picture of shape `aspect(i)`, the
+    /// pictures `photo` high.
+    pub fn new(count: usize, photo: f32, aspect: impl Fn(usize) -> f32) -> Self {
         let mut lefts = Vec::with_capacity(count);
         let mut widths = Vec::with_capacity(count);
         let mut photos = Vec::with_capacity(count);
         let mut x = PAD;
         for i in 0..count {
             let a = aspect(i);
-            let w = cell_width(a);
+            let w = cell_width(a, photo);
             lefts.push(x);
             widths.push(w);
-            photos.push(photo_width(a));
+            photos.push(photo_width(a, photo));
             x += w + GAP;
         }
         Layout {
@@ -200,26 +215,39 @@ mod tests {
     fn a_cell_takes_its_pictures_shape_at_the_rows_height() {
         // 3:2 on its side: 91 high is 136.5 wide, 137 in whole pixels,
         // and the ring either side, wider than the floor.
-        assert_eq!(photo_width(LANDSCAPE), 137.0);
-        assert_eq!(cell_width(LANDSCAPE), 137.0 + 4.0);
+        assert_eq!(photo_width(LANDSCAPE, PHOTO), 137.0);
+        assert_eq!(cell_width(LANDSCAPE, PHOTO), 137.0 + 4.0);
         // On its end, 61, and a square, 91: the floor.
-        assert_eq!(photo_width(PORTRAIT), 61.0);
-        assert_eq!(cell_width(PORTRAIT), FLOOR);
-        assert_eq!(photo_width(1.0), 91.0);
-        assert_eq!(cell_width(1.0), FLOOR);
+        assert_eq!(photo_width(PORTRAIT, PHOTO), 61.0);
+        assert_eq!(cell_width(PORTRAIT, PHOTO), FLOOR);
+        assert_eq!(photo_width(1.0, PHOTO), 91.0);
+        assert_eq!(cell_width(1.0, PHOTO), FLOOR);
         // Not known yet: laid out as the landscape.
-        assert_eq!(cell_width(0.0), cell_width(LANDSCAPE));
-        assert_eq!(cell_width(f32::NAN), cell_width(LANDSCAPE));
+        assert_eq!(cell_width(0.0, PHOTO), cell_width(LANDSCAPE, PHOTO));
+        assert_eq!(cell_width(f32::NAN, PHOTO), cell_width(LANDSCAPE, PHOTO));
         // A panorama and a sliver are held, the sliver in the floor.
-        assert_eq!(cell_width(0.1), 273.0 + 4.0);
-        assert_eq!(photo_width(10.0), 46.0);
-        assert_eq!(cell_width(10.0), FLOOR);
+        assert_eq!(cell_width(0.1, PHOTO), 273.0 + 4.0);
+        assert_eq!(photo_width(10.0, PHOTO), 46.0);
+        assert_eq!(cell_width(10.0, PHOTO), FLOOR);
+        // A taller row, a wider picture at its height.
+        assert_eq!(photo_width(LANDSCAPE, 180.0), 270.0);
+        assert_eq!(cell_width(PORTRAIT, 180.0), 120.0 + 4.0);
+    }
+
+    /// The pool's long edge follows the row's height up past the
+    /// default's, and never below it.
+    #[test]
+    fn a_taller_strip_asks_for_larger_pictures() {
+        assert_eq!(render_size(PHOTO), crate::worker::THUMB_WIDTH);
+        assert_eq!(render_size(LEAST_PHOTO), crate::worker::THUMB_WIDTH);
+        assert_eq!(render_size(160.0), 240);
+        assert_eq!(render_size(400.0), crate::grid::MAX_RENDER);
     }
 
     #[test]
     fn a_picture_narrower_than_the_floor_sits_centered_in_its_cell() {
         let shapes = [PORTRAIT, LANDSCAPE, 1.0, 10.0];
-        let l = Layout::new(shapes.len(), |i| shapes[i]);
+        let l = Layout::new(shapes.len(), PHOTO, |i| shapes[i]);
         // 61 and the ring in 96: 15.5 a side, 15 in whole pixels.
         assert_eq!(l.photo(0), Some((15.0, 61.0)));
         // A landscape fills its cell.
@@ -234,7 +262,7 @@ mod tests {
     #[test]
     fn the_cells_run_from_the_pad_with_a_gap_between() {
         let shapes = [LANDSCAPE, PORTRAIT, 1.0, 0.0];
-        let l = Layout::new(shapes.len(), |i| shapes[i]);
+        let l = Layout::new(shapes.len(), PHOTO, |i| shapes[i]);
         assert_eq!(l.place(0), Some((12.0, 141.0)));
         assert_eq!(l.place(1), Some((12.0 + 141.0 + 8.0, 96.0)));
         assert_eq!(l.place(2), Some((161.0 + 96.0 + 8.0, 96.0)));
@@ -243,7 +271,7 @@ mod tests {
         assert_eq!(l.place(-1), None);
         assert_eq!(l.length(), 369.0 + 141.0 + 12.0);
         // Empty: the pads alone.
-        let empty = Layout::new(0, |_| 0.0);
+        let empty = Layout::new(0, PHOTO, |_| 0.0);
         assert_eq!(empty.length(), 24.0);
         assert_eq!(empty.shown(0.0, 1500.0), None);
         assert_eq!(empty.reveal(40.0, 1500.0, 0), 0.0);
@@ -252,7 +280,7 @@ mod tests {
     #[test]
     fn a_scroll_shows_the_cells_it_touches() {
         // Portraits, the floor's 96 wide at a pitch of 104 from 12.
-        let l = Layout::new(100, |_| PORTRAIT);
+        let l = Layout::new(100, PHOTO, |_| PORTRAIT);
         assert_eq!(l.shown(0.0, 1500.0), Some((0, 14)));
         // The left edge in the gap after row 1: row 2 is the first.
         assert_eq!(l.shown(12.0 + 104.0 + 97.0, 300.0).unwrap().0, 2);
@@ -275,7 +303,7 @@ mod tests {
                 LANDSCAPE
             }
         };
-        let l = Layout::new(40, shapes);
+        let l = Layout::new(40, PHOTO, shapes);
         let view = 1000.0;
         // Row 7 runs past the right edge of the view at the start.
         let (left, width) = l.place(7).unwrap();
@@ -295,15 +323,19 @@ mod tests {
     #[test]
     fn a_late_shape_left_of_the_view_keeps_the_view_steady() {
         // Nothing known: every cell the 3:2 landscape's.
-        let before = Layout::new(60, |_| 0.0);
+        let before = Layout::new(60, PHOTO, |_| 0.0);
         let view = 1200.0;
         let scroll = before.place(30).unwrap().0 - 20.0;
         let (first, last) = before.shown(scroll, view).unwrap();
         // Rows 3 and 10, far left of the view, come in as portraits.
-        let after = Layout::new(60, |i| if i == 3 || i == 10 { PORTRAIT } else { 0.0 });
+        let after = Layout::new(
+            60,
+            PHOTO,
+            |i| if i == 3 || i == 10 { PORTRAIT } else { 0.0 },
+        );
         // Selected off screen: the first frame on screen holds.
         let to = held(&before, &after, scroll, view, 0);
-        let gone = 2.0 * (cell_width(0.0) - cell_width(PORTRAIT));
+        let gone = 2.0 * (cell_width(0.0, PHOTO) - cell_width(PORTRAIT, PHOTO));
         assert_eq!(to, scroll - gone);
         for row in first..=last {
             let x = |l: &Layout, s: f32| l.place(row).unwrap().0 - s;
@@ -320,27 +352,27 @@ mod tests {
     fn a_whole_selected_frame_that_grows_past_the_edge_is_shown_whole() {
         // Portraits all; the selected frame is the last whole one on
         // screen and comes in as a panorama.
-        let before = Layout::new(60, |_| PORTRAIT);
+        let before = Layout::new(60, PHOTO, |_| PORTRAIT);
         let view = 700.0;
         let scroll = 0.0;
         let (_, last) = before.shown(scroll, view).unwrap();
         let sel = last - 1;
         assert_eq!(before.reveal(scroll, view, sel), scroll, "whole");
-        let after = Layout::new(60, |i| if i as i32 == sel { 0.1 } else { PORTRAIT });
+        let after = Layout::new(60, PHOTO, |i| if i as i32 == sel { 0.1 } else { PORTRAIT });
         let to = held(&before, &after, scroll, view, sel);
         assert_eq!(to, after.reveal(scroll, view, sel));
         assert!(to > 0.0);
         // Cut at the edge before, it is left where it was.
         let cut = last;
         assert_ne!(before.reveal(scroll, view, cut), scroll);
-        let after = Layout::new(60, |i| if i as i32 == cut { 0.1 } else { PORTRAIT });
+        let after = Layout::new(60, PHOTO, |i| if i as i32 == cut { 0.1 } else { PORTRAIT });
         assert_eq!(held(&before, &after, scroll, view, cut), scroll);
     }
 
     #[test]
     fn a_strip_of_twenty_thousand_is_laid_out_quickly() {
         let started = std::time::Instant::now();
-        let l = Layout::new(20_000, |i| {
+        let l = Layout::new(20_000, PHOTO, |i| {
             if i.is_multiple_of(4) {
                 PORTRAIT
             } else {

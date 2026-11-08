@@ -82,6 +82,10 @@ design note behind it.
   panel's sections, the Masks tab's, and the left pane's read apart at
   a glance; the spacing is as it was (issue 80)
   ([§604](https://github.com/jessolmstead/greycard/blob/master/docs/notes/604-the-develop-sections-told-apart.md)).
+- Drag the left pane's or the Develop panel's inner edge to set its
+  width, or the strip's top edge to set its thumbnails' size; a
+  double-click on an edge resets it, and the sizes are remembered
+  ([§605](https://github.com/jessolmstead/greycard/blob/master/docs/notes/605-the-panes-and-the-strip-take-a-size.md)).
 
 ### Export
 

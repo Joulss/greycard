@@ -1343,9 +1343,27 @@ pub(crate) fn grid_layout(app: &App) {
 /// follows the shapes as they come; the answer is the layout as it
 /// stands.
 pub(crate) fn strip_layout(app: &App) {
-    app.set_strip_photo(strip::PHOTO);
+    app.set_strip_photo_default(strip::PHOTO);
+    app.set_strip_photo_least(strip::LEAST_PHOTO);
     app.set_strip_ring(strip::RING);
     app.set_strip_pad(strip::PAD);
+    // A drag on the strip's edge, or a window that holds it lower: the
+    // layout's number moves on so the cells ask again, and the strip
+    // is held still about the selected frame as it is under new
+    // shapes. The pictures follow in `strip-range`, which the hold
+    // reports to.
+    let weak = app.as_weak();
+    app.on_strip_sized(move || {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        let before = cells::strip_resized(&app);
+        cells::renumber(&app);
+        match before {
+            Some(before) => hold_strip(&app, &before),
+            None => app.invoke_strip_hold(app.get_strip_scroll()),
+        }
+    });
     let weak = app.as_weak();
     app.on_strip_place(move |row, _| {
         weak.upgrade()
@@ -3503,6 +3521,26 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             st.views.strip_shown = Some((first, last));
+            // The strip's pictures at its row's height, as the grid's
+            // at its cell: a taller strip asks for larger ones, and
+            // those on screen made too small are asked for again, once.
+            let want = strip::render_size(app.get_strip_photo());
+            if want != st.views.thumb_want {
+                st.views.thumb_want = want;
+                worker.set_thumb_size(want);
+            }
+            for row in first as usize..=last as usize {
+                let Some(&i) = st.views.shown.get(row) else {
+                    break;
+                };
+                if st.views.thumb_made[i] > 0
+                    && grid::wants_bigger(st.views.thumb_made[i], want)
+                    && st.views.thumb_asked[i] < want
+                {
+                    st.views.thumb_asked[i] = want;
+                    worker.send(crate::rows::thumb_job(&st, i));
+                }
+            }
             worker.want_thumbnails(f, l);
             near_shown(&mut st, &worker, first as usize, last as usize);
             crate::edited::note_editing(&mut st, &worker, false);
@@ -4672,11 +4710,11 @@ mod tests {
         }
         assert_eq!(
             cells::strip_layout(&app).place(0).unwrap().1,
-            strip::cell_width(1.5)
+            strip::cell_width(1.5, strip::PHOTO)
         );
         assert_eq!(
             cells::strip_layout(&app).place(1).unwrap().1,
-            strip::cell_width(2.0 / 3.0)
+            strip::cell_width(2.0 / 3.0, strip::PHOTO)
         );
         // Along the strip, past frames whose pictures have not come.
         assert!(app.invoke_scroll_by(5000.0));

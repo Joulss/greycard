@@ -21,8 +21,8 @@ component Chip inherits Rectangle {
     /// A chip that is a toggle rather than a question about the
     /// folder has nothing to count.
     in property <bool> shows-count: true;
-    /// The panel is 320px wide and the header is not, so a chip on
-    /// the panel is spelled closer.
+    /// The panel is 280 to a third of the window wide and the header
+    /// is wider, so a chip on the panel is spelled closer.
     in property <bool> tight: false;
     in property <color> dot: Theme.text-muted;
     /// Whether Ctrl (Cmd on a Mac) was held: the press holds the
@@ -208,8 +208,8 @@ export component SortButton inherits PanelButton {
 // the file's kind), and words or terms looked for. In the grid's
 // header, one row of chips with the words at its end and a row of
 // facets under it; the same chips a group to a row in the CULLING
-// section, where the panel is 320px wide and the header's row would
-// not fit.
+// section, where the panel, 280px at its narrowest, could not hold
+// the header's row.
 export component FilterBar inherits Rectangle {
     in property <[FilterChip]> stars;
     in property <[FilterChip]> flags;
@@ -283,7 +283,7 @@ export component FilterBar inherits Rectangle {
     VerticalLayout {
         spacing: Theme.space-2;
         // The panel's, a group to a row with its name over it: at
-        // 320px the header's row runs off the side, and a caption
+        // the panel's width the header's row runs off the side, and a caption
         // beside each row would take the width three chips need.
         if root.stacked: VerticalLayout {
             spacing: Theme.space-1;

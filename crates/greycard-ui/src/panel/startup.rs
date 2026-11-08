@@ -428,6 +428,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     show_presets_picker(&app, &remembered.shared.export_presets, preset.as_deref());
     show_folds(&app, &remembered.collapsed);
     crate::panel::shares::show(&app, &remembered.shares);
+    crate::panel::sizes::show(&app, &remembered);
     app.set_scope(opening_scope(&cli, &remembered).name().into());
     app.set_scope_selection(cli.scope_selection);
     app.set_show_sharpen_mask(cli.sharpen_mask);
@@ -2465,6 +2466,11 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         } else {
             app.get_strip_hidden()
         },
+        // The sizes stand while their panes are away, the lightbox's
+        // or the keys'.
+        left_width: crate::panel::sizes::left(app),
+        right_width: crate::panel::sizes::right(app),
+        strip_photo: crate::panel::sizes::strip(app),
         // Kept apart, both: culling's switch as it is flipped, and the
         // lens and model offers' answers as they are given. The caller
         // fills them in from disk.

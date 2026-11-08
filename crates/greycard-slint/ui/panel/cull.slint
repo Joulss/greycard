@@ -65,11 +65,16 @@ export component CullSection inherits Section {
     collapsed <=> root.collapsed-culling;
     // What the picture is drawn from: the camera's JPEG, instant from
     // frame to frame, or the frame developed, for checking edits at
-    // full size without the edit panel.
+    // full size without the edit panel. In a panel too narrow for the
+    // label and both buttons whole beside it, the label goes over them,
+    // as the filter's group names do.
+    property <bool> picture-over: 68px + 2 * Theme.space-2 + camera-jpeg.preferred-width
+        + developed.preferred-width > self.width - self.padding-left - self.padding-right;
+    if root.picture-over: Text { text: "Picture"; color: Theme.text; font-size: Theme.font-sm; }
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Picture"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-        PanelButton {
+        if !root.picture-over: Text { text: "Picture"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        camera-jpeg := PanelButton {
             text: "Camera JPEG";
             primary: !root.developed;
             accessible-role: button;
@@ -77,7 +82,7 @@ export component CullSection inherits Section {
             accessible-checked: !root.developed;
             clicked => { root.focus-keys(); root.source-asked(false); }
         }
-        PanelButton {
+        developed := PanelButton {
             text: "Developed";
             primary: root.developed;
             accessible-role: button;
@@ -112,9 +117,9 @@ export component CullSection inherits Section {
         }
     }
     // The same filter the grid's header holds,
-    // a group of chips to a row: the panel is
-    // 320px wide and the header's one row
-    // would not fit in it.
+    // a group of chips to a row: the panel,
+    // 280px at its narrowest, could not hold
+    // the header's one row.
     if root.filter-bar: Text {
         text: "Show";
         color: Theme.text;

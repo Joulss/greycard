@@ -987,7 +987,10 @@ mod tests {
         // A strip 1500 wide over forty landscapes, 141 wide with 8
         // between and 12 of padding at each end: the row is 5976, so
         // 4476 to scroll.
-        let (w, row) = (1500.0, crate::strip::Layout::new(40, |_| 0.0).length());
+        let (w, row) = (
+            1500.0,
+            crate::strip::Layout::new(40, crate::strip::PHOTO, |_| 0.0).length(),
+        );
         assert_eq!(row, 5976.0);
         let max = row - w;
         let track = w - 2.0 * BAR_INSET;
