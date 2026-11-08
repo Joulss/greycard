@@ -625,3 +625,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§611. A fill that survives rounding, and a card kept while it has room](notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md) (2026-11-08)
 - [§612. The handheld bracket and stack](notes/612-the-handheld-bracket-and-stack.md) (2026-11-08)
 - [§613. Six tester items after 0.10.0](notes/613-six-tester-items-after-0-10-0.md) (2026-11-08)
+- [§614. Eight notes from a few minutes with 0.10.0](notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md) (2026-11-08)
