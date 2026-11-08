@@ -247,6 +247,7 @@ pub mod edited {
             seed_blend: false,
             turn: 0,
             stance_known: false,
+            learned: Vec::new(),
         });
         let rig = Rig {
             worker,

@@ -619,6 +619,45 @@ pub(crate) fn mask_sent(st: &mut State, key: Key, shape: &Shape) {
     }
 }
 
+/// The step for `shape` as the window would take it now: what the
+/// store has, the providers, the session's declines and failed
+/// fetches, and whether the sheet is free for an offer.
+pub(crate) fn step_now(st: &State, shape: &Shape) -> Option<Step> {
+    let store = st.develop.store.as_ref();
+    // Cached: the first ask opens a `wgpu::Instance` to name the
+    // adapter and every one after reads and parses providers.json,
+    // neither of which belongs on the render path this runs from.
+    step(
+        shape,
+        |m: &greycard_ai::Model| store.is_some_and(|s| s.have(m)),
+        crate::ai::providers(),
+        &st.sheets.declined,
+        &st.sheets.fetch_failed,
+        st.sheets.fetch.is_none() && !st.sheets.fetching,
+        |_: &greycard_ai::Model| store.is_some_and(crate::ai::subject_original_failed_on_webgpu),
+    )
+}
+
+/// The learned shapes of `edit` the window would ask for at once as
+/// it opens the frame, each with the model its step names: sent with
+/// the open, so those made already come with its first picture. One
+/// whose step is an offer or a wait is left out, and asked for (or
+/// offered) after the picture as before.
+pub(crate) fn asks_at_open(st: &State, edit: &Edit) -> Vec<(Key, &'static greycard_ai::Model)> {
+    let mut asks = Vec::new();
+    for a in edit.adjustments.iter().take(MAX_LOCALS) {
+        for (i, c) in a.mask.components.iter().enumerate() {
+            if !c.enabled || !c.shape.is_learned() || !prompted(&c.shape) {
+                continue;
+            }
+            if let Some(Step::Ask(model)) = step_now(st, &c.shape) {
+                asks.push(((a.id, i), model));
+            }
+        }
+    }
+    asks
+}
+
 /// Ask the worker for the learned masks wanted and not yet asked for;
 /// where the model is not in the store, offer to fetch it.
 pub(crate) fn ask_for(st: &mut State, app: &App, mut wants: Vec<(Key, Shape)>) {
@@ -634,24 +673,13 @@ pub(crate) fn ask_for(st: &mut State, app: &App, mut wants: Vec<(Key, Shape)>) {
         let store = st.develop.store.clone();
         let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
         let providers = crate::ai::providers();
-        // Cached: the first ask opens a `wgpu::Instance` to name the
-        // adapter and every one after reads and parses providers.json,
-        // neither of which belongs on the render path this runs from.
         let original_failed_on_webgpu = |_: &greycard_ai::Model| {
             store
                 .as_ref()
                 .is_some_and(crate::ai::subject_original_failed_on_webgpu)
         };
         let sheet_free = st.sheets.fetch.is_none() && !st.sheets.fetching;
-        let Some(next) = step(
-            &shape,
-            have,
-            providers,
-            &st.sheets.declined,
-            &st.sheets.fetch_failed,
-            sheet_free,
-            original_failed_on_webgpu,
-        ) else {
+        let Some(next) = step_now(st, &shape) else {
             continue;
         };
         if let Step::Ask(model) = next {
@@ -1894,6 +1922,60 @@ mod tests {
     use std::cell::Cell;
 
     use slint::Model;
+
+    /// The learned shapes an open carries are those the window would
+    /// ask for at once, each with the model its step names: a Sky whose
+    /// model is in the store goes with the open, a Subject whose model
+    /// would be offered does not (the offer comes after the picture),
+    /// and neither does a shape switched off.
+    #[test]
+    fn an_open_carries_the_shapes_the_window_would_ask_for() {
+        let dir = crate::testing::scratch_dir("open-asks");
+        let store = greycard_ai::Store::at(&dir);
+        for f in greycard_ai::SKY.files {
+            let path = store.path(&greycard_ai::SKY, f);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::File::create(&path)
+                .unwrap()
+                .set_len(f.bytes)
+                .unwrap();
+        }
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let shape = |shape: Shape, enabled: bool| Component {
+            shape,
+            enabled,
+            ..Component::default()
+        };
+        let mut edit = Edit::default();
+        edit.adjustments.push(Adjustment {
+            id: 4,
+            mask: Mask {
+                components: vec![
+                    shape(Shape::Subject {}, true),
+                    shape(Shape::Sky { picks: Vec::new() }, true),
+                    shape(Shape::Sky { picks: Vec::new() }, false),
+                ],
+                ..Default::default()
+            },
+            ..Adjustment::default()
+        });
+        {
+            let mut st = state.borrow_mut();
+            st.develop.store = Some(store.clone());
+            // SAM declined: the Sky is the sky model's alone, in the store.
+            st.sheets.declined = vec![greycard_ai::SAM.id];
+            assert!(matches!(
+                step_now(&st, &Shape::Subject {}),
+                Some(Step::Offer(..))
+            ));
+            let asks = asks_at_open(&st, &edit);
+            assert_eq!(asks.len(), 1, "the Sky alone");
+            assert_eq!(asks[0].0, (4, 1));
+            assert_eq!(asks[0].1.id, greycard_ai::SKY.id);
+        }
+        crate::testing::remove_scratch(state, &dir);
+    }
 
     /// A look slider moved with the overlay showing turns it off, every
     /// time; a shape control (feather, invert, Refine edge, the toggle

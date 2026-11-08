@@ -119,6 +119,12 @@ pub enum Job {
         /// The window knows the file's mosaic already (its library row,
         /// an open before): no stance is read ahead of the decode.
         stance_known: bool,
+        /// The learned shapes whose raster the window would ask for at
+        /// once, each with the model its own choice names: read from
+        /// the mask cache and answered ahead of the first picture when
+        /// made already. One the window would offer a model for, or
+        /// wait on, is not here, and is asked for after the picture.
+        learned: Vec<(Key, &'static greycard_ai::Model)>,
     },
     Develop {
         edit: Edit,
@@ -701,6 +707,10 @@ struct Queue {
     /// How many times the worker gave the card back, for a test.
     #[cfg(test)]
     gave_back_by_test: usize,
+    /// The models' store, and the mask cache beside it, the open
+    /// frame's masks are read from and made with, as a test has them.
+    #[cfg(test)]
+    models_by_test: Option<greycard_ai::Store>,
 }
 
 pub type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;

@@ -433,6 +433,7 @@ mod tests {
                 seed_blend: false,
                 turn: 0,
                 stance_known: false,
+                learned: Vec::new(),
             });
         };
         opened(&files[0], 1);
@@ -700,6 +701,7 @@ mod tests {
                 seed_blend: false,
                 turn: 0,
                 stance_known: false,
+                learned: Vec::new(),
             });
             rig.kept();
             let (_, _, left) = rig.thumb();

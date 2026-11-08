@@ -74,6 +74,7 @@ fn run_fake_set(
                         seed_blend: false,
                         turn: 0,
                         stance_known: false,
+                        learned: Vec::new(),
                     });
                     cv.notify_one();
                 }
@@ -193,6 +194,7 @@ fn a_stop_that_finds_the_worker_in_a_job_keeps_it_until_it_ends() {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     });
     in_job
         .recv_timeout(std::time::Duration::from_secs(30))
@@ -3227,6 +3229,7 @@ fn the_worker_prefetches_the_neighbors_once_idle_and_their_open_takes_the_base()
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     };
     let wait = std::time::Duration::from_secs(60);
     worker.send(open(&paths[0], 1));
@@ -3302,6 +3305,7 @@ fn open_default(path: &std::path::Path, generation: u64) -> Job {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     }
 }
 
@@ -3884,6 +3888,7 @@ fn the_worker_s_prefetch_meets_the_requests_of_the_real_queue() {
             seed_blend: false,
             turn: 0,
             stance_known: false,
+            learned: Vec::new(),
         });
     };
     let landed = |generation: u64| {
@@ -4042,6 +4047,7 @@ fn the_neighbors_come_back_with_the_open_frame() {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     });
     let wait = std::time::Duration::from_secs(60);
     assert_eq!(rx.recv_timeout(wait).expect("the open lands"), 7);
@@ -4132,6 +4138,7 @@ fn a_neighbor_whose_edit_changed_is_dropped_and_made_again() {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     };
     worker.set_open_frame(Some(Frame::file(paths[0].clone())));
     worker.send(open(&paths[0], Edit::default(), 1));
@@ -4246,6 +4253,7 @@ fn a_prefetch_whose_edit_changes_under_it_gives_way_and_is_let_go() {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     };
     let warmer = Edit {
         white_balance: greycard_edit::WhiteBalance::Custom {
@@ -5561,6 +5569,7 @@ fn the_worker_makes_a_develops_fills_after_it_and_a_new_develop_takes_them_over(
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     });
     let wait = std::time::Duration::from_secs(60);
     let next = || rx.recv_timeout(wait).expect("the worker says");
@@ -5662,6 +5671,7 @@ fn open_with_fills(path: &std::path::Path) -> Job {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     }
 }
 
@@ -5939,6 +5949,7 @@ fn fills_said_then(
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     });
     let mask = || Job::Mask {
         key: (1, 0),
@@ -6103,6 +6114,7 @@ fn a_set_short_of_the_card_gives_it_back_once() {
         seed_blend: false,
         turn: 0,
         stance_known: false,
+        learned: Vec::new(),
     });
     let set = Arc::new(crate::queue::Set::new(
         2,
@@ -6132,5 +6144,271 @@ fn a_set_short_of_the_card_gives_it_back_once() {
     }
     assert_eq!(worker.gave_back_by_test(), 1);
     worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// Frames whose edit draws a Sky, each its raster in the mask cache as
+/// an earlier visit left it, every texel of the value `names` gives, or
+/// not there at all.
+fn sky_frames(
+    what: &str,
+    names: &[(&str, Option<u8>)],
+) -> (PathBuf, Vec<PathBuf>, Edit, greycard_ai::Store) {
+    use greycard_edit::mask::Component;
+    let files: Vec<&str> = names.iter().map(|(n, _)| *n).collect();
+    let (dir, paths) = dngs(what, &files, 96, 64);
+    let store = greycard_ai::Store::at(dir.join("models"));
+    let sky = Shape::Sky { picks: Vec::new() };
+    let mut edit = Edit::default();
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        name: "Sky".into(),
+        mask: greycard_edit::mask::Mask {
+            components: vec![Component {
+                shape: sky.clone(),
+                ..Component::default()
+            }],
+            ..Default::default()
+        },
+        ..greycard_edit::Adjustment::default()
+    });
+    for (path, value) in paths
+        .iter()
+        .zip(names)
+        .filter_map(|(p, (_, v))| Some((p, (*v)?)))
+    {
+        let print = crate::mask_base::print(Some(path), &edit, 0, crate::mask_base::Size::Full);
+        let slot = Ai::for_test_on_disk(store.clone())
+            .cached_path_of(path, &sky, 0, print)
+            .expect("a slot in the mask cache");
+        std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
+        let width = greycard_edit::brush::raster_width(&sky, (96, 64));
+        let height = greycard_edit::brush::raster_height(width, 64.0 / 96.0);
+        image::GrayImage::from_pixel(width as u32, height as u32, image::Luma([value]))
+            .save_with_format(&slot, image::ImageFormat::Png)
+            .unwrap();
+    }
+    (dir, paths, edit, store)
+}
+
+/// What a worker delivered on an open, in order: each develop, by its
+/// generation, and each learned mask, by its key and whether a model
+/// made it.
+#[derive(Debug, Clone, PartialEq)]
+enum Seen {
+    Developed(u64),
+    Mask(Key, bool),
+    MaskFailed(Key),
+}
+
+fn seeing_worker(store: greycard_ai::Store) -> (Worker, Arc<Mutex<Vec<Seen>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let worker = Worker::new(move |o| {
+        let s = match o {
+            Outcome::Developed { generation, .. } => Seen::Developed(generation),
+            Outcome::Mask { key, provider, .. } => Seen::Mask(key, provider.is_some()),
+            Outcome::MaskFailed { key, .. } => Seen::MaskFailed(key),
+            _ => return,
+        };
+        log.lock().unwrap().push(s);
+    });
+    worker.models_by_test(store);
+    (worker, seen)
+}
+
+/// An open of `path` under `edit`, the window asking at once for the
+/// Sky at (1, 0) with the sky model, as its step names it.
+fn open_with(path: &std::path::Path, edit: &Edit, generation: u64) -> Job {
+    Job::Open {
+        path: path.to_path_buf(),
+        version: None,
+        edit: edit.clone(),
+        generation,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: vec![((1, 0), &greycard_ai::SKY)],
+    }
+}
+
+/// A frame whose learned mask is made already draws it the first time:
+/// its raster is read from the mask cache and delivered before the
+/// open's first picture, no model run, so the window never draws the
+/// frame without it and then with it. The opens' times are said, not
+/// held to a bound: one sample each moves more than the read.
+#[test]
+fn a_learned_mask_in_the_cache_comes_before_the_first_picture() {
+    let (dir, paths, edit, store) = sky_frames(
+        "mask-first",
+        &[
+            ("warm.dng", None),
+            ("made.dng", Some(255)),
+            ("unmade.dng", None),
+        ],
+    );
+    let (worker, seen) = seeing_worker(store);
+    let mut took = Vec::new();
+    for (generation, path) in (1..).zip(&paths) {
+        seen.lock().unwrap().clear();
+        let started = Instant::now();
+        worker.send(open_with(path, &edit, generation));
+        until("the open develops", &|| {
+            seen.lock().unwrap().contains(&Seen::Developed(generation))
+        });
+        took.push(started.elapsed());
+        let order = seen.lock().unwrap().clone();
+        if generation == 2 {
+            assert_eq!(
+                order,
+                vec![Seen::Mask((1, 0), false), Seen::Developed(2)],
+                "the mask read from the cache, then the picture"
+            );
+        } else {
+            assert_eq!(order, vec![Seen::Developed(generation)]);
+        }
+    }
+    eprintln!(
+        "opens: made {:.3} s, unmade {:.3} s",
+        took[1].as_secs_f64(),
+        took[2].as_secs_f64()
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A frame whose learned mask is not made yet opens as before: the
+/// picture first, no mask with it and none asked for by the worker,
+/// and the window's ask after it answered then.
+#[test]
+fn a_learned_mask_not_made_yet_is_asked_for_after_the_picture() {
+    let (dir, paths, edit, store) = sky_frames("mask-after", &[("sky.dng", None)]);
+    let (worker, seen) = seeing_worker(store);
+    worker.send(open_with(&paths[0], &edit, 1));
+    until("the open develops", &|| {
+        seen.lock().unwrap().contains(&Seen::Developed(1))
+    });
+    // Past the settle, in which the worker would ask again for a mask
+    // of a base it had given before.
+    std::thread::sleep(masks::SETTLE + std::time::Duration::from_millis(200));
+    assert_eq!(*seen.lock().unwrap(), vec![Seen::Developed(1)]);
+    // The window's ask, which with no Sky model in the store fails.
+    worker.send(Job::Mask {
+        key: (1, 0),
+        shape: Shape::Sky { picks: Vec::new() },
+        model: None,
+    });
+    until("the ask is answered", &|| seen.lock().unwrap().len() == 2);
+    assert_eq!(seen.lock().unwrap()[1], Seen::MaskFailed((1, 0)));
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A frame's learned masks held back from its first picture though
+/// made: a Sky the window would offer its model for (not in the
+/// open's list), and a Sky found empty, whose word for the status line
+/// the picture's own would cover; each is asked for by the window
+/// after the picture, as before.
+#[test]
+fn a_mask_offered_or_found_empty_waits_for_the_window_s_ask() {
+    let (dir, paths, edit, store) = sky_frames(
+        "mask-held",
+        &[("offered.dng", Some(255)), ("empty.dng", Some(0))],
+    );
+    let (worker, seen) = seeing_worker(store);
+    let Job::Open {
+        path,
+        version,
+        edit: opened,
+        generation,
+        seed_blend,
+        turn,
+        stance_known,
+        ..
+    } = open_with(&paths[0], &edit, 1)
+    else {
+        unreachable!("an open")
+    };
+    worker.send(Job::Open {
+        path,
+        version,
+        edit: opened,
+        generation,
+        seed_blend,
+        turn,
+        stance_known,
+        learned: Vec::new(),
+    });
+    until("the open develops", &|| {
+        seen.lock().unwrap().contains(&Seen::Developed(1))
+    });
+    assert_eq!(*seen.lock().unwrap(), vec![Seen::Developed(1)], "offered");
+    seen.lock().unwrap().clear();
+    worker.send(open_with(&paths[1], &edit, 2));
+    until("the open develops", &|| {
+        seen.lock().unwrap().contains(&Seen::Developed(2))
+    });
+    assert_eq!(*seen.lock().unwrap(), vec![Seen::Developed(2)], "empty");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A mask answered ahead of the picture is recorded as given with the
+/// model the window's step named, so a base moved after asks for it
+/// again with that model, as the window's own ask would have; one the
+/// window did not list is not read at all.
+#[test]
+fn a_mask_answered_with_the_open_is_given_with_the_window_s_model() {
+    use greycard_edit::mask::Component;
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let sky = Shape::Sky { picks: Vec::new() };
+    let mut edit = Edit::default();
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: greycard_edit::mask::Mask {
+            components: vec![
+                Component {
+                    shape: sky.clone(),
+                    ..Component::default()
+                },
+                Component {
+                    shape: sky.clone(),
+                    ..Component::default()
+                },
+            ],
+            ..Default::default()
+        },
+        ..greycard_edit::Adjustment::default()
+    });
+    let mut base = None;
+    develop_with(&frame, &edit, &mut base, &mut None);
+    let b = base.as_ref().expect("a base");
+    let dir = crate::testing::scratch_dir("mask-given");
+    let file = dir.join("given.dng");
+    let mut ai = Ai::for_test_on_disk(greycard_ai::Store::at(dir.join("models")));
+    let slot = ai
+        .cached_path_of(&file, &sky, 0, b.print)
+        .expect("a slot in the mask cache");
+    std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
+    let size = (b.image.width, b.image.height);
+    let width = greycard_edit::brush::raster_width(&sky, size);
+    let height = greycard_edit::brush::raster_height(width, size.1 as f32 / size.0 as f32);
+    image::GrayImage::from_pixel(width as u32, height as u32, image::Luma([255]))
+        .save_with_format(&slot, image::ImageFormat::Png)
+        .unwrap();
+    let kept = masks::kept_for_open(
+        &edit,
+        &[((1, 1), &greycard_ai::SKY)],
+        b,
+        &mut ai,
+        Some(&file),
+    );
+    assert_eq!(kept.len(), 1);
+    assert!(matches!(kept[0], Outcome::Mask { key: (1, 1), .. }));
+    assert_eq!(
+        ai.given_model_by_test((1, 1)).flatten().map(|m| m.id),
+        Some(greycard_ai::SKY.id)
+    );
+    assert_eq!(ai.given_model_by_test((1, 0)), None, "not listed, not read");
     crate::testing::remove_dir_retry(&dir);
 }

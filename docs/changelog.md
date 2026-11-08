@@ -162,6 +162,10 @@ design note behind it.
   and the grid without being opened first, once the fill has been made
   (issue 92)
   ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
+- A Sky, Subject, or other learned mask already made no longer flashes
+  when you switch to its frame: the picture comes up with the mask on
+  (issue 96)
+  ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 
 ## 0.10.0, 2026-11-06
 

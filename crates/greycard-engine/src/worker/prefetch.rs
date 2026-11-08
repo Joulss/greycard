@@ -1314,6 +1314,7 @@ mod tests {
             seed_blend: false,
             turn: 0,
             stance_known: true,
+            learned: Vec::new(),
         };
         let keep = || Job::Keep {
             frame: Frame::file("a.CR3"),

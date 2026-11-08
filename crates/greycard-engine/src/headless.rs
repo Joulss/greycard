@@ -944,6 +944,7 @@ mod tests {
             seed_blend: frame.seed_blend,
             turn: frame.turn,
             stance_known: false,
+            learned: Vec::new(),
         });
         let mut edit = frame.edit.clone();
         let wait = Duration::from_secs(300);

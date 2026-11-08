@@ -4024,6 +4024,13 @@ impl Ai {
         self.given.insert(key, (shape.clone(), model, print, base));
     }
 
+    /// The model the component at `key` was recorded as given with:
+    /// for a test.
+    #[cfg(test)]
+    pub(crate) fn given_model_by_test(&self, key: Key) -> Option<Option<&'static Model>> {
+        self.given.get(&key).map(|(_, model, _, _)| *model)
+    }
+
     /// A model arrived: the components given the base's raster for a
     /// failed second run, each with its shape and model, to be asked for
     /// again.
@@ -4091,6 +4098,54 @@ impl Ai {
         again
     }
 
+    /// The raster for `shape` at `key` on a frame whose full develop is
+    /// `frame` (width, height), from the cache alone: in memory when it
+    /// was made for this shape on a base of `base`'s print, else read
+    /// from its slot on disk (and kept in memory); None when neither
+    /// has it, or nothing is picked yet. No model loads or runs: what
+    /// the open frame's first develop is drawn with, before any ask.
+    pub fn raster_cached(
+        &mut self,
+        frame: (usize, usize),
+        base: Base,
+        turn: u8,
+        key: Key,
+        shape: &Shape,
+        model: Option<&'static Model>,
+    ) -> Option<Made> {
+        self.print = base.print;
+        if let Some((s, p, r)) = self.cache.get(&(key, turn))
+            && s == shape
+            && *p == base.print
+        {
+            return Some(Made {
+                note: self.empty_note(shape, r),
+                raster: r.clone(),
+                provider: None,
+                seconds: 0.0,
+                part: None,
+            });
+        }
+        if !prompted(shape) {
+            return None;
+        }
+        let width = raster_width(shape, frame);
+        let aspect = frame.1 as f32 / frame.0.max(1) as f32;
+        let height = raster_height(width, aspect);
+        let path = self.cached_path_at(shape, model, turn, width)?;
+        let data = read_raster(&path, width, height)?;
+        let raster = Arc::new(Raster::from_data(aspect, width, data));
+        self.cache
+            .insert((key, turn), (shape.clone(), self.print, raster.clone()));
+        Some(Made {
+            note: self.empty_note(shape, &raster),
+            raster,
+            provider: None,
+            seconds: 0.0,
+            part: None,
+        })
+    }
+
     // `base` to `turn` are `worker::masks::On`'s picture; moving it is its own change.
     #[allow(clippy::too_many_arguments)]
     fn raster_of(
@@ -4106,18 +4161,8 @@ impl Ai {
         model: Option<&'static Model>,
     ) -> Result<Made, String> {
         let stamp = base.stamp;
-        self.print = base.print;
-        if let Some((s, p, r)) = self.cache.get(&(key, turn))
-            && s == shape
-            && *p == base.print
-        {
-            return Ok(Made {
-                note: self.empty_note(shape, r),
-                raster: r.clone(),
-                provider: None,
-                seconds: 0.0,
-                part: None,
-            });
+        if let Some(made) = self.raster_cached(frame, base, turn, key, shape, model) {
+            return Ok(made);
         }
         if !prompted(shape) {
             return Err("nothing picked yet".into());
@@ -4126,21 +4171,6 @@ impl Ai {
         let aspect = frame.1 as f32 / frame.0.max(1) as f32;
         let height = raster_height(width, aspect);
         let cached = self.cached_path_at(shape, model, turn, width);
-        if let Some(data) = cached
-            .as_deref()
-            .and_then(|p| read_raster(p, width, height))
-        {
-            let raster = Arc::new(Raster::from_data(aspect, width, data));
-            self.cache
-                .insert((key, turn), (shape.clone(), self.print, raster.clone()));
-            return Ok(Made {
-                note: self.empty_note(shape, &raster),
-                raster,
-                provider: None,
-                seconds: 0.0,
-                part: None,
-            });
-        }
         // A Background reads the Subject matte, the model run once
         // for whichever of the two asks for it first; a hit here
         // needs no store and loads nothing. The provider that made

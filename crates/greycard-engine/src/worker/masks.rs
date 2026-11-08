@@ -133,6 +133,68 @@ pub(super) fn learned_rasters(edit: &Edit, ai: &mut Ai, on: &On<'_>) -> (Rasters
     (rasters, left_out)
 }
 
+/// The open frame's learned masks made already, read on `b` for
+/// `edit` from the mask cache, no model run: each answered to the
+/// window as the open's first picture goes, so the frame is drawn
+/// with them the first time rather than without and then with, and
+/// recorded as given, so a base moved after asks for it again. Only
+/// the shapes in `learned`, those the window would ask for at once,
+/// each read from the slot of the model it names. Left to the
+/// window's ask after the picture, as it always was: a shape with no
+/// raster in the cache; one a Fill patch lies over (made again on the
+/// retouched picture); and one with a word for the status line (a Sky
+/// with no sky), which the picture's own line would cover, and whose
+/// empty raster draws as no raster does.
+pub(super) fn kept_for_open(
+    edit: &Edit,
+    learned: &[(Key, &'static greycard_ai::Model)],
+    b: &FrameKept,
+    ai: &mut Ai,
+    file: Option<&PathBuf>,
+) -> Vec<Outcome> {
+    let started = Instant::now();
+    let frame = (b.image.width, b.image.height);
+    let retouched = retouched_of(b, None);
+    let mut kept = Vec::new();
+    for &(key, model) in learned {
+        let Some(c) = edit
+            .adjustments
+            .iter()
+            .find(|a| a.id == key.0)
+            .and_then(|a| a.mask.components.get(key.1))
+            .filter(|c| c.enabled && c.shape.is_learned() && crate::ai::prompted(&c.shape))
+        else {
+            continue;
+        };
+        let Some(made) = ai.raster_cached(frame, b.base(), b.turn, key, &c.shape, Some(model))
+        else {
+            continue;
+        };
+        if made.note.is_some() || retouched.is_some_and(|r| r.print_over(&made.raster).is_some()) {
+            continue;
+        }
+        ai.given(key, &c.shape, Some(model), None, b.print);
+        kept.push(Outcome::Mask {
+            key,
+            shape: c.shape.clone(),
+            file: file.cloned(),
+            raster: made.raster,
+            provider: None,
+            seconds: 0.0,
+            note: None,
+            part: None,
+        });
+    }
+    if !kept.is_empty() {
+        tracing::info!(
+            "the open frame's masks: {} read from the mask cache in {:.3} s, before its picture",
+            kept.len(),
+            started.elapsed().as_secs_f64()
+        );
+    }
+    kept
+}
+
 /// The base's picture with its retouch applied, when that is `edit`'s
 /// retouch (any edit for `None`): the picture a learned shape a patch
 /// meets is made on ([`Ai::raster_retouched`]).

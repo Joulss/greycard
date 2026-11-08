@@ -2622,6 +2622,7 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
     let file = st.file_of(i);
     crate::panel::mask::learned_for(st, &path);
     crate::panel::mask::learned_anew(st, st.cells[i].version.clone());
+    let learned = crate::panel::mask::asks_at_open(st, &edit);
     Job::Open {
         path,
         version: st.cells[i].version.clone(),
@@ -2636,6 +2637,7 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
             None => st.sidecars[file].turn,
         },
         stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
+        learned,
     }
 }
 

@@ -206,6 +206,10 @@ pub(super) fn run(
                     ai.fill_by_test = Some(v);
                 }
                 #[cfg(test)]
+                if let Some(store) = q.models_by_test.take() {
+                    ai = Ai::for_test_on_disk(store);
+                }
+                #[cfg(test)]
                 if let Some(budget) = q.shelf_by_test.take() {
                     shelf = Some(Shelf::new(budget));
                 }
@@ -890,6 +894,7 @@ pub(super) fn run(
                 seed_blend,
                 turn: wanted,
                 stance_known,
+                learned,
             } => {
                 // What the file system says of the file before it is
                 // read, so a write that lands during the decode is a
@@ -1024,6 +1029,21 @@ pub(super) fn run(
                             matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                         lock.lock().expect("worker queue").landed =
                             landed.map(|g| (g, opened_path.clone().unwrap_or_default()));
+                        // The frame's masks made already go just ahead
+                        // of its picture, so it is drawn with them.
+                        if matches!(outcome, Outcome::Developed { .. })
+                            && let Some(b) = &base
+                        {
+                            for mask in masks::kept_for_open(
+                                &edit,
+                                &learned,
+                                b,
+                                &mut ai,
+                                opened_path.as_ref(),
+                            ) {
+                                deliver(mask);
+                            }
+                        }
                         // A first round makes no fill (its budget is
                         // none), so none is refused here: the fills'
                         // own rounds ask the card.

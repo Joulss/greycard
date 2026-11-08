@@ -65,3 +65,66 @@ pictures (§608) are untouched.
 
 Moving files between roots by drag or a menu (issue 99) is a release
 item of its own, on the roadmap.
+
+## What was built
+
+**A learned mask drawn with the first picture (issue 96): what it was.** We reproduced it on the worker before changing
+anything. An open delivered its picture with no mask beside it; the
+window, finding a learned shape it held no raster for, drew it as
+nothing (a missing raster weighs 0) and asked; the worker answered
+from the mask cache, no model run, and the next draw had it. With
+the edit's stand-in picture (§270, sized by §580), which carries the
+mask, the sequence a tester saw was masked, unmasked, masked.
+
+**What we built.** `Job::Open` carries the learned shapes the window
+would ask for at once, each with the model its own `step` names
+(`Step::Ask`; `panel::mask::asks_at_open`). Once the open's first
+develop is made and before its picture is delivered, the worker reads
+each of those from the cache (in memory, else its disk slot, under
+that model; never a model run, `Ai::raster_cached`, the first half of
+`Ai::raster` split out) and delivers it ahead of the picture,
+recorded as given with that model, so a later change of base asks
+for it again as the window's ask would have. Left to the window's
+ask after the picture, as before: a shape whose step is an offer or
+a wait (so the offer, the Subject rewrite's among them, still comes),
+one not in the cache, one a Fill patch lies over (remade on the
+retouched picture), and one found empty with a word for the status
+line (a Sky with no sky): the picture's own line would cover the
+word, and an empty raster draws as no raster does, so it cannot
+flash. The window takes an answer it did not ask for quietly
+already.
+
+**Measured.** On lavapipe/CPU, a 96 × 64 test frame, run alone three
+times: an open with its raster cached 0.051 to 0.066 s, one without
+0.040 s. Under a parallel test run one sample read 0.299 s, so the
+test says the times and holds them to no bound. Timings on a
+software device are shapes, not numbers.
+
+**Verified.**
+- A worker test opens a frame whose Sky raster is in the cache: the
+  window gets the mask, then the picture. Before the fix the same
+  test saw the picture alone, and the mask only after an ask.
+- A frame with no cached raster develops first, nothing is asked by
+  the worker past the settle, and the window's ask is answered after.
+- A made Sky not in the open's list (the window would offer), and a
+  made Sky found empty, are not delivered ahead of the picture.
+- A mask delivered with the open is given with the window's model; a
+  key the window did not list is not read.
+- The window lists a Sky whose model is in the store and leaves out a
+  Subject whose model it would offer, and a shape switched off.
+- `cargo test -p greycard-engine` and `-p greycard-ui`, clippy with
+  `-D warnings` on both, fmt.
+
+**Not verified.**
+- In the editor on a real frame: no capture of the switch was taken.
+- The read happens after the develop is made rather than before it;
+  nothing is delivered in between, so the window cannot tell.
+- A reopen of the same frame still asks again for the rasters it
+  holds; the worker answers from memory.
+- Between the `Mask` and the `Developed`, a render with the old
+  picture still held and no stand-in could draw the old edit with the
+  new raster for one frame; before, that gap drew it unmasked.
+- `asks_at_open` does not offer the runtime the way the window's ask
+  does (`runtime_first`); a cached read needs no runtime, and the
+  window's own ask after the picture still offers it for any shape
+  not read.

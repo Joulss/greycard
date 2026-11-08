@@ -742,6 +742,15 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// The open frame's masks read from and made with the models in
+    /// `store`, and the mask cache beside it, before the first open.
+    #[cfg(test)]
+    pub(super) fn models_by_test(&self, store: greycard_ai::Store) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").models_by_test = Some(store);
+        cv.notify_one();
+    }
+
     /// The open frame's fills made with no model, every value `v`.
     #[cfg(test)]
     pub(super) fn fill_by_test(&self, v: f32) {
