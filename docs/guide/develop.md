@@ -36,7 +36,8 @@ pan and zoom straight away.
 - A **two-finger scroll** on a touchpad moves the picture, in the
   direction your system scrolls.
 - **Ctrl** with any scroll (⌘ on a Mac) zooms smoothly about the
-  pointer.
+  pointer, with a brush or a repair tool in hand too.
+- **+** and **−** zoom a step in or out about the middle of the view.
 - A **pinch** on a Mac trackpad, or on a Windows precision touchpad,
   zooms about the pointer. On Linux a touchpad pinch does nothing yet;
   use Ctrl and a scroll.

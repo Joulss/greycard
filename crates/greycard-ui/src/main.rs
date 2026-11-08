@@ -947,6 +947,7 @@ impl State {
                 drawn_kind: finish::Source::SCENE,
                 drawn_guide: Arc::new(finish::Guide::NONE),
                 drawn_generation: 0,
+                drawn_planes: None,
                 picture_asked: None,
                 as_shot_white: None,
                 white_cache: None,
@@ -1043,6 +1044,7 @@ impl State {
                 status_after_develop: None,
                 hint: None,
                 peek: None,
+                original: Default::default(),
                 held: None,
                 status_kept: None,
                 view_kept: None,
@@ -1110,6 +1112,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::history::install(app, &state, &worker);
     panel::reset::install(app, &state, &worker);
     panel::retouch::install(app, &state, &worker);
+    panel::original::install(app, &state, &worker);
     panel::prefs::install(app, &state, &worker);
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);

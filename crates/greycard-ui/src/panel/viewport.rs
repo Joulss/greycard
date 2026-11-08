@@ -69,6 +69,7 @@ pub(crate) fn picture_up(develop: &mut owners::Develop, landed: &crate::panel::d
     develop.drawn_kind = landed.kind;
     develop.drawn_guide = landed.guide.clone();
     develop.drawn_generation = landed.generation;
+    develop.drawn_planes = landed.planes.clone();
     let Some(renderer) = develop.renderer.as_mut() else {
         return;
     };
@@ -1818,6 +1819,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             crate::panel::cull::leave_developed(&mut st, &app);
+            crate::panel::original::off(&mut st, &app, false);
             crate::panel::mask::look_edited(&mut st, &app);
             crate::panel::look_preview::panel_moved(&st, &app);
             // A mask's Detail that needs a plane the develop has not

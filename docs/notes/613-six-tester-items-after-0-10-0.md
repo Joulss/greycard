@@ -128,3 +128,95 @@ software device are shapes, not numbers.
   does (`runtime_first`); a cached read needs no runtime, and the
   window's own ask after the picture still offers it for any shape
   not read.
+
+**Zoom inside a tool, Escape, and the Original (issues 94, 97, 100).**
+
+- **Zoom in a tool (issue 94).** The viewport's `scroll-event` takes Ctrl
+  first, so Ctrl and the wheel zoom with the brush or a repair in hand;
+  the plain wheel still sizes the tool. In the Loupe, `+ = - _` and their
+  Ctrl forms zoom a step (1.25, or 0.8) about the view's center through
+  the wheel's own `zoom` callback; the grid and the lightbox keep theirs.
+  The help line gains "in the Loupe, zoom in or out".
+- **Esc a repair (issue 97).** Escape lets go of a chosen patch first, as
+  before; then it puts Heal, Clone, or Fill down through `stop-placing`.
+  A patch half drawn when Escape comes is removed (`patch-changed(-1)`
+  drops the stroke's patch), so none is left behind or developed.
+- **The Original on backslash (issue 100).** A new `panel::original`.
+  - The Original is `reset::original_of` (the default edit for a raw,
+    the picture defaults for a picture) under the edit's geometry: the
+    crop, turn, straighten, and aspect, and the lens's drawing of the
+    picture, so the crop frames the same picture. Carried from the
+    edit: the distortion (on only where the edit's section, profile, and
+    distortion are), the manual distortion, the scale and auto scale,
+    and the lens chosen; with the edit's lens section off, no
+    distortion, no manual, scale 1. The vignetting and the CA stay the
+    Original's own.
+  - Its develop is a new worker job, `Job::DevelopAside`
+    (`worker::develop::develop_aside`): a walk from a clone of the open
+    frame's kept points (a clone shares their pictures) into a
+    `FrameKept` of its own that goes with the walk, with the device's
+    caches left alone. Nothing of the frame's own develop is written:
+    its kept points, base, stamp, the edit its masks see, the shelf, and
+    `developed_as`; `shown` and the fills due are not touched either. So
+    the next develop of the edit goes on from the base kept.
+  - Once up, the Original's picture is kept as the renderer's texture
+    (`Renderer::developed`, new) with its own white, guide, planes,
+    size, and turn, taken from the `Landed` it came in, and so is the
+    edit's picture it stood over. Later presses swap the two as texture
+    develops, `shown_turn` restored with each, no worker job. The kept
+    Original is of a frame and a turn and a lens drawing; a turn, a
+    model arriving, or the look or profile directory moving drops it,
+    and a frame's open (every switch, culling's included) or entering
+    Cull drops everything kept, the textures with it.
+  - Every press bumps the generation, so a develop on its way is
+    dropped. The edit's picture is put back only when it was its latest
+    develop with no fills pending; otherwise the edit develops again.
+  - An edit's develop landing while the Original shows (a change by a
+    path that did not turn it back) turns it off as it lands, with no
+    generation bump and nothing put up, so the fill rounds after it land.
+  - While it shows: `view_edit` and the preview white are the
+    Original's, the status line reads "Original" (the develop's line
+    goes to the log; the sharpen's measured radius and threshold are not
+    taken from it), the tools' overlays are hidden (`bare` in the
+    viewport), and a press with a tool in hand turns the edit back and
+    is consumed, its drag and release included. It turns back on a
+    second press, any other key, a look or develop control, a history
+    move, or a switch. The scopes show the Original: they read the
+    drawn view.
+
+**Verified.**
+
+- greycard-ui tests: Ctrl+wheel zooms with the brush and with Heal and
+  leaves their sizes, and the plain wheel sizes the brush; `+`/`-` zoom
+  the Loupe and keep the tool in hand, and size the grid's tiles over
+  the grid (keys); Escape ends Heal and Clone, and mid-stroke drops the
+  stroke's patch and then ends the tool (retouch); the backslash asks
+  the Original's develop, says "Original", draws exposure 0 under the
+  same crop, and a second press, J, and an exposure change each turn it
+  back with the status line restored; the kept Original holds its own
+  white, not the edit's base; a turn drops the kept Original; an edit's
+  develop landing turns it back at its own generation and its fill
+  round still lands; the lens drawing is carried and the vignetting
+  and CA are not; the key is in the table (original).
+- greycard-engine: a develop aside leaves the frame's stamp, the edit
+  its masks see, `developed_as`, and the base picture as they were, and
+  the next edit develop keeps the base (the default edit's own develop
+  does make another, so the aside's base was a different one).
+- `cargo test -p greycard-ui -p greycard-viewport -p greycard-slint -p
+  greycard-engine` on lavapipe; clippy `-D warnings` on the four; fmt.
+
+**Not verified.**
+
+- Not run in the editor: no look at the swap on a real frame, the kept
+  textures across presses (tests have no renderer, so the kept-texture
+  path is untested), Fill's Escape, or a picture file's Original.
+- GPU memory: two full-size textures are held while a frame whose
+  Original was shown stays open; not measured. The aside walk on the
+  device holds its own pictures beside the frame's kept ones while it
+  runs.
+- "A demosaic preference" names no setting we found; a change to the
+  profile or look directory, a model arriving, and a lens database
+  fetched (which opens the frame again) drop the kept Original.
+- While the Original shows, a re-open of the same frame (a lens
+  database arriving) forgets it, and until the open lands the panel's
+  look is drawn over the Original's texture for a moment.

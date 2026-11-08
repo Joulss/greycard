@@ -386,7 +386,15 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let st = state.borrow();
+            let mut st = state.borrow_mut();
+            // Let go of mid-stroke (Esc): the patch the press began
+            // goes, never developed.
+            if i == -1
+                && let Some(j) = st.develop.patch_stroke.take()
+                && j < st.develop.edit.retouch.patches.len()
+            {
+                st.develop.edit.retouch.patches.remove(j);
+            }
             app.set_patch(i);
             show_patches(&st, &st.develop.edit, &app);
             app.window().request_redraw();
@@ -1258,5 +1266,33 @@ mod tests {
         land_with(&app, &state, FillReport::default());
         assert_eq!(app.get_fill_fraction(), -1.0);
         assert_eq!(waiting(), "");
+    }
+
+    /// Escape puts a repair tool down as its button does; a patch half
+    /// drawn goes first, as a chosen one is let go of first.
+    #[test]
+    fn escape_puts_a_repair_tool_down() {
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        let patches = || state.borrow().develop.edit.retouch.patches.len();
+        for tool in ["Heal", "Clone"] {
+            app.invoke_retouch_toggled(tool.into());
+            assert_eq!(app.get_retouch_mode(), tool);
+            press(&app, Key::Escape);
+            assert_eq!(app.get_retouch_mode(), "", "{tool} still in hand");
+            assert!(state.borrow().develop.retouching.is_none());
+        }
+        // Escape mid-stroke: the press's patch is not left behind.
+        app.invoke_retouch_toggled("Heal".into());
+        app.invoke_place_pressed(600.0, 400.0, false);
+        app.invoke_place_dragged(640.0, 420.0);
+        assert_eq!(patches(), 1, "the press began a patch");
+        press(&app, Key::Escape);
+        app.invoke_place_released();
+        assert_eq!(patches(), 0, "a stray patch");
+        assert_eq!(app.get_patch(), -1);
+        assert_eq!(app.get_retouch_mode(), "Heal");
+        press(&app, Key::Escape);
+        assert_eq!(app.get_retouch_mode(), "");
     }
 }

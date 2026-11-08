@@ -41,7 +41,7 @@ use self::develop::develop_job;
 use self::{
     base::{FrameKept, KeptMaskPicture, Stages, WorkerModels, timed, window_steps},
     decode::{lens_report, open_told, timed_open},
-    develop::{Round, develop_round},
+    develop::{Round, develop_aside, develop_round},
     engine::{left_out_of, left_out_words, run},
     export::{Written, export_open, export_other, seeded, walk_for_export},
     keep::keep_open,
@@ -127,6 +127,15 @@ pub enum Job {
         learned: Vec<(Key, &'static greycard_ai::Model)>,
     },
     Develop {
+        edit: Edit,
+        generation: u64,
+        turn: u8,
+    },
+    /// Another edit of the open frame developed beside its own, as a
+    /// before and after shows it: answered as a develop of
+    /// `generation` is, and nothing of the frame's own develop (its
+    /// kept points, its base, the develop it last delivered) changes.
+    DevelopAside {
         edit: Edit,
         generation: u64,
         turn: u8,
@@ -960,6 +969,7 @@ impl Blame {
         match job {
             Job::Open { generation, .. }
             | Job::Develop { generation, .. }
+            | Job::DevelopAside { generation, .. }
             | Job::Fill { generation } => Blame::Develop(*generation),
             // A frame of a set is caught where it runs, and counted
             // there as the set's failure.

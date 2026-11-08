@@ -320,6 +320,7 @@ fn fits(preview: &Preview, st: &State, app: &App, edit: &Edit) -> bool {
     preview.frame == st.current
         && st.develop.held.is_none()
         && st.develop.peek.is_none()
+        && !st.develop.original.on
         && st.culling.cull.is_none()
         && st.views.pick_pending.is_none()
         && edit.look_lut.strength == preview.strength

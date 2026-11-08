@@ -108,6 +108,13 @@ export component Viewport inherits Rectangle {
     /// icon is missing, and then the cursor stays a crosshair.
     property <image> dropper: @image-url("../icons/pipette.svg");
     in property <bool> placeholder;
+    // The frame's Original shows in place of the edit: the tools'
+    // overlays are hidden, as over the placeholder, and a press with
+    // a tool in hand turns the edit back rather than act on a picture
+    // it is not.
+    in property <bool> original: false;
+    callback original-off();
+    property <bool> bare: root.placeholder || root.original;
     in property <[CompareTile]> compare-tiles;
     /// Culling: the frame on screen's badge in the corner, or one on
     /// each compared tile, and a word for the last key pressed.
@@ -199,7 +206,7 @@ export component Viewport inherits Rectangle {
     // A linear or radial shape chosen with no tool in hand: the only
     // time a press on the picture can take hold of a shape's body.
     property <bool> mask-body-live: (root.mask-kind == "Linear" || root.mask-kind == "Radial")
-        && !root.placeholder && root.picking == "" && root.placing == ""
+        && !root.bare && root.picking == "" && root.placing == ""
         && root.retouch-mode == "" && !root.crop-mode && !root.level-mode
         && root.guide-mode == "";
     in property <length> crop-left;
@@ -276,6 +283,9 @@ export component Viewport inherits Rectangle {
     /// Set when such a drag panned, for Space's release: a tap still
     /// zooms, a hold that panned does not.
     in-out property <bool> hand-panned;
+    // A tool that acts on a press on the picture.
+    property <bool> tool-held: root.placing != "" || root.picking != "" || root.retouch-mode != ""
+        || root.crop-mode || root.level-mode || root.guide-mode != "" || root.crop-draw-armed;
     property <bool> hand-tool: !root.placeholder && (root.placing != "" || root.retouch-mode != "");
     // The middle button pans the picture whatever is in hand, the tool
     // left as it is: a drag of it from wherever on the view had its
@@ -382,6 +392,9 @@ export component Viewport inherits Rectangle {
         // handler still keeps the release from reading as a plain
         // click and zooming.
         property <bool> picked-down;
+        // A press that turned the Original back to the edit: its
+        // release and its drag do nothing more.
+        property <bool> back-down;
         // Whether the press went to a tool placing on the picture,
         // latched for the same reason: the person a part is of is
         // picked on the press, which puts the picking down, and the
@@ -448,6 +461,8 @@ export component Viewport inherits Rectangle {
                 // The release of a press that closed a menu.
             } else if (ta.menu-down) {
                 ta.menu-down = false;
+            } else if (ta.back-down) {
+                // The press only turned the edit back.
             } else if (ta.hand-down) {
                 // The hand's: neither a stroke nor a click's zoom.
             } else if (ta.body-moving) {
@@ -478,6 +493,7 @@ export component Viewport inherits Rectangle {
             ta.hand-down = false;
             ta.placed-down = false;
             ta.picked-down = false;
+            ta.back-down = false;
             ta.crop-drawing = false;
             root.place-line = false;
         }
@@ -546,9 +562,15 @@ export component Viewport inherits Rectangle {
                 // was picked to keep it from a plain click.
                 self.picked-down = false;
                 self.placed-down = false;
+                self.back-down = false;
                 self.hand-down = (root.hand || (e.modifiers.shift && !root.shift-holds)) && root.hand-tool
                     && e.button == PointerEventButton.left;
                 if (root.placeholder) {
+                } else if (root.original) {
+                    if (root.tool-held) {
+                        self.back-down = true;
+                        root.original-off();
+                    }
                 } else if (self.hand-down) {
                 } else if (root.wheel-in-hand && e.modifiers.control && e.button == PointerEventButton.left
                         && root.picking == "" && root.placing == "" && root.retouch-mode == ""
@@ -598,6 +620,7 @@ export component Viewport inherits Rectangle {
                 self.body-moving = false;
                 self.menu-down = false;
                 self.picked-down = false;
+                self.back-down = false;
                 self.placed-down = false;
                 self.dragged = false;
                 self.crop-drawing = false;
@@ -608,8 +631,9 @@ export component Viewport inherits Rectangle {
         }
         moved => {
             // A press not held (one made while the middle pans) is
-            // nothing, though the window still marks it pressed.
-            if (self.pressed && self.held && !self.menu-down) {
+            // nothing, though the window still marks it pressed; nor
+            // is one that turned the Original back.
+            if (self.pressed && self.held && !self.menu-down && !self.back-down) {
                 if (abs(self.mouse-x - self.down-x) > 4px || abs(self.mouse-y - self.down-y) > 4px) {
                     self.dragged = true;
                 }
@@ -631,7 +655,7 @@ export component Viewport inherits Rectangle {
                         root.mask-grabbed(0, false);
                     }
                     root.mask-dragged(0, self.mouse-x - self.down-x, self.mouse-y - self.down-y, false);
-                } else if (self.dragged && !self.picked-down && !self.placed-down && root.crop-mode && !root.placeholder) {
+                } else if (self.dragged && !self.picked-down && !self.placed-down && root.crop-mode && !root.bare) {
                     // Crop mode is a mode: a drag out here draws,
                     // whether or not the picture is zoomed in enough
                     // that a drag would otherwise have panned it. Not
@@ -651,6 +675,15 @@ export component Viewport inherits Rectangle {
             }
         }
         scroll-event(e) => {
+            // Ctrl zooms whatever the delta, by as much of a step as
+            // the delta is of a click: a pinch arrives as Ctrl and a
+            // stream of small deltas on Windows, and a browser zooms
+            // on Ctrl and the wheel too. It comes before the tool's
+            // sizing, so a tool in hand zooms the same way.
+            if (e.modifiers.control) {
+                root.zoom(pow(1.25, e.delta-y / 60px), self.mouse-x, self.mouse-y);
+                return accept;
+            }
             // With the brush or the retouch patch in hand the wheel
             // sizes it: a step of 1.1x for each 60 px of delta, a
             // wheel click's size, added up as a touchpad's small
@@ -674,14 +707,6 @@ export component Viewport inherits Rectangle {
                         root.patch-edited();
                     }
                 }
-                return accept;
-            }
-            // Ctrl zooms whatever the delta, by as much of a step as
-            // the delta is of a click: a pinch arrives as Ctrl and a
-            // stream of small deltas on Windows, and a browser zooms
-            // on Ctrl and the wheel too.
-            if (e.modifiers.control) {
-                root.zoom(pow(1.25, e.delta-y / 60px), self.mouse-x, self.mouse-y);
                 return accept;
             }
             // A mouse wheel's click is a single vertical delta of whole
@@ -727,7 +752,7 @@ export component Viewport inherits Rectangle {
     }
     // The brush under the pointer: its radius, and where
     // its feather begins.
-    if root.placing == "Brush" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
+    if root.placing == "Brush" && ta.has-hover && !root.bare && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
         for s[k] in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Ring {
             stroke: s == 1.0 ? (root.brush-op == "Erase" ? #ff6060cc : root.brush-op == "Subtract" ? #ffb860cc : #ffffffcc) : #ffffff50;
             halo: k == 0;
@@ -879,7 +904,7 @@ export component Viewport inherits Rectangle {
     // The color pick's square about the point, what its mean is
     // taken over: a dark edge outside a light one, to read on any
     // picture.
-    if root.picking == "Range" && ta.has-hover && !root.placeholder: square := Rectangle {
+    if root.picking == "Range" && ta.has-hover && !root.bare: square := Rectangle {
         property <length> side: max(root.range-sample * root.pick-scale * 1px, 3px);
         x: ta.mouse-x - self.side / 2 - 1px;
         y: ta.mouse-y - self.side / 2 - 1px;
@@ -901,7 +926,7 @@ export component Viewport inherits Rectangle {
     // so the icon hangs up and to the right of the point. A
     // dark copy behind it, spread by a pixel, reads on light
     // and on dark alike.
-    if root.picking != "" && root.dropper.width > 0 && ta.has-hover && !root.placeholder: Rectangle {
+    if root.picking != "" && root.dropper.width > 0 && ta.has-hover && !root.bare: Rectangle {
         property <length> size: 22px;
         x: ta.mouse-x - 2 / 24 * self.size;
         y: ta.mouse-y - 22 / 24 * self.size;
@@ -926,7 +951,7 @@ export component Viewport inherits Rectangle {
         }
     }
     // The repair tool under the pointer: its radius and feather.
-    if root.retouch-mode != "" && ta.has-hover && !root.placeholder && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
+    if root.retouch-mode != "" && ta.has-hover && !root.bare && !root.hand && !ta.hand-down && !root.mid-down: Rectangle {
         for s[k] in [1.0, 1.0 - root.patch-feather]: Ring {
             stroke: s == 1.0 ? #7fd0ffcc : #7fd0ff50;
             halo: k == 0;
@@ -941,7 +966,7 @@ export component Viewport inherits Rectangle {
     // clone shows its result at once and so implies its
     // shape; a fill shows nothing until the model answers,
     // and this is where it was drawn meanwhile and after.
-    if root.panel-tab == "Retouch" && root.patch-outline != "" && !root.placeholder: Path {
+    if root.panel-tab == "Retouch" && root.patch-outline != "" && !root.bare: Path {
         width: 100%;
         height: 100%;
         viewbox-x: 0;
@@ -955,7 +980,7 @@ export component Viewport inherits Rectangle {
     // The Fill patches whose fills are still to come, on any tab: the
     // chosen one's stroke, dimmed, where the picture still shows what
     // they cover.
-    if root.pending-outline != "" && !root.placeholder: Path {
+    if root.pending-outline != "" && !root.bare: Path {
         width: 100%;
         height: 100%;
         viewbox-x: 0;
@@ -966,7 +991,7 @@ export component Viewport inherits Rectangle {
         stroke: #7fd0ff55;
         stroke-width: 1px;
     }
-    if root.panel-tab == "Retouch" && root.patch-feather-outline != "" && !root.placeholder: Path {
+    if root.panel-tab == "Retouch" && root.patch-feather-outline != "" && !root.bare: Path {
         width: 100%;
         height: 100%;
         viewbox-x: 0;
@@ -979,7 +1004,7 @@ export component Viewport inherits Rectangle {
     }
     // The chosen patch's pins: its center and its source,
     // joined by a line.
-    if root.retouch-mode != "" && root.patch-handles.length == 2 && !root.placeholder: Path {
+    if root.retouch-mode != "" && root.patch-handles.length == 2 && !root.bare: Path {
         width: 100%;
         height: 100%;
         viewbox-x: 0;
@@ -991,7 +1016,7 @@ export component Viewport inherits Rectangle {
         MoveTo { x: root.patch-handles[0].x; y: root.patch-handles[0].y; }
         LineTo { x: root.patch-handles[1].x; y: root.patch-handles[1].y; }
     }
-    if root.retouch-mode != "" && !root.placeholder: Rectangle {
+    if root.retouch-mode != "" && !root.bare: Rectangle {
         for h[i] in root.patch-handles: CropHandle {
             id: i;
             x: h.x * 1px - 10px;
@@ -1058,7 +1083,7 @@ export component Viewport inherits Rectangle {
     }
     // The crop: shade outside, a rule of thirds inside, eight
     // handles and the whole to move.
-    if root.crop-mode && !root.placeholder: Rectangle {
+    if root.crop-mode && !root.bare: Rectangle {
         property <length> cl: root.crop-left;
         property <length> ct: root.crop-top;
         property <length> cw: root.crop-width;
@@ -1121,14 +1146,14 @@ export component Viewport inherits Rectangle {
     }
     // The grid while the angle is set: over the crop in crop mode,
     // where the thirds already are, over the whole view otherwise.
-    if root.angle-dragging && !root.placeholder: AlignGrid {
+    if root.angle-dragging && !root.bare: AlignGrid {
         x: root.crop-mode ? root.crop-left : 0;
         y: root.crop-mode ? root.crop-top : 0;
         width: root.crop-mode ? root.crop-width : parent.width;
         height: root.crop-mode ? root.crop-height : parent.height;
     }
     // The chosen mask shape: its outline and its handles.
-    if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.placeholder && !root.handles-down: Rectangle {
+    if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.bare && !root.handles-down: Rectangle {
         for h[i] in root.mask-handles: Rule {
             stroke: i == 0 ? #ffffff60 : #ffffffcc;
             halo: i != 0;
@@ -1140,7 +1165,7 @@ export component Viewport inherits Rectangle {
             y1: h.y + self.dy;
         }
     }
-    if root.mask-kind == "Radial" && root.mask-handles.length == 5 && !root.placeholder && !root.handles-down: Rectangle {
+    if root.mask-kind == "Radial" && root.mask-handles.length == 5 && !root.bare && !root.handles-down: Rectangle {
         for s[k] in [1.0, root.mask-feather-scale]: Ring {
             stroke: s == 1.0 ? #ffffffcc : #ffffff50;
             halo: k == 0;
@@ -1153,7 +1178,7 @@ export component Viewport inherits Rectangle {
     }
     // An object's boxes, and its picks: a dot, green for
     // the object and red for what is not it.
-    if !root.placeholder: Rectangle {
+    if !root.bare: Rectangle {
         for b in root.mask-boxes: Rectangle {
             x: b.x * 1px;
             y: b.y * 1px;
@@ -1182,7 +1207,7 @@ export component Viewport inherits Rectangle {
     }
     // The people a part may be of, while one is to be picked: each
     // face outlined, the guess in the accent and heavier.
-    if !root.placeholder: Rectangle {
+    if !root.bare: Rectangle {
         for b in root.person-boxes: Rectangle {
             x: b.x * 1px - 4px;
             y: b.y * 1px - 4px;
@@ -1204,7 +1229,7 @@ export component Viewport inherits Rectangle {
     }
     // While a person is to be picked: everyone's instead, over the
     // picture where the clicks go, never below the panel's fold.
-    if root.placing == "Part" && !root.placeholder: PanelButton {
+    if root.placing == "Part" && !root.bare: PanelButton {
         x: (parent.width - self.width) / 2;
         y: 12px;
         width: 140px;
@@ -1213,7 +1238,7 @@ export component Viewport inherits Rectangle {
         primary: true;
         clicked => { root.all-people(); }
     }
-    if root.mask-kind != "" && !root.placeholder && !root.handles-down: Rectangle {
+    if root.mask-kind != "" && !root.bare && !root.handles-down: Rectangle {
         for h[i] in root.mask-handles: CropHandle {
             id: i;
             x: h.x * 1px - 10px;
@@ -1237,7 +1262,7 @@ export component Viewport inherits Rectangle {
     }
     // The level tool: drag along a line that should be
     // horizontal or vertical.
-    if root.level-mode && !root.placeholder: leveler := Rectangle {
+    if root.level-mode && !root.bare: leveler := Rectangle {
         property <length> x0;
         property <length> y0;
         property <length> x1;
@@ -1299,7 +1324,7 @@ export component Viewport inherits Rectangle {
     // moves the line with the picture rather than under it;
     // the pair gives the turn and the keystone at once, and
     // the tool lets go.
-    if root.guide-mode != "" && !root.placeholder: guider := Rectangle {
+    if root.guide-mode != "" && !root.bare: guider := Rectangle {
         // The stroke in hand.
         property <length> x0;
         property <length> y0;

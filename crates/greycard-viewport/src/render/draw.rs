@@ -569,6 +569,14 @@ impl Renderer {
         }
     }
 
+    /// The developed picture on show, as uploaded or set: none while
+    /// an encoded one (the camera's JPEG) stands in. Handed back to
+    /// [`Renderer::set_source`] later, it shows again without another
+    /// upload.
+    pub fn developed(&self) -> Option<&gpu::Texture> {
+        self.source.as_ref().filter(|_| !self.encoded)
+    }
+
     /// Show a developed picture that is on the GPU already: an
     /// engine op's texture, the sharpen's mask in its alpha.
     pub fn set_source(&mut self, texture: gpu::Texture) {

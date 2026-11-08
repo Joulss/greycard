@@ -860,7 +860,7 @@ pub(super) fn run(
         // to what `during_develop` allows until it is done.
         let developing = matches!(
             job,
-            Job::Open { .. } | Job::Develop { .. } | Job::Fill { .. }
+            Job::Open { .. } | Job::Develop { .. } | Job::DevelopAside { .. } | Job::Fill { .. }
         );
         // A picture with no Part on it lets the People model go: it
         // holds about a gigabyte, and two with a picture's crops.
@@ -1099,6 +1099,27 @@ pub(super) fn run(
                     );
                     developed = matches!(outcome, Outcome::Developed { .. }).then_some(generation);
                     // No fill refused in a first round (see Open).
+                    deliver(outcome);
+                }
+            }
+            Job::DevelopAside {
+                edit,
+                generation,
+                turn: wanted,
+            } => {
+                if let Some(f) = &input {
+                    ai.clear_shorts();
+                    let outcome = develop_aside(
+                        f,
+                        &edit,
+                        wanted % 4,
+                        generation,
+                        base.as_ref(),
+                        &mut ai,
+                        (cache.as_ref(), lenses.as_deref()),
+                        &mut gpu,
+                        &deliver,
+                    );
                     deliver(outcome);
                 }
             }

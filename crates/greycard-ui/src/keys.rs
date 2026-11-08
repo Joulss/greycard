@@ -170,7 +170,7 @@ pub(crate) const TABLE: &[Group] = &[
                 // The grid's with Ctrl too, as a browser's zoom is.
                 &["+", "=", "-", "_", "Ctrl++", "Ctrl+=", "Ctrl+-", "Ctrl+_"],
                 "+ −",
-                "Bigger or smaller tiles in the grid; fewer or more across the lightbox",
+                "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in the Loupe, zoom in or out",
             ),
             line(
                 &["Tab"],
@@ -298,6 +298,7 @@ pub(crate) const TABLE: &[Group] = &[
                 "Brush flow, less and more",
             ),
             act("show-mask", &["O"], "Show the mask"),
+            act("original", &["\\"], "Show the frame as it was, and back"),
         ],
     },
     // A focused slider's own (`EditSlider` in greycard-slint's
@@ -2483,5 +2484,91 @@ mod tests {
         if let Some((sharp, blurred)) = shot(&app) {
             assert_eq!((sharp, blurred), (0, 0), "a second press clears it");
         }
+    }
+
+    /// A wheel event at the middle of the view, Ctrl held or not.
+    fn scroll(app: &crate::App, delta_y: f32, ctrl: bool) {
+        let key = |down: bool| {
+            let text = Key::Control.into();
+            app.window().dispatch_event(if down {
+                WindowEvent::KeyPressed { text }
+            } else {
+                WindowEvent::KeyReleased { text }
+            });
+        };
+        if ctrl {
+            key(true);
+        }
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(600.0, 400.0),
+            delta_x: 0.0,
+            delta_y,
+        });
+        if ctrl {
+            key(false);
+        }
+    }
+
+    /// A window with a 6000 by 4000 picture at 1:1, nothing open.
+    fn at_one_to_one() -> (crate::App, Rc<crate::Shared>, Rc<crate::worker::Worker>) {
+        let app = window(1);
+        let (state, worker) = crate::testing::retouch_state(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.image_size = (6000, 4000);
+            st.develop.center = (3000.0, 2000.0);
+            st.develop.zoom = 1.0;
+        }
+        (app, state, worker)
+    }
+
+    /// Ctrl and the wheel zoom with the brush or a repair in hand, as
+    /// they do with nothing; the plain wheel still sizes the tool.
+    #[test]
+    fn ctrl_and_the_wheel_zoom_with_a_tool_in_hand() {
+        let (app, state, _worker) = at_one_to_one();
+        let zoom = || state.borrow().develop.zoom;
+        app.set_brush_size(0.05);
+        app.set_placing("Brush".into());
+        scroll(&app, 60.0, true);
+        assert!((zoom() - 1.25).abs() < 1e-4, "zoomed to {}", zoom());
+        assert_eq!(app.get_brush_size(), 0.05, "the brush kept its size");
+        scroll(&app, 60.0, false);
+        assert!((zoom() - 1.25).abs() < 1e-4, "the plain wheel zoomed");
+        assert_ne!(app.get_brush_size(), 0.05, "the plain wheel sized nothing");
+        assert_eq!(app.get_placing(), "Brush");
+        app.set_placing("".into());
+
+        app.invoke_retouch_toggled("Heal".into());
+        let size = app.get_patch_size();
+        scroll(&app, -60.0, true);
+        assert!((zoom() - 1.0).abs() < 1e-4, "zoomed to {}", zoom());
+        assert_eq!(app.get_patch_size(), size);
+        assert_eq!(app.get_retouch_mode(), "Heal");
+    }
+
+    /// Plus and minus zoom the Loupe a step, the tool left in hand;
+    /// over the grid they size its tiles as before.
+    #[test]
+    fn plus_and_minus_zoom_the_loupe_and_size_the_grid() {
+        let (app, state, _worker) = at_one_to_one();
+        let zoom = || state.borrow().develop.zoom;
+        app.set_placing("Brush".into());
+        press(&app, "+");
+        assert!((zoom() - 1.25).abs() < 1e-4, "zoomed to {}", zoom());
+        press(&app, "-");
+        assert!((zoom() - 1.0).abs() < 1e-4, "zoomed to {}", zoom());
+        assert_eq!(app.get_placing(), "Brush", "the tool stays in hand");
+        app.set_placing("".into());
+
+        let steps = Rc::new(std::cell::Cell::new(0));
+        let counted = steps.clone();
+        app.on_grid_zoom(move |by| counted.set(counted.get() + by));
+        app.set_grid_open(true);
+        press(&app, "+");
+        press(&app, "+");
+        press(&app, "-");
+        assert_eq!(steps.get(), 1, "the grid's tiles");
+        assert!((zoom() - 1.0).abs() < 1e-4, "the grid zoomed the Loupe");
     }
 }

@@ -232,6 +232,10 @@ balance on".
 - **Hover** over a row to see that state in the picture without
   changing anything.
 - **Ctrl+Z** undoes a step, **Ctrl+Shift+Z** or **Ctrl+Y** redoes it.
+- **\\** (backslash) shows the frame as it was, its Original, under the
+  edit's crop and at the same zoom, and the status line says
+  "Original". Press it again, or press any other key or change
+  anything, to see the edit.
 - **Reset to Original**, in the section's head while the edit is not
   the Original, puts the edit back there as one step, "Reset to
   Original", which Ctrl+Z takes back. It is there with the section

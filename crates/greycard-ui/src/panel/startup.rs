@@ -1306,10 +1306,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         st.develop.image_size = frame_size;
                         st.develop.center = (frame.size.0 / 2.0, frame.size.1 / 2.0);
                     }
-                    let white_key = match &st.develop.peek {
-                        Some(p) => white_key(&p.white_balance),
-                        None => (app.get_as_shot(), app.get_temperature(), app.get_tint()),
-                    };
+                    if app.get_original_on() != st.develop.original.on {
+                        app.set_original_on(st.develop.original.on);
+                    }
+                    let white_key =
+                        match crate::panel::original::shown(st).or(st.develop.peek.as_ref()) {
+                            Some(p) => white_key(&p.white_balance),
+                            None => (app.get_as_shot(), app.get_temperature(), app.get_tint()),
+                        };
                     // A held picture was developed at its own white
                     // balance; the open frame is already the next one.
                     let white = if st.develop.held.is_some() {
@@ -2607,6 +2611,7 @@ pub(crate) fn land_pending(st: &mut State, app: &App) -> Landing {
     if let Some(landed) = &pending {
         develop_landed(st, app, landed.generation);
         picture_up(&mut st.develop, landed);
+        crate::panel::original::went_up(st, landed);
     }
     let loupe = st.culling.cull.is_some() || standing_in(st).is_some();
     if !loupe && let Some(landed) = &pending {
@@ -2627,12 +2632,14 @@ pub(crate) fn land_pending(st: &mut State, app: &App) -> Landing {
 }
 
 /// The edit the viewport draws the picture on the GPU under: the held
-/// one while that picture is an earlier frame's, a history or snapshot
-/// row's while one is under the pointer, else the panel's.
+/// one while that picture is an earlier frame's, the frame's Original
+/// while it shows, a history or snapshot row's while one is under the
+/// pointer, else the panel's.
 pub(crate) fn view_edit(st: &State, panel: &Edit) -> Edit {
     st.develop
         .held
         .clone()
+        .or_else(|| crate::panel::original::shown(st).cloned())
         .or_else(|| st.develop.peek.clone())
         .unwrap_or_else(|| panel.clone())
 }

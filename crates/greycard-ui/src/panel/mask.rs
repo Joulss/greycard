@@ -1157,9 +1157,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             }
             crate::panel::parts::dismissed(&mut st);
             crate::panel::parts::stopped(&mut st);
+            // A repair tool put down mid-stroke: the patch the press
+            // began goes with it, never developed, and none is left
+            // chosen.
+            if let Some(i) = st.develop.patch_stroke.take()
+                && i < st.develop.edit.retouch.patches.len()
+            {
+                st.develop.edit.retouch.patches.remove(i);
+                app.set_patch(-1);
+            }
             if st.develop.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
                 crate::panel::deliver::drop_hint(&app, &mut st);
+                crate::panel::retouch::show_patches(&st, &st.develop.edit, &app);
             }
             st.develop.picking = None;
             let was_defringe = app.get_picking() == "Defringe";

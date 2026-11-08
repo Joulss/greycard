@@ -6412,3 +6412,62 @@ fn a_mask_answered_with_the_open_is_given_with_the_window_s_model() {
     assert_eq!(ai.given_model_by_test((1, 0)), None, "not listed, not read");
     crate::testing::remove_dir_retry(&dir);
 }
+
+/// A develop aside, the before of a before and after, leaves the open
+/// frame's own as it was: its base, the stamp the masks know it by,
+/// the edit they see it through, and the develop it last delivered;
+/// the frame's next develop goes on from the base kept.
+#[test]
+fn a_develop_aside_leaves_the_frames_own_develop() {
+    use crate::stages::Keep;
+    let frame = Arc::new(aberrated_frame(200, 160));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut gpu = None;
+    let mut base = None;
+    let mut edit = Edit::default();
+    edit.light.exposure = 1.0;
+    edit.noise.profiled = true;
+    edit.noise.strength = 3.0;
+    develop_with(&frame, &edit, &mut base, &mut gpu);
+    let seen = |base: &Option<FrameKept>| {
+        let b = base.as_ref().expect("the frame kept");
+        (
+            b.stamp,
+            b.edit.clone(),
+            b.developed_as.clone(),
+            b.kept.picture(Keep::Base).cloned().expect("a base"),
+        )
+    };
+    let before = seen(&base);
+    // The before: the default edit, whose base is another.
+    let outcome = develop_aside(
+        &Input::Raw(frame.clone()),
+        &Edit::default(),
+        0,
+        2,
+        base.as_ref(),
+        &mut Ai::new(),
+        (None, None),
+        &mut gpu,
+        &deliver,
+    );
+    assert!(matches!(outcome, Outcome::Developed { generation: 2, .. }));
+    let after = seen(&base);
+    assert_eq!(after.0, before.0, "the stamp");
+    assert_eq!(after.1, before.1, "the edit the masks see");
+    assert_eq!(after.2, before.2, "the develop delivered");
+    assert!(Arc::ptr_eq(&after.3, &before.3), "the base");
+    // The frame's own next develop: the base kept, not made again.
+    edit.light.exposure = 0.5;
+    develop_with(&frame, &edit, &mut base, &mut gpu);
+    let next = seen(&base);
+    assert_eq!(next.0, before.0, "the base was made again");
+    assert!(Arc::ptr_eq(&next.3, &before.3));
+    // The before's base is another indeed: its own develop makes one.
+    develop_with(&frame, &Edit::default(), &mut base, &mut gpu);
+    assert_ne!(
+        seen(&base).0,
+        before.0,
+        "the default edit's base is the same"
+    );
+}

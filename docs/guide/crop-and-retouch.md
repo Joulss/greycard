@@ -135,16 +135,16 @@ after.
 
 ### Making a repair
 
-1. Click **Heal**, **Clone** or **Fill**. The pointer shows the
+1. Click **Heal**, **Clone**, or **Fill**. The pointer shows the
    repair's size and where its soft edge begins.
 2. Click on a spot, or drag over a longer flaw.
-3. Click the tool's button again when you are done.
+3. Click the tool's button again, or press Esc, when you are done.
 
 While a tool is in hand, the mouse wheel changes the size, one step a
 click; a touchpad scroll changes it by as many steps as the same
-distance on a wheel. To move the picture without putting the tool
-down, as when working over dust at 200%, hold **Space** or **Shift**
-and drag.
+distance on a wheel. Ctrl with the wheel still zooms. To move the
+picture without putting the tool down, as when working over dust at
+200%, hold **Space** or **Shift** and drag.
 
 For **Heal** and **Clone**, greycard chooses where to copy from. To
 change it, choose the repair in the list with the tool in hand. Two

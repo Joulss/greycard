@@ -252,6 +252,9 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     // Out of Cull drawn developed first: its tab is the one to keep.
     leave_developed(st, app);
     put_tools_down(st, app);
+    // Cull draws no develop: the Original's kept pictures go.
+    crate::panel::original::forget(st);
+    app.set_original_on(false);
     if st.current.is_some() {
         let outgoing = read_edit(app, &st.develop.edit, st.develop.target);
         save_edit(st, outgoing);

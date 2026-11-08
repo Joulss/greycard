@@ -770,6 +770,8 @@ pub(crate) fn turn_frames(
     if quarters.rem_euclid(4) == 0 {
         return;
     }
+    // The Original kept is of the turn before.
+    crate::panel::original::drop_picture(st);
     // A turn is written to the whole sidecar, so each frame's is read
     // first where it stands in from its row; one under a root that is
     // offline is left out, and the status line says so.
@@ -1889,10 +1891,12 @@ pub(crate) fn save_leaving(st: &mut State, app: &App) {
 }
 
 fn hold_outgoing(st: &mut State, outgoing: &Edit) {
+    // The frame's Original on show: the picture on screen is its.
+    let shown = crate::panel::original::forget(st);
     if st.develop.base_white.is_none() {
         st.develop.zoom = 0.0;
     } else if st.develop.held.is_none() {
-        st.develop.held = Some(outgoing.clone());
+        st.develop.held = Some(shown.unwrap_or_else(|| outgoing.clone()));
     }
 }
 
@@ -2618,6 +2622,9 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
 /// file is never drawn on this one, and none made on this one is
 /// dropped as another's.
 pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
+    // Whatever the Original kept of the frame before goes, its texture
+    // with it: culling's switches open by here too.
+    crate::panel::original::forget(st);
     let path = st.path_of(i).clone();
     let file = st.file_of(i);
     crate::panel::mask::learned_for(st, &path);

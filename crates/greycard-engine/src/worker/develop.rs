@@ -45,6 +45,9 @@ pub(super) fn develop_job(
 pub(super) struct Round {
     budget: Option<usize>,
     pub ahead: (usize, usize),
+    /// A develop aside ([`develop_aside`]): what the device holds for
+    /// the open frame's own develops is left as it is.
+    aside: bool,
 }
 
 impl Round {
@@ -54,6 +57,7 @@ impl Round {
         Self {
             budget: None,
             ahead: (0, 0),
+            aside: false,
         }
     }
 
@@ -63,6 +67,7 @@ impl Round {
         Self {
             budget: Some(0),
             ahead: (0, 0),
+            aside: false,
         }
     }
 
@@ -71,6 +76,7 @@ impl Round {
         Self {
             budget: Some(1),
             ahead,
+            aside: false,
         }
     }
 }
@@ -267,7 +273,7 @@ pub(super) fn develop_round(
     } else {
         Some(super::masks::mask_picture(h, &patched))
     };
-    if let Some(ctx) = gpu.as_ref() {
+    if let Some(ctx) = gpu.as_ref().filter(|_| !round.aside) {
         // What the device holds for a stage that is off goes.
         if edit.sharpen.options().is_none() && !edit.detail_wants().sharpen {
             ctx.release_sharpen();
@@ -384,6 +390,55 @@ pub(super) fn develop_round(
     h.developed_as = Some((edit.clone(), turn));
     h.left_out = left_out_of(&outcome, Some(h));
     (outcome, picture)
+}
+
+/// Develop another `edit` of the open frame beside its own, as a before
+/// and after shows it: a walk from a clone of what `held` keeps, which
+/// shares its pictures, into a frame kept of its own that goes with
+/// the walk. Nothing of the open frame's develop is written: its kept
+/// points, its base and stamp, the edit its masks see, and the develop
+/// it last delivered stay as they were, so its next develop goes on
+/// from them. No fill is made.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn develop_aside(
+    input: &Input,
+    edit: &Edit,
+    turn: u8,
+    generation: u64,
+    held: Option<&FrameKept>,
+    ai: &mut Ai,
+    stores: (
+        Option<&greycard_ai::DenoiseCache>,
+        Option<&greycard_lens::Database>,
+    ),
+    gpu: &mut Option<greycard_gpu::Context>,
+    deliver: &Deliver,
+) -> Outcome {
+    let facts = input.walked().facts(turn);
+    let mut aside = FrameKept::new(&facts);
+    if let Some(h) = held.filter(|h| h.facts == aside.facts) {
+        aside.kept = h.kept.clone();
+        aside.stamp = h.stamp;
+        aside.turn = h.turn;
+        aside.image = h.image.clone();
+    }
+    let mut round = Round {
+        aside: true,
+        ..Round::first()
+    };
+    develop_round(
+        input,
+        edit,
+        turn,
+        generation,
+        &mut Some(aside),
+        ai,
+        stores,
+        gpu,
+        deliver,
+        &mut round,
+    )
+    .0
 }
 
 /// What of the edit the frame could not take, by name and why, other

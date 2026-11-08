@@ -26,6 +26,14 @@ design note behind it.
   one switch turns a correction on (discussion 90)
   ([§608](https://github.com/jessolmstead/greycard/blob/master/docs/notes/608-a-pictures-lens-corrections-start-off.md)).
 
+- Backslash shows the frame as it was, its Original, under the same
+  crop and zoom, and back; any other key or change shows the edit
+  again (issue 100)
+  ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+- Ctrl and the wheel zoom with the brush or a repair tool in hand, and
+  + and − zoom the Loupe a step (issue 94)
+  ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+
 ### Models
 
 - Fetch every model at once: Settings, Models lists each model with
@@ -165,6 +173,8 @@ design note behind it.
 - A Sky, Subject, or other learned mask already made no longer flashes
   when you switch to its frame: the picture comes up with the mask on
   (issue 96)
+  ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+- Esc puts Heal, Clone, and Fill down, as it does the brush (issue 97)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 
 ## 0.10.0, 2026-11-06

@@ -375,6 +375,7 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     // rows above the one clicked.
     let develop = !same_develop(&edit, &st.develop.edit);
     st.develop.edit = edit;
+    crate::panel::original::off(st, app, develop);
     if !develop {
         app.window().request_redraw();
     } else {

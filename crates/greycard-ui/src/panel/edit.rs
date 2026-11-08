@@ -534,6 +534,7 @@ pub(crate) fn develop_soon(
     // In Cull drawn developed the panel is the frame's: the mode ends,
     // and the change develops as it would in Develop.
     crate::panel::cull::leave_developed(st, &app);
+    crate::panel::original::off(st, &app, true);
     app.window().request_redraw();
     schedule_save(st, app_weak.clone());
     st.develop.debounce.start(
@@ -1224,6 +1225,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             crate::panel::cull::leave_developed(&mut st, &app);
+            crate::panel::original::off(&mut st, &app, true);
             let picked = st.develop.edit.lens.chosen.clone();
             st.develop.edit = read_edit(&app, &st.develop.edit, st.develop.target);
             // Another lens picked: the line under the picker names it.

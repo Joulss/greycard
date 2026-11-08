@@ -653,8 +653,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.develop.planes_asked = Default::default();
                 return;
             }
+            // The Original's own, or the edit's, which the Original
+            // gives way to.
+            let original = crate::panel::original::landing(&mut st, app, generation);
             // The saved edit's pictures, from this develop.
-            crate::edited::landed(&st, turn);
+            if !original {
+                crate::edited::landed(&st, turn);
+            }
             let detailed = match detail {
                 Some((s, ran)) => {
                     let how = match ran {
@@ -694,7 +699,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 ),
                 None => String::new(),
             };
-            let sharpened = match sharpen {
+            let sharpened = match sharpen.filter(|_| !original) {
                 Some(s) => {
                     app.set_sharpen_measured_radius(s.radius);
                     app.set_sharpen_measured_threshold(s.threshold);
@@ -851,6 +856,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 );
             } else {
                 show_hint(app, &mut st, picking_hint(picking.as_str()));
+            }
+            // Its line goes to the log; the status line says what shows.
+            if original {
+                tracing::info!(
+                    "the Original of the frame: {}x{}, developed in {seconds:.2} s",
+                    image.width(),
+                    image.height()
+                );
+                app.set_status(crate::panel::original::WORD.into());
             }
             // The picture the viewport draws from the next frame on,
             // whether it takes a camera picture's place or stands
@@ -1403,6 +1417,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 /// waiting on one `arrived` takes: the learned denoiser its tier names,
 /// or the fill model with a fill to make. Not while culling.
 fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) -> bool) {
+    // A model arrived: the Original kept may have gone without it.
+    crate::panel::original::drop_picture(st);
     let denoiser = st
         .develop
         .edit

@@ -61,6 +61,9 @@ pub(crate) struct Develop {
     pub(crate) drawn_guide: Arc<finish::Guide>,
     /// The generation of the develop on the GPU, set with it.
     pub(crate) drawn_generation: u64,
+    /// The masks' detail planes of the picture on the GPU, set with
+    /// it, so the picture can go up again as it was.
+    pub(crate) drawn_planes: Option<Arc<crate::detail::DetailPlanes>>,
     /// The develop whose refined masks' picture was asked of the
     /// worker (`Job::MaskPicture`), so it is asked once.
     pub(crate) picture_asked: Option<u64>,
@@ -349,6 +352,9 @@ pub(crate) struct Develop {
     /// history or snapshot row is under the pointer, and the status
     /// line it covers meanwhile.
     pub(crate) peek: Option<Edit>,
+    /// The frame's Original on show in place of the edit, on its key,
+    /// and the two pictures it swaps between.
+    pub(crate) original: panel::original::Original,
     /// The edit of the picture still on the GPU after another file was
     /// chosen: the viewport shows that picture under this look until
     /// the new file's develop lands, rather than the new look over the

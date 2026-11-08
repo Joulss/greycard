@@ -52,6 +52,8 @@ pub(crate) fn looks_moved(st: &mut crate::State) {
     if !worker.edited().files_moved() {
         return;
     }
+    // The Original kept may be under a profile or a look moved.
+    crate::panel::original::drop_picture(st);
     let held: std::collections::HashSet<Key> = worker.edited().held_frames().into_iter().collect();
     tracing::info!(
         "the edit's pictures: the look or profile directory changed; {} edited frame(s) read again",

@@ -100,6 +100,12 @@ export component App inherits Window {
     callback toggle-zoom-200(length, length);
     /// Fit if at this level, else this level about the view's center.
     callback zoom-key(float);
+    /// The frame's Original shows in the viewport in place of the
+    /// edit; the key that shows it or the edit again, and the edit
+    /// again.
+    in-out property <bool> original-on: false;
+    callback original-key();
+    callback original-off();
     /// The mat around the fitted picture, on or off.
     callback mat-key();
     /// The effective zoom in words: "Fit", or a percentage.
@@ -2841,6 +2847,9 @@ export component App inherits Window {
             let chord = root.key-chord(e.text, e.modifiers.control, e.modifiers.shift,
                 e.modifiers.alt, e.modifiers.meta);
             if (chord == "") { return reject; }
+            // Any key but its own turns the Original back to the edit,
+            // and goes on to do what it does.
+            if (root.original-on && chord != "\\") { root.original-off(); }
             // The wheel in hand put down, and Esc goes on to mean
             // what else it means.
             if (chord == "Esc") { root.wheel-hand = -1; }
@@ -2884,6 +2893,9 @@ export component App inherits Window {
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.
             if (chord == "Esc" && root.patch != -1) { root.patch-changed(-1); return accept; }
+            // Then the repair tool itself: Heal, Clone, and Fill go
+            // down as a shape or a dropper does.
+            if (chord == "Esc" && root.retouch-mode != "") { root.stop-placing(); return accept; }
             if (chord == "Esc" && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
             if (chord == "Esc" && root.level-mode) { root.level-mode = false; return accept; }
             if (chord == "Esc" && root.crop-draw-armed) { root.crop-draw-armed = false; return accept; }
@@ -3263,6 +3275,26 @@ export component App inherits Window {
                 return accept;
             }
             if (chord == "Space" && !root.grid-open) { root.zoom-key(1); return accept; }
+            // In the Loupe, plus and minus zoom a step about the view's
+            // center, the wheel's step; a tool in hand stays in hand.
+            // The grid's and the lightbox's are theirs, above.
+            if (!root.grid-open && (!root.lightbox || root.lightbox-loupe)) {
+                if (chord == "+" || chord == "=" || chord == "Ctrl++" || chord == "Ctrl+=") {
+                    root.zoom(1.25, view.width / 2, view.height / 2);
+                    return accept;
+                }
+                if (chord == "-" || chord == "_" || chord == "Ctrl+-" || chord == "Ctrl+_") {
+                    root.zoom(0.8, view.width / 2, view.height / 2);
+                    return accept;
+                }
+            }
+            // Before and after: the frame's Original and back, in the
+            // Loupe. Held, once.
+            if (chord == "\\" && !root.grid-open && !root.cull-mode
+                && (!root.lightbox || root.lightbox-loupe)) {
+                if (!e.repeat) { root.original-key(); }
+                return accept;
+            }
             if (chord == "Z" && !root.grid-open) { root.zoom-key(3); return accept; }
             if (chord == "F" && !root.grid-open) { root.mat-key(); return accept; }
             if (chord == "S" && !root.grid-open) {
@@ -3389,6 +3421,8 @@ export component App inherits Window {
                 hand: root.hand-key || (root.shift-held && !self.shift-holds);
                 hand-panned <=> root.hand-panned;
                 placeholder: root.placeholder;
+                original: root.original-on;
+                original-off => { root.original-off(); }
                 compare-tiles: root.compare-tiles;
                 // The badge and the key's word: either Cull's.
                 culling: root.cull-mode;
