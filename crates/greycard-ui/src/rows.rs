@@ -1214,7 +1214,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
 pub(crate) fn land_read(st: &mut State, app: &App, file: usize, sidecar: Sidecar) -> bool {
     let held = Held {
         sidecar,
-        ..from_nothing()
+        ..from_nothing(&st.files[file])
     };
     take(st, app, file, held)
 }

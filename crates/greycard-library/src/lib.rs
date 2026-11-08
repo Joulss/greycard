@@ -505,25 +505,30 @@ pub fn blend_is_default(blend: f32, iso: Option<u32>) -> bool {
 }
 
 /// Whether `edit` is the default of the frame at `raw` (a raw's
-/// `Edit::default()`, a picture's `Edit::for_picture()`). The learned
+/// `Edit::default()`; for a picture, any of `Edit::picture_defaults()`,
+/// so a picture only rated by an older build is not edited). The learned
 /// blend is judged by [`blend_is_default`] against the frame's `iso`
 /// (`Some(None)` for a frame whose camera gave none); with the ISO not
 /// known (`None`) the blend is left out of it, as a seeded one is the
 /// likelier.
 pub fn is_default_edit(edit: &greycard_edit::Edit, raw: &Path, iso: Option<Option<u32>>) -> bool {
-    let default = if greycard_core::picture::is_picture_path(raw) {
-        greycard_edit::Edit::for_picture()
-    } else {
-        greycard_edit::Edit::default()
-    };
     if let Some(iso) = iso
         && !blend_is_default(edit.noise.learned_strength, iso)
     {
         return false;
     }
-    let mut seen = edit.clone();
-    seen.noise.learned_strength = default.noise.learned_strength;
-    seen == default
+    let untouched = |default: greycard_edit::Edit| {
+        let mut seen = edit.clone();
+        seen.noise.learned_strength = default.noise.learned_strength;
+        seen == default
+    };
+    if greycard_core::picture::is_picture_path(raw) {
+        greycard_edit::Edit::picture_defaults()
+            .into_iter()
+            .any(untouched)
+    } else {
+        untouched(greycard_edit::Edit::default())
+    }
 }
 
 /// Whether `sidecar` holds a develop of the frame at `raw` and whether
@@ -851,8 +856,8 @@ pub struct RowMeta {
     pub mtime: i64,
     pub meta: Meta,
     /// The sidecar holds a develop: a snapshot, or a current edit that
-    /// is not the frame's default (a raw's `Edit::default()`, a
-    /// picture's `Edit::for_picture()`). A frame only rated, or never
+    /// is not the frame's default (a raw's `Edit::default()`; for a
+    /// picture, any of `Edit::picture_defaults()`). A frame only rated, or never
     /// opened, has none, and neither has one whose edit was reset,
     /// whatever history that left behind. A sidecar whose edit
     /// this build cannot read counts as edited: there is something in

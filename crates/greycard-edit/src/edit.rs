@@ -199,16 +199,45 @@ impl Adjustment {
 
 impl Edit {
     /// The edit a picture that is not a raw starts from: the default,
-    /// but with the capture sharpening off, since the file has been
-    /// sharpened once by whatever rendered it.
+    /// but with the capture sharpening and the lens profile's
+    /// corrections (distortion, vignetting, and chromatic aberration)
+    /// off, since whatever rendered the file sharpened it once and, a
+    /// camera's JPEG or an editor's export alike, most likely corrected
+    /// its lens too, with nothing in the file to say so. The lens is
+    /// still matched and the section still shows it, so one switch puts
+    /// a correction back.
     pub fn for_picture() -> Self {
         Self {
             sharpen: Sharpen {
                 enabled: false,
                 ..Sharpen::default()
             },
+            lens: Lens {
+                distortion: false,
+                vignetting: false,
+                chromatic_aberration: false,
+                ..Lens::default()
+            },
             ..Self::default()
         }
+    }
+
+    /// Every edit a picture that is not a raw counts as untouched at:
+    /// [`Edit::for_picture`], and the same with the lens profile's
+    /// corrections on, which is what `for_picture` was before they
+    /// started off. A sidecar an older build wrote for a picture only
+    /// rated holds the second; it develops as it says, but nobody
+    /// edited it. The one rule for the edited mark and the history's
+    /// Original row; the schema migration takes the second alone, the
+    /// only one a sidecar from before it can hold.
+    pub fn picture_defaults() -> [Self; 2] {
+        [
+            Self::for_picture(),
+            Self {
+                lens: Lens::default(),
+                ..Self::for_picture()
+            },
+        ]
     }
 
     /// The color mixer as the picture takes it: nothing at all while
@@ -501,6 +530,37 @@ mod tests {
         });
         edit.adjustments[0].look.detail = detail;
         edit
+    }
+
+    /// A picture starts with the capture sharpen and the lens
+    /// profile's three corrections off, everything else a raw's:
+    /// the section and its profile switch stay on, so one correction
+    /// switched on is all it takes, and that is kept through a save.
+    #[test]
+    fn a_picture_starts_with_its_lens_corrections_off() {
+        let picture = Edit::for_picture();
+        let lens = &picture.lens;
+        assert!(!lens.distortion && !lens.vignetting && !lens.chromatic_aberration);
+        assert!(lens.enabled && lens.profile && lens.chosen.is_from_file());
+        assert!(!lens.wants_profile());
+        assert!(!picture.sharpen.enabled);
+        // Nothing else differs from a raw's default, and a raw's own is
+        // unchanged.
+        let raw = Edit::default();
+        assert!(raw.lens.distortion && raw.lens.vignetting && raw.lens.chromatic_aberration);
+        assert_eq!(
+            Edit {
+                lens: raw.lens.clone(),
+                sharpen: raw.sharpen,
+                ..picture.clone()
+            },
+            raw
+        );
+        // One switched on is what the edit then holds, read back.
+        let mut on = picture;
+        on.lens.vignetting = true;
+        assert!(on.lens.wants_profile());
+        assert_eq!(Edit::from_json(&on.to_json()).unwrap(), on);
     }
 
     /// A mask's Detail is written only when it is set, reads back

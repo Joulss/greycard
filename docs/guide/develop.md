@@ -388,7 +388,10 @@ denoiser.
 
 ## Lens
 
-Corrects what the lens does to the picture. **Lens**, near the top,
+Corrects what the lens does to the picture. On a raw the three
+corrections start on; on a JPEG, TIFF, or PNG they start off, since
+the file was corrected once already by the camera or the editor that
+made it, and each is a switch. **Lens**, near the top,
 picks whose profile corrects it. **From the file**, the default, is the
 lens the file names. **Maker**, above it, narrows the list to one
 maker's lenses, or **All**. The field beside **Maker**, **Find a

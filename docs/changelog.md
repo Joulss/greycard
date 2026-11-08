@@ -20,6 +20,11 @@ design note behind it.
   move the picture from its own white in mired and Duv, with As shot,
   Auto, the dropper, and a mask's offset as on a raw
   ([§602](https://github.com/jessolmstead/greycard/blob/master/docs/notes/602-white-balance-on-a-picture.md)).
+- A JPEG, TIFF, or PNG now opens with the lens profile's distortion,
+  vignetting, and chromatic aberration corrections off, so an export
+  opened again is not corrected twice; the lens is still matched and
+  one switch turns a correction on (discussion 90)
+  ([§608](https://github.com/jessolmstead/greycard/blob/master/docs/notes/608-a-pictures-lens-corrections-start-off.md)).
 
 ### Models
 

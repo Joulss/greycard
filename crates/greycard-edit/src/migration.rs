@@ -346,7 +346,10 @@ fn develops_nothing(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
         return false;
     };
     edit.version = VERSION;
-    [Edit::default(), Edit::for_picture()].into_iter().any(|d| {
+    // A picture's default as an edit from before the bodies held it:
+    // the one with its lens corrections on.
+    let [_, picture_then] = Edit::picture_defaults();
+    [Edit::default(), picture_then].into_iter().any(|d| {
         edit.noise.learned_strength = d.noise.learned_strength;
         edit == d
     })
@@ -731,7 +734,8 @@ mod baselines {
         let seeded = written_before(&serde_json::json!({"noise": {"learned_strength": 0.6}}));
         assert_eq!(seeded.light.baseline, None);
         assert_eq!(seeded.noise.learned_strength, 0.6);
-        let picture = serde_json::to_value(Edit::for_picture()).unwrap();
+        // A picture's default then had its lens corrections on.
+        let picture = serde_json::to_value(&Edit::picture_defaults()[1]).unwrap();
         assert_eq!(written_before(&picture).light.baseline, None);
     }
 

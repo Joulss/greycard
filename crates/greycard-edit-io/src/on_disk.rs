@@ -56,7 +56,21 @@ pub enum Trouble {
 pub fn load_sidecar_said(f: &Path, sidecars: Option<Placement>) -> (Sidecar, Option<Trouble>) {
     match sidecars {
         Some(placement) => load(f, Some(placement)),
-        None => (Sidecar::default(), None),
+        None => (fresh_sidecar(f), None),
+    }
+}
+
+/// The sidecar of a frame nothing has been written for: a raw's
+/// default, and for a picture that is not a raw its own
+/// ([`Edit::for_picture`]).
+pub fn fresh_sidecar(f: &Path) -> Sidecar {
+    if greycard_core::picture::is_picture_path(f) {
+        Sidecar {
+            line: Line::of(Edit::for_picture()),
+            ..Sidecar::default()
+        }
+    } else {
+        Sidecar::default()
     }
 }
 
@@ -72,16 +86,7 @@ pub fn read_sidecar_said(f: &Path) -> (Sidecar, Option<Trouble>) {
 fn load(f: &Path, takes: Option<Placement>) -> (Sidecar, Option<Trouble>) {
     let mut trouble = None;
     // A picture that is not a raw starts from its own default.
-    let fresh = || {
-        if greycard_core::picture::is_picture_path(f) {
-            Sidecar {
-                line: Line::of(Edit::for_picture()),
-                ..Sidecar::default()
-            }
-        } else {
-            Sidecar::default()
-        }
-    };
+    let fresh = || fresh_sidecar(f);
     let mut sidecar = match Sidecar::load(f) {
         Ok(Some(s)) => {
             // A shape from a later build: loaded as nothing, the
@@ -233,6 +238,18 @@ pub fn migrate_from_file(sidecar: &mut Sidecar, frame: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With sidecars off nothing is read, and a picture still starts
+    /// from its own default, lens corrections and capture sharpen off;
+    /// a raw from the raw's.
+    #[test]
+    fn with_sidecars_off_a_picture_starts_from_its_own_default() {
+        let (picture, _) = load_sidecar_said(Path::new("/nowhere/IMG_0001.JPG"), None);
+        assert_eq!(picture.line.current, Edit::for_picture());
+        assert!(!picture.line.current.lens.wants_profile());
+        let (raw, _) = load_sidecar_said(Path::new("/nowhere/IMG_0001.CR3"), None);
+        assert_eq!(raw, Sidecar::default());
+    }
 
     /// A star is not a develop: the sidecar a rating makes still has
     /// nothing of a develop in it, so the frame's learned blend is

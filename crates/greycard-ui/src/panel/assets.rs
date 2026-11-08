@@ -2363,6 +2363,74 @@ mod tests {
         assert!(!app.get_fetch_open());
     }
 
+    /// A picture opens with its lens matched and shown and the
+    /// profile's three corrections off; one switched on goes into the
+    /// edit and the sidecar written for it, the others left off.
+    #[test]
+    fn a_picture_opens_with_its_lens_shown_and_its_corrections_off() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/scratch/picture-lens-off-{}",
+            std::process::id()
+        ));
+        crate::testing::remove_dir_retry(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let jpeg = dir.join("IMG_0001.JPG");
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, vec![jpeg.clone()]);
+        {
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.sidecars[0] =
+                greycard_library::held::from_disk(&jpeg, Some(greycard_edit::Placement::Beside))
+                    .sidecar;
+        }
+        app.invoke_select(0);
+        let generation = state.borrow().develop.generation;
+        let lens = "Canon RF 50mm F1.8 STM";
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Opened {
+                generation,
+                as_shot: (6504.0, 0.0),
+                frame: None,
+                profile: None,
+                lens: LensReport::Found {
+                    lens: lens.into(),
+                    camera: true,
+                    smaller_sensor: false,
+                },
+                lens_options: Vec::new(),
+                kind: crate::worker::SourceKind::Picture {
+                    space: "sRGB".into(),
+                    bits: 8,
+                },
+                shot: Default::default(),
+                taken: None,
+                blend: None,
+            },
+        );
+        assert_eq!(app.get_lens_profile(), lens);
+        assert!(app.get_lens_available());
+        assert!(app.get_lens_enabled() && app.get_lens_profile_on());
+        assert!(!app.get_lens_distortion());
+        assert!(!app.get_lens_ca());
+        assert!(!app.get_lens_vignetting());
+
+        app.set_lens_distortion(true);
+        app.invoke_develop_changed();
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+            crate::panel::edit::SAVE_MS + 100,
+        ));
+        let current = state.borrow().sidecars[0].current.lens.clone();
+        assert!(current.distortion);
+        assert!(!current.chromatic_aberration && !current.vignetting);
+        let saved = greycard_edit::Sidecar::load(&jpeg)
+            .unwrap()
+            .expect("a sidecar written");
+        assert_eq!(saved.current.lens, current);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
     /// The LENS picker: "From the file" first and chosen by default,
     /// with the report under it as before; a lens picked is chosen and
     /// named; one picked that this body or machine has not got is

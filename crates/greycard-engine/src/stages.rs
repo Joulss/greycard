@@ -1761,12 +1761,9 @@ mod tests {
         );
     }
 
-    /// A file that corrects its own lens has the last word on it: under
-    /// the file's own lens, its profile gives up the distortion to a
-    /// warp, and the lateral aberration (the profile's and the automatic
-    /// one) to a warp that moves each color; the vignetting stays.
-    #[test]
-    fn a_files_warp_takes_the_profiles_distortion_and_the_ca() {
+    /// A database that knows the R5 and an RF 50mm with all three of a
+    /// profile's corrections, and a shot on that lens.
+    fn rf50() -> (greycard_lens::Database, Shot) {
         let mut db = greycard_lens::Database::default();
         db.read_xml(
             r#"<lensdatabase version="2">
@@ -1786,6 +1783,54 @@ mod tests {
             f_number: Some(2.8),
             ..Shot::default()
         };
+        (db, shot)
+    }
+
+    /// A picture starts with its lens profile's corrections off, the
+    /// lens still matched: a fresh picture develops with no lens step,
+    /// one switch puts the correction in, and a raw's fresh edit still
+    /// corrects.
+    #[test]
+    fn a_fresh_picture_takes_no_lens_profile_and_a_raw_still_does() {
+        let (db, shot) = rf50();
+        let mut facts = picture(0);
+        facts.identity.shot = shot.clone();
+        let lens = |edit: &Edit, facts: &Facts| -> Option<LensCorrection> {
+            stages(edit, &Purpose::Viewport, facts, Some(&db))
+                .ops()
+                .find_map(|o| match o {
+                    Stage::Lens(c) => c.first().copied(),
+                    _ => None,
+                })
+        };
+        assert_eq!(lens(&Edit::for_picture(), &facts), None);
+        // The lens is still the database's for the picture: one switch
+        // and its correction runs.
+        let mut on = Edit::for_picture();
+        on.lens.distortion = true;
+        let c = lens(&on, &facts).expect("the profile's distortion");
+        assert!(c.distortion.is_some() && c.vignetting.is_none());
+        // A picture's sidecar from before keeps its corrections on.
+        let before = Edit {
+            lens: greycard_edit::Lens::default(),
+            ..Edit::for_picture()
+        };
+        let c = lens(&before, &facts).expect("the profile's corrections");
+        assert!(c.distortion.is_some() && c.vignetting.is_some());
+        // A raw's default is unchanged.
+        let mut raw = raw(0);
+        raw.identity.shot = shot;
+        let c = lens(&Edit::default(), &raw).expect("a raw's profile");
+        assert!(c.distortion.is_some() && c.vignetting.is_some());
+    }
+
+    /// A file that corrects its own lens has the last word on it: under
+    /// the file's own lens, its profile gives up the distortion to a
+    /// warp, and the lateral aberration (the profile's and the automatic
+    /// one) to a warp that moves each color; the vignetting stays.
+    #[test]
+    fn a_files_warp_takes_the_profiles_distortion_and_the_ca() {
+        let (db, shot) = rf50();
         let with_shot = |mut f: Facts| {
             f.identity.shot = shot.clone();
             f

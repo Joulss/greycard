@@ -155,7 +155,7 @@ pub static DISK_READS: std::sync::Mutex<Vec<std::path::PathBuf>> =
 /// nothing to stand in for, and the frame is held as read.
 pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held {
     if !write_sidecars {
-        return from_nothing();
+        return from_nothing(path);
     }
     let raw = !greycard_core::picture::is_picture_path(path);
     let default = || {
@@ -186,7 +186,7 @@ pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held {
 /// raw with no edit of ours is taken and written there.
 pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>) -> Held {
     let Some(placement) = sidecars else {
-        return from_nothing();
+        return from_nothing(path);
     };
     #[cfg(any(test, feature = "fixtures"))]
     DISK_READS
@@ -202,10 +202,11 @@ pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>) -> Hel
     }
 }
 
-/// A frame with sidecars off: the default, and nothing to read.
-pub fn from_nothing() -> Held {
+/// A frame with sidecars off: its default (a picture's own, as a
+/// sidecar read would start it), and nothing to read.
+pub fn from_nothing(path: &Path) -> Held {
     Held {
-        sidecar: Sidecar::default(),
+        sidecar: greycard_edit_io::on_disk::fresh_sidecar(path),
         from_row: FromRow::read(),
         id: None,
         trouble: None,

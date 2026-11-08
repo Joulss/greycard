@@ -92,7 +92,7 @@ fn state_name(sidecar: &greycard_edit::Line, i: usize) -> String {
         None if {
             let mut plain = state.clone();
             plain.noise.learned_strength = Edit::default().noise.learned_strength;
-            plain == Edit::default() || *state == Edit::for_picture()
+            plain == Edit::default() || Edit::picture_defaults().contains(state)
         } =>
         {
             "Original".to_string()

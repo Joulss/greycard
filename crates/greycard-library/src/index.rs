@@ -6676,6 +6676,51 @@ pub(crate) mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// A picture's sidecar an older build wrote when it was only rated
+    /// holds the picture default of then, its lens corrections on: not
+    /// edited, in the row as in memory. One with a real edit over that
+    /// old default is.
+    #[test]
+    fn a_picture_rated_before_its_lens_started_off_is_not_edited() {
+        use greycard_edit::Edit;
+        let dir = scratch("picture-lens-on");
+        let rated = dir.join("rated.tif");
+        let edited = dir.join("edited.tif");
+        for (i, p) in [&rated, &edited].iter().enumerate() {
+            write_frame(p, &R5, i as u16 + 1);
+        }
+        let old = Edit::picture_defaults()[1].clone();
+        assert!(old.lens.distortion && old.lens.vignetting && old.lens.chromatic_aberration);
+        let mut s = Sidecar {
+            line: greycard_edit::Line::of(old.clone()),
+            ..Sidecar::default()
+        };
+        s.meta.rating = 2;
+        s.save(&rated).unwrap();
+        let mut moved = old.clone();
+        moved.light.exposure = 0.4;
+        let mut s = Sidecar {
+            line: greycard_edit::Line::of(moved),
+            ..Sidecar::default()
+        };
+        s.save(&edited).unwrap();
+
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let r = lib.by_path(&rated).unwrap().unwrap();
+        assert_eq!((r.meta.rating, r.edited), (2, false));
+        assert!(lib.by_path(&edited).unwrap().unwrap().edited);
+        // The rule in memory, which the strip's mark follows.
+        let back = Sidecar::load(&rated).unwrap().unwrap();
+        assert_eq!(crate::develop_marks(&back, &rated, None), (false, false));
+        let back = Sidecar::load(&edited).unwrap().unwrap();
+        assert_eq!(crate::develop_marks(&back, &edited, None), (true, false));
+        // A raw holding a picture's old default is edited: the rule is
+        // a picture's.
+        assert!(!crate::is_default_edit(&old, &dir.join("IMG.CR3"), None));
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// A reset leaves its history behind and is no develop; the blend
     /// the ISO seeds is none either, one set on purpose is. An export
     /// is a fact about the frame: it stays through an undo past the
