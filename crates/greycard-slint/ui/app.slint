@@ -1375,10 +1375,17 @@ export component App inherits Window {
         else if (i == 3) { root.grown-snapshots = grown; root.room-snapshots = room; }
         else { root.grown-history = grown; root.room-history = room; }
     }
-    // Raised as a drag starts: each list then says how it lies, by
-    // the next event, which is when the drag reads it.
+    // Raised as a gap is hovered, moved in, and pressed: each list then
+    // says how it lies (`share-laid`), at the event loop's next turn.
     property <int> share-ask;
     property <bool> share-pending;
+    /// Whether the gap between lists `a` and `b` can move anything, as
+    /// they last said they lie: one has room to grow and the other has
+    /// grown past its floor. Its hand shows only then.
+    public pure function share-live(a: int, b: int) -> bool {
+        return (root.room-of(a) > 0.5px && root.grown-of(b) > 0.5px)
+            || (root.grown-of(a) > 0.5px && root.room-of(b) > 0.5px);
+    }
     // The drag under way: the list above the gap and the one below,
     // how they stood at the press, and the room a weight of one comes
     // to, read from one of the two still short of its ceiling, which
@@ -4889,9 +4896,10 @@ export component App inherits Window {
                     vertical-stretch: root.share-folders;
                     property <length> grown: self.height - folders-section.preferred-height;
                     property <length> room: folders-section.max-height - self.height;
-                    // Told only when a drag asks: a handler on the height
-                    // itself would lay the section out as it is made, and
-                    // its fold would then move as its list first fills.
+                    // Told only when a gap asks (a hover, a press, or a release): a
+                    // handler on the height itself would lay the section out
+                    // as it is made, and its fold would then move as its list
+                    // first fills.
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(0, self.grown, self.room); }
                     folders-section := FoldersSection {
@@ -4917,9 +4925,10 @@ export component App inherits Window {
                     vertical-stretch: root.share-collections;
                     property <length> grown: self.height - collections-section.preferred-height;
                     property <length> room: collections-section.max-height - self.height;
-                    // Told only when a drag asks: a handler on the height
-                    // itself would lay the section out as it is made, and
-                    // its fold would then move as its list first fills.
+                    // Told only when a gap asks (a hover, a press, or a release): a
+                    // handler on the height itself would lay the section out
+                    // as it is made, and its fold would then move as its list
+                    // first fills.
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(1, self.grown, self.room); }
                     collections-section := CollectionsSection {
@@ -4942,6 +4951,8 @@ export component App inherits Window {
                         y: -Theme.space-2;
                         width: 100%;
                         height: Theme.space-2;
+                        live: root.share-live(0, 1);
+                        hovering => { root.share-ask += 1; }
                         started => { root.share-press(0, 1); }
                         dragged(d) => { root.share-drag(d); }
                         evened => { root.share-even(0, 1); }
@@ -4999,9 +5010,10 @@ export component App inherits Window {
                     vertical-stretch: root.share-presets;
                     property <length> grown: self.height - presets-section.preferred-height;
                     property <length> room: presets-section.max-height - self.height;
-                    // Told only when a drag asks: a handler on the height
-                    // itself would lay the section out as it is made, and
-                    // its fold would then move as its list first fills.
+                    // Told only when a gap asks (a hover, a press, or a release): a
+                    // handler on the height itself would lay the section out
+                    // as it is made, and its fold would then move as its list
+                    // first fills.
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(2, self.grown, self.room); }
                     presets-section := PresetsSection {
@@ -5042,6 +5054,8 @@ export component App inherits Window {
                         y: -Theme.space-2;
                         width: 100%;
                         height: Theme.space-2;
+                        live: root.share-live(0, 2);
+                        hovering => { root.share-ask += 1; }
                         started => { root.share-press(0, 2); }
                         dragged(d) => { root.share-drag(d); }
                         evened => { root.share-even(0, 2); }
@@ -5063,9 +5077,10 @@ export component App inherits Window {
                     vertical-stretch: root.share-snapshots;
                     property <length> grown: self.height - snapshots-section.preferred-height;
                     property <length> room: snapshots-section.max-height - self.height;
-                    // Told only when a drag asks: a handler on the height
-                    // itself would lay the section out as it is made, and
-                    // its fold would then move as its list first fills.
+                    // Told only when a gap asks (a hover, a press, or a release): a
+                    // handler on the height itself would lay the section out
+                    // as it is made, and its fold would then move as its list
+                    // first fills.
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(3, self.grown, self.room); }
                     snapshots-section := SnapshotsSection {
@@ -5084,6 +5099,8 @@ export component App inherits Window {
                         y: -Theme.space-2;
                         width: 100%;
                         height: Theme.space-2;
+                        live: root.share-live(2, 3);
+                        hovering => { root.share-ask += 1; }
                         started => { root.share-press(2, 3); }
                         dragged(d) => { root.share-drag(d); }
                         evened => { root.share-even(2, 3); }
@@ -5104,9 +5121,10 @@ export component App inherits Window {
                     vertical-stretch: root.share-history;
                     property <length> grown: self.height - history-section.preferred-height;
                     property <length> room: history-section.max-height - self.height;
-                    // Told only when a drag asks: a handler on the height
-                    // itself would lay the section out as it is made, and
-                    // its fold would then move as its list first fills.
+                    // Told only when a gap asks (a hover, a press, or a release): a
+                    // handler on the height itself would lay the section out
+                    // as it is made, and its fold would then move as its list
+                    // first fills.
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(4, self.grown, self.room); }
                     history-section := HistorySection {
@@ -5124,6 +5142,8 @@ export component App inherits Window {
                         y: -Theme.space-2;
                         width: 100%;
                         height: Theme.space-2;
+                        live: root.share-live(3, 4);
+                        hovering => { root.share-ask += 1; }
                         started => { root.share-press(3, 4); }
                         dragged(d) => { root.share-drag(d); }
                         evened => { root.share-even(3, 4); }

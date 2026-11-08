@@ -60,6 +60,20 @@ when the minimums do not fit. The drag writes two weights; nothing
 in Rust lays anything out. The weights cross to Rust only to be
 remembered and read back (`settings.rs`), by the section's name.
 
+The hand is honest: a gap shows the resizing cursor only where one
+of its two lists has room to grow and the other has grown past its
+floor, as the lists last said. The gap asks at each pointer move over
+it with no button held, at a press, and at a release, so a pointer
+resting in a gap while its lists change under it (an undo, a preset
+added by shortcut, a resize) sees the hand turn at its next move.
+Slint picks the cursor up before the move's event runs and the lists
+answer on the loop's next pass, so the hand shows the answer a move
+behind. We first made a drag wait for both lists' answers before it
+started and dropped that on review: Slint runs pending change
+handlers before every pointer event, so the order it defended against
+does not occur, and it would only have hidden a drag if a list ever
+failed to answer. A press on a dead gap still writes nothing.
+
 ## What was built
 
 As decided, with these departures and particulars:
@@ -173,6 +187,15 @@ As decided, with these departures and particulars:
 - One capture, debug build under headless weston (pixman) on lavapipe at
   1500 x 1400, fit to 1500 x 800 by the window's screen fit: short lists
   (three presets, no snapshots) look as before.
+- The honest hand: five rows everywhere on a 1600-high window makes
+  the PRESETS/SNAPSHOTS gap dead, sixty rows live, and five presets
+  over sixty snapshots live; a pointer resting in the FOLDERS/PRESETS
+  gap with the presets cut from sixty to five under it keeps the old
+  answer until a 1 px move, then is dead, and is live again after the
+  presets come back and a move. With the ask raised only as the hover
+  begins, that test fails at the 1 px move. The real event loop,
+  scripted under headless weston, answered the press's ask before the
+  first move and moved the room it had.
 
 ## Not verified
 

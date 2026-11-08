@@ -465,6 +465,104 @@ mod tests {
         near(steps[steps.len() - 1], share, "its share");
     }
 
+    /// The hand shows on a gap only where a drag can move something:
+    /// short lists, all at their ceilings, leave the gap tried dead.
+    #[test]
+    fn a_gap_that_can_move_nothing_shows_no_hand() {
+        let hover = |app: &App| {
+            let (x, y) = gap_above(app, "snapshots-section");
+            for dy in [0.0, 1.0] {
+                app.window()
+                    .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                        position: slint::LogicalPosition::new(x, y + dy),
+                    });
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        let short = pane(5, 5);
+        sized(&short, 1600.0);
+        hover(&short);
+        assert!(!short.invoke_share_live(2, 3), "short lists, a dead gap");
+        let long = pane(60, 60);
+        sized(&long, 1600.0);
+        hover(&long);
+        assert!(long.invoke_share_live(2, 3), "long lists, a live gap");
+        // Five presets, at their ceiling, over a long SNAPSHOTS: live,
+        // as PRESETS can still give what it has past its floor.
+        let mixed = pane(60, 5);
+        sized(&mixed, 1600.0);
+        hover(&mixed);
+        assert!(
+            mixed.invoke_share_live(2, 3),
+            "a short PRESETS can still give"
+        );
+    }
+
+    /// A pointer resting in a gap sees the hand turn as the lists
+    /// change under it: each move in the gap asks them afresh. FOLDERS
+    /// short, at its ceiling, keeps the gap below it still as PRESETS
+    /// changes.
+    #[test]
+    fn a_resting_pointer_sees_the_gap_turn() {
+        let app = pane(60, 60);
+        let folders: Vec<FolderRow> = (0..5)
+            .map(|i| FolderRow {
+                name: format!("folder {i}").into(),
+                path: format!("/nowhere/{i}").into(),
+                count: 3,
+                ..Default::default()
+            })
+            .collect();
+        app.set_folder_tree(ModelRc::new(VecModel::from(folders)));
+        sized(&app, 1600.0);
+        let presets = |n: usize| {
+            let rows: Vec<PresetRow> = (0..n)
+                .map(|i| PresetRow {
+                    text: format!("preset {i}").into(),
+                    index: i as i32,
+                    ..Default::default()
+                })
+                .collect();
+            app.set_preset_list_rows(ModelRc::new(VecModel::from(rows)));
+            tick();
+        };
+        let (x, y) = gap_above(&app, "presets-section");
+        let rest = |dy: f32| {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(x, y + dy),
+                });
+            tick();
+        };
+        let still = |said: &str| {
+            let (gx, gy) = gap_above(&app, "presets-section");
+            near(gx, x, said);
+            near(gy, y, said);
+        };
+        rest(0.0);
+        assert!(app.invoke_share_live(0, 2), "sixty presets, a live gap");
+        // Five presets, at their ceiling: nowhere for FOLDERS' room.
+        presets(5);
+        still("the gap stayed under the pointer");
+        assert!(app.invoke_share_live(0, 2), "not asked yet");
+        rest(1.0);
+        assert!(!app.invoke_share_live(0, 2), "a move asked: dead");
+        // And back.
+        presets(60);
+        still("the gap stayed under the pointer");
+        rest(0.0);
+        assert!(app.invoke_share_live(0, 2), "a move asked: live again");
+    }
+
+    /// Timers and change handlers a few frames on, unlike `settle`,
+    /// which also moves the pointer to the corner.
+    fn tick() {
+        for _ in 0..5 {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            slint::platform::update_timers_and_animations();
+        }
+    }
+
     #[test]
     fn a_drag_that_moves_nothing_writes_nothing() {
         // Every list short of a tall window's share: all at their

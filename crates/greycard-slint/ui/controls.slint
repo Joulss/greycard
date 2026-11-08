@@ -2155,13 +2155,21 @@ export component ScrollBand inherits TouchArea {
 // grid's: 4 px from the ends, no shorter than 24 px.
 // A gap that is dragged to move room from one side of it to the
 // other: the gap between two of the left pane's lists, and the panes'
-// edges. Nothing is drawn; the pointer over it turns to the resizing
-// hand. `dragged` carries the pointer's travel since the press, in
-// the window, along y or, with `along-y` false, along x, so the gap
-// moving under the pointer as the room moves does not count. A
-// double-click is `evened`, which its press and release precede.
+// edges. Nothing is drawn; the pointer over it, when `live`, turns to
+// the resizing hand. `hovering` is raised at each move over it with no
+// button held, and at a release, so the owner can work `live` out
+// afresh for the next move; the hand shows the answer a move behind.
+// `dragged` carries the pointer's travel since the press, in the
+// window, along y or, with `along-y` false, along x, so the gap moving
+// under the pointer as the room moves does not count. A double-click
+// is `evened`, which its press and release precede.
+// `live` false, nothing could move there as last asked: the pointer keeps the
+// arrow; a press still raises `started`, and the owner finds nothing
+// to move.
 export component DragEdge inherits Rectangle {
     in property <bool> along-y: true;
+    in property <bool> live: true;
+    callback hovering();
     callback started();
     callback dragged(length);
     callback ended();
@@ -2172,14 +2180,19 @@ export component DragEdge inherits Rectangle {
             : root.absolute-position.x + area.mouse-x;
     }
     area := TouchArea {
-        mouse-cursor: root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
+        mouse-cursor: !root.live ? MouseCursor.default
+            : root.along-y ? MouseCursor.ns-resize : MouseCursor.ew-resize;
         pointer-event(e) => {
+            // The TouchArea's `moved` comes only with a button held.
+            if (e.kind == PointerEventKind.move && !self.pressed) { root.hovering(); }
             if (e.button != PointerEventButton.left) { return; }
             if (e.kind == PointerEventKind.down) {
                 root.from = root.at();
                 root.started();
             }
-            if (e.kind == PointerEventKind.up) { root.ended(); }
+            // The release asks too: the drag moved room, so where the
+            // pointer now rests may have turned.
+            if (e.kind == PointerEventKind.up) { root.ended(); root.hovering(); }
         }
         moved => {
             if (self.pressed) { root.dragged(root.at() - root.from); }
