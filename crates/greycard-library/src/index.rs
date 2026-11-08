@@ -1431,7 +1431,15 @@ fn index_paths(
                 if !greycard_edit_io::lightroom::beside::waits(p) {
                     return None;
                 }
-                greycard_edit_io::on_disk::load_sidecar_said(p, Some(placement));
+                // The setting for new edits does not matter here: a
+                // Lightroom take starts its line at the schema's
+                // default (`on_disk::starting_of`) whatever the fresh
+                // sidecar held, as the window's own take does.
+                greycard_edit_io::on_disk::load_sidecar_said(
+                    p,
+                    Some(placement),
+                    greycard_edit_io::on_disk::Fresh::default(),
+                );
                 let sidecar = sidecar_of(p, true);
                 let summary = summary_of(sidecar.as_ref(), p);
                 Some((sidecar, summary))

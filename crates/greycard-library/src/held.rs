@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use greycard_edit::{Edit, Sidecar};
-use greycard_edit_io::on_disk::{Trouble, load_sidecar_said};
+use greycard_edit::Sidecar;
+use greycard_edit_io::on_disk::{Fresh, Trouble, load_sidecar_said};
 
 use crate::RowMeta;
 
@@ -152,19 +152,14 @@ pub static DISK_READS: std::sync::Mutex<Vec<std::path::PathBuf>> =
 
 /// A stand-in for `path`'s sidecar from its row: the row's meta, the
 /// frame's default edit, nothing read. With sidecars off there is
-/// nothing to stand in for, and the frame is held as read.
-pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held {
+/// nothing to stand in for, and the frame is held as read. `fresh` is
+/// what a raw's new edit starts with, as the sidecar read will start it
+/// when there is none.
+pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool, fresh: Fresh) -> Held {
     if !write_sidecars {
-        return from_nothing(path);
+        return from_nothing(path, fresh);
     }
-    let raw = !greycard_core::picture::is_picture_path(path);
-    let default = || {
-        greycard_edit::Line::of(if raw {
-            Edit::default()
-        } else {
-            Edit::for_picture()
-        })
-    };
+    let default = || greycard_edit_io::on_disk::fresh_sidecar(path, fresh).line;
     Held {
         sidecar: Sidecar {
             line: default(),
@@ -183,17 +178,18 @@ pub fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held {
 /// `path`'s sidecar read from disk, as a folder's open always read it,
 /// with `sidecars` where the editor's setting puts a sidecar (none with
 /// sidecars off, when nothing is read): a Lightroom develop beside a
-/// raw with no edit of ours is taken and written there.
-pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>) -> Held {
+/// raw with no edit of ours is taken and written there. `fresh` is
+/// what a raw with no sidecar starts with.
+pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>, fresh: Fresh) -> Held {
     let Some(placement) = sidecars else {
-        return from_nothing(path);
+        return from_nothing(path, fresh);
     };
     #[cfg(any(test, feature = "fixtures"))]
     DISK_READS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(path.to_path_buf());
-    let (sidecar, trouble) = load_sidecar_said(path, Some(placement));
+    let (sidecar, trouble) = load_sidecar_said(path, Some(placement), fresh);
     Held {
         sidecar,
         from_row: FromRow::read(),
@@ -203,10 +199,11 @@ pub fn from_disk(path: &Path, sidecars: Option<greycard_edit::Placement>) -> Hel
 }
 
 /// A frame with sidecars off: its default (a picture's own, as a
-/// sidecar read would start it), and nothing to read.
-pub fn from_nothing(path: &Path) -> Held {
+/// sidecar read would start it), a raw's lens section as `fresh`
+/// says, and nothing to read.
+pub fn from_nothing(path: &Path, fresh: Fresh) -> Held {
     Held {
-        sidecar: greycard_edit_io::on_disk::fresh_sidecar(path),
+        sidecar: greycard_edit_io::on_disk::fresh_sidecar(path, fresh),
         from_row: FromRow::read(),
         id: None,
         trouble: None,

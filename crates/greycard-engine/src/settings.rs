@@ -16,7 +16,7 @@ use crate::sheet::{ExportPreset, Sheet};
 
 /// The settings the window, a headless export, and the command line
 /// share, by the names the file has always had.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Shared {
     /// The export sheet as it was left, under the `export_` names it
@@ -50,6 +50,14 @@ pub struct Shared {
     /// goes (`greycard_library::pairs`). The command line's listing and
     /// `--export` read it too. Written as the switch is flipped.
     pub jpegs_apart: bool,
+    /// Whether a raw's new edit starts with the lens section on. On by
+    /// default; off, a raw with no sidecar starts with the section's
+    /// switch off, and a sidecar already written keeps what it holds.
+    /// The command line's `--export` reads it too, so a frame with no
+    /// sidecar exports as the window shows it. Written as the switch
+    /// is flipped.
+    #[serde(default = "on", deserialize_with = "bool_on_leniently")]
+    pub lens_on_new: bool,
     /// The absolute path of the last file open, developed and all, so
     /// the next run with no path can jump back to it. Written as soon
     /// as it develops, not waited for the window to close; empty
@@ -57,7 +65,48 @@ pub struct Shared {
     pub last_file: String,
 }
 
+impl Default for Shared {
+    fn default() -> Self {
+        Shared {
+            export: Sheet::default(),
+            export_presets: Vec::new(),
+            export_preset: String::new(),
+            xmp_sidecars: false,
+            sidecars_in_folder: false,
+            jpegs_apart: false,
+            lens_on_new: true,
+            last_file: String::new(),
+        }
+    }
+}
+
+fn on() -> bool {
+    true
+}
+
+/// A switch of a file edited by hand that is on by default: anything
+/// but true or false reads as on, and costs the rest nothing.
+fn bool_on_leniently<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Bool(b) => Ok(b),
+        other => {
+            tracing::warn!("settings: {other} is not a switch; on");
+            Ok(true)
+        }
+    }
+}
+
 impl Shared {
+    /// What a raw with no sidecar starts with, by these settings.
+    pub fn fresh(&self) -> greycard_edit_io::on_disk::Fresh {
+        greycard_edit_io::on_disk::Fresh {
+            lens: self.lens_on_new,
+        }
+    }
+
     /// The export sheet to open with, and the preset it is: the last
     /// run's, or the one `preset` names, with `long_edge` and
     /// `on_exists` over either. A preset the settings do not have is an
@@ -155,6 +204,30 @@ mod tests {
         std::fs::write(&file, b"not json").unwrap();
         assert_eq!(Shared::load_from(&file), Shared::default());
         remove_dir_retry(&dir);
+    }
+
+    /// The switch for a new edit's lens section: on for a file without
+    /// it or with a value of the wrong kind, the rest of the file
+    /// standing; off only where the file says so, and written back as
+    /// it reads.
+    #[test]
+    fn the_lens_switch_for_new_edits_is_read_leniently() {
+        assert!(Shared::default().lens_on_new);
+        let read: Shared = serde_json::from_str("{}").unwrap();
+        assert!(read.lens_on_new && read.fresh().lens);
+        let read: Shared = serde_json::from_str(r#"{"lens_on_new": false}"#).unwrap();
+        assert!(!read.lens_on_new && !read.fresh().lens);
+        let again: Shared = serde_json::from_str(&serde_json::to_string(&read).unwrap()).unwrap();
+        assert_eq!(again, read, "round trip");
+        for text in [
+            r#"{"jpegs_apart": true, "lens_on_new": "no"}"#,
+            r#"{"jpegs_apart": true, "lens_on_new": null}"#,
+            r#"{"jpegs_apart": true, "lens_on_new": 0}"#,
+        ] {
+            let read: Shared = serde_json::from_str(text).expect(text);
+            assert!(read.jpegs_apart, "{text}");
+            assert!(read.lens_on_new, "{text}");
+        }
     }
 
     #[test]

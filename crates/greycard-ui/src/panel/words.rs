@@ -872,6 +872,47 @@ mod tests {
         assert_eq!(testing::count_labeled(&app, "Add keywords"), 2);
     }
 
+    /// However many words are on a frame, the field under them keeps
+    /// its own height: the section grows with the chips and the pane
+    /// scrolls, on the Develop tab and beside the grid.
+    #[test]
+    fn the_keyword_field_keeps_its_height_under_many_words() {
+        let app = window(2);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(2));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        app.set_collapsed_metadata(false);
+        let empty = testing::labeled(&app, "Add keywords").1.height;
+        assert!(empty > 10.0, "a line of its own: {empty}");
+        let words: Vec<String> = (0..20)
+            .map(|i| format!("{}{i}", ["harbor", "dusk", "fishing boats"][i % 3]))
+            .collect();
+        app.invoke_keyword_added(words.join(", ").into());
+        assert_eq!(keywords_of(&state.borrow(), 0).len(), 20);
+        // The section's fold moves to its new height.
+        testing::settle(&app);
+        testing::settle(&app);
+        let full = testing::labeled(&app, "Add keywords").1.height;
+        assert_eq!(full, empty, "on the Develop tab");
+        app.set_grid_open(true);
+        testing::settle(&app);
+        testing::settle(&app);
+        use i_slint_backend_testing::ElementHandle;
+        let heights: Vec<f32> = ElementHandle::find_by_accessible_label(&app, "Add keywords")
+            .map(|e| e.size().height)
+            .collect();
+        assert_eq!(
+            heights.len(),
+            2,
+            "the panel's under the grid, and the pane's"
+        );
+        for h in heights {
+            assert_eq!(h, empty, "beside the grid");
+        }
+    }
+
     /// A title typed and not yet sent is the frame's it was typed
     /// for when another frame is clicked in the strip: sent before the
     /// selection moves, not dropped and not put on the frame clicked.

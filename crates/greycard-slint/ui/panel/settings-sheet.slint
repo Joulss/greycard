@@ -11,7 +11,8 @@
 // the canvas, the monitor's profile, and the soft proof's, the same
 // choices the panel's MONITOR and SOFT PROOF sections make, bound to
 // the window's own properties so a change in either place shows in
-// both; the aspect an uncropped frame's crop opens at; the shipped
+// both; whether a raw's new edit starts with its lens corrections on;
+// the aspect an uncropped frame's crop opens at; the shipped
 // presets put back; the export sheet's format and color space,
 // bound the same way; and the apps Edit in hands a frame to. Models:
 // every model the registry knows, its size and where it stands, and
@@ -95,6 +96,10 @@ export component SettingsSheet inherits Rectangle {
     /// "Original", "Last used" or "Free".
     in-out property <string> crop-start;
     callback crop-start-changed();
+    /// Whether a raw's new edit starts with the lens section on; a
+    /// sidecar already written keeps its own.
+    in-out property <bool> lens-on-new;
+    callback lens-on-new-changed();
     in-out property <string> fill-choice;
     in property <[string]> fill-why-not;
     callback fill-chosen(string);
@@ -840,6 +845,11 @@ export component SettingsSheet inherits Rectangle {
                                     accessible-value: self.current;
                                     selected(i) => { root.proof-changed(); }
                                 }
+                            }
+                            Toggle {
+                                label: "Lens corrections on new edits";
+                                checked <=> root.lens-on-new;
+                                toggled => { root.lens-on-new-changed(); }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {

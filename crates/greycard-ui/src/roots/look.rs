@@ -338,6 +338,7 @@ impl Look {
             &fresh,
             &fresh_rows,
             self.sidecars,
+            self.fresh,
             self.progress.as_deref().map(|p| &p.read),
         );
         // The frame to open: the file last open matched to the list by

@@ -240,6 +240,28 @@ impl Edit {
         ]
     }
 
+    /// Every edit a raw counts as untouched at: the default, and the
+    /// same with the lens section off, which is what a fresh edit
+    /// starts from with lens corrections off for new edits (the
+    /// editor's setting). The one rule for the edited mark, the
+    /// history's Original row, and a learned blend still waiting for
+    /// its ISO, as [`Edit::picture_defaults`] is for a picture.
+    pub fn raw_defaults() -> [Self; 2] {
+        [Self::default(), Self::raw_without_lens()]
+    }
+
+    /// A raw's default with the lens section off: a fresh edit's start
+    /// with lens corrections off for new edits.
+    pub fn raw_without_lens() -> Self {
+        Self {
+            lens: Lens {
+                enabled: false,
+                ..Lens::default()
+            },
+            ..Self::default()
+        }
+    }
+
     /// The color mixer as the picture takes it: nothing at all while
     /// the black and white is on. A mono conversion has the last word
     /// on hue and chroma, so two of the mixer's three sliders could

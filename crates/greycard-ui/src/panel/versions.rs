@@ -2366,7 +2366,7 @@ mod tests {
             .collect();
         let held = files
             .iter()
-            .map(|f| crate::rows::from_disk(f, None))
+            .map(|f| crate::rows::from_disk(f, None, Default::default()))
             .collect();
         crate::panel::browser::open_loaded(&state, &app, &worker, files, held, true, 0);
         let st = state.borrow();

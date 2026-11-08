@@ -33,6 +33,10 @@ design note behind it.
 - Ctrl and the wheel zoom with the brush or a repair tool in hand, and
   + and − zoom the Loupe a step (issue 94)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+- Settings > Editing > Lens corrections on new edits: off, a raw with
+  no sidecar yet starts with its lens corrections off; raws that
+  already have a sidecar keep theirs (issue 101)
+  ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 
 ### Models
 
@@ -175,6 +179,9 @@ design note behind it.
   (issue 96)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 - Esc puts Heal, Clone, and Fill down, as it does the brush (issue 97)
+  ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
+- The Keywords field keeps its height however many keywords a frame
+  carries; the section grows and the panel scrolls (issue 98)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 
 ## 0.10.0, 2026-11-06

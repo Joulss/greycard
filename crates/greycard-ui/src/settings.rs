@@ -1103,6 +1103,7 @@ mod tests {
                 xmp_sidecars: true,
                 sidecars_in_folder: true,
                 jpegs_apart: true,
+                lens_on_new: false,
                 last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             },
             scope: "Vector".into(),

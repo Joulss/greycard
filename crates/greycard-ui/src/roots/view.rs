@@ -287,6 +287,7 @@ fn send_view(
         known: HashSet::new(),
         have: HashSet::new(),
         sidecars: st.window.sidecars(),
+        fresh: st.window.fresh(),
         on_screen: None,
         index: st.views.index_path.clone(),
         progress: Some(progress.clone()),
@@ -371,6 +372,7 @@ pub(crate) fn open_listing(
         known: HashSet::new(),
         have: HashSet::new(),
         sidecars: st.window.sidecars(),
+        fresh: st.window.fresh(),
         on_screen: None,
         index: st.views.index_path.clone(),
         progress: Some(progress.clone()),
@@ -613,6 +615,7 @@ pub(super) fn ask(st: &State) -> Option<Look> {
         known,
         have: st.files.iter().cloned().collect(),
         sidecars: st.window.sidecars(),
+        fresh: st.window.fresh(),
         on_screen: st.current.and_then(|c| {
             Some((
                 st.path_at(c)?.clone(),

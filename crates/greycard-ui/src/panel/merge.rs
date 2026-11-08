@@ -23,10 +23,11 @@
 #[cfg(test)]
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use greycard_edit::{Edit, Learned, Line, Placement, Sidecar};
+use greycard_edit_io::on_disk::Fresh;
 use greycard_engine::merge::{self, Options, Step, focus, pano};
 use greycard_library::Rehash;
 use greycard_library::collections::Reference;
@@ -110,6 +111,8 @@ struct Merge {
     stack: Option<Vec<Reference>>,
     placement: Placement,
     write_sidecars: bool,
+    /// What a raw with no sidecar starts with (`Window::fresh`).
+    fresh: Fresh,
 }
 
 /// A merged file made again from its recipe, over itself.
@@ -123,6 +126,24 @@ struct Remerge {
     edit: Option<Box<Edit>>,
     /// The learned tier the frames are denoised at; none for none.
     tier: Option<String>,
+    /// What a reference with no sidecar starts with (`Window::fresh`).
+    fresh: Fresh,
+}
+
+/// The edit of a frame the window has not read, from its sidecar on
+/// disk, or, with sidecars off or none there, the new edit the
+/// window's setting starts it at.
+fn edit_on_disk(path: &Path, write_sidecars: bool, fresh: Fresh) -> Edit {
+    if write_sidecars {
+        greycard_edit_io::on_disk::read_sidecar_fresh(path, fresh)
+            .0
+            .line
+            .current
+    } else {
+        greycard_edit_io::on_disk::fresh_sidecar(path, fresh)
+            .line
+            .current
+    }
 }
 
 /// What a merge made.
@@ -212,6 +233,7 @@ pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker, kind: Kind) {
         stack,
         placement: st.window.placement,
         write_sidecars: st.window.write_sidecars,
+        fresh: st.window.fresh(),
     });
     queue(st, app, worker, job);
 }
@@ -255,6 +277,7 @@ pub(crate) fn ask_again(st: &mut State, app: &App, worker: &Worker) {
         reference,
         edit,
         tier,
+        fresh: st.window.fresh(),
     });
     queue(st, app, worker, job);
 }
@@ -324,14 +347,7 @@ impl Merge {
         let made = (|| -> anyhow::Result<Made> {
             let edit_of = |k: usize| {
                 self.edits[k].clone().unwrap_or_else(|| {
-                    if self.write_sidecars {
-                        greycard_edit_io::on_disk::read_sidecar_said(&self.files[k])
-                            .0
-                            .current
-                            .clone()
-                    } else {
-                        greycard_edit::Edit::default()
-                    }
+                    edit_on_disk(&self.files[k], self.write_sidecars, self.fresh)
                 })
             };
             let progress = |step: Step| said(step_line(step));
@@ -508,10 +524,7 @@ impl Remerge {
         let made = (|| -> anyhow::Result<Made> {
             let edit = match &self.edit {
                 Some(edit) => (**edit).clone(),
-                None => greycard_edit_io::on_disk::read_sidecar_said(&self.reference)
-                    .0
-                    .current
-                    .clone(),
+                None => edit_on_disk(&self.reference, true, self.fresh),
             };
             let overrides = merge::Overrides {
                 denoise: Some(self.tier.clone()),
@@ -864,14 +877,32 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
     use crate::roots::{View, land_sent, open_view};
     use crate::testing::{state_for, window};
     use greycard_core::merge::Noise;
     use greycard_core::merge::testing::{mosaic, write_dng};
     use slint::Model;
+
+    /// A frame the window has not read takes the setting for new edits
+    /// when it has no sidecar, sidecars on or off, and its own when it
+    /// has one.
+    #[test]
+    fn a_frame_merged_unread_starts_as_the_setting_says() {
+        let off = Fresh { lens: false };
+        let none = Path::new("/nowhere/IMG_0001.CR3");
+        assert!(!edit_on_disk(none, true, off).lens.enabled);
+        assert!(!edit_on_disk(none, false, off).lens.enabled);
+        assert_eq!(edit_on_disk(none, true, Fresh::default()), Edit::default());
+        let dir = crate::testing::scratch_dir("merge-fresh");
+        let raw = dir.join("IMG_0002.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let mut written = Sidecar::default();
+        written.meta.rating = 2;
+        written.save(&raw).unwrap();
+        assert!(edit_on_disk(&raw, true, off).lens.enabled, "the file's own");
+        crate::testing::remove_dir_retry(&dir);
+    }
 
     /// A shoot of three bracketed frames, IMG_0 to IMG_2 (x0.26, x1,
     /// x3.8), the middle one edited (an exposure, a demosaic), indexed,

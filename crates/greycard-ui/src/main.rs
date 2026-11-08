@@ -791,6 +791,7 @@ impl State {
                 write_sidecars: false,
                 xmp_sidecars: false,
                 placement: greycard_edit::Placement::Beside,
+                lens_on_new: true,
                 deletes_allowed: false,
                 settings_file: None,
                 batch: false,

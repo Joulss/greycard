@@ -153,13 +153,24 @@ export component MetaSection inherits Section {
         font-size: Theme.font-sm;
         vertical-alignment: center;
     }
-    if root.frame-keywords.length > 0: FlexboxLayout {
-        spacing: Theme.space-1;
-        for chip in root.frame-keywords: WordChip {
-            word: chip.word;
-            all: chip.all;
-            removed => { root.keyword-removed(chip.word); root.focus-keys(); }
-            spread => { root.keyword-added(chip.word); root.focus-keys(); }
+    // The chips' flow, as tall as its rows at the width it is given,
+    // so the section grows with them and the field below keeps its own
+    // line. Measured in a box of its own: in the section's column the
+    // flow's rows are counted at another width than it is laid out at,
+    // too few with many words, and the field is clipped under the
+    // section's foot.
+    if root.frame-keywords.length > 0: Rectangle {
+        height: chips.preferred-height;
+        chips := FlexboxLayout {
+            width: parent.width;
+            height: self.preferred-height;
+            spacing: Theme.space-1;
+            for chip in root.frame-keywords: WordChip {
+                word: chip.word;
+                all: chip.all;
+                removed => { root.keyword-removed(chip.word); root.focus-keys(); }
+                spread => { root.keyword-added(chip.word); root.focus-keys(); }
+            }
         }
     }
     keyword-field := LineEdit {

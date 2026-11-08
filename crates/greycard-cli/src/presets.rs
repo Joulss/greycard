@@ -93,8 +93,10 @@ pub(crate) fn presets(
         if files.is_empty() {
             anyhow::bail!("--apply wants files to lay {} over", entry.preset.name);
         }
+        // A raw with no sidecar starts as the editor's setting says.
+        let fresh = greycard_engine::settings::Shared::load().fresh();
         for file in files {
-            let mut sidecar = sidecar_for(file)?;
+            let mut sidecar = sidecar_for(file, fresh)?;
             let edit = entry.preset.applied(&sidecar.current);
             let label = greycard_edit::history::preset_label(&entry.preset.name);
             if sidecar.record_as(edit, Some(label)) {
@@ -141,8 +143,12 @@ pub(crate) fn presets(
 }
 
 /// A frame's sidecar to lay something over: the one it has, wherever
-/// it is, or a new one at the edit the editor would open the frame at.
-fn sidecar_for(file: &std::path::Path) -> Result<greycard_edit::Sidecar> {
+/// it is, or a new one at the edit the editor would open the frame at,
+/// a raw's lens section as `fresh` says.
+fn sidecar_for(
+    file: &std::path::Path,
+    fresh: greycard_edit_io::on_disk::Fresh,
+) -> Result<greycard_edit::Sidecar> {
     use greycard_edit::Sidecar;
     let mut sidecar = match Sidecar::load(file)
         .with_context(|| format!("reading the sidecar of {}", file.display()))?
@@ -166,12 +172,9 @@ fn sidecar_for(file: &std::path::Path) -> Result<greycard_edit::Sidecar> {
                     None
                 }
             };
-            let mut edit = greycard_edit::Edit::default();
-            edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
-            Sidecar {
-                line: greycard_edit::Line::of(edit),
-                ..Sidecar::default()
-            }
+            let mut sidecar = greycard_edit_io::on_disk::fresh_sidecar(file, fresh);
+            sidecar.line.current.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
+            sidecar
         }
     };
     // A sidecar from before schema 4 does not know which way up an
@@ -244,6 +247,36 @@ fn section_names(preset: &greycard_edit::Preset) -> String {
 
 #[cfg(test)]
 mod tests {
+    use greycard_edit_io::on_disk::Fresh;
+
+    /// A raw with no sidecar starts with its lens section as the
+    /// setting for new edits says; one with a sidecar keeps its own.
+    #[test]
+    fn a_preset_on_a_raw_with_no_sidecar_starts_as_the_setting_says() {
+        let d =
+            std::env::temp_dir().join(format!("greycard-cli-preset-fresh-{}", std::process::id()));
+        greycard_core::testing::remove_dir_retry(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let raw = d.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        let off = Fresh { lens: false };
+        assert!(!super::sidecar_for(&raw, off).unwrap().current.lens.enabled);
+        assert!(
+            super::sidecar_for(&raw, Fresh::default())
+                .unwrap()
+                .current
+                .lens
+                .enabled
+        );
+        let mut written = greycard_edit::Sidecar::default();
+        written.meta.rating = 4;
+        written.save(&raw).unwrap();
+        let kept = super::sidecar_for(&raw, off).unwrap();
+        assert!(kept.current.lens.enabled, "the file's own");
+        assert_eq!(kept.meta.rating, 4);
+        greycard_core::testing::remove_dir_retry(&d);
+    }
+
     /// `--import` refuses a name the store has and says how to
     /// replace it, tries every file whatever is refused, and fails at
     /// the end; `--replace` writes over the one there, in its file.

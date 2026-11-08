@@ -53,40 +53,79 @@ pub enum Trouble {
 /// sidecars off, when nothing is read and the default stands in. A
 /// Lightroom develop beside a raw with no edit of ours is taken and the
 /// sidecar written there ([`crate::lightroom::beside`]).
-pub fn load_sidecar_said(f: &Path, sidecars: Option<Placement>) -> (Sidecar, Option<Trouble>) {
+///
+/// `fresh` is what a raw with no sidecar starts from, by the editor's
+/// settings.
+pub fn load_sidecar_said(
+    f: &Path,
+    sidecars: Option<Placement>,
+    fresh: Fresh,
+) -> (Sidecar, Option<Trouble>) {
     match sidecars {
-        Some(placement) => load(f, Some(placement)),
-        None => (fresh_sidecar(f), None),
+        Some(placement) => load(f, Some(placement), fresh),
+        None => (fresh_sidecar(f, fresh), None),
+    }
+}
+
+/// What the editor's settings say a raw's fresh edit starts with: the
+/// part of a new sidecar that is a preference rather than the
+/// schema's default. A picture that is not a raw starts from its own
+/// default whatever this says, and a sidecar already written keeps
+/// what it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fresh {
+    /// The lens section on: the profile's corrections and the rest of
+    /// the section as the default has them. Off, the section's switch
+    /// is off and nothing else of it changes.
+    pub lens: bool,
+}
+
+impl Default for Fresh {
+    fn default() -> Self {
+        Fresh { lens: true }
     }
 }
 
 /// The sidecar of a frame nothing has been written for: a raw's
-/// default, and for a picture that is not a raw its own
-/// ([`Edit::for_picture`]).
-pub fn fresh_sidecar(f: &Path) -> Sidecar {
+/// default, its lens section as `fresh` says, and for a picture that
+/// is not a raw its own ([`Edit::for_picture`]).
+pub fn fresh_sidecar(f: &Path, fresh: Fresh) -> Sidecar {
     if greycard_core::picture::is_picture_path(f) {
         Sidecar {
             line: Line::of(Edit::for_picture()),
             ..Sidecar::default()
         }
-    } else {
+    } else if fresh.lens {
         Sidecar::default()
+    } else {
+        Sidecar {
+            line: Line::of(Edit::raw_without_lens()),
+            ..Sidecar::default()
+        }
     }
 }
 
 /// [`load_sidecar_said`] for a reader that does not know where
-/// sidecars go (the reduced develop, the masks, a record of an export):
-/// the sidecar as it is, nothing taken and nothing written.
+/// sidecars go (the reduced develop, the masks): the sidecar as it is,
+/// nothing taken and nothing written, a raw with none at the default.
+/// Each of those readers gives up on a sidecar that is not there.
 pub fn read_sidecar_said(f: &Path) -> (Sidecar, Option<Trouble>) {
-    load(f, None)
+    load(f, None, Fresh::default())
+}
+
+/// [`read_sidecar_said`] with a raw with no sidecar starting as
+/// `fresh` says: for a reader that holds the editor's settings (a
+/// merge's frame the window has not read).
+pub fn read_sidecar_fresh(f: &Path, fresh: Fresh) -> (Sidecar, Option<Trouble>) {
+    load(f, None, fresh)
 }
 
 /// The sidecar read, and with `takes` a Lightroom develop beside it
 /// taken and written there.
-fn load(f: &Path, takes: Option<Placement>) -> (Sidecar, Option<Trouble>) {
+fn load(f: &Path, takes: Option<Placement>, fresh: Fresh) -> (Sidecar, Option<Trouble>) {
     let mut trouble = None;
     // A picture that is not a raw starts from its own default.
-    let fresh = || fresh_sidecar(f);
+    let fresh = || fresh_sidecar(f, fresh);
     let mut sidecar = match Sidecar::load(f) {
         Ok(Some(s)) => {
             // A shape from a later build: loaded as nothing, the
@@ -208,8 +247,14 @@ pub fn never_developed(sidecar: &Sidecar) -> bool {
 /// original before the raw was opened is at the default too, and waits
 /// for its ISO on its own; one made from an edited version, or edited
 /// since, is not.
+///
+/// A raw's default is either of [`Edit::raw_defaults`]: one with the
+/// lens section off is how a fresh edit starts with lens corrections
+/// off for new edits.
 pub fn line_never_developed(line: &Line) -> bool {
-    line.current == Edit::default() && line.history.is_empty() && line.snapshots.is_empty()
+    Edit::raw_defaults().contains(&line.current)
+        && line.history.is_empty()
+        && line.snapshots.is_empty()
 }
 
 /// A sidecar from an older build brought up to date from the shape of
@@ -244,11 +289,60 @@ mod tests {
     /// a raw from the raw's.
     #[test]
     fn with_sidecars_off_a_picture_starts_from_its_own_default() {
-        let (picture, _) = load_sidecar_said(Path::new("/nowhere/IMG_0001.JPG"), None);
+        let (picture, _) =
+            load_sidecar_said(Path::new("/nowhere/IMG_0001.JPG"), None, Fresh::default());
         assert_eq!(picture.line.current, Edit::for_picture());
         assert!(!picture.line.current.lens.wants_profile());
-        let (raw, _) = load_sidecar_said(Path::new("/nowhere/IMG_0001.CR3"), None);
+        let (raw, _) =
+            load_sidecar_said(Path::new("/nowhere/IMG_0001.CR3"), None, Fresh::default());
         assert_eq!(raw, Sidecar::default());
+    }
+
+    /// The setting decides a fresh raw edit's lens section and nothing
+    /// else: on, the default; off, the default with the section's
+    /// switch off, still never developed. A picture starts from its
+    /// own default either way.
+    #[test]
+    fn a_fresh_raw_edit_takes_its_lens_section_from_the_setting() {
+        let raw = Path::new("/nowhere/IMG_0001.CR3");
+        let off = Fresh { lens: false };
+        assert_eq!(fresh_sidecar(raw, Fresh::default()), Sidecar::default());
+        let without = fresh_sidecar(raw, off);
+        assert!(!without.line.current.lens.enabled);
+        let mut back = without.line.current.clone();
+        back.lens.enabled = true;
+        assert_eq!(back, Edit::default(), "only the switch moves");
+        assert!(never_developed(&without));
+        let (read, _) = load_sidecar_said(raw, None, off);
+        assert_eq!(read, without);
+        let picture = Path::new("/nowhere/IMG_0001.JPG");
+        assert_eq!(
+            fresh_sidecar(picture, off),
+            fresh_sidecar(picture, Fresh::default())
+        );
+    }
+
+    /// A sidecar already written keeps its lens section whatever the
+    /// setting says, and one that is not there starts as it says.
+    #[test]
+    fn an_existing_sidecar_keeps_its_lens_section() {
+        let dir = std::env::temp_dir().join(format!("greycard-fresh-lens-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_0002.CR3");
+        let off = Fresh { lens: false };
+        let (missing, trouble) = load_sidecar_said(&raw, Some(Placement::Beside), off);
+        assert_eq!(trouble, Some(Trouble::Missing));
+        assert!(!missing.line.current.lens.enabled);
+        let mut written = Sidecar::default();
+        written.meta.rating = 3;
+        written.save(&raw).unwrap();
+        let (read, trouble) = load_sidecar_said(&raw, Some(Placement::Beside), off);
+        assert_eq!(trouble, None);
+        assert!(read.line.current.lens.enabled, "the file's own");
+        assert_eq!(read.meta.rating, 3);
+        let (read, _) = read_sidecar_fresh(&raw, off);
+        assert!(read.line.current.lens.enabled);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     /// A star is not a develop: the sidecar a rating makes still has

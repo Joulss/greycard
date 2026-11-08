@@ -99,6 +99,11 @@ pub fn record_export_on_disk(
 /// seed is taken (`Outcome::Opened`); true when it took it. Nothing
 /// when the two differ in anything else: then the export was not of
 /// this state, and the seed waits for the open.
+///
+/// A raw's default is either of `Edit::raw_defaults`, so a frame read
+/// at one and rendered at the other (no sidecar on disk, and lens
+/// corrections off for new edits in the window) takes the rendered one
+/// with its seed: both are the frame untouched.
 pub fn take_seed(
     sidecar: &mut Sidecar,
     source: &Path,
@@ -117,7 +122,17 @@ pub fn take_seed(
     let mut seeded = line.current.clone();
     seeded.noise.learned_strength = rendered.noise.learned_strength;
     if seeded != *rendered {
-        return false;
+        let lens = seeded.lens.enabled;
+        seeded.lens.enabled = rendered.lens.enabled;
+        // Never developed, it was one of the two; it is the other now.
+        if seeded != *rendered {
+            return false;
+        }
+        log::info!(
+            "{}: untouched, its lens section turned {} as the export was rendered",
+            file_name(source),
+            if lens { "off" } else { "on" }
+        );
     }
     line.current = seeded;
     true
@@ -191,5 +206,27 @@ mod tests {
             !take_seed(&mut picture, Path::new("/shoot/scan.tif"), None, &rendered),
             "a picture has no ISO to seed from"
         );
+    }
+
+    /// A raw read at the default and exported from the window at the
+    /// default with the lens section off, which a new edit starts at
+    /// with lens corrections off for new edits, is the frame untouched
+    /// both ways: it takes the rendered state, and is still not edited.
+    /// Anything else apart, it is not the state exported.
+    #[test]
+    fn an_export_at_a_new_edit_without_lens_is_recorded_on_the_default() {
+        let raw = Path::new("/shoot/IMG_0001.CR3");
+        let mut rendered = Edit::raw_without_lens();
+        rendered.noise.learned_strength = 0.42;
+        let mut sidecar = Sidecar::default();
+        assert!(take_seed(&mut sidecar, raw, None, &rendered));
+        assert_eq!(sidecar.current, rendered);
+        assert!(crate::is_default_edit(&sidecar.current, raw, None));
+        assert!(!crate::develop_marks(&sidecar, raw, None).0);
+        let mut moved = rendered.clone();
+        moved.light.exposure = 0.3;
+        let mut sidecar = Sidecar::default();
+        assert!(!take_seed(&mut sidecar, raw, None, &moved));
+        assert_eq!(sidecar.current, Edit::default());
     }
 }

@@ -298,6 +298,17 @@ pub(crate) fn wheel_resizes_changed(st: &State, app: &App) {
     tracing::info!("grid wheel {}", if on { "resizes" } else { "only scrolls" });
 }
 
+/// A raw's new edit with the lens section on or off: kept as flipped.
+pub(crate) fn lens_on_new_changed(st: &mut State, app: &App) {
+    let on = app.get_lens_on_new();
+    st.window.lens_on_new = on;
+    keep(st, |s| s.shared.lens_on_new = on);
+    tracing::info!(
+        "lens corrections on new edits: {}",
+        if on { "on" } else { "off" }
+    );
+}
+
 /// The settings' cap in megabytes as bytes, a number too large for
 /// that being as good as no cap at all.
 pub(crate) fn cap_bytes(mb: u64) -> u64 {
@@ -786,6 +797,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             app.set_xmp_sidecars(st.window.xmp_sidecars);
             app.set_jpegs_apart(st.views.jpegs_apart);
             app.set_crop_start(st.develop.crop_start.name().into());
+            app.set_lens_on_new(st.window.lens_on_new);
             crate::panel::retouch::show_patches(&st, &st.develop.edit, &app);
             let kept = settings::Settings::load();
             show_start(&app, &kept.start_folder);
@@ -910,6 +922,17 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             crate::panel::crop::start_chosen(&mut state.borrow_mut(), &app.get_crop_start());
+        });
+    }
+    // A raw's new edit with the lens section on or off: kept as
+    // flipped, for the next raw with no sidecar; one written keeps its
+    // own.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_lens_on_new_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                lens_on_new_changed(&mut state.borrow_mut(), &app);
+            }
         });
     }
     // The interface's scale: kept as typed, for the next start, which
@@ -1063,6 +1086,49 @@ mod tests {
         assert_eq!(move_sidecars(&files, Placement::Folder).moved, 0);
         assert_eq!(move_sidecars(&files, Placement::Beside).moved, 3);
         assert_eq!(sidecars_elsewhere(&files, Placement::Beside), 0);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The Settings switch for a new edit's lens section: on by
+    /// default; a click turns it off, and a raw with no sidecar then
+    /// reads with the section off and still untouched, while one with
+    /// a sidecar keeps its own. Back on, the next read is the default.
+    #[test]
+    fn the_lens_switch_decides_a_new_edits_lens_section() {
+        let dir = scratch("lens-new");
+        let files = shoot(&dir);
+        let app = crate::testing::window(files.len());
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().window.write_sidecars = true;
+        app.invoke_settings_asked();
+        assert!(app.get_lens_on_new(), "on by default");
+        app.set_settings_category("Editing".into());
+        let label = "Lens corrections on new edits";
+        let (at, size) = crate::testing::labeled(&app, label);
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(!app.get_lens_on_new());
+        assert!(!state.borrow().window.lens_on_new);
+
+        let lens_of = |file: usize| {
+            let mut st = state.borrow_mut();
+            assert!(crate::rows::reread_file(&mut st, &app, file));
+            let line = &st.sidecars[file].line;
+            let (edited, _) =
+                greycard_library::develop_marks(&st.sidecars[file], &files[file], None);
+            (line.current.lens.enabled, edited)
+        };
+        assert_eq!(lens_of(3), (false, false), "none on disk: off, untouched");
+        assert_eq!(lens_of(0), (true, false), "the sidecar's own");
+        {
+            let st = state.borrow();
+            assert!(greycard_edit_io::on_disk::never_developed(&st.sidecars[3]));
+        }
+        // Nothing was written for the frame with none.
+        assert!(Sidecar::find(&files[3]).is_none());
+
+        app.set_lens_on_new(true);
+        app.invoke_lens_on_new_changed();
+        assert_eq!(lens_of(3), (true, false));
         crate::testing::remove_dir_retry(&dir);
     }
 

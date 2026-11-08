@@ -19,6 +19,10 @@ pub(crate) struct Window {
     /// hidden folder: `settings.sidecars_in_folder`, or
     /// `--sidecar-folder`. Reading looks in both places either way.
     pub(crate) placement: greycard_edit::Placement,
+    /// Whether a raw's new edit starts with the lens section on:
+    /// `settings.lens_on_new`, as the Settings sheet's switch flips
+    /// it. A sidecar already written keeps its own.
+    pub(crate) lens_on_new: bool,
     /// Whether anything may be deleted from disk: only in a session
     /// someone is at. A snapshot, a screenshot, an export or a timing
     /// run never deletes, whatever it is asked, and a test's state
@@ -42,5 +46,12 @@ impl Window {
     /// off: what a read that may take a Lightroom develop is told.
     pub(crate) fn sidecars(&self) -> Option<greycard_edit::Placement> {
         self.write_sidecars.then_some(self.placement)
+    }
+
+    /// What a raw with no sidecar starts with, by the setting.
+    pub(crate) fn fresh(&self) -> greycard_edit_io::on_disk::Fresh {
+        greycard_edit_io::on_disk::Fresh {
+            lens: self.lens_on_new,
+        }
     }
 }

@@ -116,11 +116,13 @@ pub(crate) fn seed_landed(st: &mut State, c: usize, blend: f32) -> bool {
 /// read from disk on the rayon pool. `read`, when given, is bumped for
 /// each sidecar read from disk, for the window's bar. The order is the
 /// list's. `sidecars` is where the session writes them, none with
-/// sidecars off (`Window::sidecars`).
+/// sidecars off (`Window::sidecars`), and `fresh` what a raw with none
+/// starts with (`Window::fresh`).
 pub(crate) fn bring(
     files: &[PathBuf],
     rows: &[Option<RowMeta>],
     sidecars: Option<greycard_edit::Placement>,
+    fresh: greycard_edit_io::on_disk::Fresh,
     read: Option<&AtomicUsize>,
 ) -> Vec<Held> {
     use rayon::prelude::*;
@@ -129,9 +131,9 @@ pub(crate) fn bring(
         .par_iter()
         .zip(rows.par_iter())
         .map(|(path, row)| match row {
-            Some(row) => from_row(path, row, sidecars.is_some()),
+            Some(row) => from_row(path, row, sidecars.is_some(), fresh),
             None => {
-                let held = from_disk(path, sidecars);
+                let held = from_disk(path, sidecars, fresh);
                 if let Some(read) = read {
                     read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -715,9 +717,16 @@ thread_local! {
 }
 
 /// A read a test's request asked for: the request's id, the list's
-/// generation, the paths to read, and whether sidecars are on.
+/// generation, the paths to read, whether sidecars are on, and
+/// what a raw with none starts with.
 #[cfg(test)]
-type QueuedRead = (u64, u64, Vec<PathBuf>, Option<greycard_edit::Placement>);
+type QueuedRead = (
+    u64,
+    u64,
+    Vec<PathBuf>,
+    Option<greycard_edit::Placement>,
+    greycard_edit_io::on_disk::Fresh,
+);
 
 #[cfg(test)]
 thread_local! {
@@ -733,12 +742,13 @@ thread_local! {
 /// nothing. In a test, queued for `land_pending`.
 fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
     let write = st.window.sidecars();
+    let fresh = st.window.fresh();
     let generation = st.views.view_generation;
     bar_started(st, app, to_read.len());
     st.views.loads.in_flight.insert(id, to_read.clone());
     #[cfg(test)]
     {
-        QUEUED.with(|q| q.borrow_mut().push((id, generation, to_read, write)));
+        QUEUED.with(|q| q.borrow_mut().push((id, generation, to_read, write, fresh)));
     }
     #[cfg(not(test))]
     {
@@ -750,7 +760,13 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
             .spawn(move || {
                 let started = Instant::now();
                 let none = vec![None; to_read.len()];
-                let held = bring(&to_read, &none, write, progress.as_deref().map(|p| &p.read));
+                let held = bring(
+                    &to_read,
+                    &none,
+                    write,
+                    fresh,
+                    progress.as_deref().map(|p| &p.read),
+                );
                 tracing::debug!(
                     "{} sidecar(s) read on the pool in {:.1} ms",
                     to_read.len(),
@@ -773,7 +789,7 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
             tracing::warn!("{e}; the sidecars read on the window's thread");
             st.views.loads.in_flight.remove(&id);
             let none = vec![None; paths.len()];
-            let held = bring(&paths, &none, write, None);
+            let held = bring(&paths, &none, write, fresh, None);
             let results: Vec<(PathBuf, Held)> = paths.into_iter().zip(held).collect();
             for (path, h) in results {
                 if let Some(file) = st.file_by_path(&path)
@@ -818,9 +834,9 @@ pub(crate) fn land_pending(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) -
         }
         n += mosaics.len();
         land_mosaics(state, app, worker, mosaics);
-        for (id, generation, to_read, write) in reads {
+        for (id, generation, to_read, write, fresh) in reads {
             let none = vec![None; to_read.len()];
-            let held = bring(&to_read, &none, write, None);
+            let held = bring(&to_read, &none, write, fresh, None);
             landed(
                 state,
                 app,
@@ -1122,7 +1138,7 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
         app.set_status(why.into());
         return false;
     }
-    let held = from_disk(&st.files[file], st.window.sidecars());
+    let held = from_disk(&st.files[file], st.window.sidecars(), st.window.fresh());
     take(st, app, file, held)
 }
 
@@ -1130,7 +1146,7 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
 /// the window held of it: another writer (the Lightroom import) wrote
 /// it. False when the read did not take.
 pub(crate) fn reread_file(st: &mut State, app: &App, file: usize) -> bool {
-    let held = from_disk(&st.files[file], st.window.sidecars());
+    let held = from_disk(&st.files[file], st.window.sidecars(), st.window.fresh());
     take(st, app, file, held)
 }
 
@@ -1178,7 +1194,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
         0 => {}
         1 => {
             let file = to_read[0];
-            let held = from_disk(&st.files[file], st.window.sidecars());
+            let held = from_disk(&st.files[file], st.window.sidecars(), st.window.fresh());
             if !take(st, app, file, held) {
                 failed.push(file);
             }
@@ -1187,7 +1203,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
             let started = std::time::Instant::now();
             let paths: Vec<PathBuf> = to_read.iter().map(|&f| st.files[f].clone()).collect();
             let rows = vec![None; n];
-            let held = bring(&paths, &rows, st.window.sidecars(), None);
+            let held = bring(&paths, &rows, st.window.sidecars(), st.window.fresh(), None);
             for (file, h) in to_read.into_iter().zip(held) {
                 if !take(st, app, file, h) {
                     failed.push(file);
@@ -1214,7 +1230,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
 pub(crate) fn land_read(st: &mut State, app: &App, file: usize, sidecar: Sidecar) -> bool {
     let held = Held {
         sidecar,
-        ..from_nothing(&st.files[file])
+        ..from_nothing(&st.files[file], st.window.fresh())
     };
     take(st, app, file, held)
 }

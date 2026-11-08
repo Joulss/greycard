@@ -504,8 +504,9 @@ pub fn blend_is_default(blend: f32, iso: Option<u32>) -> bool {
         || close(blend, greycard_edit::Noise::blend_for_iso(iso))
 }
 
-/// Whether `edit` is the default of the frame at `raw` (a raw's
-/// `Edit::default()`; for a picture, any of `Edit::picture_defaults()`,
+/// Whether `edit` is the default of the frame at `raw` (for a raw, any
+/// of `Edit::raw_defaults()`, so one that started with lens corrections
+/// off for new edits is not edited; for a picture, any of `Edit::picture_defaults()`,
 /// so a picture only rated by an older build is not edited). The learned
 /// blend is judged by [`blend_is_default`] against the frame's `iso`
 /// (`Some(None)` for a frame whose camera gave none); with the ISO not
@@ -527,7 +528,9 @@ pub fn is_default_edit(edit: &greycard_edit::Edit, raw: &Path, iso: Option<Optio
             .into_iter()
             .any(untouched)
     } else {
-        untouched(greycard_edit::Edit::default())
+        greycard_edit::Edit::raw_defaults()
+            .into_iter()
+            .any(untouched)
     }
 }
 

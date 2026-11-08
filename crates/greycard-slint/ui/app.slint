@@ -2494,6 +2494,10 @@ export component App inherits Window {
     // crop opens at (`panel::crop::Start`).
     in-out property <string> crop-start: "Original";
     callback crop-start-changed();
+    // The Settings sheet's lens switch: whether a raw's new edit
+    // starts with the lens section on.
+    in-out property <bool> lens-on-new: true;
+    callback lens-on-new-changed();
     // The Settings sheet's scale row (`window_fit::scale`): the
     // interface's scale as typed and as taken, the one this window
     // started at, and whether SLINT_SCALE_FACTOR, set by hand,
@@ -5737,6 +5741,8 @@ export component App inherits Window {
         jpegs-apart-changed => { root.jpegs-apart-changed(); }
         crop-start <=> root.crop-start;
         crop-start-changed => { root.crop-start-changed(); }
+        lens-on-new <=> root.lens-on-new;
+        lens-on-new-changed => { root.lens-on-new-changed(); }
         fill-choice <=> root.fill-choice;
         fill-why-not: root.fill-why-not;
         fill-chosen(c) => { root.fill-chosen(c); }

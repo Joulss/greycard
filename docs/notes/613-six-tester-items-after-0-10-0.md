@@ -220,3 +220,90 @@ software device are shapes, not numbers.
 - While the Original shows, a re-open of the same frame (a lens
   database arriving) forgets it, and until the open lands the panel's
   look is drawn over the Original's texture for a moment.
+
+**The keyword field keeps its height (issue 98).** The fault was the
+section's height, not the field's: the fluent `LineEdit` already holds
+a one-line minimum (32 px). In the section's column the chip flow's
+rows were counted at another width than it is laid out at, four rows
+for seven with twenty words, so the body came out short and the field
+was clipped under the section's foot. The flow now sits in a box of
+its own whose height is the flow's preferred height at the width it
+is given; the body measures right, the section grows with the chips,
+and the pane scrolls as for any section. The same section serves the
+Develop tab, culling, and the pane beside the grid.
+
+**Lens corrections on new edits (issue 101).** A switch in Settings,
+Editing (the develop category; there is no "Develop" one), under the
+soft proof rows: "Lens corrections on new edits", on by default.
+`lens_on_new` lives in the shared half of the settings file
+(`greycard_engine::settings::Shared`, read leniently, a wrong value
+reads as on), so the command line's `--export` reads it too and a raw
+with no sidecar exports as the window shows it. `Shared` lost its
+derived `Default` for a written one, the switch defaulting on.
+
+In `greycard-edit-io`, `on_disk::Fresh { lens }` is what a raw's new
+sidecar starts with; `fresh_sidecar`, `load_sidecar_said`,
+`held::from_disk`, `held::from_nothing`, and `held::from_row` take it,
+and the window passes `Window::fresh()`. Off, a raw with no sidecar
+starts at `Edit::raw_without_lens()`: the default with `lens.enabled`
+false and nothing else moved. Pictures start from their own default
+whatever it says; a sidecar already written keeps its own; the
+migration is untouched.
+
+A raw now has two untouched edits, `Edit::raw_defaults()`, as a
+picture has two (`picture_defaults`): the edited mark
+(`is_default_edit`), a learned blend still waiting for its ISO
+(`never_developed`), the history's Original row, and the Lightroom
+take's "no edit of ours" all read either as untouched. A raw whose
+lens section was turned off by hand and nothing else is therefore
+untouched too, as a picture's lens turned on is: its edited badge
+goes, it leaves the edited filter, and its grid thumbnail returns to
+the camera's JPEG, while the history still shows the step and Reset
+to Original is still offered.
+
+An export recorded on disk for a frame with no sidecar
+(`take_seed`) reads the default and was rendered at the default
+without lens: the one difference is taken with the seed, both being
+the frame untouched, and logged.
+
+A merge's frame the window has not read, and the reference of a
+merge made again, read their sidecar with the setting
+(`read_sidecar_fresh`), or with sidecars off start at
+`fresh_sidecar(path, fresh)`; `greycard presets --apply` on a raw with
+no sidecar starts from the setting too (`Shared::load().fresh()`).
+
+Readers that give up on a missing sidecar (the reduced develop, the
+masks, the edited pictures' key) keep `read_sidecar_said` at the
+schema default: they never develop a frame with none.
+
+**Verified (issues 98 and 101).**
+
+- `the_keyword_field_keeps_its_height_under_many_words` (greycard-ui):
+  twenty keywords, the field's height on the Develop tab and in both
+  sections beside the grid equals its height with none. Fails on the
+  old layout (the field is clipped out of reach), passes on the new.
+- `the_lens_switch_decides_a_new_edits_lens_section` (greycard-ui): the
+  switch in Settings, Editing, clicked off; a raw with no sidecar reads
+  with the lens section off, unedited and never developed, nothing
+  written; one with a sidecar keeps its own; back on, the default.
+- `a_fresh_raw_edit_takes_its_lens_section_from_the_setting` and
+  `an_existing_sidecar_keeps_its_lens_section` (greycard-edit-io).
+- `the_lens_switch_for_new_edits_is_read_leniently` (greycard-engine):
+  default on, round trip, wrong kinds read as on with the rest kept.
+- `an_export_at_a_new_edit_without_lens_is_recorded_on_the_default`
+  (greycard-library).
+- `a_frame_merged_unread_starts_as_the_setting_says` (greycard-ui) and
+  `a_preset_on_a_raw_with_no_sidecar_starts_as_the_setting_says`
+  (greycard-cli).
+
+**Not verified (issues 98 and 101).**
+
+- No screenshot or hand check of either item in the running editor.
+- A Lightroom take (by the index or the window, which write the same
+  sidecar), a catalog import, and a pp3 import start from the schema
+  default whatever the setting: `take_over` sets the line to
+  `on_disk::starting_of`, lens on, and records the import on top. A
+  policy call left open: start them from the setting, or map
+  Lightroom's `crs:LensProfileEnable`, unmapped today.
+- Reset to Original on a frame whose earliest state is not a default
+  falls back to `Edit::default()`, lens on, as before.

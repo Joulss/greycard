@@ -427,6 +427,8 @@ pub(crate) struct Look {
     /// and its sidecar is read.
     have: HashSet<PathBuf>,
     sidecars: Option<greycard_edit::Placement>,
+    /// What a raw with no sidecar starts with (`Window::fresh`).
+    fresh: greycard_edit_io::on_disk::Fresh,
     /// The frame on screen and its row, to see whether it is still
     /// there, and where the index says it went if not.
     on_screen: Option<(PathBuf, Option<i64>)>,

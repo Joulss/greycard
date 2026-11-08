@@ -747,6 +747,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.window.write_sidecars = write_sidecars;
         st.window.xmp_sidecars = xmp_sidecars;
         st.window.placement = placement;
+        st.window.lens_on_new = remembered.shared.lens_on_new;
         st.window.settings_file = settings_file;
         st.window.deletes_allowed = deletes_allowed;
         st.launch.scripted = scripted;
@@ -2287,6 +2288,7 @@ fn merged(
     settings.shared.xmp_sidecars = kept.shared.xmp_sidecars;
     settings.shared.sidecars_in_folder = kept.shared.sidecars_in_folder;
     settings.shared.jpegs_apart = kept.shared.jpegs_apart;
+    settings.shared.lens_on_new = kept.shared.lens_on_new;
     settings.one_section = kept.one_section;
     settings.exported = kept.exported;
     settings.edit_in = kept.edit_in;
@@ -2420,6 +2422,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
             xmp_sidecars: false,
             sidecars_in_folder: false,
             jpegs_apart: false,
+            // As the Settings sheet's switch is flipped.
+            lens_on_new: true,
             last_file: String::new(),
         },
         // Kept by the caller: written when a chooser answers.

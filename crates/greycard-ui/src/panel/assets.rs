@@ -2380,9 +2380,12 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.window.write_sidecars = true;
-            st.sidecars[0] =
-                greycard_library::held::from_disk(&jpeg, Some(greycard_edit::Placement::Beside))
-                    .sidecar;
+            st.sidecars[0] = greycard_library::held::from_disk(
+                &jpeg,
+                Some(greycard_edit::Placement::Beside),
+                Default::default(),
+            )
+            .sidecar;
         }
         app.invoke_select(0);
         let generation = state.borrow().develop.generation;

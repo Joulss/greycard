@@ -88,11 +88,12 @@ fn state_name(sidecar: &greycard_edit::Line, i: usize) -> String {
         Some(name) => name,
         // A fresh raw's learned-denoiser blend starts from its ISO
         // (`Noise::blend_for_iso`), not the plain default, so that
-        // field alone is left out of the comparison.
+        // field alone is left out of the comparison; its lens section
+        // starts as the setting for new edits said.
         None if {
             let mut plain = state.clone();
             plain.noise.learned_strength = Edit::default().noise.learned_strength;
-            plain == Edit::default() || Edit::picture_defaults().contains(state)
+            Edit::raw_defaults().contains(&plain) || Edit::picture_defaults().contains(state)
         } =>
         {
             "Original".to_string()

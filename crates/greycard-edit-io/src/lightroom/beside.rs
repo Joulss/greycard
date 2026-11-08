@@ -137,15 +137,16 @@ pub fn path_for(raw: &Path) -> Option<PathBuf> {
 }
 
 /// Whether `sidecar` holds no edit of ours: no history, snapshot, or
-/// version, and the edit the default but for the learned blend an open
-/// seeds from the ISO. Its meta is not an edit.
+/// version, and the edit a raw's default (either of
+/// `Edit::raw_defaults`) but for the learned blend an open seeds from
+/// the ISO. Its meta is not an edit.
 pub fn no_edit_of_ours(sidecar: &Sidecar) -> bool {
     let mut current = sidecar.line.current.clone();
     current.noise.learned_strength = Edit::default().noise.learned_strength;
     sidecar.versions.is_empty()
         && sidecar.line.history.is_empty()
         && sidecar.line.snapshots.is_empty()
-        && current == Edit::default()
+        && Edit::raw_defaults().contains(&current)
 }
 
 /// The sliders the mapper reads at the values Lightroom starts a frame
@@ -473,7 +474,14 @@ pub fn take_and_save(raw: &Path, sidecar: &mut Sidecar, setting: Placement) -> O
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::on_disk::{load_sidecar_said, read_sidecar_said};
+    use crate::on_disk::{Fresh, read_sidecar_said};
+
+    fn load_sidecar_said(
+        f: &Path,
+        sidecars: Option<Placement>,
+    ) -> (Sidecar, Option<crate::on_disk::Trouble>) {
+        crate::on_disk::load_sidecar_said(f, sidecars, Fresh::default())
+    }
 
     /// Sidecars written beside the frame, as the editor's setting
     /// says by default.

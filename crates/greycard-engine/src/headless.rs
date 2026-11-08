@@ -246,7 +246,11 @@ pub fn plan(
     let mut frames = Vec::with_capacity(rows.len());
     for &i in &rows {
         let source = files[i].clone();
-        let held = greycard_library::held::from_disk(&source, write_sidecars.then_some(placement));
+        let held = greycard_library::held::from_disk(
+            &source,
+            write_sidecars.then_some(placement),
+            remembered.fresh(),
+        );
         let unreadable = matches!(
             held.trouble,
             Some(greycard_edit_io::on_disk::Trouble::Unreadable(_))
