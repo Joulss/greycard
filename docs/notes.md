@@ -616,3 +616,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§602. White balance on a picture](notes/602-white-balance-on-a-picture.md) (2026-11-07)
 - [§603. The left pane's sections share its height](notes/603-the-left-panes-sections-share-its-height.md) (2026-11-07)
 - [§604. The Develop sections told apart](notes/604-the-develop-sections-told-apart.md) (2026-11-07)
+- [§605. The panes and the strip take a size](notes/605-the-panes-and-the-strip-take-a-size.md) (2026-11-07)

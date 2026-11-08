@@ -181,6 +181,7 @@ the reasoning lives in `docs/notes.md`.
 - [ ] White balance on a picture (§602)
 - [ ] The left pane's sections share its height (issue 79, §603)
 - [ ] The Develop sections told apart (issue 80, §604)
+- [ ] The panes and the strip take a size (§605)
 - [ ] i18n (issue 75)
 - [ ] Handheld HDR and focus stacking
 
