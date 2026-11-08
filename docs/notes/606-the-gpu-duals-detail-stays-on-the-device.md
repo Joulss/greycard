@@ -126,8 +126,27 @@ runs the CPU's demosaic on either, so nothing a user sees changes.
 
 ## Not verified
 
-- Any number on a real card: the bus is where item 1 pays, and
-  lavapipe has none.
+- The peak device memory on a real card: computed from the buffers'
+  sizes, not read off the device (the card's times are below).
 - The 102 MP peak, measured: it is computed from the buffers' sizes.
 - A device whose largest buffer is under a frame's rows of 12 bytes a
   pixel (a frame row wider than 22 M pixels): never met.
+
+## Measured on the card
+
+The same `timing` test on the RTX 5070 Ti, warm, best of three, the
+CPU on 32 threads under the evening's agent builds (so the CPU
+column runs high against §591's table):
+
+| 45 MP | GPU before (§591) | GPU after | up / back per run |
+|---|---|---|---|
+| AMaZE dual, the default | 247 ms | 180 ms | 357 / 520 MB |
+| AMaZE dual, automatic threshold | | 222 ms | 357 / 1040 MB |
+| RCD dual | 137 ms | 94 ms | 183 / 520 MB |
+| RCD dual, automatic threshold | | 208 ms | 366 / 1040 MB |
+| RCD alone | 134 ms | 86 ms | 183 / 520 MB |
+| VNG4 alone | 127 ms | 87 ms | 183 / 520 MB |
+
+At 24 MP the default dual is 109 ms warm and the RCD dual 61 ms.
+The default's first run after the context is made pays the
+pipelines, 677 ms at 24 MP, once.
