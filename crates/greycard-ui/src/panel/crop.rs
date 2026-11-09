@@ -2501,7 +2501,7 @@ mod tests {
         crate::testing::click(&app, base.x + size.width / 2.0, base.y + size.height - 5.0);
         assert_eq!(*pressed.borrow(), [5], "the bottom handle");
         assert!(!app.get_strip_hidden());
-        let (at, arrow) = crate::testing::labeled(&app, "Strip");
+        let (at, arrow) = crate::testing::labeled(&app, "Filmstrip");
         crate::testing::click(&app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
         assert!(
             app.get_strip_hidden(),

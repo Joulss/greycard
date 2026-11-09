@@ -254,16 +254,16 @@ takes one off. See
 ## Models
 
 Every model greycard knows, with its license, its size, and where it
-stands: in the store, fetching, or skipped, with why. **Fetch all**
+stands: in the store, downloading, or skipped, with why. **Download all**
 downloads every model this computer can run that is not in the store
 yet, one at a time; the button shows how much that is. Without a GPU
 with WebGPU, or on a card too small or without 16-bit floats, the
 generative remove is skipped; of the Subject model's two copies, only
 the one this computer uses comes. Where the AI features are off until
-ONNX Runtime for the CPU is downloaded, Fetch all downloads it first.
+ONNX Runtime for the CPU is downloaded, Download all takes it first.
 If one download fails, its line says why and the rest go on. Each
 model's full license is written beside it in the store. A download
-cannot be stopped once it has started. On a Mac, Fetch all also
+cannot be stopped once it has started. On a Mac, Download all also
 prepares Core ML for Sky and the denoiser, so their first use is as
 quick as the next.
 

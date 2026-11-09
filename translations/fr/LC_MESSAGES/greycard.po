@@ -91,9 +91,9 @@ msgstr ""
 msgid "Not now"
 msgstr ""
 
-#. The models ask's button that fetches every model
+#. The models ask's button that downloads every model
 #: crates/greycard-slint/ui/app.slint:2261
-msgid "Fetch all"
+msgid "Download all"
 msgstr ""
 
 #: crates/greycard-slint/ui/app.slint:3622
@@ -166,17 +166,17 @@ msgstr ""
 
 #. View menu: the filmstrip
 #: crates/greycard-slint/ui/app.slint:4578
-msgid "Strip"
+msgid "Filmstrip"
 msgstr ""
 
 #. View menu: the filmstrip
 #: crates/greycard-slint/ui/app.slint:4580
-msgid "Hide strip"
+msgid "Hide filmstrip"
 msgstr ""
 
 #. View menu: the filmstrip
 #: crates/greycard-slint/ui/app.slint:4580
-msgid "Show strip"
+msgid "Show filmstrip"
 msgstr ""
 
 #. The view button at the top left: the grid
@@ -2601,10 +2601,6 @@ msgstr ""
 
 #: crates/greycard-slint/ui/panel/settings-sheet.slint:555
 msgid "Language"
-msgstr ""
-
-#: crates/greycard-slint/ui/panel/settings-sheet.slint:566
-msgid "Takes effect when greycard next starts"
 msgstr ""
 
 #. Interface: the develop panel's sections
@@ -6800,7 +6796,7 @@ msgstr ""
 
 #. Models list: a model's state
 #: crates/greycard-ui/src/panel/models.rs:234
-msgid "not fetched"
+msgid "not downloaded"
 msgstr ""
 
 #. Models list: a model's state
@@ -6810,7 +6806,7 @@ msgstr ""
 
 #. Models list: a model's state
 #: crates/greycard-ui/src/panel/models.rs:248
-msgid "fetching {pct}%"
+msgid "downloading {pct}%"
 msgstr ""
 
 #. Models list: a model's state
@@ -6838,11 +6834,11 @@ msgid "Each under its own license, kept beside it in the store."
 msgstr ""
 
 #: crates/greycard-ui/src/panel/models.rs:301
-msgid "No cache directory, so nothing can be fetched."
+msgid "No cache directory, so nothing can be downloaded."
 msgstr ""
 
 #: crates/greycard-ui/src/panel/models.rs:341
-msgid "Fetch all ({})"
+msgid "Download all ({})"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/models.rs:419
@@ -6850,7 +6846,7 @@ msgid "downloading {}"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/models.rs:558
-msgid "Fetch every model now?"
+msgid "Download every model now?"
 msgstr ""
 
 #: crates/greycard-ui/src/panel/models.rs:577
@@ -6877,7 +6873,7 @@ msgstr ""
 #: crates/greycard-ui/src/panel/models.rs:619
 msgid ""
 "Licenses: {}; each full text sits beside its model in the store. Asked once; "
-"Fetch all is also in Settings, Models."
+"Download all is also in Settings, Models."
 msgstr ""
 
 #: crates/greycard-ui/src/panel/models.rs:627

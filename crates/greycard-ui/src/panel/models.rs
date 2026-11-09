@@ -231,7 +231,7 @@ pub(crate) fn after_runtime() -> String {
 /// A line's words for a model to fetch, or any with no store.
 pub(crate) fn not_fetched() -> String {
     // Models list: a model's state
-    tr!("not fetched")
+    tr!("not downloaded")
 }
 
 /// The lines' words while the machine is probed.
@@ -245,7 +245,7 @@ fn status(all: &FetchAll, model: &Model, stands: &Stands) -> String {
     for (m, pct) in all.coming.iter().chain(&all.sheet) {
         if m.id == model.id {
             // Models list: a model's state
-            return tr!("fetching {pct}%", pct = pct);
+            return tr!("downloading {pct}%", pct = pct);
         }
     }
     if all.waiting.iter().any(|m| m.id == model.id) {
@@ -298,7 +298,7 @@ pub(crate) fn note() -> String {
 
 /// The note with no store to fetch into.
 pub(crate) fn no_store() -> String {
-    tr!("No cache directory, so nothing can be fetched.")
+    tr!("No cache directory, so nothing can be downloaded.")
 }
 
 /// The Models category as it stands: a line a model, and Fetch all
@@ -338,9 +338,9 @@ pub(crate) fn show(st: &mut State, app: &App) {
         || !all.waiting.is_empty();
     app.set_models_fetch_label(
         if left > 0 {
-            tr!("Fetch all ({})", size_words(left))
+            tr!("Download all ({})", size_words(left))
         } else {
-            tr!("Fetch all")
+            tr!("Download all")
         }
         .into(),
     );
@@ -555,7 +555,7 @@ pub(crate) fn runtime_landed(st: &mut State, app: &App, id: &str, failed: Option
 
 /// The offer's title.
 pub(crate) fn offer_title() -> String {
-    tr!("Fetch every model now?")
+    tr!("Download every model now?")
 }
 
 /// The offer's words: how many and how much, that they also come one
@@ -616,7 +616,7 @@ pub(crate) fn offer_note(here: &Here, plan: &[(&'static Model, Stands)]) -> Stri
         }
     }
     tr!(
-        "Licenses: {}; each full text sits beside its model in the store. Asked once; Fetch all \
+        "Licenses: {}; each full text sits beside its model in the store. Asked once; Download all \
          is also in Settings, Models.",
         names.join(", ")
     )
@@ -836,7 +836,7 @@ mod tests {
         }
         assert_eq!(crate::testing::count_labeled(&app, "MODELS"), 1);
         assert_eq!(line(&app, &SKY).status, "in the store");
-        assert_eq!(line(&app, &SAM).status, "not fetched");
+        assert_eq!(line(&app, &SAM).status, "not downloaded");
         assert_eq!(
             line(&app, &REMOVE).status,
             "skipped: needs a GPU with WebGPU"
@@ -845,14 +845,14 @@ mod tests {
             line(&app, &SUBJECT_WEBGPU).status,
             "skipped: the original runs here"
         );
-        assert_eq!(line(&app, &SUBJECT).status, "not fetched");
+        assert_eq!(line(&app, &SUBJECT).status, "not downloaded");
         // The total is what is left of what runs here.
         let left: u64 = MODELS
             .iter()
             .filter(|m| runnable_on_cpu().contains(&m.id) && m.id != SKY.id)
             .map(bytes)
             .sum();
-        let label = format!("Fetch all ({})", size_words(left));
+        let label = format!("Download all ({})", size_words(left));
         assert_eq!(app.get_models_fetch_label(), label.as_str());
         assert!(app.get_models_fetch_enabled());
         // The button above the list, in reach unscrolled in a common
@@ -897,7 +897,7 @@ mod tests {
         assert_eq!(sent(&state), vec![runnable_on_cpu()[0]], "one at a time");
         assert!(state.borrow().sheets.fetching);
         assert!(!app.get_models_fetch_enabled(), "pressed once");
-        assert_eq!(line(&app, &SUBJECT).status, "fetching 0%");
+        assert_eq!(line(&app, &SUBJECT).status, "downloading 0%");
         assert_eq!(line(&app, &SAM).status, "queued");
         // Pressed again (the button greyed, the callback all the same):
         // nothing twice.
@@ -962,7 +962,7 @@ mod tests {
                 total: first.bytes(),
             },
         );
-        assert_eq!(line(&app, first).status, "fetching 50%");
+        assert_eq!(line(&app, first).status, "downloading 50%");
         deliver(
             &app,
             Outcome::FetchFailed {
@@ -1003,7 +1003,7 @@ mod tests {
         // Download: the sheet's fetch, said on its line.
         app.invoke_fetch_answered(true);
         assert_eq!(sent(&state), vec![first.id, SAM.id]);
-        assert_eq!(line(&app, &SAM).status, "fetching 0%");
+        assert_eq!(line(&app, &SAM).status, "downloading 0%");
         deliver(
             &app,
             Outcome::Fetching {
@@ -1053,7 +1053,7 @@ mod tests {
             assert_eq!(line(&app, &SUBJECT).status, "queued");
             deliver(&app, landing);
             assert_eq!(sent(&state), vec![SUBJECT.id]);
-            assert_eq!(line(&app, &SUBJECT).status, "fetching 0%");
+            assert_eq!(line(&app, &SUBJECT).status, "downloading 0%");
             drop(app);
             drop(state);
         }
@@ -1093,7 +1093,7 @@ mod tests {
         assert_eq!(sent(&state), vec![runtime.id, SUBJECT.id]);
         state.borrow_mut().sheets.models.here = Some(cpu());
         show(&mut state.borrow_mut(), &app);
-        assert_eq!(line(&app, &SUBJECT).status, "fetching 0%");
+        assert_eq!(line(&app, &SUBJECT).status, "downloading 0%");
         assert_eq!(line(&app, &SAM).status, "queued");
 
         // The runtime would not load: its models say so, and none is
@@ -1128,7 +1128,7 @@ mod tests {
         let (app, state) = window(cpu(), &store);
         assert!(offer_once(&mut state.borrow_mut(), &app));
         assert!(app.get_fetch_open());
-        assert_eq!(app.get_fetch_title(), "Fetch every model now?");
+        assert_eq!(app.get_fetch_title(), "Download every model now?");
         assert_eq!(app.get_fetch_yes(), "Now");
         assert_eq!(app.get_fetch_no(), "As needed");
         assert!(app.get_fetch_no_default(), "As needed is the default");
@@ -1224,10 +1224,10 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
         show(&mut state.borrow_mut(), &app);
         assert!(!state.borrow().sheets.models.probing);
-        assert!(lines(&app).iter().all(|l| l.status == "not fetched"));
+        assert!(lines(&app).iter().all(|l| l.status == "not downloaded"));
         assert_eq!(
             app.get_models_note(),
-            "No cache directory, so nothing can be fetched."
+            "No cache directory, so nothing can be downloaded."
         );
         assert!(!app.get_models_fetch_enabled());
     }

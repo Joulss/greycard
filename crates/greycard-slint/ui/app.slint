@@ -2257,8 +2257,8 @@ export component App inherits Window {
     // The Settings sheet's Models category: a line a model, the Fetch
     // all button's words and whether it can be pressed, and a note.
     in property <[ModelLine]> models-lines: [];
-    // The models ask's button that fetches every model
-    in property <string> models-fetch-label: @tr("Fetch all");
+    // The models ask's button that downloads every model
+    in property <string> models-fetch-label: @tr("Download all");
     in property <bool> models-fetch-enabled: false;
     in property <string> models-note: "";
     callback models-fetch-all();
@@ -4575,9 +4575,9 @@ export component App inherits Window {
         quiet: root.all-hidden();
         light-ground: root.canvas-light;
         // View menu: the filmstrip
-        label: @tr("Strip");
+        label: @tr("Filmstrip");
         // View menu: the filmstrip
-        words: root.strip-hidden ? @tr("Show strip") : @tr("Hide strip");
+        words: root.strip-hidden ? @tr("Show filmstrip") : @tr("Hide filmstrip");
         icon: root.strip-hidden ? @image-url("icons/chevron-up.svg") : @image-url("icons/chevron-down.svg");
         clicked => { root.strip-hidden = !root.strip-hidden; keys.focus(); }
     }

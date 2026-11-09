@@ -5660,7 +5660,7 @@ pub(crate) mod tests {
             ("Undo", "Undo"),
             ("Redo", "Redo"),
             ("Right panel", "Hide panel"),
-            ("Strip", "Hide strip"),
+            ("Filmstrip", "Hide filmstrip"),
         ] {
             assert_eq!(app.get_tip_text(), "", "no word before a rest on {label}");
             rest_on(&app, label);

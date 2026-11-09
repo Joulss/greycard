@@ -1318,21 +1318,23 @@ mod tests {
         assert!(app.get_settings_open());
         assert_eq!(crate::testing::count_labeled(&app, "INTERFACE"), 1);
         assert_eq!(app.get_ui_scale(), "150");
-        assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+        // The Language row says the same under it, always: the base.
+        let base = crate::testing::count_labeled(&app, NEXT);
+        assert_eq!(base, 1);
         let typed = |text: &str| {
             app.set_ui_scale(text.into());
             app.invoke_ui_scale_changed();
             (app.get_ui_scale().to_string(), app.get_ui_scale_percent())
         };
         assert_eq!(typed("137"), ("137".into(), 137));
-        assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), base + 1);
         assert_eq!(typed("20"), ("50".into(), 50));
         assert_eq!(typed("400"), ("300".into(), 300));
         assert_eq!(typed("abc"), ("300".into(), 300), "put back");
         assert_eq!(typed(""), ("300".into(), 300), "put back");
-        assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), base + 1);
         assert_eq!(typed("150"), ("150".into(), 150));
-        assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), base);
         // Typed and not entered: taken as the sheet closes.
         app.set_ui_scale("112".into());
         app.set_settings_open(false);
@@ -1340,12 +1342,12 @@ mod tests {
         crate::testing::press(&app, slint::platform::Key::Shift);
         assert_eq!(app.get_ui_scale_percent(), 112);
         app.invoke_settings_asked();
-        assert_eq!(crate::testing::count_labeled(&app, NEXT), 1);
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), base + 1);
         // By hand: the variable's line, and not the next start's.
         app.set_ui_scale_by_hand(true);
         assert_eq!(typed("125"), ("125".into(), 125));
         assert_eq!(crate::testing::count_labeled(&app, BY_HAND), 1);
-        assert_eq!(crate::testing::count_labeled(&app, NEXT), 0);
+        assert_eq!(crate::testing::count_labeled(&app, NEXT), base);
     }
 
     /// Start in: the last folder until a folder is chosen; a click on

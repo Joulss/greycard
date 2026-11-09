@@ -603,7 +603,7 @@ them. Each shows you its license before it downloads:
 - the learned denoiser, 5 to 20 MB depending on the tier
 
 Each one is downloaded once.
-**Fetch all** in Settings, Models downloads the denoiser's tiers with
+**Download all** in Settings, Models downloads the denoiser's tiers with
 every other model this computer runs.
 
 The first time a picture opens, greycard also asks once whether to
