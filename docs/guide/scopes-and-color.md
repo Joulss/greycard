@@ -56,13 +56,18 @@ on, the clipping lamps on the histogram follow the mask too. See
 ## Clipping
 
 On the **RGB** histogram, two small squares at the top corners light
-when part of the picture is pure black (left) or pure white (right).
+when a channel somewhere in the picture reaches black (left) or white
+(right).
 Their color says which channels clip: red, green or blue for one,
 yellow, magenta or cyan for two, white for all three.
 
 Click a square to paint that end's clipping over the picture: blue
-where it is black, red where it is white. Press **J** to turn both on,
-or both off. The choice is remembered.
+where it is black, red where a channel has reached white. Press **J**
+to turn both on, or both off. The choice is remembered.
+
+The left square can be lit with no blue over the picture: a channel
+is at zero somewhere in a color that is not black, most often a
+saturated one at the edge of the output space.
 
 The lamps say what the exported file will clip after the tone curve,
 not what the camera's sensor clipped. The painted warning always

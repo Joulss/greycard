@@ -702,14 +702,19 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         d = mix(d, vec3<f32>(1.0, 0.15, 0.15), 0.6 * clamp(t4.a, 0.0, 1.0));
         overlaid = overlaid || t4.a > 0.0;
     }
-    // The clipping warnings: where a channel of the output lands in
-    // the histogram's first or last bin, as `scope.wgsl` rounds it,
-    // the pixel is painted blue for the shadows or red for the
-    // highlights, the highlights over the shadows.
+    // The clipping warnings, on the output's levels as `scope.wgsl`
+    // rounds them: red where a channel lands in the histogram's last
+    // bin, blue where one lands in its first and the pixel is black,
+    // its brightest channel no higher than level 2; the highlights
+    // over the shadows. A channel at zero alone is no shadow: it is
+    // what the clamp or the AgX rail leaves of any color outside the
+    // output space, at any brightness. All three at zero would leave
+    // the noise to say which pixels of a black wall are painted.
     let clip = u32(p.clip.x);
     if (clip != 0u && !bare) {
         let level = floor(e * 255.0 + 0.5);
-        let lo = min(min(level.r, level.g), level.b) <= 0.0;
+        let lo = min(min(level.r, level.g), level.b) <= 0.0
+            && max(max(level.r, level.g), level.b) <= 2.0;
         let hi = max(max(level.r, level.g), level.b) >= 255.0;
         if ((clip & 2u) != 0u && hi) {
             d = vec3<f32>(1.0, 0.15, 0.15);

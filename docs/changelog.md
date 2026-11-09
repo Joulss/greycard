@@ -3,6 +3,15 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.12.0
+
+### Fixes
+
+- The shadows' clipping paint covers only what is black. It had also
+  covered any color outside the output space at any brightness, a
+  third of one frame in dim warm light
+  ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-the-shadows-paint-is-for-black.md)).
+
 ## 0.11.0, 2026-11-09
 
 Handheld HDR and focus stacks, the demosaic on the GPU, the window

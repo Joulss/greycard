@@ -4080,6 +4080,97 @@ fn peaking_on_the_device_is_the_cpus() {
     }
 }
 
+/// The shadows' paint is for black, not for a color outside the
+/// output space. A saturated green of the working space leaves the
+/// clamp, and the AgX rail, with a channel at zero at any
+/// brightness: three ramps from nothing up, of that green, of a
+/// grey, and of a red, are painted where the bare picture has a
+/// channel at zero and none above level 2, and nowhere else. Under
+/// both display curves, and with each side of the rule seen.
+#[test]
+fn the_shadows_paint_is_for_black_and_not_a_color_out_of_gamut() {
+    let Some((device, queue)) = device("the shadows' paint and a color out of gamut") else {
+        return;
+    };
+    let (w, h) = (512usize, 24usize);
+    let mut data = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            // Black at the left edge, then seven decades up to 0.5.
+            let v = if x == 0 {
+                0.0
+            } else {
+                0.5 * 10f32.powf(-7.0 * (1.0 - x as f32 / (w - 1) as f32))
+            };
+            let px = match y * 3 / h {
+                0 => [0.0, v, 0.0],
+                1 => [v, v, v],
+                _ => [v, 0.0, 0.0],
+            };
+            data.extend_from_slice(&px);
+        }
+    }
+    let image = WorkingImage {
+        width: w,
+        height: h,
+        data,
+    };
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    let blue = [51u8, 102, 255, 255];
+    for curve in greycard_edit::DisplayCurve::ALL {
+        let mut view = View::blank();
+        view.center = (w as f32 / 2.0, h as f32 / 2.0);
+        view.plane = (w as f32, h as f32);
+        view.frame_size = (w as f32, h as f32);
+        view.display_curve = curve;
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        let bare = renderer.read_back(&target).unwrap();
+        view.warn = Warn {
+            shadows: true,
+            highlights: false,
+        };
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        let painted = renderer.read_back(&target).unwrap();
+        // What the rule was seen to decide: black, black but for a
+        // level or two in one channel, a channel at zero in a color
+        // just past black, and one in a bright color. The target
+        // rounds a value near half way between two levels on its
+        // own, not as the shader does (three pixels of the grey ramp
+        // differ on an RTX 5070 Ti, none on lavapipe), so the few
+        // pixels of a ramp around where the rule's answer turns are
+        // left to either; a level's run is twice that and more.
+        let black_at = |x: u32, y: u32| {
+            let p = bare.get_pixel(x, y);
+            let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+            (lo == 0 && hi <= 2, lo, hi)
+        };
+        let (mut black, mut nearly, mut past, mut bright) = (false, false, false, false);
+        for y in 0..h as u32 {
+            for x in 4..w as u32 - 4 {
+                let (want, lo, hi) = black_at(x, y);
+                if (x - 4..=x + 4).any(|n| black_at(n, y).0 != want) {
+                    continue;
+                }
+                let (p, got) = (bare.get_pixel(x, y).0, painted.get_pixel(x, y).0);
+                if want {
+                    assert_eq!(got, blue, "{curve:?} at {x},{y}: {p:?} is black");
+                    black |= hi == 0;
+                    nearly |= hi > 0;
+                } else {
+                    assert_eq!(got, p, "{curve:?} at {x},{y}: no shadow");
+                    past |= lo == 0 && hi <= 8;
+                    bright |= lo == 0 && hi > 64;
+                }
+            }
+        }
+        assert!(
+            black && nearly && past && bright,
+            "{curve:?}: black {black}, nearly {nearly}, just past {past}, bright {bright}"
+        );
+    }
+}
+
 /// Under the clipping paint, peaking measures the picture and not
 /// the paint: it paints where it paints without it, and the clipping
 /// paint still shows over it.
