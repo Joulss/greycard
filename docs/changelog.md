@@ -7,6 +7,11 @@ design note behind it.
 
 ### The window
 
+- Develop sections can be dragged by their headers into any order. A
+  blue line marks the drop position, and the panel scrolls near its
+  edges while dragging. The order is kept across restarts; open
+  sections stay open when moved
+  ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-the-develop-sections-in-the-users-order.md)).
 - The Develop panel's sections, the Masks tab's, and the left pane's
   sit on separate, darker, square cards. Their titles keep the
   original size and colors. Folders and Presets align their rows and

@@ -261,6 +261,12 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // A section on the Develop tab may be moved by its header. A click
+    // still folds it; a press dragged past a few pixels moves it.
+    in property <bool> reorderable: false;
+    callback reorder-started();
+    callback reorder-moved(length, length);
+    callback reorder-ended();
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -391,7 +397,40 @@ export component Section inherits VerticalLayout {
                     height: 100%;
                 }
                 head := TouchArea {
-                    mouse-cursor: MouseCursor.pointer;
+                    property <length> down-x;
+                    property <length> down-y;
+                    property <bool> dragging;
+                    property <bool> dragged;
+                    property <bool> drag-armed;
+                    mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.pointer;
+                    pointer-event(e) => {
+                        if (!root.reorderable) { return; }
+                        if (e.kind == PointerEventKind.down) {
+                            self.drag-armed = e.button == PointerEventButton.left;
+                            self.down-x = self.mouse-x;
+                            self.down-y = self.mouse-y;
+                            self.dragging = false;
+                            self.dragged = false;
+                        } else if (e.kind == PointerEventKind.up && self.dragging) {
+                            self.dragging = false;
+                            self.drag-armed = false;
+                            self.dragged = true;
+                            root.reorder-ended();
+                        } else if (e.kind == PointerEventKind.up) {
+                            self.drag-armed = false;
+                        }
+                    }
+                    moved => {
+                        if (!root.reorderable || !self.drag-armed || !self.pressed) { return; }
+                        if (!self.dragging && abs(self.mouse-x - self.down-x) + abs(self.mouse-y - self.down-y) > 6px) {
+                            self.dragging = true;
+                            root.reorder-started();
+                        }
+                        if (self.dragging) {
+                            root.reorder-moved(self.absolute-position.x + self.mouse-x,
+                                self.absolute-position.y + self.mouse-y);
+                        }
+                    }
                     // A focused slider elsewhere in the panel keeps the
                     // keys, and the panel keeps it in view as this
                     // section opens or folds; one in this section lets
@@ -399,6 +438,7 @@ export component Section inherits VerticalLayout {
                     // one anywhere in the panel when this one opens under
                     // One section open at a time, which folds all others.
                     clicked => {
+                        if (self.dragged) { self.dragged = false; return; }
                         let folds-the-rest = root.collapsed && root.one-of-panel && Folds.one-open;
                         if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
                             Typing.close-all();

@@ -1148,6 +1148,12 @@ export component App inherits Window {
     in-out property <int> target: 0;
     // Which tab the panel shows: Develop, Crop, Masks or Retouch.
     in-out property <string> panel-tab: "Develop";
+    in-out property <[string]> develop-order: ["look", "white-balance", "camera", "light", "color", "curves", "mixer", "black-white", "grading", "tint", "noise", "lens", "detail", "sharpen", "vignette", "grain", "proof", "monitor", "demosaic", "metadata"];
+    callback develop-section-moved(int, int);
+    property <int> develop-drag-index: -1;
+    property <int> develop-drop-slot: -1;
+    property <length> develop-drag-y;
+    property <int> develop-drag-revision: 0;
     /// The export queue's view, whose frames are not to be edited: the
     /// four develop tabs, the presets, the snapshots, and the history
     /// are not shown, and the Develop view's tools (R, W, M) are not
@@ -1198,6 +1204,8 @@ export component App inherits Window {
     // the keys handed back: a destroyed field says nothing itself.
     changed panel-tab => {
         root.panel-scroll = 0px;
+        root.develop-drag-index = -1;
+        root.develop-drop-slot = -1;
         Typing.close-all();
         root.look-list-gone();
     }
@@ -3710,6 +3718,33 @@ export component App inherits Window {
                 if root.shown-tab == "Masks": Rectangle { height: Theme.space-2; }
                 // Named so the tests find the view's own edges.
                 panel-view := ScrollPane {
+                    function develop-section-dragged(x: length, y: length) {
+                        root.develop-drag-y = y;
+                        if (x < panel-view.absolute-position.x || x > panel-view.absolute-position.x + panel-view.width
+                            || y < panel-view.absolute-position.y - 30px
+                            || y > panel-view.absolute-position.y + panel-view.visible-height + 30px) {
+                            root.develop-drop-slot = -1;
+                            return;
+                        }
+                        root.develop-drop-slot = root.develop-order.length;
+                        root.develop-drag-revision += 1;
+                    }
+                    Timer {
+                        interval: 40ms;
+                        running: root.develop-drag-index >= 0 && root.develop-drop-slot >= 0;
+                        triggered => {
+                            let top = panel-view.absolute-position.y;
+                            let bottom = top + panel-view.visible-height;
+                            if (root.develop-drag-y < top + 30px) {
+                                root.panel-scroll = min(0px, root.panel-scroll + 12px);
+                            } else if (root.develop-drag-y > bottom - 30px) {
+                                root.panel-scroll = max(min(0px, panel-view.visible-height - panel-view.content-height),
+                                    root.panel-scroll - 12px);
+                            } else { return; }
+                            root.develop-drop-slot = root.develop-order.length;
+                            root.develop-drag-revision += 1;
+                        }
+                    }
                     content-y <=> root.panel-scroll;
                     // A slider reached by a key, scrolled into view,
                     // and kept there as the layout moves it. Moved by
@@ -3908,46 +3943,534 @@ export component App inherits Window {
                             renamed => { root.renamed(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.shown-tab == "Develop": LookSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-look <=> root.collapsed-look;
-                            look-name <=> root.look-name;
-                            look-strength <=> root.look-strength;
-                            look-rows: root.look-rows;
-                            look-mismatch: root.look-mismatch;
-                            look-refit: root.look-refit;
-                            look-refit-asked => { root.look-refit-asked(); }
-                            look-group-toggled(key) => { root.look-group-toggled(key); }
-                            look-note: root.look-note;
-                            look-warning: root.look-warning;
-                            look-fitted: root.look-fitted;
-                            look-picked => { root.look-picked(); }
-                            look-hovered(name, on) => { root.look-hovered(name, on); }
-                            look-removable: root.look-removable;
-                            look-remove-asked => { root.look-remove-asked(); }
-                            look-renamable: root.look-renamable;
-                            look-rename-asked => { root.look-rename-asked(); }
-                            match-asked => { root.match-asked(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": WhiteBalanceSection {
-                            one-of-panel: !root.grid-open;
-                            as-shot <=> root.as-shot;
-                            collapsed-wb <=> root.collapsed-wb;
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            wb-auto => { root.wb-auto(); }
-                            temperature <=> root.temperature;
-                            tint <=> root.tint;
-                            raw-input: root.raw-input;
-                            picture: root.picture-open;
-                            mired-min: root.picture-mired-min;
-                            mired-max: root.picture-mired-max;
-                            tint-min: root.picture-tint-min;
-                            tint-max: root.picture-tint-max;
-                            develop-changed => { root.develop-changed(); }
-                            as-shot-toggled => { root.as-shot-toggled(); }
-                            wb-slider-reset(w) => { root.wb-slider-reset(w); }
+                        if root.shown-tab == "Develop": VerticalLayout {
+                            spacing: Theme.space-2;
+                            for section[i] in root.develop-order: Rectangle {
+                                preferred-height: content.preferred-height;
+                                content := VerticalLayout {
+                                    alignment: start;
+                                    if section == "look": LookSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-look <=> root.collapsed-look;
+                                        look-name <=> root.look-name;
+                                        look-strength <=> root.look-strength;
+                                        look-rows: root.look-rows;
+                                        look-mismatch: root.look-mismatch;
+                                        look-refit: root.look-refit;
+                                        look-refit-asked => { root.look-refit-asked(); }
+                                        look-group-toggled(key) => { root.look-group-toggled(key); }
+                                        look-note: root.look-note;
+                                        look-warning: root.look-warning;
+                                        look-fitted: root.look-fitted;
+                                        look-picked => { root.look-picked(); }
+                                        look-hovered(name, on) => { root.look-hovered(name, on); }
+                                        look-removable: root.look-removable;
+                                        look-remove-asked => { root.look-remove-asked(); }
+                                        look-renamable: root.look-renamable;
+                                        look-rename-asked => { root.look-rename-asked(); }
+                                        match-asked => { root.match-asked(); }
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "white-balance": WhiteBalanceSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        as-shot <=> root.as-shot;
+                                        collapsed-wb <=> root.collapsed-wb;
+                                        picking <=> root.picking;
+                                        pick-started(a) => { root.pick-started(a); }
+                                        wb-auto => { root.wb-auto(); }
+                                        temperature <=> root.temperature;
+                                        tint <=> root.tint;
+                                        raw-input: root.raw-input;
+                                        picture: root.picture-open;
+                                        mired-min: root.picture-mired-min;
+                                        mired-max: root.picture-mired-max;
+                                        tint-min: root.picture-tint-min;
+                                        tint-max: root.picture-tint-max;
+                                        develop-changed => { root.develop-changed(); }
+                                        as-shot-toggled => { root.as-shot-toggled(); }
+                                        wb-slider-reset(w) => { root.wb-slider-reset(w); }
+                                    }
+                                    if section == "camera": CameraSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-camera <=> root.collapsed-camera;
+                                        raw-input: root.raw-input;
+                                        source-note: root.source-note;
+                                        camera-profile <=> root.camera-profile;
+                                        camera-profile-names: root.camera-profile-names;
+                                        camera-profile-labels: root.camera-profile-labels;
+                                        camera-profile-note: root.camera-profile-note;
+                                        camera-profile-warning: root.camera-profile-warning;
+                                        camera-profile-picked => { root.camera-profile-picked(); }
+                                    }
+                                    if section == "light": LightSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        exposure <=> root.exposure;
+                                        contrast <=> root.contrast;
+                                        highlights <=> root.highlights;
+                                        shadows <=> root.shadows;
+                                        whites <=> root.whites;
+                                        blacks <=> root.blacks;
+                                        light-enabled <=> root.light-enabled;
+                                        display-curve <=> root.display-curve;
+                                        show-display-curve: root.target == 0 && root.raw-input;
+                                        collapsed-light <=> root.collapsed-light;
+                                        target-name <=> root.target-name;
+                                        raw-input: root.raw-input;
+                                        auto-shown: root.target == 0;
+                                        light-auto => { root.light-auto(); }
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "color": ColorSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        color-enabled <=> root.color-enabled;
+                                        saturation <=> root.saturation;
+                                        vibrance <=> root.vibrance;
+                                        collapsed-color <=> root.collapsed-color;
+                                        target-name <=> root.target-name;
+                                        band-colors: root.band-colors;
+                                        dull: root.dull;
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "curves": CurvesSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        curves-enabled <=> root.curves-enabled;
+                                        curve-mode <=> root.curve-mode;
+                                        para-highlights <=> root.para-highlights;
+                                        para-lights <=> root.para-lights;
+                                        para-darks <=> root.para-darks;
+                                        para-shadows <=> root.para-shadows;
+                                        curve-channel <=> root.curve-channel;
+                                        curve-image: root.curve-image;
+                                        collapsed-curves <=> root.collapsed-curves;
+                                        picking <=> root.picking;
+                                        pick-started(a) => { root.pick-started(a); }
+                                        target-name <=> root.target-name;
+                                        curve-press(a, b) => { root.curve-press(a, b); }
+                                        curve-move(a, b) => { root.curve-move(a, b); }
+                                        curve-release => { root.curve-release(); }
+                                        curve-double(a, b) => { root.curve-double(a, b); }
+                                        curve-selected: root.curve-selected;
+                                        curve-point-in: root.curve-point-in;
+                                        curve-point-out: root.curve-point-out;
+                                        curve-typed(a, b) => { root.curve-typed(a, b); }
+                                        curve-reset => { root.curve-reset(); }
+                                        curve-channel-changed => { root.curve-channel-changed(); }
+                                        curve-mode-changed => { root.curve-mode-changed(); }
+                                        parametric-changed => { root.parametric-changed(); }
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "mixer": MixerSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-mixer <=> root.collapsed-mixer;
+                                        picking <=> root.picking;
+                                        pick-started(a) => { root.pick-started(a); }
+                                        target-name <=> root.target-name;
+                                        band-colors: root.band-colors;
+                                        mixer-enabled <=> root.mixer-enabled;
+                                        mixer-band <=> root.mixer-band;
+                                        mixer-hue <=> root.mixer-hue;
+                                        mixer-saturation <=> root.mixer-saturation;
+                                        mixer-luminance <=> root.mixer-luminance;
+                                        mixer-band-changed => { root.mixer-band-changed(); }
+                                        mixer-changed => { root.mixer-changed(); }
+                                        mixer-reset => { root.mixer-reset(); }
+                                        bw-enabled <=> root.bw-enabled;
+                                        target <=> root.target;
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    // Global only: masks carry a look, not a monochrome picture.
+                                    if section == "black-white": BlackWhiteSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-bw <=> root.collapsed-bw;
+                                        band-colors: root.band-colors;
+                                        dull: root.dull;
+                                        bw-enabled <=> root.bw-enabled;
+                                        bw-band <=> root.bw-band;
+                                        bw-weight <=> root.bw-weight;
+                                        bw-strength <=> root.bw-strength;
+                                        bw-filter <=> root.bw-filter;
+                                        bw-band-changed => { root.bw-band-changed(); }
+                                        bw-changed => { root.bw-changed(); }
+                                        bw-filter-changed => { root.bw-filter-changed(); }
+                                        bw-reset => { root.bw-reset(); }
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "grading": GradingSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-grading <=> root.collapsed-grading;
+                                        target-name <=> root.target-name;
+                                        grading-enabled <=> root.grading-enabled;
+                                        grade-range <=> root.grade-range;
+                                        grade-hue <=> root.grade-hue;
+                                        grade-saturation <=> root.grade-saturation;
+                                        grade-balance <=> root.grade-balance;
+                                        grade-images: root.grade-images;
+                                        grade-big <=> root.grade-big;
+                                        wheel-hand: root.wheel-hand;
+                                        grade-press(a, b, c, d) => { root.grade-press(a, b, c, d); }
+                                        grade-move(a, b, c) => { root.grade-move(a, b, c); }
+                                        grade-release => { root.grade-release(); }
+                                        grade-double(a) => { root.grade-double(a); }
+                                        grade-chose(a) => { root.grade-chose(a); }
+                                        grade-changed => { root.grade-changed(); }
+                                        grade-reset => { root.grade-reset(); }
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "tint": TintSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-tint <=> root.collapsed-tint;
+                                        target-name <=> root.target-name;
+                                        tint-enabled <=> root.tint-enabled;
+                                        tint-hue <=> root.tint-hue;
+                                        tint-amount <=> root.tint-amount;
+                                        tint-color: root.tint-color;
+                                        tint-image: root.tint-image;
+                                        tint-hue-text: root.tint-hue-text;
+                                        in-hand: root.wheel-hand == 3;
+                                        tint-press(a, b, c) => { root.tint-press(a, b, c); }
+                                        tint-move(a, b) => { root.tint-move(a, b); }
+                                        tint-release => { root.tint-release(); }
+                                        hue-circle: root.hue-circle;
+                                        tint-changed => { root.tint-changed(); }
+                                        tint-reset => { root.tint-reset(); }
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "noise": NoiseSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        noise-enabled <=> root.noise-enabled;
+                                        collapsed-noise <=> root.collapsed-noise;
+                                        denoise <=> root.denoise;
+                                        denoise-strength <=> root.denoise-strength;
+                                        denoise-learned <=> root.denoise-learned;
+                                        denoise-tiers: root.denoise-tiers;
+                                        denoise-learned-strength <=> root.denoise-learned-strength;
+                                        denoise-learned-chroma-strength <=> root.denoise-learned-chroma-strength;
+                                        unavailable: root.noise-unavailable;
+                                        learned-unavailable: root.learned-unavailable;
+                                        again-shown: root.merge-again-shown;
+                                        again-tier <=> root.merge-again-tier;
+                                        merging: root.merge-running;
+                                        develop-changed => { root.develop-changed(); }
+                                        merge-again => { root.merge-again(); }
+                                    }
+                                    if section == "lens": LensSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        lens-enabled <=> root.lens-enabled;
+                                        collapsed-lens <=> root.collapsed-lens;
+                                        picking <=> root.picking;
+                                        pick-started(a) => { root.pick-started(a); }
+                                        hue-circle: root.hue-circle;
+                                        lens-profile: root.lens-profile;
+                                        lens-available: root.lens-available;
+                                        lens-database: root.lens-database;
+                                        lens-choice-labels: root.lens-choice-labels;
+                                        lens-choice-keys: root.lens-choice-keys;
+                                        lens-choice <=> root.lens-choice;
+                                        lens-choice-index <=> root.lens-choice-index;
+                                        lens-makers: root.lens-makers;
+                                        lens-maker-index <=> root.lens-maker-index;
+                                        lens-filter <=> root.lens-filter;
+                                        lens-rows-changed => { root.lens-rows-changed(); }
+                                        lens-profile-on <=> root.lens-profile-on;
+                                        lens-distortion <=> root.lens-distortion;
+                                        lens-ca <=> root.lens-ca;
+                                        lens-ca-measured: root.lens-ca-measured;
+                                        lens-vignetting <=> root.lens-vignetting;
+                                        lens-manual <=> root.lens-manual;
+                                        lens-ca-red <=> root.lens-ca-red;
+                                        lens-ca-blue <=> root.lens-ca-blue;
+                                        lens-auto-scale <=> root.lens-auto-scale;
+                                        lens-scale <=> root.lens-scale;
+                                        lens-defringe <=> root.lens-defringe;
+                                        lens-defringe-radius <=> root.lens-defringe-radius;
+                                        lens-defringe-threshold <=> root.lens-defringe-threshold;
+                                        lens-defringe-purple-center <=> root.lens-defringe-purple-center;
+                                        lens-defringe-purple-width <=> root.lens-defringe-purple-width;
+                                        lens-defringe-purple-amount <=> root.lens-defringe-purple-amount;
+                                        lens-defringe-green-center <=> root.lens-defringe-green-center;
+                                        lens-defringe-green-width <=> root.lens-defringe-green-width;
+                                        lens-defringe-green-amount <=> root.lens-defringe-green-amount;
+                                        fetch-lenses => { root.fetch-lenses(); }
+                                        develop-changed => { root.develop-changed(); }
+                                    }
+                                    // Local contrast, after retouch and before sharpen.
+                                    if section == "detail": DetailSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-detail <=> root.collapsed-detail;
+                                        detail-enabled <=> root.detail-enabled;
+                                        detail-texture <=> root.detail-texture;
+                                        detail-clarity <=> root.detail-clarity;
+                                        detail-structure <=> root.detail-structure;
+                                        detail-dehaze <=> root.detail-dehaze;
+                                        develop-changed => { root.develop-changed(); }
+                                    }
+                                    if section == "sharpen": SharpenSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-sharpen <=> root.collapsed-sharpen;
+                                        show-sharpen-mask <=> root.show-sharpen-mask;
+                                        sharpen <=> root.sharpen;
+                                        sharpen-auto-radius <=> root.sharpen-auto-radius;
+                                        sharpen-radius <=> root.sharpen-radius;
+                                        sharpen-iterations <=> root.sharpen-iterations;
+                                        sharpen-auto-threshold <=> root.sharpen-auto-threshold;
+                                        sharpen-threshold <=> root.sharpen-threshold;
+                                        sharpen-measured-radius: root.sharpen-measured-radius;
+                                        sharpen-measured-threshold: root.sharpen-measured-threshold;
+                                        view-changed => { root.view-changed(); }
+                                        develop-changed => { root.develop-changed(); }
+                                    }
+                                    if section == "vignette": VignetteSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        vignette-enabled <=> root.vignette-enabled;
+                                        collapsed-vignette <=> root.collapsed-vignette;
+                                        vignette-amount <=> root.vignette-amount;
+                                        vignette-midpoint <=> root.vignette-midpoint;
+                                        vignette-feather <=> root.vignette-feather;
+                                        vignette-roundness <=> root.vignette-roundness;
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "grain": GrainSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        grain-enabled <=> root.grain-enabled;
+                                        collapsed-grain <=> root.collapsed-grain;
+                                        grain-amount <=> root.grain-amount;
+                                        grain-size <=> root.grain-size;
+                                        grain-kind <=> root.grain-kind;
+                                        view-changed => { root.view-changed(); }
+                                    }
+                                    if section == "proof": ProofSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-proof <=> root.collapsed-proof;
+                                        proofing <=> root.proofing;
+                                        proof-profile <=> root.proof-profile;
+                                        proof-file <=> root.proof-file;
+                                        proof-intent <=> root.proof-intent;
+                                        gamut-warning <=> root.gamut-warning;
+                                        proof-changed => { root.proof-changed(); }
+                                        choose-proof-file => { root.choose-proof-file(); }
+                                    }
+                                    if section == "monitor": MonitorSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-monitor <=> root.collapsed-monitor;
+                                        display-profile <=> root.display-profile;
+                                        display-monitor <=> root.display-monitor;
+                                        display-file <=> root.display-file;
+                                        monitors: root.monitors;
+                                        display-note: root.display-note;
+                                        display-changed => { root.display-changed(); }
+                                        choose-display-file => { root.choose-display-file(); }
+                                        canvas-choice <=> root.canvas-choice;
+                                        canvas-colors: root.canvas-colors;
+                                        canvas-changed => { root.canvas-changed(); }
+                                    }
+                                    if section == "demosaic": DemosaicSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        collapsed-demosaic <=> root.collapsed-demosaic;
+                                        raw-input: root.raw-input;
+                                        source-note: root.source-note;
+                                        demosaic <=> root.demosaic;
+                                        demosaics: root.demosaics;
+                                        menu-hint: root.demosaic-hint;
+                                        picked(v) => { root.demosaic-picked(v); }
+                                    }
+                                    // The selection's title and keywords, beside its Develop controls.
+                                    if section == "metadata": MetaSection {
+                                        reorderable: true;
+                                        reorder-started => { root.develop-drag-index = i; root.develop-drop-slot = -1; }
+                                        reorder-moved(x, y) => { panel-view.develop-section-dragged(x, y); }
+                                        reorder-ended => {
+                                            if (root.develop-drop-slot >= 0) { root.develop-section-moved(root.develop-drag-index, root.develop-drop-slot); }
+                                            root.develop-drag-index = -1;
+                                            root.develop-drop-slot = -1;
+                                        }
+                                        one-of-panel: !root.grid-open;
+                                        frame-meta-on: root.frame-meta-on;
+                                        frame-title: root.frame-title;
+                                        frame-title-mixed: root.frame-title-mixed;
+                                        title-text <=> root.title-text;
+                                        title-dirty <=> root.title-dirty;
+                                        frame-keywords: root.frame-keywords;
+                                        keyword-text <=> root.keyword-text;
+                                        keyword-completions <=> root.keyword-completions;
+                                        keyword-pick <=> root.keyword-pick;
+                                        set-count: root.set-count;
+                                        collapsed-metadata <=> root.collapsed-metadata;
+                                        title-edited(t) => { root.title-edited(t); }
+                                        keyword-typed(t) => { root.keyword-typed(t); }
+                                        keyword-added(t) => { root.keyword-added(t); }
+                                        keyword-removed(t) => { root.keyword-removed(t); }
+                                        keyword-focused => { root.keyword-focused(); }
+                                        focus-keys => { keys.focus(); }
+                                    }
+                                }
+                                property <int> drag-revision: root.develop-drag-revision;
+                                changed drag-revision => {
+                                    if (root.develop-drag-index >= 0 && root.develop-drag-y < self.absolute-position.y + self.height / 2 && i < root.develop-drop-slot) {
+                                        root.develop-drop-slot = i;
+                                    }
+                                }
+                                if root.develop-drag-index >= 0 && (root.develop-drop-slot == i || (i == root.develop-order.length - 1 && root.develop-drop-slot == root.develop-order.length)): Rectangle {
+                                    // Above the first card there is no scrollable padding to paint in.
+                                    y: root.develop-drop-slot == i
+                                        ? (i == 0 ? 1px : -Theme.space-2 / 2 - 1px)
+                                        : parent.height + Theme.space-2 / 2 - 1px;
+                                    height: 2px;
+                                    width: 100%;
+                                    background: Theme.accent;
+                                }
+                            }
                         }
                         // The chosen mask's own white balance: the light
                         // under it, where that is not the light under the
@@ -3971,19 +4494,7 @@ export component App inherits Window {
                             picture: root.picture-open;
                             develop-changed => { root.view-changed(); }
                         }
-                        if root.shown-tab == "Develop": CameraSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-camera <=> root.collapsed-camera;
-                            raw-input: root.raw-input;
-                            source-note: root.source-note;
-                            camera-profile <=> root.camera-profile;
-                            camera-profile-names: root.camera-profile-names;
-                            camera-profile-labels: root.camera-profile-labels;
-                            camera-profile-note: root.camera-profile-note;
-                            camera-profile-warning: root.camera-profile-warning;
-                            camera-profile-picked => { root.camera-profile-picked(); }
-                        }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): LightSection {
+                        if root.shown-tab == "Masks" && root.target > 0: LightSection {
                             one-of-panel: !root.grid-open;
                             exposure <=> root.exposure;
                             contrast <=> root.contrast;
@@ -4001,7 +4512,7 @@ export component App inherits Window {
                             light-auto => { root.light-auto(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): ColorSection {
+                        if root.shown-tab == "Masks" && root.target > 0: ColorSection {
                             one-of-panel: !root.grid-open;
                             color-enabled <=> root.color-enabled;
                             saturation <=> root.saturation;
@@ -4012,7 +4523,7 @@ export component App inherits Window {
                             dull: root.dull;
                             view-changed => { root.view-changed(); }
                         }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): CurvesSection {
+                        if root.shown-tab == "Masks" && root.target > 0: CurvesSection {
                             one-of-panel: !root.grid-open;
                             curves-enabled <=> root.curves-enabled;
                             curve-mode <=> root.curve-mode;
@@ -4040,7 +4551,7 @@ export component App inherits Window {
                             parametric-changed => { root.parametric-changed(); }
                             view-changed => { root.view-changed(); }
                         }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): MixerSection {
+                        if root.shown-tab == "Masks" && root.target > 0: MixerSection {
                             one-of-panel: !root.grid-open;
                             collapsed-mixer <=> root.collapsed-mixer;
                             picking <=> root.picking;
@@ -4059,26 +4570,7 @@ export component App inherits Window {
                             target <=> root.target;
                             view-changed => { root.view-changed(); }
                         }
-                        // Global only: a mask carries a look, and a
-                        // picture is mono or it is not, so this one
-                        // is not offered on the Masks tab.
-                        if root.shown-tab == "Develop": BlackWhiteSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-bw <=> root.collapsed-bw;
-                            band-colors: root.band-colors;
-                            dull: root.dull;
-                            bw-enabled <=> root.bw-enabled;
-                            bw-band <=> root.bw-band;
-                            bw-weight <=> root.bw-weight;
-                            bw-strength <=> root.bw-strength;
-                            bw-filter <=> root.bw-filter;
-                            bw-band-changed => { root.bw-band-changed(); }
-                            bw-changed => { root.bw-changed(); }
-                            bw-filter-changed => { root.bw-filter-changed(); }
-                            bw-reset => { root.bw-reset(); }
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): GradingSection {
+                        if root.shown-tab == "Masks" && root.target > 0: GradingSection {
                             one-of-panel: !root.grid-open;
                             collapsed-grading <=> root.collapsed-grading;
                             target-name <=> root.target-name;
@@ -4104,7 +4596,7 @@ export component App inherits Window {
                         // and a look's, so the global picture and
                         // every mask can carry one, each with its
                         // switch.
-                        if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): TintSection {
+                        if root.shown-tab == "Masks" && root.target > 0: TintSection {
                             one-of-panel: !root.grid-open;
                             collapsed-tint <=> root.collapsed-tint;
                             target-name <=> root.target-name;
@@ -4140,137 +4632,6 @@ export component App inherits Window {
                             local: true;
                             detail-sharpen <=> root.local-sharpen;
                             develop-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": NoiseSection {
-                            one-of-panel: !root.grid-open;
-                            noise-enabled <=> root.noise-enabled;
-                            collapsed-noise <=> root.collapsed-noise;
-                            denoise <=> root.denoise;
-                            denoise-strength <=> root.denoise-strength;
-                            denoise-learned <=> root.denoise-learned;
-                            denoise-tiers: root.denoise-tiers;
-                            denoise-learned-strength <=> root.denoise-learned-strength;
-                            denoise-learned-chroma-strength <=> root.denoise-learned-chroma-strength;
-                            unavailable: root.noise-unavailable;
-                            learned-unavailable: root.learned-unavailable;
-                            again-shown: root.merge-again-shown;
-                            again-tier <=> root.merge-again-tier;
-                            merging: root.merge-running;
-                            develop-changed => { root.develop-changed(); }
-                            merge-again => { root.merge-again(); }
-                        }
-                        if root.shown-tab == "Develop": LensSection {
-                            one-of-panel: !root.grid-open;
-                            lens-enabled <=> root.lens-enabled;
-                            collapsed-lens <=> root.collapsed-lens;
-                            picking <=> root.picking;
-                            pick-started(a) => { root.pick-started(a); }
-                            hue-circle: root.hue-circle;
-                            lens-profile: root.lens-profile;
-                            lens-available: root.lens-available;
-                            lens-database: root.lens-database;
-                            lens-choice-labels: root.lens-choice-labels;
-                            lens-choice-keys: root.lens-choice-keys;
-                            lens-choice <=> root.lens-choice;
-                            lens-choice-index <=> root.lens-choice-index;
-                            lens-makers: root.lens-makers;
-                            lens-maker-index <=> root.lens-maker-index;
-                            lens-filter <=> root.lens-filter;
-                            lens-rows-changed => { root.lens-rows-changed(); }
-                            lens-profile-on <=> root.lens-profile-on;
-                            lens-distortion <=> root.lens-distortion;
-                            lens-ca <=> root.lens-ca;
-                            lens-ca-measured: root.lens-ca-measured;
-                            lens-vignetting <=> root.lens-vignetting;
-                            lens-manual <=> root.lens-manual;
-                            lens-ca-red <=> root.lens-ca-red;
-                            lens-ca-blue <=> root.lens-ca-blue;
-                            lens-auto-scale <=> root.lens-auto-scale;
-                            lens-scale <=> root.lens-scale;
-                            lens-defringe <=> root.lens-defringe;
-                            lens-defringe-radius <=> root.lens-defringe-radius;
-                            lens-defringe-threshold <=> root.lens-defringe-threshold;
-                            lens-defringe-purple-center <=> root.lens-defringe-purple-center;
-                            lens-defringe-purple-width <=> root.lens-defringe-purple-width;
-                            lens-defringe-purple-amount <=> root.lens-defringe-purple-amount;
-                            lens-defringe-green-center <=> root.lens-defringe-green-center;
-                            lens-defringe-green-width <=> root.lens-defringe-green-width;
-                            lens-defringe-green-amount <=> root.lens-defringe-green-amount;
-                            fetch-lenses => { root.fetch-lenses(); }
-                            develop-changed => { root.develop-changed(); }
-                        }
-                        // Local contrast, the Texture, Clarity, and
-                        // Structure of the engine's guided filter: a
-                        // develop op, so the worker runs it, after the
-                        // retouch and before the sharpen.
-                        if root.shown-tab == "Develop": DetailSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-detail <=> root.collapsed-detail;
-                            detail-enabled <=> root.detail-enabled;
-                            detail-texture <=> root.detail-texture;
-                            detail-clarity <=> root.detail-clarity;
-                            detail-structure <=> root.detail-structure;
-                            detail-dehaze <=> root.detail-dehaze;
-                            develop-changed => { root.develop-changed(); }
-                        }
-                        if root.shown-tab == "Develop": SharpenSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-sharpen <=> root.collapsed-sharpen;
-                            show-sharpen-mask <=> root.show-sharpen-mask;
-                            sharpen <=> root.sharpen;
-                            sharpen-auto-radius <=> root.sharpen-auto-radius;
-                            sharpen-radius <=> root.sharpen-radius;
-                            sharpen-iterations <=> root.sharpen-iterations;
-                            sharpen-auto-threshold <=> root.sharpen-auto-threshold;
-                            sharpen-threshold <=> root.sharpen-threshold;
-                            sharpen-measured-radius: root.sharpen-measured-radius;
-                            sharpen-measured-threshold: root.sharpen-measured-threshold;
-                            view-changed => { root.view-changed(); }
-                            develop-changed => { root.develop-changed(); }
-                        }
-                        if root.shown-tab == "Develop": VignetteSection {
-                            one-of-panel: !root.grid-open;
-                            vignette-enabled <=> root.vignette-enabled;
-                            collapsed-vignette <=> root.collapsed-vignette;
-                            vignette-amount <=> root.vignette-amount;
-                            vignette-midpoint <=> root.vignette-midpoint;
-                            vignette-feather <=> root.vignette-feather;
-                            vignette-roundness <=> root.vignette-roundness;
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": GrainSection {
-                            one-of-panel: !root.grid-open;
-                            grain-enabled <=> root.grain-enabled;
-                            collapsed-grain <=> root.collapsed-grain;
-                            grain-amount <=> root.grain-amount;
-                            grain-size <=> root.grain-size;
-                            grain-kind <=> root.grain-kind;
-                            view-changed => { root.view-changed(); }
-                        }
-                        if root.shown-tab == "Develop": ProofSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-proof <=> root.collapsed-proof;
-                            proofing <=> root.proofing;
-                            proof-profile <=> root.proof-profile;
-                            proof-file <=> root.proof-file;
-                            proof-intent <=> root.proof-intent;
-                            gamut-warning <=> root.gamut-warning;
-                            proof-changed => { root.proof-changed(); }
-                            choose-proof-file => { root.choose-proof-file(); }
-                        }
-                        if root.shown-tab == "Develop": MonitorSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-monitor <=> root.collapsed-monitor;
-                            display-profile <=> root.display-profile;
-                            display-monitor <=> root.display-monitor;
-                            display-file <=> root.display-file;
-                            monitors: root.monitors;
-                            display-note: root.display-note;
-                            display-changed => { root.display-changed(); }
-                            choose-display-file => { root.choose-display-file(); }
-                            canvas-choice <=> root.canvas-choice;
-                            canvas-colors: root.canvas-colors;
-                            canvas-changed => { root.canvas-changed(); }
                         }
                         // The Crop tab in three: what is kept, which way
                         // up it is, and the keystone. One section held
@@ -4327,39 +4688,6 @@ export component App inherits Window {
                             geometry-changed => { root.geometry-changed(); }
                             geometry-reset => { root.geometry-reset(); }
                             guide-dropped => { root.guide-dropped(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        if root.shown-tab == "Develop": DemosaicSection {
-                            one-of-panel: !root.grid-open;
-                            collapsed-demosaic <=> root.collapsed-demosaic;
-                            raw-input: root.raw-input;
-                            source-note: root.source-note;
-                            demosaic <=> root.demosaic;
-                            demosaics: root.demosaics;
-                            menu-hint: root.demosaic-hint;
-                            picked(v) => { root.demosaic-picked(v); }
-                        }
-                        // The selection's title and keywords, last on
-                        // the Develop tab: not part of the develop, but
-                        // within reach of the frame being worked on.
-                        if root.shown-tab == "Develop": MetaSection {
-                            one-of-panel: !root.grid-open;
-                            frame-meta-on: root.frame-meta-on;
-                            frame-title: root.frame-title;
-                            frame-title-mixed: root.frame-title-mixed;
-                            title-text <=> root.title-text;
-                            title-dirty <=> root.title-dirty;
-                            frame-keywords: root.frame-keywords;
-                            keyword-text <=> root.keyword-text;
-                            keyword-completions <=> root.keyword-completions;
-                            keyword-pick <=> root.keyword-pick;
-                            set-count: root.set-count;
-                            collapsed-metadata <=> root.collapsed-metadata;
-                            title-edited(t) => { root.title-edited(t); }
-                            keyword-typed(t) => { root.keyword-typed(t); }
-                            keyword-added(t) => { root.keyword-added(t); }
-                            keyword-removed(t) => { root.keyword-removed(t); }
-                            keyword-focused => { root.keyword-focused(); }
                             focus-keys => { keys.focus(); }
                         }
                         if root.shown-tab == "Retouch": RetouchSection {

@@ -1134,6 +1134,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::collections::install(app, &state, &worker);
     panel::stacks::install(app, &state, &worker);
     panel::sort::install(app, &state, &worker);
+    panel::order::install(app);
     lightbox::install(app, &state, &worker);
     tree::install(app, &state, &worker);
     report::install(app, &state);

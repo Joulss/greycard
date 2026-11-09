@@ -26,6 +26,7 @@ pub(crate) mod mask;
 pub(crate) mod menu;
 pub(crate) mod merge;
 pub(crate) mod models;
+pub(crate) mod order;
 pub(crate) mod original;
 pub(crate) mod parts;
 pub(crate) mod parts_all;
