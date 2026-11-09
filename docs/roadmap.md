@@ -1113,6 +1113,17 @@ clears or a tester asks for it.
       tester's job took days against hours in Lightroom, the switching
       between frames named as the worst of it (discussion 59,
       2026-11-06)
+- [ ] An aarch64 Linux package for the ARM laptops and Asahi Macs:
+      a release leg on GitHub's ARM runner, ONNX Runtime's
+      linux-aarch64 build in the registry, the AppImage tooling for
+      ARM (issue 105, 2026-11-09)
+- [ ] Author, copyright, and the IPTC fields written into exports
+      and kept in the sidecar, GPS with them, the author and copyright
+      defaults set once in Settings (issue 106, 2026-11-09)
+- [ ] A history step as the compare's Before: a row's context action
+      sets it, the key swaps against it instead of the original, and
+      leaving the frame clears it, as Lightroom's Copy History Step
+      Settings to Before (issue 107, 2026-11-09)
 
 ## Blocked
 
