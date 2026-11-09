@@ -524,6 +524,11 @@ jobs:
       # The site reads the changelog from master at build time, so a
       # release only has to ask Netlify for a fresh build. A separate job,
       # so a failure here never touches the release itself.
+      #
+      # The site's build asks GitHub for each of the release's files, and
+      # fails if one is not there yet. The download CDN can lag the upload
+      # by more than the seconds between the release job and this one
+      # (0.11.0's rebuild failed that way), so wait before asking.
       - name: Netlify build hook
         env:
           HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
@@ -532,4 +537,5 @@ jobs:
             echo "no NETLIFY_BUILD_HOOK secret; the site is not rebuilt"
             exit 0
           fi
+          sleep 120
           curl --fail --silent --show-error -X POST -d '{}' "$HOOK"
