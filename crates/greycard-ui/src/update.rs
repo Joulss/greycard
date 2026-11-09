@@ -21,7 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use slint::ComponentHandle;
 
-use crate::{App, Shared, settings};
+use crate::{App, Shared, settings, tr};
 
 /// The one address asked.
 pub const LATEST: &str = "https://api.github.com/repos/jessolmstead/greycard/releases/latest";
@@ -288,11 +288,11 @@ pub fn after(kept: &Kept, outcome: &Outcome, now: u64, asked: bool) -> Kept {
 pub fn words(outcome: &Outcome, current: &str) -> String {
     match outcome {
         Outcome::Found(r) if is_newer(&r.tag, current) => {
-            format!("{} is available", shown(&r.tag))
+            tr!("{} is available", shown(&r.tag))
         }
-        Outcome::Found(_) => "You have the latest version".into(),
-        Outcome::Refused => "GitHub returned no release; try again later".into(),
-        Outcome::Unreachable => "Could not reach GitHub".into(),
+        Outcome::Found(_) => tr!("You have the latest version"),
+        Outcome::Refused => tr!("GitHub returned no release; try again later"),
+        Outcome::Unreachable => tr!("Could not reach GitHub"),
     }
 }
 
@@ -394,7 +394,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 a.get()
             });
             app.set_update_checking(true);
-            app.set_update_note("Checking...".into());
+            app.set_update_note(tr!("Checking...").into());
             let persist = !state.borrow().window.batch && !cfg!(test);
             spawn(&app, fetch, persist, Some(n));
         });
@@ -410,7 +410,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 return;
             }
             tracing::info!("update: opening {url}");
-            app.set_status(format!("the release page is open in the browser: {url}").into());
+            app.set_status(tr!("the release page is open in the browser: {url}", url = url).into());
             // As the report's form: never from a test.
             if cfg!(test) {
                 return;

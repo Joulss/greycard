@@ -21,7 +21,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::delete::{self, Deleted, Doomed, How, Offer, TRASH_SUPPORTED};
 use crate::panel::assets::show_looks;
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, i18n, tr};
 
 /// The sheet's question while it is up.
 #[derive(Debug, Clone)]
@@ -151,48 +151,51 @@ pub(crate) fn named_on_disk(paths: &[PathBuf], name: &str) -> usize {
 /// how many are still being read; `place` is where the pictures are,
 /// "in this folder" or "in the library".
 pub(crate) fn uses_line(named: usize, pending: usize, place: &str) -> String {
+    let place = i18n::text(place);
     let mut out = match (named, pending) {
-        (0, 0) => format!("No picture {place} uses it."),
+        (0, 0) => tr!("No picture {place} uses it.", place = place),
         (0, _) => String::new(),
-        (1, _) => format!(
-            "1 picture {place} uses it; it will show the look as missing and render \
+        (n, _) => tr!(
+            "{n} picture {place} uses it; it will show the look as missing and render \
              without it."
-        ),
-        (n, _) => format!(
-            "{n} pictures {place} use it; they will show the look as missing and render \
-             without it."
+                | "{n} pictures {place} use it; they will show the look as missing and render \
+                   without it."
+                    % n,
+            place = place
         ),
     };
     if pending > 0 {
         if !out.is_empty() {
             out.push(' ');
         }
-        out.push_str(&format!(
-            "Reading the edits of {pending} more picture{} to count them...",
-            if pending == 1 { "" } else { "s" }
+        out.push_str(&tr!(
+            "Reading the edits of {n} more picture to count them..."
+                | "Reading the edits of {n} more pictures to count them..." % pending
         ));
     }
     out
 }
 
 /// What the sheet says will happen, by what it offers.
-fn offer_note(offer: Offer, files: usize) -> &'static str {
+fn offer_note(offer: Offer, files: usize) -> String {
     let one = files == 1;
     match (offer.trash, offer.permanent) {
-        (true, false) if one => "The file goes to the system trash, where it can be restored from.",
-        (true, false) => "The files go to the system trash, where they can be restored from.",
-        (true, true) => {
+        (true, false) if one => {
+            tr!("The file goes to the system trash, where it can be restored from.")
+        }
+        (true, false) => tr!("The files go to the system trash, where they can be restored from."),
+        (true, true) => tr!(
             "The trash refused files from the look folder earlier. Try the trash again, or \
              delete them permanently. A permanent delete cannot be undone."
-        }
-        _ if one => {
+        ),
+        _ if one => tr!(
             "There is no system trash here, so the file will be deleted permanently. This \
              cannot be undone."
-        }
-        _ => {
+        ),
+        _ => tr!(
             "There is no system trash here, so the files will be deleted permanently. This \
              cannot be undone."
-        }
+        ),
     }
 }
 
@@ -200,16 +203,16 @@ fn offer_note(offer: Offer, files: usize) -> &'static str {
 /// status line why there is nothing to ask.
 pub(crate) fn ask(st: &mut State, app: &App) {
     if st.sheets.look_removing {
-        app.set_status("a look is still being removed".into());
+        app.set_status(tr!("a look is still being removed").into());
         return;
     }
     let name = app.get_look_name().to_string();
     if name == "none" {
-        app.set_status("no look is chosen to remove".into());
+        app.set_status(tr!("no look is chosen to remove").into());
         return;
     }
     let Some(dir) = store() else {
-        app.set_status("there is no look directory on this machine".into());
+        app.set_status(tr!("there is no look directory on this machine").into());
         return;
     };
     // The directory as it is now, not as it was when the section was
@@ -217,7 +220,13 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     st.develop.looks = list_in(Some(dir.clone()));
     let all = files_of(&st.develop.looks, &name, &dir);
     if all.is_empty() {
-        app.set_status(format!("{name} has no file in the look directory to remove").into());
+        app.set_status(
+            tr!(
+                "{name} has no file in the look directory to remove",
+                name = name
+            )
+            .into(),
+        );
         return;
     }
     // A link is never removed (the move refuses one, and a link's
@@ -232,10 +241,11 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         .collect();
     if files.is_empty() {
         app.set_status(
-            format!(
-                "{} {} a link and stays; nothing is removed through one",
-                link_names.join(", "),
-                if link_names.len() == 1 { "is" } else { "are" }
+            tr!(
+                "{names} is a link and stays; nothing is removed through one"
+                    | "{names} are a link and stays; nothing is removed through one"
+                        % link_names.len(),
+                names = link_names.join(", ")
             )
             .into(),
         );
@@ -257,33 +267,35 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         .map(|e| e.label().to_string())
         .unwrap_or_else(|| name.clone());
     let place = match st.views.view {
-        crate::roots::View::Roots(_) => "in the library",
-        _ => "in this folder",
+        crate::roots::View::Roots(_) => crate::marked::tr!("in the library"),
+        _ => crate::marked::tr!("in this folder"),
     };
-    let mut note = offer_note(offer, files.len()).to_string();
+    let mut note = offer_note(offer, files.len());
     let stays = !link_names.is_empty();
     let (title, uses) = if stays {
         // Something of the look stays, so pictures keep it: the sheet
         // removes some of its tables, not the look.
-        note = format!(
-            "{} {} a link and stays. {note}",
-            link_names.join(", "),
-            if link_names.len() == 1 { "is" } else { "are" }
+        note = tr!(
+            "{names} is a link and stays. {note}"
+                | "{names} are a link and stays. {note}" % link_names.len(),
+            names = link_names.join(", "),
+            note = note
         );
         (
-            format!(
+            tr!(
                 "Remove {} of {shown}'s {} tables?",
                 files.len(),
-                files.len() + link_names.len()
+                files.len() + link_names.len(),
+                shown = shown
             ),
-            format!(
+            tr!(
                 "The look stays for pictures through {}, so none of them shows it as missing.",
                 link_names.join(", ")
             ),
         )
     } else {
         (
-            format!("Remove the look {shown}?"),
+            tr!("Remove the look {shown}?", shown = shown),
             uses_line(counted.named, counted.unread.len(), place),
         )
     };
@@ -411,17 +423,18 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         _ => return,
     };
     if !st.window.deletes_allowed {
-        let why = "not removed: a capture, an export or a timing run never deletes";
-        tracing::info!("{why}");
-        app.set_status(why.into());
+        tracing::info!("not removed: a capture, an export or a timing run never deletes");
+        app.set_status(
+            tr!("not removed: a capture, an export or a timing run never deletes").into(),
+        );
         return;
     }
     if st.sheets.look_removing {
-        app.set_status("a look is still being removed".into());
+        app.set_status(tr!("a look is still being removed").into());
         return;
     }
     st.sheets.look_removing = true;
-    app.set_status(format!("removing {}...", asked.name).into());
+    app.set_status(tr!("removing {}...", asked.name).into());
     let job = Job {
         name: asked.name,
         files: asked.files,
@@ -430,7 +443,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
     };
     if !send_off(app, job) {
         st.sheets.look_removing = false;
-        app.set_status("the removal could not be started; nothing was removed".into());
+        app.set_status(tr!("the removal could not be started; nothing was removed").into());
     }
 }
 
@@ -474,33 +487,36 @@ fn send_off(_app: &App, job: Job) -> bool {
 /// What a removal did, in the status line's words.
 fn summary(done: &Done) -> String {
     if let Some(why) = &done.panicked {
-        return format!(
+        return tr!(
             "the removal of {} failed ({why}); {} of {} went before it did",
             done.name,
             done.gone,
-            delete::count(done.total, "file")
+            files(done.total),
+            why = why
         );
     }
     let how = match done.how {
-        How::Trash => "moved to the trash",
-        How::Permanent => "deleted permanently",
+        How::Trash => tr!("moved to the trash"),
+        How::Permanent => tr!("deleted permanently"),
     };
     let mut out = if done.gone == done.total {
-        format!(
+        tr!(
             "removed {}: {} {how}",
             done.name,
-            delete::count(done.total, "file")
+            files(done.total),
+            how = how
         )
     } else {
-        format!(
+        tr!(
             "{}: {} of {} {how}",
             done.name,
             done.gone,
-            delete::count(done.total, "file")
+            files(done.total),
+            how = how
         )
     };
     if let Some(r) = &done.deleted.trash_refused {
-        out.push_str(&format!(
+        out.push_str(&tr!(
             "; the trash refused {}: {}; ask again to delete permanently",
             // The own table when it is what was refused; else the
             // table that was left after it went.
@@ -513,14 +529,20 @@ fn summary(done: &Done) -> String {
         ));
     }
     if let Some((f, why)) = done.deleted.failed.first() {
-        out.push_str(&format!(
+        out.push_str(&tr!(
             "; {} not removed: {why}",
             f.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            why = why
         ));
     }
     out
+}
+
+/// "1 file", "3 files".
+fn files(n: usize) -> String {
+    tr!("{n} file" | "{n} files" % n)
 }
 
 /// A removal is done: the look list read again, the viewport's cached

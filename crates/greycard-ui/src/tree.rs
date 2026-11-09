@@ -393,9 +393,12 @@ pub(crate) fn nothing_in(folder: &Path, deep: bool) -> String {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| folder.display().to_string());
     if deep {
-        format!("nothing under {name}")
+        crate::tr!("nothing under {name}", name = name)
     } else {
-        format!("nothing directly in {name}: turn on With subfolders to see the frames under it")
+        crate::tr!(
+            "nothing directly in {name}: turn on With subfolders to see the frames under it",
+            name = name
+        )
     }
 }
 
@@ -817,7 +820,7 @@ fn tile_reveal(st: &State, app: &App, tile: i32) {
             "reveal {}: could not start the file manager: {e}",
             folder.display()
         );
-        app.set_status(format!("could not show {}: {e}", folder.display()).into());
+        app.set_status(crate::tr!("could not show {}: {e}", folder.display(), e = e).into());
     }
 }
 

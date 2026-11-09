@@ -26,7 +26,7 @@ use crate::panel::browser::{chosen_frames, open_row, row_of};
 use crate::panel::collections::frames_of;
 use crate::stacks::{Listed, listed, stack_of};
 use crate::worker::Worker;
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, tr};
 
 /// Most frames side by side; a stack of more compares its first four.
 const COMPARE_MOST: usize = 4;
@@ -139,7 +139,7 @@ fn planned(st: &State) -> Vec<Planned> {
 /// on an archive's copy at its local one.
 pub(crate) fn make(st: &mut State, app: &App, worker: &Worker) {
     if st.views.collection_frames.is_some() {
-        app.set_status("a stack is made in a folder's list, not in a collection's".into());
+        app.set_status(tr!("a stack is made in a folder's list, not in a collection's").into());
         return;
     }
     let plan = planned(st);
@@ -155,12 +155,12 @@ pub(crate) fn make(st: &mut State, app: &App, worker: &Worker) {
         .map(|&c| crate::stacks::folder_of(st, st.file_of(c)))
         .collect();
     if folders.len() > 1 {
-        app.set_status("a stack is made of frames in one folder".into());
+        app.set_status(tr!("a stack is made of frames in one folder").into());
         return;
     }
     let frames = frames_of(st, &cells);
     if frames.len() != cells.len() {
-        app.set_status("not stacked: a frame chosen could not be read".into());
+        app.set_status(tr!("not stacked: a frame chosen could not be read").into());
         return;
     }
     let mut hashes = frames.into_iter();
@@ -184,17 +184,16 @@ pub(crate) fn make(st: &mut State, app: &App, worker: &Worker) {
         }
     }
     if refs.len() < 2 {
-        app.set_status("choose two frames or more to stack".into());
+        app.set_status(tr!("choose two frames or more to stack").into());
         return;
     }
     let n = refs.len();
     st.views.stacks.make(refs);
     let name = st.current.and_then(|c| st.key_of(c)).map(|k| k.said());
     settle(st, app, worker);
-    let said = format!(
-        "{} stacked{}",
-        crate::queue::frames(n),
-        name.map(|n| format!(" under {n}")).unwrap_or_default()
+    let said = tr!(
+        "{n} frame stacked{under}" | "{n} frames stacked{under}" % n,
+        under = name.map(|n| tr!(" under {n}", n = n)).unwrap_or_default()
     );
     tracing::info!("{said}");
     app.set_status(said.into());
@@ -204,16 +203,16 @@ pub(crate) fn make(st: &mut State, app: &App, worker: &Worker) {
 pub(crate) fn unmake(st: &mut State, app: &App, worker: &Worker) {
     let stacks = chosen_stacks(st);
     if stacks.is_empty() {
-        app.set_status("no stack chosen".into());
+        app.set_status(tr!("no stack chosen").into());
         return;
     }
     let said = match stacks.as_slice() {
-        [one] => format!(
-            "{}'s stack of {} unstacked",
-            top_name(st, one),
-            one.members.len()
+        [one] => tr!(
+            "{name}'s stack of {n} unstacked"
+                | "{name}'s stack of {n} unstacked" % one.members.len(),
+            name = top_name(st, one)
         ),
-        many => format!("{} stacks unstacked", many.len()),
+        many => tr!("{n} stack unstacked" | "{n} stacks unstacked" % many.len()),
     };
     for l in &stacks {
         st.views.stacks.unstack(&l.id);
@@ -239,7 +238,7 @@ pub(crate) fn toggle(st: &mut State, app: &App, worker: &Worker, row: Option<usi
         None => chosen_stacks(st),
     };
     if stacks.is_empty() {
-        app.set_status("no stack chosen".into());
+        app.set_status(tr!("no stack chosen").into());
         return;
     }
     let open = stacks.iter().any(|l| !l.open);
@@ -262,7 +261,7 @@ pub(crate) fn toggle(st: &mut State, app: &App, worker: &Worker, row: Option<usi
 /// screen, on top of its stack.
 pub(crate) fn set_top(st: &mut State, app: &App, worker: &Worker, from_menu: bool) {
     let Some((l, at)) = cell_for(st, from_menu).and_then(|c| stack_of(st, c)) else {
-        app.set_status("not in a stack".into());
+        app.set_status(tr!("not in a stack").into());
         return;
     };
     if at == 0 {
@@ -274,7 +273,7 @@ pub(crate) fn set_top(st: &mut State, app: &App, worker: &Worker, from_menu: boo
         members: vec![l.members[at].clone()],
         ..l
     };
-    app.set_status(format!("{} on top of its stack", top_name(st, &top)).into());
+    app.set_status(tr!("{} on top of its stack", top_name(st, &top)).into());
 }
 
 /// Up or down in the stack (Shift+[ and Shift+]): the frame on screen
@@ -283,7 +282,7 @@ pub(crate) fn set_top(st: &mut State, app: &App, worker: &Worker, from_menu: boo
 /// down leaves the member after it on top, and on screen.
 pub(crate) fn step(st: &mut State, app: &App, worker: &Worker, by: i32) {
     let Some((l, at)) = st.current.and_then(|c| stack_of(st, c)) else {
-        app.set_status("not in a stack".into());
+        app.set_status(tr!("not in a stack").into());
         return;
     };
     let Some(to) = at
@@ -321,7 +320,7 @@ pub(crate) fn remove(st: &mut State, app: &App, worker: &Worker) {
         }
     }
     if out.is_empty() {
-        app.set_status("no frame chosen is in a stack".into());
+        app.set_status(tr!("no frame chosen is in a stack").into());
         return;
     }
     let n: usize = out
@@ -330,17 +329,16 @@ pub(crate) fn remove(st: &mut State, app: &App, worker: &Worker) {
         .sum();
     settle(st, app, worker);
     app.set_status(
-        format!(
-            "{} taken out of {}",
-            crate::queue::frames(n),
-            stacks_word(out.len())
+        tr!(
+            "{n} frame taken out of {stacks}" | "{n} frames taken out of {stacks}" % n,
+            stacks = if out.len() == 1 {
+                tr!("its stack")
+            } else {
+                tr!("their stacks")
+            }
         )
         .into(),
     );
-}
-
-fn stacks_word(n: usize) -> &'static str {
-    if n == 1 { "its stack" } else { "their stacks" }
 }
 
 /// The cells Compare stack shows of stack `id`: its members listed and
@@ -363,7 +361,7 @@ fn compare_set(st: &State, id: &str) -> Option<(Vec<usize>, usize)> {
 /// changes under it, as Compare versions' stays its file's.
 pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: bool) {
     let Some((l, at)) = cell_for(st, from_menu).and_then(|c| stack_of(st, c)) else {
-        app.set_status("not in a stack".into());
+        app.set_status(tr!("not in a stack").into());
         return;
     };
     if !l.open {
@@ -374,7 +372,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
         return;
     };
     if set.len() < 2 {
-        app.set_status("the stack's frames are hidden by the filter".into());
+        app.set_status(tr!("the stack's frames are hidden by the filter").into());
         return;
     }
     let focus = st
@@ -395,9 +393,13 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
     fit_compare(st, app, &l.id, None);
     let name = top_name(st, &l);
     let said = if left > 0 {
-        format!("comparing {name}'s stack; {left} more of it left out")
+        tr!(
+            "comparing {name}'s stack; {left} more of it left out",
+            name = name,
+            left = left
+        )
     } else {
-        format!("comparing {name}'s stack")
+        tr!("comparing {name}'s stack", name = name)
     };
     tracing::info!("{said}");
     app.set_status(said.into());
@@ -428,7 +430,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, id: &str, was: Option<usize
     let changed = was.unwrap_or(cull.compare) != up;
     cull.compare = up;
     cull.anchor = first;
-    cull.note = (left > 0).then(|| format!("{left} more of the stack left out"));
+    cull.note = (left > 0).then(|| tr!("{left} more of the stack left out", left = left));
     cull.versions_of = None;
     cull.stack_of = Some(id.to_string());
     cull.set = Some(set);

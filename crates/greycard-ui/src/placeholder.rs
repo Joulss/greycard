@@ -22,7 +22,7 @@ pub const REACH: usize = 2;
 
 /// The word over the picture while the camera's JPEG stands in, and
 /// the name the status line gives it.
-pub const WORD: &str = "camera preview";
+pub const WORD: &str = crate::marked::tr!("camera preview");
 
 /// How far along a placeholder is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +176,12 @@ pub fn status(
 ) -> String {
     let what = crate::panel::cull::picture_words(size, small, local);
     let at = crate::panel::cull::zoom_words(at.0, at.1);
-    format!("{WORD}: {what}, {at}; developing...")
+    crate::tr!(
+        "{word}: {what}, {at}; developing...",
+        word = crate::i18n::text(WORD),
+        what = what,
+        at = at
+    )
 }
 
 /// The rows whose camera picture is kept about `row` of `count`.

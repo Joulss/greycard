@@ -35,7 +35,7 @@ use crate::edit_in::{self as how, Platform, Stamp};
 use crate::export::{Format, OnExists};
 use crate::sheet::Sheet;
 use crate::worker::Worker;
-use crate::{App, Shared, State, chooser, queue};
+use crate::{App, Shared, State, chooser, queue, tr};
 
 /// How often a watched file is looked at.
 const WATCH_EVERY: Duration = Duration::from_secs(1);
@@ -290,7 +290,7 @@ pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, which: u
             return;
         }
         if st.work.exporting.is_some() || st.work.export_choosing {
-            app.set_status("not exported: another export is under way".into());
+            app.set_status(tr!("not exported: another export is under way").into());
             return;
         }
         let Some(key) = st.views.menu_file.or(st.current).and_then(|c| st.key_of(c)) else {
@@ -304,7 +304,7 @@ pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, which: u
         worker,
         vec![key.clone()],
         crate::rows::Scope::Line,
-        "export",
+        crate::marked::tr!("export"),
         Box::new(move |state, app, _, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
             start(state, app, &key, &frames, chosen);
@@ -572,7 +572,7 @@ fn choose(state: &Rc<Shared>, app: &App) {
     {
         let weak = app.as_weak();
         chooser::choose_open(
-            "Edit in",
+            crate::marked::tr!("Edit in"),
             start,
             (String::new(), Vec::new()),
             move |picked| {

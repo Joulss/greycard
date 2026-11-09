@@ -34,7 +34,12 @@ use crate::filter::{Saved, SavedBar};
 use crate::panel::browser::chosen_frames;
 use crate::roots::View;
 use crate::worker::Worker;
-use crate::{App, CollectionChip, Shared, State};
+use crate::{App, CollectionChip, Shared, State, tr};
+
+/// "1 frame", "3 frames", in the window's words.
+fn frames_words(n: usize) -> String {
+    tr!("{n} frame" | "{n} frames" % n)
+}
 
 /// The collections as the window shows them, beside the store's: the
 /// sidebar's rows and the frame menu's names, one model each for the
@@ -178,8 +183,8 @@ pub(crate) fn smart_view(st: &State, root: Option<&Path>) -> View {
 fn scope_words(st: &State, root: Option<&Path>) -> String {
     match smart_view(st, root) {
         View::Roots(Some(r)) => crate::roots::root_name(&st.views.library.roots, &r),
-        View::Branch { folder, .. } => format!("{} and the folders in it", folder.display()),
-        _ => "every root".to_string(),
+        View::Branch { folder, .. } => tr!("{} and the folders in it", folder.display()),
+        _ => tr!("every root"),
     }
 }
 
@@ -287,14 +292,19 @@ pub(crate) fn opened_words(st: &State, missing: usize) -> Option<String> {
     let c = st.views.collections.collection(id)?;
     let name = full_name(&c.set, &c.name);
     Some(if c.refs.is_empty() {
-        format!("{name} is empty: add frames with B, or Add to collection in the frame menu")
+        tr!(
+            "{name} is empty: add frames with B, or Add to collection in the frame menu",
+            name = name
+        )
     } else if missing > 0 {
-        format!(
+        tr!(
             "{name}: {} shown, {missing} missing (moved or deleted, and kept until found)",
-            crate::queue::frames(st.cells.len())
+            frames_words(st.cells.len()),
+            name = name,
+            missing = missing
         )
     } else {
-        format!("{name}: {}", crate::queue::frames(st.cells.len()))
+        tr!("{name}: {}", frames_words(st.cells.len()), name = name)
     })
 }
 
@@ -396,9 +406,9 @@ fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: 
         members_changed(&mut st, app);
         app.set_status(
             match (added.added, added.moved) {
-                (0, 0) => format!("already in {name}"),
-                (0, _) => format!("already in {name}; shown from this copy now"),
-                (n, _) => format!("{} added to {name}", crate::queue::frames(n)),
+                (0, 0) => tr!("already in {name}", name = name),
+                (0, _) => tr!("already in {name}; shown from this copy now", name = name),
+                (n, _) => tr!("{} added to {name}", frames_words(n), name = name),
             }
             .into(),
         );
@@ -461,12 +471,12 @@ fn remove_from(
         };
         let n = c.remove(pairs);
         if n == 0 {
-            app.set_status(format!("not in {name}").into());
+            app.set_status(tr!("not in {name}", name = name).into());
             return;
         }
         st.views.collections.save(id);
         members_changed(&mut st, app);
-        app.set_status(format!("{} taken out of {name}", crate::queue::frames(n)).into());
+        app.set_status(tr!("{} taken out of {name}", frames_words(n), name = name).into());
         tracing::info!("collection {name}: {n} taken out");
         (st.views.view.collection() == Some(id)).then(|| st.views.view.clone())
     };
@@ -525,8 +535,11 @@ fn forget_missing(state: &Rc<Shared>, app: &App, id: &str) {
     let name = name_of(st, id);
     if indexing(st) {
         app.set_status(
-            format!("the library is being indexed; nothing forgotten from {name} until it is done")
-                .into(),
+            tr!(
+                "the library is being indexed; nothing forgotten from {name} until it is done",
+                name = name
+            )
+            .into(),
         );
         return;
     }
@@ -573,24 +586,33 @@ fn forget_missing(state: &Rc<Shared>, app: &App, id: &str) {
             .forget_missing(id, st.views.index_reader.as_ref(), &away, &far, &look)
     else {
         app.set_status(
-            format!("the library index could not be read; nothing forgotten from {name}").into(),
+            tr!(
+                "the library index could not be read; nothing forgotten from {name}",
+                name = name
+            )
+            .into(),
         );
         return;
     };
     members_changed(st, app);
     let words = opened_words(st, forgot.missing).unwrap_or_default();
     let said = match (forgot.forgotten, forgot.away, forgot.on_disk) {
-        (0, 0, 0) if forgot.unsure > 0 => format!(
+        (0, 0, 0) if forgot.unsure > 0 => tr!(
             "{words}; nothing forgotten: the sidecar of {} could not be read",
-            crate::queue::frames(forgot.unsure)
+            frames_words(forgot.unsure),
+            words = words
         ),
-        (0, 0, 0) => format!("{words}; nothing to forget"),
-        (0, away, 0) => format!(
+        (0, 0, 0) => tr!("{words}; nothing to forget", words = words),
+        (0, away, 0) => tr!(
             "{words}; nothing forgotten: {} on a drive that is offline or not answering",
-            crate::queue::frames(away)
+            frames_words(away),
+            words = words
         ),
-        (0, _, _) => format!("{words}; nothing forgotten: the index has yet to read some of them"),
-        (n, _, _) => format!("{words}; forgot {n} missing"),
+        (0, _, _) => tr!(
+            "{words}; nothing forgotten: the index has yet to read some of them",
+            words = words
+        ),
+        (n, _, _) => tr!("{words}; forgot {n} missing", words = words, n = n),
     };
     app.set_status(said.into());
 }
@@ -599,45 +621,45 @@ fn forget_missing(state: &Rc<Shared>, app: &App, id: &str) {
 fn ask(st: &mut State, app: &App, asked: Asked) {
     let (title, note, asks, verb, name) = match &asked {
         Asked::New { add } => (
-            "New collection".to_string(),
+            tr!("New collection"),
             match add.len() {
                 0 => String::new(),
-                n => format!("{} go into it", crate::queue::frames(n)),
+                n => tr!("{} go into it", frames_words(n)),
             },
             true,
-            "Create",
+            tr!("Create"),
             String::new(),
         ),
         Asked::Smart { filter, root } => (
-            "Save the filter as a smart collection".to_string(),
-            format!(
+            tr!("Save the filter as a smart collection"),
+            tr!(
                 "{}, under {}",
                 filter.filter().describe(),
                 scope_words(st, root.as_deref())
             ),
             true,
-            "Save",
+            tr!("Save"),
             String::new(),
         ),
         Asked::Rename(id) => (
-            "Rename the collection".to_string(),
-            "A slash puts it in sets: Clients/2026/Cover".to_string(),
+            tr!("Rename the collection"),
+            tr!("A slash puts it in sets: Clients/2026/Cover"),
             true,
-            "Rename",
+            tr!("Rename"),
             name_of(st, id),
         ),
         Asked::Delete(id) => (
-            format!("Delete {}?", name_of(st, id)),
-            "Its file is deleted. The frames in it are not touched.".to_string(),
+            tr!("Delete {}?", name_of(st, id)),
+            tr!("Its file is deleted. The frames in it are not touched."),
             false,
-            "Delete",
+            tr!("Delete"),
             String::new(),
         ),
         Asked::QueueOut { out, .. } => (
-            format!("Take {} out of the queue?", crate::queue::frames(out.len())),
+            tr!("Take {} out of the queue?", frames_words(out.len())),
             String::new(),
             false,
-            "Remove",
+            tr!("Remove"),
             String::new(),
         ),
         // Asked by `panel::versions`, which fills the sheet itself.
@@ -671,7 +693,7 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             return;
         }
         app.set_collection_sheet_open(false);
-        app.set_collection_sheet_placeholder("Name, or Set/Name".into());
+        app.set_collection_sheet_placeholder(tr!("Name, or Set/Name").into());
         crate::panel::versions::renamed(&mut st, app, &path, &id, &typed);
         return;
     }
@@ -698,8 +720,8 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             tracing::info!("collection {name} made, {added} frames in it");
             app.set_status(
                 match added {
-                    0 => format!("made {name}"),
-                    n => format!("made {name} with {}", crate::queue::frames(n)),
+                    0 => tr!("made {name}", name = name),
+                    n => tr!("made {name} with {}", frames_words(n), name = name),
                 }
                 .into(),
             );
@@ -717,7 +739,7 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             st.views.collections.smart.push(s);
             st.views.collections.sort();
             st.views.collections.save(&id);
-            app.set_status(format!("saved the filter as {name}").into());
+            app.set_status(tr!("saved the filter as {name}", name = name).into());
         }
         Asked::Rename(id) => {
             let (set, name) = crate::collections::split_name(&typed);
@@ -728,7 +750,7 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             }
             st.views.collections.sort();
             st.views.collections.save(&id);
-            app.set_status(format!("renamed {}", name_of(&st, &id)).into());
+            app.set_status(tr!("renamed {}", name_of(&st, &id)).into());
         }
         // Taken before the match.
         Asked::Version { .. } => {}
@@ -743,7 +765,7 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
                 // Its order goes with it.
                 st.views.sort.forget(&id);
                 crate::panel::prefs::keep(&st, |s| s.sort.forget(&id));
-                app.set_status(format!("deleted {name}; no frame was touched").into());
+                app.set_status(tr!("deleted {name}; no frame was touched", name = name).into());
                 if st.views.view.collection() == Some(id.as_str()) {
                     reopen = Some(View::Roots(None));
                 }
@@ -768,7 +790,7 @@ fn key(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
         let st = state.borrow();
         let files = chosen_frames(&st);
         if files.is_empty() {
-            app.set_status("nothing chosen to add to a collection".into());
+            app.set_status(tr!("nothing chosen to add to a collection").into());
             return;
         }
         let frames = frames_of(&st, &files);
@@ -1026,7 +1048,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             if st.views.filter.is_empty() {
-                app.set_status("nothing to save: the filter shows every frame".into());
+                app.set_status(tr!("nothing to save: the filter shows every frame").into());
                 return;
             }
             // The view's own scope: a root, or a folder of one with the
@@ -1046,7 +1068,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 }
                 View::Collection { .. } => {
                     app.set_status(
-                        "a smart collection is saved from a root's view, not a collection's".into(),
+                        tr!("a smart collection is saved from a root's view, not a collection's")
+                            .into(),
                     );
                     return;
                 }

@@ -25,7 +25,8 @@ use std::sync::LazyLock;
 use slint::platform::Key;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::{App, BindRow, KeyRow, Shared};
+use crate::i18n::text;
+use crate::{App, BindRow, KeyRow, Shared, marked, tr};
 
 /// A line of the sheet: the chords that do it, by [`chord`]'s names,
 /// how the sheet writes them when the names alone would read badly,
@@ -132,13 +133,15 @@ const fn shown(
 /// Lightroom hand looks for them there: not chords, and bound by the
 /// strip's and the grid's cells rather than the key handler.
 const POINTER: &[Binding] = &[
-    line(
+    shown(
         &[],
-        "Ctrl+click: Add a frame to the selection, or take it out",
+        "Ctrl+click",
+        marked::tr!("Add a frame to the selection, or take it out"),
     ),
-    line(
+    shown(
         &[],
-        "Shift+click: Select every frame from the open one to this one (with Ctrl, added)",
+        "Shift+click",
+        marked::tr!("Select every frame from the open one to this one (with Ctrl, added)"),
     ),
 ];
 
@@ -146,7 +149,7 @@ const POINTER: &[Binding] = &[
 /// groups them.
 pub(crate) const TABLE: &[Group] = &[
     Group {
-        title: "Moving around",
+        title: marked::tr!("Moving around"),
         lines: &[
             // The Loupe's step: the grid's and the lightbox's arrows
             // move their selection by the defaults whatever is bound
@@ -155,18 +158,18 @@ pub(crate) const TABLE: &[Group] = &[
                 ["previous-frame", "next-frame"],
                 &["Left", "Right"],
                 "← →",
-                "Previous or next frame",
+                marked::tr!("Previous or next frame"),
             ),
             // These follow the pair above (`SHIFT_FORMS`).
             shown(
                 &["Shift+Left", "Shift+Right"],
                 "Shift+← →",
-                "Previous or next frame, added to the selection",
+                marked::tr!("Previous or next frame, added to the selection"),
             ),
             shown(
                 &["Up", "Down", "Shift+Up", "Shift+Down"],
                 "↑ ↓",
-                "In the grid, the frame above or below (with Shift, added)",
+                marked::tr!("In the grid, the frame above or below (with Shift, added)"),
             ),
             shown(
                 // With Ctrl too, as master took them.
@@ -181,217 +184,277 @@ pub(crate) const TABLE: &[Group] = &[
                     "Ctrl+Shift+End",
                 ],
                 "Home, End",
-                "The first or the last frame (with Shift, added)",
+                marked::tr!("The first or the last frame (with Shift, added)"),
             ),
-            act("select-all", &["Ctrl+A"], "Select every frame shown"),
+            act(
+                "select-all",
+                &["Ctrl+A"],
+                marked::tr!("Select every frame shown"),
+            ),
         ],
     },
     Group {
-        title: "Views",
+        title: marked::tr!("Views"),
         lines: &[
             act(
                 "library",
                 &["G"],
-                "Library (the grid), and back to the Loupe as it was left",
+                marked::tr!("Library (the grid), and back to the Loupe as it was left"),
             ),
             act(
                 "loupe",
                 &["E"],
-                "The Loupe (one frame), in the mode it was left in: Cull or Develop",
+                marked::tr!("The Loupe (one frame), in the mode it was left in: Cull or Develop"),
             ),
-            act("develop", &["D"], "Develop: the Loupe with the edit panel"),
-            act("lightbox", &["L"], "The lightbox, and back"),
+            act(
+                "develop",
+                &["D"],
+                marked::tr!("Develop: the Loupe with the edit panel"),
+            ),
+            act("lightbox", &["L"], marked::tr!("The lightbox, and back")),
             act(
                 "overlays",
                 &["J"],
-                "In the lightbox, the rating, flag, and label on the tiles, or not",
+                marked::tr!("In the lightbox, the rating, flag, and label on the tiles, or not"),
             ),
             act(
                 "cull",
                 &["C"],
-                "Cull; in the Loupe, Cull or Develop in turn",
+                marked::tr!("Cull; in the Loupe, Cull or Develop in turn"),
             ),
-            act("compare", &["V"], "In Cull, compare two or four frames"),
+            act(
+                "compare",
+                &["V"],
+                marked::tr!("In Cull, compare two or four frames"),
+            ),
             shown(
                 &["Return"],
                 "Enter",
-                "Open the frame chosen in the grid or the lightbox; from Cull, Develop",
+                marked::tr!(
+                    "Open the frame chosen in the grid or the lightbox; from Cull, Develop"
+                ),
             ),
             shown(
                 // The grid's with Ctrl too, as a browser's zoom is.
                 &["+", "=", "-", "_", "Ctrl++", "Ctrl+=", "Ctrl+-", "Ctrl+_"],
                 "+ −",
-                "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in the Loupe, zoom in or out",
+                marked::tr!(
+                    "Bigger or smaller tiles in the grid; fewer or more across the lightbox; in the Loupe, zoom in or out"
+                ),
             ),
             line(
                 &["Tab"],
-                "Hide the panels and the filmstrip, and bring them back (in the grid, the left pane)",
+                marked::tr!(
+                    "Hide the panels and the filmstrip, and bring them back (in the grid, the left pane)"
+                ),
             ),
             shown(
                 &["F6", "F7", "F8"],
                 "F6, F7, F8",
-                "The filmstrip, the left pane or the develop panel alone",
+                marked::tr!("The filmstrip, the left pane or the develop panel alone"),
             ),
             // Not on a Mac (`NOT_MAC`).
-            line(&["F11"], "Full screen, and back"),
-            act("zoom-1to1", &["Space"], "Fit or 1:1"),
-            act("zoom-3to1", &["Z"], "Fit or 3:1"),
+            line(&["F11"], marked::tr!("Full screen, and back")),
+            act("zoom-1to1", &["Space"], marked::tr!("Fit or 1:1")),
+            act("zoom-3to1", &["Z"], marked::tr!("Fit or 3:1")),
             act(
                 "mat",
                 &["F"],
-                "A mat of the canvas around the picture at Fit, or none",
+                marked::tr!("A mat of the canvas around the picture at Fit, or none"),
             ),
             act(
                 "overlays",
                 &["J"],
-                "In the Loupe, shadow and highlight clipping warnings",
+                marked::tr!("In the Loupe, shadow and highlight clipping warnings"),
             ),
             act(
                 "peaking",
                 &["Shift+J"],
-                "In the Loupe, focus peaking: the sharpest parts painted over the picture",
+                marked::tr!(
+                    "In the Loupe, focus peaking: the sharpest parts painted over the picture"
+                ),
             ),
-            act("proof", &["S"], "Soft proof (in the grid, a stack: below)"),
+            act(
+                "proof",
+                &["S"],
+                marked::tr!("Soft proof (in the grid, a stack: below)"),
+            ),
         ],
     },
     Group {
-        title: "Rating and sorting",
+        title: marked::tr!("Rating and sorting"),
         lines: &[
             shown(
                 &["1", "2", "3", "4", "5", "0"],
-                "1 to 5, 0",
-                "Set a rating, or clear it",
+                marked::tr!("1 to 5, 0"),
+                marked::tr!("Set a rating, or clear it"),
             ),
             // With Shift too: a hand that holds it for the stars of
             // another application still flags.
             shown(
                 &["P", "X", "U", "Shift+P", "Shift+X", "Shift+U"],
                 "P, X, U",
-                "Pick, reject, unflag",
+                marked::tr!("Pick, reject, unflag"),
             ),
             shown(
                 &["6", "7", "8", "9"],
-                "6 to 9",
-                "Red, yellow, green or blue label (again to clear)",
+                marked::tr!("6 to 9"),
+                marked::tr!("Red, yellow, green or blue label (again to clear)"),
             ),
             pair(
                 ["turn-left", "turn-right"],
                 &["[", "]"],
                 "[ ]",
-                "Turn the frame a quarter left or right; not part of the edit",
+                marked::tr!("Turn the frame a quarter left or right; not part of the edit"),
             ),
             act(
                 "collection",
                 &["B"],
-                "Add the selected frames to a collection, or take them out",
+                marked::tr!("Add the selected frames to a collection, or take them out"),
             ),
-            act("stack", &["Ctrl+G"], "Stack the selected frames"),
-            act("unstack", &["Ctrl+Shift+G"], "Unstack them"),
+            act(
+                "stack",
+                &["Ctrl+G"],
+                marked::tr!("Stack the selected frames"),
+            ),
+            act("unstack", &["Ctrl+Shift+G"], marked::tr!("Unstack them")),
             shown(
                 &["S", "Shift+S"],
                 "S, Shift+S",
-                "In the grid, open or close a stack; make the frame its top",
+                marked::tr!("In the grid, open or close a stack; make the frame its top"),
             ),
             // A brace is Shift and a bracket on most boards.
             shown(
                 &["{", "}"],
                 "Shift+[ Shift+]",
-                "In the grid, move the frame up or down in its stack",
+                marked::tr!("In the grid, move the frame up or down in its stack"),
             ),
-            act("version", &["Ctrl+'"], "New version of the frame"),
+            act(
+                "version",
+                &["Ctrl+'"],
+                marked::tr!("New version of the frame"),
+            ),
             line(
                 &["Delete", "Backspace"],
-                "Delete the selected frames, after a confirmation",
+                marked::tr!("Delete the selected frames, after a confirmation"),
             ),
         ],
     },
     Group {
-        title: "Editing",
+        title: marked::tr!("Editing"),
         lines: &[
-            act("undo", &["Ctrl+Z"], "Undo"),
+            act("undo", &["Ctrl+Z"], marked::tr!("Undo")),
             shown(
                 &["Ctrl+Shift+Z", "Ctrl+Y"],
                 "Ctrl+Shift+Z or Ctrl+Y",
-                "Redo",
+                marked::tr!("Redo"),
             ),
-            act("copy", &["Ctrl+C"], "Copy the open frame's settings"),
-            act("paste", &["Ctrl+V"], "Paste them onto the selected frames"),
+            act(
+                "copy",
+                &["Ctrl+C"],
+                marked::tr!("Copy the open frame's settings"),
+            ),
+            act(
+                "paste",
+                &["Ctrl+V"],
+                marked::tr!("Paste them onto the selected frames"),
+            ),
             act(
                 "sync",
                 &["Ctrl+Shift+S"],
-                "Sync the selected frames to the open one",
+                marked::tr!("Sync the selected frames to the open one"),
             ),
-            act("crop", &["R"], "Crop, and Done"),
+            act("crop", &["R"], marked::tr!("Crop, and Done")),
             act(
                 "white-balance",
                 &["W"],
-                "White balance from a neutral patch: the pipette",
+                marked::tr!("White balance from a neutral patch: the pipette"),
             ),
             act(
                 "linear-mask",
                 &["M"],
-                "New mask with a Linear, placed by the next drag",
+                marked::tr!("New mask with a Linear, placed by the next drag"),
             ),
             act(
                 "radial-mask",
                 &["Shift+M"],
-                "New mask with a Radial, placed by the next drag",
+                marked::tr!("New mask with a Radial, placed by the next drag"),
             ),
             // The brush in hand's, as its sliders: the brackets size
             // Lightroom's brush, and Shift and one feather it. The
             // size is the brackets themselves with a brush or a patch
             // in hand, wherever the turn is bound (`BRUSH`).
-            raw(&["[", "]"], "[ ]", "Brush size, smaller and bigger"),
+            raw(
+                &["[", "]"],
+                "[ ]",
+                marked::tr!("Brush size, smaller and bigger"),
+            ),
             shown(
                 &["{", "}"],
                 "Shift+[ Shift+]",
-                "Brush feather, less and more",
+                marked::tr!("Brush feather, less and more"),
             ),
             shown(
                 &["Ctrl+[", "Ctrl+]"],
                 "Ctrl+[ Ctrl+]",
-                "Brush flow, less and more",
+                marked::tr!("Brush flow, less and more"),
             ),
-            act("show-mask", &["O"], "Show the mask"),
-            act("original", &["\\"], "Show the frame as it was, and back"),
+            act("show-mask", &["O"], marked::tr!("Show the mask")),
+            act(
+                "original",
+                &["\\"],
+                marked::tr!("Show the frame as it was, and back"),
+            ),
         ],
     },
     // A focused slider's own (`EditSlider` in greycard-slint's
     // `ui/controls.slint`), not the handler's: no chords, and the
     // window has these keys back once no slider has the focus.
     Group {
-        title: "Sliders",
+        title: marked::tr!("Sliders"),
         lines: &[
             shown(
                 &[],
                 "↑ ↓ ← →, + −",
-                "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less, and Shift on a drag for finer",
+                marked::tr!(
+                    "Nudge the focused slider, or its typed value with ↑ ↓; Shift on an arrow for more, Ctrl on the slider for less, and Shift on a drag for finer"
+                ),
             ),
-            shown(&[], ", .", "The previous or the next slider"),
+            shown(&[], ", .", marked::tr!("The previous or the next slider")),
             shown(
                 &[],
                 "Tab, Shift+Tab",
-                "In a slider's typed value, the next or the previous one",
+                marked::tr!("In a slider's typed value, the next or the previous one"),
             ),
         ],
     },
     Group {
-        title: "Files, sheets and help",
+        title: marked::tr!("Files, sheets and help"),
         lines: &[
             shown(
                 &["Ctrl+F", "/"],
                 "Ctrl+F or /",
-                "Filter the folder by rating, flag, label or words",
+                marked::tr!("Filter the folder by rating, flag, label or words"),
             ),
-            act("open", &["Ctrl+O"], "Open a folder"),
-            act("import", &["Ctrl+Shift+I"], "Import from a card"),
-            act("export", &["Ctrl+Shift+E"], "Export"),
-            act("export-again", &["Ctrl+E"], "Export with the last settings"),
-            act("settings", &["Ctrl+,"], "Settings"),
-            act("keys", &["?"], "The keys sheet"),
+            act("open", &["Ctrl+O"], marked::tr!("Open a folder")),
+            act(
+                "import",
+                &["Ctrl+Shift+I"],
+                marked::tr!("Import from a card"),
+            ),
+            act("export", &["Ctrl+Shift+E"], marked::tr!("Export")),
+            act(
+                "export-again",
+                &["Ctrl+E"],
+                marked::tr!("Export with the last settings"),
+            ),
+            act("settings", &["Ctrl+,"], marked::tr!("Settings")),
+            act("keys", &["?"], marked::tr!("The keys sheet")),
             line(
                 &["Esc"],
-                "Close a sheet, put a tool down, leave the crop, let go of a set, or go back to one frame",
+                marked::tr!(
+                    "Close a sheet, put a tool down, leave the crop, let go of a set, or go back to one frame"
+                ),
             ),
         ],
     },
@@ -520,8 +583,24 @@ const LOUPE: View = View {
     brush: false,
 };
 
+/// The pointer's word, after its chord: "Ctrl+click".
+const CLICK: &str = marked::tr!("click");
+
+/// A line's own keys in the window's words: two chords either of
+/// which does it joined by "or", the chords as they are; a click's
+/// chord with the word after it; the rest translated as one.
+fn shown_words(s: &str) -> String {
+    if let Some((a, b)) = s.split_once(" or ") {
+        return tr!("{} or {}", a, b);
+    }
+    match s.rsplit_once('+') {
+        Some((mods, "click")) => format!("{mods}+{}", text(CLICK)),
+        _ => text(s),
+    }
+}
+
 /// What the sheets write for an action bound to no key.
-const NONE: &str = "None";
+const NONE: &str = marked::tr!("None");
 
 /// The rebindable actions, in the table's order.
 pub(crate) fn actions() -> &'static [Action] {
@@ -534,12 +613,13 @@ fn is_default(chord: &str) -> bool {
     actions().iter().any(|a| a.default == chord)
 }
 
-/// What an action's lines say it does, in one.
+/// What an action's lines say it does, in one, in the window's words.
 fn does_of(a: &Action) -> String {
     let mut out = String::new();
     for (i, d) in a.does.iter().enumerate() {
+        let d = text(d);
         if i == 0 {
-            out.push_str(d);
+            out.push_str(&d);
             continue;
         }
         out.push_str("; ");
@@ -973,7 +1053,7 @@ fn chord_on(
 /// A chord as the sheet writes it on this platform; "None" for none.
 fn said(chord: &str, mac: bool) -> String {
     if chord.is_empty() {
-        return NONE.to_string();
+        return text(NONE);
     }
     // The key is after the last "+", unless "+" is the key.
     let (mods, key) = match chord.strip_suffix("++") {
@@ -1010,7 +1090,7 @@ fn keys_of(b: &Binding, map: &Keymap, mac: bool) -> String {
     let moved = !b.raw && b.chords.iter().any(|c| map.now(c) != *c);
     match b.shown {
         Some(s) if !moved => {
-            let s = platform(s, mac);
+            let s = platform(&shown_words(s), mac);
             // The Mac's own delete beside Delete.
             if mac && b.chords.contains(&"Backspace") {
                 format!("{s}, ⌫")
@@ -1043,19 +1123,19 @@ fn rows_in(map: &Keymap, query: &str, mac: bool) -> Vec<KeyRow> {
     let holds = |s: &str| q.is_empty() || s.to_lowercase().contains(&q);
     let mut out = Vec::new();
     for (i, g) in TABLE.iter().enumerate() {
-        let whole = !q.is_empty() && holds(g.title);
+        let title = text(g.title);
+        let whole = !q.is_empty() && holds(&title);
         let pointer = if i == 0 { POINTER } else { &[] };
         let lines: Vec<KeyRow> = g
             .lines
             .iter()
             .filter(|b| shown_here(b, mac))
-            .map(|b| (keys_of(b, map, mac), platform(b.does, mac)))
+            .map(|b| (keys_of(b, map, mac), platform(&text(b.does), mac)))
             .chain(pointer.iter().map(|b| {
-                let (keys, does) = b
-                    .does
-                    .split_once(": ")
-                    .expect("a pointer line names its click");
-                (platform(keys, mac), does.to_string())
+                (
+                    platform(&shown_words(b.shown.unwrap_or_default()), mac),
+                    text(b.does),
+                )
             }))
             .filter(|(keys, does)| whole || holds(keys) || holds(does))
             .map(|(keys, does)| KeyRow {
@@ -1069,7 +1149,7 @@ fn rows_in(map: &Keymap, query: &str, mac: bool) -> Vec<KeyRow> {
         }
         out.push(KeyRow {
             heading: true,
-            keys: g.title.into(),
+            keys: title.into(),
             does: SharedString::new(),
         });
         out.extend(lines);
@@ -1102,7 +1182,7 @@ pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
         }
         out.push(BindRow {
             heading: true,
-            does: g.title.into(),
+            does: text(g.title).into(),
             ..Default::default()
         });
         for a in mine {
@@ -1125,7 +1205,8 @@ pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
             let also = if others.is_empty() {
                 String::new()
             } else {
-                platform(&format!("Also: {}", others.join("; ")), mac)
+                let others: Vec<String> = others.iter().map(|o| text(o)).collect();
+                platform(&tr!("Also: {}", others.join("; ")), mac)
             };
             out.push(BindRow {
                 heading: false,
@@ -1290,7 +1371,7 @@ pub(crate) fn install(app: &App) {
             };
             let url = guide_url();
             tracing::info!("help: opening {url}");
-            app.set_status("the guide is open in the browser".into());
+            app.set_status(tr!("the guide is open in the browser").into());
             // As Report a problem's: never a browser from a test.
             if cfg!(test) {
                 return;
@@ -1301,7 +1382,7 @@ pub(crate) fn install(app: &App) {
                     tracing::warn!("help: no browser would open the guide: {e}");
                     let _ = app_weak.upgrade_in_event_loop(move |app| {
                         app.set_status(
-                            format!("no browser would open: the guide is at {url}").into(),
+                            tr!("no browser would open: the guide is at {url}", url = url).into(),
                         );
                     });
                 }

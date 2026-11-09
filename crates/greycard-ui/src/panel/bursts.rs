@@ -23,7 +23,7 @@ use slint::ComponentHandle;
 
 use crate::stacks::{folder_of, hint_of_file, listed};
 use crate::worker::Worker;
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, i18n, tr};
 
 /// The threads a folder's previews are read on: a preview is a JPEG
 /// decode, and four make a card of raws a few seconds' work while
@@ -206,7 +206,7 @@ fn stacked(st: &State) -> HashSet<String> {
 /// Stack bursts: asked of the folders the list shows.
 pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker) {
     if st.views.collection_frames.is_some() {
-        app.set_status("a stack is made in a folder's list, not in a collection's".into());
+        app.set_status(tr!("a stack is made in a folder's list, not in a collection's").into());
         return;
     }
     let db = st.views.index_path.clone().or_else(|| {
@@ -216,7 +216,7 @@ pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker) {
             .map(|l| l.path().to_path_buf())
     });
     let Some(db) = db else {
-        app.set_status(crate::library::READER_UNAVAILABLE.into());
+        app.set_status(i18n::text(crate::library::READER_UNAVAILABLE).into());
         return;
     };
     let Some(running) = Running::take() else {
@@ -273,7 +273,7 @@ fn send_off(st: &mut State, app: &App, worker: &Worker, job: Job) {
 fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     if let Some(e) = &done.error {
         tracing::warn!("stack bursts: {e}");
-        app.set_status(crate::library::READER_UNAVAILABLE.into());
+        app.set_status(i18n::text(crate::library::READER_UNAVAILABLE).into());
         return;
     }
     let shown: HashMap<String, usize> = (0..st.files.len())
@@ -307,7 +307,7 @@ fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     if made > 0 {
         crate::panel::stacks::settle(st, app, worker);
     }
-    app.set_status(format!("{} stacked", crate::queue::frames(frames)).into());
+    app.set_status(tr!("{n} frame stacked" | "{n} frames stacked" % frames).into());
 }
 
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {

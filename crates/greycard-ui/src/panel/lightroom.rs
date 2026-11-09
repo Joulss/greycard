@@ -29,12 +29,12 @@ use greycard_library::lightroom_catalog::{self as lrcat, Progress, Report};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::files::tilde;
-use crate::{App, LightroomRoot, ReportLine, STATE, Shared, State, WORKER, chooser};
+use crate::{App, LightroomRoot, ReportLine, STATE, Shared, State, WORKER, chooser, i18n, tr};
 
 /// What the sheet says when the run writes no sidecars: the report is
 /// shown, and Write stays off.
 pub(crate) const NO_SIDECARS: &str =
-    "This run writes no sidecars (--no-sidecars), so nothing can be imported.";
+    crate::marked::tr!("This run writes no sidecars (--no-sidecars), so nothing can be imported.");
 
 /// The sheet's side of the state.
 #[derive(Default)]
@@ -107,7 +107,7 @@ pub(crate) fn open(st: &mut State, app: &App, catalog: PathBuf) {
     st.lightroom.catalog = Some(catalog.clone());
     st.lightroom.roots = std::mem::take(&mut st.lightroom.seed);
     st.lightroom.report = None;
-    app.set_lr_title(format!("Import {name} from Lightroom").into());
+    app.set_lr_title(tr!("Import {name} from Lightroom", name = name).into());
     app.set_lr_subtitle(tilde(&catalog).into());
     app.set_lr_note("".into());
     app.set_lr_set(name.into());
@@ -117,7 +117,7 @@ pub(crate) fn open(st: &mut State, app: &App, catalog: PathBuf) {
     app.set_lr_open(true);
     if st.views.index_path.is_none() {
         app.set_lr_note(
-            "There is no library to import into: this installation has no data folder.".into(),
+            tr!("There is no library to import into: this installation has no data folder.").into(),
         );
         show(st, app);
         return;
@@ -140,7 +140,7 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
     st.lightroom.reading = true;
     let generation = st.lightroom.generation;
     app.set_lr_busy(true);
-    app.set_lr_busy_text("reading the catalog...".into());
+    app.set_lr_busy_text(tr!("reading the catalog...").into());
     app.set_lr_fraction(-1.0);
     let weak = app.as_weak();
     std::thread::spawn(move || {
@@ -180,7 +180,7 @@ pub(crate) fn caught(
 ) -> std::result::Result<Report, String> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
         Ok(read) => read.map_err(|e| e.to_string()),
-        Err(payload) => Err(format!(
+        Err(payload) => Err(tr!(
             "the import failed: {}",
             crate::worker::panic_message(&*payload)
         )),
@@ -297,7 +297,7 @@ pub(crate) fn show(st: &State, app: &App) {
                     let ambiguous = names.iter().filter(|n| *n == name).count() > 1;
                     let taken = root.local.as_deref().filter(|_| root.confirmed).map(tilde);
                     let under = match (ambiguous, taken) {
-                        (true, Some(at)) => format!("{} at {at}", root.catalog),
+                        (true, Some(at)) => tr!("{} at {at}", root.catalog, at = at),
                         (false, Some(at)) => at,
                         (true, None) => root.catalog.clone(),
                         (false, None) => String::new(),
@@ -339,7 +339,7 @@ pub(crate) fn show(st: &State, app: &App) {
             && st.window.write_sidecars,
     );
     if !st.window.write_sidecars && app.get_lr_note().is_empty() {
-        app.set_lr_note(NO_SIDECARS.into());
+        app.set_lr_note(i18n::text(NO_SIDECARS).into());
     }
 }
 
@@ -371,7 +371,7 @@ pub(crate) fn write(state: &Rc<Shared>, app: &App) {
         return;
     }
     if !st.window.write_sidecars {
-        app.set_lr_note(NO_SIDECARS.into());
+        app.set_lr_note(i18n::text(NO_SIDECARS).into());
         return;
     }
     let (Some(catalog), Some(opts)) = (st.lightroom.catalog.clone(), write_options(&mut st, app))
@@ -381,10 +381,10 @@ pub(crate) fn write(state: &Rc<Shared>, app: &App) {
     // The sheet stays up while it writes, so nothing is edited under
     // it; its progress is on the status line and under the button.
     app.set_lr_busy(true);
-    app.set_lr_busy_text("writing...".into());
+    app.set_lr_busy_text(tr!("writing...").into());
     app.set_lr_fraction(0.0);
     app.set_lr_running(true);
-    say(app, "importing the catalog: reading it...".into());
+    say(app, tr!("importing the catalog: reading it..."));
     let weak = app.as_weak();
     st.lightroom.thread = Some(std::thread::spawn(move || {
         let told = weak.clone();
@@ -508,23 +508,16 @@ pub(crate) fn wrote(
                     }
                 }
                 let line = match &report.written {
-                    Some(w) => {
-                        let n = |k: usize, one: &str, many: &str| {
-                            format!("{k} {}", if k == 1 { one } else { many })
-                        };
-                        format!(
-                            "imported the catalog: {} written, {} left alone, {}, {}",
-                            n(w.sidecars, "frame", "frames"),
-                            w.left_alone,
-                            n(
-                                w.collections + w.joined + w.smart,
-                                "collection",
-                                "collections"
-                            ),
-                            n(w.stacks, "stack", "stacks")
-                        )
-                    }
-                    None => "imported the catalog".to_string(),
+                    Some(w) => tr!(
+                        "imported the catalog: {frames} written, {left} left alone, \
+                         {collections}, {stacks}",
+                        frames = tr!("{n} frame" | "{n} frames" % w.sidecars),
+                        left = w.left_alone,
+                        collections = tr!("{n} collection"
+                            | "{n} collections" % w.collections + w.joined + w.smart),
+                        stacks = tr!("{n} stack" | "{n} stacks" % w.stacks)
+                    ),
+                    None => tr!("imported the catalog"),
                 };
                 app.set_lr_note("".into());
                 st.lightroom.report = Some(report);
@@ -532,8 +525,8 @@ pub(crate) fn wrote(
             }
             Err(e) => {
                 tracing::warn!("lightroom import: {e}");
-                app.set_lr_note(format!("Not imported: {e}").into());
-                format!("the catalog was not imported: {e}")
+                app.set_lr_note(tr!("Not imported: {e}", e = e).into());
+                tr!("the catalog was not imported: {e}", e = e)
             }
         }
     };
@@ -648,14 +641,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
             let start = dirs::picture_dir()
                 .or_else(dirs::home_dir)
                 .unwrap_or_default();
-            app.set_status("choosing a Lightroom catalog...".into());
+            app.set_status(tr!("choosing a Lightroom catalog...").into());
             let weak = app.as_weak();
             // A test opens no chooser: it answers as a cancel.
             chooser::choose_open(
-                "Import a Lightroom catalog",
+                crate::marked::tr!("Import a Lightroom catalog"),
                 start,
                 (
-                    "Lightroom catalogs".to_string(),
+                    tr!("Lightroom catalogs"),
                     vec!["*.lrcat".into(), "*.LRCAT".into()],
                 ),
                 move |chosen| {
@@ -665,7 +658,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                         };
                         match chosen {
                             Ok(Some(catalog)) => open(&mut state.borrow_mut(), &app, catalog),
-                            Ok(None) => app.set_status("import canceled".into()),
+                            Ok(None) => app.set_status(tr!("import canceled").into()),
                             Err(e) => {
                                 tracing::warn!("file chooser: {e:#}");
                                 app.set_status(chooser::chooser_failed(&e).into());
@@ -703,23 +696,27 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 .or_else(dirs::home_dir)
                 .unwrap_or_default();
             let weak = app.as_weak();
-            chooser::choose_folder("Where the catalog's folder is now", start, move |chosen| {
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    let Some(state) = STATE.with(|s| s.borrow().clone()) else {
-                        return;
-                    };
-                    match chosen {
-                        Ok(Some(folder)) => {
-                            root_chosen(&mut state.borrow_mut(), &app, row as usize, folder)
+            chooser::choose_folder(
+                crate::marked::tr!("Where the catalog's folder is now"),
+                start,
+                move |chosen| {
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+                            return;
+                        };
+                        match chosen {
+                            Ok(Some(folder)) => {
+                                root_chosen(&mut state.borrow_mut(), &app, row as usize, folder)
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::warn!("folder chooser: {e:#}");
+                                app.set_lr_note(chooser::chooser_failed(&e).into());
+                            }
                         }
-                        Ok(None) => {}
-                        Err(e) => {
-                            tracing::warn!("folder chooser: {e:#}");
-                            app.set_lr_note(chooser::chooser_failed(&e).into());
-                        }
-                    }
-                });
-            });
+                    });
+                },
+            );
         });
     }
     {

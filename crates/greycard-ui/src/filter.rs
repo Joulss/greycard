@@ -43,6 +43,9 @@ use greycard_edit::meta::{Flag, Label, Meta, STARS};
 pub use greycard_library::filter::Facet;
 use greycard_library::filter::{ParseError, Term};
 
+use crate::i18n::text;
+use crate::tr;
+
 /// How the rating chips read: at least so many stars, or exactly so
 /// many.
 ///
@@ -100,7 +103,7 @@ impl Stars {
         if exact {
             n.to_string()
         } else if n == 0 {
-            "Any".to_string()
+            tr!("Any")
         } else if n >= STARS {
             STARS.to_string()
         } else {
@@ -176,7 +179,10 @@ impl SavedBar for Saved {
 /// It used to read "show All to see them", which named a control:
 /// All was the three-way Show's first option. It is now the first
 /// rating chip and means any rating, so the way back is Clear.
-pub const NOTHING_SHOWN: &str = "no frames pass the filter; Clear shows the folder again";
+///
+/// In English, marked for the catalog: translated where it is shown.
+pub const NOTHING_SHOWN: &str =
+    crate::marked::tr!("no frames pass the filter; Clear shows the folder again");
 
 /// One frame as the filter reads it: where the file is, which is
 /// where its name is, what its sidecar says about it, and what the
@@ -245,19 +251,51 @@ pub fn facet_slot(facet: Facet) -> usize {
         .expect("every facet is in ALL")
 }
 
-/// What a facet's row is captioned on the bar.
+/// What a facet's row is captioned on the bar: in English, marked for
+/// the catalog, and translated where it is shown.
 pub fn facet_caption(facet: Facet) -> &'static str {
+    use crate::marked;
     match facet {
-        Facet::Camera => "Camera",
-        Facet::Lens => "Lens",
-        Facet::Kind => "Kind",
-        Facet::Style => "Style",
+        Facet::Camera => marked::tr!("Camera"),
+        Facet::Lens => marked::tr!("Lens"),
+        Facet::Kind => marked::tr!("Kind"),
+        Facet::Style => marked::tr!("Style"),
         Facet::Iso => "ISO",
-        Facet::Focal => "Focal",
-        Facet::Date => "Day",
-        Facet::Keyword => "Keyword",
+        Facet::Focal => marked::tr!("Focal"),
+        Facet::Date => marked::tr!("Day"),
+        Facet::Keyword => marked::tr!("Keyword"),
     }
 }
+
+/// The flags' and the labels' names (`Flag::name`, `Label::name`, in
+/// greycard-edit), marked here for the catalog: [`Filter::describe`]
+/// translates them where it says them.
+const _MARK_NAMES: [&str; 9] = [
+    crate::marked::tr!("Unflagged"),
+    crate::marked::tr!("Pick"),
+    crate::marked::tr!("Reject"),
+    crate::marked::tr!("None"),
+    crate::marked::tr!("Red"),
+    crate::marked::tr!("Yellow"),
+    crate::marked::tr!("Green"),
+    crate::marked::tr!("Blue"),
+    crate::marked::tr!("Purple"),
+];
+
+/// The flag and label names as a sentence says them, in lower case,
+/// their own entries in the catalog (a language need not lower its
+/// words as English does).
+const _MARK_LOWER_NAMES: [&str; 9] = [
+    crate::marked::tr!("unflagged"),
+    crate::marked::tr!("pick"),
+    crate::marked::tr!("reject"),
+    crate::marked::tr!("none"),
+    crate::marked::tr!("red"),
+    crate::marked::tr!("yellow"),
+    crate::marked::tr!("green"),
+    crate::marked::tr!("blue"),
+    crate::marked::tr!("purple"),
+];
 
 /// A facet's value as its chip says it: a focal length in
 /// millimeters, a kind as a word (Raw) or a format's capitals (JPEG),
@@ -265,7 +303,7 @@ pub fn facet_caption(facet: Facet) -> &'static str {
 pub fn facet_chip_text(facet: Facet, label: &str) -> String {
     match facet {
         Facet::Focal => format!("{label} mm"),
-        Facet::Kind if label == greycard_library::filter::RAW => "Raw".to_string(),
+        Facet::Kind if label == greycard_library::filter::RAW => tr!("Raw"),
         Facet::Kind => label.to_uppercase(),
         _ => label.to_string(),
     }
@@ -536,38 +574,34 @@ impl Filter {
         press(&mut self.labels, &mut self.not_labels, label, true);
     }
 
-    /// The filter in words, for the log and the status line: what is
-    /// asked of a frame, in the order the chips sit in, or "all
-    /// frames" when nothing is asked.
+    /// The filter in words, for the status line and the log, in the
+    /// window's language: what is asked of a frame, in the order the
+    /// chips sit in, or "all frames" when nothing is asked.
     pub fn describe(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         match self.stars {
             Stars::AtLeast(0) => {}
-            Stars::AtLeast(1) => parts.push("1 star or more".to_string()),
-            Stars::AtLeast(n) => parts.push(format!("{n} stars or more")),
-            Stars::Exactly(0) => parts.push("unrated".to_string()),
-            Stars::Exactly(1) => parts.push("exactly 1 star".to_string()),
-            Stars::Exactly(n) => parts.push(format!("exactly {n} stars")),
+            Stars::AtLeast(n) => parts.push(tr!("{n} star or more" | "{n} stars or more" % n)),
+            Stars::Exactly(0) => parts.push(tr!("unrated")),
+            Stars::Exactly(n) => parts.push(tr!("exactly {n} star" | "exactly {n} stars" % n)),
         }
         let label_name = |l: &Label| match l {
-            Label::None => "no label".to_string(),
-            _ => l.name().to_lowercase(),
+            Label::None => tr!("no label"),
+            _ => text(&l.name().to_lowercase()),
         };
+        let flag_name = |f: &Flag| text(&f.name().to_lowercase());
         if !self.flags.is_empty() {
-            parts.push(join(self.flags.iter().map(|f| f.name().to_lowercase())));
+            parts.push(join(self.flags.iter().map(flag_name)));
         }
         if !self.not_flags.is_empty() {
-            parts.push(format!(
-                "not {}",
-                join(self.not_flags.iter().map(|f| f.name().to_lowercase()))
-            ));
+            parts.push(tr!("not {}", join(self.not_flags.iter().map(flag_name))));
         }
         if !self.labels.is_empty() {
             parts.push(join(self.labels.iter().map(label_name)));
         }
         // "No label" held out is every label, said so.
         if self.not_labels.contains(&Label::None) {
-            parts.push("labeled".to_string());
+            parts.push(tr!("labeled"));
         }
         let colors: Vec<&Label> = self
             .not_labels
@@ -575,7 +609,7 @@ impl Filter {
             .filter(|l| **l != Label::None)
             .collect();
         if !colors.is_empty() {
-            parts.push(format!("not {}", join(colors.into_iter().map(label_name))));
+            parts.push(tr!("not {}", join(colors.into_iter().map(label_name))));
         }
         let text = self.text.trim();
         if !text.is_empty() {
@@ -583,28 +617,29 @@ impl Filter {
         }
         for (facet, values, not) in Facet::ALL
             .into_iter()
-            .flat_map(|f| [(f, self.chosen(f), ""), (f, self.held_out(f), "not ")])
+            .flat_map(|f| [(f, self.chosen(f), false), (f, self.held_out(f), true)])
         {
             if values.is_empty() {
                 continue;
             }
             let said = join(values.iter().cloned());
-            parts.push(match facet {
-                Facet::Camera => format!("{not}camera {said}"),
-                Facet::Lens => format!("{not}lens {said}"),
-                Facet::Kind => format!(
-                    "{not}kind {}",
+            let asked = match facet {
+                Facet::Camera => tr!("camera {}", said),
+                Facet::Lens => tr!("lens {}", said),
+                Facet::Kind => tr!(
+                    "kind {}",
                     join(values.iter().map(|v| facet_chip_text(Facet::Kind, v)))
                 ),
-                Facet::Style => format!("{not}style {said}"),
-                Facet::Iso => format!("{not}ISO {said}"),
-                Facet::Focal => format!("{not}{said} mm"),
-                Facet::Date => format!("{not}taken {said}"),
-                Facet::Keyword => format!("{not}keyword {said}"),
-            });
+                Facet::Style => tr!("style {}", said),
+                Facet::Iso => format!("ISO {said}"),
+                Facet::Focal => format!("{said} mm"),
+                Facet::Date => tr!("taken {}", said),
+                Facet::Keyword => tr!("keyword {}", said),
+            };
+            parts.push(if not { tr!("not {}", asked) } else { asked });
         }
         if parts.is_empty() {
-            "all frames".to_string()
+            tr!("all frames")
         } else {
             parts.join(", ")
         }
@@ -700,7 +735,7 @@ fn join(names: impl IntoIterator<Item = String>) -> String {
     match names.split_last() {
         None => String::new(),
         Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        Some((last, rest)) => tr!("{} or {last}", rest.join(", "), last = last),
     }
 }
 
@@ -853,6 +888,19 @@ impl Filter {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// The names marked for the catalog are greycard-edit's own.
+    #[test]
+    fn the_marked_names_are_the_flags_and_the_labels() {
+        let names: Vec<&str> = Flag::ALL
+            .iter()
+            .map(|f| f.name())
+            .chain(Label::ALL.iter().map(|l| l.name()))
+            .collect();
+        assert_eq!(names, _MARK_NAMES);
+        let lower: Vec<String> = _MARK_NAMES.iter().map(|n| n.to_lowercase()).collect();
+        assert_eq!(lower, _MARK_LOWER_NAMES);
+    }
 
     /// A folder to filter: a name, a rating, a flag, a label and
     /// some keywords each.

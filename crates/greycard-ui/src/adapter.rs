@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use greycard_gpu::wgpu;
 
-use crate::{App, State};
+use crate::{App, State, tr};
 
 /// The variable Slint reads to take a CPU adapter.
 const SLINT_WGPU_CPU: &str = greycard_gpu::SLINT_WGPU_CPU;
@@ -46,6 +46,15 @@ const API: &str = if cfg!(target_vendor = "apple") {
 } else {
     "Vulkan"
 };
+
+/// [`API`] in the window's language: "or" is a word.
+fn tr_api() -> String {
+    if cfg!(target_family = "windows") {
+        tr!("Vulkan or DX12")
+    } else {
+        API.to_string()
+    }
+}
 
 /// Where a software adapter comes from here.
 const SOFTWARE_FROM: &str = if cfg!(target_vendor = "apple") {
@@ -85,7 +94,11 @@ pub(crate) enum Drawing {
 /// software, and what every develop's line carries after its time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Lines {
+    /// The start's line in English, for the log.
     pub(crate) start: String,
+    /// The start's line in the window's language.
+    pub(crate) shown: String,
+    /// In English, marked for the catalog; translated where it is kept.
     pub(crate) tail: &'static str,
 }
 
@@ -113,14 +126,23 @@ impl Drawing {
                     "no GPU greycard can draw on through {API}: drawing in software and \
                      developing on the CPU, which is slow"
                 ),
-                tail: " on the CPU, no usable GPU",
+                shown: tr!(
+                    "no GPU greycard can draw on through {api}: drawing in software and \
+                     developing on the CPU, which is slow",
+                    api = tr_api()
+                ),
+                tail: crate::marked::tr!(" on the CPU, no usable GPU"),
             }
         } else {
             Lines {
                 start: format!(
                     "drawing in software on {name} and developing on the CPU, which is slow"
                 ),
-                tail: " on the CPU, drawing in software",
+                shown: tr!(
+                    "drawing in software on {name} and developing on the CPU, which is slow",
+                    name = name
+                ),
+                tail: crate::marked::tr!(" on the CPU, drawing in software"),
             }
         })
     }
@@ -236,13 +258,16 @@ pub(crate) fn scrub(command: &mut std::process::Command) -> &mut std::process::C
 /// software, kept for the develop's line and said in the status line,
 /// and in the log with the adapter's own line, `gpu`.
 pub(crate) fn show(app: &App, st: &mut State, lines: Option<Lines>, gpu: &str) {
-    st.develop.software_tail = lines.as_ref().map(|l| l.tail);
+    // Translated once a start, so the kept tail stays a `&'static str`.
+    st.develop.software_tail = lines
+        .as_ref()
+        .map(|l| &*Box::leak(crate::i18n::text(l.tail).into_boxed_str()));
     if let Some(lines) = lines {
         tracing::warn!(
             "{} (engine ops on the CPU, the window on {gpu})",
             lines.start
         );
-        app.set_status(lines.start.into());
+        app.set_status(lines.shown.into());
     }
 }
 

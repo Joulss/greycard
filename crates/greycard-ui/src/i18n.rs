@@ -362,6 +362,23 @@ macro_rules! __tr_args {
     };
 }
 
+/// A string of a `&'static str` table that the window shows, marked
+/// for the catalog: `marked::tr!("Views")` is the literal as written,
+/// so a `const` may hold it, and `xtr` takes it into the catalog as it
+/// takes [`tr!`](crate::tr). It is translated where it is shown, by
+/// [`text`], never where it is compared or stored.
+pub mod marked {
+    pub use crate::__tr_marked as tr;
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __tr_marked {
+    ($s:literal) => {
+        $s
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

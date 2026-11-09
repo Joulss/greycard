@@ -204,7 +204,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 keys,
                 crate::rows::Scope::Line,
-                "reset",
+                crate::marked::tr!("reset"),
                 Box::new(move |state, app, worker, at| {
                     let chosen: Vec<usize> = at.into_iter().flatten().collect();
                     reset_onto(&mut state.borrow_mut(), app, worker, &chosen);

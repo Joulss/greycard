@@ -16,7 +16,7 @@ use crate::panel::cull::{drop_files, shoot_rejects_dir};
 use crate::panel::edit::{read_edit, save_edit};
 use crate::roots::View;
 use crate::worker::Worker;
-use crate::{App, Shared, State, cull};
+use crate::{App, Shared, State, cull, tr};
 
 /// What the sheet was opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,11 +192,11 @@ fn folders_of(frames: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 /// What the sheet says will happen, by what it offers.
-pub(crate) fn offer_note(offer: Offer) -> &'static str {
+pub(crate) fn offer_note(offer: Offer) -> String {
     match (offer.trash, offer.permanent) {
-        (true, false) => "They go to the trash.",
-        (true, true) => "The trash failed here earlier; a permanent delete can't be undone.",
-        _ => "No trash here: this is permanent.",
+        (true, false) => tr!("They go to the trash."),
+        (true, true) => tr!("The trash failed here earlier; a permanent delete can't be undone."),
+        _ => tr!("No trash here: this is permanent."),
     }
 }
 
@@ -204,7 +204,7 @@ pub(crate) fn offer_note(offer: Offer) -> &'static str {
 /// there is nothing to ask.
 pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
     if st.sheets.deleting.is_some() {
-        app.set_status("a delete is still under way".into());
+        app.set_status(tr!("a delete is still under way").into());
         return;
     }
     // In the export queue's view, Delete takes the chosen frames out of
@@ -237,10 +237,12 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                 .filter(|&c| st.version_of(c).is_none())
                 .collect();
             if versions > 0 {
-                let said = format!(
-                    "{versions} version{} left out: a file's delete takes its versions with it; \
-                     a version is deleted from its own cell",
-                    if versions == 1 { "" } else { "s" }
+                let said = tr!(
+                    "{n} version left out: a file's delete takes its versions with it; \
+                     a version is deleted from its own cell"
+                        | "{n} versions left out: a file's delete takes its versions with it; \
+                           a version is deleted from its own cell"
+                            % versions
                 );
                 tracing::info!("{said}");
                 app.set_status(said.into());
@@ -257,16 +259,16 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
             frames.dedup();
             if let Some(&i) = offline.first() {
                 let what = if frames.is_empty() {
-                    ": nothing to delete"
+                    tr!(": nothing to delete")
                 } else {
-                    ": its frames are left out"
+                    tr!(": its frames are left out")
                 };
-                crate::rows::say_offline_for(st, app, i, what);
+                crate::rows::say_offline_for(st, app, i, &what);
                 if frames.is_empty() {
                     return;
                 }
             } else if frames.is_empty() {
-                app.set_status("nothing is chosen to delete".into());
+                app.set_status(tr!("nothing is chosen to delete").into());
                 return;
             }
             // The chosen frames' own folders, and the rejects folders
@@ -309,7 +311,9 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                         .find(|r| folder.starts_with(r))
                     {
                         let name = crate::roots::root_name(&st.views.library.roots, root);
-                        app.set_status(format!("{name} is offline: nothing to delete").into());
+                        app.set_status(
+                            tr!("{name} is offline: nothing to delete", name = name).into(),
+                        );
                         return;
                     }
                     let folder =
@@ -325,31 +329,37 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                 }
             };
             let Some(dir) = one else {
-                app.set_status("nothing is open".into());
+                app.set_status(tr!("nothing is open").into());
                 return;
             };
             match std::fs::symlink_metadata(&dir) {
                 Ok(m) if m.file_type().is_symlink() => {
                     app.set_status(
-                        format!("{} is a link; nothing is deleted through one", shown(&dir)).into(),
+                        tr!("{} is a link; nothing is deleted through one", shown(&dir)).into(),
                     );
                     return;
                 }
                 Ok(m) if m.is_dir() => {}
                 _ => {
-                    app.set_status(format!("there is no rejects folder at {}", shown(&dir)).into());
+                    app.set_status(tr!("there is no rejects folder at {}", shown(&dir)).into());
                     return;
                 }
             }
             let frames = match crate::files::list_files(&dir, st.views.jpegs_apart) {
                 Ok(f) => f,
                 Err(e) => {
-                    app.set_status(format!("the rejects folder cannot be read: {e:#}").into());
+                    app.set_status(
+                        tr!(
+                            "the rejects folder cannot be read: {e}",
+                            e = format!("{e:#}")
+                        )
+                        .into(),
+                    );
                     return;
                 }
             };
             if frames.is_empty() {
-                app.set_status(format!("{} has no frames in it", shown(&dir)).into());
+                app.set_status(tr!("{} has no frames in it", shown(&dir)).into());
                 return;
             }
             Over {
@@ -424,18 +434,16 @@ fn rejects_listed(st: &State, app: &App) -> Option<Over> {
     }
     if frames.is_empty() {
         if let Some(&i) = offline.first() {
-            crate::rows::say_offline_for_file(st, app, i, ": nothing to delete");
+            crate::rows::say_offline_for_file(st, app, i, &tr!(": nothing to delete"));
         } else if let Some(link) = links.first() {
-            app.set_status(
-                format!("{} is a link; nothing is deleted through one", shown(link)).into(),
-            );
+            app.set_status(tr!("{} is a link; nothing is deleted through one", shown(link)).into());
         } else if !archived.is_empty() {
             app.set_status(
-                "the rejects here are all on an archive: delete them from the archive's own view"
+                tr!("the rejects here are all on an archive: delete them from the archive's own view")
                     .into(),
             );
         } else {
-            app.set_status("no frame here is in a rejects folder".into());
+            app.set_status(tr!("no frame here is in a rejects folder").into());
         }
         return None;
     }
@@ -463,7 +471,7 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
             .first()
             .map(|(_, why)| why.clone())
             .unwrap_or_default();
-        app.set_status(format!("nothing can be deleted: {why}").into());
+        app.set_status(tr!("nothing can be deleted: {why}", why = why).into());
         return;
     }
     let planned: Vec<PathBuf> = plan.frames.iter().map(|d| d.frame.clone()).collect();
@@ -472,55 +480,46 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
     let offer = delete::offer(TRASH_SUPPORTED, refused_here);
     let n = planned.len();
     let title = match which {
-        Which::Selection if n == 1 => format!("Delete {}?", file_name(&planned[0])),
-        Which::Selection => format!("Delete {n} frames?"),
-        Which::Rejects if folders.len() == 1 => {
-            format!("Delete the rejects folder's {}?", delete::count(n, "frame"))
-        }
-        Which::Rejects => format!(
-            "Delete {} from {} rejects folders?",
-            delete::count(n, "frame"),
-            folders.len()
+        Which::Selection if n == 1 => tr!("Delete {}?", file_name(&planned[0])),
+        Which::Selection => tr!("Delete {n} frame?" | "Delete {n} frames?" % n),
+        Which::Rejects if folders.len() == 1 => tr!("Delete the rejects folder's {n} frame?"
+            | "Delete the rejects folder's {n} frames?" % n),
+        Which::Rejects => tr!(
+            "Delete {n} frame from {folders} rejects folders?"
+                | "Delete {n} frames from {folders} rejects folders?" % n,
+            folders = folders.len()
         ),
     };
     let place = match folders.as_slice() {
         [one] => shown(one),
-        many if which == Which::Rejects => format!("{} rejects folders", many.len()),
-        many => format!("{} folders", many.len()),
+        many if which == Which::Rejects => {
+            tr!("{n} rejects folder" | "{n} rejects folders" % many.len())
+        }
+        many => tr!("{n} folder" | "{n} folders" % many.len()),
     };
-    let mut text = format!(
-        "{}{} and {}, from {place}.",
-        delete::count(n, "frame"),
-        delete::companion_words(plan.companions()),
-        delete::count(plan.sidecars(), "sidecar")
+    let mut text = tr!(
+        "{frames}{companions} and {sidecars}, from {place}.",
+        frames = tr!("{n} frame" | "{n} frames" % n),
+        companions = delete::companion_words(plan.companions()),
+        sidecars = tr!("{n} sidecar" | "{n} sidecars" % plan.sidecars()),
+        place = place
     );
     if let Some((_, why)) = plan.refused.first() {
-        text.push_str(&format!(
-            " {} left where {} ({why}).",
-            plan.refused.len(),
-            if plan.refused.len() == 1 {
-                "it is"
-            } else {
-                "they are"
-            }
+        text.push_str(&tr!(
+            " {n} left where it is ({why})."
+                | " {n} left where they are ({why})." % plan.refused.len(),
+            why = why
         ));
     }
     if links > 0 {
-        text.push_str(&format!(
-            " {} left alone: {}.",
-            delete::count(links, "rejects folder"),
-            if links == 1 {
-                "it is a link"
-            } else {
-                "they are links"
-            }
-        ));
+        text.push_str(&tr!(" {n} rejects folder left alone: it is a link."
+            | " {n} rejects folders left alone: they are links." % links));
     }
     if archived > 0 {
-        text.push_str(&format!(
-            " {} on an archive left alone: delete {} from the archive's own view.",
-            delete::count(archived, "frame"),
-            if archived == 1 { "it" } else { "them" }
+        text.push_str(&tr!(
+            " {n} frame on an archive left alone: delete it from the archive's own view."
+                | " {n} frames on an archive left alone: delete them from the archive's own view."
+                    % archived
         ));
     }
     app.set_delete_title(title.into());
@@ -556,13 +555,14 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
         _ => return,
     };
     if !st.window.deletes_allowed {
-        let why = "not deleted: a capture, an export or a timing run never deletes";
-        tracing::info!("{why}");
-        app.set_status(why.into());
+        tracing::info!("not deleted: a capture, an export or a timing run never deletes");
+        app.set_status(
+            tr!("not deleted: a capture, an export or a timing run never deletes").into(),
+        );
         return;
     }
     if st.sheets.deleting.is_some() {
-        app.set_status("a delete is still under way".into());
+        app.set_status(tr!("a delete is still under way").into());
         return;
     }
     // An edit of the frame on screen still to be written goes to disk
@@ -589,7 +589,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
     );
     let n = plan.frames.len();
     st.sheets.deleting = Some(plan.frames.iter().map(|d| d.frame.clone()).collect());
-    app.set_status(format!("deleting {}...", delete::count(n, "frame")).into());
+    app.set_status(tr!("deleting {n} frame..." | "deleting {n} frames..." % n).into());
     let job = Job {
         which: asked.which,
         plan,
@@ -598,7 +598,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
     };
     if !send_off(app, job) {
         st.sheets.deleting = None;
-        app.set_status("the delete could not be started; nothing was deleted".into());
+        app.set_status(tr!("the delete could not be started; nothing was deleted").into());
     }
 }
 
@@ -687,10 +687,12 @@ pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     let status = match &done.panicked {
         Some(message) => {
             tracing::error!("the delete failed: {message}");
-            format!(
-                "the delete failed, and nothing more was deleted ({} went before it did; \
-                 the log has why)",
-                delete::count(done.deleted.frames.len(), "frame")
+            tr!(
+                "the delete failed, and nothing more was deleted ({n} frame went before it did; \
+                 the log has why)"
+                    | "the delete failed, and nothing more was deleted ({n} frames went before it did; \
+                       the log has why)"
+                        % done.deleted.frames.len()
             )
         }
         None => delete::summary(&done.deleted, done.how, &done.refused),

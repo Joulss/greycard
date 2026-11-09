@@ -607,7 +607,10 @@ pub fn source_for(offline: bool, remote: bool, key: Option<(String, u64)>) -> Pl
 
 /// What the loupe says of a frame out of reach with no local preview
 /// kept, in place of a decode's failure.
-pub const NO_LOCAL_PREVIEW: &str = "its root is offline, and no local preview of it is kept";
+/// In English, marked for the catalog: kept and compared as it is,
+/// translated where it is shown.
+pub const NO_LOCAL_PREVIEW: &str =
+    crate::marked::tr!("its root is offline, and no local preview of it is kept");
 
 #[derive(Default)]
 struct Queue {
@@ -775,7 +778,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, previews: Previewe
                 file: want.file,
                 frame: want.frame(),
                 size: want.size,
-                message: "the decode panicked".into(),
+                message: crate::tr!("the decode panicked"),
             });
         }
     }

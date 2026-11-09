@@ -19,7 +19,7 @@ use greycard_edit::preset::{self, Entry, Store};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::panel::assets::refresh_presets;
-use crate::{App, PresetRow, Shared, State, settings};
+use crate::{App, PresetRow, Shared, State, settings, tr};
 
 /// The Favorites section's fold key.
 pub(crate) const FAVORITES: &str = "favorites";
@@ -261,16 +261,13 @@ fn move_preset(
     group: Option<&str>,
 ) -> Result<(), String> {
     let Some(store) = st.develop.preset_store.clone() else {
-        return Err("no configuration directory to keep presets in".into());
+        return Err(tr!("no configuration directory to keep presets in"));
     };
     // The list read again under the sheet: the preset is not where
     // it was asked for, and saying so beats a sheet that closes on
     // nothing done.
     let Some(entry) = st.develop.presets.iter().find(|e| e.path == path).cloned() else {
-        return Err(format!(
-            "{} is no longer in the list",
-            preset::stem_name(path)
-        ));
+        return Err(tr!("{} is no longer in the list", preset::stem_name(path)));
     };
     let old = store.key_of(&entry.path);
     let to = store.move_to(&entry, group).map_err(|e| {
@@ -291,7 +288,7 @@ fn move_preset(
 /// A group renamed, the stars and the fold of its presets going along.
 fn rename_group(st: &mut State, app: &App, old: &str, new: &str) -> Result<(), String> {
     let Some(store) = st.develop.preset_store.clone() else {
-        return Err("no configuration directory to keep presets in".into());
+        return Err(tr!("no configuration directory to keep presets in"));
     };
     let new = store.rename_group(old, new).map_err(|e| {
         tracing::warn!("preset group {old}: not renamed: {e}");
@@ -321,8 +318,8 @@ fn ask(st: &mut State, app: &App, asked: GroupAsked) {
         return;
     }
     let (name, verb) = match &asked {
-        GroupAsked::New(_) => (String::new(), "Create"),
-        GroupAsked::Rename(group) => (group.clone(), "Rename"),
+        GroupAsked::New(_) => (String::new(), tr!("Create")),
+        GroupAsked::Rename(group) => (group.clone(), tr!("Rename")),
     };
     app.set_preset_group_sheet_name(name.into());
     app.set_preset_group_sheet_verb(verb.into());
@@ -345,7 +342,7 @@ fn sheet_done(st: &mut State, app: &App) {
     };
     if preset::group_folder(&typed).is_none() {
         if !typed.is_empty() {
-            app.set_preset_group_sheet_note("a group needs a name".into());
+            app.set_preset_group_sheet_note(tr!("a group needs a name").into());
         }
         st.develop.preset_group_asked = Some(asked);
         return;

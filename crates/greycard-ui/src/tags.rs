@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 
 use greycard_edit::meta::{Change, Flag, Label, Meta};
 
+use crate::tr;
+
 /// The fields the culling keys and the panel's words write, and the
 /// capture time's shift, which the shift sheet writes down the same
 /// path and takes back with the same undo.
@@ -60,21 +62,23 @@ impl Tags {
 /// says so. The flag's past tense is the one a culler says aloud.
 pub fn notice(change: &Change) -> String {
     match change {
-        Change::Rating(0) => "No stars".into(),
-        Change::Rating(1) => "1 star".into(),
-        Change::Rating(n) => format!("{n} stars"),
-        Change::Flag(Flag::Pick) => "Pick".into(),
-        Change::Flag(Flag::Reject) => "Rejected".into(),
-        Change::Flag(Flag::None) => "Unflagged".into(),
-        Change::Label(Label::None) => "No label".into(),
-        Change::Label(label) => label.name().into(),
-        Change::AddKeywords(words) if words.len() == 1 => format!("Keyword {}", words[0]),
-        Change::AddKeywords(words) => format!("Keywords {}", words.join(", ")),
-        Change::RemoveKeyword(word) => format!("No keyword {word}"),
-        Change::Title(text) if text.is_empty() => "No title".into(),
-        Change::Title(_) => "Titled".into(),
-        Change::TimeShift(by) => format!("Capture time {}", signed(*by)),
-        Change::ClearTimeShift => "Capture time as the camera set it".into(),
+        Change::Rating(0) => tr!("No stars"),
+        Change::Rating(n) => tr!("{n} star" | "{n} stars" % *n),
+        Change::Flag(Flag::Pick) => tr!("Pick"),
+        Change::Flag(Flag::Reject) => tr!("Rejected"),
+        Change::Flag(Flag::None) => tr!("Unflagged"),
+        Change::Label(Label::None) => tr!("No label"),
+        // The label's name is marked for the catalog in `filter`.
+        Change::Label(label) => crate::i18n::text(label.name()),
+        Change::AddKeywords(words) => tr!(
+            "Keyword {words}" | "Keywords {words}" % words.len(),
+            words = words.join(", ")
+        ),
+        Change::RemoveKeyword(word) => tr!("No keyword {word}", word = word),
+        Change::Title(text) if text.is_empty() => tr!("No title"),
+        Change::Title(_) => tr!("Titled"),
+        Change::TimeShift(by) => tr!("Capture time {}", signed(*by)),
+        Change::ClearTimeShift => tr!("Capture time as the camera set it"),
     }
 }
 
@@ -100,20 +104,36 @@ pub fn signed(secs: i64) -> String {
 /// no word, and reads as lost.
 pub fn hidden_by_filter(change: &Change, who: &str, many: bool, filter: &str) -> String {
     let done = match change {
-        Change::Rating(n) => format!("rated {n}"),
-        Change::Flag(Flag::Pick) => "picked".into(),
-        Change::Flag(Flag::Reject) => "rejected".into(),
-        Change::Flag(Flag::None) => "unflagged".into(),
-        Change::Label(Label::None) => "unlabeled".into(),
-        Change::Label(label) => format!("labeled {}", label.name().to_lowercase()),
-        Change::AddKeywords(words) => format!("tagged {}", words.join(", ")),
-        Change::RemoveKeyword(word) => format!("untagged {word}"),
-        Change::Title(text) if text.is_empty() => "untitled".into(),
-        Change::Title(_) => "titled".into(),
-        Change::TimeShift(_) | Change::ClearTimeShift => "moved in time".into(),
+        Change::Rating(n) => tr!("rated {n}", n = n),
+        Change::Flag(Flag::Pick) => tr!("picked"),
+        Change::Flag(Flag::Reject) => tr!("rejected"),
+        Change::Flag(Flag::None) => tr!("unflagged"),
+        Change::Label(Label::None) => tr!("unlabeled"),
+        Change::Label(label) => tr!(
+            "labeled {}",
+            crate::i18n::text(&label.name().to_lowercase())
+        ),
+        Change::AddKeywords(words) => tr!("tagged {}", words.join(", ")),
+        Change::RemoveKeyword(word) => tr!("untagged {word}", word = word),
+        Change::Title(text) if text.is_empty() => tr!("untitled"),
+        Change::Title(_) => tr!("titled"),
+        Change::TimeShift(_) | Change::ClearTimeShift => tr!("moved in time"),
     };
-    let it = if many { "them" } else { "it" };
-    format!("{who} {done} and hidden by the filter ({filter}); Clear the filter to see {it}")
+    if many {
+        tr!(
+            "{who} {done} and hidden by the filter ({filter}); Clear the filter to see them",
+            who = who,
+            done = done,
+            filter = filter
+        )
+    } else {
+        tr!(
+            "{who} {done} and hidden by the filter ({filter}); Clear the filter to see it",
+            who = who,
+            done = done,
+            filter = filter
+        )
+    }
 }
 
 /// The one field that differs between `from` and `to`, as the change
@@ -159,11 +179,11 @@ pub fn between(from: &Tags, to: &Tags) -> Option<Change> {
 /// back: "Undo: No stars" for one frame, what it carries now after
 /// the key's own word, and a bare "Undone" for a step over several.
 pub fn step_notice(back: bool, landed: &[Option<Change>]) -> String {
-    let what = if back { "Undo" } else { "Redo" };
     match landed {
-        [Some(change)] => format!("{what}: {}", notice(change)),
-        _ if back => "Undone".into(),
-        _ => "Redone".into(),
+        [Some(change)] if back => tr!("Undo: {}", notice(change)),
+        [Some(change)] => tr!("Redo: {}", notice(change)),
+        _ if back => tr!("Undone"),
+        _ => tr!("Redone"),
     }
 }
 

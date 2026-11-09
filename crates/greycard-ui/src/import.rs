@@ -20,6 +20,7 @@
 
 use crate::export_name::modified_day;
 use crate::naming::{self, Day, Fields};
+use crate::tr;
 use anyhow::{Context, Result, bail};
 use greycard_edit::{Placement, Preset};
 use std::collections::{HashMap, HashSet};
@@ -191,10 +192,10 @@ pub fn subfolders(dir: &Path) -> usize {
 /// that stem go with the one the browser pairs the camera's JPEG with
 /// (`greycard_library::pairs`): the camera's own format before a DNG.
 pub fn scan(source: &Path) -> Result<Scan> {
-    anyhow::ensure!(source.is_dir(), "{} is not a folder", source.display());
+    anyhow::ensure!(source.is_dir(), tr!("{} is not a folder", source.display()));
     let mut files = Vec::new();
     let unreadable =
-        walk(source, &mut files).with_context(|| format!("reading {}", source.display()))?;
+        walk(source, &mut files).with_context(|| tr!("reading {}", source.display()))?;
     files.sort();
     let key = |p: &Path| (p.parent().map(Path::to_path_buf), stem_of(p).to_lowercase());
     // The raws by folder and stem: they take the companions.
@@ -462,61 +463,62 @@ impl Report {
     /// The status line's words once it is done.
     pub fn line(&self, destination: &Path) -> String {
         let mut s = if self.canceled {
-            format!(
-                "import stopped: {} of {} imported",
-                self.frames,
-                frames(self.total)
+            tr!(
+                "import stopped: {done} of {n} frame imported"
+                    | "import stopped: {done} of {n} frames imported" % self.total,
+                done = self.frames
             )
         } else if self.error.is_some() {
-            format!(
-                "import failed after {} of {}",
-                self.frames,
-                frames(self.total)
+            tr!(
+                "import failed after {done} of {n} frame"
+                    | "import failed after {done} of {n} frames" % self.total,
+                done = self.frames
             )
         } else {
-            format!("imported {}", frames(self.frames))
+            tr!("imported {n} frame" | "imported {n} frames" % self.frames)
         };
-        s.push_str(&format!(" to {}", destination.display()));
+        s.push_str(&tr!(" to {}", destination.display()));
         if self.bytes > 0 {
-            s.push_str(&format!(
-                " ({:.0} MB at {:.0} MB/s)",
-                self.bytes as f64 / 1e6,
-                self.rate()
+            s.push_str(&tr!(
+                " ({} MB at {} MB/s)",
+                format!("{:.0}", self.bytes as f64 / 1e6),
+                format!("{:.0}", self.rate())
             ));
         }
         if self.backed_up > 0 {
-            s.push_str(&format!(", {} backed up", self.backed_up));
+            s.push_str(&tr!(", {} backed up", self.backed_up));
         }
         if self.already > 0 {
-            s.push_str(&format!(", {} already there", self.already));
+            s.push_str(&tr!(", {} already there", self.already));
         }
         if self.lightroom > 0 {
-            s.push_str(&format!(", {} with a Lightroom edit", self.lightroom));
+            s.push_str(&tr!(", {} with a Lightroom edit", self.lightroom));
         }
         if self.renamed > 0 {
-            s.push_str(&format!(
+            s.push_str(&tr!(
                 ", {} renamed with -1 (the name was another file's)",
                 self.renamed
             ));
         }
         if self.companions_left > 0 {
-            s.push_str(&format!(
+            s.push_str(&tr!(
                 ", {} JPEG or XMP not copied (the name was another file's)",
                 self.companions_left
             ));
         }
         if self.profile_left_off > 0 {
-            s.push_str(&format!(
-                ", the preset's camera profile left off {} (made for another camera)",
-                frames(self.profile_left_off)
+            s.push_str(&tr!(
+                ", the preset's camera profile left off {n} frame (made for another camera)"
+                    | ", the preset's camera profile left off {n} frames (made for another camera)"
+                        % self.profile_left_off
             ));
         }
-        match self.unreadable {
-            0 => {}
-            1 => s.push_str("; 1 folder could not be read, its frames not imported"),
-            n => s.push_str(&format!(
-                "; {n} folders could not be read, their frames not imported"
-            )),
+        if self.unreadable > 0 {
+            s.push_str(&tr!(
+                "; {n} folder could not be read, its frames not imported"
+                    | "; {n} folders could not be read, their frames not imported"
+                        % self.unreadable
+            ));
         }
         if let Some((file, why)) = &self.error {
             s.push_str(&format!(": {}: {why}", name_of(file)));
@@ -581,14 +583,19 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
     }
 }
 
-/// "1 frame", "3 frames".
+/// "1 frame", "3 frames", in English, for the log.
 pub fn frames(n: usize) -> String {
     format!("{n} frame{}", if n == 1 { "" } else { "s" })
 }
 
 /// The status line while frame `index` (from zero) is copied.
 pub fn progress_line(index: usize, total: usize, name: &str) -> String {
-    format!("importing {} of {total}: {name}", index + 1)
+    tr!(
+        "importing {} of {total}: {name}",
+        index + 1,
+        total = total,
+        name = name
+    )
 }
 
 const CHUNK: usize = 1 << 20;
@@ -875,8 +882,8 @@ fn open_uncached(path: &Path) -> std::io::Result<std::fs::File> {
 /// against the card's hash). The file keeps `from`'s modification
 /// time. On any failure the temporary is gone and `to` untouched.
 pub fn land(from: &Path, to: &Path, want: Option<&str>) -> Result<(String, u64)> {
-    let mut src = std::fs::File::open(from).context("reading it")?;
-    let meta = src.metadata().context("reading it")?;
+    let mut src = std::fs::File::open(from).context(tr!("reading it"))?;
+    let meta = src.metadata().context(tr!("reading it"))?;
     land_from(&mut src, meta.modified().ok(), Some(meta.len()), to, want)
 }
 
@@ -935,8 +942,8 @@ pub fn land_with(
     want: Option<&str>,
     how: &Landing<'_>,
 ) -> Result<(String, u64)> {
-    let folder = to.parent().context("no folder to write in")?;
-    std::fs::create_dir_all(folder).with_context(|| format!("making {}", folder.display()))?;
+    let folder = to.parent().context(tr!("no folder to write in"))?;
+    std::fs::create_dir_all(folder).with_context(|| tr!("making {}", folder.display()))?;
     let tmp = temporary_ending(to, how.ending);
     let mut made = false;
     let result = (|| -> Result<(String, u64)> {
@@ -946,7 +953,7 @@ pub fn land_with(
             .write(true)
             .create_new(true)
             .open(&tmp)
-            .context("writing the copy")?;
+            .context(tr!("writing the copy"))?;
         made = true;
         let mut hasher = blake3::Hasher::new();
         let mut buf = vec![0u8; CHUNK];
@@ -956,10 +963,10 @@ pub fn land_with(
                 Ok(0) => break,
                 Ok(k) => k,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(anyhow::Error::new(e).context("reading it")),
+                Err(e) => return Err(anyhow::Error::new(e).context(tr!("reading it"))),
             };
             hasher.update(&buf[..k]);
-            out.write_all(&buf[..k]).context("writing the copy")?;
+            out.write_all(&buf[..k]).context(tr!("writing the copy"))?;
             bytes += k as u64;
             if let Some(counted) = how.bytes {
                 counted.fetch_add(k as u64, Ordering::Relaxed);
@@ -969,16 +976,20 @@ pub fn land_with(
         if let Some(length) = length
             && bytes != length
         {
-            bail!("read {bytes} bytes of the {length} it has");
+            bail!(tr!(
+                "read {bytes} bytes of the {length} it has",
+                bytes = bytes,
+                length = length
+            ));
         }
-        out.sync_all().context("writing the copy")?;
+        out.sync_all().context(tr!("writing the copy"))?;
         drop_cached(&out);
         drop(out);
         let hash = hasher.finalize().to_hex().to_string();
         if let Some(want) = want
             && want != hash
         {
-            bail!("the copy it was made from no longer matches the card");
+            bail!(tr!("the copy it was made from no longer matches the card"));
         }
         #[cfg(test)]
         if let Some(tamper) = how.tamper {
@@ -986,18 +997,18 @@ pub fn land_with(
         }
         let (back, _) = open_uncached(&tmp)
             .and_then(|mut f| hash_reader_beating(&mut f, how.beat))
-            .context("reading the copy back")?;
+            .context(tr!("reading the copy back"))?;
         if back != hash {
-            bail!("the copy does not read back the same");
+            bail!(tr!("the copy does not read back the same"));
         }
         if how.replace {
-            std::fs::rename(&tmp, to).context("naming the copy")?;
+            std::fs::rename(&tmp, to).context(tr!("naming the copy"))?;
         } else {
             let how = rename_noreplace(&tmp, to).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    anyhow::anyhow!("{} appeared while it was copied", to.display())
+                    anyhow::anyhow!(tr!("{} appeared while it was copied", to.display()))
                 } else {
-                    anyhow::Error::new(e).context("naming the copy")
+                    anyhow::Error::new(e).context(tr!("naming the copy"))
                 }
             })?;
             say_rename(how);
@@ -1088,7 +1099,7 @@ impl<'a> CardFile<'a> {
 
     fn tail(&mut self) -> Result<String> {
         if self.tail.is_none() {
-            self.tail = Some(hash_tail(self.path).context("reading it")?);
+            self.tail = Some(hash_tail(self.path).context(tr!("reading it"))?);
         }
         Ok(self.tail.clone().unwrap_or_default())
     }
@@ -1105,14 +1116,14 @@ impl<'a> CardFile<'a> {
 
     fn head(&mut self) -> Result<String> {
         if self.head.is_none() {
-            self.head = Some(greycard_library::hash_file(self.path).context("reading it")?);
+            self.head = Some(greycard_library::hash_file(self.path).context(tr!("reading it"))?);
         }
         Ok(self.head.clone().unwrap_or_default())
     }
 
     fn whole(&mut self) -> Result<String> {
         if self.whole.is_none() {
-            self.whole = Some(hash_whole(self.path).context("reading it")?);
+            self.whole = Some(hash_whole(self.path).context(tr!("reading it"))?);
         }
         Ok(self.whole.clone().unwrap_or_default())
     }
@@ -1346,37 +1357,45 @@ pub fn same_device(a: &Path, b: &Path) -> Option<bool> {
 pub fn check(opts: &Options) -> Result<()> {
     anyhow::ensure!(
         opts.source.is_dir(),
-        "the source {} is not a folder",
-        opts.source.display()
+        tr!("the source {} is not a folder", opts.source.display())
     );
     anyhow::ensure!(
         !opts.destination.as_os_str().is_empty(),
-        "no destination is chosen"
+        tr!("no destination is chosen")
     );
     let card = card_root(&opts.source);
     let source = resolve(&opts.source);
-    let mut places = vec![("destination", resolve(&opts.destination))];
+    let mut places = vec![(
+        crate::marked::tr!("destination"),
+        resolve(&opts.destination),
+    )];
     if let Some(b) = &opts.backup {
-        places.push(("backup", resolve(b)));
+        places.push((crate::marked::tr!("backup"), resolve(b)));
     }
     for (what, place) in &places {
         anyhow::ensure!(
             !source.starts_with(place),
-            "the {what} {} holds the source {}",
-            place.display(),
-            source.display()
+            tr!(
+                "the {what} {} holds the source {}",
+                place.display(),
+                source.display(),
+                what = crate::i18n::text(what)
+            )
         );
         anyhow::ensure!(
             !place.starts_with(&card),
-            "the {what} {} is on the card ({})",
-            place.display(),
-            card.display()
+            tr!(
+                "the {what} {} is on the card ({})",
+                place.display(),
+                card.display(),
+                what = crate::i18n::text(what)
+            )
         );
     }
     if let [(_, dest), (_, backup)] = places.as_slice() {
         anyhow::ensure!(
             !backup.starts_with(dest) && !dest.starts_with(backup),
-            "the backup is the destination, or inside it"
+            tr!("the backup is the destination, or inside it")
         );
     }
     naming::folders(&opts.subfolder, &sample())?;
@@ -1545,7 +1564,9 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
     let reserve = companion_reserve(item);
     let rel = relative_within(opts, &item.file, &fields, reserve)?;
     let planned = opts.destination.join(&rel);
-    let size = std::fs::metadata(&item.file).context("reading it")?.len();
+    let size = std::fs::metadata(&item.file)
+        .context(tr!("reading it"))?
+        .len();
     let mut card = CardFile::new(&item.file, size);
 
     // Imported before: the same bytes under the destination, under any
@@ -1591,7 +1612,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
                 // Read twice and different: the card is not giving the
                 // same bytes back.
                 let _ = std::fs::remove_file(&to);
-                bail!("the card read differently twice");
+                bail!(tr!("the card read differently twice"));
             }
             run.existing.add(to.clone(), bytes, hash.clone());
             report.files += 1;
@@ -1624,7 +1645,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
         }
         let (h, b) = run
             .land(companion, &c_to, None)
-            .with_context(|| format!("{} (with {})", name_of(companion), name_of(&item.file)))?;
+            .with_context(|| tr!("{} (with {})", name_of(companion), name_of(&item.file)))?;
         run.existing.add(c_to.clone(), b, h.clone());
         report.files += 1;
         report.bytes += b;
@@ -1721,7 +1742,7 @@ fn back_up(
     }
     if !held {
         run.land(frame, &b_frame, frame_hash.as_deref())
-            .context("the backup copy")?;
+            .context(tr!("the backup copy"))?;
         report.backed_up += 1;
     }
     for (file, hash) in &copies[1..] {
@@ -1738,7 +1759,7 @@ fn back_up(
             continue;
         }
         run.land(file, &b_to, hash.as_deref())
-            .context("the backup copy")?;
+            .context(tr!("the backup copy"))?;
         report.backed_up += 1;
     }
     Ok(())

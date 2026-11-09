@@ -29,6 +29,7 @@ use greycard_library::Library;
 use super::{Beat, Hooks, key_of, open_index, whole_from_row};
 use crate::delete::{self, Deleted, How};
 use crate::rejects::{REJECTS, rejects_dir};
+use crate::tr;
 
 /// The queue's file name, beside `roots.json`.
 pub const QUEUE_FILE: &str = "archive-queue.json";
@@ -128,9 +129,9 @@ fn near(a: i64, b: i64) -> bool {
 pub fn entry_of(frame: &Path, lib: Option<&Library>) -> Result<Entry, String> {
     let meta = std::fs::metadata(frame).map_err(|e| e.to_string())?;
     if !meta.is_file() {
-        return Err("not a file".into());
+        return Err(tr!("not a file"));
     }
-    let hash = key_of(frame, &meta, lib).ok_or_else(|| "its head could not be read".to_string())?;
+    let hash = key_of(frame, &meta, lib).ok_or_else(|| tr!("its head could not be read"))?;
     Ok(Entry {
         hash,
         name: frame
@@ -350,14 +351,18 @@ pub fn look(
             ));
         }
         Ok(m) if m.is_dir() => {}
-        _ => return Err(format!("there is no rejects folder at {}", dir.display())),
+        _ => return Err(tr!("there is no rejects folder at {}", dir.display())),
     }
     beat();
     // Every file of the folder its own, the camera's JPEG beside a raw
     // too: each is found on the archive by its own content, and moved
     // or deleted there on its own.
-    let frames = crate::files::list_files(dir, true)
-        .map_err(|e| format!("the rejects folder cannot be read: {e:#}"))?;
+    let frames = crate::files::list_files(dir, true).map_err(|e| {
+        tr!(
+            "the rejects folder cannot be read: {e}",
+            e = format!("{e:#}")
+        )
+    })?;
     let lib = index.and_then(|p| open_index(p, false, beat));
     let mut rejects = Vec::with_capacity(frames.len());
     for frame in frames {
@@ -488,9 +493,9 @@ pub fn run_moves(
             let why = if let Some(why) = why_left {
                 why
             } else if found.unknown.is_empty() {
-                "no copy of it was found there".to_string()
+                tr!("no copy of it was found there")
             } else {
-                "its copy there could not be told from it without reading both whole".to_string()
+                tr!("its copy there could not be told from it without reading both whole")
             };
             out.left.push((entry.clone(), why));
             hooks.bytes.fetch_add(1, Ordering::Relaxed);
@@ -539,7 +544,7 @@ pub fn run_moves(
                         .skipped
                         .first()
                         .map(|(_, w)| w.clone())
-                        .unwrap_or_else(|| "not moved".into());
+                        .unwrap_or_else(|| tr!("not moved"));
                     why_left = Some(why);
                 }
                 Err(e) => why_left = Some(format!("{e:#}")),
@@ -724,8 +729,7 @@ pub fn parse_queue(bytes: &[u8]) -> Option<Read> {
     let mut read = Read::default();
     for item in list {
         let Some(archive) = item.get("archive").and_then(|a| a.as_str()) else {
-            read.dropped
-                .push("an entry with no archive's path".to_string());
+            read.dropped.push(tr!("an entry with no archive's path"));
             continue;
         };
         let archive = PathBuf::from(archive);
@@ -777,7 +781,7 @@ pub fn read_queue(path: &Path) -> std::io::Result<Read> {
             let _ = std::fs::rename(path, &aside);
             Ok(Read {
                 queue: Vec::new(),
-                dropped: vec![format!(
+                dropped: vec![tr!(
                     "the whole file, which is not a queue (set aside as {})",
                     aside.display()
                 )],

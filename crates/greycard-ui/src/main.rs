@@ -62,6 +62,10 @@ pub(crate) use greycard_ui::{
     selection, tags, wheel, zoom,
 };
 
+// The window's words: `crate::tr!` here as in the library, and the
+// marker for a shown table's strings.
+pub(crate) use greycard_ui::{marked, tr};
+
 // What renders a developed frame into a picture or a file, in a crate
 // of its own below the window; named here as the modules were.
 pub(crate) use greycard_render::{detail, export, finish, watermark};
@@ -920,6 +924,7 @@ impl State {
                 view_generation: 0,
                 loads: rows::Loads::default(),
                 pick_pending: None,
+                reading_line: None,
                 panel_stand_in: None,
                 thumb_base: vec![None; count],
                 thumb_shown: vec![None; count],

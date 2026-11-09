@@ -34,7 +34,7 @@ use crate::archive::{self, Beat, Heard};
 use crate::panel::browser::file_name;
 use crate::roots::ROOT_WAIT;
 use crate::worker::Worker;
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, tr};
 
 /// How long a write to an archive may say nothing before it is given
 /// up (§233): a share that answered its look and then went quiet.
@@ -1647,18 +1647,16 @@ pub(crate) fn refresh_note(st: &State, app: &App) {
         .map(|count| {
             let name = crate::roots::root_name(&st.views.library.roots, &count.archive);
             let n = count.total;
-            let mut clause = format!(
-                "{n} edit{} waiting for {name}",
-                if n == 1 { "" } else { "s" }
+            let mut clause = tr!(
+                "{n} edit waiting for {name}" | "{n} edits waiting for {name}" % n,
+                name = name
             );
             if count.unknown > 0 {
                 // Waiting on the user, not the archive: the log names
                 // the frames when the note is clicked.
                 let u = count.unknown;
-                clause.push_str(&format!(
-                    "; {u} can't tell which copy {} own",
-                    if u == 1 { "is its" } else { "are their" }
-                ));
+                clause.push_str(&tr!("; {n} can't tell which copy is its own"
+                    | "; {n} can't tell which copy are their own" % u));
             }
             clause
         })
@@ -1914,11 +1912,13 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
     let where_ = crate::roots::root_name(&st.views.library.roots, &target.archive);
     let which = local_root
         .map(|r| crate::roots::root_name(&st.views.library.roots, &r))
-        .unwrap_or_else(|| "its root".to_string());
+        .unwrap_or_else(|| tr!("its root"));
     app.set_status(
-        format!(
+        tr!(
             "{which} is offline: {} is open from its copy on {where_}",
-            file_name(frame)
+            file_name(frame),
+            which = which,
+            where_ = where_
         )
         .into(),
     );

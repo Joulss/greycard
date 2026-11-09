@@ -30,7 +30,7 @@ use crate::delete::{self, How, Offer, TRASH_SUPPORTED};
 use crate::panel::browser::file_name;
 use crate::roots::{ROOT_WAIT, View};
 use crate::worker::Worker;
-use crate::{App, Shared, State, archive};
+use crate::{App, Shared, State, archive, tr};
 
 /// The window's side of Remove rejects.
 #[derive(Default)]
@@ -98,11 +98,7 @@ pub(crate) struct Done {
 }
 
 fn copies_word(n: usize) -> String {
-    if n == 1 {
-        "1 copy".into()
-    } else {
-        format!("{n} copies")
-    }
+    tr!("{n} copy" | "{n} copies" % n)
 }
 
 fn names(names: &[String]) -> String {
@@ -116,7 +112,7 @@ pub(crate) fn show(st: &State, app: &App) {
     let items: Vec<slint::SharedString> = roots
         .archives()
         .iter()
-        .map(|a| format!("Remove rejects from {}...", roots.label(a)).into())
+        .map(|a| tr!("Remove rejects from {}...", roots.label(a)).into())
         .collect();
     app.set_archive_rejects_choices(ModelRc::new(VecModel::from(items)));
 }
@@ -127,11 +123,11 @@ pub(crate) fn show(st: &State, app: &App) {
 pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
     let mut st = state.borrow_mut();
     if st.archive.running.is_some() {
-        app.set_status("a job on an archive is still under way".into());
+        app.set_status(tr!("a job on an archive is still under way").into());
         return;
     }
     let Some(archive) = st.views.library.roots.archives().get(choice).cloned() else {
-        app.set_status("there is no archive: mark a root as one from its menu".into());
+        app.set_status(tr!("there is no archive: mark a root as one from its menu").into());
         return;
     };
     let label = st.views.library.roots.label(&archive);
@@ -147,9 +143,11 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
         } => Some(folder.clone()),
         _ => {
             app.set_status(
-                "Remove rejects works on one folder: pick one in the tree with With \
-                 subfolders off"
-                    .into(),
+                tr!(
+                    "Remove rejects works on one folder: pick one in the tree with With \
+                     subfolders off"
+                )
+                .into(),
             );
             return;
         }
@@ -165,7 +163,7 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
         .or_else(|| super::open_folder(&st))
         .or_else(|| st.views.recent.open.clone())
     else {
-        app.set_status("nothing is open".into());
+        app.set_status(tr!("nothing is open").into());
         return;
     };
     let open = dunce::simplified(&open).to_path_buf();
@@ -173,16 +171,17 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
     let on_archive = |p: &Path| p.starts_with(&archive);
     if on_archive(&open) || st.files.first().is_some_and(|f| on_archive(f)) {
         app.set_status(
-            format!(
+            tr!(
                 "the open folder is on {label}: its rejects folder is {label}'s own, and Delete \
-                 rejects folder is the way to take it off"
+                 rejects folder is the way to take it off",
+                label = label
             )
             .into(),
         );
         return;
     }
     if st.archive.aside.iter().any(|(_, a)| *a == archive) {
-        app.set_status(format!("still waiting on {label}; try again shortly").into());
+        app.set_status(tr!("still waiting on {label}; try again shortly", label = label).into());
         return;
     }
     let r = &mut st.archive.rejects;
@@ -195,7 +194,7 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
     });
     r.look = None;
     let index = st.views.index_path.clone();
-    app.set_status(format!("looking for the rejects on {label}...").into());
+    app.set_status(tr!("looking for the rejects on {label}...", label = label).into());
     let sent = send(
         app,
         "archive rejects look",
@@ -208,7 +207,7 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, choice: usize) {
     );
     if !sent {
         st.archive.rejects.asked = None;
-        app.set_status("the look at the archive could not be started".into());
+        app.set_status(tr!("the look at the archive could not be started").into());
     }
 }
 
@@ -229,7 +228,7 @@ fn land_look(
     match heard {
         Heard::Aside => {
             app.set_status(
-                format!(
+                tr!(
                     "{} timed out after {} s; nothing was done",
                     asked.label,
                     ROOT_WAIT.as_secs()
@@ -239,7 +238,7 @@ fn land_look(
             close(&mut st, app);
         }
         Heard::Lost => {
-            app.set_status("the look at the archive failed; the log has why".into());
+            app.set_status(tr!("the look at the archive failed; the log has why").into());
             close(&mut st, app);
         }
         Heard::Done { late: true, .. } => {}
@@ -254,7 +253,7 @@ fn land_look(
         } => {
             if look.rejects.is_empty() {
                 app.set_status(
-                    format!(
+                    tr!(
                         "{} has no frames in it",
                         dunce::simplified(&look.dir).display()
                     )
@@ -301,19 +300,19 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
     let with: Vec<&core::Reject> = look.with_copies().collect();
     let mut lines = Vec::new();
     if n > 0 {
-        lines.push(format!(
-            "{} here {} {} on {label}, {}:",
-            frames_word(with.len()).replace("frame", "reject"),
-            if with.len() == 1 { "has" } else { "have" },
-            copies_word(n),
-            archive::size_words(bytes)
+        lines.push(tr!(
+            "{n} reject here has {copies} on {label}, {size}:"
+                | "{n} rejects here have {copies} on {label}, {size}:" % with.len(),
+            copies = copies_word(n),
+            label = label,
+            size = archive::size_words(bytes)
         ));
         const SHOWN: usize = 8;
         let mut shown = 0;
         'all: for r in &with {
             for c in &r.found.copies {
                 if shown == SHOWN {
-                    lines.push(format!("and {} more", n - SHOWN));
+                    lines.push(tr!("and {} more", n - SHOWN));
                     break 'all;
                 }
                 lines.push(format!(
@@ -325,47 +324,60 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
             }
         }
     } else {
-        lines.push(format!(
-            "No copy of the {} in {} was found on {label}.",
-            frames_word(look.rejects.len()).replace("frame", "reject"),
-            dunce::simplified(&asked.dir).display()
+        lines.push(tr!(
+            "No copy of the {n} reject in {dir} was found on {label}."
+                | "No copy of the {n} rejects in {dir} was found on {label}." % look.rejects.len(),
+            dir = dunce::simplified(&asked.dir).display(),
+            label = label
         ));
     }
     if !look.answered {
-        lines.push(format!(
-            "{label} isn't reachable: moves will queue, deletes can't run."
+        lines.push(tr!(
+            "{label} isn't reachable: moves will queue, deletes can't run.",
+            label = label
         ));
     }
     let mut named = Vec::new();
     let none = look.none_found();
     if !none.is_empty() {
-        named.push(format!("No copy found on {label}: {}.", some_names(&none)));
+        named.push(tr!(
+            "No copy found on {label}: {names}.",
+            label = label,
+            names = some_names(&none)
+        ));
     }
     let unknown = look.not_known();
     if !unknown.is_empty() {
-        named.push(format!("Unverified, skipped: {}.", some_names(&unknown)));
+        named.push(tr!("Unverified, skipped: {}.", some_names(&unknown)));
     }
     let unreadable = look.unreadable();
     if !unreadable.is_empty() {
         let paths: Vec<&Path> = unreadable.iter().map(|(p, _)| *p).collect();
-        named.push(format!("Could not be read: {}.", some_names(&paths)));
+        named.push(tr!("Could not be read: {}.", some_names(&paths)));
     }
     let delete_note = match (offer.trash, offer.permanent) {
-        (true, false) => "Delete uses the trash.".to_string(),
+        (true, false) => tr!("Delete uses the trash."),
         (true, true) => {
-            format!("The trash failed on {label} earlier; a permanent delete can't be undone.")
+            tr!(
+                "The trash failed on {label} earlier; a permanent delete can't be undone.",
+                label = label
+            )
         }
-        _ => format!("No trash on {label}: deletes are permanent."),
+        _ => tr!("No trash on {label}: deletes are permanent.", label = label),
     };
-    let note = format!("Move files them in a rejects folder on {label}. {delete_note}");
-    app.set_archive_rejects_title(format!("Remove rejects from {label}").into());
+    let note = tr!(
+        "Move files them in a rejects folder on {label}. {delete_note}",
+        label = label,
+        delete_note = delete_note
+    );
+    app.set_archive_rejects_title(tr!("Remove rejects from {label}", label = label).into());
     app.set_archive_rejects_text(lines.join("\n").into());
     app.set_archive_rejects_named(named.join("\n").into());
     app.set_archive_rejects_note(note.into());
     let some = n > 0;
     app.set_archive_rejects_move(
         if look.to_move() > 0 {
-            format!("Move to rejects on {label}")
+            tr!("Move to rejects on {label}", label = label)
         } else {
             String::new()
         }
@@ -374,12 +386,15 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
     let deletable = some && look.answered;
     let (trash, permanent) = match (deletable, offer.trash, offer.permanent) {
         (false, _, _) => (String::new(), String::new()),
-        (true, true, false) => (format!("Delete from {label}"), String::new()),
+        (true, true, false) => (tr!("Delete from {label}", label = label), String::new()),
         (true, true, true) => (
-            format!("Delete from {label} (to the trash)"),
-            format!("Delete from {label} permanently"),
+            tr!("Delete from {label} (to the trash)", label = label),
+            tr!("Delete from {label} permanently", label = label),
         ),
-        (true, false, _) => (String::new(), format!("Delete from {label} permanently")),
+        (true, false, _) => (
+            String::new(),
+            tr!("Delete from {label} permanently", label = label),
+        ),
     };
     app.set_archive_rejects_trash(trash.into());
     app.set_archive_rejects_permanent(permanent.into());
@@ -395,7 +410,7 @@ pub(crate) fn answered(state: &Rc<Shared>, app: &App, answer: i32) {
             || st.archive.aside.iter().any(|(_, a)| *a == asked.archive))
     {
         app.set_status(
-            "nothing done: another job on an archive is under way; ask again once it is done"
+            tr!("nothing done: another job on an archive is under way; ask again once it is done")
                 .into(),
         );
         close(&mut st, app);
@@ -419,7 +434,7 @@ pub(crate) fn answered(state: &Rc<Shared>, app: &App, answer: i32) {
         _ => None,
     };
     if matches!(answer, 2 | 3) && !look.answered {
-        app.set_status(format!("not deleted: {} isn't reachable", asked.label).into());
+        app.set_status(tr!("not deleted: {} isn't reachable", asked.label).into());
         run_due(&mut st, app);
         return;
     }
@@ -428,9 +443,10 @@ pub(crate) fn answered(state: &Rc<Shared>, app: &App, answer: i32) {
         return;
     };
     if !st.window.deletes_allowed {
-        let why = "nothing done: a capture, an export or a timing run never moves or deletes";
-        tracing::info!("{why}");
-        app.set_status(why.into());
+        tracing::info!("nothing done: a capture, an export or a timing run never moves or deletes");
+        app.set_status(
+            tr!("nothing done: a capture, an export or a timing run never moves or deletes").into(),
+        );
         return;
     }
     start(
@@ -459,8 +475,8 @@ fn start(
     let cancel = Arc::new(AtomicBool::new(false));
     let count = Arc::new(AtomicU64::new(0));
     let doing = match kind {
-        Kind::Move | Kind::Queue => "moving the rejects on",
-        Kind::Delete(_) => "deleting the rejects from",
+        Kind::Move | Kind::Queue => crate::marked::tr!("moving the rejects on"),
+        Kind::Delete(_) => crate::marked::tr!("deleting the rejects from"),
     };
     st.archive.running = Some(Running {
         cancel: cancel.clone(),
@@ -482,7 +498,14 @@ fn start(
         frames_word(items.len())
     );
     app.set_archive_fraction(0.0);
-    app.set_archive_line(format!("{doing} {label}...").into());
+    app.set_archive_line(
+        tr!(
+            "{doing} {label}...",
+            doing = crate::i18n::text(doing),
+            label = label
+        )
+        .into(),
+    );
     app.set_archive_running(true);
     let index = st.views.index_path.clone();
     let sent = send(
@@ -528,7 +551,7 @@ fn start(
     if !sent {
         st.archive.running = None;
         app.set_archive_running(false);
-        app.set_status("the job could not be started; nothing was done".into());
+        app.set_status(tr!("the job could not be started; nothing was done").into());
         return;
     }
     start_timer(st, app);
@@ -561,7 +584,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
                 st.archive.timer.stop();
                 app.set_archive_running(false);
                 app.set_status(
-                    format!(
+                    tr!(
                         "{} timed out after {} s; stopping after this frame",
                         r.label,
                         ROOT_WAIT.as_secs()
@@ -585,7 +608,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
             }
             st.archive.rejects.canceled_by_hand.remove(&token);
             tracing::error!("archive: the rejects' job ended without a report");
-            app.set_status("the rejects' job stopped without a report; see the log".into());
+            app.set_status(tr!("the rejects' job stopped without a report; see the log").into());
             run_due(&mut st, app);
         }
         Heard::Done { result, late } => {
@@ -600,7 +623,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
             let by_hand = st.archive.rejects.canceled_by_hand.remove(&token);
             let mut words = landed(&mut st, result, late && !by_hand);
             if late {
-                words = format!("the timed-out job finished: {words}");
+                words = tr!("the timed-out job finished: {words}", words = words);
             }
             tracing::info!("archive: {words}");
             app.set_status(words.into());
@@ -628,7 +651,7 @@ fn landed(st: &mut State, done: Done, late: bool) -> String {
 /// `entries` added to `archive`'s queue; what was dropped from it said.
 fn enqueue(st: &State, archive: &Path, entries: &[Entry]) -> Result<String, String> {
     let Some(file) = st.views.library.file.as_deref().map(core::queue_path) else {
-        return Err("there is no library to keep the queue beside".into());
+        return Err(tr!("there is no library to keep the queue beside"));
     };
     core::edit_queue(&file, |q| core::enqueue(q, archive, entries))
         .map(|(read, ())| dropped_words(&read.dropped))
@@ -651,22 +674,33 @@ fn landed_words(
         (Kind::Move, Ran::NotAnswering) => {
             st.archive.rejects.tried.remove(&archive);
             match enqueue(st, &archive, &entries) {
-                Ok(dropped) => format!(
-                    "{label} isn't reachable; the move of {} is queued until it's back{dropped}",
-                    frames_word(entries.len()).replace("frame", "reject")
+                Ok(dropped) => tr!(
+                    "{label} isn't reachable; the move of {n} reject is queued until it's back{dropped}"
+                        | "{label} isn't reachable; the move of {n} rejects is queued until it's back{dropped}"
+                            % entries.len(),
+                    label = label,
+                    dropped = dropped
                 ),
-                Err(e) => {
-                    format!("{label} isn't reachable, and the move couldn't be queued: {e}")
-                }
+                Err(e) => tr!(
+                    "{label} isn't reachable, and the move couldn't be queued: {e}",
+                    label = label,
+                    e = e
+                ),
             }
         }
         (Kind::Delete(_), Ran::NotAnswering) => {
             st.archive.rejects.tried.remove(&archive);
-            format!("not deleted: {label} isn't reachable; try again when it's back")
+            tr!(
+                "not deleted: {label} isn't reachable; try again when it's back",
+                label = label
+            )
         }
         (Kind::Queue, Ran::NotAnswering) => {
             st.archive.rejects.tried.remove(&archive);
-            format!("{label} isn't reachable after all; its queued moves wait")
+            tr!(
+                "{label} isn't reachable after all; its queued moves wait",
+                label = label
+            )
         }
         (_, Ran::Moved(moves)) => {
             hand_folders(st, &moves.folders);
@@ -678,13 +712,18 @@ fn landed_words(
                 // and are queued (§197).
                 st.archive.rejects.tried.remove(&archive);
                 match enqueue(st, &archive, &moves.canceled) {
-                    Ok(dropped) => words.push_str(&format!(
-                        "; the {} not reached are queued until {label} is back{dropped}",
-                        frames_word(moves.canceled.len())
+                    Ok(dropped) => words.push_str(&tr!(
+                        "; the {n} frame not reached are queued until {label} is back{dropped}"
+                            | "; the {n} frames not reached are queued until {label} is back{dropped}"
+                            % moves.canceled.len(),
+                        label = label,
+                        dropped = dropped
                     )),
-                    Err(e) => words.push_str(&format!(
-                        "; the {} not reached could not be queued: {e}",
-                        frames_word(moves.canceled.len())
+                    Err(e) => words.push_str(&tr!(
+                        "; the {n} frame not reached could not be queued: {e}"
+                            | "; the {n} frames not reached could not be queued: {e}"
+                            % moves.canceled.len(),
+                        e = e
                     )),
                 }
             }
@@ -701,12 +740,16 @@ fn landed_words(
                 return words;
             };
             let edited = core::edit_queue(&file, |q| core::dequeue(q, &archive, &moves.done));
-            let mut words = format!("{label} is back; queued moves ran: {words}");
+            let mut words = tr!(
+                "{label} is back; queued moves ran: {words}",
+                label = label,
+                words = words
+            );
             match edited {
                 Ok((read, ())) => words.push_str(&dropped_words(&read.dropped)),
                 Err(e) => {
                     tracing::warn!("archive: {}: {e}", file.display());
-                    words.push_str(&format!("; the queue could not be written: {e}"));
+                    words.push_str(&tr!("; the queue could not be written: {e}", e = e));
                 }
             }
             let left: Vec<String> = moves
@@ -716,7 +759,7 @@ fn landed_words(
                 .chain(moves.canceled.iter().map(|e| e.name.clone()))
                 .collect();
             if !left.is_empty() {
-                words.push_str(&format!(
+                words.push_str(&tr!(
                     "; left in the queue: {}{}",
                     names(&left),
                     moves
@@ -765,11 +808,15 @@ fn hand_folders(st: &State, folders: &[PathBuf]) {
 fn dropped_words(dropped: &[String]) -> String {
     match dropped {
         [] => String::new(),
-        [one] => format!("; dropped from the archive queue as malformed: {one}"),
-        many => format!(
-            "; dropped from the archive queue as malformed: {} entries ({}; the log has the rest)",
-            many.len(),
-            many[0]
+        [one] => tr!(
+            "; dropped from the archive queue as malformed: {one}",
+            one = one
+        ),
+        many => tr!(
+            "; dropped from the archive queue as malformed: {n} entry ({first}; the log has the rest)"
+                | "; dropped from the archive queue as malformed: {n} entries ({first}; the log has the rest)"
+                    % many.len(),
+            first = many[0]
         ),
     }
 }
@@ -778,41 +825,36 @@ fn dropped_words(dropped: &[String]) -> String {
 pub(crate) fn moves_words(m: &Moves, label: &str) -> String {
     let mut parts = Vec::new();
     if m.moved.is_empty() {
-        parts.push(format!("nothing was moved on {label}"));
+        parts.push(tr!("nothing was moved on {label}", label = label));
     } else {
-        let mut first = format!(
-            "moved {} on {label} into a rejects folder beside each",
-            copies_word(m.moved.len())
+        let mut first = tr!(
+            "moved {copies} on {label} into a rejects folder beside each",
+            copies = copies_word(m.moved.len()),
+            label = label
         );
         if m.sidecars > 0 {
-            first.push_str(&format!(
-                ", {} with them",
-                delete::count(m.sidecars, "sidecar")
+            first.push_str(&tr!(
+                ", {n} sidecar with them" | ", {n} sidecars with them" % m.sidecars
             ));
         }
         parts.push(first);
     }
     if m.already > 0 {
-        parts.push(format!(
+        parts.push(tr!(
             "{} in a rejects folder there already",
             copies_word(m.already)
         ));
     }
     if let Some((_, why)) = m.left.first() {
         let left: Vec<String> = m.left.iter().map(|(e, _)| e.name.clone()).collect();
-        parts.push(format!("left: {} ({why})", names(&left)));
+        parts.push(tr!("left: {} ({why})", names(&left), why = why));
     }
     if !m.not_known.is_empty() {
-        parts.push(format!(
-            "a copy not known, left alone: {}",
-            names(&m.not_known)
-        ));
+        parts.push(tr!("a copy not known, left alone: {}", names(&m.not_known)));
     }
     if !m.canceled.is_empty() {
-        parts.push(format!(
-            "canceled, {} not reached",
-            frames_word(m.canceled.len())
-        ));
+        parts.push(tr!("canceled, {n} frame not reached"
+            | "canceled, {n} frames not reached" % m.canceled.len()));
     }
     parts.join("; ")
 }
@@ -820,26 +862,30 @@ pub(crate) fn moves_words(m: &Moves, label: &str) -> String {
 /// What a run of the deletes did, in a line: §190's words, saying it
 /// was the archive.
 pub(crate) fn deletes_words(d: &Deletes, how: How, label: &str) -> String {
-    let mut words = format!(
-        "on {label}, {}",
-        delete::summary(&d.deleted, how, &d.refused)
+    let mut words = tr!(
+        "on {label}, {summary}",
+        label = label,
+        summary = delete::summary(&d.deleted, how, &d.refused)
     );
     if !d.not_found.is_empty() {
-        words.push_str(&format!("; no copy found there: {}", names(&d.not_found)));
+        words.push_str(&tr!("; no copy found there: {}", names(&d.not_found)));
     }
     if !d.not_known.is_empty() {
-        words.push_str(&format!(
+        words.push_str(&tr!(
             "; a copy not known, left alone: {}",
             names(&d.not_known)
         ));
     }
     if d.canceled > 0 {
         let why = if d.deleted.trash_refused.is_some() {
-            "after the refusal"
+            tr!("after the refusal")
         } else {
-            "canceled,"
+            tr!("canceled,")
         };
-        words.push_str(&format!("; {why} {} not reached", frames_word(d.canceled)));
+        words.push_str(&tr!(
+            "; {why} {n} frame not reached" | "; {why} {n} frames not reached" % d.canceled,
+            why = why
+        ));
     }
     words
 }
@@ -947,9 +993,10 @@ fn run_queue(st: &mut State, app: &App, archive: &Path) {
     }
     let label = st.views.library.roots.label(archive);
     app.set_status(
-        format!(
-            "{label} is back: moving its {} queued...",
-            frames_word(entries.len()).replace("frame", "reject")
+        tr!(
+            "{label} is back: moving its {n} reject queued..."
+                | "{label} is back: moving its {n} rejects queued..." % entries.len(),
+            label = label
         )
         .into(),
     );

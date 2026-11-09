@@ -351,3 +351,90 @@ line's errors, the log, and the request nouns `rows::request` takes
   reasons and step names, `export_queue::sets` and `count_line`,
   `delete::companion_words`, shape and part labels, the chooser's
   titles, which `chooser` takes as `&'static str`) are not wrapped here.
+
+### The library side's Rust strings
+
+**The Rust strings of the window's library side wrapped.** Every string
+greycard-ui's crate root, `owners/`, `panel/archive/`, and the library,
+sheets, and settings panels set on the window goes through `tr!`: 626
+calls and 785 catalog entries (90 of them plurals) as `xtr` reads the
+library and the binary. The English is unchanged; the tests assert it.
+
+**Plurals made whole.** A count joined to a word (`frame{}` with an
+`s`, `count(n, "picture", "pictures")`, `queue::frames`, `if n == 1`)
+is a plural sentence of its own, `tr!("{n} frame" | "{n} frames" % n)`,
+so a language with other forms can have them; so is a count of two or
+more that English never says in the singular. Where English has always
+said "1 frames" (a read's line, a size in bytes, the models' count),
+both forms are the plural, so the English stays and a translation may
+still say it well. A sentence built of fragments keeps them as
+placeholders, each fragment translated. A word English lowers in the
+middle of a sentence (a flag, a label, an order, a shape's kind) has
+its lower-case form as its own entry, since another language may not
+lower it.
+
+**Shown tables marked.** A `&'static str` that a `const` holds and the
+window shows (the keys sheet's lines and headings, the models' notes,
+the filter's captions, the order menu's words, the file choosers'
+titles) is marked with `marked::tr!("...")`, the literal itself, so a
+`const` may hold it and `xtr` takes it into the catalog; it is
+translated where it is shown, by `i18n::text`, and compared and stored
+in English. Words another crate holds (greycard-edit's section and part
+titles, greycard-library's order names) are marked in a list of ours,
+with a test that the list is theirs. The marker lives in i18n.rs, named
+in lib.rs at `marked`; the binary re-exports it and `tr!` beside its
+other library names, so `crate::tr!` is one path on both sides.
+
+**The pick's reading line remembered.** The pick's end cleared the
+status when it began "reading ", which no translation need. The line a
+pick or a read of mosaics puts up is kept (`views.reading_line`), and
+the pick's end clears the status only while it still says that.
+
+**The keys.** The table stays English; the `?` sheet's rows, the
+Settings sheet's Keys rows, "Also: ...", and "None" are translated as
+they are built, and the sheet's search reads the words shown. The
+pointer's two lines keep their chord apart from the word "click", and
+two chords either of which does a thing are joined by a translated
+"{} or {}", the chords as they are.
+
+**Left English on purpose.** Logs; settings.json's keys and values;
+values the Slint side compares (the theme, scroll bar, category,
+start view, and import names, which the Slint side labels); chord and
+key names; thread names; the terminal's text (headless, the command
+line); errors shown before the window exists; the issue report's
+body; words other crates build (greycard-engine's `queue::frames`,
+greycard-edit's and greycard-library's names), which their callers
+here replace or pass through.
+
+*Verified.*
+
+- `cargo fmt --all`, `cargo clippy -p greycard-ui --all-targets` with
+  `-D warnings`, clean.
+- `cargo test -p greycard-ui` on lavapipe: 179 (lib), 1416 (bin, 5
+  ignored), and 3 more, all passing.
+- `xtr` over lib.rs and main.rs: the strings are there, plurals with
+  both forms, multi-line literals whole; no log line, key, or test
+  string among them.
+- New tests: the order menu's marked words, and their lower-case
+  forms, are greycard-library's `SortBy::words` and ours; the filter's
+  marked flag and label names, and their lower-case forms, are
+  greycard-edit's; the carry sheet's marked titles are greycard-edit's
+  sections and parts.
+
+*Not verified.*
+
+- Any string in another language on screen: no catalog holds a
+  translation yet.
+- A log line that echoes a status (`info!("{said}")`) logs the
+  translated text once a language is set; a few were given English
+  literals of their own, not all.
+- roots/view.rs puts up its own "reading {} frames..." line, which
+  the pick's end cleared by its prefix before and does not now.
+- The file choosers' titles on the portal, zenity, kdialog, and rfd in
+  another language.
+
+The merge with the develop side left two seams for the mop-up that
+follows: the rejects' module sets both the marked "moving the rejects
+on" string and the `Doing` enum, and the develop side's assets panel
+still calls greycard-edit's English `carried_words` where this side's
+translated one now exists.

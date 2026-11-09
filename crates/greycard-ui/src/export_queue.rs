@@ -8,6 +8,7 @@
 //! by the window one entry at a time.
 
 use crate::sheet::Sheet;
+use crate::tr;
 use greycard_edit::Edit;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -226,15 +227,15 @@ pub fn place_shown(entry: &Entry) -> String {
 
 /// "1 set", "3 sets".
 pub fn sets(n: usize) -> String {
-    format!("{n} set{}", if n == 1 { "" } else { "s" })
+    tr!("{n} set" | "{n} sets" % n)
 }
 
 /// The sheet's line for the queue: "2 sets, 7 frames queued".
 pub fn count_line(entries: &[Entry]) -> String {
-    format!(
+    tr!(
         "{}, {} queued",
         sets(entries.len()),
-        crate::queue::frames(frame_count(entries))
+        tr!("{n} frame" | "{n} frames" % frame_count(entries))
     )
 }
 

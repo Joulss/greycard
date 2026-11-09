@@ -22,7 +22,8 @@ use slint::ComponentHandle;
 use slint::{ModelRc, VecModel};
 
 use crate::ai::{Here, NeverHere};
-use crate::{App, Fetch, ModelLine, State, settings};
+use crate::i18n::text;
+use crate::{App, Fetch, ModelLine, State, settings, tr};
 
 /// The fetch of every model, as it stands.
 #[derive(Debug, Default)]
@@ -223,26 +224,26 @@ pub(crate) fn brief(message: &str) -> String {
 }
 
 /// The line's words while the CPU-only runtime comes first.
-pub(crate) const AFTER_RUNTIME: &str = "after the runtime";
+pub(crate) const AFTER_RUNTIME: &str = crate::marked::tr!("after the runtime");
 
 /// A line's words for a model to fetch, or any with no store.
-pub(crate) const NOT_FETCHED: &str = "not fetched";
+pub(crate) const NOT_FETCHED: &str = crate::marked::tr!("not fetched");
 
 /// The lines' words while the machine is probed.
-pub(crate) const CHECKING: &str = "checking this machine…";
+pub(crate) const CHECKING: &str = crate::marked::tr!("checking this machine…");
 
 /// What a line says of where its model stands.
 fn status(all: &FetchAll, model: &Model, stands: &Stands) -> String {
     for (m, pct) in all.coming.iter().chain(&all.sheet) {
         if m.id == model.id {
-            return format!("fetching {pct}%");
+            return tr!("fetching {pct}%", pct = pct);
         }
     }
     if all.waiting.iter().any(|m| m.id == model.id) {
         return if all.runtime.is_some() || all.runtime_coming.is_some() {
-            AFTER_RUNTIME.into()
+            text(AFTER_RUNTIME)
         } else {
-            "queued".into()
+            tr!("queued")
         };
     }
     // A failure is said first: a model whose runtime failed under it
@@ -250,13 +251,13 @@ fn status(all: &FetchAll, model: &Model, stands: &Stands) -> String {
     if *stands != Stands::Have
         && let Some((_, why)) = all.failed.iter().find(|(id, _)| *id == model.id)
     {
-        return format!("failed: {why}");
+        return tr!("failed: {why}", why = why);
     }
     match stands {
-        Stands::Have => "in the store".into(),
-        Stands::Skip(why) => format!("skipped: {}", why.short()),
-        Stands::AfterRuntime => AFTER_RUNTIME.into(),
-        Stands::Fetch => NOT_FETCHED.into(),
+        Stands::Have => tr!("in the store"),
+        Stands::Skip(why) => tr!("skipped: {}", why.short()),
+        Stands::AfterRuntime => text(AFTER_RUNTIME),
+        Stands::Fetch => text(NOT_FETCHED),
     }
 }
 
@@ -278,10 +279,12 @@ fn left(here: &Here, plan: &[(&'static Model, Stands)]) -> u64 {
 }
 
 /// The note under the Fetch all button.
-pub(crate) const NOTE: &str = "Each under its own license, kept beside it in the store.";
+pub(crate) const NOTE: &str =
+    crate::marked::tr!("Each under its own license, kept beside it in the store.");
 
 /// The note with no store to fetch into.
-pub(crate) const NO_STORE: &str = "No cache directory, so nothing can be fetched.";
+pub(crate) const NO_STORE: &str =
+    crate::marked::tr!("No cache directory, so nothing can be fetched.");
 
 /// The Models category as it stands: a line a model, and Fetch all
 /// with what is left to fetch beside it, pressed once while a fetch of
@@ -303,8 +306,8 @@ pub(crate) fn show(st: &mut State, app: &App) {
             status: match &plan {
                 Some(plan) => status(all, m, &plan[i].1),
                 // With no store nothing is probed, and nothing fetched.
-                None if st.develop.store.is_none() => NOT_FETCHED.into(),
-                None => CHECKING.into(),
+                None if st.develop.store.is_none() => text(NOT_FETCHED),
+                None => text(CHECKING),
             }
             .into(),
         })
@@ -320,15 +323,15 @@ pub(crate) fn show(st: &mut State, app: &App) {
         || !all.waiting.is_empty();
     app.set_models_fetch_label(
         if left > 0 {
-            format!("Fetch all ({})", size_words(left))
+            tr!("Fetch all ({})", size_words(left))
         } else {
-            "Fetch all".to_string()
+            tr!("Fetch all")
         }
         .into(),
     );
     let store = st.develop.store.is_some();
     app.set_models_fetch_enabled(store && left > 0 && !running && !st.sheets.fetching);
-    app.set_models_note(if store { NOTE } else { NO_STORE }.into());
+    app.set_models_note(text(if store { NOTE } else { NO_STORE }).into());
 }
 
 /// Fetch every model this machine runs that the store lacks, one at a
@@ -398,7 +401,7 @@ pub(crate) fn pump(st: &mut State, app: &App) {
             st.sheets.models.runtime_coming = Some(runtime);
             st.sheets.fetching = true;
             st.sheets.runtime_next = Some(crate::panel::assets::AfterRuntime::Nothing);
-            app.set_status(format!("downloading {}", short(runtime.name)).into());
+            app.set_status(tr!("downloading {}", short(runtime.name)).into());
             send_runtime(st, runtime);
         } else {
             while let Some(m) = st.sheets.models.waiting.pop_front() {
@@ -536,7 +539,7 @@ pub(crate) fn runtime_landed(st: &mut State, app: &App, id: &str, failed: Option
 }
 
 /// The offer's title.
-pub(crate) const OFFER_TITLE: &str = "Fetch every model now?";
+pub(crate) const OFFER_TITLE: &str = crate::marked::tr!("Fetch every model now?");
 
 /// The offer's words: how many and how much, that they also come one
 /// by one as wanted, the runtime first where it comes first, and what
@@ -552,14 +555,17 @@ pub(crate) fn offer_text(here: &Here, plan: &[(&'static Model, Stands)]) -> Stri
     let host = fetched
         .first()
         .and_then(|m| m.files[0].url.split('/').nth(2))
-        .unwrap_or("the model host");
-    let mut text = format!(
-        "{} models, {} from {host}. Or each comes as needed, the first time it's used.",
-        fetched.len(),
-        size_words(left(here, plan)),
+        .map_or_else(|| tr!("the model host"), str::to_string);
+    // One model reads "1 models" in English as it always has.
+    let mut text = tr!(
+        "{n} models, {size} from {host}. Or each comes as needed, the first time it's used."
+            | "{n} models, {size} from {host}. Or each comes as needed, the first time it's used."
+                % fetched.len(),
+        size = size_words(left(here, plan)),
+        host = host
     );
     if let Some(runtime) = runtime_first(here, plan) {
-        text.push_str(&format!(" {} comes first.", short(runtime.name)));
+        text.push_str(&tr!(" {} comes first.", short(runtime.name)));
     }
     let mut reasons: Vec<(String, usize)> = Vec::new();
     for (_, stands) in plan {
@@ -574,7 +580,7 @@ pub(crate) fn offer_text(here: &Here, plan: &[(&'static Model, Stands)]) -> Stri
         }
     }
     for (why, n) in reasons {
-        text.push_str(&format!("\n\n{n} skipped here: {why}."));
+        text.push_str(&tr!("\n\n{n} skipped here: {why}.", n = n, why = why));
     }
     text
 }
@@ -593,7 +599,7 @@ pub(crate) fn offer_note(here: &Here, plan: &[(&'static Model, Stands)]) -> Stri
             names.push(m.license.name);
         }
     }
-    format!(
+    tr!(
         "Licenses: {}; each full text sits beside its model in the store. Asked once; Fetch all \
          is also in Settings, Models.",
         names.join(", ")
@@ -601,7 +607,7 @@ pub(crate) fn offer_note(here: &Here, plan: &[(&'static Model, Stands)]) -> Stri
 }
 
 /// The status line once the offer is answered As needed.
-pub(crate) const AS_NEEDED: &str = "each model comes the first time it's used";
+pub(crate) const AS_NEEDED: &str = crate::marked::tr!("each model comes the first time it's used");
 
 /// Offer every model at once, unprompted, the first time a picture is
 /// up: once, ever, answered either way; never in a batch run or one
@@ -637,11 +643,11 @@ pub(crate) fn offer_once(st: &mut State, app: &App) -> bool {
     st.sheets.models.asked_now = true;
     tracing::info!("offering every model at once, {}", size_words(left));
     st.sheets.fetch = Some(Fetch::Every);
-    app.set_fetch_title(OFFER_TITLE.into());
+    app.set_fetch_title(text(OFFER_TITLE).into());
     app.set_fetch_text(offer_text(&here, &plan).into());
     app.set_fetch_note(offer_note(&here, &plan).into());
-    app.set_fetch_yes("Now".into());
-    app.set_fetch_no("As needed".into());
+    app.set_fetch_yes(tr!("Now").into());
+    app.set_fetch_no(tr!("As needed").into());
     app.set_fetch_no_default(true);
     app.set_fetch_open(true);
     true
@@ -651,8 +657,8 @@ pub(crate) fn offer_once(st: &mut State, app: &App) -> bool {
 /// back to their own words for the next offer, the answer kept so it
 /// is not asked again, and on Now the fetch of every model.
 pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
-    app.set_fetch_yes("Download".into());
-    app.set_fetch_no("Not now".into());
+    app.set_fetch_yes(tr!("Download").into());
+    app.set_fetch_no(tr!("Not now").into());
     app.set_fetch_no_default(false);
     st.sheets.models.asked = true;
     // Not from a batch run, which leaves the user's settings alone, nor
@@ -665,7 +671,7 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
         fetch_all(st, app);
     } else {
         tracing::info!("every model as needed, at the offer");
-        app.set_status(AS_NEEDED.into());
+        app.set_status(text(AS_NEEDED).into());
     }
 }
 

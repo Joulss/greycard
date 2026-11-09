@@ -50,7 +50,7 @@ use crate::panel::assets::{refresh_presets, show_looks};
 use crate::panel::browser::show_badges_of_file;
 use crate::panel::history::show_history;
 use crate::panel::look_remove::{files_of, list_in, store};
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, i18n, tr};
 
 /// The sheet's question while it is up.
 #[derive(Debug, Clone)]
@@ -202,14 +202,13 @@ pub(crate) fn refusal(folder: &Folder, old: &str, files: &[PathBuf], new: &str) 
     }
     let lower = new.to_lowercase();
     if lower == old.to_lowercase() {
-        return Some(
+        return Some(tr!(
             "Only the case differs from its name now, and Windows and macOS take the two for \
              one name. Rename it to another name first, then to this one."
-                .into(),
-        );
+        ));
     }
     if folder.looks.contains(&lower) {
-        return Some(format!("There is a look called \"{new}\" already."));
+        return Some(tr!("There is a look called \"{new}\" already.", new = new));
     }
     for (_, to) in pairs(files, old, new) {
         let name = to
@@ -217,7 +216,10 @@ pub(crate) fn refusal(folder: &Folder, old: &str, files: &[PathBuf], new: &str) 
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         if folder.files.contains(&name.to_lowercase()) {
-            return Some(format!("\"{name}\" is in the look folder already."));
+            return Some(tr!(
+                "\"{name}\" is in the look folder already.",
+                name = name
+            ));
         }
     }
     None
@@ -228,19 +230,29 @@ pub(crate) fn refusal(folder: &Folder, old: &str, files: &[PathBuf], new: &str) 
 /// beside.
 fn busy(st: &State) -> Option<&'static str> {
     if st.sheets.look_renaming.is_some() {
-        Some("a look is still being renamed")
+        Some(crate::marked::tr!("a look is still being renamed"))
     } else if st.sheets.deleting.is_some() {
-        Some("pictures are being deleted; rename the look when that is done")
+        Some(crate::marked::tr!(
+            "pictures are being deleted; rename the look when that is done"
+        ))
     } else if st.sheets.look_removing {
-        Some("a look is still being removed")
+        Some(crate::marked::tr!("a look is still being removed"))
     } else if st.camera_match.running() {
-        Some("the camera match is running; rename the look when it is done")
+        Some(crate::marked::tr!(
+            "the camera match is running; rename the look when it is done"
+        ))
     } else if st.work.exporting.is_some() || st.work.queue_run.is_some() {
-        Some("an export is running; rename the look when it is done")
+        Some(crate::marked::tr!(
+            "an export is running; rename the look when it is done"
+        ))
     } else if st.archive.copying() {
-        Some("a copy to or from an archive is running; rename the look when it is done")
+        Some(crate::marked::tr!(
+            "a copy to or from an archive is running; rename the look when it is done"
+        ))
     } else if st.import.job.is_some() {
-        Some("an import is running; rename the look when it is done")
+        Some(crate::marked::tr!(
+            "an import is running; rename the look when it is done"
+        ))
     } else {
         None
     }
@@ -286,26 +298,27 @@ pub(crate) fn looks_on_disk(paths: &[PathBuf]) -> Vec<(PathBuf, BTreeSet<String>
         .collect()
 }
 
-fn count(n: usize, one: &str, many: &str) -> String {
-    if n == 1 {
-        format!("1 {one}")
-    } else {
-        format!("{n} {many}")
-    }
+fn pictures(n: usize) -> String {
+    tr!("{n} picture" | "{n} pictures" % n)
+}
+
+fn presets_of(n: usize) -> String {
+    tr!("{n} preset" | "{n} presets" % n)
 }
 
 /// The sheet's line on what names the look and what it becomes.
 pub(crate) fn uses_line(named: usize, pending: usize, presets: usize, place: &str) -> String {
+    let place = i18n::text(place);
     let mut out = match (named, pending) {
-        (0, 0) => format!("No picture {place} names it."),
+        (0, 0) => tr!("No picture {place} names it.", place = place),
         (0, _) => String::new(),
-        (1, _) => format!(
-            "1 picture {place} names it; its edit, history and snapshots will name the new \
+        (n, _) => tr!(
+            "{n} picture {place} names it; its edit, history and snapshots will name the new \
              one."
-        ),
-        (n, _) => format!(
-            "{n} pictures {place} name it; their edits, history and snapshots will name the \
-             new one."
+                | "{n} pictures {place} name it; their edits, history and snapshots will name the \
+                   new one."
+                    % n,
+            place = place
         ),
     };
     let mut add = |s: String| {
@@ -315,15 +328,15 @@ pub(crate) fn uses_line(named: usize, pending: usize, presets: usize, place: &st
         out.push_str(&s);
     };
     if pending > 0 {
-        add(format!(
-            "Reading the edits of {} to count them...",
-            count(pending, "more picture", "more pictures")
+        add(tr!(
+            "Reading the edits of {n} more picture to count them..."
+                | "Reading the edits of {n} more pictures to count them..." % pending
         ));
     }
-    match presets {
-        0 => {}
-        1 => add("1 preset names it and will name the new one.".into()),
-        n => add(format!("{n} presets name it and will name the new one.")),
+    if presets > 0 {
+        add(tr!("{n} preset names it and will name the new one."
+            | "{n} presets name it and will name the new one."
+                % presets));
     }
     out
 }
@@ -332,33 +345,37 @@ pub(crate) fn uses_line(named: usize, pending: usize, presets: usize, place: &st
 /// already name, for a look that is not in the folder: they show it as
 /// missing now, and will take this look once it has the name.
 pub(crate) fn taken_line(new: &str, pictures: usize, presets: usize, place: &str) -> String {
+    let place = i18n::text(place);
     let who = match (pictures, presets) {
         (0, 0) => return String::new(),
-        (p, 0) => format!("{} {place}", count(p, "picture", "pictures")),
-        (0, q) => count(q, "preset", "presets"),
-        (p, q) => format!(
+        (p, 0) => tr!("{} {place}", self::pictures(p), place = place),
+        (0, q) => presets_of(q),
+        (p, q) => tr!(
             "{} {place} and {}",
-            count(p, "picture", "pictures"),
-            count(q, "preset", "presets")
+            self::pictures(p),
+            presets_of(q),
+            place = place
         ),
     };
-    let verb = if pictures + presets == 1 {
-        "names"
-    } else {
-        "name"
-    };
-    format!(
-        "{who} already {verb} \"{new}\", a look that is not in the folder, and will use this \
+    tr!(
+        "{who} already names \"{new}\", a look that is not in the folder, and will use this \
          look."
+            | "{who} already name \"{new}\", a look that is not in the folder, and will use \
+               this look."
+                % pictures
+                + presets,
+        who = who,
+        new = new
     )
 }
 
 /// The sheet's note: what the rename does not reach, and what the list
 /// will show the look by when that is its title rather than its name.
 fn note(old: &str, new: &str, own: Option<&Entry>) -> String {
-    let mut out = format!(
+    let mut out = tr!(
         "Edits in other folders that name {old} will show it as missing; renaming it back \
-         to {old} brings them back."
+         to {old} brings them back.",
+        old = old
     );
     if let Some(own) = own {
         let after = Entry {
@@ -367,8 +384,9 @@ fn note(old: &str, new: &str, own: Option<&Entry>) -> String {
         };
         let label = after.label();
         if label != new {
-            out.push_str(&format!(
-                " The list shows it by the title inside its file, \"{label}\", which stays."
+            out.push_str(&tr!(
+                " The list shows it by the title inside its file, \"{label}\", which stays.",
+                label = label
             ));
         }
     }
@@ -379,28 +397,34 @@ fn note(old: &str, new: &str, own: Option<&Entry>) -> String {
 /// status line why there is nothing to ask.
 pub(crate) fn ask(st: &mut State, app: &App) {
     if let Some(why) = busy(st) {
-        app.set_status(why.into());
+        app.set_status(i18n::text(why).into());
         return;
     }
     let name = app.get_look_name().to_string();
     if name == look::NONE {
-        app.set_status("no look is chosen to rename".into());
+        app.set_status(tr!("no look is chosen to rename").into());
         return;
     }
     let Some(dir) = store() else {
-        app.set_status("there is no look directory on this machine".into());
+        app.set_status(tr!("there is no look directory on this machine").into());
         return;
     };
     // The directory as it is now, as removal reads it.
     st.develop.looks = list_in(Some(dir.clone()));
     let files = files_of(&st.develop.looks, &name, &dir);
     if files.is_empty() {
-        app.set_status(format!("{name} has no file in the look directory to rename").into());
+        app.set_status(
+            tr!(
+                "{name} has no file in the look directory to rename",
+                name = name
+            )
+            .into(),
+        );
         return;
     }
     if let Some(link) = files.iter().find(|f| is_link(f)) {
         app.set_status(
-            format!(
+            tr!(
                 "{} is a link; rename the look in its folder by hand",
                 link.file_name().unwrap_or_default().to_string_lossy()
             )
@@ -418,8 +442,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         .map(|e| e.label().to_string())
         .unwrap_or_else(|| name.clone());
     let place = match st.views.view {
-        crate::roots::View::Roots(_) => "in the library",
-        _ => "in this folder",
+        crate::roots::View::Roots(_) => crate::marked::tr!("in the library"),
+        _ => crate::marked::tr!("in this folder"),
     };
     let (in_memory, unread) = uses(st);
     let presets = st
@@ -444,7 +468,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         place,
         generation,
     };
-    app.set_look_rename_title(format!("Rename the look {shown}").into());
+    app.set_look_rename_title(tr!("Rename the look {shown}", shown = shown).into());
     app.set_look_rename_name(name.as_str().into());
     app.set_look_rename_working(false);
     st.sheets.look_rename = Some(asked);
@@ -581,9 +605,10 @@ pub(crate) fn link_all(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
             for (_, made) in &pairs[..i] {
                 let _ = std::fs::remove_file(made);
             }
-            return Err(format!(
+            return Err(tr!(
                 "{} could not be made ({e})",
-                to.file_name().unwrap_or_default().to_string_lossy()
+                to.file_name().unwrap_or_default().to_string_lossy(),
+                e = e
             ));
         }
     }
@@ -602,7 +627,7 @@ pub(crate) fn unlink_old(pairs: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, String)>
             _ => false,
         };
         if !whole {
-            failed.push((from.clone(), "its new copy is not whole".to_string()));
+            failed.push((from.clone(), tr!("its new copy is not whole")));
             continue;
         }
         if let Err(e) = std::fs::remove_file(from) {
@@ -773,52 +798,59 @@ fn summary(
     done: &Rewritten,
     unlinked: &[(PathBuf, String)],
 ) -> String {
-    let mut reached = vec![count(files, "file", "files")];
+    let mut reached = vec![tr!("{n} file" | "{n} files" % files)];
     if done.pictures > 0 {
-        reached.push(count(done.pictures, "picture", "pictures"));
+        reached.push(pictures(done.pictures));
     }
     if done.presets > 0 {
-        reached.push(count(done.presets, "preset", "presets"));
+        reached.push(presets_of(done.presets));
     }
-    let mut out = format!("renamed {old} to {new}: {}", reached.join(", "));
+    let mut out = tr!(
+        "renamed {old} to {new}: {}",
+        reached.join(", "),
+        old = old,
+        new = new
+    );
     let stale = done.stale + done.presets_stale;
     let mut why = Vec::new();
     if stale > 0 {
+        let edits = |n: usize| tr!("{n} picture's edit" | "{n} pictures' edits" % n);
         let what = match (done.stale, done.presets_stale) {
-            (p, 0) => count(p, "picture's edit", "pictures' edits"),
-            (0, p) => count(p, "preset", "presets"),
-            (p, q) => format!(
-                "{} and {}",
-                count(p, "picture's edit", "pictures' edits"),
-                count(q, "preset", "presets")
-            ),
+            (p, 0) => edits(p),
+            (0, p) => presets_of(p),
+            (p, q) => tr!("{} and {}", edits(p), presets_of(q)),
         };
-        why.push(format!(
-            "{what} could not be read or written and still name {old}"
+        why.push(tr!(
+            "{what} could not be read or written and still name {old}",
+            what = what,
+            old = old
         ));
     }
     if done.unreachable > 0 {
-        why.push(format!(
+        why.push(tr!(
             "{} could not be reached (offline, on an archive and not read yet, or sidecars \
              off) and may still name {old}",
-            count(done.unreachable, "picture's sidecar", "pictures' sidecars")
+            tr!("{n} picture's sidecar" | "{n} pictures' sidecars" % done.unreachable),
+            old = old
         ));
     }
     if done.archived > 0 {
-        why.push(format!(
+        why.push(tr!(
             "{} to an archive's copy, which is written later",
-            count(done.archived, "picture's edit goes", "pictures' edits go")
+            tr!("{n} picture's edit goes" | "{n} pictures' edits go" % done.archived)
         ));
     }
     if !why.is_empty() {
-        out.push_str(&format!(
+        out.push_str(&tr!(
             "; {}, so {old}'s files stay under that name too until you remove them",
-            why.join("; ")
+            why.join("; "),
+            old = old
         ));
     } else if let Some((file, why)) = unlinked.first() {
-        out.push_str(&format!(
+        out.push_str(&tr!(
             "; {} stays under the old name ({why})",
-            file.file_name().unwrap_or_default().to_string_lossy()
+            file.file_name().unwrap_or_default().to_string_lossy(),
+            why = why
         ));
     }
     out
@@ -838,26 +870,32 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
     let looks = list_in(Some(asked.store.clone()));
     let files = files_of(&looks, old, &asked.store);
     if files.is_empty() {
-        return Err(format!(
-            "{old} has no file in the look directory now; nothing was renamed"
+        return Err(tr!(
+            "{old} has no file in the look directory now; nothing was renamed",
+            old = old
         ));
     }
     if new == old {
-        return Err(format!("{old} is its name already"));
+        return Err(tr!("{old} is its name already", old = old));
     }
     let folder = Folder::read(&asked.store, &looks);
     if let Some(why) = refusal(&folder, old, &files, new) {
-        return Err(format!("{old} was not renamed: {why}"));
+        return Err(tr!("{old} was not renamed: {why}", old = old, why = why));
     }
     if let Some(link) = files.iter().find(|f| is_link(f)) {
-        return Err(format!(
+        return Err(tr!(
             "{old} was not renamed: {} is a link",
-            link.file_name().unwrap_or_default().to_string_lossy()
+            link.file_name().unwrap_or_default().to_string_lossy(),
+            old = old
         ));
     }
     let pairs = pairs(&files, old, new);
     if let Err(why) = link_all(&pairs) {
-        return Err(format!("{old} was not renamed: {why}; nothing changed"));
+        return Err(tr!(
+            "{old} was not renamed: {why}; nothing changed",
+            old = old,
+            why = why
+        ));
     }
     // The reads out now carry what the files held before the thread
     // renames them: those, and only those, are caught up as they land.
@@ -951,7 +989,7 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
         reached,
         stop,
     };
-    app.set_status(format!("renaming {old} to {new}...").into());
+    app.set_status(tr!("renaming {old} to {new}...", old = old, new = new).into());
     send_off(app, generation, job);
     Ok(())
 }
@@ -1396,11 +1434,13 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
     }
     let new = app.get_look_rename_name().trim().to_string();
     let refused = if !st.window.deletes_allowed {
-        Some("not renamed: a capture, an export or a timing run never renames".to_string())
+        Some(tr!(
+            "not renamed: a capture, an export or a timing run never renames"
+        ))
     } else if let Some(why) = busy(st) {
-        Some(why.to_string())
+        Some(i18n::text(why))
     } else if asked.on_disk.is_none() {
-        Some("not renamed: the folder's edits were still being read".to_string())
+        Some(tr!("not renamed: the folder's edits were still being read"))
     } else {
         start(st, app, &asked, &new).err()
     };
@@ -1417,7 +1457,9 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
             );
             app.set_look_rename_working(true);
             app.set_look_rename_ready(false);
-            app.set_look_rename_uses("Renaming: the edits are being read and written...".into());
+            app.set_look_rename_uses(
+                tr!("Renaming: the edits are being read and written...").into(),
+            );
         }
     }
 }

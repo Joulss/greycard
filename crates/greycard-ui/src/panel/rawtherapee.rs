@@ -41,7 +41,7 @@ use greycard_library::rawtherapee::{self as rt, Progress, Report, Voice};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::files::tilde;
-use crate::{App, ReportLine, STATE, Shared, State, settings};
+use crate::{App, ReportLine, STATE, Shared, State, i18n, settings, tr};
 
 /// The sheet's side of the state, and the offer's.
 #[derive(Default)]
@@ -100,15 +100,13 @@ pub(crate) const SHOWN_FRAMES: usize = 200;
 /// The offer's words for `n` frames waiting: frames, since a picture
 /// with no raw of its name beside it can have a profile too.
 fn offer_words(n: usize) -> String {
-    format!(
-        "RawTherapee profiles found beside {n} {}",
-        if n == 1 { "frame" } else { "frames" }
-    )
+    tr!("RawTherapee profiles found beside {n} frame"
+        | "RawTherapee profiles found beside {n} frames" % n)
 }
 
 /// What the sheet says when the run writes no sidecars.
 pub(crate) const NO_SIDECARS: &str =
-    "This run writes no sidecars (--no-sidecars), so nothing can be imported.";
+    crate::marked::tr!("This run writes no sidecars (--no-sidecars), so nothing can be imported.");
 
 /// Whether the settings at `file` have `dir` answered.
 pub(crate) fn answered_in(file: &Path, dir: &Path) -> bool {
@@ -271,7 +269,7 @@ pub(crate) fn open(st: &mut State, app: &App, dir: PathBuf) {
     }
     st.rawtherapee.folder = Some(dir.clone());
     st.rawtherapee.report = None;
-    app.set_rt_title("Import RawTherapee profiles".into());
+    app.set_rt_title(tr!("Import RawTherapee profiles").into());
     app.set_rt_subtitle(tilde(&dir).into());
     app.set_rt_note("".into());
     app.set_rt_force(false);
@@ -291,7 +289,7 @@ pub(crate) fn dry_run(st: &mut State, app: &App) {
     st.rawtherapee.reading = true;
     let generation = st.rawtherapee.generation;
     app.set_rt_busy(true);
-    app.set_rt_busy_text("reading the profiles...".into());
+    app.set_rt_busy_text(tr!("reading the profiles...").into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let read = rt::import(&[dir], &opts).map_err(|e| e.to_string());
@@ -371,16 +369,15 @@ pub(crate) fn show(st: &State, app: &App) {
         st.window.write_sidecars && report.is_some_and(|r| !r.write && r.to_write() > 0),
     );
     if !st.window.write_sidecars && app.get_rt_note().is_empty() {
-        app.set_rt_note(NO_SIDECARS.into());
+        app.set_rt_note(i18n::text(NO_SIDECARS).into());
     }
     if let (Some(r), Some(dir)) = (report, st.rawtherapee.folder.as_deref()) {
         app.set_rt_subtitle(
-            format!(
-                "{}; {} {}, {} with a profile",
-                tilde(dir),
-                r.frames,
-                if r.frames == 1 { "frame" } else { "frames" },
-                r.profiled.len()
+            tr!(
+                "{dir}; {n} frame, {profiled} with a profile"
+                    | "{dir}; {n} frames, {profiled} with a profile" % r.frames,
+                dir = tilde(dir),
+                profiled = r.profiled.len()
             )
             .into(),
         );
@@ -399,14 +396,14 @@ pub(crate) fn write(state: &Rc<Shared>, app: &App) {
         return;
     };
     if !st.window.write_sidecars {
-        app.set_rt_note(NO_SIDECARS.into());
+        app.set_rt_note(i18n::text(NO_SIDECARS).into());
         return;
     }
     let opts = write_options(&mut st, app);
     app.set_rt_busy(true);
     app.set_rt_writing(true);
-    app.set_rt_busy_text("writing...".into());
-    app.set_status("importing the RawTherapee profiles...".into());
+    app.set_rt_busy_text(tr!("writing...").into());
+    app.set_status(tr!("importing the RawTherapee profiles...").into());
     let weak = app.as_weak();
     st.rawtherapee.thread = Some(std::thread::spawn(move || {
         let told = weak.clone();
@@ -470,9 +467,10 @@ pub(crate) fn keys_of(report: &std::result::Result<Report, String>) -> Vec<PathB
 
 /// The words for how far the write has come.
 pub(crate) fn progress_line(p: Progress) -> String {
-    format!(
+    tr!(
         "importing the RawTherapee profiles: {} of {} frames",
-        p.done, p.of
+        p.done,
+        p.of
     )
 }
 
@@ -495,15 +493,13 @@ pub(crate) fn wrote(
                 let written = report.written().len();
                 let left = report.held();
                 let failed = report.failed();
-                let mut line = format!(
-                    "imported the RawTherapee profiles: {written} {} written",
-                    if written == 1 { "frame" } else { "frames" }
-                );
+                let mut line = tr!("imported the RawTherapee profiles: {n} frame written"
+                    | "imported the RawTherapee profiles: {n} frames written" % written);
                 if left > 0 {
-                    line.push_str(&format!(", {left} left alone"));
+                    line.push_str(&tr!(", {left} left alone", left = left));
                 }
                 if failed > 0 {
-                    line.push_str(&format!(", {failed} would not write"));
+                    line.push_str(&tr!(", {failed} would not write", failed = failed));
                 }
                 app.set_rt_note("".into());
                 // A frame brought in answers the folder: it has come in,
@@ -519,8 +515,8 @@ pub(crate) fn wrote(
             }
             Err(e) => {
                 tracing::warn!("rawtherapee import: {e}");
-                app.set_rt_note(format!("Not imported: {e}").into());
-                format!("the RawTherapee profiles were not imported: {e}")
+                app.set_rt_note(tr!("Not imported: {e}", e = e).into());
+                tr!("the RawTherapee profiles were not imported: {e}", e = e)
             }
         }
     };
@@ -550,9 +546,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
             let app = weak.unwrap();
             if answer(&mut state.borrow_mut(), &app).is_some() {
                 app.set_status(
-                    "the profiles are not offered again for this folder; \
-                     greycard rawtherapee imports them from the command line"
-                        .into(),
+                    tr!("the profiles are not offered again for this folder; \
+                         greycard rawtherapee imports them from the command line")
+                    .into(),
                 );
             }
         });

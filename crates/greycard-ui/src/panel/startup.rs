@@ -31,7 +31,7 @@ use crate::worker::{Job, WhiteBase, Worker};
 use crate::{
     App, Cli, MaskBox, MaskPick, Pt, STATE, Shared, State, WORKER, chooser, cull, display, export,
     files, filter, finder, finish, grid, install_callbacks, instance, log, render, report, scope,
-    settings, sheet, worker,
+    settings, sheet, tr, worker,
 };
 // What the import also lays at its landing, off the window, in the
 // library.
@@ -1020,7 +1020,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The way round the window, once: where the library is and where
     // the keys are, which two testers looked for.
     if first_run && !state.borrow().window.batch {
-        app.set_status(FIRST_RUN.into());
+        app.set_status(crate::i18n::text(FIRST_RUN).into());
     }
     // The pane's entry from what the last check found, and this
     // launch's check if a day has gone.
@@ -1152,7 +1152,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                         Some(None) => {
                             if let Some(app) = app_weak.upgrade() {
-                                app.set_status(filter::NOTHING_SHOWN.into());
+                                app.set_status(crate::i18n::text(filter::NOTHING_SHOWN).into());
                             }
                             tracing::warn!("no frames pass the filter");
                             let mut st = state.borrow_mut();
@@ -1776,7 +1776,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             if finder::arrived() {
                 return;
             }
-            chooser::choose_folder("Open a folder", start, move |chosen| {
+            chooser::choose_folder(crate::marked::tr!("Open a folder"), start, move |chosen| {
                 let app_weak = app_weak.clone();
                 // The state and the worker through their thread locals:
                 // this runs on the chooser's own thread, which an `Rc`
@@ -2111,18 +2111,18 @@ pub(crate) fn monitor_settings(
             match picked {
                 Some(m) => (
                     MonitorProfile::File(m.profile.clone().expect("filtered")),
-                    format!("{}'s profile from {}", m.model, display::SYSTEM_SOURCE),
+                    tr!("{}'s profile from {}", m.model, display::SYSTEM_SOURCE),
                 ),
                 None => (
                     MonitorProfile::Srgb,
-                    format!("{} knows no display profile", display::SYSTEM_SOURCE),
+                    tr!("{} knows no display profile", display::SYSTEM_SOURCE),
                 ),
             }
         }
         FILE => {
             let file = app.get_display_file();
             if file.is_empty() {
-                return (MonitorProfile::Srgb, "No profile chosen".to_string());
+                return (MonitorProfile::Srgb, tr!("No profile chosen"));
             }
             let path = PathBuf::from(file.as_str());
             let name = path
@@ -2146,7 +2146,10 @@ pub(crate) fn monitor_settings(
 pub(crate) fn monitor_note(monitor: &display::MonitorProfile, from: &str) -> String {
     if *monitor == display::MonitorProfile::Srgb {
         tracing::info!("display profile: none ({from}); sRGB output");
-        return format!("{from}: nothing changed on the way to the screen");
+        return tr!(
+            "{from}: nothing changed on the way to the screen",
+            from = from
+        );
     }
     match display::Lut3d::build(export::Space::Srgb, monitor, None) {
         Ok(lut) => {
@@ -2155,14 +2158,21 @@ pub(crate) fn monitor_note(monitor: &display::MonitorProfile, from: &str) -> Str
                 "display profile {} ({from}): at most {d:.1} of 255 from sRGB",
                 monitor.key()
             );
-            format!("{from}: up to {d:.0} of 255 from sRGB")
+            tr!(
+                "{from}: up to {d} of 255 from sRGB",
+                from = from,
+                d = format!("{d:.0}")
+            )
         }
         Err(e) => {
             tracing::warn!(
                 "display profile {} ({from}): {e:#}; sRGB output",
                 monitor.key()
             );
-            format!("{from}: cannot be read; nothing changed on the way to the screen")
+            tr!(
+                "{from}: cannot be read; nothing changed on the way to the screen",
+                from = from
+            )
         }
     }
 }
@@ -2565,8 +2575,10 @@ pub(crate) fn scripted_start(cli: &crate::Cli) -> bool {
 }
 
 /// The status line on a first run.
-pub(crate) const FIRST_RUN: &str = "Library and Loupe, top left (or G), switch between the grid \
-     and one frame; Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys";
+pub(crate) const FIRST_RUN: &str = crate::marked::tr!(
+    "Library and Loupe, top left (or G), switch between the grid \
+     and one frame; Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
+);
 
 /// The absolute path of the file now open, kept for the next run to
 /// jump back to; skipped for a screenshot, a snapshot or a one-shot

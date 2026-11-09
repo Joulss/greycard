@@ -28,6 +28,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::tr;
+
 use greycard_edit::{Placement, SIDECAR_FOLDER, Sidecar};
 
 /// Whether this build has a system trash to move files to: the
@@ -168,24 +170,24 @@ fn deletable(path: &Path, allowed: &[PathBuf]) -> Result<bool, String> {
     // own canonical spellings, so a hidden folder that is a link to
     // elsewhere is refused.
     let Ok(folder) = dunce::canonicalize(parent) else {
-        return Err(format!("{} cannot be read", parent.display()));
+        return Err(tr!("{} cannot be read", parent.display()));
     };
     let hidden = std::ffi::OsStr::new(SIDECAR_FOLDER);
     let inside = allowed
         .iter()
         .any(|a| *a == folder || a.join(hidden) == folder);
     if !inside {
-        return Err(format!(
+        return Err(tr!(
             "{} is not in the folder open",
             path.file_name().unwrap_or_default().to_string_lossy()
         ));
     }
     match std::fs::symlink_metadata(path) {
-        Ok(m) if m.file_type().is_symlink() => Err(format!(
+        Ok(m) if m.file_type().is_symlink() => Err(tr!(
             "{} is a link",
             path.file_name().unwrap_or_default().to_string_lossy()
         )),
-        Ok(m) if !m.is_file() => Err(format!(
+        Ok(m) if !m.is_file() => Err(tr!(
             "{} is not a file",
             path.file_name().unwrap_or_default().to_string_lossy()
         )),
@@ -460,7 +462,7 @@ pub fn companion_words(n: usize) -> String {
     if n == 0 {
         String::new()
     } else {
-        format!(", {}", count(n, "camera JPEG"))
+        tr!(", {n} camera JPEG" | ", {n} camera JPEGs" % n)
     }
 }
 
@@ -476,19 +478,19 @@ fn name(p: &Path) -> String {
 /// confirm's own check left alone.
 pub fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -> String {
     let mut out = if done.frames.is_empty() {
-        "nothing was deleted".to_string()
+        tr!("nothing was deleted")
     } else {
-        format!(
-            "{} {}{} and {}{}",
-            match how {
-                How::Trash => "moved to the trash:",
-                How::Permanent => "deleted permanently:",
+        tr!(
+            "{how} {frames}{companions} and {sidecars}{gone}",
+            how = match how {
+                How::Trash => tr!("moved to the trash:"),
+                How::Permanent => tr!("deleted permanently:"),
             },
-            count(done.frames.len(), "frame"),
-            companion_words(done.companions.len()),
-            count(done.sidecars, "sidecar"),
-            if done.vanished > 0 {
-                format!(" ({} gone already)", done.vanished)
+            frames = tr!("{n} frame" | "{n} frames" % done.frames.len()),
+            companions = companion_words(done.companions.len()),
+            sidecars = tr!("{n} sidecar" | "{n} sidecars" % done.sidecars),
+            gone = if done.vanished > 0 {
+                tr!(" ({} gone already)", done.vanished)
             } else {
                 String::new()
             }
@@ -503,77 +505,70 @@ pub fn summary(done: &Deleted, how: How, refused: &[(PathBuf, String)]) -> Strin
             .iter()
             .map(|p| {
                 let place = if p.parent().and_then(Path::file_name) == Some(hidden) {
-                    format!("left in {SIDECAR_FOLDER}")
+                    tr!("left in {folder}", folder = SIDECAR_FOLDER)
                 } else {
-                    "left in the folder".to_string()
+                    tr!("left in the folder")
                 };
                 format!("{} ({place})", name(p))
             })
             .collect();
         let what = if r.frame_gone && left.is_empty() {
-            format!("the trash stopped at {}: {}", name(&r.frame), r.why)
+            tr!("the trash stopped at {}: {}", name(&r.frame), r.why)
         } else if r.was_gone {
-            format!(
+            tr!(
                 "{} was gone already, and the trash refused {}: {}",
                 name(&r.frame),
                 left.join(", "),
                 r.why
             )
         } else if r.frame_gone {
-            format!(
+            tr!(
                 "the trash took {} but refused {}: {}",
                 name(&r.frame),
                 left.join(", "),
                 r.why
             )
         } else if r.sidecars_gone > 0 {
-            format!(
+            tr!(
                 "the trash refused {} ({}) after taking {} of it",
                 name(&r.frame),
                 r.why,
-                count(r.sidecars_gone, "sidecar")
+                tr!("{n} sidecar" | "{n} sidecars" % r.sidecars_gone)
             )
         } else {
-            format!("the trash refused {} ({})", name(&r.frame), r.why)
+            tr!("the trash refused {} ({})", name(&r.frame), r.why)
         };
         out.push_str(&format!("; {what}"));
         let stayed = usize::from(!r.frame_gone) + done.untried;
         if stayed > 0 {
-            out.push_str(&format!(
-                "; {} still where {}: ask again to delete permanently",
-                count(stayed, "frame"),
-                if stayed == 1 { "it was" } else { "they were" }
+            out.push_str(&tr!(
+                "; {n} frame still where it was: ask again to delete permanently"
+                    | "; {n} frames still where they were: ask again to delete permanently"
+                        % stayed
             ));
         }
     }
     let not: Vec<&(PathBuf, String)> = refused.iter().chain(&done.failed).collect();
     if let Some((frame, why)) = not.first() {
-        out.push_str(&format!(
-            "; {} not deleted ({}: {why}{})",
-            count(not.len(), "frame"),
-            name(frame),
-            if not.len() > 1 {
-                "; the log has each"
+        out.push_str(&tr!(
+            "; {n} frame not deleted ({name}: {why}{each})"
+                | "; {n} frames not deleted ({name}: {why}{each})" % not.len(),
+            name = name(frame),
+            why = why,
+            each = if not.len() > 1 {
+                tr!("; the log has each")
             } else {
-                ""
+                String::new()
             }
         ));
     }
     if let Some((jpeg, why)) = done.companions_left.first() {
-        out.push_str(&format!(
-            "; {} left where {} when {} went ({}: {why})",
-            count(done.companions_left.len(), "camera JPEG"),
-            if done.companions_left.len() == 1 {
-                "it was"
-            } else {
-                "they were"
-            },
-            if done.companions_left.len() == 1 {
-                "its raw"
-            } else {
-                "their raws"
-            },
-            name(jpeg)
+        out.push_str(&tr!(
+            "; {n} camera JPEG left where it was when its raw went ({name}: {why})"
+                | "; {n} camera JPEGs left where they were when their raws went ({name}: {why})"
+                    % done.companions_left.len(),
+            name = name(jpeg),
+            why = why
         ));
     }
     out

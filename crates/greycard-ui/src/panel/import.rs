@@ -19,7 +19,7 @@ use crate::import::{self, Job, Options, Report, Scan};
 use crate::naming::Fields;
 use crate::panel::browser::open_folder;
 use crate::worker::Worker;
-use crate::{App, STATE, Shared, State, WORKER, chooser, settings};
+use crate::{App, STATE, Shared, State, WORKER, chooser, settings, tr};
 
 /// The sheet's side of the state.
 #[derive(Default)]
@@ -99,17 +99,18 @@ fn path_text(p: &Option<PathBuf>) -> slint::SharedString {
 pub(crate) fn note_text(scan: &Scan) -> String {
     let n = scan.items.len();
     if n == 0 {
-        return "no frames here the editor opens".into();
+        return tr!("no frames here the editor opens");
     }
     let files = scan.files();
-    let mut s = import::frames(n);
+    let mut s = tr!("{n} frame" | "{n} frames" % n);
     if files > n {
-        s.push_str(&format!(
-            ", {files} files with the JPEGs and XMPs that go with their raws"
+        s.push_str(&tr!(
+            ", {files} files with the JPEGs and XMPs that go with their raws",
+            files = files
         ));
     }
     if !scan.left.is_empty() {
-        s.push_str(&format!(
+        s.push_str(&tr!(
             "; {} left on the card (videos, and files the editor does not open)",
             scan.left.len()
         ));
@@ -121,14 +122,19 @@ pub(crate) fn note_text(scan: &Scan) -> String {
 /// What the note under Add in place's folder says of what it holds.
 pub(crate) fn place_note(held: &Held) -> String {
     let folders = match held.subfolders {
-        0 => "no subfolders".to_string(),
-        1 => "1 subfolder".to_string(),
-        n => format!("{n} subfolders"),
+        0 => tr!("no subfolders"),
+        n => tr!("{n} subfolder" | "{n} subfolders" % n),
     };
     let mut s = if held.frames == 0 {
-        format!("no frames here the editor opens; {folders}")
+        tr!(
+            "no frames here the editor opens; {folders}",
+            folders = folders
+        )
     } else {
-        format!("{}, {folders}", import::frames(held.frames))
+        tr!(
+            "{n} frame, {folders}" | "{n} frames, {folders}" % held.frames,
+            folders = folders
+        )
     };
     s.push_str(&unreadable_words(held.unreadable));
     s
@@ -139,8 +145,7 @@ pub(crate) fn place_note(held: &Held) -> String {
 fn unreadable_words(n: usize) -> String {
     match n {
         0 => String::new(),
-        1 => "; 1 folder could not be read".into(),
-        n => format!("; {n} folders could not be read"),
+        n => tr!("; {n} folder could not be read" | "; {n} folders could not be read" % n),
     }
 }
 
@@ -199,14 +204,14 @@ pub(crate) fn preview(
         verify: false,
     };
     match import::relative(&opts, &item.file, first) {
-        Err(e) => (format!("Not a pattern: {e}"), false),
+        Err(e) => (tr!("Not a pattern: {e}", e = e), false),
         Ok(rel) => match destination {
             None => (
-                format!("{} becomes {}", item_name(&item.file), rel.display()),
+                tr!("{} becomes {}", item_name(&item.file), rel.display()),
                 false,
             ),
             Some(d) => (
-                format!("{} becomes {}", item_name(&item.file), tilde(&d.join(rel))),
+                tr!("{} becomes {}", item_name(&item.file), tilde(&d.join(rel))),
                 true,
             ),
         },
@@ -231,13 +236,13 @@ pub(crate) fn show(st: &State, app: &App) {
     app.set_import_destination(path_text(&st.import.destination));
     app.set_import_backup(path_text(&st.import.backup));
     let note = if missing(&st.import.destination, st.import.destination_there) {
-        "Destination missing; is the drive connected?"
+        tr!("Destination missing; is the drive connected?")
     } else if missing(&st.import.backup, st.import.backup_there) {
-        "Backup missing; is the drive connected?"
+        tr!("Backup missing; is the drive connected?")
     } else if st.import.backup.is_some() && st.import.same_drive {
-        "Backup is on the same drive."
+        tr!("Backup is on the same drive.")
     } else {
-        ""
+        String::new()
     };
     app.set_import_folders_note(note.into());
     app.set_import_place(path_text(&st.import.place));
@@ -323,7 +328,7 @@ fn read_source(st: &mut State, app: &App, source: PathBuf) {
     st.import.source = Some(source.clone());
     st.import.scan = None;
     st.import.first = None;
-    app.set_import_note(format!("reading {}...", source.display()).into());
+    app.set_import_note(tr!("reading {}...", source.display()).into());
     show(st, app);
     let weak = app.as_weak();
     std::thread::spawn(move || {
@@ -351,7 +356,7 @@ pub(crate) fn read_place(st: &mut State, app: &App, folder: PathBuf) {
     let generation = st.import.place_generation;
     st.import.place = Some(folder.clone());
     st.import.place_read = None;
-    app.set_import_place_note(format!("reading {}...", folder.display()).into());
+    app.set_import_place_note(tr!("reading {}...", folder.display()).into());
     show(st, app);
     let weak = app.as_weak();
     std::thread::spawn(move || {
@@ -508,7 +513,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     match st.import.source.clone() {
         Some(source) => read_source(st, app, source),
         None => {
-            app.set_import_note("looking for a card...".into());
+            app.set_import_note(tr!("looking for a card...").into());
             show(st, app);
             let weak = app.as_weak();
             std::thread::spawn(move || {
@@ -550,7 +555,7 @@ pub(crate) fn found(
     match card {
         Some(card) => read_source(st, app, card),
         None => {
-            app.set_import_note("no card found; choose the folder to import from".into());
+            app.set_import_note(tr!("no card found; choose the folder to import from").into());
             show(st, app);
         }
     }
@@ -597,7 +602,7 @@ pub(crate) fn start(st: &mut State, app: &App) {
     app.set_import_stopping(false);
     say(
         app,
-        format!("importing {}...", import::frames(scan.items.len())),
+        tr!("importing {n} frame..." | "importing {n} frames..." % scan.items.len()),
     );
     let weak = app.as_weak();
     st.import.thread = Some(std::thread::spawn(move || {
@@ -654,7 +659,7 @@ pub(crate) fn finished(state: &Rc<Shared>, app: &App, opts: &Options, report: Re
         && let Some(folder) = report.main_folder().map(Path::to_path_buf)
     {
         if moved {
-            line.push_str(&format!("; open {} to see them", tilde(&folder)));
+            line.push_str(&tr!("; open {} to see them", tilde(&folder)));
         } else if let Some(worker) = WORKER.with(|w| w.borrow().clone()) {
             open_folder(state, app, &worker, &folder);
         }
@@ -731,7 +736,7 @@ pub(crate) fn close_asked(st: &mut State, app: &App) -> bool {
     app.set_import_stopping(true);
     say(
         app,
-        format!(
+        tr!(
             "finishing {}... the window closes once it has landed",
             st.import.in_hand
         ),
@@ -841,10 +846,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if let Some(job) = &state.borrow().import.job {
                 job.cancel();
                 app.set_import_stopping(true);
-                say(
-                    &app,
-                    "stopping the import after the frame in hand...".into(),
-                );
+                say(&app, tr!("stopping the import after the frame in hand..."));
             }
         });
     }
@@ -855,10 +857,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let app = weak.unwrap();
             let st = state.borrow();
             let (title, now) = match which.as_str() {
-                "source" => ("Import from", &st.import.source),
-                "destination" => ("Import to", &st.import.destination),
-                "place" => ("Add to the library in place", &st.import.place),
-                _ => ("Back up to", &st.import.backup),
+                "source" => (crate::marked::tr!("Import from"), &st.import.source),
+                "destination" => (crate::marked::tr!("Import to"), &st.import.destination),
+                "place" => (
+                    crate::marked::tr!("Add to the library in place"),
+                    &st.import.place,
+                ),
+                _ => (crate::marked::tr!("Back up to"), &st.import.backup),
             };
             let start = now
                 .clone()

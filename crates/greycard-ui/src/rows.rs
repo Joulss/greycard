@@ -71,7 +71,7 @@ use slint::ComponentHandle;
 use crate::roots::Progress;
 use crate::versions::Key;
 use crate::worker::{Job, Worker};
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, tr};
 
 /// Whether cell `c`'s line still waits for its ISO's learned-denoiser
 /// blend: its file is a raw and the line was never developed (the
@@ -182,7 +182,7 @@ pub(crate) fn file_is_offline(st: &State, file: usize) -> bool {
 /// that costs (`", nothing to sync from"`), or nothing more.
 fn say_offline(st: &State, app: &App, root: &Path, what: &str) {
     let name = crate::roots::root_name(&st.views.library.roots, root);
-    app.set_status(format!("{name} is offline{what}").into());
+    app.set_status(tr!("{name} is offline{what}", name = name, what = what).into());
 }
 
 /// Say that cell `c`'s root is offline, and what that costs. For a
@@ -231,7 +231,7 @@ pub(crate) fn panel_is_frames(st: &State, c: usize) -> bool {
 /// refused, and this is what the status line says. None for a frame
 /// loaded.
 pub(crate) fn not_kept(st: &State, i: usize) -> Option<String> {
-    refused(st, i, "the change is not kept")
+    refused(st, i, &tr!("the change is not kept"))
 }
 
 /// [`not_kept`]'s reason, ending in `what` was refused ("nothing is
@@ -247,21 +247,37 @@ pub(crate) fn refused(st: &State, c: usize, what: &str) -> Option<String> {
     }
     if is_loaded(st, c) {
         let name = file_name(st.path_at(c)?);
-        return Some(format!("the panel is not {name}'s own yet: {what}"));
+        return Some(tr!(
+            "the panel is not {name}'s own yet: {what}",
+            name = name,
+            what = what
+        ));
     }
     if let Some(root) = offline_root(st, c) {
         let name = crate::roots::root_name(&st.views.library.roots, &root);
-        return Some(format!("{name} is offline: {what}"));
+        return Some(tr!("{name} is offline: {what}", name = name, what = what));
     }
     let name = file_name(st.path_at(c)?);
     let file = st.file_at(c)?;
     Some(
         if st.from_row.get(file).is_some_and(|r| r.unread.is_some()) {
-            format!("{name}'s sidecar could not be read: {what}")
+            tr!(
+                "{name}'s sidecar could not be read: {what}",
+                name = name,
+                what = what
+            )
         } else if st.views.pick_pending.as_deref() == st.path_at(c).map(PathBuf::as_path) {
-            format!("{name}'s sidecar is still being read: {what}")
+            tr!(
+                "{name}'s sidecar is still being read: {what}",
+                name = name,
+                what = what
+            )
         } else {
-            format!("{name}'s sidecar did not come in: {what}")
+            tr!(
+                "{name}'s sidecar did not come in: {what}",
+                name = name,
+                what = what
+            )
         },
     )
 }
@@ -314,16 +330,19 @@ fn describe(dropped: &[Pending]) -> String {
     }
     let words: Vec<String> = kinds
         .iter()
-        .map(|(what, n, pick)| match (n, pick) {
-            (_, true) => format!("the {what}"),
-            (1, false) => format!("the {what}"),
-            (n, false) => format!("{n} {what}s"),
+        // A pick is one, however many asked for it.
+        .map(|&(what, n, pick)| {
+            let n = if pick { 1 } else { n };
+            tr!(
+                "the {what}" | "{n} {what}s" % n,
+                what = crate::i18n::text(what)
+            )
         })
         .collect();
     match words.len() {
         0 => String::new(),
         1 => words[0].clone(),
-        n => format!("{} and {}", words[..n - 1].join(", "), words[n - 1]),
+        n => tr!("{} and {}", words[..n - 1].join(", "), words[n - 1]),
     }
 }
 
@@ -588,7 +607,10 @@ pub(crate) fn after_mosaics(
         pick: false,
         landed: false,
     });
-    app.set_status(format!("reading {} frames...", paths.len()).into());
+    // One frame reads "1 frames" in English as it always has.
+    let line = tr!("reading {n} frames..." | "reading {n} frames..." % paths.len());
+    app.set_status(line.as_str().into());
+    st.views.reading_line = Some(line);
     #[cfg(test)]
     {
         MOSAICS_QUEUED.with(|q| q.borrow_mut().push((id, paths)));
@@ -931,14 +953,16 @@ fn say_gone(app: &App, frames: &[Key], at: &[Option<usize>], what: &str, pick: b
         .collect();
     let said = match gone.as_slice() {
         [] => return,
-        [one] if pick => format!("{} moved or is gone; not opened", one.said()),
-        [one] => format!(
+        [one] if pick => tr!("{} moved or is gone; not opened", one.said()),
+        [one] => tr!(
             "{} moved or is gone; the {what} was not applied to it",
-            one.said()
+            one.said(),
+            what = crate::i18n::text(what)
         ),
-        many => format!(
-            "{} frames moved or are gone; the {what} was not applied to them",
-            many.len()
+        many => tr!(
+            "{n} frame moved or is gone; the {what} was not applied to it"
+                | "{n} frames moved or are gone; the {what} was not applied to them" % many.len(),
+            what = crate::i18n::text(what)
         ),
     };
     tracing::info!("{said}");
@@ -956,7 +980,8 @@ pub(crate) fn pick_over(st: &mut State, app: &App) {
     if st.views.pick_pending.take().is_none() {
         return;
     }
-    if app.get_status().starts_with("reading ") {
+    let line = st.views.reading_line.take();
+    if line.is_some_and(|l| app.get_status() == l.as_str()) {
         app.set_status("".into());
         app.set_busy(false);
     } else if st.culling.cull.is_some() {
@@ -1053,7 +1078,7 @@ pub(crate) fn bar_tick(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, now: 
                 pick_over(&mut st, app);
                 app.set_busy(false);
             }
-            let said = format!(
+            let said = tr!(
                 "{} dropped: the sidecars did not come in",
                 describe(&dropped)
             );
@@ -1184,7 +1209,7 @@ pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usi
             "{left_out} frame(s) under {} left out: it is offline",
             root.display()
         );
-        say_offline(st, app, &root, ": left out");
+        say_offline(st, app, &root, &tr!(": left out"));
     }
     if let Some(why) = unread {
         app.set_status(why.into());
@@ -1254,9 +1279,10 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
     } = held;
     let standing_in = st.from_row.get(file).is_some_and(|r| !r.read);
     let why = match &trouble {
-        Some(Trouble::Unreadable(e)) if standing_in => Some(format!(
+        Some(Trouble::Unreadable(e)) if standing_in => Some(tr!(
             "{}'s sidecar could not be read ({e}); nothing is written over it",
-            file_name(&st.files[file])
+            file_name(&st.files[file]),
+            e = e
         )),
         Some(Trouble::Missing)
             if standing_in
@@ -1267,7 +1293,7 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
             // A version, edited or not, is data the default must not go
             // over: its cell would go at the next turn, and the next save
             // would write a sidecar without it over the real one.
-            Some(format!(
+            Some(tr!(
                 "{}'s sidecar was not found, though the library has an edit, an \
                  export or a version of it on record; nothing is written over it",
                 file_name(&st.files[file])

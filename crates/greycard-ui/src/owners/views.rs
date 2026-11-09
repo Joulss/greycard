@@ -142,6 +142,10 @@ pub(crate) struct Views {
     /// its panel read-only, and opened when the read lands if it is
     /// still the pick. Nothing of the panel's is saved for it.
     pub(crate) pick_pending: Option<PathBuf>,
+    /// The "reading ..." line a pick or a read of mosaics put on the
+    /// status, as shown: the pick's end clears the status only while it
+    /// still says this, whatever the language.
+    pub(crate) reading_line: Option<String>,
     /// The frame whose panel shows the edit standing in from its row,
     /// not its own: a pick whose sidecar was on its way, or a frame
     /// opened while its sidecar could not be had. Nothing of the panel

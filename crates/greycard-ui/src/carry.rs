@@ -27,7 +27,8 @@ use greycard_edit::Edit;
 use greycard_edit::preset::{Choice, Masks, Section};
 use slint::{Model, VecModel};
 
-use crate::CarryRow;
+use crate::i18n::text;
+use crate::{CarryRow, tr};
 
 /// What a row of the list is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +74,7 @@ pub(crate) fn masks_of(edit: &Edit) -> Vec<(u64, String)> {
         .iter()
         .map(|a| {
             let name = if a.name.trim().is_empty() {
-                format!("Mask {}", a.id)
+                tr!("Mask {}", a.id)
             } else {
                 a.name.clone()
             };
@@ -241,8 +242,8 @@ impl Checks {
             rows.push((
                 Target::Section(i),
                 CarryRow {
-                    label: s.title().into(),
-                    a11y: s.title().into(),
+                    label: text(s.title()).into(),
+                    a11y: text(s.title()).into(),
                     state: state.number(),
                     ..at(line[col], 0, HEADING)
                 },
@@ -251,13 +252,13 @@ impl Checks {
             let names: Vec<String> = if s == Section::Adjustments {
                 self.masks.iter().map(|(_, n)| n.clone()).collect()
             } else {
-                s.parts().map(|p| p.title().to_string()).collect()
+                s.parts().map(|p| text(p.title())).collect()
             };
             for (j, name) in names.iter().enumerate() {
                 rows.push((
                     Target::Part(i, j),
                     CarryRow {
-                        a11y: format!("{}: {name}", s.title()).into(),
+                        a11y: format!("{}: {name}", text(s.title())).into(),
                         label: name.into(),
                         state: if self.on[i][j] { 2 } else { 0 },
                         ..at(line[col] + j / 2, j % 2, PART)
@@ -385,10 +386,95 @@ fn split_at(heights: &[usize]) -> usize {
     best.1
 }
 
+/// greycard-edit's section and part titles, which the sheet shows
+/// through `text`, marked here for the catalog.
+const _MARK_SECTIONS: [&str; 19] = [
+    crate::marked::tr!("Light"),
+    crate::marked::tr!("Display curve"),
+    crate::marked::tr!("White balance"),
+    crate::marked::tr!("Noise"),
+    crate::marked::tr!("Detail"),
+    crate::marked::tr!("Sharpen"),
+    crate::marked::tr!("Curves"),
+    crate::marked::tr!("Color mixer"),
+    crate::marked::tr!("Color"),
+    crate::marked::tr!("Black and white"),
+    crate::marked::tr!("Color grading"),
+    crate::marked::tr!("Color tint"),
+    crate::marked::tr!("Look"),
+    crate::marked::tr!("Lens"),
+    crate::marked::tr!("Vignette"),
+    crate::marked::tr!("Grain"),
+    crate::marked::tr!("Demosaic"),
+    crate::marked::tr!("Camera profile"),
+    crate::marked::tr!("Masks"),
+];
+
+/// The parts' titles, each once.
+const _MARK_PARTS: [&str; 41] = [
+    crate::marked::tr!("Exposure"),
+    crate::marked::tr!("Contrast"),
+    crate::marked::tr!("Highlights"),
+    crate::marked::tr!("Shadows"),
+    crate::marked::tr!("Whites"),
+    crate::marked::tr!("Blacks"),
+    crate::marked::tr!("Vibrance"),
+    crate::marked::tr!("Saturation"),
+    crate::marked::tr!("Parametric"),
+    crate::marked::tr!("RGB"),
+    crate::marked::tr!("Red"),
+    crate::marked::tr!("Green"),
+    crate::marked::tr!("Blue"),
+    crate::marked::tr!("R/G"),
+    crate::marked::tr!("B/Y"),
+    crate::marked::tr!("Orange"),
+    crate::marked::tr!("Yellow"),
+    crate::marked::tr!("Aqua"),
+    crate::marked::tr!("Purple"),
+    crate::marked::tr!("Magenta"),
+    crate::marked::tr!("Weights"),
+    crate::marked::tr!("Strength"),
+    crate::marked::tr!("Mid-tones"),
+    crate::marked::tr!("Balance"),
+    crate::marked::tr!("Profile"),
+    crate::marked::tr!("Vignetting"),
+    crate::marked::tr!("Chromatic aberration"),
+    crate::marked::tr!("Manual aberration"),
+    crate::marked::tr!("Manual distortion"),
+    crate::marked::tr!("Scale"),
+    crate::marked::tr!("Defringe"),
+    crate::marked::tr!("Texture"),
+    crate::marked::tr!("Clarity"),
+    crate::marked::tr!("Dehaze"),
+    crate::marked::tr!("Amount"),
+    crate::marked::tr!("Midpoint"),
+    crate::marked::tr!("Feather"),
+    crate::marked::tr!("Roundness"),
+    crate::marked::tr!("Size"),
+    crate::marked::tr!("Type"),
+    crate::marked::tr!("Structure"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use greycard_edit::preset::Part;
+
+    /// The titles marked for the catalog are greycard-edit's own.
+    #[test]
+    fn the_marked_titles_are_the_sections_and_parts() {
+        assert_eq!(Section::ALL.len(), _MARK_SECTIONS.len());
+        for section in Section::ALL {
+            assert!(
+                _MARK_SECTIONS.contains(&section.title()),
+                "{}",
+                section.title()
+            );
+        }
+        for part in Part::ALL {
+            assert!(_MARK_PARTS.contains(&part.title()), "{}", part.title());
+        }
+    }
 
     /// The part a row's place under section `i` is.
     fn part_at(i: usize, j: usize) -> Option<Part> {

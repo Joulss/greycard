@@ -15,7 +15,7 @@ use std::rc::Rc;
 use anyhow::{Context, Result};
 use slint::ComponentHandle;
 
-use crate::{App, Shared, gpu, log};
+use crate::{App, Shared, gpu, log, tr};
 
 /// The fields of the form this fills, by id, in the form's order.
 pub struct Report {
@@ -341,10 +341,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
         let url = issue_url(env!("CARGO_PKG_REPOSITORY"), &report);
         tracing::info!("report: opening {url}");
         app.set_status(match log {
-            Some(_) => "the form is open in the browser, and the log's folder: \
-                        drag greycard-ui.log into the form"
-                .into(),
-            None => "the form is open in the browser; there is no log to attach".into(),
+            Some(_) => tr!("the form is open in the browser, and the log's folder: \
+                 drag greycard-ui.log into the form")
+            .into(),
+            None => tr!("the form is open in the browser; there is no log to attach").into(),
         });
         // Off the event loop: a browser or a file manager can take
         // its time to answer, and xdg-open waits for it.
@@ -359,7 +359,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 tracing::warn!("report: no browser would open the form: {e}");
                 let _ = app_weak.upgrade_in_event_loop(|app| {
                     app.set_status(
-                        format!(
+                        tr!(
                             "no browser would open: the form is at {}/issues/new",
                             env!("CARGO_PKG_REPOSITORY")
                         )

@@ -13,11 +13,12 @@ use greycard_ai::landscape::Offer;
 use greycard_edit::mask::{Component, Mode, Shape};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use crate::i18n::text;
 use crate::panel::assets::offer_model;
 use crate::panel::edit::{read_edit, show_edit};
 use crate::panel::mask::{Step, name_first_shape, step};
 use crate::worker::Job;
-use crate::{App, Shared, State, WORKER};
+use crate::{App, Shared, State, WORKER, tr};
 
 /// The mask the button was pressed on, by id, and the mode a shape
 /// picked from its menu joins by.
@@ -97,20 +98,21 @@ pub(crate) fn resume(st: &mut State, app: &App) {
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
         _ if st.sheets.declined.contains(&greycard_ai::SKY.id) => {
             st.develop.landscape_pending = None;
-            app.set_status(DECLINED.into());
+            app.set_status(text(DECLINED).into());
         }
         _ if st.sheets.fetch_failed.contains(&greycard_ai::SKY.id) => {
             st.develop.landscape_pending = None;
-            app.set_status("the Sky model could not be fetched this session".into());
+            app.set_status(tr!("the Sky model could not be fetched this session").into());
         }
-        _ => app.set_status(WAITING.into()),
+        _ => app.set_status(text(WAITING).into()),
     }
 }
 
 /// The status line for a press that waits on a download or a sheet.
-pub(crate) const WAITING: &str = "the landscape is found once the download in hand is done";
+pub(crate) const WAITING: &str =
+    crate::marked::tr!("the landscape is found once the download in hand is done");
 /// And for one whose model was declined.
-const DECLINED: &str = "without the Sky model no landscape can be found";
+const DECLINED: &str = crate::marked::tr!("without the Sky model no landscape can be found");
 
 fn ask(app: &App) {
     WORKER.with(|w| {
@@ -118,7 +120,7 @@ fn ask(app: &App) {
             w.send(Job::Landscape);
         }
     });
-    app.set_status("finding the landscape".into());
+    app.set_status(tr!("finding the landscape").into());
 }
 
 /// The sky's model arrived (or its offer was answered): a press
@@ -131,7 +133,7 @@ pub(crate) fn model_answered(st: &mut State, app: &App, have: bool) {
         ask(app);
     } else {
         st.develop.landscape_pending = None;
-        app.set_status(DECLINED.into());
+        app.set_status(text(DECLINED).into());
     }
 }
 
@@ -156,7 +158,7 @@ pub(crate) fn found(
         Ok(o) => o,
         Err(e) => {
             tracing::error!("Landscape: {e}");
-            app.set_status(format!("Landscape: {e}").into());
+            app.set_status(tr!("Landscape: {e}", e = e).into());
             return;
         }
     };
@@ -173,13 +175,25 @@ pub(crate) fn found(
     app.set_landscape_menu_shown(true);
     let n = offers.len();
     app.set_status(
-        format!(
-            "{n} {} found on {provider} in {seconds:.2} s",
-            if n == 1 { "shape" } else { "shapes" }
+        tr!(
+            "{n} shape found on {provider} in {seconds} s"
+                | "{n} shapes found on {provider} in {seconds} s" % n,
+            provider = provider,
+            seconds = format!("{seconds:.2}")
         )
         .into(),
     );
 }
+
+/// The shapes' kinds as "finding the ..." says them, in lower case,
+/// marked for the catalog.
+const _LOWER_KINDS: [&str; 5] = [
+    crate::marked::tr!("sky"),
+    crate::marked::tr!("water"),
+    crate::marked::tr!("foliage"),
+    crate::marked::tr!("mountain"),
+    crate::marked::tr!("building"),
+];
 
 /// A shape picked from the menu, by kind, into the mask the button was
 /// pressed on; whether the edit changed.
@@ -216,7 +230,7 @@ pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
     st.develop.target = Some(index);
     app.set_component(which as i32);
     show_edit(st, &st.develop.edit, app, st.develop.target);
-    app.set_status(format!("finding the {}", kind.to_lowercase()).into());
+    app.set_status(tr!("finding the {}", crate::i18n::text(&kind.to_lowercase())).into());
     true
 }
 

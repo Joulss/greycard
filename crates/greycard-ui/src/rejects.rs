@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::delete;
+use crate::{delete, tr};
 
 /// The folder the rejects go to: beside the frames, named for what
 /// they are.
@@ -82,7 +82,7 @@ pub fn move_rejects_as(
         if above_rejects(raw).is_some() {
             moved
                 .skipped
-                .push((i, "it is in a rejects folder already".into()));
+                .push((i, tr!("it is in a rejects folder already")));
             continue;
         }
         match by_shoot.iter_mut().find(|(s, _)| *s == shoot) {
@@ -130,7 +130,7 @@ pub fn move_back(files: &[PathBuf], chosen: &[usize], apart: bool) -> Moved {
         let Some(above) = above_rejects(raw) else {
             moved
                 .skipped
-                .push((i, "it is not in a rejects folder".into()));
+                .push((i, tr!("it is not in a rejects folder")));
             continue;
         };
         match by_folder.iter_mut().find(|(d, _)| *d == above) {
@@ -175,7 +175,7 @@ pub fn above_rejects(raw: &Path) -> Option<PathBuf> {
 fn stem_owner(xmp: &Path, dir: &Path, arrived: &[PathBuf]) -> Option<String> {
     let stem = xmp.file_stem()?.to_string_lossy().to_lowercase();
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return Some(format!("{} (it cannot be read)", dir.display()));
+        return Some(tr!("{} (it cannot be read)", dir.display()));
     };
     entries.flatten().find_map(|e| {
         let name = e.file_name();
@@ -232,7 +232,7 @@ fn move_into(
             continue;
         };
         let Some(name) = raw.file_name() else {
-            moved.skipped.push((i, "no file name".into()));
+            moved.skipped.push((i, tr!("no file name")));
             continue;
         };
         let dest = dir.join(name);
@@ -302,13 +302,13 @@ fn move_into(
             .filter_map(|c| c.file_name())
             .find(|n| dir.join(n).exists());
         let taken = if dest.exists() {
-            Some(format!(
+            Some(tr!(
                 "{} is in {} already",
                 name.to_string_lossy(),
                 dir.display()
             ))
         } else if let Some(n) = companion_there {
-            Some(format!(
+            Some(tr!(
                 "{} is in {} already",
                 n.to_string_lossy(),
                 dir.display()
@@ -316,7 +316,7 @@ fn move_into(
         } else {
             let keep = orphans == Orphans::Keep;
             let there = |to: &Path| {
-                format!(
+                tr!(
                     "{} is in {} already",
                     to.file_name().unwrap_or_default().to_string_lossy(),
                     dir.display()
@@ -333,9 +333,10 @@ fn move_into(
                             return Some(if to.exists() {
                                 there(to)
                             } else {
-                                format!(
+                                tr!(
                                     "{owner} there answers to {} too",
-                                    to.file_name().unwrap_or_default().to_string_lossy()
+                                    to.file_name().unwrap_or_default().to_string_lossy(),
+                                    owner = owner
                                 )
                             });
                         }

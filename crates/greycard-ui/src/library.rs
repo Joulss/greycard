@@ -49,7 +49,7 @@ use greycard_library::{Change, FacetCount, Library, Report};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::filter::{self, Facet};
-use crate::{App, FacetChip, FacetRow, Shared, State};
+use crate::{App, FacetChip, FacetRow, Shared, State, tr};
 
 /// How often a long pass tells the window how far it has got, so a
 /// facet fills in and a frame the filter does not want goes, while
@@ -681,7 +681,7 @@ fn run(
         serve(path, waiting, told, &waits, &guard)
     }));
     if let Err(payload) = held {
-        told(Told::Failed(format!(
+        told(Told::Failed(tr!(
             "the indexer panicked: {}",
             crate::worker::panic_message(payload.as_ref())
         )));
@@ -1501,9 +1501,9 @@ fn serve(
                 continue;
             }
             Ran::Lost => (
-                Err(greycard_library::Error::Io(std::io::Error::other(
-                    "the passes' connection to the library could not be had",
-                ))),
+                Err(greycard_library::Error::Io(std::io::Error::other(tr!(
+                    "the passes' connection to the library could not be had"
+                )))),
                 None,
             ),
         };
@@ -1635,7 +1635,9 @@ fn window_pass_guarded(
                 generation,
                 report: Report::default(),
                 seconds: 0.0,
-                error: Some("the passes' connection to the library could not be had".into()),
+                error: Some(tr!(
+                    "the passes' connection to the library could not be had"
+                )),
             });
             None
         }
@@ -1847,7 +1849,10 @@ pub(crate) fn open_reader(st: &mut State, app: &App) {
     }
 }
 
-pub(crate) const READER_UNAVAILABLE: &str = "The library index could not be read";
+/// In English, marked for the catalog: kept and compared as it is,
+/// translated where it is shown.
+pub(crate) const READER_UNAVAILABLE: &str =
+    crate::marked::tr!("The library index could not be read");
 
 /// Each file's row id, as the index holds it now; `None` for a file
 /// it has no row for yet, and for every file while there is no index.
@@ -2194,7 +2199,7 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
             let says_nothing = chips.is_empty()
                 || (facet == Facet::Kind && chips.len() == 1 && !chips[0].on && !chips[0].out);
             (!says_nothing).then(|| FacetRow {
-                name: filter::facet_caption(facet).into(),
+                name: crate::i18n::text(filter::facet_caption(facet)).into(),
                 code: filter::facet_slot(facet) as i32,
                 chips: ModelRc::new(VecModel::from(chips)),
             })
@@ -2223,13 +2228,25 @@ pub(crate) fn split_facet_rows(rows: &[FacetRow]) -> (Vec<FacetRow>, Vec<FacetRo
 /// with no rows at all, that the files have no EXIF to count.
 pub(crate) fn facet_note(st: &State, rows: bool) -> String {
     if let Some(e) = &st.views.index_error {
-        return e.clone();
+        // READER_UNAVAILABLE is kept in English, to be compared; any
+        // other error is in the window's words already.
+        return if e == READER_UNAVAILABLE {
+            crate::i18n::text(e)
+        } else {
+            e.clone()
+        };
     }
     match (&st.views.index_reader, st.views.index_progress) {
-        (_, Some((done, total))) => format!("Indexing the folder: {done} of {total}"),
+        (_, Some((done, total))) => {
+            tr!(
+                "Indexing the folder: {done} of {total}",
+                done = done,
+                total = total
+            )
+        }
         (Some(_), None) if rows => String::new(),
-        (Some(_), None) => "No camera, lens or date in these files' EXIF".to_string(),
-        (None, None) if st.views.index.is_some() => "Opening the library index".to_string(),
+        (Some(_), None) => tr!("No camera, lens or date in these files' EXIF"),
+        (None, None) if st.views.index.is_some() => tr!("Opening the library index"),
         (None, None) => String::new(),
     }
 }
@@ -2466,7 +2483,7 @@ pub(crate) fn told(app: &App, told: Told) {
             let last = st.launch.last_folder.take();
             let last = last.filter(|_| wanted.is_some() && st.files.is_empty());
             st.views.index_progress = None;
-            st.views.index_error = Some(format!("No library index: {message}"));
+            st.views.index_error = Some(tr!("No library index: {message}", message = message));
             st.launch.awaiting_index = false;
             crate::panel::cull::show_filter(&st, app);
             app.window().request_redraw();
@@ -2529,7 +2546,8 @@ pub(crate) fn told(app: &App, told: Told) {
                 if st.views.index_tries <= RETRIES {
                     // Busy, most likely: said, and asked again in a
                     // moment. A capture waiting on the chips waits on.
-                    st.views.index_error = Some(format!("Library index busy; trying again ({e})"));
+                    st.views.index_error =
+                        Some(tr!("Library index busy; trying again ({e})", e = e));
                     st.views.index_progress = None;
                     let app_weak = app.as_weak();
                     slint::Timer::single_shot(RETRY_AFTER, move || {
@@ -2549,7 +2567,7 @@ pub(crate) fn told(app: &App, told: Told) {
                     return;
                 }
                 tracing::warn!("index: giving up on the folder after {RETRIES} tries: {e}");
-                st.views.index_error = Some(format!("Library index unavailable: {e}"));
+                st.views.index_error = Some(tr!("Library index unavailable: {e}", e = e));
             } else {
                 st.views.index_tries = 0;
                 st.views.index_error = None;
@@ -2630,7 +2648,10 @@ pub(crate) fn skipped_words(roots: &greycard_library::Roots, root: &Path) -> Str
     } else {
         root.display().to_string()
     };
-    format!("{name} isn't reachable; showing its last indexed frames")
+    tr!(
+        "{name} isn't reachable; showing its last indexed frames",
+        name = name
+    )
 }
 
 /// The index moved under the window: the rows read again, and the

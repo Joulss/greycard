@@ -28,3 +28,6 @@ pub mod zoom;
 // The export's names and a preset laid at the start, in the engine's
 // crate, which a run with no window shares; named here as they were.
 pub use greycard_engine::{export_name, naming, preset_fit};
+
+// The marker for a shown table's strings, at the path its callers use.
+pub use i18n::marked;

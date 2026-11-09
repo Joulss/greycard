@@ -17,7 +17,7 @@ use slint::ComponentHandle;
 
 use crate::panel::browser::{chosen_frames, file_name, meta_on_selection};
 use crate::worker::Worker;
-use crate::{App, Shared, selection};
+use crate::{App, Shared, selection, tr};
 
 /// What a menu item asks for, as a culling key would: a rating of
 /// `value` stars, the flag whose code is `value`, the label whose
@@ -288,7 +288,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     "reveal {}: could not start the file manager: {e}",
                     path.display()
                 );
-                app.set_status(format!("could not show {}: {e}", file_name(path)).into());
+                app.set_status(tr!("could not show {}: {e}", file_name(path), e = e).into());
             }
         });
     }

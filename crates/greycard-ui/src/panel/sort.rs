@@ -8,7 +8,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::roots::View;
 use crate::sort::{Choice, button_words, entries, picked, turned, way_words};
 use crate::worker::Worker;
-use crate::{App, Shared, SortMenu, State};
+use crate::{App, Shared, SortMenu, State, i18n, tr};
 
 /// The menu as the view's choice has it.
 pub(crate) fn menu_of(st: &State) -> SortMenu {
@@ -21,8 +21,8 @@ pub(crate) fn menu_of(st: &State) -> SortMenu {
     let words: Vec<SharedString> = listed
         .iter()
         .map(|e| match e {
-            None => SharedString::from("Hand order"),
-            Some(by) => SharedString::from(by.words()),
+            None => SharedString::from(tr!("Hand order")),
+            Some(by) => SharedString::from(i18n::text(by.words())),
         })
         .collect();
     let (ways, descending): (Vec<SharedString>, bool) = match choice {
@@ -30,26 +30,35 @@ pub(crate) fn menu_of(st: &State) -> SortMenu {
         Choice::By(o) => (
             way_words(o.by)
                 .into_iter()
-                .map(SharedString::from)
+                .map(|w| SharedString::from(i18n::text(w)))
                 .collect(),
             o.descending,
         ),
     };
-    let tip = match (choice, ways.get(usize::from(descending))) {
+    let tip = match (
+        choice,
+        choice
+            .order()
+            .map(|o| way_words(o.by)[usize::from(descending)]),
+    ) {
         // "oldest first" in the middle of the line, "A to Z" as it is.
         (Choice::By(_), Some(way)) => {
             let way = if way.chars().nth(1) == Some(' ') {
-                way.to_string()
+                i18n::text(way)
             } else {
-                way.to_lowercase()
+                i18n::text(&way.to_lowercase())
             };
-            format!("Sort: {}, {way}", button_words(choice))
+            tr!(
+                "Sort: {}, {way}",
+                i18n::text(&button_words(choice)),
+                way = way
+            )
         }
-        _ => format!("Sort: {}", button_words(choice)),
+        _ => tr!("Sort: {}", i18n::text(&button_words(choice))),
     };
     SortMenu {
-        words: button_words(choice).into(),
-        label: button_words(choice).to_lowercase().into(),
+        words: i18n::text(&button_words(choice)).into(),
+        label: i18n::text(&button_words(choice).to_lowercase()).into(),
         tip: tip.into(),
         entries: ModelRc::new(VecModel::from(words)),
         checked: checked as i32,
@@ -118,7 +127,7 @@ pub(crate) fn choose(
                 // is kept, and the next read of the list is in it.
                 st.views.sort_reveal = false;
                 app.set_status(
-                    "the order is kept; it applies the next time the list is read".into(),
+                    tr!("the order is kept; it applies the next time the list is read").into(),
                 );
             }
         }

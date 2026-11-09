@@ -17,7 +17,7 @@ use crate::files::tilde;
 use crate::panel::browser::open_folder;
 use crate::settings::{self, push_recent};
 use crate::worker::Worker;
-use crate::{App, RecentFolder, Shared, State};
+use crate::{App, RecentFolder, Shared, State, tr};
 
 /// What the window knows of the folders: the one open, if the list is
 /// a single folder's, and the ones opened, most recent first.
@@ -123,13 +123,13 @@ pub(crate) fn show(st: &State, app: &App) {
         (crate::roots::View::Roots(Some(r)), _) => {
             (roots.label(r), String::new(), r.display().to_string())
         }
-        (crate::roots::View::Roots(None), _) => ("All roots".into(), String::new(), String::new()),
+        (crate::roots::View::Roots(None), _) => (tr!("All roots"), String::new(), String::new()),
         (crate::roots::View::Collection { id, .. }, _) => (
             crate::panel::collections::name_of(st, id),
             String::new(),
             String::new(),
         ),
-        (crate::roots::View::Queue, _) => ("Export queue".into(), String::new(), String::new()),
+        (crate::roots::View::Queue, _) => (tr!("Export queue"), String::new(), String::new()),
         (crate::roots::View::Folder | crate::roots::View::Branch { .. }, None) => {
             Default::default()
         }
@@ -186,7 +186,7 @@ fn chosen(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, path: &str) {
     let dir = PathBuf::from(path);
     let app_weak = app.as_weak();
     let generation = state.borrow().views.view_generation;
-    let opening = format!("opening {}...", tilde(&dir));
+    let opening = tr!("opening {}...", tilde(&dir));
     app.set_status(opening.as_str().into());
     let spawned = std::thread::Builder::new()
         .name("greycard recent check".into())
@@ -217,7 +217,7 @@ fn chosen(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, path: &str) {
         });
     if let Err(e) = spawned {
         tracing::warn!("recently opened: {e}");
-        app.set_status(format!("not opened: {e}").into());
+        app.set_status(tr!("not opened: {e}", e = e).into());
     }
 }
 
@@ -257,14 +257,14 @@ fn checked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path, there
     let Some(there) = there else {
         tracing::warn!("recently opened: {} is not answering", dir.display());
         // Not "in 3 s": a look still out from before answers no at once.
-        let said = format!("{} isn't reachable; is its drive connected?", tilde(dir));
+        let said = tr!("{} isn't reachable; is its drive connected?", tilde(dir));
         app.set_status(said.as_str().into());
         app.set_open_folder_note(said.into());
         return;
     };
     if !there {
         tracing::warn!("recently opened: {} is not there", dir.display());
-        let said = format!("{} no longer exists", tilde(dir));
+        let said = tr!("{} no longer exists", tilde(dir));
         app.set_status(said.as_str().into());
         app.set_open_folder_note(said.into());
         return;

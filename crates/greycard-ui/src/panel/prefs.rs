@@ -11,7 +11,7 @@ use greycard_edit::Sidecar;
 use slint::ComponentHandle;
 
 use crate::worker::Worker;
-use crate::{App, Shared, State, chooser, grid, settings};
+use crate::{App, Shared, State, chooser, grid, settings, tr};
 
 /// The sheet's words for the two places, in the order its row shows
 /// them.
@@ -76,23 +76,20 @@ pub(crate) fn move_sidecars(files: &[PathBuf], placement: greycard_edit::Placeme
 pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) -> String {
     let n = moved.moved;
     let place = match placement {
-        greycard_edit::Placement::Beside => "beside their raws",
-        greycard_edit::Placement::Folder => "into the hidden folder",
+        greycard_edit::Placement::Beside => tr!("beside their raws"),
+        greycard_edit::Placement::Folder => tr!("into the hidden folder"),
     };
-    let mut words = format!(
-        "Moved {n} sidecar{} {place}.",
-        if n == 1 { "" } else { "s" }
+    let mut words = tr!(
+        "Moved {n} sidecar {place}." | "Moved {n} sidecars {place}." % n,
+        place = place
     );
     if moved.dropped > 0 {
-        let k = moved.dropped;
-        words.push_str(&format!(
-            " Removed {k} older cop{} left in the other place.",
-            if k == 1 { "y" } else { "ies" }
-        ));
+        words.push_str(&tr!(" Removed {n} older copy left in the other place."
+            | " Removed {n} older copies left in the other place." % moved.dropped));
     }
     if !moved.failed.is_empty() {
         let k = moved.failed.len();
-        words.push_str(&format!(" {k} could not be moved; the log says why."));
+        words.push_str(&tr!(" {k} could not be moved; the log says why.", k = k));
     }
     words
 }
@@ -281,7 +278,7 @@ fn start_picked(st: &State, app: &App, choice: &str) {
             .or_else(dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("/"));
         let weak = app.as_weak();
-        chooser::choose_folder("Start in", start, move |chosen| {
+        chooser::choose_folder(crate::marked::tr!("Start in"), start, move |chosen| {
             let _ = weak.upgrade_in_event_loop(move |app| take(&app, chosen));
         });
     }
@@ -415,20 +412,20 @@ impl CacheShown {
 /// there is none.
 pub(crate) fn thumb_cache_words(shown: CacheShown) -> String {
     let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let one = |b: u64| format!("{:.1}", mb(b));
+    let whole = |b: u64| format!("{:.0}", mb(b));
     match shown {
-        CacheShown::Missing => "No cache folder: thumbnails are rebuilt each time.".into(),
-        CacheShown::Counting => "Counting…".into(),
+        CacheShown::Missing => tr!("No cache folder: thumbnails are rebuilt each time."),
+        CacheShown::Counting => tr!("Counting…"),
         CacheShown::Known { usage, cap: 0, .. } if usage.total().entries == 0 => {
-            "Off: thumbnails are rebuilt each time.".into()
+            tr!("Off: thumbnails are rebuilt each time.")
         }
         CacheShown::Known { usage, cap: 0, .. } => {
             let all = usage.total();
-            format!(
-                "Off. {} picture{} from before, {:.1} MB.",
-                all.entries,
-                plural(all.entries),
-                mb(all.bytes)
+            tr!(
+                "Off. {n} picture from before, {mb} MB."
+                    | "Off. {n} pictures from before, {mb} MB." % all.entries,
+                mb = one(all.bytes)
             )
         }
         CacheShown::Known {
@@ -436,25 +433,26 @@ pub(crate) fn thumb_cache_words(shown: CacheShown) -> String {
             cap,
             preview_cap,
         } => {
-            let thumbs = format!(
-                "{} thumbnail{} kept, {:.1} MB of {:.0} MB.",
-                usage.thumbs.entries,
-                plural(usage.thumbs.entries),
-                mb(usage.thumbs.bytes),
-                mb(cap)
+            let thumbs = tr!(
+                "{n} thumbnail kept, {mb} MB of {cap} MB."
+                    | "{n} thumbnails kept, {mb} MB of {cap} MB." % usage.thumbs.entries,
+                mb = one(usage.thumbs.bytes),
+                cap = whole(cap)
             );
             match (preview_cap, usage.previews.entries) {
                 (0, 0) => thumbs,
-                (0, n) => format!(
-                    "{thumbs} {n} preview{} from before, {:.1} MB.",
-                    plural(n),
-                    mb(usage.previews.bytes)
+                (0, n) => tr!(
+                    "{thumbs} {n} preview from before, {mb} MB."
+                        | "{thumbs} {n} previews from before, {mb} MB." % n,
+                    thumbs = thumbs,
+                    mb = one(usage.previews.bytes)
                 ),
-                (pcap, n) => format!(
-                    "{thumbs} {n} local preview{}, {:.1} MB of {:.0} MB.",
-                    plural(n),
-                    mb(usage.previews.bytes),
-                    mb(pcap)
+                (pcap, n) => tr!(
+                    "{thumbs} {n} local preview, {mb} MB of {cap} MB."
+                        | "{thumbs} {n} local previews, {mb} MB of {cap} MB." % n,
+                    thumbs = thumbs,
+                    mb = one(usage.previews.bytes),
+                    cap = whole(pcap)
                 ),
             }
         }
@@ -1060,7 +1058,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 land(&app, &state, move_sidecars(&files, placement));
                 return;
             }
-            app.set_settings_note("Moving the sidecars...".into());
+            app.set_settings_note(tr!("Moving the sidecars...").into());
             let app_weak = app.as_weak();
             let spawned = std::thread::Builder::new()
                 .name("sidecars move".into())
@@ -1081,7 +1079,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if let Err(e) = spawned {
                 tracing::warn!("sidecars move: {e}");
                 MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
-                app.set_settings_note("The sidecars couldn't be moved; see the log.".into());
+                app.set_settings_note(tr!("The sidecars couldn't be moved; see the log.").into());
             }
         });
     }

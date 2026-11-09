@@ -30,7 +30,7 @@ use slint::ComponentHandle;
 
 use crate::panel::browser::{chosen_frames, file_name, meta_on_selection};
 use crate::worker::Worker;
-use crate::{App, Shared, State};
+use crate::{App, Shared, State, tr};
 
 // In the tags, whose undo notices write a shift too.
 use crate::tags::signed;
@@ -172,8 +172,11 @@ pub(crate) fn moved_time(camera: &str, by: i64) -> Option<String> {
 /// earlier`.
 fn later(by: i64) -> String {
     let words = signed(by);
-    let way = if by < 0 { "earlier" } else { "later" };
-    format!("{} {way}", &words[1..])
+    if by < 0 {
+        tr!("{} earlier", &words[1..])
+    } else {
+        tr!("{} later", &words[1..])
+    }
 }
 
 /// File `file`'s capture time as its camera wrote it, in the index's
@@ -232,7 +235,7 @@ pub(crate) fn time_words(st: &mut State, file: usize) -> String {
     match shift {
         0 => camera,
         by => match moved_time(&camera, by) {
-            Some(now) => format!("{now} (shifted {})", signed(by)),
+            Some(now) => tr!("{now} (shifted {})", signed(by), now = now),
             None => camera,
         },
     }
@@ -264,11 +267,14 @@ pub(crate) fn moved(st: &mut State, app: &App, files: &[usize]) {
             [f] => {
                 let name = file_name(&st.files[*f]);
                 match time_words(st, *f) {
-                    words if words.is_empty() => format!("{name}: capture time shifted"),
-                    words => format!("{name}: capture time {words}"),
+                    words if words.is_empty() => tr!("{name}: capture time shifted", name = name),
+                    words => tr!("{name}: capture time {words}", name = name, words = words),
                 }
             }
-            many => format!("capture time of {} moved", crate::queue::frames(many.len())),
+            many => {
+                tr!("capture time of {n} frame moved"
+                    | "capture time of {n} frames moved" % many.len())
+            }
         };
         app.set_status(said.into());
     }
@@ -351,8 +357,11 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     let any_shifted = files.iter().any(|&f| st.sidecars[f].meta.time_shift != 0);
     app.set_time_shift_title(
         match asked.count {
-            1 => format!("Shift the capture time of {}", asked.name),
-            n => format!("Shift the capture time of {n} frames"),
+            1 => tr!("Shift the capture time of {}", asked.name),
+            n => {
+                tr!("Shift the capture time of {n} frame"
+                    | "Shift the capture time of {n} frames" % n)
+            }
         }
         .into(),
     );
@@ -374,23 +383,29 @@ pub(crate) fn ask(st: &mut State, app: &App) {
 /// The sheet's line about the frame it names.
 fn frame_line(asked: &Asked) -> String {
     let Some(camera) = asked.camera.as_deref() else {
-        return format!("{}: its camera wrote no capture time", asked.name);
+        return tr!("{}: its camera wrote no capture time", asked.name);
     };
-    let others = match asked.count {
-        1 => String::new(),
-        2 => "; the other frame moves with it".into(),
-        n => format!("; the other {} frames move with it", n - 1),
-    };
+    let others =
+        match asked.count {
+            1 => String::new(),
+            2 => tr!("; the other frame moves with it"),
+            n => tr!("; the other {n} frame moves with it"
+                | "; the other {n} frames move with it" % n - 1),
+        };
     match asked.shift {
-        0 => format!(
+        0 => tr!(
             "{}: taken {camera} by its camera's clock{others}",
-            asked.name
+            asked.name,
+            camera = camera,
+            others = others
         ),
-        by => format!(
+        by => tr!(
             "{}: taken {camera} by its camera's clock, {} now (shifted {}){others}",
             asked.name,
             moved_time(camera, by).unwrap_or_default(),
-            signed(by)
+            signed(by),
+            camera = camera,
+            others = others
         ),
     }
 }
@@ -399,12 +414,11 @@ fn frame_line(asked: &Asked) -> String {
 /// they do not read.
 fn delta_of(asked: &Asked, mode: &str, delta: &str, to: &str) -> Result<i64, String> {
     if mode != SET {
-        return parse_delta(delta).ok_or_else(|| {
-            "Type the difference as +1:00:00 or -0:05:00, or as 1h, 5m, -30s".to_string()
-        });
+        return parse_delta(delta)
+            .ok_or_else(|| tr!("Type the difference as +1:00:00 or -0:05:00, or as 1h, 5m, -30s"));
     }
     let Some(camera) = asked.camera.as_deref().and_then(seconds_of) else {
-        return Err(format!(
+        return Err(tr!(
             "{} has no capture time to set from: shift it by a difference instead",
             asked.name
         ));
@@ -414,10 +428,10 @@ fn delta_of(asked: &Asked, mode: &str, delta: &str, to: &str) -> Result<i64, Str
     let whole = matches!(to.trim().len(), 10 | 19);
     let to = seconds_of(to)
         .filter(|_| whole)
-        .ok_or_else(|| "Type the date and time as 2026-09-20 14:05:00".to_string())?;
+        .ok_or_else(|| tr!("Type the date and time as 2026-09-20 14:05:00"))?;
     let by = to - camera - asked.shift;
     if (asked.shift + by).abs() > SHIFT_LIMIT {
-        return Err("That is further than any clock is set wrong".into());
+        return Err(tr!("That is further than any clock is set wrong"));
     }
     Ok(by)
 }
@@ -433,23 +447,28 @@ pub(crate) fn show(st: &State, app: &App) {
         app.get_time_shift_to(),
     );
     let (said, refusal, ready) = match delta_of(asked, &mode, &delta, &to) {
-        Ok(0) => ("No change".to_string(), String::new(), false),
+        Ok(0) => (tr!("No change"), String::new(), false),
         Ok(by) => {
             let whom = match asked.count {
                 1 => asked.name.clone(),
-                n => format!("{n} frames"),
+                n => tr!("{n} frame" | "{n} frames" % n),
             };
             let lands = asked
                 .camera
                 .as_deref()
                 .and_then(|c| moved_time(c, asked.shift + by))
                 .map(|t| match asked.count {
-                    1 => format!(", to {t}"),
-                    _ => format!("; {} to {t}", asked.name),
+                    1 => tr!(", to {t}", t = t),
+                    _ => tr!("; {} to {t}", asked.name, t = t),
                 })
                 .unwrap_or_default();
             (
-                format!("Moves {whom} {}{lands}", later(by)),
+                tr!(
+                    "Moves {whom} {}{lands}",
+                    later(by),
+                    whom = whom,
+                    lands = lands
+                ),
                 String::new(),
                 true,
             )

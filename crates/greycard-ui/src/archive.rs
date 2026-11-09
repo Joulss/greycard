@@ -42,6 +42,8 @@ use std::time::{Duration, Instant, SystemTime};
 use greycard_edit::{SIDECAR_FOLDER, Sidecar};
 use greycard_library::Library;
 
+use crate::tr;
+
 pub mod rejects;
 
 /// The ending of a copy's temporary name, which a later run removes.
@@ -470,9 +472,9 @@ fn is_gcd(path: &Path) -> bool {
 /// revision, and the other side the same bytes; the archive write
 /// behind a later save then finds the copies the same.
 pub fn join_sidecars(join: &SidecarJoin) -> Result<(), String> {
-    let ours = Sidecar::read(&join.mine_sidecar).map_err(|e| format!("reading it: {e}"))?;
+    let ours = Sidecar::read(&join.mine_sidecar).map_err(|e| tr!("reading it: {e}", e = e))?;
     let theirs =
-        Sidecar::read(&join.theirs_sidecar).map_err(|e| format!("reading the copy: {e}"))?;
+        Sidecar::read(&join.theirs_sidecar).map_err(|e| tr!("reading the copy: {e}", e = e))?;
     let mut joined = greycard_edit::sync::join(&ours, &theirs);
     let placement = if join.mine_sidecar.parent().and_then(Path::file_name)
         == Some(std::ffi::OsStr::new(SIDECAR_FOLDER))
@@ -483,10 +485,10 @@ pub fn join_sidecars(join: &SidecarJoin) -> Result<(), String> {
     };
     joined
         .save_in(&join.mine, placement)
-        .map_err(|e| format!("writing it: {e}"))?;
+        .map_err(|e| tr!("writing it: {e}", e = e))?;
     joined
         .write_to(&join.theirs_sidecar)
-        .map_err(|e| format!("writing the copy: {e}"))?;
+        .map_err(|e| tr!("writing the copy: {e}", e = e))?;
     Ok(())
 }
 
@@ -746,7 +748,7 @@ pub fn plan(ask: &Ask, beat: &Beat) -> Plan {
                 items.push(Item {
                     frame,
                     size: 0,
-                    what: What::Unreadable("not a file".into()),
+                    what: What::Unreadable(tr!("not a file")),
                 });
                 continue;
             }
@@ -955,8 +957,8 @@ pub fn copy_file(
     hooks: &Hooks<'_>,
     counted: bool,
 ) -> Result<(String, u64), String> {
-    let mut src = std::fs::File::open(from).map_err(|e| format!("reading it: {e}"))?;
-    let meta = src.metadata().map_err(|e| format!("reading it: {e}"))?;
+    let mut src = std::fs::File::open(from).map_err(|e| tr!("reading it: {e}", e = e))?;
+    let meta = src.metadata().map_err(|e| tr!("reading it: {e}", e = e))?;
     let how = crate::import::Landing {
         ending: TEMPORARY,
         replace,
@@ -1371,7 +1373,8 @@ pub fn size_words(bytes: u64) -> String {
         b if b >= 1_000_000_000 => format!("{:.1} GB", b as f64 / 1e9),
         b if b >= 1_000_000 => format!("{:.1} MB", b as f64 / MB),
         b if b >= 1_000 => format!("{} KB", b / 1_000),
-        b => format!("{b} bytes"),
+        // One byte reads "1 bytes" in English as it always has.
+        b => tr!("{n} bytes" | "{n} bytes" % b),
     }
 }
 

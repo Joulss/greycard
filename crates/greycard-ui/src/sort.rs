@@ -28,6 +28,7 @@ use std::collections::BTreeMap;
 use greycard_library::{Order, SortBy};
 use serde::{Deserialize, Serialize};
 
+use crate::marked;
 use crate::roots::View;
 
 /// A view's order: a collection's own, by hand, or an order.
@@ -181,7 +182,7 @@ pub(crate) fn entries(view: &View) -> Vec<Option<SortBy>> {
 /// The words on the Sort button.
 pub(crate) fn button_words(choice: Choice) -> String {
     match choice {
-        Choice::Hand => "Hand order".to_string(),
+        Choice::Hand => marked::tr!("Hand order").to_string(),
         Choice::By(o) => o.by.words().to_string(),
     }
 }
@@ -189,11 +190,40 @@ pub(crate) fn button_words(choice: Choice) -> String {
 /// The words for each way up of an order: the oldest first, A to Z.
 pub(crate) fn way_words(by: SortBy) -> [&'static str; 2] {
     match by {
-        SortBy::Taken | SortBy::Edited => ["Oldest first", "Newest first"],
-        SortBy::Name => ["A to Z", "Z to A"],
-        SortBy::Rating | SortBy::Focus => ["Lowest first", "Highest first"],
+        SortBy::Taken | SortBy::Edited => {
+            [marked::tr!("Oldest first"), marked::tr!("Newest first")]
+        }
+        SortBy::Name => [marked::tr!("A to Z"), marked::tr!("Z to A")],
+        SortBy::Rating | SortBy::Focus => {
+            [marked::tr!("Lowest first"), marked::tr!("Highest first")]
+        }
     }
 }
+
+/// The order's words as a sentence says them, in lower case, their
+/// own entries in the catalog.
+const _LOWER_WORDS: [&str; 10] = [
+    crate::marked::tr!("hand order"),
+    crate::marked::tr!("capture time"),
+    crate::marked::tr!("name"),
+    crate::marked::tr!("rating"),
+    crate::marked::tr!("date edited"),
+    crate::marked::tr!("focus"),
+    crate::marked::tr!("oldest first"),
+    crate::marked::tr!("newest first"),
+    crate::marked::tr!("lowest first"),
+    crate::marked::tr!("highest first"),
+];
+
+/// `SortBy::words`, which greycard-library holds, marked here for the
+/// catalog: the menu translates them where it shows them.
+const _BY_WORDS: [&str; 5] = [
+    marked::tr!("Capture time"),
+    marked::tr!("Name"),
+    marked::tr!("Rating"),
+    marked::tr!("Date edited"),
+    marked::tr!("Focus"),
+];
 
 /// The choice after the menu's entry `entry` is picked over `now`: an
 /// order keeps the way up it had, so a pick of the same order again
@@ -223,6 +253,26 @@ pub(crate) fn turned(now: Choice, descending: bool) -> Choice {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// The words marked for the catalog are the library's own.
+    #[test]
+    fn the_marked_order_words_are_the_librarys() {
+        let words: Vec<&str> = SortBy::ALL.iter().map(|b| b.words()).collect();
+        assert_eq!(words, _BY_WORDS);
+        // Each in lower case, as a sentence says it, is marked too.
+        let mut said: Vec<String> = vec![button_words(Choice::Hand).to_lowercase()];
+        for by in SortBy::ALL {
+            said.push(by.words().to_lowercase());
+            for way in way_words(by) {
+                if way.chars().nth(1) != Some(' ') {
+                    said.push(way.to_lowercase());
+                }
+            }
+        }
+        for word in said {
+            assert!(_LOWER_WORDS.contains(&word.as_str()), "{word}");
+        }
+    }
 
     fn collection(id: &str) -> View {
         View::Collection { id: id.into() }

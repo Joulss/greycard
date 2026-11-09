@@ -52,7 +52,7 @@ use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
 use crate::panel::history::{show_history, take_current, take_current_with};
 use crate::settings::SyncShift;
 use crate::worker::Worker;
-use crate::{App, Shared, State, carry, selection};
+use crate::{App, Shared, State, carry, selection, tr};
 
 // The fit of a preset's profile to a frame, which the import also
 // asks, off the window, in the library.
@@ -123,9 +123,9 @@ pub(crate) fn sync_targets(st: &State) -> Vec<usize> {
 fn sync_words(st: &State) -> String {
     let n = sync_targets(st).len();
     let from = st.current.map(|c| frame_name(st, c)).unwrap_or_default();
-    format!(
-        "From {from} onto {n} other frame{}.",
-        if n == 1 { "" } else { "s" }
+    tr!(
+        "From {from} onto {n} other frame." | "From {from} onto {n} other frames." % n,
+        from = from
     )
 }
 
@@ -163,16 +163,18 @@ fn show_shift(st: &State, app: &App) {
         || (modes.tint && app.get_sync_shift_white() && shift.tint.is_none());
     app.set_sync_shift_words(
         if unread {
-            "This frame's as-shot light cannot be read (it is no raw, or its raw does not \
-             say): its Temperature and Tint are set."
-                .to_string()
+            tr!(
+                "This frame's as-shot light cannot be read (it is no raw, or its raw does not \
+                 say): its Temperature and Tint are set."
+            )
         } else if shift.is_none() {
-            "Set gives every frame this frame's value. Shift moves each frame from its own by \
-             this frame's difference from its as-shot light (Temperature, Tint) or from 0 EV \
-             (Exposure)."
-                .to_string()
+            tr!(
+                "Set gives every frame this frame's value. Shift moves each frame from its own \
+                 by this frame's difference from its as-shot light (Temperature, Tint) or from \
+                 0 EV (Exposure)."
+            )
         } else {
-            format!(
+            tr!(
                 "Each frame moves from its own value: {}. That is this frame's difference from \
                  its as-shot light and from 0 EV.",
                 shift.sheet_words()
@@ -690,7 +692,7 @@ fn sync_now(
     let went = choice_leaving(choice, st.path_at(from).map(PathBuf::as_path));
     let mut said = synced_words(&st, &went, targets.len(), &synced);
     if !shift.is_none() && !synced.moved.is_empty() {
-        said.push_str(&format!(", each shifted {}", shift.words()));
+        said.push_str(&tr!(", each shifted {}", shift.words()));
     }
     tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
     app.set_status(said.into());
@@ -749,13 +751,13 @@ impl Shift {
     pub(crate) fn words(&self) -> String {
         let mut said = Vec::new();
         if let Some(t) = self.temperature {
-            said.push(format!("Temperature {t:+.0} mired"));
+            said.push(tr!("Temperature {t} mired", t = format!("{t:+.0}")));
         }
         if let Some(d) = self.tint {
-            said.push(format!("Tint {d:+.3}"));
+            said.push(tr!("Tint {d}", d = format!("{d:+.3}")));
         }
         if let Some(e) = self.exposure {
-            said.push(format!("Exposure {e:+.2} EV"));
+            said.push(tr!("Exposure {e} EV", e = format!("{e:+.2}")));
         }
         said.join(", ")
     }
@@ -769,19 +771,27 @@ impl Shift {
             let at = |k: f64| kelvin_moved(k, t) - k;
             let here = self
                 .from_kelvin
-                .map(|k| format!("{:+.0} K at this frame's {k:.0} K, ", at(k)))
+                .map(|k| {
+                    tr!(
+                        "{} K at this frame's {k} K, ",
+                        format!("{:+.0}", at(k)),
+                        k = format!("{k:.0}")
+                    )
+                })
                 .unwrap_or_default();
-            said.push(format!(
-                "Temperature {t:+.0} mired ({here}{:+.0} K at 3000 K, {:+.0} K at 6500 K)",
-                at(3000.0),
-                at(6500.0)
+            said.push(tr!(
+                "Temperature {t} mired ({here}{} K at 3000 K, {} K at 6500 K)",
+                format!("{:+.0}", at(3000.0)),
+                format!("{:+.0}", at(6500.0)),
+                t = format!("{t:+.0}"),
+                here = here
             ));
         }
         if let Some(d) = self.tint {
-            said.push(format!("Tint {d:+.3}"));
+            said.push(tr!("Tint {d}", d = format!("{d:+.3}")));
         }
         if let Some(e) = self.exposure {
-            said.push(format!("Exposure {e:+.2} EV"));
+            said.push(tr!("Exposure {e} EV", e = format!("{e:+.2}")));
         }
         said.join(", ")
     }
@@ -929,7 +939,7 @@ fn read_whites(
 /// frame whose sidecar stands in.
 fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
     if !crate::rows::is_loaded(st, from) {
-        crate::rows::say_offline_for(st, app, from, ": nothing to sync from");
+        crate::rows::say_offline_for(st, app, from, &tr!(": nothing to sync from"));
         return None;
     }
     if st.current == Some(from)
@@ -990,7 +1000,7 @@ pub(crate) fn preset_pressed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>,
         worker,
         paths,
         crate::rows::Scope::Line,
-        "preset",
+        crate::marked::tr!("preset"),
         Box::new(move |state, app, worker, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
             let profiles = greycard_edit_io::profiles::list();
@@ -1046,7 +1056,7 @@ pub(crate) fn apply_preset_to(
     // The frame on screen under a root that is offline: nothing to lay
     // the preset over, said.
     if !crate::rows::load_frame(st, app, c) {
-        crate::rows::say_offline_for(st, app, c, ": the preset is not applied");
+        crate::rows::say_offline_for(st, app, c, &tr!(": the preset is not applied"));
         return;
     }
     // Loaded, the panel is the frame's own (`rows::take` opened it);
@@ -1098,7 +1108,14 @@ pub(crate) fn apply_preset_to(
             };
             let applied = current_preset.applied(&edit);
             if applied == edit {
-                app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
+                app.set_status(
+                    tr!(
+                        "{} is on already{left_off_tail}",
+                        preset.name,
+                        left_off_tail = left_off_tail
+                    )
+                    .into(),
+                );
                 return;
             }
             if let Some(line) = st.line_mut(c) {
@@ -1114,7 +1131,14 @@ pub(crate) fn apply_preset_to(
             // left-off tail leave_cull cannot know about, is the one
             // that stands once it has had its say.
             leave_cull(st, app, worker, None);
-            app.set_status(format!("{} applied{left_off_tail}", preset.name).into());
+            app.set_status(
+                tr!(
+                    "{} applied{left_off_tail}",
+                    preset.name,
+                    left_off_tail = left_off_tail
+                )
+                .into(),
+            );
             return;
         }
         // Whatever the panel holds is a state first, then the preset
@@ -1122,7 +1146,14 @@ pub(crate) fn apply_preset_to(
         let edit = read_edit(app, &st.develop.edit, st.develop.target);
         let applied = current_preset.applied(&edit);
         if applied == edit {
-            app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
+            app.set_status(
+                tr!(
+                    "{} is on already{left_off_tail}",
+                    preset.name,
+                    left_off_tail = left_off_tail
+                )
+                .into(),
+            );
             return;
         }
         if let Some(edit) = panel_state(st, edit)
@@ -1133,7 +1164,11 @@ pub(crate) fn apply_preset_to(
         if let Some(line) = st.line_mut(c) {
             line.record_as(applied, Some(preset_label(&preset.name)));
         }
-        let said = format!("{} applied{left_off_tail}", preset.name);
+        let said = tr!(
+            "{} applied{left_off_tail}",
+            preset.name,
+            left_off_tail = left_off_tail
+        );
         // As the set's own non-culling branch below: left for the
         // develop this generation is when one is actually asked for,
         // so the tail is not lost the moment it lands.
@@ -1248,7 +1283,7 @@ fn profile_left_off_words(st: &State, synced: &Synced) -> String {
             "{}{}",
             names.join(", "),
             if more > 0 {
-                format!(" and {more} more")
+                tr!(" and {more} more", more = more)
             } else {
                 String::new()
             }
@@ -1256,13 +1291,13 @@ fn profile_left_off_words(st: &State, synced: &Synced) -> String {
     };
     let mut said = String::new();
     if !synced.profile_left_off.is_empty() {
-        said.push_str(&format!(
+        said.push_str(&tr!(
             "; the camera profile left off {} (made for another camera)",
             named(&synced.profile_left_off)
         ));
     }
     if !synced.demosaic_left_off.is_empty() {
-        said.push_str(&format!(
+        said.push_str(&tr!(
             "; the demosaic left off {} (a method of another mosaic)",
             named(&synced.demosaic_left_off)
         ));
@@ -1270,18 +1305,38 @@ fn profile_left_off_words(st: &State, synced: &Synced) -> String {
     said
 }
 
+/// How much a choice carries, in the window's words: greycard-edit's
+/// `Choice::words`, "3 sections", "1 part", "2 sections and 4 parts".
+fn choice_words(choice: &Choice) -> String {
+    carried_words(choice.sections.len(), choice.parts.len())
+}
+
+/// greycard-edit's `carried_words` in the window's words: "N sections
+/// and M parts", either left out at none.
+pub(crate) fn carried_words(sections: usize, parts: usize) -> String {
+    let sections_said = || tr!("{n} section" | "{n} sections" % sections);
+    let parts_said = || tr!("{n} part" | "{n} parts" % parts);
+    match (sections, parts) {
+        (_, 0) => sections_said(),
+        (0, _) => parts_said(),
+        _ => tr!(
+            "{sections} and {parts}",
+            sections = sections_said(),
+            parts = parts_said()
+        ),
+    }
+}
+
 /// The status line after a sync: how much went where, and which
 /// frames kept their own camera profile.
 fn synced_words(st: &State, choice: &Choice, asked: usize, synced: &Synced) -> String {
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     let mut said = if synced.moved.is_empty() {
-        format!("the other {asked} frame{} had these already", plural(asked))
+        tr!("the other {n} frame had these already"
+            | "the other {n} frames had these already" % asked)
     } else {
-        format!(
-            "synced {} onto {} frame{}",
-            choice.words(),
-            synced.moved.len(),
-            plural(synced.moved.len())
+        tr!(
+            "synced {what} onto {n} frame" | "synced {what} onto {n} frames" % synced.moved.len(),
+            what = choice_words(choice)
         )
     };
     said.push_str(&profile_left_off_words(st, synced));
@@ -1299,15 +1354,17 @@ pub(crate) fn preset_onto_words(
     total: usize,
     synced: &Synced,
 ) -> String {
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     let mut said = if moved == 0 {
-        format!("{name} is on already")
+        tr!("{name} is on already", name = name)
     } else {
-        format!("{name} onto {moved} frame{}", plural(moved))
+        tr!(
+            "{name} onto {n} frame" | "{name} onto {n} frames" % moved,
+            name = name
+        )
     };
     let already = total.saturating_sub(moved);
     if moved > 0 && already > 0 {
-        said.push_str(&format!("; {already} had it already"));
+        said.push_str(&tr!("; {already} had it already", already = already));
     }
     said.push_str(&profile_left_off_words(st, synced));
     said
@@ -1319,7 +1376,7 @@ pub(crate) fn preset_onto_words(
 /// is not the frame's.
 pub(crate) fn copy_settings(st: &mut State, app: &App) {
     let Some(c) = st.current else {
-        app.set_status("open a frame to copy its settings".into());
+        app.set_status(tr!("open a frame to copy its settings").into());
         return;
     };
     copy_settings_of(st, app, c);
@@ -1352,7 +1409,7 @@ fn copy_of(st: &mut State, app: &App, cell: usize, masks_only: bool) {
     // read: under an offline root the panel shows the default that
     // stands in, and there is nothing to copy.
     if !crate::rows::load_frame(st, app, cell) {
-        crate::rows::say_offline_for(st, app, cell, ": nothing to copy");
+        crate::rows::say_offline_for(st, app, cell, &tr!(": nothing to copy"));
         return;
     }
     // A frame of the export queue's view is its queued edit.
@@ -1390,7 +1447,7 @@ fn copy_of(st: &mut State, app: &App, cell: usize, masks_only: bool) {
     }
     st.sheets.clipboard = Some(clip);
     app.set_clip_from(name.clone().into());
-    app.set_status(format!("copied the settings of {name}").into());
+    app.set_status(tr!("copied the settings of {name}", name = name).into());
 }
 
 /// The checks a paste's sheet opens with, over the copied frame's
@@ -1438,16 +1495,17 @@ fn paste_last(st: &State) -> carry::Checks {
 fn paste_words(st: &State, clip: &Clipboard, targets: &[usize]) -> String {
     let onto = match targets {
         [one] => frame_name(st, *one),
-        _ => format!("{} frames", targets.len()),
+        _ => tr!("{n} frame" | "{n} frames" % targets.len()),
     };
     let set = chosen_frames(st);
     if set.len() > targets.len() {
-        format!(
+        tr!(
             "Onto {onto}; {}, which they came from, is left as it is.",
-            clip.name()
+            clip.name(),
+            onto = onto
         )
     } else {
-        format!("Onto {onto}.")
+        tr!("Onto {onto}.", onto = onto)
     }
 }
 
@@ -1457,12 +1515,12 @@ fn paste_words(st: &State, clip: &Clipboard, targets: &[usize]) -> String {
 pub(crate) fn paste_open(st: &mut State, app: &App) {
     let Some(clip) = st.sheets.clipboard.clone() else {
         app.set_status(
-            "nothing copied yet: right-click a frame for Copy settings, or Ctrl+C".into(),
+            tr!("nothing copied yet: right-click a frame for Copy settings, or Ctrl+C").into(),
         );
         return;
     };
     if tool_in_hand(app) {
-        app.set_status("put the tool down first (Esc), then paste".into());
+        app.set_status(tr!("put the tool down first (Esc), then paste").into());
         return;
     }
     let Some(c) = st.current else {
@@ -1471,7 +1529,7 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
     let targets = clip.targets(st, &chosen_frames(st));
     if targets.is_empty() {
         app.set_status(
-            format!(
+            tr!(
                 "{} is the frame these came from; choose the frames to paste onto",
                 clip.name()
             )
@@ -1512,9 +1570,9 @@ pub(crate) fn paste_onto(
         learned_from: clip.learned_from(&preset),
         preset: &preset,
         label: clip.label(),
-        what: format!(
+        what: tr!(
             "{} from {}",
-            choice_leaving(choice, Some(&clip.from.path)).words(),
+            choice_words(&choice_leaving(choice, Some(&clip.from.path))),
             clip.name()
         ),
     };
@@ -1546,9 +1604,9 @@ pub(crate) fn paste_mask_onto(
         learned_from: None,
         preset: &clip.preset,
         label: clip.label(),
-        what: format!(
+        what: tr!(
             "{} from {}",
-            Choice::whole(&clip.preset.sections).words(),
+            choice_words(&Choice::whole(&clip.preset.sections)),
             clip.name()
         ),
     };
@@ -1661,19 +1719,12 @@ fn lay_paste(
             synced.demosaic_left_off.sort_unstable();
         }
     }
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     let mut said = if synced.moved.is_empty() {
-        format!(
-            "the {} frame{} had these already",
-            targets.len(),
-            plural(targets.len())
-        )
+        tr!("the {n} frame had these already" | "the {n} frames had these already" % targets.len())
     } else {
-        format!(
-            "pasted {} onto {} frame{}",
-            pasted.what,
-            synced.moved.len(),
-            plural(synced.moved.len())
+        tr!(
+            "pasted {what} onto {n} frame" | "pasted {what} onto {n} frames" % synced.moved.len(),
+            what = pasted.what
         )
     };
     said.push_str(&profile_left_off_words(st, &synced));
@@ -1703,14 +1754,14 @@ fn sync_ready(st: &mut State, app: &App, last: bool) -> bool {
         return false;
     }
     if tool_in_hand(app) {
-        app.set_status("put the tool down first (Esc), then sync".into());
+        app.set_status(tr!("put the tool down first (Esc), then sync").into());
         return false;
     }
     let (Some(c), targets) = (st.current, sync_targets(st)) else {
         return false;
     };
     if targets.is_empty() {
-        app.set_status("choose the frames to sync onto: Ctrl+click or Shift+click".into());
+        app.set_status(tr!("choose the frames to sync onto: Ctrl+click or Shift+click").into());
         return false;
     }
     st.sheets.sync_asked = Some((c, targets));
@@ -1789,7 +1840,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             if tool_in_hand(&app) {
-                app.set_status("put the tool down first (Esc), then paste".into());
+                app.set_status(tr!("put the tool down first (Esc), then paste").into());
                 return;
             }
             let paths: Vec<crate::versions::Key> = chosen_frames(&st)
@@ -1803,7 +1854,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::Line,
-                "paste",
+                crate::marked::tr!("paste"),
                 Box::new(move |state, app, worker, at| {
                     let chosen: Vec<usize> = at.into_iter().flatten().collect();
                     let profiles = greycard_edit_io::profiles::list();
@@ -1904,7 +1955,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let mut st = state.borrow_mut();
             let choice = st.sheets.sync_checks.choice();
             if choice.is_empty() {
-                app.set_status("choose what goes across".into());
+                app.set_status(tr!("choose what goes across").into());
                 return;
             }
             // Read before the sheet closes: closing it clears the flag.
@@ -1921,7 +1972,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 if asked.is_none() || asked != now {
                     tracing::warn!("paste refused: the selection moved while the sheet was open");
                     app.set_status(
-                        "the selection changed while the sheet was open; nothing pasted".into(),
+                        tr!("the selection changed while the sheet was open; nothing pasted")
+                            .into(),
                     );
                     return;
                 }
@@ -1939,7 +1991,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     &worker,
                     paths,
                     crate::rows::Scope::Line,
-                    "paste",
+                    crate::marked::tr!("paste"),
                     Box::new(move |state, app, worker, at| {
                         let chosen: Vec<usize> = at.into_iter().flatten().collect();
                         let profiles = greycard_edit_io::profiles::list();
@@ -1971,12 +2023,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if asked.is_none() || asked != now {
                 tracing::warn!("sync refused: the selection moved while the sheet was open");
                 app.set_status(
-                    "the selection changed while the sheet was open; nothing synced".into(),
+                    tr!("the selection changed while the sheet was open; nothing synced").into(),
                 );
                 return;
             }
             if targets.is_empty() {
-                app.set_status("nothing to sync onto".into());
+                app.set_status(tr!("nothing to sync onto").into());
                 return;
             }
             // A paste's sheet opens on this choice from now on.
@@ -2000,10 +2052,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::Line,
-                "sync",
+                crate::marked::tr!("sync"),
                 Box::new(move |state, app, worker, at| {
                     let Some(from) = at.first().copied().flatten() else {
-                        app.set_status("the frame to sync from is gone; nothing synced".into());
+                        app.set_status(
+                            tr!("the frame to sync from is gone; nothing synced").into(),
+                        );
                         return;
                     };
                     let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
@@ -2028,11 +2082,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         unread,
                         frames,
                         crate::rows::Scope::Line,
-                        "sync",
+                        crate::marked::tr!("sync"),
                         Box::new(move |state, app, _, at| {
                             let Some(from) = at.first().copied().flatten() else {
                                 app.set_status(
-                                    "the frame to sync from is gone; nothing synced".into(),
+                                    tr!("the frame to sync from is gone; nothing synced").into(),
                                 );
                                 return;
                             };
