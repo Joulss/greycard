@@ -14,7 +14,7 @@ use slint::Model;
 use super::tests;
 use super::{ROOT_WAIT, View, open_view, refresh_view, restart_poll, watch};
 use crate::worker::Worker;
-use crate::{App, RootChip, Shared, State};
+use crate::{App, RootChip, Shared, State, tr};
 
 /// Each root's count, as the index holds it now.
 pub(crate) fn recount(st: &mut State) {
@@ -63,9 +63,9 @@ pub(crate) fn show(st: &State, app: &App) {
     app.set_library_can_add_open(open_folder_to_add(st).is_some());
     app.set_library_note(
         if roots.is_empty() {
-            "No folders in the library yet"
+            tr!("No folders in the library yet")
         } else {
-            ""
+            String::new()
         }
         .into(),
     );
@@ -170,7 +170,7 @@ pub(crate) fn edit_roots<T>(
 /// (a folder on a share can take a round trip, or never answer), and
 /// added when that is done.
 pub(crate) fn add(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
-    app.set_status(format!("adding {}...", dir.display()).into());
+    app.set_status(tr!("adding {}...", dir.display()).into());
     send_check(state, app, worker, dir.to_path_buf(), Check::Add);
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn add(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path
 /// view as a root, or, under a root already, that root's view of it
 /// and the folders under it. The Import sheet's Add in place.
 pub(crate) fn add_and_open(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
-    app.set_status(format!("adding {}...", dir.display()).into());
+    app.set_status(tr!("adding {}...", dir.display()).into());
     send_check(state, app, worker, dir.to_path_buf(), Check::AddOpen);
 }
 
@@ -229,10 +229,10 @@ impl Check {
                 {
                     remove_listed(state, app, worker, &canonical)
                 }
-                Ok(_) => app.set_status(format!("{} is not in the library", dir.display()).into()),
+                Ok(_) => app.set_status(tr!("{} is not in the library", dir.display()).into()),
                 Err(e) => {
                     tracing::warn!("library: {e}");
-                    app.set_status(format!("not removed: {e}").into());
+                    app.set_status(tr!("not removed: {e}", e = e).into());
                 }
             },
         }
@@ -252,7 +252,7 @@ pub(super) fn checked_within(
             dir.to_path_buf(),
             std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                format!("timed out after {} s", ROOT_WAIT.as_secs()),
+                tr!("timed out after {} s", ROOT_WAIT.as_secs()),
             ),
         )
     };
@@ -300,7 +300,7 @@ fn send_check(_state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, dir: PathBuf
         });
     if let Err(e) = spawned {
         tracing::warn!("library: {e}");
-        app.set_status(format!("not done: {e}").into());
+        app.set_status(tr!("not done: {e}", e = e).into());
     }
 }
 
@@ -331,7 +331,7 @@ fn add_checked(
         Ok(dir) => dir,
         Err(e) => {
             tracing::warn!("library: {e}");
-            app.set_status(format!("not added: {e}").into());
+            app.set_status(tr!("not added: {e}", e = e).into());
             return;
         }
     };
@@ -341,14 +341,14 @@ fn add_checked(
         Ok(a) => a,
         Err(e) => {
             tracing::warn!("library: roots not saved: {e}");
-            app.set_status(format!("not added: {e}").into());
+            app.set_status(tr!("not added: {e}", e = e).into());
             return;
         }
     };
     let new = match added {
         Ok(Added::New(root)) => {
             app.set_status(
-                format!(
+                tr!(
                     "{} is in the library now; right-click its row to name it",
                     said(&st.views.library.roots, &root)
                 )
@@ -358,11 +358,11 @@ fn add_checked(
         }
         Ok(Added::Absorbed(root, under)) => {
             app.set_status(
-                format!(
-                    "{} is in the library now, in place of {} folder{} under it",
-                    said(&st.views.library.roots, &root),
-                    under.len(),
-                    if under.len() == 1 { "" } else { "s" }
+                tr!(
+                    "{root} is in the library now, in place of {n} folder under it"
+                        | "{root} is in the library now, in place of {n} folders under it"
+                            % under.len(),
+                    root = said(&st.views.library.roots, &root)
                 )
                 .into(),
             );
@@ -370,7 +370,7 @@ fn add_checked(
         }
         Ok(Added::Covered(root)) => {
             app.set_status(
-                format!(
+                tr!(
                     "already in the library, under {}",
                     said(&st.views.library.roots, &root)
                 )
@@ -394,7 +394,7 @@ fn add_checked(
         }
         Err(e) => {
             tracing::warn!("library: {e}");
-            app.set_status(format!("not added: {e}").into());
+            app.set_status(tr!("not added: {e}", e = e).into());
             return;
         }
     };
@@ -484,7 +484,7 @@ fn remove_listed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path)
         Ok(false) => return,
         Err(e) => {
             tracing::warn!("library: roots not saved: {e}");
-            app.set_status(format!("not removed: {e}").into());
+            app.set_status(tr!("not removed: {e}", e = e).into());
             return;
         }
     }
@@ -492,7 +492,13 @@ fn remove_listed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path)
         "library: removed {}; nothing on disk touched",
         dir.display()
     );
-    app.set_status(format!("{was} is out of the library; its files are where they were").into());
+    app.set_status(
+        tr!(
+            "{was} is out of the library; its files are where they were",
+            was = was
+        )
+        .into(),
+    );
     // Nothing is owed to or by a root that is out (§233).
     if let Some(indexer) = &st.views.index {
         indexer.forget_pending_under(dir.to_path_buf());
@@ -535,12 +541,12 @@ pub(crate) fn rename(state: &Rc<Shared>, app: &App, dir: &Path, name: &str) {
     match edit_roots(&mut st, |r| r.set_name(dir, name)) {
         Ok(true) => {}
         Ok(false) => {
-            app.set_status(format!("{} is not in the library", dir.display()).into());
+            app.set_status(tr!("{} is not in the library", dir.display()).into());
             return;
         }
         Err(e) => {
             tracing::warn!("library: roots not saved: {e}");
-            app.set_status(format!("not renamed: {e}").into());
+            app.set_status(tr!("not renamed: {e}", e = e).into());
             return;
         }
     }
@@ -550,11 +556,12 @@ pub(crate) fn rename(state: &Rc<Shared>, app: &App, dir: &Path, name: &str) {
     }
     app.set_status(
         match &after {
-            Some(name) => format!(
-                "{} is called {name} in the library; the folder is as it was",
-                dir.display()
+            Some(name) => tr!(
+                "{folder} is called {name} in the library; the folder is as it was",
+                folder = dir.display(),
+                name = name
             ),
-            None => format!("{} goes by its folder's name", dir.display()),
+            None => tr!("{} goes by its folder's name", dir.display()),
         }
         .into(),
     );

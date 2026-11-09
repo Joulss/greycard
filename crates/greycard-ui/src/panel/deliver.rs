@@ -5,10 +5,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::tr;
 use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Method as RetouchMethod;
 use greycard_edit::{Edit, WhiteBalance};
-use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::{
@@ -858,7 +858,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if picking.is_empty() {
                 // With no GPU, why the time is what it is: the start's
                 // own line saying so is gone by now.
-                let on_cpu = st.develop.software_tail.unwrap_or_default();
+                let on_cpu = st.develop.software_tail.as_deref().unwrap_or_default();
                 // The set's own words first: the develop's line runs
                 // long with a note or two of its own, and the set's
                 // is the one a snapshot's width must not clip.
@@ -1999,7 +1999,7 @@ fn ask_folder(
     #[cfg(not(test))]
     {
         let weak = app.as_weak();
-        chooser::choose_folder("Export to a folder", start, move |chosen| {
+        chooser::choose_folder(tr!("Export to a folder"), start, move |chosen| {
             let _ = weak.upgrade_in_event_loop(move |app| then(&app, chosen));
         });
     }
@@ -2311,7 +2311,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 .unwrap_or_else(|| PathBuf::from("/"));
             let weak = app.as_weak();
             chooser::choose_open(
-                "Watermark",
+                tr!("Watermark"),
                 start,
                 ("PNG".into(), vec!["*.png".into(), "*.PNG".into()]),
                 move |chosen| {
@@ -2366,7 +2366,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::Line,
-                "export",
+                crate::rows::Request::Export,
                 Box::new(move |state, app, _, at| {
                     let frames: Vec<usize> = at.into_iter().flatten().collect();
                     export_frames(state, app, &pressed, &frames);

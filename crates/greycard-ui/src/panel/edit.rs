@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::curve::Channel;
 use greycard_edit::grading::Range;
 use greycard_edit::mask::Shape;
@@ -8,7 +9,6 @@ use greycard_edit::{
     WhiteBalance,
 };
 use greycard_edit_io::xmp;
-use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::{show_looks, show_profiles};

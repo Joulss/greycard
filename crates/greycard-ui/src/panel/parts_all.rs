@@ -21,11 +21,11 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::Edit;
 use greycard_edit::history::person_label;
 use greycard_edit::mask::{Person, Shape};
 use greycard_edit::preset::Preset;
-use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::ai::{PersonOn, Picked};

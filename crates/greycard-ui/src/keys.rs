@@ -583,9 +583,6 @@ const LOUPE: View = View {
     brush: false,
 };
 
-/// The pointer's word, after its chord: "Ctrl+click".
-const CLICK: &str = marked::tr!("click");
-
 /// A line's own keys in the window's words: two chords either of
 /// which does it joined by "or", the chords as they are; a click's
 /// chord with the word after it; the rest translated as one.
@@ -594,13 +591,11 @@ fn shown_words(s: &str) -> String {
         return tr!("{} or {}", a, b);
     }
     match s.rsplit_once('+') {
-        Some((mods, "click")) => format!("{mods}+{}", text(CLICK)),
+        // The pointer's word, after its chord: "Ctrl+click".
+        Some((mods, "click")) => format!("{mods}+{}", tr!("click")),
         _ => text(s),
     }
 }
-
-/// What the sheets write for an action bound to no key.
-const NONE: &str = marked::tr!("None");
 
 /// The rebindable actions, in the table's order.
 pub(crate) fn actions() -> &'static [Action] {
@@ -1053,7 +1048,8 @@ fn chord_on(
 /// A chord as the sheet writes it on this platform; "None" for none.
 fn said(chord: &str, mac: bool) -> String {
     if chord.is_empty() {
-        return text(NONE);
+        // What the sheets write for an action bound to no key.
+        return tr!("key binding" => "None");
     }
     // The key is after the last "+", unless "+" is the key.
     let (mods, key) = match chord.strip_suffix("++") {

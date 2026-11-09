@@ -304,7 +304,7 @@ pub(crate) fn asked(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, which: u
         worker,
         vec![key.clone()],
         crate::rows::Scope::Line,
-        crate::marked::tr!("export"),
+        crate::rows::Request::Export,
         Box::new(move |state, app, _, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
             start(state, app, &key, &frames, chosen);
@@ -572,7 +572,7 @@ fn choose(state: &Rc<Shared>, app: &App) {
     {
         let weak = app.as_weak();
         chooser::choose_open(
-            crate::marked::tr!("Edit in"),
+            tr!("Edit in"),
             start,
             (String::new(), Vec::new()),
             move |picked| {

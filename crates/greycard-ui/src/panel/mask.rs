@@ -3,12 +3,12 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::tr;
 use greycard_edit::brush::{Op, Raster, Stroke};
 use greycard_edit::mask::{Component, MIN_RADIUS, Mask, Mode, Pick, Shape, on_angle_step};
 use greycard_edit::retouch::{Method as RetouchMethod, Patch};
 use greycard_edit::{Adjustment, Edit, Look};
 use greycard_render::refine::MaskPicture;
-use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::ai::{Key, prompted};

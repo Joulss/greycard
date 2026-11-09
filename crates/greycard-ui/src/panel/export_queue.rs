@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use greycard_ui::tr;
+use crate::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::export_queue::{self, Entry, QueuedFrame};
@@ -858,7 +858,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::Line,
-                "queue",
+                crate::rows::Request::Queue,
                 Box::new(move |state, app, _, at| {
                     let frames: Vec<usize> = at.into_iter().flatten().collect();
                     queue_pressed(state, app, &pressed, &frames);

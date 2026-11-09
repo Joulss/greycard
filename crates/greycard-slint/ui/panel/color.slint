@@ -297,7 +297,7 @@ export component MixerSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         PanelButton {
-            text: @tr("Pick");
+            text: @tr("picker" => "Pick");
             icon: @image-url("../icons/pipette.svg");
             enabled: root.mixer-acts;
             primary: root.picking == "Mixer";

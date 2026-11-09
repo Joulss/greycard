@@ -36,11 +36,6 @@ use crate::roots::View;
 use crate::worker::Worker;
 use crate::{App, CollectionChip, Shared, State, tr};
 
-/// "1 frame", "3 frames", in the window's words.
-fn frames_words(n: usize) -> String {
-    tr!("{n} frame" | "{n} frames" % n)
-}
-
 /// The collections as the window shows them, beside the store's: the
 /// sidebar's rows and the frame menu's names, one model each for the
 /// session, and the sheet's question while it is up.
@@ -298,13 +293,17 @@ pub(crate) fn opened_words(st: &State, missing: usize) -> Option<String> {
         )
     } else if missing > 0 {
         tr!(
-            "{name}: {} shown, {missing} missing (moved or deleted, and kept until found)",
-            frames_words(st.cells.len()),
+            "{name}: {n} frame shown, {missing} missing (moved or deleted, and kept until found)"
+                | "{name}: {n} frames shown, {missing} missing (moved or deleted, and kept until found)"
+                    % st.cells.len(),
             name = name,
             missing = missing
         )
     } else {
-        tr!("{name}: {}", frames_words(st.cells.len()), name = name)
+        tr!(
+            "{name}: {n} frame" | "{name}: {n} frames" % st.cells.len(),
+            name = name
+        )
     })
 }
 
@@ -408,7 +407,10 @@ fn add_to(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, id: &str, frames: 
             match (added.added, added.moved) {
                 (0, 0) => tr!("already in {name}", name = name),
                 (0, _) => tr!("already in {name}; shown from this copy now", name = name),
-                (n, _) => tr!("{} added to {name}", frames_words(n), name = name),
+                (n, _) => tr!(
+                    "{n} frame added to {name}" | "{n} frames added to {name}" % n,
+                    name = name
+                ),
             }
             .into(),
         );
@@ -476,7 +478,13 @@ fn remove_from(
         }
         st.views.collections.save(id);
         members_changed(&mut st, app);
-        app.set_status(tr!("{} taken out of {name}", frames_words(n), name = name).into());
+        app.set_status(
+            tr!(
+                "{n} frame taken out of {name}" | "{n} frames taken out of {name}" % n,
+                name = name
+            )
+            .into(),
+        );
         tracing::info!("collection {name}: {n} taken out");
         (st.views.view.collection() == Some(id)).then(|| st.views.view.clone())
     };
@@ -598,14 +606,16 @@ fn forget_missing(state: &Rc<Shared>, app: &App, id: &str) {
     let words = opened_words(st, forgot.missing).unwrap_or_default();
     let said = match (forgot.forgotten, forgot.away, forgot.on_disk) {
         (0, 0, 0) if forgot.unsure > 0 => tr!(
-            "{words}; nothing forgotten: the sidecar of {} could not be read",
-            frames_words(forgot.unsure),
+            "{words}; nothing forgotten: the sidecar of {n} frame could not be read"
+                | "{words}; nothing forgotten: the sidecar of {n} frames could not be read"
+                    % forgot.unsure,
             words = words
         ),
         (0, 0, 0) => tr!("{words}; nothing to forget", words = words),
         (0, away, 0) => tr!(
-            "{words}; nothing forgotten: {} on a drive that is offline or not answering",
-            frames_words(away),
+            "{words}; nothing forgotten: {n} frame on a drive that is offline or not answering"
+                | "{words}; nothing forgotten: {n} frames on a drive that is offline or not answering"
+                    % away,
             words = words
         ),
         (0, _, _) => tr!(
@@ -624,7 +634,7 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
             tr!("New collection"),
             match add.len() {
                 0 => String::new(),
-                n => tr!("{} go into it", frames_words(n)),
+                n => tr!("{n} frame go into it" | "{n} frames go into it" % n),
             },
             true,
             tr!("Create"),
@@ -656,7 +666,8 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
             String::new(),
         ),
         Asked::QueueOut { out, .. } => (
-            tr!("Take {} out of the queue?", frames_words(out.len())),
+            tr!("Take {n} frame out of the queue?"
+                | "Take {n} frames out of the queue?" % out.len()),
             String::new(),
             false,
             tr!("Remove"),
@@ -721,7 +732,10 @@ fn sheet_done(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
             app.set_status(
                 match added {
                     0 => tr!("made {name}", name = name),
-                    n => tr!("made {name} with {}", frames_words(n), name = name),
+                    n => tr!(
+                        "made {name} with {n} frame" | "made {name} with {n} frames" % n,
+                        name = name
+                    ),
                 }
                 .into(),
             );

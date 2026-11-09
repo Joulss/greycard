@@ -1365,31 +1365,44 @@ pub fn check(opts: &Options) -> Result<()> {
     );
     let card = card_root(&opts.source);
     let source = resolve(&opts.source);
-    let mut places = vec![(
-        crate::marked::tr!("destination"),
-        resolve(&opts.destination),
-    )];
+    // The destination, then the backup: each sentence whole, a place
+    // a case.
+    let mut places = vec![(false, resolve(&opts.destination))];
     if let Some(b) = &opts.backup {
-        places.push((crate::marked::tr!("backup"), resolve(b)));
+        places.push((true, resolve(b)));
     }
-    for (what, place) in &places {
+    for (backup, place) in &places {
         anyhow::ensure!(
             !source.starts_with(place),
-            tr!(
-                "the {what} {} holds the source {}",
-                place.display(),
-                source.display(),
-                what = crate::i18n::text(what)
-            )
+            if *backup {
+                tr!(
+                    "the backup {} holds the source {}",
+                    place.display(),
+                    source.display()
+                )
+            } else {
+                tr!(
+                    "the destination {} holds the source {}",
+                    place.display(),
+                    source.display()
+                )
+            }
         );
         anyhow::ensure!(
             !place.starts_with(&card),
-            tr!(
-                "the {what} {} is on the card ({})",
-                place.display(),
-                card.display(),
-                what = crate::i18n::text(what)
-            )
+            if *backup {
+                tr!(
+                    "the backup {} is on the card ({})",
+                    place.display(),
+                    card.display()
+                )
+            } else {
+                tr!(
+                    "the destination {} is on the card ({})",
+                    place.display(),
+                    card.display()
+                )
+            }
         );
     }
     if let [(_, dest), (_, backup)] = places.as_slice() {

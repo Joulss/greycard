@@ -94,7 +94,7 @@ pub(crate) use self::{
     watcher::{poll_every, restart_poll, start},
 };
 use crate::worker::Worker;
-use crate::{App, RootChip, Shared, chooser};
+use crate::{App, RootChip, Shared, chooser, tr};
 
 /// What the browser lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -748,8 +748,8 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     .unwrap_or_else(|| PathBuf::from("/"))
             };
             let app_weak = app.as_weak();
-            app.set_status("choosing a folder to add to the library...".into());
-            chooser::choose_folder("Add a folder to the library", start, move |chosen| {
+            app.set_status(tr!("choosing a folder to add to the library...").into());
+            chooser::choose_folder(tr!("Add a folder to the library"), start, move |chosen| {
                 let app_weak = app_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(app) = app_weak.upgrade() else {
@@ -763,7 +763,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     };
                     match chosen {
                         Ok(Some(dir)) => add(&state, &app, &worker, &dir),
-                        Ok(None) => app.set_status("nothing added".into()),
+                        Ok(None) => app.set_status(tr!("nothing added").into()),
                         Err(e) => {
                             tracing::warn!("file chooser: {e:#}");
                             app.set_status(chooser::chooser_failed(&e).into());

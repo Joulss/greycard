@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::{Edit, Preset, preset};
-use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::browser::file_name;
@@ -477,7 +477,10 @@ fn bring(store: &preset::Store, path: &Path, folder: Option<&str>) -> Brought {
             );
             Brought::In {
                 name: preset.name.clone(),
-                carried: preset::carried_words(preset.sections.len(), preset.parts.len()),
+                carried: crate::panel::sync::carried_words(
+                    preset.sections.len(),
+                    preset.parts.len(),
+                ),
                 passed: imported.unmapped,
             }
         }
@@ -624,7 +627,7 @@ fn from_the_file() -> String {
 
 /// The Maker row's first entry: every maker's lenses.
 fn all_makers() -> String {
-    tr!("All")
+    tr!("lens makers" => "All")
 }
 
 /// [`from_the_file`] and [`all_makers`] in English, as the tests read
@@ -1562,8 +1565,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         tr!(
                             "saved {name} ({carried}) to {path}",
                             name = preset.name,
-                            carried =
-                                preset::carried_words(preset.sections.len(), preset.parts.len()),
+                            carried = crate::panel::sync::carried_words(
+                                preset.sections.len(),
+                                preset.parts.len()
+                            ),
                             path = path.display()
                         )
                         .into(),
@@ -1679,7 +1684,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // As many as the user picks, Lightroom's and this engine's
             // together. A test opens no chooser: it answers as a cancel.
             chooser::choose_open_many(
-                "Import presets",
+                tr!("Import presets"),
                 start,
                 (
                     tr!("Presets"),

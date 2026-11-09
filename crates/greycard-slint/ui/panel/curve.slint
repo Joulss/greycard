@@ -152,7 +152,7 @@ export component CurvesSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         if root.curve-mode == "Point": PanelButton {
-            text: @tr("Pick");
+            text: @tr("picker" => "Pick");
             icon: @image-url("../icons/pipette.svg");
             enabled: root.curves-enabled;
             primary: root.picking == "Curve";

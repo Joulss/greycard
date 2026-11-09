@@ -98,8 +98,9 @@ pub(crate) struct Lines {
     pub(crate) start: String,
     /// The start's line in the window's language.
     pub(crate) shown: String,
-    /// In English, marked for the catalog; translated where it is kept.
-    pub(crate) tail: &'static str,
+    /// The words every develop's line carries after its time, in the
+    /// window's language.
+    pub(crate) tail: String,
 }
 
 impl Drawing {
@@ -131,7 +132,7 @@ impl Drawing {
                      developing on the CPU, which is slow",
                     api = tr_api()
                 ),
-                tail: crate::marked::tr!(" on the CPU, no usable GPU"),
+                tail: tr!(" on the CPU, no usable GPU"),
             }
         } else {
             Lines {
@@ -142,7 +143,7 @@ impl Drawing {
                     "drawing in software on {name} and developing on the CPU, which is slow",
                     name = name
                 ),
-                tail: crate::marked::tr!(" on the CPU, drawing in software"),
+                tail: tr!(" on the CPU, drawing in software"),
             }
         })
     }
@@ -258,10 +259,7 @@ pub(crate) fn scrub(command: &mut std::process::Command) -> &mut std::process::C
 /// software, kept for the develop's line and said in the status line,
 /// and in the log with the adapter's own line, `gpu`.
 pub(crate) fn show(app: &App, st: &mut State, lines: Option<Lines>, gpu: &str) {
-    // Translated once a start, so the kept tail stays a `&'static str`.
-    st.develop.software_tail = lines
-        .as_ref()
-        .map(|l| &*Box::leak(crate::i18n::text(l.tail).into_boxed_str()));
+    st.develop.software_tail = lines.as_ref().map(|l| l.tail.clone());
     if let Some(lines) = lines {
         tracing::warn!(
             "{} (engine ops on the CPU, the window on {gpu})",

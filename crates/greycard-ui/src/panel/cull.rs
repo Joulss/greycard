@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::tr;
 use greycard_edit::geometry::Geometry;
 use greycard_edit::{Edit, Sidecar, meta};
-use greycard_ui::tr;
 use slint::wgpu_30::wgpu as gpu;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -2000,7 +2000,11 @@ pub(crate) fn cull_status(
     };
     if let Some(why) = cull.failed.get(&current) {
         if why == cull::NO_LOCAL_PREVIEW {
-            return tr!("{mode}: nothing to show; {why}", mode = mode, why = why);
+            return tr!(
+                "{mode}: nothing to show; {why}",
+                mode = mode,
+                why = crate::i18n::text(why)
+            );
         }
         return tr!(
             "{mode}: no camera preview ({why}); Enter develops",
@@ -2688,7 +2692,7 @@ pub(crate) fn show_filter(st: &State, app: &App) {
 /// badge, no next frame and no arrow, only a blank sheet and a zero.
 pub(crate) fn say_if_empty(st: &State, app: &App) {
     if st.views.shown.is_empty() && !st.files.is_empty() {
-        app.set_status(filter::NOTHING_SHOWN.into());
+        app.set_status(filter::nothing_shown().into());
     }
 }
 

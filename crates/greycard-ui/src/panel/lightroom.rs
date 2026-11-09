@@ -29,12 +29,13 @@ use greycard_library::lightroom_catalog::{self as lrcat, Progress, Report};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::files::tilde;
-use crate::{App, LightroomRoot, ReportLine, STATE, Shared, State, WORKER, chooser, i18n, tr};
+use crate::{App, LightroomRoot, ReportLine, STATE, Shared, State, WORKER, chooser, tr};
 
 /// What the sheet says when the run writes no sidecars: the report is
 /// shown, and Write stays off.
-pub(crate) const NO_SIDECARS: &str =
-    crate::marked::tr!("This run writes no sidecars (--no-sidecars), so nothing can be imported.");
+pub(crate) fn no_sidecars() -> String {
+    tr!("This run writes no sidecars (--no-sidecars), so nothing can be imported.")
+}
 
 /// The sheet's side of the state.
 #[derive(Default)]
@@ -339,7 +340,7 @@ pub(crate) fn show(st: &State, app: &App) {
             && st.window.write_sidecars,
     );
     if !st.window.write_sidecars && app.get_lr_note().is_empty() {
-        app.set_lr_note(i18n::text(NO_SIDECARS).into());
+        app.set_lr_note(no_sidecars().into());
     }
 }
 
@@ -371,7 +372,7 @@ pub(crate) fn write(state: &Rc<Shared>, app: &App) {
         return;
     }
     if !st.window.write_sidecars {
-        app.set_lr_note(i18n::text(NO_SIDECARS).into());
+        app.set_lr_note(no_sidecars().into());
         return;
     }
     let (Some(catalog), Some(opts)) = (st.lightroom.catalog.clone(), write_options(&mut st, app))
@@ -645,7 +646,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
             let weak = app.as_weak();
             // A test opens no chooser: it answers as a cancel.
             chooser::choose_open(
-                crate::marked::tr!("Import a Lightroom catalog"),
+                tr!("Import a Lightroom catalog"),
                 start,
                 (
                     tr!("Lightroom catalogs"),
@@ -697,7 +698,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>) {
                 .unwrap_or_default();
             let weak = app.as_weak();
             chooser::choose_folder(
-                crate::marked::tr!("Where the catalog's folder is now"),
+                tr!("Where the catalog's folder is now"),
                 start,
                 move |chosen| {
                     let _ = weak.upgrade_in_event_loop(move |app| {
@@ -1263,7 +1264,10 @@ mod tests {
         land_now(&state, &app);
         assert_eq!(app.get_lr_roots().row_count(), 1);
         assert!(!app.get_lr_ready());
-        assert_eq!(app.get_lr_note(), NO_SIDECARS);
+        assert_eq!(
+            app.get_lr_note(),
+            "This run writes no sidecars (--no-sidecars), so nothing can be imported."
+        );
         write(&state, &app);
         assert!(state.borrow().lightroom.thread.is_none());
         assert!(!app.get_lr_running());

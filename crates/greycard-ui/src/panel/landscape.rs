@@ -98,21 +98,24 @@ pub(crate) fn resume(st: &mut State, app: &App) {
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
         _ if st.sheets.declined.contains(&greycard_ai::SKY.id) => {
             st.develop.landscape_pending = None;
-            app.set_status(text(DECLINED).into());
+            app.set_status(declined().into());
         }
         _ if st.sheets.fetch_failed.contains(&greycard_ai::SKY.id) => {
             st.develop.landscape_pending = None;
             app.set_status(tr!("the Sky model could not be fetched this session").into());
         }
-        _ => app.set_status(text(WAITING).into()),
+        _ => app.set_status(waiting().into()),
     }
 }
 
 /// The status line for a press that waits on a download or a sheet.
-pub(crate) const WAITING: &str =
-    crate::marked::tr!("the landscape is found once the download in hand is done");
+pub(crate) fn waiting() -> String {
+    tr!("the landscape is found once the download in hand is done")
+}
 /// And for one whose model was declined.
-const DECLINED: &str = crate::marked::tr!("without the Sky model no landscape can be found");
+fn declined() -> String {
+    tr!("without the Sky model no landscape can be found")
+}
 
 fn ask(app: &App) {
     WORKER.with(|w| {
@@ -133,7 +136,7 @@ pub(crate) fn model_answered(st: &mut State, app: &App, have: bool) {
         ask(app);
     } else {
         st.develop.landscape_pending = None;
-        app.set_status(text(DECLINED).into());
+        app.set_status(declined().into());
     }
 }
 
@@ -230,7 +233,7 @@ pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
     st.develop.target = Some(index);
     app.set_component(which as i32);
     show_edit(st, &st.develop.edit, app, st.develop.target);
-    app.set_status(tr!("finding the {}", crate::i18n::text(&kind.to_lowercase())).into());
+    app.set_status(tr!("finding the {}", text(&kind.to_lowercase())).into());
     true
 }
 
@@ -324,6 +327,17 @@ mod tests {
         (0..m.row_count())
             .map(|i| m.row_data(i).unwrap().to_string())
             .collect()
+    }
+
+    /// The kinds "finding the ..." says, marked in lower case for the
+    /// catalog, are the landscape's: the sky, then every group.
+    #[test]
+    fn the_lower_kinds_are_the_landscape_s() {
+        let kinds: Vec<String> = std::iter::once(Kind::Sky)
+            .chain(Group::ALL.into_iter().map(Kind::Group))
+            .map(|kind| kind_of(&Offer { kind, area: 0.0 }).to_lowercase())
+            .collect();
+        assert_eq!(kinds, _LOWER_KINDS);
     }
 
     #[test]
@@ -490,7 +504,10 @@ mod tests {
         st.sheets.declined.push(greycard_ai::SKY.id);
         pressed(&mut st, &app, "Add");
         assert!(st.develop.landscape_pending.is_none());
-        assert_eq!(app.get_status(), DECLINED);
+        assert_eq!(
+            app.get_status(),
+            "without the Sky model no landscape can be found"
+        );
     }
 
     /// Pressed while a download runs: the press waits and says so, and
@@ -504,7 +521,10 @@ mod tests {
         st.sheets.fetching = true;
         pressed(&mut st, &app, "Add");
         assert!(st.develop.landscape_pending.is_some(), "the press waits");
-        assert_eq!(app.get_status(), WAITING);
+        assert_eq!(
+            app.get_status(),
+            "the landscape is found once the download in hand is done"
+        );
         st.sheets.fetching = false;
         st.sheets.fetch_failed.push(greycard_ai::SKY.id);
         resume(&mut st, &app);

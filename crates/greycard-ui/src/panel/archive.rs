@@ -16,8 +16,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::tr;
 use greycard_library::{Change, Pairing, Roots};
-use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::archive::{self, Ask, Beat, Direction, Frames, Heard, Plan, Report};

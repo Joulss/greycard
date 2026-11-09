@@ -50,7 +50,7 @@ use crate::panel::assets::{refresh_presets, show_looks};
 use crate::panel::browser::show_badges_of_file;
 use crate::panel::history::show_history;
 use crate::panel::look_remove::{files_of, list_in, store};
-use crate::{App, Shared, State, i18n, tr};
+use crate::{App, Shared, State, tr};
 
 /// The sheet's question while it is up.
 #[derive(Debug, Clone)]
@@ -74,7 +74,8 @@ pub(crate) struct Asked {
     pending: usize,
     /// The look each preset in the store names.
     presets: Vec<String>,
-    place: &'static str,
+    /// Where the pictures are, as the sheet's lines say it.
+    place: String,
     /// Counts the questions, so a count that lands after the sheet
     /// moved on is dropped.
     generation: u64,
@@ -228,31 +229,27 @@ pub(crate) fn refusal(folder: &Folder, old: &str, files: &[PathBuf], new: &str) 
 /// What would stop a rename now, in the status line's words: anything
 /// else that writes looks or sidecars, or moves the files they sit
 /// beside.
-fn busy(st: &State) -> Option<&'static str> {
+fn busy(st: &State) -> Option<String> {
     if st.sheets.look_renaming.is_some() {
-        Some(crate::marked::tr!("a look is still being renamed"))
+        Some(tr!("a look is still being renamed"))
     } else if st.sheets.deleting.is_some() {
-        Some(crate::marked::tr!(
+        Some(tr!(
             "pictures are being deleted; rename the look when that is done"
         ))
     } else if st.sheets.look_removing {
-        Some(crate::marked::tr!("a look is still being removed"))
+        Some(tr!("a look is still being removed"))
     } else if st.camera_match.running() {
-        Some(crate::marked::tr!(
+        Some(tr!(
             "the camera match is running; rename the look when it is done"
         ))
     } else if st.work.exporting.is_some() || st.work.queue_run.is_some() {
-        Some(crate::marked::tr!(
-            "an export is running; rename the look when it is done"
-        ))
+        Some(tr!("an export is running; rename the look when it is done"))
     } else if st.archive.copying() {
-        Some(crate::marked::tr!(
+        Some(tr!(
             "a copy to or from an archive is running; rename the look when it is done"
         ))
     } else if st.import.job.is_some() {
-        Some(crate::marked::tr!(
-            "an import is running; rename the look when it is done"
-        ))
+        Some(tr!("an import is running; rename the look when it is done"))
     } else {
         None
     }
@@ -308,7 +305,6 @@ fn presets_of(n: usize) -> String {
 
 /// The sheet's line on what names the look and what it becomes.
 pub(crate) fn uses_line(named: usize, pending: usize, presets: usize, place: &str) -> String {
-    let place = i18n::text(place);
     let mut out = match (named, pending) {
         (0, 0) => tr!("No picture {place} names it.", place = place),
         (0, _) => String::new(),
@@ -345,7 +341,6 @@ pub(crate) fn uses_line(named: usize, pending: usize, presets: usize, place: &st
 /// already name, for a look that is not in the folder: they show it as
 /// missing now, and will take this look once it has the name.
 pub(crate) fn taken_line(new: &str, pictures: usize, presets: usize, place: &str) -> String {
-    let place = i18n::text(place);
     let who = match (pictures, presets) {
         (0, 0) => return String::new(),
         (p, 0) => tr!("{} {place}", self::pictures(p), place = place),
@@ -397,7 +392,7 @@ fn note(old: &str, new: &str, own: Option<&Entry>) -> String {
 /// status line why there is nothing to ask.
 pub(crate) fn ask(st: &mut State, app: &App) {
     if let Some(why) = busy(st) {
-        app.set_status(i18n::text(why).into());
+        app.set_status(why.into());
         return;
     }
     let name = app.get_look_name().to_string();
@@ -442,8 +437,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         .map(|e| e.label().to_string())
         .unwrap_or_else(|| name.clone());
     let place = match st.views.view {
-        crate::roots::View::Roots(_) => crate::marked::tr!("in the library"),
-        _ => crate::marked::tr!("in this folder"),
+        crate::roots::View::Roots(_) => tr!("in the library"),
+        _ => tr!("in this folder"),
     };
     let (in_memory, unread) = uses(st);
     let presets = st
@@ -517,10 +512,10 @@ fn show_sheet(st: &State, app: &App) {
     let pending = if counted { 0 } else { asked.pending };
     app.set_look_rename_files(ModelRc::new(VecModel::from(lines)));
     app.set_look_rename_refusal(why.clone().unwrap_or_default().into());
-    app.set_look_rename_uses(uses_line(named, pending, presets, asked.place).into());
+    app.set_look_rename_uses(uses_line(named, pending, presets, &asked.place).into());
     let taken = if fine {
         let (pictures, presets) = asked.naming(&new);
-        taken_line(&new, pictures, presets, asked.place)
+        taken_line(&new, pictures, presets, &asked.place)
     } else {
         String::new()
     };
@@ -1438,7 +1433,7 @@ pub(crate) fn answered(st: &mut State, app: &App, yes: bool) {
             "not renamed: a capture, an export or a timing run never renames"
         ))
     } else if let Some(why) = busy(st) {
-        Some(i18n::text(why))
+        Some(why)
     } else if asked.on_disk.is_none() {
         Some(tr!("not renamed: the folder's edits were still being read"))
     } else {

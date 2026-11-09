@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::mask::{Component, Mode, PARTS, PartKind, Person, Route, Shape};
-use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::ai::{Ask, Asking, Candidate, Key};

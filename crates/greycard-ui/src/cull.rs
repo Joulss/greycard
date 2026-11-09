@@ -15,6 +15,8 @@ use std::time::Instant;
 
 use greycard_core::raw::Orientation;
 
+use crate::tr;
+
 // The compare view's tiles are laid out where the viewport's fit reads
 // them, in the library.
 pub use crate::zoom::tile_rects;
@@ -778,7 +780,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, previews: Previewe
                 file: want.file,
                 frame: want.frame(),
                 size: want.size,
-                message: crate::tr!("the decode panicked"),
+                message: tr!("the decode panicked"),
             });
         }
     }

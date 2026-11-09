@@ -300,6 +300,153 @@ pub(crate) enum Scope {
     File,
 }
 
+/// What a request is for, for the status line when it is dropped or a
+/// frame it named is gone: each kind's words whole, so a translator
+/// sees sentences, not a noun with an "s" put on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Request {
+    /// The open of a frame, by its file's name.
+    Open(String),
+    RatingKey,
+    FlagKey,
+    LabelKey,
+    Keyword,
+    Title,
+    TimeShift,
+    Turn,
+    Export,
+    Queue,
+    Reset,
+    Preset,
+    Paste,
+    Sync,
+    Undo,
+    Redo,
+}
+
+impl Request {
+    /// The kind in English, for the log and the tests.
+    pub(crate) fn log(&self) -> String {
+        match self {
+            Request::Open(name) => format!("open of {name}"),
+            Request::RatingKey => "rating key".into(),
+            Request::FlagKey => "flag key".into(),
+            Request::LabelKey => "label key".into(),
+            Request::Keyword => "keyword".into(),
+            Request::Title => "title".into(),
+            Request::TimeShift => "time shift".into(),
+            Request::Turn => "turn".into(),
+            Request::Export => "export".into(),
+            Request::Queue => "queue".into(),
+            Request::Reset => "reset".into(),
+            Request::Preset => "preset".into(),
+            Request::Paste => "paste".into(),
+            Request::Sync => "sync".into(),
+            Request::Undo => "undo".into(),
+            Request::Redo => "redo".into(),
+        }
+    }
+
+    /// One request of the kind: "the rating key", "the open of x.cr3".
+    pub(crate) fn the(&self) -> String {
+        match self {
+            Request::Open(name) => tr!("the open of {name}", name = name),
+            Request::RatingKey => tr!("the rating key"),
+            Request::FlagKey => tr!("the flag key"),
+            Request::LabelKey => tr!("the label key"),
+            Request::Keyword => tr!("the keyword"),
+            Request::Title => tr!("the title"),
+            Request::TimeShift => tr!("the time shift"),
+            Request::Turn => tr!("the turn"),
+            Request::Export => tr!("the export"),
+            Request::Queue => tr!("the queue"),
+            Request::Reset => tr!("the reset"),
+            Request::Preset => tr!("the preset"),
+            Request::Paste => tr!("the paste"),
+            Request::Sync => tr!("the sync"),
+            Request::Undo => tr!("the undo"),
+            Request::Redo => tr!("the redo"),
+        }
+    }
+
+    /// `n` requests of the kind: "3 rating keys".
+    pub(crate) fn counted(&self, n: usize) -> String {
+        match self {
+            // A pick is one, however many asked for it.
+            Request::Open(_) => self.the(),
+            Request::RatingKey => tr!("{n} rating key" | "{n} rating keys" % n),
+            Request::FlagKey => tr!("{n} flag key" | "{n} flag keys" % n),
+            Request::LabelKey => tr!("{n} label key" | "{n} label keys" % n),
+            Request::Keyword => tr!("{n} keyword" | "{n} keywords" % n),
+            Request::Title => tr!("{n} title" | "{n} titles" % n),
+            Request::TimeShift => tr!("{n} time shift" | "{n} time shifts" % n),
+            Request::Turn => tr!("{n} turn" | "{n} turns" % n),
+            Request::Export => tr!("{n} export" | "{n} exports" % n),
+            Request::Queue => tr!("{n} queue" | "{n} queues" % n),
+            Request::Reset => tr!("{n} reset" | "{n} resets" % n),
+            Request::Preset => tr!("{n} preset" | "{n} presets" % n),
+            Request::Paste => tr!("{n} paste" | "{n} pastes" % n),
+            Request::Sync => tr!("{n} sync" | "{n} syncs" % n),
+            Request::Undo => tr!("{n} undo" | "{n} undos" % n),
+            Request::Redo => tr!("{n} redo" | "{n} redos" % n),
+        }
+    }
+
+    /// What became of the request for the `n` frames it named that are
+    /// gone: "the rating key was not applied to it".
+    pub(crate) fn not_applied(&self, n: usize) -> String {
+        match self {
+            // A pick names its one frame.
+            Request::Open(_) => tr!("not opened"),
+            Request::RatingKey => tr!("the rating key was not applied to it"
+                | "the rating key was not applied to them" % n),
+            Request::FlagKey => {
+                tr!("the flag key was not applied to it"
+                    | "the flag key was not applied to them" % n)
+            }
+            Request::LabelKey => {
+                tr!("the label key was not applied to it"
+                    | "the label key was not applied to them" % n)
+            }
+            Request::Keyword => {
+                tr!("the keyword was not applied to it" | "the keyword was not applied to them" % n)
+            }
+            Request::Title => {
+                tr!("the title was not applied to it" | "the title was not applied to them" % n)
+            }
+            Request::TimeShift => tr!("the time shift was not applied to it"
+                | "the time shift was not applied to them" % n),
+            Request::Turn => {
+                tr!("the turn was not applied to it" | "the turn was not applied to them" % n)
+            }
+            Request::Export => {
+                tr!("the export was not applied to it" | "the export was not applied to them" % n)
+            }
+            Request::Queue => {
+                tr!("the queue was not applied to it" | "the queue was not applied to them" % n)
+            }
+            Request::Reset => {
+                tr!("the reset was not applied to it" | "the reset was not applied to them" % n)
+            }
+            Request::Preset => {
+                tr!("the preset was not applied to it" | "the preset was not applied to them" % n)
+            }
+            Request::Paste => {
+                tr!("the paste was not applied to it" | "the paste was not applied to them" % n)
+            }
+            Request::Sync => {
+                tr!("the sync was not applied to it" | "the sync was not applied to them" % n)
+            }
+            Request::Undo => {
+                tr!("the undo was not applied to it" | "the undo was not applied to them" % n)
+            }
+            Request::Redo => {
+                tr!("the redo was not applied to it" | "the redo was not applied to them" % n)
+            }
+        }
+    }
+}
+
 /// A request for some frames' sidecars, with what to do once they are
 /// in. Requests run in the order they were made, each on exactly the
 /// frames it named; a later one never cancels an earlier one.
@@ -309,8 +456,8 @@ pub(crate) struct Pending {
     scope: Scope,
     action: Option<Action>,
     /// What the action is, for the status line when it is dropped or a
-    /// frame it named is gone: "rating key", "turn", "open of x.cr3".
-    what: String,
+    /// frame it named is gone.
+    what: Request,
     /// The request is a frame's pick (`open_row`): dropped, it lets the
     /// pick go.
     pick: bool,
@@ -321,9 +468,9 @@ pub(crate) struct Pending {
 
 /// The dropped requests, said: "3 rating keys and the open of x.cr3".
 fn describe(dropped: &[Pending]) -> String {
-    let mut kinds: Vec<(&str, usize, bool)> = Vec::new();
+    let mut kinds: Vec<(&Request, usize, bool)> = Vec::new();
     for p in dropped {
-        match kinds.iter_mut().find(|(w, _, _)| *w == p.what) {
+        match kinds.iter_mut().find(|(w, _, _)| **w == p.what) {
             Some((_, n, _)) => *n += 1,
             None => kinds.push((&p.what, 1, p.pick)),
         }
@@ -332,11 +479,11 @@ fn describe(dropped: &[Pending]) -> String {
         .iter()
         // A pick is one, however many asked for it.
         .map(|&(what, n, pick)| {
-            let n = if pick { 1 } else { n };
-            tr!(
-                "the {what}" | "{n} {what}s" % n,
-                what = crate::i18n::text(what)
-            )
+            if pick || n == 1 {
+                what.the()
+            } else {
+                what.counted(n)
+            }
         })
         .collect();
     match words.len() {
@@ -380,7 +527,7 @@ impl Loads {
     /// What is queued, in order, for the tests.
     #[cfg(test)]
     pub(crate) fn whats(&self) -> Vec<String> {
-        self.queue.iter().map(|p| p.what.clone()).collect()
+        self.queue.iter().map(|p| p.what.log()).collect()
     }
 }
 
@@ -434,7 +581,7 @@ fn queue(
     st: &mut State,
     frames: Vec<Key>,
     scope: Scope,
-    what: &str,
+    what: Request,
     pick: bool,
     action: Action,
 ) -> Queued {
@@ -469,7 +616,7 @@ fn queue(
         frames,
         scope,
         action: Some(action),
-        what: what.to_string(),
+        what,
         pick,
         landed,
     });
@@ -488,15 +635,22 @@ pub(crate) fn request(
     worker: &Rc<Worker>,
     frames: Vec<Key>,
     scope: Scope,
-    what: &str,
+    what: Request,
     action: Action,
 ) -> bool {
-    let queued = queue(&mut state.borrow_mut(), frames, scope, what, false, action);
+    let queued = queue(
+        &mut state.borrow_mut(),
+        frames,
+        scope,
+        what.clone(),
+        false,
+        action,
+    );
     match queued {
         Queued::Inline(action, frames) => {
             let at = resolve(&state.borrow(), &frames, scope);
             action(state, app, worker, at.clone());
-            say_gone(app, &frames, &at, what, false);
+            say_gone(app, &frames, &at, &what);
             true
         }
         Queued::Later { id, to_read } => {
@@ -519,11 +673,11 @@ pub(crate) fn request_in(
     app: &App,
     frames: Vec<Key>,
     scope: Scope,
-    what: &str,
+    what: Request,
     pick: bool,
     action: Action,
 ) {
-    match queue(st, frames, scope, what, pick, action) {
+    match queue(st, frames, scope, what.clone(), pick, action) {
         Queued::Inline(action, frames) => {
             st.views.loads.next += 1;
             let id = st.views.loads.next;
@@ -532,7 +686,7 @@ pub(crate) fn request_in(
                 frames,
                 scope,
                 action: Some(action),
-                what: what.to_string(),
+                what,
                 pick,
                 landed: true,
             });
@@ -575,7 +729,7 @@ pub(crate) fn after_mosaics(
     paths: Vec<PathBuf>,
     frames: Vec<Key>,
     scope: Scope,
-    what: &str,
+    what: Request,
     action: Action,
 ) {
     // A test that does not hold the read has it here, in place.
@@ -603,12 +757,11 @@ pub(crate) fn after_mosaics(
         frames,
         scope,
         action: Some(action),
-        what: what.to_string(),
+        what,
         pick: false,
         landed: false,
     });
-    // One frame reads "1 frames" in English as it always has.
-    let line = tr!("reading {n} frames..." | "reading {n} frames..." % paths.len());
+    let line = tr!("reading {n} frame..." | "reading {n} frames..." % paths.len());
     app.set_status(line.as_str().into());
     st.views.reading_line = Some(line);
     #[cfg(test)]
@@ -937,14 +1090,14 @@ pub(crate) fn run_ready(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
         if let Some(action) = p.action.take() {
             action(state, app, worker, at.clone());
         }
-        say_gone(app, &p.frames, &at, &p.what, p.pick);
+        say_gone(app, &p.frames, &at, &p.what);
     }
 }
 
 /// A frame a request named that is no longer in the list when the
 /// request runs (moved, or gone, or a version since deleted) took
 /// nothing of it: said, after the action has had its say.
-fn say_gone(app: &App, frames: &[Key], at: &[Option<usize>], what: &str, pick: bool) {
+fn say_gone(app: &App, frames: &[Key], at: &[Option<usize>], what: &Request) {
     let gone: Vec<&Key> = frames
         .iter()
         .zip(at)
@@ -953,19 +1106,22 @@ fn say_gone(app: &App, frames: &[Key], at: &[Option<usize>], what: &str, pick: b
         .collect();
     let said = match gone.as_slice() {
         [] => return,
-        [one] if pick => tr!("{} moved or is gone; not opened", one.said()),
         [one] => tr!(
-            "{} moved or is gone; the {what} was not applied to it",
-            one.said(),
-            what = crate::i18n::text(what)
+            "{frame} moved or is gone; {not_applied}",
+            frame = one.said(),
+            not_applied = what.not_applied(1)
         ),
         many => tr!(
-            "{n} frame moved or is gone; the {what} was not applied to it"
-                | "{n} frames moved or are gone; the {what} was not applied to them" % many.len(),
-            what = crate::i18n::text(what)
+            "{n} frame moved or is gone; {not_applied}"
+                | "{n} frames moved or are gone; {not_applied}" % many.len(),
+            not_applied = what.not_applied(many.len())
         ),
     };
-    tracing::info!("{said}");
+    tracing::info!(
+        "{} frame(s) moved or gone; the {} was not applied to them",
+        gone.len(),
+        what.log()
+    );
     app.set_status(said.into());
 }
 
@@ -1082,7 +1238,11 @@ pub(crate) fn bar_tick(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, now: 
                 "{} dropped: the sidecars did not come in",
                 describe(&dropped)
             );
-            tracing::warn!("{said}");
+            let kinds: Vec<String> = dropped.iter().map(|p| p.what.log()).collect();
+            tracing::warn!(
+                "requests dropped, the sidecars did not come in: {}",
+                kinds.join(", ")
+            );
             bar_done(&mut st, app);
             app.set_status(said.into());
             true

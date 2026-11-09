@@ -26,12 +26,12 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::{Edit, Learned, Line, Placement, Sidecar};
 use greycard_edit_io::on_disk::Fresh;
 use greycard_engine::merge::{self, Options, Step, focus, pano};
 use greycard_library::Rehash;
 use greycard_library::collections::Reference;
-use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::panel::browser::chosen_frames;

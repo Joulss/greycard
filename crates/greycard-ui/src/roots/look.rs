@@ -16,7 +16,7 @@ use super::tests;
 use super::{
     Found, Look, OnScreen, Purpose, ROOT_WAIT, Select, Source, answer_of, offline_of, rows_listed,
 };
-use crate::{App, files, rows};
+use crate::{App, files, rows, tr};
 
 impl Look {
     /// The read, on a thread that is not the window's: the roots and
@@ -78,11 +78,11 @@ impl Look {
                         Some(Ok(shown)) => Some(shown),
                         Some(Err(e)) => {
                             tracing::warn!("library: {e}");
-                            said = Some(format!("the library index could not be read: {e}"));
+                            said = Some(tr!("the library index could not be read: {e}", e = e));
                             None
                         }
                         None => {
-                            said = Some("the library index could not be read".to_string());
+                            said = Some(tr!("the library index could not be read"));
                             None
                         }
                     },
@@ -127,7 +127,7 @@ impl Look {
                     None => {
                         // Not "in 3 s": a look still out from before
                         // answers no at once.
-                        said = Some(format!("{} isn't reachable", dir.display()));
+                        said = Some(tr!("{} isn't reachable", dir.display()));
                         None
                     }
                     Some(_) => {
@@ -167,11 +167,11 @@ impl Look {
                         Some(Ok(listed)) => listed,
                         Some(Err(e)) => {
                             tracing::warn!("library: {e}");
-                            said = Some(format!("the library index could not be read: {e}"));
+                            said = Some(tr!("the library index could not be read: {e}", e = e));
                             Vec::new()
                         }
                         None => {
-                            said = Some("the library index could not be read".to_string());
+                            said = Some(tr!("the library index could not be read"));
                             Vec::new()
                         }
                     },
@@ -439,13 +439,13 @@ fn list_folder(
 ) -> Option<greycard_library::pairs::Paired> {
     match files::list(dir, apart) {
         Ok(listed) if listed.frames.is_empty() => {
-            *said = Some(format!("no pictures in {}", dir.display()));
+            *said = Some(tr!("no pictures in {}", dir.display()));
             None
         }
         Ok(listed) => Some(listed),
         Err(e) => {
             tracing::warn!("{e:#}");
-            *said = Some(format!("{}: not a folder", dir.display()));
+            *said = Some(tr!("{}: not a folder", dir.display()));
             None
         }
     }

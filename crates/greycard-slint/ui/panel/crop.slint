@@ -81,7 +81,7 @@ export component CropSection inherits Section {
         spacing: Theme.space-2;
         Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         aspect-box := ComboBox {
-            model: [@tr("Free"), @tr("Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
+            model: [@tr("Free"), @tr("aspect" => "Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
             current-index: root.aspect-index(root.aspect-name);
             selected(v) => {
                 root.aspect-name = root.aspects[self.current-index];

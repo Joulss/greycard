@@ -33,7 +33,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::roots::View;
 use crate::worker::Worker;
-use crate::{App, FolderRow, FolderTile, Shared, State};
+use crate::{App, FolderRow, FolderTile, Shared, State, tr};
 
 /// A folder of the tree: where it is, what it is called, how deep
 /// under the root (the root itself is 0), the frames directly in it
@@ -393,9 +393,9 @@ pub(crate) fn nothing_in(folder: &Path, deep: bool) -> String {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| folder.display().to_string());
     if deep {
-        crate::tr!("nothing under {name}", name = name)
+        tr!("nothing under {name}", name = name)
     } else {
-        crate::tr!(
+        tr!(
             "nothing directly in {name}: turn on With subfolders to see the frames under it",
             name = name
         )
@@ -820,7 +820,7 @@ fn tile_reveal(st: &State, app: &App, tile: i32) {
             "reveal {}: could not start the file manager: {e}",
             folder.display()
         );
-        app.set_status(crate::tr!("could not show {}: {e}", folder.display(), e = e).into());
+        app.set_status(tr!("could not show {}: {e}", folder.display(), e = e).into());
     }
 }
 

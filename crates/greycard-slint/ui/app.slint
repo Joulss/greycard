@@ -110,7 +110,7 @@ export component App inherits Window {
     /// The mat around the fitted picture, on or off.
     callback mat-key();
     /// The effective zoom in words: "Fit", or a percentage.
-    in property <string> zoom-text: @tr("Fit");
+    in property <string> zoom-text: @tr("zoom" => "Fit");
     /// Set to open the Fit button's menu of zooms, for a capture of it.
     in-out property <bool> zoom-menu-shown: false;
     /// Full screen, or back to the window as it was (`window_fit`).
@@ -4389,7 +4389,7 @@ export component App inherits Window {
                         // offers the zooms, each about the view's
                         // center, as the keys' are.
                         PanelButton {
-                            text: @tr("Fit");
+                            text: @tr("zoom" => "Fit");
                             icon: @image-url("icons/maximize.svg");
                             has-menu: true;
                             clicked => { root.reset-view(); }
@@ -4414,7 +4414,7 @@ export component App inherits Window {
                                 enabled: false;
                                 Menu {
                                     MenuItem {
-                                        title: @tr("Fit");
+                                        title: @tr("zoom" => "Fit");
                                         activated => { root.reset-view(); root.menu-done(); }
                                     }
                                     for z in [{ level: 0.25, title: "25%" }, { level: 1.0 / 3, title: "33%" },

@@ -17,7 +17,7 @@ use super::{
 };
 use crate::panel::browser::open_loaded;
 use crate::worker::Worker;
-use crate::{App, Shared, State, settings};
+use crate::{App, Shared, State, settings, tr};
 
 pub(crate) use greycard_library::grouped;
 
@@ -131,14 +131,14 @@ pub(crate) fn open_view_on(
         // Asked before the indexer has opened the library: done when
         // it has.
         st.views.library.wanted = Some(view);
-        app.set_status("opening the library index...".into());
+        app.set_status(tr!("opening the library index...").into());
         return false;
     };
     let asked = Instant::now();
     let order = order_of(&st, &view);
     if let View::Collection { id } = &view {
         let Some(c) = st.views.collections.collection(id) else {
-            app.set_status("that collection is gone".into());
+            app.set_status(tr!("that collection is gone").into());
             return false;
         };
         let refs = c.refs.clone();
@@ -154,7 +154,7 @@ pub(crate) fn open_view_on(
                 Ok(shown) => Some(shown),
                 Err(e) => {
                     tracing::warn!("library: {e}");
-                    app.set_status(format!("the library index could not be read: {e}").into());
+                    app.set_status(tr!("the library index could not be read: {e}", e = e).into());
                     loading_done(&mut st.views.library, app);
                     return false;
                 }
@@ -191,7 +191,7 @@ pub(crate) fn open_view_on(
             }
             Err(e) => {
                 tracing::warn!("library: {e}");
-                app.set_status(format!("the library index could not be read: {e}").into());
+                app.set_status(tr!("the library index could not be read: {e}", e = e).into());
                 st.views.library.awaiting = false;
                 loading_done(&mut st.views.library, app);
                 return false;
@@ -274,7 +274,11 @@ fn send_view(
     };
     st.views.library.readable.clear();
     st.views.library.readable_epoch += 1;
-    app.set_status(format!("reading {} frames...", count).into());
+    let line = tr!("reading {n} frame..." | "reading {n} frames..." % count);
+    app.set_status(line.as_str().into());
+    // The pick's end clears it while it is still up, as it does a
+    // pick's own reading line.
+    st.views.reading_line = Some(line);
     // No sidecar is read for a view of the roots; the count is the
     // roots' and the folders' looks until the read says otherwise.
     let progress = Arc::new(Progress::default());
@@ -340,12 +344,12 @@ pub(crate) fn open_listing(
         Listing::Files(files) => {
             let what = match files.as_slice() {
                 [one] => crate::panel::browser::file_name(one),
-                many => format!("{} files", many.len()),
+                many => tr!("{n} file" | "{n} files" % many.len()),
             };
             (Source::Files(files), what)
         }
     };
-    app.set_status(format!("opening {what}...").into());
+    app.set_status(tr!("opening {what}...", what = what).into());
     let at = match &source {
         Source::Folder(dir) => one_root_named(&st.views.library.roots, [dir.as_path()]),
         Source::Files(files) => {
@@ -389,7 +393,7 @@ pub(crate) fn open_listing(
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
         loading_done(&mut st.views.library, app);
-        app.set_status("the folder could not be read: no thread to read it on".into());
+        app.set_status(tr!("the folder could not be read: no thread to read it on").into());
     }
 }
 
@@ -494,7 +498,7 @@ fn give_up_view(st: &mut State, app: &App) {
     loading_done(&mut st.views.library, app);
     st.views.library.awaiting = false;
     st.views.view_generation += 1;
-    app.set_status("the library's frames did not come in; the list is as it was".into());
+    app.set_status(tr!("the library's frames did not come in; the list is as it was").into());
 }
 
 /// The bar's words: "Reading sidecars… 3,400 of 11,711", or "Waiting
@@ -503,12 +507,16 @@ pub(crate) fn loading_words(read: usize, total: usize, waiting: Option<&str>) ->
     if total == 0 {
         // Nothing read from disk: the roots and the folders being
         // looked at, up to their wait each.
-        return "Looking at the library's folders…".to_string();
+        return tr!("Looking at the library's folders…");
     }
     if let Some(root) = waiting {
-        return format!("Waiting on {root}…");
+        return tr!("Waiting on {root}…", root = root);
     }
-    format!("Reading sidecars… {} of {}", grouped(read), grouped(total))
+    tr!(
+        "Reading sidecars… {read} of {total}",
+        read = grouped(read),
+        total = grouped(total)
+    )
 }
 
 /// The read for the browser's list as it is, from the folder or from

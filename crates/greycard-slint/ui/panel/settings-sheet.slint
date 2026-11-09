@@ -518,7 +518,7 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: @tr("Theme"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Charcoal", "Grey", "Light"];
-                                    labels: [@tr("Charcoal"), @tr("Grey"), @tr("Light")];
+                                    labels: [@tr("Charcoal"), @tr("Grey"), @tr("theme" => "Light")];
                                     current <=> root.theme;
                                     selected => { root.theme-changed(); }
                                 }
@@ -946,7 +946,7 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Original", "Last used", "Free"];
-                                    labels: [@tr("Original"), @tr("Last used"), @tr("Free")];
+                                    labels: [@tr("aspect" => "Original"), @tr("Last used"), @tr("Free")];
                                     current <=> root.crop-start;
                                     selected => { root.crop-start-changed(); }
                                 }

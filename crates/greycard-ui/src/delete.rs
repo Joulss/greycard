@@ -451,11 +451,6 @@ pub fn delete(
     done
 }
 
-/// A count and its noun: "1 frame", "3 frames".
-pub fn count(n: usize, noun: &str) -> String {
-    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
-}
-
 /// The camera's JPEGs that go with the frames, as a list's middle
 /// item: ", 2 camera JPEGs"; empty for none.
 pub fn companion_words(n: usize) -> String {

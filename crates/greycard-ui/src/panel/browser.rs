@@ -2069,7 +2069,7 @@ pub(crate) fn open_loaded(
         open_at_start(state, app, row);
     } else if !files.is_empty() && !deferred {
         tracing::warn!("no frames pass the filter");
-        app.set_status(crate::i18n::text(filter::NOTHING_SHOWN).into());
+        app.set_status(filter::nothing_shown().into());
         // A batch run would wait for a picture that never comes.
         let mut st = state.borrow_mut();
         if st.window.batch {
@@ -2372,7 +2372,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
         app,
         vec![frame],
         crate::rows::Scope::Line,
-        &tr!("open of {}", file_name(&path)),
+        crate::rows::Request::Open(file_name(&path).to_string()),
         true,
         Box::new(move |state, app, worker, at| {
             let mut st = state.borrow_mut();
@@ -3184,15 +3184,15 @@ pub(crate) fn meta_on_keys(
     };
     let may_select = !move_on || at_end;
     let what = match change {
-        meta::Change::Rating(_) => crate::marked::tr!("rating key"),
-        meta::Change::Flag(_) => crate::marked::tr!("flag key"),
-        meta::Change::Label(_) => crate::marked::tr!("label key"),
+        meta::Change::Rating(_) => crate::rows::Request::RatingKey,
+        meta::Change::Flag(_) => crate::rows::Request::FlagKey,
+        meta::Change::Label(_) => crate::rows::Request::LabelKey,
         meta::Change::AddKeywords(_) | meta::Change::RemoveKeyword(_) => {
-            crate::marked::tr!("keyword")
+            crate::rows::Request::Keyword
         }
-        meta::Change::Title(_) => crate::marked::tr!("title"),
+        meta::Change::Title(_) => crate::rows::Request::Title,
         meta::Change::TimeShift(_) | meta::Change::ClearTimeShift => {
-            crate::marked::tr!("time shift")
+            crate::rows::Request::TimeShift
         }
     };
     // The meta is the file's: a key on a version's cell whose line a
@@ -3408,7 +3408,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::File,
-                crate::marked::tr!("turn"),
+                crate::rows::Request::Turn,
                 Box::new(move |state, app, worker, at| {
                     let frames: Vec<usize> = at.into_iter().flatten().collect();
                     turn_frames(&mut state.borrow_mut(), app, worker, &frames, quarters);
@@ -3755,7 +3755,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let app_weak = app.as_weak();
             app.set_status(tr!("choosing a folder to open...").into());
-            chooser::choose_folder(crate::marked::tr!("Open folder"), start, move |chosen| {
+            chooser::choose_folder(tr!("Open folder"), start, move |chosen| {
                 let app_weak = app_weak.clone();
                 // The state and the worker through their thread
                 // locals, as this runs on the chooser's own thread and

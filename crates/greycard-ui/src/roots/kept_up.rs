@@ -13,7 +13,7 @@ use super::{Brought, OnScreen, PASSES_KEPT, View, recount, refresh_view, show};
 use crate::panel::browser::rebuild_browser;
 use crate::rows::Held;
 use crate::worker::Worker;
-use crate::{App, Shared, State, rows};
+use crate::{App, Shared, State, rows, tr};
 
 /// A pass has finished under `path`: what the window knew of the
 /// folders under it is forgotten, to be looked at again by the next
@@ -448,8 +448,11 @@ fn keyed(st: &State, f: &Path) -> PathBuf {
 /// left to bring anything. Said, and a capture of it ends here, failed,
 /// rather than wait for a picture that will never come.
 pub(crate) fn empty_view(st: &mut State, app: &App) {
-    let why = if st.views.library.roots.is_empty() {
-        "the library has no folders: nothing to show"
+    let (why, shown) = if st.views.library.roots.is_empty() {
+        (
+            "the library has no folders: nothing to show",
+            tr!("the library has no folders: nothing to show"),
+        )
     } else if st
         .views
         .library
@@ -458,11 +461,17 @@ pub(crate) fn empty_view(st: &mut State, app: &App) {
         .iter()
         .all(|r| st.views.library.offline.contains(r))
     {
-        "every folder in the library is offline: nothing to show"
+        (
+            "every folder in the library is offline: nothing to show",
+            tr!("every folder in the library is offline: nothing to show"),
+        )
     } else {
-        "nothing under the library's folders"
+        (
+            "nothing under the library's folders",
+            tr!("nothing under the library's folders"),
+        )
     };
-    app.set_status(why.into());
+    app.set_status(shown.into());
     tracing::warn!("library: {why}");
     st.views.library.awaiting = false;
     if st.window.batch {

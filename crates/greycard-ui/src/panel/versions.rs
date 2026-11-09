@@ -8,8 +8,8 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::Edit;
-use greycard_ui::tr;
 use slint::{ComponentHandle, Model};
 
 use crate::panel::browser::{file_name, open_row, row_of, show_badges, show_thumb, thumb_turns};

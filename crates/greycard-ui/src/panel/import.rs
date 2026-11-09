@@ -857,13 +857,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let app = weak.unwrap();
             let st = state.borrow();
             let (title, now) = match which.as_str() {
-                "source" => (crate::marked::tr!("Import from"), &st.import.source),
-                "destination" => (crate::marked::tr!("Import to"), &st.import.destination),
-                "place" => (
-                    crate::marked::tr!("Add to the library in place"),
-                    &st.import.place,
-                ),
-                _ => (crate::marked::tr!("Back up to"), &st.import.backup),
+                "source" => (tr!("Import from"), &st.import.source),
+                "destination" => (tr!("Import to"), &st.import.destination),
+                "place" => (tr!("Add to the library in place"), &st.import.place),
+                _ => (tr!("Back up to"), &st.import.backup),
             };
             let start = now
                 .clone()

@@ -1373,8 +1373,7 @@ pub fn size_words(bytes: u64) -> String {
         b if b >= 1_000_000_000 => format!("{:.1} GB", b as f64 / 1e9),
         b if b >= 1_000_000 => format!("{:.1} MB", b as f64 / MB),
         b if b >= 1_000 => format!("{} KB", b / 1_000),
-        // One byte reads "1 bytes" in English as it always has.
-        b => tr!("{n} bytes" | "{n} bytes" % b),
+        b => tr!("{n} byte" | "{n} bytes" % b),
     }
 }
 

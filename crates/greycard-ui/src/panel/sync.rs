@@ -1000,7 +1000,7 @@ pub(crate) fn preset_pressed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>,
         worker,
         paths,
         crate::rows::Scope::Line,
-        crate::marked::tr!("preset"),
+        crate::rows::Request::Preset,
         Box::new(move |state, app, worker, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
             let profiles = greycard_edit_io::profiles::list();
@@ -1854,7 +1854,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::Line,
-                crate::marked::tr!("paste"),
+                crate::rows::Request::Paste,
                 Box::new(move |state, app, worker, at| {
                     let chosen: Vec<usize> = at.into_iter().flatten().collect();
                     let profiles = greycard_edit_io::profiles::list();
@@ -1991,7 +1991,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     &worker,
                     paths,
                     crate::rows::Scope::Line,
-                    crate::marked::tr!("paste"),
+                    crate::rows::Request::Paste,
                     Box::new(move |state, app, worker, at| {
                         let chosen: Vec<usize> = at.into_iter().flatten().collect();
                         let profiles = greycard_edit_io::profiles::list();
@@ -2052,7 +2052,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 &worker,
                 paths,
                 crate::rows::Scope::Line,
-                crate::marked::tr!("sync"),
+                crate::rows::Request::Sync,
                 Box::new(move |state, app, worker, at| {
                     let Some(from) = at.first().copied().flatten() else {
                         app.set_status(
@@ -2082,7 +2082,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         unread,
                         frames,
                         crate::rows::Scope::Line,
-                        crate::marked::tr!("sync"),
+                        crate::rows::Request::Sync,
                         Box::new(move |state, app, _, at| {
                             let Some(from) = at.first().copied().flatten() else {
                                 app.set_status(
@@ -2347,7 +2347,7 @@ mod tests {
             &worker,
             vec![key],
             crate::rows::Scope::File,
-            "rating key",
+            crate::rows::Request::RatingKey,
             Box::new(move |_, _, _, _| r.set(true)),
         );
         assert_eq!(state.borrow().views.loads.whats(), ["sync", "rating key"]);

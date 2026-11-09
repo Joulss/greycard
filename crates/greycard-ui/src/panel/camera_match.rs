@@ -21,8 +21,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::tr;
 use greycard_engine::camera_match::{self as fit, Group, Plan, Progress, Survey};
-use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::show_looks;

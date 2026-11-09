@@ -438,3 +438,94 @@ follows: the rejects' module sets both the marked "moving the rejects
 on" string and the `Doing` enum, and the develop side's assets panel
 still calls greycard-edit's English `carried_words` where this side's
 translated one now exists.
+
+### The mop-up
+
+ The seams the two Rust wrappings left, closed.
+
+- **Contexts.** `tr!("zoom" => "Fit")`, with values and plurals too,
+  is the catalog's `msgctxt`; xtr extracts it as it is. One English
+  word with two meanings is two entries: the zoom's Fit (the status
+  word, the button, its menu) against the camera match's; the lens
+  makers' All and the metadata's All and None against the rest; the
+  watermark's nine places (Top, Left, Right, and Center have other
+  meanings); the clothing part Top; the picker's Pick against the
+  flag; the theme's Light against the edit's section; the crop
+  aspect's Original against the Original; and a key bound to None.
+  The scan lets a context through, and its test says so.
+- **One idiom for shown constants.** A show-only `const &str` is a
+  function returning its `tr!` (the models' lines and notes, the
+  landscape's two status lines, the importers' no-sidecars note, the
+  first run's line, the empty filter's line, the camera preview's
+  word, the keys sheet's "click" and "None"); the tests assert the
+  English literal. The marker stays only for tables also compared or
+  stored: the keys table, the facet captions, flag and label names,
+  the order words, the edit's section and part titles, the landscape's
+  lower-case kinds, `NO_LOCAL_PREVIEW`, and `READER_UNAVAILABLE`.
+  The loupe's offline line now translates `NO_LOCAL_PREVIEW` where it
+  shows it. Strings passed around rather than kept (the look sheets'
+  place, the rename's refusals) are `String`s translated where made.
+- **The request kinds.** `rows::request` takes a `Request`, one
+  variant a kind (the open of a file by its name, the rating, flag,
+  and label keys, keyword, title, time shift, turn, export, queue,
+  reset, preset, paste, sync, undo, redo), compared by `==`. Each has
+  `the()`, `counted(n)` (a whole plural), and `not_applied(n)`, so a
+  dropped or gone request reads as sentences; `log()` keeps the
+  English for the log and the tests. A pick is one, so the open's
+  count is its `the()`, with no plural of its own. The "s" pluralizer is gone.
+- **The choosers' titles** are `String`s, `impl Into<String>` at
+  every call, each wrapped at its caller.
+- **The software tail** is `Option<String>` in the develop's state,
+  translated once at the start; no `Box::leak`.
+- **The ownerless files.** roots/ (mod, view with the reading line,
+  landing, pane, look, kept_up) wrapped: plurals whole, values by
+  name. The view's reading line is kept as the pick's is, so the
+  pick's end clears it while it is still up, as the prefix did before.
+  The empty view's line logs its English and shows its translation.
+  panel/mod.rs and window_fit had nothing shown.
+- **Counts whole.** The collections' counts, joined to their
+  sentences by a placeholder, are whole plurals; `delete::count`,
+  unused, is gone. The `queue::frames` callers left are logs.
+- **The rejects' job** sets `Doing` once and logs `doing.log()`; its
+  card's first line is a sentence a job, chosen by it.
+- **Imports.** `use crate::tr;` everywhere (the binary's modules took
+  `greycard_ui::tr`, and four files wrote `crate::tr!` inline).
+- **Grammar.** One frame reads "reading 1 frame..." (the mosaics'
+  read and the view's), one byte "1 byte", one model "1 model, ...";
+  the plural was in both forms.
+- **The landscape's lower-case kinds** have a test that ties them to
+  the sky and every group.
+- **The assets panel** calls the window's `carried_words`.
+- **Import's place errors** are a sentence a place (destination,
+  backup), not a noun spliced in.
+
+**The catalog.** 1866 messages in `translations/greycard.pot`, 226 of
+them plurals, 18 with a context; `msguniq -d` finds no duplicate;
+`msgfmt -c` passes on the template and the French catalog, which is
+merged and untranslated.
+
+*Verified.*
+
+- fmt; clippy `--all-targets -D warnings` on greycard-ui and
+  greycard-slint.
+- `cargo test -p greycard-ui -p greycard-slint -p greycard-i18n-probe`
+  on lavapipe: all pass (the probe 1, the scan 2, the library 180,
+  the binary 1418 with 5 ignored, the export tests 3).
+- New tests: a context is its own entry (lookup, plural, a context the
+  catalog lacks); the macro's context arms in English; two frames gone before their
+  request ran said in the plural; the scan lets
+  `@tr("zoom" => "Fit")` through; the landscape's lower kinds.
+- xtr over a sample file with every context arm: msgctxt as written.
+
+*Not verified.*
+
+- A translated context on screen, Slint's or ours: no catalog has a
+  translation yet.
+- The choosers' translated titles on the portal, zenity, kdialog, and
+  rfd.
+- Every homonym: found by reading the short entries used in two places
+  or more; same-meaning words in two places (Size, Color, Red as a
+  channel and a label) are left one entry, a translator's report the
+  way to split one later.
+- The logs of a shown line (`tracing::warn!("{why}")` and the like)
+  still carry the translated text in places.

@@ -179,10 +179,9 @@ impl SavedBar for Saved {
 /// It used to read "show All to see them", which named a control:
 /// All was the three-way Show's first option. It is now the first
 /// rating chip and means any rating, so the way back is Clear.
-///
-/// In English, marked for the catalog: translated where it is shown.
-pub const NOTHING_SHOWN: &str =
-    crate::marked::tr!("no frames pass the filter; Clear shows the folder again");
+pub fn nothing_shown() -> String {
+    tr!("no frames pass the filter; Clear shows the folder again")
+}
 
 /// One frame as the filter reads it: where the file is, which is
 /// where its name is, what its sidecar says about it, and what the

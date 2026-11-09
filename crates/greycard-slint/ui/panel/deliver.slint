@@ -95,15 +95,15 @@ export component ExportSheet inherits Rectangle {
     property <int> folder-room: max(8, floor((root.sheet-width - 2 * Theme.space-5 - 68px - 88px - 2 * Theme.space-2) / 7px));
     /// A watermark place's words: the setting keeps the English name.
     pure function position-words(place: string) -> string {
-        return place == "Top left" ? @tr("Top left")
-            : place == "Top" ? @tr("Top")
-            : place == "Top right" ? @tr("Top right")
-            : place == "Left" ? @tr("Left")
-            : place == "Center" ? @tr("Center")
-            : place == "Right" ? @tr("Right")
-            : place == "Bottom left" ? @tr("Bottom left")
-            : place == "Bottom" ? @tr("Bottom")
-            : place == "Bottom right" ? @tr("Bottom right")
+        return place == "Top left" ? @tr("watermark place" => "Top left")
+            : place == "Top" ? @tr("watermark place" => "Top")
+            : place == "Top right" ? @tr("watermark place" => "Top right")
+            : place == "Left" ? @tr("watermark place" => "Left")
+            : place == "Center" ? @tr("watermark place" => "Center")
+            : place == "Right" ? @tr("watermark place" => "Right")
+            : place == "Bottom left" ? @tr("watermark place" => "Bottom left")
+            : place == "Bottom" ? @tr("watermark place" => "Bottom")
+            : place == "Bottom right" ? @tr("watermark place" => "Bottom right")
             : place;
     }
     /// A border color's words: the setting keeps the English name.
@@ -391,7 +391,7 @@ export component ExportSheet inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             Text { text: @tr("Metadata"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["All", "No edit", "None"]; labels: [@tr("All"), @tr("No edit"), @tr("None")]; current <=> root.export-metadata; }
+                            Segmented { options: ["All", "No edit", "None"]; labels: [@tr("metadata" => "All"), @tr("No edit"), @tr("metadata" => "None")]; current <=> root.export-metadata; }
                         }
                         // Typed, every export goes into it beside each frame
                         // with no chooser; left empty, the chooser asks.

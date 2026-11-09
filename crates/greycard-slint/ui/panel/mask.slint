@@ -691,7 +691,7 @@ export component AdjustmentsSection inherits Section {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             PanelButton {
-                                text: @tr("Pick");
+                                text: @tr("picker" => "Pick");
                                 icon: @image-url("../icons/pipette.svg");
                                 primary: root.picking == "Range";
                                 clicked => { root.pick-started("Range"); }
@@ -906,7 +906,7 @@ export component AdjustmentsSection inherits Section {
                         spacing: Theme.space-2;
                         // On a chosen sky, clicks that correct it.
                         PanelButton {
-                            text: root.component-kind == "Sky" ? @tr("Pick") : @tr("Sky");
+                            text: root.component-kind == "Sky" ? @tr("picker" => "Pick") : @tr("Sky");
                             icon: @image-url("../icons/cloud.svg");
                             primary: root.placing == "Sky" && root.placing-into;
                             clicked => { root.add-shape("Sky", root.shape-mode); }
@@ -941,7 +941,7 @@ export component AdjustmentsSection inherits Section {
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
-                            text: root.component-kind == "Object" ? @tr("Pick") : @tr("Object");
+                            text: root.component-kind == "Object" ? @tr("picker" => "Pick") : @tr("Object");
                             icon: @image-url("../icons/mouse-pointer-click.svg");
                             primary: root.placing == "Object" && root.placing-into;
                             clicked => { root.add-shape("Object", root.shape-mode); }
@@ -985,7 +985,7 @@ export component AdjustmentsSection inherits Section {
                                     MenuItem { title: @tr("Hands"); activated => { root.add-part("Hands", root.shape-mode); } }
                                     MenuSeparator { }
                                     MenuItem { title: @tr("Clothing"); enabled: false; }
-                                    MenuItem { title: @tr("Top"); activated => { root.add-part("Top", root.shape-mode); } }
+                                    MenuItem { title: @tr("clothing" => "Top"); activated => { root.add-part("Top", root.shape-mode); } }
                                     MenuItem { title: @tr("Bottoms"); activated => { root.add-part("Bottoms", root.shape-mode); } }
                                     MenuItem { title: @tr("Shoes"); activated => { root.add-part("Shoes", root.shape-mode); } }
                                     MenuItem { title: @tr("All clothing"); activated => { root.add-part("All clothing", root.shape-mode); } }

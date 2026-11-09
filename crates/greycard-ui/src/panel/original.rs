@@ -11,8 +11,8 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::tr;
 use greycard_edit::Edit;
-use greycard_ui::tr;
 use slint::{ComponentHandle, SharedString};
 
 use crate::panel::deliver::Landed;

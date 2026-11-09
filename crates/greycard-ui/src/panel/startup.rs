@@ -1020,7 +1020,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The way round the window, once: where the library is and where
     // the keys are, which two testers looked for.
     if first_run && !state.borrow().window.batch {
-        app.set_status(crate::i18n::text(FIRST_RUN).into());
+        app.set_status(first_run_line().into());
     }
     // The pane's entry from what the last check found, and this
     // launch's check if a day has gone.
@@ -1152,7 +1152,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                         Some(None) => {
                             if let Some(app) = app_weak.upgrade() {
-                                app.set_status(crate::i18n::text(filter::NOTHING_SHOWN).into());
+                                app.set_status(filter::nothing_shown().into());
                             }
                             tracing::warn!("no frames pass the filter");
                             let mut st = state.borrow_mut();
@@ -1776,7 +1776,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             if finder::arrived() {
                 return;
             }
-            chooser::choose_folder(crate::marked::tr!("Open a folder"), start, move |chosen| {
+            chooser::choose_folder(tr!("Open a folder"), start, move |chosen| {
                 let app_weak = app_weak.clone();
                 // The state and the worker through their thread locals:
                 // this runs on the chooser's own thread, which an `Rc`
@@ -2575,10 +2575,12 @@ pub(crate) fn scripted_start(cli: &crate::Cli) -> bool {
 }
 
 /// The status line on a first run.
-pub(crate) const FIRST_RUN: &str = crate::marked::tr!(
-    "Library and Loupe, top left (or G), switch between the grid \
+pub(crate) fn first_run_line() -> String {
+    tr!(
+        "Library and Loupe, top left (or G), switch between the grid \
      and one frame; Cull and Develop (C and D) are the Loupe's two modes; ? lists the keys"
-);
+    )
+}
 
 /// The absolute path of the file now open, kept for the next run to
 /// jump back to; skipped for a screenshot, a snapshot or a one-shot

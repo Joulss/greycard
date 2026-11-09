@@ -84,16 +84,27 @@ impl Catalog {
 
     /// `msg` in this language, or as written when it has no translation.
     fn text<'a>(&'a self, msg: &'a str) -> &'a str {
+        self.lookup(msg).unwrap_or(msg)
+    }
+
+    /// The translation found by `key` (the English, or the context and
+    /// the English joined), if the catalog has one.
+    fn lookup(&self, key: &str) -> Option<&str> {
         self.messages
-            .get(msg)
+            .get(key)
             .and_then(|s| s.first())
-            .map_or(msg, String::as_str)
+            .map(String::as_str)
     }
 
     /// The form for a count of `n`, by the catalog's rule, or English's
     /// two forms when the message has no translation.
     fn plural<'a>(&'a self, one: &'a str, many: &'a str, n: u64) -> &'a str {
-        let Some(strs) = self.messages.get(one) else {
+        self.plural_keyed(one, one, many, n)
+    }
+
+    /// [`Catalog::plural`] for a message found by `key`.
+    fn plural_keyed<'a>(&'a self, key: &str, one: &'a str, many: &'a str, n: u64) -> &'a str {
+        let Some(strs) = self.messages.get(key) else {
             return english_plural(one, many, n);
         };
         let index = usize::try_from(self.rule.eval(n)).unwrap_or(0);
@@ -256,6 +267,29 @@ pub fn plural(one: &str, many: &str, n: u64, args: &[Arg]) -> String {
     fill(form, args)
 }
 
+/// gettext's key for a message in a context: the two joined by EOT.
+fn in_context(ctx: &str, msg: &str) -> String {
+    format!("{ctx}\u{4}{msg}")
+}
+
+/// [`tr!`](crate::tr) in a context (`tr!("zoom" => "Fit")`), with or
+/// without values: the catalog's `msgctxt`, so one English word with
+/// two meanings is two entries.
+pub fn text_in(ctx: &str, msg: &str, args: &[Arg]) -> String {
+    let Some(c) = current() else {
+        return fill(msg, args);
+    };
+    fill(c.lookup(&in_context(ctx, msg)).unwrap_or(msg), args)
+}
+
+/// [`tr!`](crate::tr) with a count, in a context.
+pub fn plural_in(ctx: &str, one: &str, many: &str, n: u64, args: &[Arg]) -> String {
+    let Some(c) = current() else {
+        return fill(english_plural(one, many, n), args);
+    };
+    fill(c.plural_keyed(&in_context(ctx, one), one, many, n), args)
+}
+
 /// A count for [`plural`]: any integer, a negative one as zero.
 pub fn count<T: TryInto<u64>>(n: T) -> u64 {
     n.try_into().unwrap_or(0)
@@ -314,8 +348,36 @@ pub fn fill(template: &str, args: &[Arg]) -> String {
 ///   `tr!("Exporting {done} of {total}", done = d, total = t)`
 /// - `tr!("{n} frame" | "{n} frames" % count)`, the form chosen by the
 ///   catalog's plural rule, `{n}` the count; values may follow.
+/// - `tr!("zoom" => "Fit")`, any of the above in a context: the
+///   catalog's `msgctxt`, for one English word with two meanings.
 #[macro_export]
 macro_rules! tr {
+    ($ctx:literal => $one:literal | $many:literal % $n:expr $(,)?) => {{
+        let n = $n;
+        $crate::i18n::plural_in(
+            $ctx,
+            $one,
+            $many,
+            $crate::i18n::count(n),
+            &[$crate::i18n::Arg { name: Some("n"), value: &n }],
+        )
+    }};
+    ($ctx:literal => $one:literal | $many:literal % $n:expr, $($rest:tt)+) => {{
+        let n = $n;
+        $crate::i18n::plural_in(
+            $ctx,
+            $one,
+            $many,
+            $crate::i18n::count(n),
+            &$crate::__tr_args!([$crate::i18n::Arg { name: Some("n"), value: &n },] $($rest)+),
+        )
+    }};
+    ($ctx:literal => $msg:literal $(,)?) => {
+        $crate::i18n::text_in($ctx, $msg, &[])
+    };
+    ($ctx:literal => $msg:literal, $($rest:tt)+) => {
+        $crate::i18n::text_in($ctx, $msg, &$crate::__tr_args!([] $($rest)+))
+    };
     ($one:literal | $many:literal % $n:expr $(,)?) => {{
         let n = $n;
         $crate::i18n::plural(
@@ -415,6 +477,12 @@ msgctxt "menu"
 msgid "Done"
 msgstr "Fini"
 
+msgctxt "menu"
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n} élément"
+msgstr[1] "{n} éléments"
+
 msgid "A long "
 "line"
 msgstr "Une longue "
@@ -440,6 +508,31 @@ msgstr "\a\b\f\v\101\x42\t"
         let marked = Catalog::from_po("fr", &format!("\u{feff}{FRENCH}"));
         assert_eq!(marked.text("Done"), "Terminé");
         assert_eq!(marked.forms, 2);
+    }
+
+    /// A message in a context is its own entry: found by the context
+    /// and the English, the bare English not finding it, and English's
+    /// forms for a context the catalog does not have.
+    #[test]
+    fn a_context_is_its_own_entry() {
+        let fr = Catalog::from_po("fr", FRENCH);
+        assert_eq!(fr.lookup(&in_context("menu", "Done")), Some("Fini"));
+        assert_eq!(fr.text("Done"), "Terminé");
+        assert_eq!(fr.lookup(&in_context("zoom", "Done")), None);
+        let key = in_context("menu", "{n} item");
+        assert_eq!(
+            fr.plural_keyed(&key, "{n} item", "{n} items", 0),
+            "{n} élément"
+        );
+        assert_eq!(
+            fr.plural_keyed(&key, "{n} item", "{n} items", 2),
+            "{n} éléments"
+        );
+        let other = in_context("list", "{n} item");
+        assert_eq!(
+            fr.plural_keyed(&other, "{n} item", "{n} items", 2),
+            "{n} items"
+        );
     }
 
     /// A translation may put the values in another order, by name or by
@@ -596,6 +689,13 @@ msgstr "\a\b\f\v\101\x42\t"
         assert_eq!(
             shown!("{n} in {place}" | "{n} in {place}" % -1i32, place = "x"),
             "-1 in x"
+        );
+        assert_eq!(shown!("zoom" => "Fit"), "Fit");
+        assert_eq!(shown!("zoom" => "{} at {}", a, b), "2 at 5");
+        assert_eq!(shown!("menu" => "{n} item" | "{n} items" % 2), "2 items");
+        assert_eq!(
+            shown!("menu" => "{n} item in {w}" | "{n} items in {w}" % 1, w = "x"),
+            "1 item in x"
         );
     }
 }

@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_core::color::{WhitePoint, resolve_white_balance};
 use greycard_core::develop::defringe;
 use greycard_edit::curve::Channel;
 use greycard_edit::geometry::Geometry;
-use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::color::{preview_white, show_mixer_band, store_mixer_band, white_profile};
@@ -949,7 +949,7 @@ pub(crate) fn zoom_label(zoom: f32) -> slint::SharedString {
     if zoom > 0.0 {
         format!("{}%", (zoom * 100.0).round() as i32).into()
     } else {
-        tr!("Fit").into()
+        tr!("zoom" => "Fit").into()
     }
 }
 
@@ -1702,7 +1702,7 @@ pub(crate) fn write_screenshot(
 /// on the event loop.
 pub(crate) fn choose_icc(
     app: &App,
-    title: &'static str,
+    title: impl Into<String>,
     current: PathBuf,
     apply: impl Fn(&App, PathBuf) + Send + 'static,
 ) {
@@ -1747,7 +1747,7 @@ pub(crate) fn choose_icc(
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        tracing::warn!("{title}: file chooser: {e:#}");
+                        tracing::warn!("ICC profile chooser: {e:#}");
                         app.set_status(chooser::chooser_failed(&e).into());
                     }
                 }
@@ -1905,7 +1905,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let current = PathBuf::from(app.get_proof_file().as_str());
-            choose_icc(&app, "Proof profile", current, |app, path| {
+            choose_icc(&app, tr!("Proof profile"), current, |app, path| {
                 set_proof_file(app, &path.to_string_lossy());
                 app.set_proof_profile(FILE.into());
                 app.set_proofing(true);
@@ -1924,7 +1924,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let current = PathBuf::from(app.get_display_file().as_str());
-            choose_icc(&app, "Monitor profile", current, |app, path| {
+            choose_icc(&app, tr!("Monitor profile"), current, |app, path| {
                 app.set_display_file(path.to_string_lossy().as_ref().into());
                 app.set_display_profile(FILE.into());
             });

@@ -1,10 +1,10 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::{Edit, Exported, Row};
 use greycard_library::export_record::{no_version, not_kept, record_export_on_disk, take_seed};
 use greycard_render::finish;
-use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::cull::leave_cull;
@@ -461,7 +461,11 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     &worker,
                     Vec::new(),
                     crate::rows::Scope::File,
-                    if back { "undo" } else { "redo" },
+                    if back {
+                        crate::rows::Request::Undo
+                    } else {
+                        crate::rows::Request::Redo
+                    },
                     Box::new(move |state, app, _, _| {
                         let next =
                             crate::panel::browser::step_tags(&mut state.borrow_mut(), app, back);

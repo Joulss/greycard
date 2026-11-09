@@ -41,7 +41,7 @@ use greycard_library::rawtherapee::{self as rt, Progress, Report, Voice};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::files::tilde;
-use crate::{App, ReportLine, STATE, Shared, State, i18n, settings, tr};
+use crate::{App, ReportLine, STATE, Shared, State, settings, tr};
 
 /// The sheet's side of the state, and the offer's.
 #[derive(Default)]
@@ -105,8 +105,9 @@ fn offer_words(n: usize) -> String {
 }
 
 /// What the sheet says when the run writes no sidecars.
-pub(crate) const NO_SIDECARS: &str =
-    crate::marked::tr!("This run writes no sidecars (--no-sidecars), so nothing can be imported.");
+pub(crate) fn no_sidecars() -> String {
+    tr!("This run writes no sidecars (--no-sidecars), so nothing can be imported.")
+}
 
 /// Whether the settings at `file` have `dir` answered.
 pub(crate) fn answered_in(file: &Path, dir: &Path) -> bool {
@@ -369,7 +370,7 @@ pub(crate) fn show(st: &State, app: &App) {
         st.window.write_sidecars && report.is_some_and(|r| !r.write && r.to_write() > 0),
     );
     if !st.window.write_sidecars && app.get_rt_note().is_empty() {
-        app.set_rt_note(i18n::text(NO_SIDECARS).into());
+        app.set_rt_note(no_sidecars().into());
     }
     if let (Some(r), Some(dir)) = (report, st.rawtherapee.folder.as_deref()) {
         app.set_rt_subtitle(
@@ -396,7 +397,7 @@ pub(crate) fn write(state: &Rc<Shared>, app: &App) {
         return;
     };
     if !st.window.write_sidecars {
-        app.set_rt_note(i18n::text(NO_SIDECARS).into());
+        app.set_rt_note(no_sidecars().into());
         return;
     }
     let opts = write_options(&mut st, app);
@@ -767,7 +768,10 @@ Enabled=true
         open(&mut state.borrow_mut(), &app, shots.clone());
         land_now(&state, &app);
         assert!(!app.get_rt_ready());
-        assert_eq!(app.get_rt_note(), NO_SIDECARS);
+        assert_eq!(
+            app.get_rt_note(),
+            "This run writes no sidecars (--no-sidecars), so nothing can be imported."
+        );
         assert!(texts(app.get_rt_lines()).iter().any(|(l, _)| l == "frame"));
         write(&state, &app);
         assert!(state.borrow().rawtherapee.thread.is_none());

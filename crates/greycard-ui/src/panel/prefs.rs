@@ -278,7 +278,7 @@ fn start_picked(st: &State, app: &App, choice: &str) {
             .or_else(dirs::home_dir)
             .unwrap_or_else(|| PathBuf::from("/"));
         let weak = app.as_weak();
-        chooser::choose_folder(crate::marked::tr!("Start in"), start, move |chosen| {
+        chooser::choose_folder(tr!("Start in"), start, move |chosen| {
             let _ = weak.upgrade_in_event_loop(move |app| take(&app, chosen));
         });
     }

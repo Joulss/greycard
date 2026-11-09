@@ -21,7 +21,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::delete::{self, Deleted, Doomed, How, Offer, TRASH_SUPPORTED};
 use crate::panel::assets::show_looks;
-use crate::{App, Shared, State, i18n, tr};
+use crate::{App, Shared, State, tr};
 
 /// The sheet's question while it is up.
 #[derive(Debug, Clone)]
@@ -151,7 +151,6 @@ pub(crate) fn named_on_disk(paths: &[PathBuf], name: &str) -> usize {
 /// how many are still being read; `place` is where the pictures are,
 /// "in this folder" or "in the library".
 pub(crate) fn uses_line(named: usize, pending: usize, place: &str) -> String {
-    let place = i18n::text(place);
     let mut out = match (named, pending) {
         (0, 0) => tr!("No picture {place} uses it.", place = place),
         (0, _) => String::new(),
@@ -267,8 +266,8 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         .map(|e| e.label().to_string())
         .unwrap_or_else(|| name.clone());
     let place = match st.views.view {
-        crate::roots::View::Roots(_) => crate::marked::tr!("in the library"),
-        _ => crate::marked::tr!("in this folder"),
+        crate::roots::View::Roots(_) => tr!("in the library"),
+        _ => tr!("in this folder"),
     };
     let mut note = offer_note(offer, files.len());
     let stays = !link_names.is_empty();
@@ -296,7 +295,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     } else {
         (
             tr!("Remove the look {shown}?", shown = shown),
-            uses_line(counted.named, counted.unread.len(), place),
+            uses_line(counted.named, counted.unread.len(), &place),
         )
     };
     app.set_look_remove_title(title.into());
@@ -323,7 +322,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
 /// Read the edits that stood in from the index on a thread of their
 /// own, and put the count on the sheet when it is done.
 #[cfg(not(test))]
-fn count_unread(app: &App, generation: u64, counted: Uses, name: String, place: &'static str) {
+fn count_unread(app: &App, generation: u64, counted: Uses, name: String, place: String) {
     let app_weak = app.as_weak();
     let spawned = std::thread::Builder::new()
         .name("greycard look uses".into())
@@ -338,7 +337,7 @@ fn count_unread(app: &App, generation: u64, counted: Uses, name: String, place: 
                 };
                 let st = state.borrow();
                 if st.sheets.look_remove.as_ref().map(|a| a.generation) == Some(generation) {
-                    app.set_look_remove_uses(uses_line(counted.named + on_disk, 0, place).into());
+                    app.set_look_remove_uses(uses_line(counted.named + on_disk, 0, &place).into());
                 }
             });
         });
@@ -349,7 +348,7 @@ fn count_unread(app: &App, generation: u64, counted: Uses, name: String, place: 
 
 /// A test counts them itself, through [`named_on_disk`].
 #[cfg(test)]
-fn count_unread(_app: &App, _generation: u64, _counted: Uses, _name: String, _place: &str) {}
+fn count_unread(_app: &App, _generation: u64, _counted: Uses, _name: String, _place: String) {}
 
 impl Job {
     /// The removal, `trash` the system trash for [`How::Trash`]: every

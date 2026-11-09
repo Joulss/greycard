@@ -11,6 +11,8 @@
 //! Everything that decides something is here and pure, so it can be
 //! tested without a window; the panel's modules hold the glue.
 
+use crate::tr;
+
 /// How many frames either side of the selection keep their camera
 /// picture in the develop view. Nothing is decoded ahead here — the
 /// selection's own JPEG is the only one asked for — so this is what
@@ -22,7 +24,9 @@ pub const REACH: usize = 2;
 
 /// The word over the picture while the camera's JPEG stands in, and
 /// the name the status line gives it.
-pub const WORD: &str = crate::marked::tr!("camera preview");
+pub fn word() -> String {
+    tr!("camera preview")
+}
 
 /// How far along a placeholder is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,9 +180,9 @@ pub fn status(
 ) -> String {
     let what = crate::panel::cull::picture_words(size, small, local);
     let at = crate::panel::cull::zoom_words(at.0, at.1);
-    crate::tr!(
+    tr!(
         "{word}: {what}, {at}; developing...",
-        word = crate::i18n::text(WORD),
+        word = word(),
         what = what,
         at = at
     )

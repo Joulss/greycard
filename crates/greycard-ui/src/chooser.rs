@@ -16,13 +16,14 @@ use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "linux"))]
 use std::sync::{Arc, Mutex};
 
+use crate::tr;
+
 /// What a file chooser is being asked for. The desktop portal and the
 /// native dialogs answer the same request in their own ways, so the
 /// calls below build one of these and hand it to `ask`.
 struct Ask {
-    /// The dialog's title, in English (marked for the catalog), and
-    /// translated where the dialog is asked for.
-    title: &'static str,
+    /// The dialog's title, as shown: the caller's `tr!`.
+    title: String,
     /// The folder it opens on.
     folder: PathBuf,
     /// The name a save dialog offers. None asks for a file to open:
@@ -40,14 +41,14 @@ struct Ask {
 /// on, `filter` a name and its globs. `done` gets the path, none when
 /// the user canceled, or the error when there was no chooser to ask.
 pub fn choose_open(
-    title: &'static str,
+    title: impl Into<String>,
     start: PathBuf,
     filter: (String, Vec<String>),
     done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static,
 ) {
     ask(
         Ask {
-            title,
+            title: title.into(),
             folder: start,
             name: None,
             filter,
@@ -61,14 +62,14 @@ pub fn choose_open(
 /// Ask for files to open, the same way, as many as the user picks:
 /// `done` gets them, none when the user canceled.
 pub fn choose_open_many(
-    title: &'static str,
+    title: impl Into<String>,
     start: PathBuf,
     filter: (String, Vec<String>),
     done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static,
 ) {
     ask(
         Ask {
-            title,
+            title: title.into(),
             folder: start,
             name: None,
             filter,
@@ -82,13 +83,13 @@ pub fn choose_open_many(
 /// Ask the desktop for a folder to open, the same way. A folder
 /// chooser has no filter and replies with one directory.
 pub fn choose_folder(
-    title: &'static str,
+    title: impl Into<String>,
     start: PathBuf,
     done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static,
 ) {
     ask(
         Ask {
-            title,
+            title: title.into(),
             folder: start,
             name: None,
             filter: (String::new(), Vec::new()),
@@ -220,20 +221,16 @@ pub fn chooser_failed(e: &anyhow::Error) -> String {
     #[cfg(target_os = "linux")]
     match e.downcast_ref::<Unreached>() {
         Some(Unreached::Bus) => {
-            return crate::tr!(
-                "no file chooser: there is no D-Bus session bus; \
-                 install zenity, or see the user guide"
-            );
+            return tr!("no file chooser: there is no D-Bus session bus; \
+                 install zenity, or see the user guide");
         }
         Some(Unreached::Portal) => {
-            return crate::tr!(
-                "no file chooser: no desktop portal answered; \
-                 install xdg-desktop-portal-gtk or zenity"
-            );
+            return tr!("no file chooser: no desktop portal answered; \
+                 install xdg-desktop-portal-gtk or zenity");
         }
         None => {}
     }
-    crate::tr!("the file chooser failed: {e}", e = format!("{e:#}"))
+    tr!("the file chooser failed: {e}", e = format!("{e:#}"))
 }
 
 /// A program that draws a file chooser and prints the paths picked,
@@ -280,7 +277,7 @@ impl Helper {
         match self {
             Helper::Zenity => {
                 args.push("--file-selection".into());
-                args.push(format!("--title={}", crate::i18n::text(request.title)).into());
+                args.push(format!("--title={}", request.title).into());
                 let mut filename = OsString::from("--filename=");
                 filename.push(&start);
                 args.push(filename);
@@ -301,7 +298,7 @@ impl Helper {
             }
             Helper::Kdialog => {
                 args.push("--title".into());
-                args.push(crate::i18n::text(request.title).into());
+                args.push(request.title.as_str().into());
                 args.push(
                     if request.directory {
                         "--getexistingdirectory"
@@ -492,7 +489,7 @@ fn ask(request: Ask, done: impl FnOnce(Result<Vec<PathBuf>>) + Send + 'static) {
 #[cfg(not(target_os = "linux"))]
 fn native(request: &Ask) -> rfd::AsyncFileDialog {
     let mut dialog = rfd::AsyncFileDialog::new()
-        .set_title(crate::i18n::text(request.title))
+        .set_title(&request.title)
         .set_directory(&request.folder);
     if let Some(name) = &request.name {
         dialog = dialog.set_file_name(name);
@@ -624,10 +621,8 @@ fn portal(request: &Ask) -> Result<Vec<PathBuf>> {
     // Nothing is on the screen until the call returns, so a call that
     // found nothing to take it can go to a helper without a second
     // dialog.
-    let handle: OwnedObjectPath = match chooser.call(
-        method,
-        &("", crate::i18n::text(request.title).as_str(), options),
-    ) {
+    let handle: OwnedObjectPath = match chooser.call(method, &("", request.title.as_str(), options))
+    {
         Ok(handle) => handle,
         Err(e) if absent(&e) => return Err(e).context(Unreached::Portal),
         Err(e) => return Err(e).context("the file chooser portal"),
@@ -738,7 +733,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn asking(name: Option<&str>, directory: bool, multiple: bool) -> Ask {
         Ask {
-            title: "Pick",
+            title: "Pick".into(),
             folder: PathBuf::from("/home/me/My Pictures"),
             name: name.map(str::to_string),
             filter: if directory {

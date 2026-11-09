@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::geometry::{Aspect, Crop, Geometry, Guide, Handle, MAX_ANGLE, MAX_TILT};
-use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::panel::viewport::{effective_zoom, view_to_plane, view_to_source};

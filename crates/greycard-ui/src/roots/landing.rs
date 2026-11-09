@@ -11,7 +11,7 @@ use super::{
 use crate::panel::browser::{open_loaded, rebuild_browser};
 use crate::rows::Held;
 use crate::worker::Worker;
-use crate::{App, Shared, rows};
+use crate::{App, Shared, rows, tr};
 
 /// A read done, on the window's thread: what it saw of the roots and
 /// the folders kept, and the list opened or merged. Nothing here asks
@@ -176,7 +176,7 @@ pub(super) fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, found: Fo
                 let mut st = state.borrow_mut();
                 loading_done(&mut st.views.library, app);
                 st.views.library.awaiting = false;
-                let why = said.unwrap_or_else(|| "nothing to open".to_string());
+                let why = said.unwrap_or_else(|| tr!("nothing to open"));
                 tracing::warn!("{why}");
                 app.set_status(why.into());
                 return;
@@ -343,7 +343,7 @@ fn take_empty(
     show(&st, app);
     if queue {
         // Nothing queued: said as the export sheet says it.
-        app.set_status("nothing queued".into());
+        app.set_status(tr!("nothing queued").into());
         st.views.library.awaiting = false;
     } else if collection {
         // Nothing in it, or nothing of it to be found: said, and a
@@ -352,7 +352,7 @@ fn take_empty(
         app.set_status(words.into());
         st.views.library.awaiting = false;
     } else if passing {
-        app.set_status("Nothing indexed under the roots yet; the pass is running".into());
+        app.set_status(tr!("Nothing indexed under the roots yet; the pass is running").into());
     } else {
         empty_view(&mut st, app);
     }

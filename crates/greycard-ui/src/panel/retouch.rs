@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
+use crate::tr;
 use greycard_edit::Edit;
 use greycard_edit::retouch::{FillChoice, Method as RetouchMethod, Patch};
-use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::ai::FillHaves;

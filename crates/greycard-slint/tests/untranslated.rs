@@ -307,8 +307,9 @@ fn every_shown_string_is_translatable() {
 }
 
 /// The scan finds a bare string in each shown binding, by its line, and
-/// lets through `@tr`, the allow-list, the empty string, comments,
-/// compared values, element ids, and bindings that are not shown.
+/// lets through `@tr` (with a context too), the allow-list, the empty
+/// string, comments, compared values, element ids, and bindings that
+/// are not shown.
 #[test]
 fn the_scan_finds_bare_strings_by_line() {
     let source = r#"component A {
@@ -342,6 +343,7 @@ fn the_scan_finds_bare_strings_by_line() {
     Text { text: "Last"; }
     Text { text: root.mode == "a" ? "Shown" : "Other"; }
     Rectangle { accessible-value: root.on ? "Value" : root.n; }
+    Text { text: @tr("zoom" => "Fit"); }
 }"#;
     let found = bare_strings(source, &["greycard".to_string()]);
     let got: Vec<(usize, &str, bool)> = found

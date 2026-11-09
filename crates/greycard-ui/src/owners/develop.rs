@@ -109,7 +109,7 @@ pub(crate) struct Develop {
     /// Where the window draws on a software adapter and the engine's
     /// ops run on the CPU, the words every develop's line carries after
     /// its time to say so (`adapter::Lines`).
-    pub(crate) software_tail: Option<&'static str>,
+    pub(crate) software_tail: Option<String>,
     /// The last scope bins: the histogram, the backdrop of the curve
     /// editor, and after it whatever `scope` asked for.
     pub(crate) bins: Option<Vec<u32>>,

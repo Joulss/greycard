@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use greycard_ui::tr;
+use crate::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::export_queue::{self, Entry, QueuedFrame};

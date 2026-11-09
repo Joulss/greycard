@@ -1466,6 +1466,36 @@ fn a_frame_gone_before_its_request_ran_is_said() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// Two frames gone before their request ran are said together, in the
+/// plural.
+#[test]
+fn frames_gone_before_their_request_ran_are_said_together() {
+    let (dir, _files, writer, app, state, worker) = rated_under_a_root("rows-gone-many");
+    open_view(&state, &app, &worker, View::Roots(None));
+    land_all(&state, &app, &worker);
+    open_and_land(&state, &app, &worker, 0);
+    state.borrow_mut().views.picked = vec![0, 1, 2];
+    assert!(crate::panel::browser::meta_on_selection(
+        &state,
+        &app,
+        &worker,
+        meta::Change::Rating(5)
+    ));
+    // y and z move before their reads land.
+    state.borrow_mut().files[1] = dir.join("a").join("elsewhere.tif");
+    state.borrow_mut().files[2] = dir.join("a").join("further.tif");
+    crate::rows::land_pending(&state, &app, &worker);
+    assert_eq!(state.borrow().sidecars[0].meta.rating, 5, "x took it");
+    assert_eq!(
+        app.get_status(),
+        "2 frames moved or are gone; the rating key was not applied to them"
+    );
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// Three picked frames under a root, indexed, the view opened and
 /// landed, culling on with move-on and the Picks filter up: what a
 /// key that unflags one of them starts from.

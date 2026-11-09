@@ -475,35 +475,33 @@ fn start(
     let cancel = Arc::new(AtomicBool::new(false));
     let count = Arc::new(AtomicU64::new(0));
     let doing = match kind {
-        Kind::Move | Kind::Queue => crate::marked::tr!("moving the rejects on"),
-        Kind::Delete(_) => crate::marked::tr!("deleting the rejects from"),
+        Kind::Move | Kind::Queue => super::Doing::MoveRejects,
+        Kind::Delete(_) => super::Doing::DeleteRejects,
     };
     st.archive.running = Some(Running {
         cancel: cancel.clone(),
         bytes: count.clone(),
         total: items.len() as u64,
-        doing: if matches!(kind, Kind::Delete(_)) {
-            super::Doing::DeleteRejects
-        } else {
-            super::Doing::MoveRejects
-        },
+        doing,
         by_files: true,
         label: label.clone(),
         token,
         archive: archive.clone(),
     });
     tracing::info!(
-        "archive: {doing} {} ({kind:?}), {}",
+        "archive: {} {} ({kind:?}), {}",
+        doing.log(),
         label,
         frames_word(items.len())
     );
     app.set_archive_fraction(0.0);
     app.set_archive_line(
-        tr!(
-            "{doing} {label}...",
-            doing = crate::i18n::text(doing),
-            label = label
-        )
+        match doing {
+            super::Doing::DeleteRejects => {
+                tr!("deleting the rejects from {label}...", label = label)
+            }
+            _ => tr!("moving the rejects on {label}...", label = label),
+        }
         .into(),
     );
     app.set_archive_running(true);
