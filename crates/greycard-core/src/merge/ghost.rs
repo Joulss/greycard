@@ -17,12 +17,12 @@
 //! holds the pixel is kept in a ledger, and once all are in, the
 //! darkest frame that agrees with every other (by the same test)
 //! judges: since it agrees with all, all are kept. Where no frame
-//! agrees with all the others, the darkest alone is kept and the rest
-//! are taken back out of the sums. The ledger is the frames' samples
-//! at the reference's clipped pixels only, which a bracket's darker
-//! frames hold and its brighter ones mostly do not: a second small
-//! pass over those pixels, rather than every frame held to compare
-//! them in darkest-first order.
+//! agrees with all the others, the darkest alone is kept: its sample
+//! is set in the sums in place of them all. The ledger is the frames'
+//! samples at the reference's clipped pixels only, which a bracket's
+//! darker frames hold and its brighter ones mostly do not: a second
+//! small pass over those pixels, rather than every frame held to
+//! compare them in darkest-first order.
 //!
 //! What that costs: 16 bytes a ledger sample (the weight is worked out
 //! again from the value) and 20 a pending one, so a 45 MP reference
@@ -64,6 +64,12 @@ pub const BUDGET: usize = 512 << 20;
 const HELD: usize = std::mem::size_of::<Held>();
 /// A pending entry's bytes.
 const PENDING: usize = std::mem::size_of::<(u32, f32, [f32; 3])>();
+/// A pixel's weight left at or under this fraction of what it held
+/// before its take-out is rounding, not a frame: the pixel is emptied.
+/// The rounding of a few subtractions is some 1e-7 of the most the sum
+/// held, which is what it held before them, all weights being
+/// positive; a frame left a 4096th of a bright mover's weight is kept.
+const TAKEN: f32 = 1e-5;
 
 /// What a frame is judged against: the reference's samples, its clip
 /// mask, and its noise.
@@ -188,17 +194,33 @@ impl Ghosts {
             return;
         }
         self.running = true;
-        for seen in &mut self.frames {
-            for &(i, wt, s) in &seen.pending {
-                let i = i as usize;
-                if acc.weight[i] < 0.0 {
-                    continue;
+        // The pending lists are each in pixel order: walk them
+        // together, so a pixel's take-out is judged against what it
+        // held before any of it.
+        let mut at = vec![0usize; self.frames.len()];
+        let mut parts: Vec<(f32, [f32; 3])> = Vec::new();
+        loop {
+            let next = self
+                .frames
+                .iter()
+                .zip(&at)
+                .filter_map(|(s, &k)| s.pending.get(k).map(|p| p.0))
+                .min();
+            let Some(pixel) = next else {
+                break;
+            };
+            parts.clear();
+            for (seen, k) in self.frames.iter().zip(&mut at) {
+                if let Some(&(i, wt, s)) = seen.pending.get(*k)
+                    && i == pixel
+                {
+                    parts.push((wt, s));
+                    *k += 1;
                 }
-                for (sum, s) in acc.sum[i * 3..i * 3 + 3].iter_mut().zip(s) {
-                    *sum -= s;
-                }
-                acc.weight[i] -= wt;
             }
+            take_out(acc, pixel as usize, &parts);
+        }
+        for seen in &mut self.frames {
             seen.pending = Vec::new();
             if seen.whole {
                 seen.rejected = 0.0;
@@ -310,15 +332,23 @@ impl Ghosts {
             if acc.weight[i] < 0.0 {
                 continue;
             }
-            for (f, h, wt) in &here {
-                if *f == darkest {
-                    continue;
+            // Where the reference clipped, the frames that hold the
+            // pixel are all here, so the darkest's sample is set
+            // rather than the rest subtracted: a subtraction in f32
+            // of weights far apart (a black sample's is the inverse of
+            // the read noise alone) leaves rounding, or even zero or
+            // below zero, where the darkest's weight should be. The
+            // sums keep their meaning, the darkest's weight and its
+            // weighted sample, so a frame added after weighs fairly.
+            let (_, h, wd) = here.iter().find(|(f, _, _)| *f == darkest).expect("here");
+            for (sum, v) in acc.sum[i * 3..i * 3 + 3].iter_mut().zip(h.value) {
+                *sum = wd * v;
+            }
+            acc.weight[i] = *wd;
+            for (f, _, _) in &here {
+                if *f != darkest {
+                    extra[*f] += 1;
                 }
-                for (sum, v) in acc.sum[i * 3..i * 3 + 3].iter_mut().zip(h.value) {
-                    *sum -= wt * v;
-                }
-                acc.weight[i] -= wt;
-                extra[*f] += 1;
             }
         }
         self.frames
@@ -327,6 +357,36 @@ impl Ghosts {
             .map(|(s, e)| (s.id, Some((s.rejected + e as f64) / n)))
             .collect()
     }
+}
+
+/// Every frame's `parts` (a weight and its weighted samples) taken out
+/// of `acc`'s pixel `i`, as [`pending`] says the accumulator added
+/// them. The subtraction
+/// rounds, and where the sums held little else it leaves a residual
+/// weight, or one below zero, that the merge would divide by or take
+/// for a pixel set whole: a weight left at or under [`TAKEN`] of what
+/// the pixel held before empties it, so a weight of zero means no frame holds it and
+/// a later frame (the reference, which holds every pixel it judged)
+/// or the fill sets it.
+fn take_out(acc: &mut Accumulator, i: usize, parts: &[(f32, [f32; 3])]) {
+    let before = acc.weight[i];
+    if before < 0.0 {
+        return;
+    }
+    let mut left = before;
+    let sums = &mut acc.sum[i * 3..i * 3 + 3];
+    for (wt, s) in parts {
+        left -= wt;
+        for (sum, s) in sums.iter_mut().zip(s) {
+            *sum -= s;
+        }
+    }
+    // Not over: under, or not a number from an infinite weight.
+    if left.partial_cmp(&(TAKEN * before)) != Some(std::cmp::Ordering::Greater) {
+        left = 0.0;
+        sums.fill(0.0);
+    }
+    acc.weight[i] = left;
 }
 
 /// Whether two of the ledger's samples agree: every channel within
@@ -757,6 +817,187 @@ mod tests {
         let ((full, _), peak) = merge_by(&frames, &reference, Some(Ghosts::new(W, H, true)));
         assert_eq!(full, judged);
         assert_eq!(peak.0, 2 * W * H * HELD);
+    }
+
+    /// A noise whose read term fitted to nothing: a black sample's
+    /// weight is then the inverse of the read term's floor, thousands
+    /// of times another frame's, so the other's is rounded in the
+    /// sums.
+    const SILENT: Noise = Noise {
+        shot: 2e-5,
+        read: f32::MIN_POSITIVE,
+    };
+
+    /// `frames` (each its exposure, samples, and noise) through a
+    /// deghosting started idle and run once all are in, then the
+    /// reference: the merge, and how many samples held to the
+    /// darkest's clip.
+    fn merge_late(frames: &[(f32, &[f32], Noise)], reference: &[f32]) -> (Vec<f32>, usize) {
+        let ref_mask = clip_mask(reference, W, H);
+        let judge = Judge {
+            rgb: reference,
+            mask: &ref_mask,
+            noise: NOISE,
+        };
+        let mut acc = Accumulator::new(W, H);
+        let mut g = Ghosts::new(W, H, false);
+        for (k, (e, rgb, noise)) in frames.iter().enumerate() {
+            let mask = clip_mask(rgb, W, H);
+            let frame = Frame {
+                rgb,
+                mask: &mask,
+                exposure: f64::from(*e),
+                noise: *noise,
+            };
+            g.add(&mut acc, &frame, &judge, k);
+        }
+        g.run(&mut acc);
+        acc.add(&Frame {
+            rgb: reference,
+            mask: &ref_mask,
+            exposure: 1.0,
+            noise: NOISE,
+        });
+        g.finish(&mut acc);
+        let mut image = acc.finish();
+        let e_min = frames.iter().map(|f| f.0).fold(1.0, f32::min);
+        let held = crate::merge::hold_to(&mut image, 1.0 / e_min);
+        (image.data, held)
+    }
+
+    /// Two frames moved over one square, the reference not, the
+    /// deghosting run only once both are in: their pending taken back
+    /// out at every pixel of the square leaves the reference's samples
+    /// there, though one frame's black outweighs the other's
+    /// thousands of times in the sums.
+    #[test]
+    fn a_square_taken_out_of_every_frame_is_the_reference() {
+        let reference = frame(1.0, 1, scene);
+        let middle = frame(
+            0.5,
+            2,
+            |x, y, c| if mover(x, y) { 0.0 } else { scene(x, y, c) },
+        );
+        let dark = frame(
+            0.25,
+            3,
+            |x, y, c| if mover(x, y) { 0.9 } else { scene(x, y, c) },
+        );
+        let (merged, held) =
+            merge_late(&[(0.5, &middle, SILENT), (0.25, &dark, NOISE)], &reference);
+        assert!(merged.iter().all(|v| v.is_finite() && *v <= 4.0));
+        assert_eq!(held, 0);
+        for y in 20..40 {
+            for x in 40..60 {
+                let i = (y * W + x) * 3;
+                for c in 0..3 {
+                    let (got, want) = (merged[i + c], reference[i + c]);
+                    assert!((got - want).abs() < 1e-5, "{x},{y}: {got} against {want}");
+                }
+            }
+        }
+    }
+
+    /// Taken out of a pixel two frames of weights far apart hold, by
+    /// what each added, in either order, the weight is exactly zero
+    /// and its sums with it: no frame holds the pixel.
+    #[test]
+    fn taking_every_frame_out_leaves_exactly_nothing() {
+        let black = [0.0f32; 3];
+        let grey = [0.3f32, 0.32, 0.29];
+        let reject = [1.0f32];
+        for order in [[0, 1], [1, 0]] {
+            for (a, b) in [(black, grey), (grey, grey), ([0.11, 0.7, 0.05], grey)] {
+                let mask = [false];
+                let frames = [
+                    Frame {
+                        rgb: &a,
+                        mask: &mask,
+                        exposure: 0.5,
+                        noise: SILENT,
+                    },
+                    Frame {
+                        rgb: &b,
+                        mask: &mask,
+                        exposure: 0.25,
+                        noise: NOISE,
+                    },
+                ];
+                let mut acc = Accumulator::new(1, 1);
+                frames.iter().for_each(|f| acc.add(f));
+                let parts: Vec<(f32, [f32; 3])> = order
+                    .iter()
+                    .flat_map(|&k| pending(&frames[k], &reject, 1))
+                    .map(|(_, wt, s)| (wt, s))
+                    .collect();
+                take_out(&mut acc, 0, &parts);
+                assert_eq!(acc.weight[0].to_bits(), 0, "{a:?} {b:?} {order:?}");
+                assert!(acc.sum.iter().all(|v| v.to_bits() == 0));
+            }
+        }
+
+        // A dim frame a 4096th of a bright mover's weight, left when
+        // the mover is taken out, is kept.
+        let mask = [false];
+        let (mover, dim) = ([0.2f32; 3], [0.4f32; 3]);
+        let bright = Frame {
+            rgb: &mover,
+            mask: &mask,
+            exposure: 64.0,
+            noise: NOISE,
+        };
+        let faint = Frame {
+            rgb: &dim,
+            mask: &mask,
+            exposure: 1.0,
+            noise: NOISE,
+        };
+        let mut acc = Accumulator::new(1, 1);
+        acc.add(&bright);
+        acc.add(&faint);
+        let kept = weight_of(&faint, 0).unwrap();
+        assert!(kept < acc.weight[0] / 4000.0, "{kept} of {}", acc.weight[0]);
+        let parts: Vec<_> = pending(&bright, &reject, 1)
+            .into_iter()
+            .map(|(_, wt, s)| (wt, s))
+            .collect();
+        take_out(&mut acc, 0, &parts);
+        let got = acc.sum[0] / acc.weight[0];
+        assert!((got - 0.4).abs() < 1e-3, "{got}");
+    }
+
+    /// Where the reference clipped and a moved frame holds black at
+    /// many times the darkest's weight, the darkest's sample stands:
+    /// not the rounding of the black's weight taken back out.
+    #[test]
+    fn a_black_mover_where_the_reference_clipped_leaves_the_darkest() {
+        let light = |x: usize, y: usize, c: usize| 2.0 * scene(x, y, c) + 1.0;
+        let reference = frame(1.0, 1, light);
+        let darkest = frame(0.25, 2, light);
+        let middle = frame(
+            0.5,
+            3,
+            |x, y, c| if mover(x, y) { 0.0 } else { light(x, y, c) },
+        );
+        let (merged, held) = merge_late(
+            &[(0.5, &middle, SILENT), (0.25, &darkest, NOISE)],
+            &reference,
+        );
+        assert!(merged.iter().all(|v| v.is_finite() && *v <= 4.0));
+        assert_eq!(held, 0);
+        for y in 20..40 {
+            for x in 40..60 {
+                let i = (y * W + x) * 3;
+                for c in 0..3 {
+                    let want = darkest[i + c] / 0.25;
+                    assert!(
+                        (merged[i + c] - want).abs() <= 1e-6 * want,
+                        "{x},{y}: {} against {want}",
+                        merged[i + c]
+                    );
+                }
+            }
+        }
     }
 
     /// A frame whose pending would not fit the budget is kept whole

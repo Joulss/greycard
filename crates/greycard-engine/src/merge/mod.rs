@@ -663,6 +663,17 @@ pub fn hdr_of(
     order.sort_by_key(|&k| k == darkest);
     let mut exposures = vec![1.0f64; of];
     let mut all_clipped = 0;
+    // The darkest frame's brightest sample, its reconstruction's top
+    // where it has one: with its exposure, the most any merged sample
+    // can be.
+    let brightest = |rgb: &[f32]| {
+        use rayon::prelude::*;
+        rgb.par_iter()
+            .copied()
+            .filter(|v| v.is_finite())
+            .reduce(|| 1.0, f32::max)
+    };
+    let mut top = 1.0f32;
     for (n, &k) in order.iter().enumerate() {
         progress.step(Step::Frame { index: n + 2, of });
         let t = Instant::now();
@@ -799,6 +810,7 @@ pub fn hdr_of(
         }
         if k == darkest {
             all_clipped = acc.fill_clipped(&frame);
+            top = brightest(&f.rgb);
         }
         seconds.push(("frame", walked_s));
         seconds.push(("fit", fit_s));
@@ -819,6 +831,7 @@ pub fn hdr_of(
         add_reference(&mut acc, sensor);
     }
     if darkest == reference {
+        top = brightest(&ref_rgb);
         all_clipped = acc.fill_clipped(&Frame {
             rgb: &ref_rgb,
             mask: &ref_mask,
@@ -865,7 +878,15 @@ pub fn hdr_of(
             );
         }
     }
-    let image = acc.finish();
+    let mut image = acc.finish();
+    // No merged sample is over the darkest frame's clip on the
+    // reference's scale; one that is was made by the arithmetic, and
+    // would set the headroom the whole file is divided by.
+    let e_min = exposures.iter().copied().fold(1.0f64, f64::min);
+    let held = merge::hold_to(&mut image, (f64::from(top) / e_min) as f32);
+    if held > 0 {
+        log::info!("merge: {held} samples above the darkest frame's clip, held to it");
+    }
 
     progress.step(Step::Writing);
     let t = Instant::now();

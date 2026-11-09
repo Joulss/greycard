@@ -397,7 +397,7 @@ impl PairNoise {
         }
         (shot.is_finite() && shot > 0.0).then(|| Noise {
             shot: shot as f32,
-            read: (read as f32).max(f32::MIN_POSITIVE),
+            read: (read as f32).max(Noise::READ_FLOOR),
         })
     }
 }
@@ -420,6 +420,15 @@ impl Noise {
         read: 6e-8,
     };
 
+    /// The least read term there is: one step of a 14-bit sensor's
+    /// quantization, squared, in units of its clip. No sensor reads
+    /// with less noise than a step, so a fit that lands at zero is the
+    /// fit's failure, not the sensor's; and under a read term of
+    /// nothing a black sample's weight is the inverse of the float's
+    /// floor, some 1e37, which pins its pixel to black whatever the
+    /// other frames hold.
+    pub const READ_FLOOR: f32 = 1.0 / (16384.0 * 16384.0);
+
     /// The core's noise model (measured before the gains, in the
     /// frame's normalized levels) as one pair, the channels weighted
     /// as [`luma`] weights them; [`Noise::ASSUMED`] for a model that
@@ -433,7 +442,7 @@ impl Noise {
         } else {
             Noise {
                 shot,
-                read: read.max(f32::MIN_POSITIVE),
+                read: read.max(Noise::READ_FLOOR),
             }
         }
     }
@@ -448,9 +457,16 @@ impl Noise {
         }
     }
 
-    /// The variance at `level` in the frame's own units.
+    /// The variance at `level` in the frame's own units, the read
+    /// term never under [`Noise::READ_FLOOR`], however the noise was
+    /// made.
     pub fn variance(&self, level: f32) -> f32 {
-        (self.shot * level.max(0.0) + self.read).max(f32::MIN_POSITIVE)
+        let read = if self.read.is_nan() {
+            Noise::READ_FLOOR
+        } else {
+            self.read.max(Noise::READ_FLOOR)
+        };
+        (self.shot * level.max(0.0) + read).max(Noise::READ_FLOOR)
     }
 }
 
@@ -598,6 +614,27 @@ impl Accumulator {
         });
         CameraImage::from_data(width, height, sum).expect("the sums are the frame's size")
     }
+}
+
+/// `image`'s samples over `bound` held to it, and how many were: the
+/// merge's last guard. A merged sample is a weighted mean of unclipped
+/// samples, each under its frame's clip over its exposure, or the
+/// darkest frame's own value where every frame clipped; so none can be
+/// over the darkest frame's brightest over its exposure, and one that
+/// is was made by the arithmetic, not the scene.
+pub fn hold_to(image: &mut CameraImage, bound: f32) -> usize {
+    image
+        .data
+        .par_iter_mut()
+        .map(|v| {
+            if *v > bound {
+                *v = bound;
+                1
+            } else {
+                0
+            }
+        })
+        .sum()
 }
 
 /// The headroom a merge needs so neither the writer's white level nor
@@ -1092,6 +1129,47 @@ mod tests {
     /// A flat frame of `v` in every channel.
     fn flat(n: usize, v: f32) -> Vec<f32> {
         vec![v; n * 3]
+    }
+
+    /// A black frame under a noise whose read term is nothing weighs
+    /// what the floor of a read term gives it: finite, and no more
+    /// than a sensor's quantization step allows.
+    #[test]
+    fn a_black_sample_under_no_read_noise_has_a_bounded_weight() {
+        let rgb = flat(4, 0.0);
+        let mask = vec![false; 4];
+        let mut acc = Accumulator::new(2, 2);
+        acc.add(&Frame {
+            rgb: &rgb,
+            mask: &mask,
+            exposure: 0.5,
+            noise: Noise {
+                shot: 2e-5,
+                read: 0.0,
+            },
+        });
+        let most = 0.25 / Noise::READ_FLOOR;
+        for &wt in &acc.weight {
+            assert!(wt.is_finite() && wt > 0.0 && wt <= most * 1.0001, "{wt}");
+        }
+        let fitted = Noise {
+            shot: 2e-5,
+            read: -1.0,
+        };
+        assert_eq!(fitted.variance(0.0), Noise::READ_FLOOR);
+    }
+
+    /// Samples over the bound are held to it and counted; the rest,
+    /// and a sample not a number, are left.
+    #[test]
+    fn samples_over_the_bound_are_held_to_it() {
+        let mut image =
+            CameraImage::from_data(2, 1, vec![0.5, 4.0, 4.5, 5180.0, f32::NAN, -1.0]).unwrap();
+        assert_eq!(hold_to(&mut image, 4.0), 2);
+        assert_eq!(image.data[..4], [0.5, 4.0, 4.0, 4.0]);
+        assert!(image.data[4].is_nan());
+        assert_eq!(image.data[5], -1.0);
+        assert!(headroom(&image, [1.0, 1.0, 1.0]) <= 4.0);
     }
 
     #[test]

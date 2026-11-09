@@ -265,3 +265,37 @@ merge resamples its moved frames as it did. `merge::Options::kernel`
 - Deghosting runs on luminance-level noise per channel (`Noise` is
   the channels' average); a demosaic's correlated red and blue noise
   may mark more or less than 4 sigma predicts.
+
+## The first real bracket, and the deghoster's take-out (2026-11-08)
+
+**What the first real bracket found.**
+
+A handheld five-frame bracket merged with deghosting On wrote a file whose headroom read 14.51 stops (3.06 off) and developed to black. Instrumented, the cause was not plain f32 rounding between like weights but a weight of 2.03e37: a resampled frame's sample of exactly 0 in all channels, under a sensor noise whose read term was 0 (`Noise::variance` floored at `f32::MIN_POSITIVE`), so its weight is e^2 over that floor. The 0 is the reference's own noise estimate: every other frame of the set was resampled, the engine skips `pairs.add` for a resampled frame, so `PairNoise::fit` had no points and returned None, and the merge fell back to `Noise::of_model` of the core estimator, whose intercept clamps at 0 and cannot resolve the read term at ISO 100. Summed in f32 it swallows every other frame's weight at the pixel. Where the reference clipped and that frame disagreed with the darkest, `Ghosts::finish` subtracted it back out and left 0 (ten pixels, read black) or below 0 (three pixels: -2.2e6). A weight below zero is the accumulator's mark for a pixel set whole, so `finish` wrote its undivided sum, about 12000, as the sample, which set the headroom.
+
+The same take-out by subtraction runs in `Ghosts::run` (Auto, a move found after earlier frames went in); there a residual below zero also made later frames, the reference among them, skip the pixel.
+
+**What changed.**
+
+- `Ghosts::finish`: where the reference clipped, every frame that holds the pixel is in the ledger (the reference's own add uses the judge's mask), so instead of subtracting the rest we set the darkest's weight `wd` (as the ledger works it out) and each sum to `wd` times its sample. No subtraction, and the sums keep the accumulator's meaning, so a frame added after would weigh against it fairly.
+- `Ghosts::run`: the frames that remain at a pending pixel are not kept, so we still subtract (the pending's expression is already the accumulator's own). The pending lists are walked together in pixel order, as `finish` walks the ledger, and `take_out` subtracts all of a pixel's parts at once; a weight left at or under 1e-5 of what the pixel held before any of them, or not a number, empties it to exactly 0 with its sums. The rounding of a few subtractions is some 1e-7 of the most the sum held, which, all weights being positive, is what it held before. We first tested each subtraction against its own removed weight (1e-3), which empties a dim frame left after a bright mover (a 4096th of its weight in read-limited shadow of a 2 EV bracket); then each against the pixel's weight just before it (1e-5), which misses the rounding a bright mover's take-out leaves for a later, smaller one (a residual of 8 against 3500 in the square test). Judged against the weight before the whole take-out, neither happens. Zero then means no frame holds it; the reference, which holds every pixel it judged, adds after, and `fill_clipped` fills what none holds.
+- `merge::hold_to`: samples over a bound held to it, counted. The HDR driver bounds at the darkest frame's brightest finite sample (at least 1) over the least exposure, and logs "merge: N samples above the darkest frame's clip, held to it" when N > 0. We bound by the darkest's brightest rather than its nominal white of 1 because its highlight reconstruction lifts samples past 1: on the five-frame set 112,020 samples are over 1/e_min (205,142 on the three-frame set), all legitimate, and a cap at 1/e_min would have clipped them. The bound is still physical: every other contribution is under its frame's clip over an exposure at least e_min.
+- `Noise::READ_FLOOR`, (1/16384)^2 (about 3.7e-9): one quantization step of a 14-bit sensor, squared, in units of clip. `PairNoise::fit` and `Noise::of_model` floor the read term there (they floored at `f32::MIN_POSITIVE`), and `Noise::variance` floors it again (a NaN read too), so a hand-made `Noise`, `--noise`, the reference's own estimate, and `at_iso` at a lower ISO all meet it. A fit that lands at zero is the fit's failure, not the sensor's; no sensor reads with less noise than a step. A black sample's weight is now at most e^2 / 3.7e-9 (6.7e7 at e = 0.5) instead of about 2e37.
+
+*Verified.*
+
+- Tests (greycard-core, synthetic): a square moved in both non-reference frames of a three-frame bracket, run late, reads the reference's samples (before the fix: -12393 at a pixel); a direct take-out in either order leaves weight and sums at bit zero (before: weight below zero); a black mover where the reference clipped leaves the darkest's sample (before: off by 7e-4); the cap counts 0 on both brackets; `hold_to`'s own test. All three ghost tests fail with the fix taken out.
+- `cargo test -p greycard-core merge` (43 passed) and `cargo test -p greycard-engine merge` on lavapipe (40 passed, 5 ignored); clippy `--all-targets -D warnings` on both crates; fmt.
+- A test: a dim frame a 4096th of a bright mover's weight is kept when the mover is taken out (emptied under the first guard).
+- A test: a black frame under a read term of 0 weighs a finite e^2 / READ_FLOOR at most, and a negative read term's variance is the floor.
+- Real five-frame bracket, Auto: the same headroom and the same deghosted shares as On (checked by the coordinator). Its log's "0.0 MB set aside before a move" means the first frame in was already resampled, so `run`'s take-out never ran on this set: that path is covered by the synthetic tests only.
+- Real five-frame bracket, after the floor and the final guard (rerun): `--deghost on` and `off` both "headroom 3.06 stops over the reference's clip; 74690 px clipped in every frame, from the darkest"; deghosted 6.02%, 19.81%, 22.72%, and 15.80% (6.11%, 19.97%, 22.90%, and 16.11% before the floor: the floor widens the rejection test's deviation in the deep shadows); the cap's line does not fire.
+- Its `--deghost off` file decoded: samples of exactly 0 went from 3474 to 3360, pixels 0 in every channel from 39 to 3 (deghost on: 3464 and 27). The rest are single channels at 0 among 7.0 million negative samples, the noise's own spread about black.
+- Real three-frame bracket, after the floor: on and off both "headroom 1.69 stops over the reference's clip; 149799 px clipped in every frame, from the darkest"; deghosted 4.29% and 6.85% (4.41% and 7.03% before); the cap's line does not fire.
+
+*Not verified.*
+
+- The written files were not developed or looked at; equal headroom on and off is the evidence.
+- `run`'s take-out on a real set: none of ours sets anything aside before a move.
+- The core estimator's read term at low ISO, and pair noise from resampled frames, are untouched; the floor makes a read term of 0 harmless, not right. The DNG's NoiseProfile still prints `O 0.000e0` (its own line fit, which may pick an offset of 0).
+- The three pixels still 0 in every channel in the off file were not traced.
+- The floor's value assumes a 14-bit sensor; a 12-bit one's step is 16 times the variance, so the floor is under its true read noise, which is harmless.
