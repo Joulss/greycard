@@ -628,3 +628,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§614. Eight notes from a few minutes with 0.10.0](notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md) (2026-11-08)
 - [§615. A lens off the body's mount, in the picker](notes/615-a-lens-off-the-bodys-mount-in-the-picker.md) (2026-11-08)
 - [§616. The window in other languages](notes/616-the-window-in-other-languages.md) (2026-11-08)
+- [§617. A removal on a card the editor has filled](notes/617-a-removal-on-a-card-the-editor-has-filled.md) (2026-11-09)

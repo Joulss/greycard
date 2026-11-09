@@ -23,7 +23,12 @@ the reasoning lives in `docs/notes.md`.
       in the Library after a frame was opened (an RTX 5060 Laptop at
       2.3x, discussion 51, 2026-10-29); the same path here draws
       nothing at rest at that scale. The log says since 9680ffd4 when
-      the window keeps drawing, with what was on. A Windows log decides
+      the window keeps drawing, with what was on. Issue 104's log
+      (2026-11-09) decides it: 660 to 1085 frames a minute at rest in
+      the editor, every one for a scope readback, nothing busy
+- [ ] The thumbnail pool refuses fills, so a frame with a fill shows
+      the camera's preview in the Library until it is opened (issues
+      92 and 104, §617)
 - [ ] A Fast fill on a Windows GeForce RTX 3080 Ti takes 11 to 19 s
       for 24 UNet calls against under 3 s here, and once lost the
       device after a 76 s model load, which the watchdog restarted on
