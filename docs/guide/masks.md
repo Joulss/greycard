@@ -148,8 +148,8 @@ Click **Brush** and paint. While a brush is chosen, the button reads
 |---|---|
 | **Size** | the brush's radius, as a share of the picture's width; the scroll wheel changes it too, one step a click, and a touchpad scroll by as many steps as the same distance on a wheel |
 | **Feather** | how much of the radius fades |
-| **Flow** | how much each stroke lays down |
-| **Add**, **Subtract**, **Erase** | add to the mask by the flow, take from it by the flow, or clear what the brush itself did, completely, under the brush |
+| **Opacity** | the most one stroke lays down, however often it passes over a spot; lift and stroke again to build up |
+| **Add**, **Subtract**, **Erase** | add to the mask by the opacity, take from it by the opacity, or clear what the brush itself did, completely, under the brush |
 
 **Subtract** takes away from the whole mask under the stroke, whatever
 the shapes before the brush gave there, so a brush over a Sky,
@@ -163,7 +163,7 @@ line from where it began to where you let go.
 
 With the brush in hand, **[** and **]** make it smaller or bigger,
 **Shift+[** and **Shift+]** take the feather down or up by 0.05, and
-**Ctrl+[** and **Ctrl+]** the flow.
+**Ctrl+[** and **Ctrl+]** the opacity.
 
 ### Subject and Background
 

@@ -28,6 +28,17 @@ feather and flow.
 **Finer feather and flow steps.** Shift or Ctrl and a bracket step
 the feather or the flow by a tenth. Half that: 0.05 a press.
 
+**Flow is Opacity.** The tester laid six strokes over one another and
+six passes in one stroke, and saw the first build and the second not.
+That is the brush as built: a stroke's coverage is the most any of
+its dabs gave, capped by the slider, and only a new stroke builds on
+it, which is Photoshop's Opacity, not its Flow. The even stroke is
+what a mask brush wants, and a true flow that builds within a stroke
+would make a slow pass along an edge denser than a quick one across
+the middle, so the behavior stays and the slider is named for what it
+does: Opacity, in the Brush section, the keys help, and the guide. The
+sidecar field keeps its name.
+
 **Keys that can be taken away.** Settings > Keys rebinds the `act`
 lines; the turn pair and frame stepping are `shown` lines, fixed.
 Both become actions, one a direction (`turn-left`, `turn-right`,

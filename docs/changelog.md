@@ -220,6 +220,10 @@ design note behind it.
   so a drag in through the center stops at zero instead of climbing
   on the far side (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
+- The brush's Flow slider is named Opacity, which is what it does: a
+  stroke lays down at most that much however often it passes over a
+  spot, and a new stroke builds on it (discussion 59)
+  ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ## 0.10.0, 2026-11-06
 

@@ -397,7 +397,7 @@ pub(crate) const TABLE: &[Group] = &[
             shown(
                 &["Ctrl+[", "Ctrl+]"],
                 "Ctrl+[ Ctrl+]",
-                marked::tr!("Brush flow, less and more"),
+                marked::tr!("Brush opacity, less and more"),
             ),
             act("show-mask", &["O"], marked::tr!("Show the mask")),
             act(
