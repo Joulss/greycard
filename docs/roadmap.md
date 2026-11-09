@@ -582,6 +582,9 @@ brackets and the panorama to shoot for testing are in
       ledger's seam where its hard rejection meets the soft one at the
       reference's clip edge; the budget's row boundary on a mover; the
       4σ test against the demosaic's correlated chroma noise
+- [ ] A focus stack keeps a recipe as a bracket and a panorama do, so
+      `merge again` remakes it and the Noise row's re-merge reaches it
+      (found on the first real hand-stepped stack, 2026-11-08)
 - [ ] A bracket finder: a burst whose EXIF exposures step marked as a
       bracket, so the merge can be asked of a whole card (§523)
 - [ ] A center for the vignette: two sliders or a drag on the picture
