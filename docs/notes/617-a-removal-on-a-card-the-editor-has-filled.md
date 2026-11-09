@@ -34,9 +34,10 @@ margin after the give-back, the margin is the next question.
 
 ## Also in the log
 
-The thumbnail pool refuses fills, so the frame's Library thumbnail
-shows the camera's preview (the pool's own line says "not kept: the
-fill Fill 2; ..."); issue 92 found the same. And the window at rest
+The frame's Library thumbnail shows the camera's preview, since
+0.10.0's thumbnail pool refuses fills (its own line says "not kept:
+the fill Fill 2; ..."); §611 has that fixed for 0.11.0. And the
+window at rest
 drew 660 to 1085 frames a minute, all for a scope readback, nothing
 busy: the Windows log discussion 51's roadmap line waited for.
 

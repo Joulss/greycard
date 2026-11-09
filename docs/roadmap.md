@@ -26,9 +26,6 @@ the reasoning lives in `docs/notes.md`.
       the window keeps drawing, with what was on. Issue 104's log
       (2026-11-09) decides it: 660 to 1085 frames a minute at rest in
       the editor, every one for a scope readback, nothing busy
-- [ ] The thumbnail pool refuses fills, so a frame with a fill shows
-      the camera's preview in the Library until it is opened (issues
-      92 and 104, §617)
 - [ ] A Fast fill on a Windows GeForce RTX 3080 Ti takes 11 to 19 s
       for 24 UNet calls against under 3 s here, and once lost the
       device after a 76 s model load, which the watchdog restarted on
@@ -1012,8 +1009,6 @@ clears or a tester asks for it.
 - [ ] Structure's strength judged on real frames (§507): +100 reads
       as about Clarity +35; the gain is one constant (1.5; the review
       suggests 2.5 to 3, or epsilon 0.1 with 2)
-- [ ] A mask's adjustments nested under the mask, so a folded mask
-      is one row (pixls, 2026-10-24)
 - [ ] A default preset applied to every frame on its first open, so
       the tools a user never wants start off (pixls, 2026-10-24;
       asked again as a saved baseline, discussion 59, 2026-10-30)
@@ -1082,7 +1077,6 @@ clears or a tester asks for it.
       each spot listed so a wrong one can be removed or redrawn; the
       camera-scanning workflow alongside digital raws (reddit,
       2026-10-31)
-
 - [ ] Refine edge at full resolution (§503): the fitted a·Oklab+b
       sent to the finish and the shader and applied per pixel, so the
       edge is finer than the 2048 grid's 4 px at 45 MP and a Sky's
