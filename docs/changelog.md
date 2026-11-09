@@ -3,12 +3,16 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
-## 0.11.0
+## 0.11.0, 2026-11-09
+
+Handheld HDR and focus stacks, the demosaic on the GPU, the window
+ready for translation, and a round of tester fixes. Sidecars from this
+build are refused by 0.10.x.
 
 ### Develop
 
-- With a GPU, the demosaic runs there, so a frame's first picture
-  lands sooner and the frames ahead are ready sooner
+- Demosaic moved to the GPU when available, so a frame's first picture
+  loads sooner and the frames ahead are ready sooner
   ([§591](https://github.com/jessolmstead/greycard/blob/master/docs/notes/591-a-quick-demosaic-on-the-gpu-and-the-default-behind-it.md)).
 - Switching to a frame not yet seen is quicker with a GPU: the
   demosaic's working result stays on the card
@@ -54,7 +58,7 @@ design note behind it.
   visited, as a browser's do
   ([§594](https://github.com/jessolmstead/greycard/blob/master/docs/notes/594-back-and-forward-as-the-folders-visited.md)).
 - Walking through a shoot, three frames ahead and one behind are made
-  ready, so quick steps land on a finished base
+  ready, so quick steps load faster
   ([§601](https://github.com/jessolmstead/greycard/blob/master/docs/notes/601-the-prefetch-deeper-in-the-walks-direction.md)).
 
 ### Masks
