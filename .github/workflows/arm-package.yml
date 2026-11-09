@@ -1,7 +1,8 @@
 # The Windows on ARM package from any branch, on request, for a tester
 # to try before a release carries it: Actions, "Windows on ARM
 # package", Run workflow, and the zip is the run's
-# package-aarch64-windows artifact for a week.
+# package-aarch64-windows artifact for a week, the installer
+# package-aarch64-windows-setup.
 #
 # Its own file rather than a job in ci.yml: ci.yml runs on every push
 # and pull request and its jobs are gated on the event already, and a
@@ -11,8 +12,10 @@
 # The steps are release.yml's aarch64-windows leg, less the release:
 # the same runner, the same checks on the toolchain and on what was
 # built, and package.sh with no argument, so the version is
-# Cargo.toml's. release.yml's header has why the leg ships no ONNX
-# Runtime and how the models run there.
+# Cargo.toml's, then the installer, installed and uninstalled on the
+# runner. Unsigned: signing is release.yml's one step. release.yml's
+# header has why the leg ships no ONNX Runtime and how the models run
+# there.
 
 name: Windows on ARM package
 
@@ -125,5 +128,30 @@ jobs:
         with:
           name: package-aarch64-windows
           path: target/dist/greycard-*-aarch64-windows.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      # As in release.yml: the compiler, the installer from the zip's
+      # staging directory, and a round trip on the runner.
+      - name: Inno Setup
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass \
+            -File scripts/inno-setup.ps1 -Destination "$RUNNER_TEMP\\innosetup"
+
+      - name: Installer
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-setup.ps1
+
+      - name: The installer, installed and uninstalled
+        run: |
+          setup=$(ls target/dist/greycard-*-aarch64-windows-setup.exe)
+          version=${setup#target/dist/greycard-}
+          version=${version%-aarch64-windows-setup.exe}
+          powershell -NoProfile -ExecutionPolicy Bypass \
+            -File scripts/windows-setup-check.ps1 -Setup "$setup" -Version "$version"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-aarch64-windows-setup
+          path: target/dist/greycard-*-aarch64-windows-setup.exe
           if-no-files-found: error
           retention-days: 7

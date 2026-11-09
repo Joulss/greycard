@@ -36,6 +36,9 @@
 #            to fetch into the model store on first use, and the Visual
 #            C++ runtime comes from the arm64 redistributable rather
 #            than the x64 one, four DLLs rather than five.
+#            scripts/windows-setup.ps1 then compiles the installer,
+#            greycard-<version>-<arch>-windows-setup.exe, from the
+#            same staging directory.
 #
 # The libraries we ship are ONNX Runtime, Dawn and, on Windows, the
 # two DXC ones Dawn loads by name. The binaries link neither ONNX
@@ -376,6 +379,18 @@ else
                 chmod 0644 "$stage/bin/$l"
             done
             echo "Visual C++ runtime from $vcredist"
+        fi
+
+        # Our two executables signed before they are zipped, when
+        # WINDOWS_SIGN_SCRIPT names a PowerShell script that signs the files
+        # it is given; the release workflow's signing step sets it.
+        # scripts/windows-setup.ps1 signs the installer with the same
+        # script. Unset, both go out unsigned.
+        if [ -n "${WINDOWS_SIGN_SCRIPT:-}" ]; then
+            powershell -NoProfile -ExecutionPolicy Bypass \
+                -File "$(cygpath -w "$WINDOWS_SIGN_SCRIPT")" \
+                "$(cygpath -w "$PWD/$stage/bin/greycard-ui.exe")" \
+                "$(cygpath -w "$PWD/$stage/bin/greycard.exe")"
         fi
     fi
 fi

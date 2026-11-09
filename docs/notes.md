@@ -630,3 +630,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§616. The window in other languages](notes/616-the-window-in-other-languages.md) (2026-11-08)
 - [§617. A removal on a card the editor has filled](notes/617-a-removal-on-a-card-the-editor-has-filled.md) (2026-11-09)
 - [§618. The shadows' paint is for black](notes/618-the-shadows-paint-is-for-black.md) (2026-11-09)
+- [§619. A Windows installer](notes/619-a-windows-installer.md) (2026-11-09)

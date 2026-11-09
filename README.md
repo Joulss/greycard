@@ -82,18 +82,18 @@ Panasonic raws.
 ## Install
 
 Download your system's file from the
-[releases page](https://github.com/jessolmstead/greycard/releases/latest)
-and unpack it.
+[releases page](https://github.com/jessolmstead/greycard/releases/latest).
+Unpack it, unless it's the Windows setup, which you just run.
 
 - **Linux:** `sh install.sh`, or take the `.AppImage` instead, make it
   executable and run it (it needs FUSE, or `--appimage-extract-and-run`).
 - **macOS:** open the `.dmg` and drag greycard to Applications (Apple
   silicon or Intel, macOS 13.4 or newer); the `.tar.gz`'s `sh install.sh` also
   adds the `greycard` command. [Step by step](docs/testing-on-a-mac.md).
-- **Windows:** double-click `install.cmd`, or just run
-  `bin\greycard-ui.exe` from the unpacked folder. `register.cmd` adds
-  greycard to Open with for raws. The `aarch64-windows` zip is for
-  Windows on ARM.
+- **Windows:** run the `-setup.exe`, or take the `.zip` and
+  double-click `install.cmd`, or just run `bin\greycard-ui.exe` from
+  the unpacked folder. The `aarch64-windows` files are for Windows on
+  ARM.
 
 You'll want a GPU with Vulkan, or Metal on a Mac. Without one it
 still opens, drawing in software and developing on the CPU, but

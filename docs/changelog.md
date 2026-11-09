@@ -5,6 +5,13 @@ design note behind it.
 
 ## 0.12.0
 
+### Windows
+
+- Windows has an installer, `greycard-<version>-x86_64-windows-setup.exe`
+  (and `-aarch64-`): no administrator needed, and greycard is in
+  Installed apps to remove. The zip is still there
+  ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-a-windows-installer.md)).
+
 ### Fixes
 
 - The shadows' clipping paint covers only what is black. It had also

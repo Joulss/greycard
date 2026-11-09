@@ -187,8 +187,9 @@ the reasoning lives in `docs/notes.md`.
 
 0.12.0: a signed Windows installer, and the first translation.
 
-- [ ] A Windows installer (Inno Setup or WiX) from the release
-      workflow, signed
+- [ ] The Windows installer (§619) compiled and installed on CI: a
+      run of windows-package.yml, before the tag
+- [ ] The Windows installer signed: waits on a signing service
 - [ ] The first translation, French (issue 75), on the §616 catalog;
       the guide and the release notes stay English
 
@@ -1149,7 +1150,7 @@ release when the wait clears.
       Path, the file associations under HKLM, and an entry under the
       machine's Uninstall key, with uninstall.cmd taking the same
       switch; today GREYCARD_PREFIX puts the files there and the rest
-      stays the one user's. The installer package itself is under Next.
+      stays the one user's. The setup (§619) is the one user's too.
       Asked 2026-10-19. Two testers would rather unzip anywhere,
       as RawTherapee ships, than install: the zip runs in place today
       from bin\, and the guide says so; keep it beside the installer

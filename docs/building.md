@@ -280,9 +280,30 @@ app and a link to Applications. Both are signed ad hoc unless
 when `MACOS_NOTARY_PROFILE` also names a notarytool keychain profile,
 as the release does ([§440](notes/440-the-mac-build-signed-and-notarized.md)).
 
+On Windows it writes `greycard-<version>-<arch>-windows.zip`, with
+`install.cmd` and `uninstall.cmd` in the staging directory beside
+`bin\`. With [Inno Setup 7](https://jrsoftware.org/isdl.php)
+installed, `scripts/windows-setup.ps1` then compiles
+`packaging/windows/greycard.iss` over that staging directory into
+`target/dist/greycard-<version>-<arch>-windows-setup.exe`, the
+installer the release ships beside the zip:
+
+```sh
+powershell -File scripts/windows-setup.ps1
+```
+
+It finds `ISCC.exe` through `-Iscc`, `$env:ISCC`, the Path, or Inno
+Setup 7's own install directories. Both stay unsigned unless
+`WINDOWS_SIGN_SCRIPT` holds the Windows path of a PowerShell script
+that signs the files it is given, as the release's signing step will
+once it has a service.
+`scripts/windows-setup-check.ps1` installs the setup into your own
+profile, checks it, and uninstalls it, which is what the release runs
+on its runner.
+
 On x86_64 Linux, `scripts/appimage.sh` then turns that staging
 directory into `target/dist/greycard-<version>-linux-x86_64.AppImage`,
-the release's fourth file. It fetches appimagetool and the AppImage
+which the release ships too. It fetches appimagetool and the AppImage
 runtime, pinned and checked, into `target/appimagetool/`, and needs
 `curl` and `readelf`. Build with `LCMS2_STATIC=1` as the release does,
 or it stops on the `liblcms2.so.2` the binaries would ask the host for;

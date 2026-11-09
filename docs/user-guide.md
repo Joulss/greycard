@@ -69,15 +69,18 @@ unpack it.
   opens with one question the first time. For the `greycard` command
   too, take the `.tar.gz` instead and run `sh install.sh`;
   [testing-on-a-mac.md](testing-on-a-mac.md) has both step by step.
-- **Windows:** take `greycard-<version>-x86_64-windows.zip`, or
-  `greycard-<version>-aarch64-windows.zip` on Windows on ARM, and
-  double-click `install.cmd`. Run `register.cmd` too if you
-  want greycard in **Open with** for raws. If Windows warns about an
-  unknown publisher, click **More info**, then **Run anyway**.
-  `uninstall.cmd` removes it.
-- **Windows, without installing:** unpack the zip anywhere and run
-  `bin\greycard-ui.exe`. `install.cmd` only adds the Start Menu entry,
-  the Path, and the Open with association; nothing needs it.
+- **Windows:** run `greycard-<version>-x86_64-windows-setup.exe`, or
+  `-aarch64-windows-setup.exe` on Windows on ARM. It installs for you
+  alone, without asking for an administrator: the Start Menu entry,
+  `greycard` on your Path, and greycard in **Open with** for raws. If
+  Windows warns about an unknown publisher, click **More info**, then
+  **Run anyway**. Remove it from **Settings > Apps > Installed apps**.
+  Your settings, presets, and downloaded models stay either way.
+- **Windows, from the zip:** take `greycard-<version>-x86_64-windows.zip`
+  (or `-aarch64-windows.zip`) and double-click `install.cmd`, which
+  installs the same things the setup does, the same way;
+  `uninstall.cmd` removes them. Or skip both, unpack it anywhere, and
+  run `bin\greycard-ui.exe`: nothing needs installing.
 
 ## The basics
 
