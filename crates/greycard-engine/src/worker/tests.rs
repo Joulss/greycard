@@ -6050,6 +6050,78 @@ fn a_short_fill_is_asked_for_again_once_after_the_card_is_given_back() {
     assert_eq!(gave, 2);
 }
 
+/// The open frame's fill jobs have the engine let go of what a
+/// develop makes again when a removal is short of the card, as its
+/// mask jobs do: 5.9 GiB free and 0.6 let go, the three removals are
+/// made, the release asked once, and it is not left set after the
+/// job. With nothing let go they are refused as before.
+#[test]
+fn a_fill_job_lets_go_for_a_removal_and_clears_it_after() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    const GIB: u64 = 1 << 30;
+    let run = |what: &str, bytes: u64| {
+        let (worker, dir, path, rx, go) = fill_worker_at(what, 0.9, (128, 96));
+        worker.free_by_test(59 * GIB / 10, 0, 0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        worker.fills_release_by_test(bytes, calls.clone());
+        go.send(()).unwrap();
+        worker.send(Job::Open {
+            path: path.to_path_buf(),
+            version: None,
+            edit: three_removes(),
+            generation: 1,
+            seed_blend: false,
+            turn: 0,
+            stance_known: false,
+            learned: Vec::new(),
+        });
+        worker.send(Job::Mask {
+            key: (1, 0),
+            shape: Shape::Linear {
+                from: [0.2, 0.5],
+                to: [0.8, 0.5],
+            },
+            model: None,
+        });
+        let mut said = Vec::new();
+        loop {
+            let s = rx
+                .recv_timeout(std::time::Duration::from_secs(60))
+                .expect("the worker says");
+            if s == "mask" {
+                break;
+            }
+            said.push(s);
+        }
+        let left = worker.release_left_by_test();
+        worker.stop();
+        crate::testing::remove_dir_retry(&dir);
+        (said, calls.load(Ordering::Relaxed), left)
+    };
+    let (said, calls, left) = run("fill-release", 6 * GIB / 10);
+    assert_eq!(
+        said,
+        [
+            "developed 1: [1, 2, 3]",
+            "filling 1: Fill 1",
+            "developed 1: [2, 3]",
+            "filling 1: Fill 2",
+            "developed 1: [3]",
+            "filling 1: Fill 3",
+            "developed 1: []",
+        ]
+    );
+    assert_eq!(calls, 1, "let go once, the card's room after");
+    assert!(!left, "the release is the fill job's alone");
+    let (said, calls, left) = run("fill-release-none", 0);
+    assert!(
+        !said.iter().any(|s| s == "developed 1: [2, 3]"),
+        "nothing made: {said:?}"
+    );
+    assert!(calls >= 1, "asked at each refusal");
+    assert!(!left);
+}
+
 /// A big fill among small ones, the card short of it alone, gives its
 /// place in the round to the next: the small ones are made. Nothing
 /// given back since, the big one is not asked of the card again, and

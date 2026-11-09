@@ -171,6 +171,10 @@ pub(super) fn run(
     // many are left. A develop asked for gives them up; leaving the
     // editor pauses them.
     let mut fills_due: Option<FillsDue> = None;
+    // What a test has the open frame's fills let go of the card, where
+    // the worker has no device.
+    #[cfg(test)]
+    let mut fills_release_by_test: Option<FillsReleaseByTest> = None;
     loop {
         let mut device = None;
         let mut built = None;
@@ -204,6 +208,13 @@ pub(super) fn run(
                 #[cfg(test)]
                 if let Some(v) = q.fill_by_test.take() {
                     ai.fill_by_test = Some(v);
+                }
+                #[cfg(test)]
+                {
+                    q.release_left_by_test |= ai.holds_card_release();
+                    if let Some(r) = q.fills_release_by_test.take() {
+                        fills_release_by_test = Some(r);
+                    }
                 }
                 #[cfg(test)]
                 if let Some(store) = q.models_by_test.take() {
@@ -1136,6 +1147,15 @@ pub(super) fn run(
                     ai.fills_queued(due.left > 1);
                     let mut round = Round::next(due.round.ahead);
                     ai.clear_shorts();
+                    // A removal short of the card may have the engine
+                    // let go of what a develop makes again, as the open
+                    // frame's masks may; cleared after, and after a
+                    // panic (`open_frame_masks_done`). Never the CPU.
+                    let release = gpu.as_ref().map(card_release);
+                    #[cfg(test)]
+                    let release =
+                        release.or_else(|| fills_release_by_test.clone().map(|r| r.release()));
+                    ai.set_card_release(release);
                     let (mut outcome, _) = develop_round(
                         f,
                         &due.edit,
@@ -1148,6 +1168,7 @@ pub(super) fn run(
                         &deliver,
                         &mut round,
                     );
+                    ai.set_card_release(None);
                     // The fills still ahead, before a queue that ends
                     // stuck lets them go: what one asked again has left.
                     let ahead = match &outcome {
@@ -1392,9 +1413,9 @@ pub(super) fn run(
         if let Err(payload) = held {
             fills_due = None;
             ai.release_fills();
-            // A mask's job that panicked leaves nothing of its own
-            // behind for a develop's or a save's masks to call, nor its
-            // choice of the CPU.
+            // A mask's or a fill's job that panicked leaves nothing of
+            // its own behind for a develop's or a save's masks or fills
+            // to call, nor a mask's choice of the CPU.
             open_frame_masks_done(&mut ai);
             give_back(
                 &mut ai,
@@ -1757,15 +1778,18 @@ fn open_frame_masks_done(ai: &mut Ai) {
     ai.set_on_cpu(None);
 }
 
-/// What the open frame's learned masks may let go of the card when it
-/// is short of them ([`Ai::set_card_release`]): the context's kept
-/// working sets, the sharpen's and the local contrast's, which the next
-/// develop makes again, as after an export of another size. The open
-/// frame's own points on the device and the picture on screen are not
-/// the context's and stay; the shelf and the prefetch hold nothing on
-/// the device ([`crate::walk::Kept::shelve`]). Called on the worker's
-/// thread inside a mask's job, so no develop is running; it takes each
-/// op's lock on its set, never the queue's.
+/// What the open frame's learned masks and removals may let go of the
+/// card when it is short of them ([`Ai::set_card_release`]): the
+/// context's kept working sets, the sharpen's and the local contrast's,
+/// which the next develop makes again, as after an export of another
+/// size. The open frame's own points on the device and the picture on
+/// screen are not the context's and stay; the shelf and the prefetch
+/// hold nothing on the device ([`crate::walk::Kept::shelve`]). Called
+/// on the worker's thread inside a mask's job, with no develop
+/// running, or inside a fill job's walk at its retouch, between the
+/// ops' runs; it takes each op's lock on its set, which only a running
+/// op holds, never the queue's. A fill's walk makes the sets again
+/// past the retouch.
 pub(super) fn card_release(ctx: &greycard_gpu::Context) -> crate::ai::CardRelease {
     let releaser = ctx.releaser();
     Box::new(move || {
@@ -1775,6 +1799,26 @@ pub(super) fn card_release(ctx: &greycard_gpu::Context) -> crate::ai::CardReleas
             ("the local contrast's working set", freed.local_contrast),
         ]
     })
+}
+
+/// What a test has the open frame's fills let go of the card where the
+/// worker has no device: `bytes` a release, each counted in `calls`.
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct FillsReleaseByTest {
+    pub bytes: u64,
+    pub calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(test)]
+impl FillsReleaseByTest {
+    fn release(self) -> crate::ai::CardRelease {
+        Box::new(move || {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            vec![("a test's working set", self.bytes)]
+        })
+    }
 }
 
 /// [`crate::ai::give_back_card`] over the worker's models: its own and

@@ -39,3 +39,46 @@ shows the camera's preview (the pool's own line says "not kept: the
 fill Fill 2; ..."); issue 92 found the same. And the window at rest
 drew 660 to 1085 frames a minute, all for a scope readback, nothing
 busy: the Windows log discussion 51's roadmap line waited for.
+
+## What was built
+
+`Ai::room_for_remove` (greycard-engine, ai.rs) asks a second time, as
+`Ai::mask_room` does. `Ai::room` runs first, its own give-back as
+before. Still short, the engine lets go of what the release holds
+(`Ai::release_card`), reads the budget again, and asks once more, the
+UNet's need found afresh:
+- fits, or the second read is not known: the log says "a removal at
+  N: begun once the engine let go of ..., X GiB free before and Y
+  after", and the short `room` recorded is put back;
+- short still: refused as before, its message the first refusal's
+  with what was let go and the two readings, "short still";
+- no release set, or nothing in it: refused with the message
+  unchanged;
+- a canceled export lets nothing go.
+
+The worker installs the release (`card_release`) around the open
+frame's `Job::Fill` round, cleared after it and by the job's panic
+arm. Open, Develop, and DevelopAside run a first round with no fill
+budget, so they ask no card. Saves, exports' sets, the background
+masks, and the prefetch get no release, as on the mask path. The
+release runs inside the fill's walk at its retouch, between the ops'
+runs, so no op holds its set's lock; the walk makes the sets again
+past the retouch, so a queue's later fills may let go once more, and
+the log says so each time.
+
+## Verified
+
+- A cold removal at 512 on 5.9 GiB free begins once 0.6 GiB is let
+  go, and is refused with the freed set named when 0.2 is; with no
+  release, or one with nothing in it, the old message.
+- A fill job sets the release, asks it once across three removals,
+  and leaves none set between jobs.
+- fmt, clippy, and greycard-engine's tests on lavapipe (476).
+
+## Not verified
+
+- On a real card: that the budget rises by what is let go, and that
+  the 8 GB laptop's frame now makes its three removals. After an
+  admitted removal the walk makes the sets again while the UNet is
+  still held for the queue, so the pressure may move to the ops
+  after the fill; the tester's next log says.

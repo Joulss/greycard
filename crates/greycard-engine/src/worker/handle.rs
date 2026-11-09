@@ -734,6 +734,29 @@ impl Worker {
         lock.lock().expect("worker queue").gave_back_by_test
     }
 
+    /// The open frame's fills let go of `bytes` of the card each time a
+    /// removal is short of it, counted in `calls`, as the device's
+    /// working sets would be.
+    #[cfg(test)]
+    pub(super) fn fills_release_by_test(
+        &self,
+        bytes: u64,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").fills_release_by_test =
+            Some(super::engine::FillsReleaseByTest { bytes, calls });
+        cv.notify_one();
+    }
+
+    /// Whether a card release was left set on the open frame's models
+    /// between two jobs.
+    #[cfg(test)]
+    pub(super) fn release_left_by_test(&self) -> bool {
+        let (lock, _) = &*self.queue;
+        lock.lock().expect("worker queue").release_left_by_test
+    }
+
     /// The shelf made anew with `budget`, before the first open.
     #[cfg(test)]
     pub(super) fn shelf_by_test(&self, budget: super::shelf::Budget) {

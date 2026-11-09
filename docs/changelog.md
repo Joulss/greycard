@@ -124,6 +124,10 @@ design note behind it.
 
 ### Fixes
 
+- A fill marked Remove on a card the editor itself had filled is no
+  longer refused: the editor lets go of its own working memory and asks
+  again (issue 104,
+  [§617](https://github.com/jessolmstead/greycard/blob/master/docs/notes/617-a-removal-on-a-card-the-editor-has-filled.md)).
 - Canon EOS R8 Mark II raws open
   ([§586](https://github.com/jessolmstead/greycard/blob/master/docs/notes/586-the-canon-eos-r8-mark-ii.md)).
 - On Linux, GNOME's dock pins the window to its desktop entry and

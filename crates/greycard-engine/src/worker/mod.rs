@@ -716,6 +716,14 @@ struct Queue {
     /// How many times the worker gave the card back, for a test.
     #[cfg(test)]
     gave_back_by_test: usize,
+    /// What the open frame's fills let go of the card, as a test has
+    /// it for a worker with no device.
+    #[cfg(test)]
+    fills_release_by_test: Option<engine::FillsReleaseByTest>,
+    /// A card release was still set on the open frame's models between
+    /// two jobs, for a test.
+    #[cfg(test)]
+    release_left_by_test: bool,
     /// The models' store, and the mask cache beside it, the open
     /// frame's masks are read from and made with, as a test has them.
     #[cfg(test)]

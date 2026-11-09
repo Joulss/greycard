@@ -573,8 +573,8 @@ pub struct Ai {
     /// A learned mask was, likewise ([`Ai::take_mask_short`]), and ran
     /// on the CPU for it.
     mask_short: bool,
-    /// What the worker lets go of the card when a learned mask is
-    /// short of it ([`Ai::set_card_release`]).
+    /// What the worker lets go of the card when a learned mask or a
+    /// removal is short of it ([`Ai::set_card_release`]).
     card_release: Option<CardRelease>,
     /// Told before a learned mask's run on the CPU for the card's
     /// memory ([`Ai::set_on_cpu`]).
@@ -1679,9 +1679,9 @@ pub fn short_of_memory(card: &str, free: u64, size: usize, held: bool) -> Option
     )
 }
 
-/// What the worker lets go of the card for a learned mask short of it,
-/// each named with its bytes: the engine's working sets that a develop
-/// makes again ([`Ai::set_card_release`]).
+/// What the worker lets go of the card for a learned mask or a removal
+/// short of it, each named with its bytes: the engine's working sets
+/// that a develop makes again ([`Ai::set_card_release`]).
 pub type CardRelease = Box<dyn FnMut() -> Vec<(&'static str, u64)> + Send>;
 
 /// Told before a learned mask runs on the CPU for the card's memory
@@ -1741,6 +1741,31 @@ fn second_ask_said(
             gib(before),
             gib(after)
         ),
+    }
+}
+
+/// What the log says of a removal's second ask of the card, after the
+/// first found it short (`why`) and the engine let go of `freed`: the
+/// free memory before and after, and whether it begins. Refused, this
+/// is the refusal's message.
+fn removal_second_ask(
+    what: &str,
+    why: &str,
+    freed: &[(&'static str, u64)],
+    before: Option<u64>,
+    after: Option<u64>,
+    fits: bool,
+) -> String {
+    let gib = |b: Option<u64>| b.unwrap_or(0) as f64 / (1u64 << 30) as f64;
+    let (freed, before, after) = (freed_words(freed), gib(before), gib(after));
+    if fits {
+        format!(
+            "{what}: begun once the engine let go of {freed}, {before:.1} GiB free before and {after:.1} after"
+        )
+    } else {
+        format!(
+            "{why}; the engine let go of {freed}, {before:.1} GiB free before and {after:.1} after, short still"
+        )
     }
 }
 
@@ -2700,10 +2725,14 @@ impl Ai {
     }
 
     /// Whether the card has the memory free a removal of `window`
-    /// about to run needs ([`short_of_memory`], [`Ai::room`]): refused,
-    /// the fill is left as the base has it and is not remembered as
-    /// failed, so it is asked for again; the worker is told
-    /// ([`Ai::take_fill_short`]).
+    /// about to run needs ([`short_of_memory`], [`Ai::room`]). Short
+    /// after the card is given back, the engine lets go of what a
+    /// develop makes again ([`Ai::set_card_release`]) and the card is
+    /// asked once more. Refused still, the fill is left as the base has
+    /// it and is not remembered as failed, so it is asked for again;
+    /// the worker is told ([`Ai::take_fill_short`]). A removal never
+    /// falls to the CPU, which takes minutes a fill, nor to LaMa, which
+    /// the user did not choose.
     fn room_for_remove(&mut self, patch: &Patch, window: Window) -> Result<(), NoFill> {
         let Some(size) = greycard_ai::remove::run_size(window.width, window.height) else {
             return Ok(());
@@ -2717,13 +2746,44 @@ impl Ai {
             .store
             .as_ref()
             .is_some_and(|s| greycard_ai::remove::unet_held_elsewhere(s, steps_for(patch), size));
-        self.room(&what, &need, keep_unet).map_err(|why| {
-            self.fill_short = true;
-            let free = self.free_memory().map_or(0, |(f, _)| f);
-            self.refused
+        let (short, hit_short) = (self.short.clone(), self.hit_short);
+        let refuse = |ai: &mut Ai, why: String| {
+            ai.fill_short = true;
+            ai.short = Some(why.clone());
+            let free = ai.free_memory().map_or(0, |(f, _)| f);
+            ai.refused
                 .insert(patch.id, (patch.clone(), window, free, why.clone()));
             NoFill::Failed(why)
-        })
+        };
+        let Err(why) = self.room(&what, &need, keep_unet) else {
+            return Ok(());
+        };
+        // Nothing to let go, or an export canceled: refused as it is.
+        if self.card_release.is_none() || self.patience.as_ref().is_some_and(|p| (p.canceled)()) {
+            return Err(refuse(self, why));
+        }
+        let before = self.free_memory().map(|(b, _)| b);
+        let freed = self.release_card();
+        if freed.is_empty() {
+            tracing::info!("{why}; nothing of the engine's to let go");
+            return Err(refuse(self, why));
+        }
+        // A second read not known fits, as `room` has it.
+        let after = self.free_memory();
+        let fits = after
+            .as_ref()
+            .is_none_or(|(free, card)| short_of(card, *free, need(self), &what).is_none());
+        let after = after.map(|(b, _)| b);
+        let said = removal_second_ask(&what, &why, &freed, before, after, fits);
+        tracing::info!("{said}");
+        if !fits {
+            return Err(refuse(self, said));
+        }
+        // Begun, the short is not the develop's or the export's to
+        // fail on.
+        self.short = short;
+        self.hit_short = hit_short;
+        Ok(())
     }
 
     /// Room on the card for a learned mask's model ([`mask_needs`],
@@ -2833,9 +2893,9 @@ impl Ai {
         }
     }
 
-    /// What the engine lets go of the card for a learned mask
-    /// ([`Ai::set_card_release`]), each named with its bytes; a test's
-    /// card gets them back.
+    /// What the engine lets go of the card for a learned mask or a
+    /// removal ([`Ai::set_card_release`]), each named with its bytes; a
+    /// test's card gets them back.
     fn release_card(&mut self) -> Vec<(&'static str, u64)> {
         let Some(release) = self.card_release.as_mut() else {
             return Vec::new();
@@ -2848,11 +2908,18 @@ impl Ai {
         freed
     }
 
-    /// What the worker lets go of the card when a learned mask is short
-    /// of it, or none: the engine's working sets, for the open frame's
-    /// masks on the worker's thread.
+    /// What the worker lets go of the card when a learned mask or a
+    /// removal is short of it, or none: the engine's working sets, for
+    /// the open frame's masks and fills on the worker's thread.
     pub fn set_card_release(&mut self, release: Option<CardRelease>) {
         self.card_release = release;
+    }
+
+    /// Whether a release is set ([`Ai::set_card_release`]), for a test
+    /// that it is cleared after its job.
+    #[cfg(test)]
+    pub(crate) fn holds_card_release(&self) -> bool {
+        self.card_release.is_some()
     }
 
     /// Told before a learned mask runs on the CPU for the card's
@@ -10154,6 +10221,84 @@ mod tests {
         assert!(!give_back_due(&[&unknown]));
         assert!(!give_back_card(&mut [&mut unknown], true));
         assert!(unknown.holds_sessions());
+    }
+
+    /// A removal short of the card after its own give-back has the
+    /// engine let go of what a develop makes again and asks once more:
+    /// with the room then, it begins and nothing is refused; short
+    /// still, it is refused, the message naming what went. With no
+    /// release, or nothing in it, the refusal is as before.
+    #[test]
+    fn the_engine_lets_go_for_a_removal_before_it_is_refused() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let image = WorkingImage::new(200, 100);
+        let patch = remove_patch(21);
+        let region = patch.region(image.width, image.height).unwrap();
+        let free = 59 * GIB / 10;
+        let with_release = |bytes: u64| {
+            let mut ai = on_card(free, 0);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let c = calls.clone();
+            ai.set_card_release(Some(Box::new(move || {
+                c.fetch_add(1, Ordering::Relaxed);
+                vec![("the sharpen's working set", bytes)]
+            })));
+            (ai, calls)
+        };
+        // 5.9 GiB free and 0.6 let go: a cold 512 (6.3) begins.
+        let (mut ai, calls) = with_release(6 * GIB / 10);
+        ai.fill(&patch, &region, &image)
+            .expect("made once the engine let go");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(ai.free_memory_by_test, Some(free + 6 * GIB / 10));
+        assert!(!ai.take_fill_short() && ai.take_short().is_none());
+        assert!(ai.fill_kept(&patch, &region, &image));
+        // 0.2 let go: short still, refused, and said what went.
+        let (mut ai, calls) = with_release(2 * GIB / 10);
+        let why = match ai.fill(&patch, &region, &image) {
+            Err(NoFill::Failed(why)) => why,
+            other => panic!("{:?}", other.map(|(_, e)| e)),
+        };
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            why,
+            "the card has 5.9 GiB free, short of the 6.3 GiB a removal at 512 needs; another program may be using it; \
+             the engine let go of the sharpen's working set (0.2 GiB), 5.9 GiB free before and 6.1 after, short still"
+        );
+        assert!(ai.take_fill_short());
+        assert_eq!(ai.take_short().as_deref(), Some(why.as_str()));
+        // Refused, not asked again until something changes.
+        assert!(ai.fills_unmade_ids(&retouch_of(&patch), &image).is_empty());
+        // No release: refused as before.
+        let mut ai = on_card(free, 0);
+        let plain = match ai.fill(&patch, &region, &image) {
+            Err(NoFill::Failed(why)) => why,
+            other => panic!("{:?}", other.map(|(_, e)| e)),
+        };
+        assert_eq!(
+            plain,
+            "the card has 5.9 GiB free, short of the 6.3 GiB a removal at 512 needs; another program may be using it"
+        );
+        assert!(ai.take_fill_short());
+        // A release with nothing in it: the same.
+        let (mut ai, calls) = with_release(0);
+        match ai.fill(&patch, &region, &image) {
+            Err(NoFill::Failed(why)) => assert_eq!(why, plain),
+            other => panic!("{:?}", other.map(|(_, e)| e)),
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        // A canceled export lets nothing go.
+        let (mut ai, calls) = with_release(6 * GIB / 10);
+        ai.set_patience(Some(Patience {
+            tries: 1,
+            wait: std::time::Duration::ZERO,
+            canceled: Arc::new(|| true),
+        }));
+        assert!(matches!(
+            ai.fill(&patch, &region, &image),
+            Err(NoFill::Failed(_))
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
     /// Short of a removal because of its own sessions, the Ai gives the
