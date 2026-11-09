@@ -3,6 +3,15 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.12.0
+
+### The window
+
+- RGB, Wave, and Vector share a 200 px scope box, with the selector and
+  Selection toggle above the plot. Switching scopes keeps the shot's
+  details and the panel below in place; the box has no border
+  ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-the-scopes-share-one-height.md)).
+
 ## 0.11.0, 2026-11-09
 
 Handheld HDR and focus stacks, the demosaic on the GPU, the window
