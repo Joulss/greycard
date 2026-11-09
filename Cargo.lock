@@ -2128,6 +2128,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "greycard-i18n-probe"
+version = "0.10.0"
+dependencies = [
+ "i-slint-backend-testing",
+ "slint",
+ "slint-build",
+]
+
+[[package]]
 name = "greycard-lens"
 version = "0.10.0"
 dependencies = [
@@ -2237,6 +2246,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slint",
+ "sys-locale",
  "tracing",
  "tracing-log",
  "tracing-subscriber",

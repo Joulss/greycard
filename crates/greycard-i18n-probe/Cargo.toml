@@ -1,0 +1,23 @@
+[package]
+name = "greycard-i18n-probe"
+version.workspace = true
+description = "A test of the window's translation mechanism: a Slint component bundled with a catalog of its own, so no translator's edit can break it"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+slint.workspace = true
+
+[dev-dependencies]
+# A backend that opens no window, for the test's component.
+i-slint-backend-testing = "1.18"
+
+[build-dependencies]
+slint-build = "1.18"

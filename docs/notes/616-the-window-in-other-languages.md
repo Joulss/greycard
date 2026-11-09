@@ -70,3 +70,122 @@ translation of it; the tidy is its own section.
 **What changes for a user.** Nothing until a language is picked or
 the system's is one we carry. The builds carry the catalogs, so a
 language is a file in the repository, never a download.
+
+## What was built
+
+**The foundation**, with no existing string wrapped yet: the catalogs,
+both sides' lookup, the Language setting, the scan, and the script.
+
+**One catalog, one domain.** slint-build takes the translation domain
+from `CARGO_PKG_NAME` and offers no setter, so greycard-slint's build
+script sets that variable to "greycard" for its own process before any
+thread starts (a `with_translation_domain` setter on our Slint fork
+would be the cleaner way, and is the route when the fork is next
+touched). Slint then bundles
+`translations/<lang>/LC_MESSAGES/greycard.po`, the same file the Rust
+side reads: the single file the design preferred. No default context.
+
+**Rust's `tr!`.** `greycard_ui::tr!` in `crates/greycard-ui/src/i18n.rs`,
+the `tr` crate's shape so `xtr` extracts it: `tr!("s")`,
+`tr!("{} of {}", a, b)`, `tr!("{done} of {total}", done = d, total = t)`
+(also `{0}`, `{1}`), and `tr!("{n} frame" | "{n} frames" % n)`. It
+always returns a `String`. greycard-ui's build script reads every
+catalog with a small pure-Rust `.po` reader (`i18n/po.rs`) into static
+tables (fuzzy and empty entries left out; a byte-order mark and C's
+escapes, octal and hex among them, read); the plural rule is
+`i18n/plural.rs`, gettext's C subset, checked at build time and
+evaluated at runtime. A catalog or rule that will not read fails the
+build. Nothing is read from disk at runtime; no gettext library.
+
+**The setting.** `Settings.language` in greycard-ui's settings.rs (not
+the engine's `Shared`, which the headless runs read and which has no
+use for it): a tag or empty for System, read leniently, kept through
+the close like the theme. At start, after `App::new` and before the
+window shows, `prefs::start_language` resolves System through
+`sys-locale`, picks the whole tag's catalog, else its language part's,
+else English, and selects it on both sides. A setting no catalog
+matches falls to the system's languages, `sys_locale::get_locales()`
+in order, the first with a catalog. A script subtag is dropped, and
+`zh-Hant` and `zh-Hans` with no region take `zh_TW` and `zh_CN`. Slint picks the system's
+language for its bundle on its own at the first component; the start
+always overrides it, and the tests' window selects English, so a test
+on a French machine still reads English.
+
+**The picker.** Settings > Interface > Language, a ComboBox: System,
+then each catalog's language in its own name (a small table keyed by
+tag, the tag itself for one not in it), at the place of the setting's
+catalog (`fr-CA` at French; a setting with none at System). Slint has no way to put a
+string ahead of a model, so "System" is `@tr` in a global,
+`LanguageWords.system`, which the Rust side reads to build the list.
+Under the row: "Takes effect when greycard next starts", always shown.
+
+**Proving the Slint side.** `crates/greycard-i18n-probe`, a
+workspace member with `publish = false`: one component with a `@tr`
+string and a plural, built the way greycard-slint is (the domain set,
+no default context) over a French catalog of its own. Its test selects
+"fr", reads the translation and French's plural through properties,
+selects "" and reads English. It runs under either profile, and no
+translator's edit reaches it. The window's builds bundle the
+repository's catalogs alone, debug or release.
+
+**The scan.** `crates/greycard-slint/tests/untranslated.rs` walks
+`ui/**/*.slint` for a string literal outside `@tr(...)` in a shown
+binding: `text`, `words`, `placeholder-text`, `placeholder`,
+`accessible-label`, `accessible-description`, `title`, `label`,
+`note`, `hint`, `tooltip`, `tips`, `empty`, `labels`, and `options`.
+Comments are skipped, and an expression is followed to its `;`, to the
+`,` that ends a struct literal's field, or to its element's `}`. A
+`Segmented`'s `options` are shown and also compared, so they count as
+bare until the element binds its shown words as `labels`, and the
+report marks them. The allow-list, `ui/untranslated.txt`, holds the
+data strings in quotes (glyphs, punctuation, numbers, units' symbols,
+file formats, the program's name). It reports `file:line: "text"`;
+1054 offenders before the allow-list's data strings, 912 after
+(the count the wrapping starts from).
+Landed `#[ignore]`d; the wrapping un-ignores it. A test of the scanner
+itself runs now.
+
+**The script.** `scripts/translations.sh`: slint-tr-extractor (no
+default context) over the Slint files, xtr over the library and the
+binary, msgcat into `translations/greycard.pot` under our header,
+msgmerge into each language. The tests of `tr!` call it by another
+name so xtr does not take their strings. The committed `.pot` and
+French `.po` are header only.
+
+`tr!("...")` with no values goes through the same fill as one with
+values, so `{{` is a brace either way.
+
+*Verified.*
+
+- `tr!` unit tests: lookup, fuzzy and empty fallback, context keys,
+  multi-line strings and escapes, named and indexed placeholders
+  reordered by a translation, plurals by French's and English's rules,
+  gettext's Russian, Polish, Czech, and one-form rules, bad rules
+  refused, tag picking (`fr-CA`, `fr_FR.UTF-8`, `pt-BR`, none).
+- greycard-i18n-probe: French selected, the translation and French's
+  plural read through properties; English again; an unbundled language
+  refused.
+- The window's bundle holds French: selected, the row lists it at its
+  place; English selects again.
+- A second build in a row leaves greycard-slint fresh.
+- The Language row lists System and Français; index 1 is "fr", System
+  is empty, a kept tag shows at its place, an unknown one as System.
+- `language` reads leniently and round-trips through settings.json
+  (`change_at`, `load_from`).
+- The scanner finds the bare strings of a test source by line; run
+  `--ignored` over the real files it lists the window's offenders.
+- `scripts/translations.sh` ran with the extractors installed under
+  the worktree's `target/tools`: the `.pot` held the three new strings
+  and the French catalog was merged.
+
+*Not verified.*
+
+- The handler's write to the user's file: `prefs::keep` does nothing
+  under test, so the row's write is checked through `language_chosen`
+  and the file round trip, not through a click.
+- The ComboBox's popup clicked, and the row's look on screen.
+- A start with a French system locale, end to end, on any platform;
+  `sys-locale` on Windows and macOS.
+- The scan's heuristics on every pattern the wrapping will meet, and
+  `element_binds`' look for `labels` beside an `options`.
+- A Hant or Hans locale on a real system.

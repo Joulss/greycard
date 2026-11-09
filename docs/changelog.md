@@ -95,6 +95,11 @@ design note behind it.
 
 ### The window
 
+- Settings > Interface has a Language row: System, or any language
+  greycard carries a translation of, in force from the next start.
+  greycard ships English alone for now; docs/translating.md says how
+  to add a language
+  ([§616](https://github.com/jessolmstead/greycard/blob/master/docs/notes/616-the-window-in-other-languages.md)).
 - Settings > Keys can move the Loupe's frame step (← →) and the turn
   ([ ]), and Backspace or Delete while a key listens leaves an action
   on no key; the grid and the lightbox keep their arrows (discussion

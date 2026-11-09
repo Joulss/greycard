@@ -8,6 +8,8 @@ members = [
     "crates/greycard-bench",
     "crates/greycard-ui",
     "crates/greycard-slint",
+    # A test of the translation mechanism, with a catalog of its own.
+    "crates/greycard-i18n-probe",
     "crates/greycard-render",
     "crates/greycard-engine",
     "crates/greycard-viewport",

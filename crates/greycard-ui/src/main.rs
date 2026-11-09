@@ -58,8 +58,8 @@ mod window_fit;
 // binary; named here as they were when they were the binary's own.
 pub(crate) use greycard_ui::{
     archive, carried, collections, delete, display, edit_in, export_name, files, filter,
-    gpu_marker, import, instance, log, naming, outline, preset_fit, rejects, scrolling, selection,
-    tags, wheel, zoom,
+    gpu_marker, i18n, import, instance, log, naming, outline, preset_fit, rejects, scrolling,
+    selection, tags, wheel, zoom,
 };
 
 // What renders a developed frame into a picture or a file, in a crate

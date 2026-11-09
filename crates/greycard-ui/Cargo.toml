@@ -83,6 +83,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # freedesktop spec asks for, already in the tree, and the COM apartment
 # on Windows, over the windows crate the tree already has.
 trash = "5.2"
+# The system's language, for the Language setting's System. Pure Rust;
+# Slint's core already brings it.
+sys-locale = "0.3"
 
 [features]
 # Nikon High Efficiency raws; off by default, see greycard-core.

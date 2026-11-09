@@ -58,6 +58,10 @@ pub(crate) fn window(count: usize) -> App {
     }
     BACKEND.with(|()| ());
     let app = App::new().expect("the window builds");
+    // English, whatever the machine's locale, which Slint would pick
+    // for its bundled catalogs on its own.
+    slint::select_bundled_translation("").expect("the window's catalogs are bundled");
+    crate::panel::prefs::show_languages(&app, "");
     let thumbs: Vec<Thumb> = (0..count)
         .map(|i| Thumb {
             name: format!("f{i:02}.CR3").into(),

@@ -337,6 +337,20 @@ of their own on a nightly toolchain, and the CI runs them weekly;
 [fuzz/README.md](../fuzz/README.md) has how to run one and how to
 turn what it finds into a test.
 
+### The translators' catalog
+
+A change to the window's wording needs nothing more than the build: the
+catalogs in `translations/` are read as they are. To refresh them from
+the source, `scripts/translations.sh` wants two extractors and GNU
+gettext (`msgcat`, `msgmerge`, `msgfmt`):
+
+```sh
+cargo install slint-tr-extractor xtr
+scripts/translations.sh
+```
+
+[translating.md](translating.md) is the translators' side.
+
 ## When it goes wrong
 
 **`linker 'cc' not found`** — the compiler from step 1 is missing.

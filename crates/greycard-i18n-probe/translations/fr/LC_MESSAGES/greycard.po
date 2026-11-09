@@ -1,0 +1,14 @@
+# The probe's own catalog: the test's, never a translator's.
+msgid ""
+msgstr ""
+"Language: fr\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Translation probe"
+msgstr "Sonde de traduction"
+
+msgid "{n} frame"
+msgid_plural "{n} frames"
+msgstr[0] "{n} vue"
+msgstr[1] "{n} vues"

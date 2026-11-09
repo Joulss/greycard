@@ -277,6 +277,12 @@ pub struct Settings {
     /// leniently.
     #[serde(deserialize_with = "scroll_bar_size_leniently")]
     pub scroll_bar_size: String,
+    /// The window's language: a catalog's tag ("fr"), or empty for the
+    /// system's. Written as it is chosen, and in force from the next
+    /// start. Read leniently: anything but a string is the system's; a
+    /// tag with no catalog is kept as written and reads as English.
+    #[serde(deserialize_with = "string_leniently")]
+    pub language: String,
 }
 
 /// The Settings sheet's categories, top to bottom, by the names the
@@ -744,6 +750,7 @@ impl Default for Settings {
             theme: THEMES[0].into(),
             scroll_bars: SCROLL_BARS[0].into(),
             scroll_bar_size: SCROLL_BAR_SIZES[0].into(),
+            language: String::new(),
         }
     }
 }
@@ -1211,6 +1218,7 @@ mod tests {
             theme: "Light".into(),
             scroll_bars: "Stay".into(),
             scroll_bar_size: "Wide".into(),
+            language: "fr".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -1637,6 +1645,33 @@ mod tests {
         }
         assert_eq!(theme_named("Grey"), "Grey");
         assert_eq!(theme_named("Gray"), "Charcoal");
+    }
+
+    /// The language: a tag reads and writes back as itself, through the
+    /// file too; a file without one, or with one that is no string,
+    /// reads as the system's and costs the rest nothing.
+    #[test]
+    fn the_language_is_read_leniently_and_kept() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.language, "");
+        for text in [
+            r#"{"ui_scale": 150, "language": 3}"#,
+            r#"{"ui_scale": 150, "language": null}"#,
+            r#"{"ui_scale": 150, "language": ["fr"]}"#,
+        ] {
+            let read: Settings = serde_json::from_str(text).expect(text);
+            assert_eq!(read.ui_scale, 150, "{text}");
+            assert_eq!(read.language, "", "{text}");
+        }
+        let read: Settings = serde_json::from_str(r#"{"language": "xx"}"#).unwrap();
+        assert_eq!(read.language, "xx");
+        let dir = crate::testing::scratch_dir("settings-language");
+        let file = dir.join("settings.json");
+        Settings::change_at(&file, |s| s.language = "fr".into());
+        assert_eq!(Settings::load_from(&file).language, "fr");
+        Settings::change_at(&file, |s| s.language.clear());
+        assert_eq!(Settings::load_from(&file).language, "");
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The scroll bars' way and size: each name reads and writes back

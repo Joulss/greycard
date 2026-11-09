@@ -155,6 +155,65 @@ pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
     settings::Settings::change(change);
 }
 
+/// The window's language, put in force once the first component is
+/// made and before it shows: the setting's catalog (a regional tag
+/// takes its language's), or the system's for System or for a setting
+/// no catalog matches; English when neither has one. Both sides take
+/// it, Slint's bundled catalogs and `tr!`. The Language row is shown
+/// with the setting.
+pub(crate) fn start_language(app: &App, setting: &str) {
+    let chosen = crate::i18n::pick(setting);
+    let language = if chosen.is_empty() {
+        crate::i18n::system()
+    } else {
+        chosen
+    };
+    crate::i18n::select(language);
+    if let Err(e) = slint::select_bundled_translation(language) {
+        tracing::warn!("language {language:?} not selected in the window: {e}");
+    }
+    tracing::info!(
+        "language {:?} (setting {setting:?})",
+        if language.is_empty() { "en" } else { language }
+    );
+    show_languages(app, setting);
+}
+
+/// The Language row's list, "System" in the window's language and then
+/// each catalog's language in its own name, at the place of the
+/// setting's catalog (`fr-CA` at French); a setting no catalog matches
+/// shows as System, which is what it falls to.
+pub(crate) fn show_languages(app: &App, setting: &str) {
+    let languages = crate::i18n::languages();
+    let mut names = vec![app.global::<crate::LanguageWords>().get_system()];
+    names.extend(
+        languages
+            .iter()
+            .map(|(_, name)| slint::SharedString::from(*name)),
+    );
+    app.set_languages(slint::ModelRc::new(slint::VecModel::from(names)));
+    let chosen = crate::i18n::pick(setting);
+    let at = languages
+        .iter()
+        .position(|(tag, _)| !chosen.is_empty() && *tag == chosen)
+        .map_or(0, |i| i + 1);
+    app.set_language_index(i32::try_from(at).unwrap_or(0));
+}
+
+/// The setting for the Language row's choice at `index`: empty for
+/// System, else the catalog's tag.
+pub(crate) fn language_chosen(index: i32) -> String {
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| i.checked_sub(1))
+        .and_then(|i| {
+            crate::i18n::languages()
+                .get(i)
+                .map(|(tag, _)| tag.to_string())
+        })
+        .unwrap_or_default()
+}
+
 /// The Start in row's words for its two choices, in its order.
 pub(crate) const START_LAST: &str = "Last folder";
 pub(crate) const START_CHOSEN: &str = "Chosen folder";
@@ -645,6 +704,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             app.set_theme(name.into());
             keep(&state.borrow(), |s| s.theme = name.into());
             tracing::info!("theme {name}");
+        });
+    }
+    // The language, kept as it is chosen and in force from the next
+    // start, as the row says.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_language_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let tag = language_chosen(app.get_language_index());
+            tracing::info!("language {tag:?} chosen, from the next start");
+            keep(&state.borrow(), |s| s.language = tag);
         });
     }
     // The scroll bars' way and size, as the palette is.
@@ -1426,6 +1498,54 @@ mod tests {
         app.set_theme("Mauve".into());
         app.invoke_theme_changed();
         assert_eq!(app.global::<crate::Theme>().get_name(), "Charcoal");
+    }
+
+    /// The window bundles French: selected, the row lists the same
+    /// languages and shows French at its place, and English selects
+    /// again. (Translated text is proved by greycard-i18n-probe, on a
+    /// catalog of its own.)
+    #[test]
+    fn the_window_selects_a_bundled_language() {
+        use slint::Model;
+        let app = crate::testing::window(0);
+        slint::select_bundled_translation("fr").expect("French is bundled");
+        show_languages(&app, "fr");
+        let names: Vec<String> = app.get_languages().iter().map(|s| s.to_string()).collect();
+        assert_eq!(names.len(), crate::i18n::languages().len() + 1);
+        assert!(names.contains(&"Français".to_string()));
+        assert_eq!(app.get_language_index(), 1);
+        slint::select_bundled_translation("").expect("English is the source");
+        show_languages(&app, "");
+        assert_eq!(app.get_language_index(), 0);
+    }
+
+    /// The Language row lists System and each catalog's language in its
+    /// own name; a choice is the tag the setting keeps, System empty, and
+    /// the row shows a kept tag at its place, one with no catalog as
+    /// System.
+    #[test]
+    fn the_language_row_lists_the_catalogs() {
+        use slint::Model;
+        let app = crate::testing::window(0);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.invoke_settings_asked();
+        assert!(crate::testing::count_labeled(&app, "Language") >= 1);
+        let names: Vec<String> = app.get_languages().iter().map(|s| s.to_string()).collect();
+        assert_eq!(names[..2], ["System", "Français"]);
+        assert_eq!(app.get_language_index(), 0);
+        assert_eq!(language_chosen(0), "");
+        assert_eq!(language_chosen(1), "fr");
+        assert_eq!(language_chosen(-1), "");
+        assert_eq!(language_chosen(99), "");
+        app.set_language_index(1);
+        app.invoke_language_changed();
+        assert_eq!(language_chosen(app.get_language_index()), "fr");
+        show_languages(&app, "fr");
+        assert_eq!(app.get_language_index(), 1);
+        show_languages(&app, "fr-CA");
+        assert_eq!(app.get_language_index(), 1);
+        show_languages(&app, "xx");
+        assert_eq!(app.get_language_index(), 0);
     }
 
     /// The scroll bar rows: a click puts the way and the size in force

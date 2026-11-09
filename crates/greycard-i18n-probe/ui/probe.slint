@@ -1,0 +1,5 @@
+// One translated string, read back through a property.
+export component Probe inherits Window {
+    out property <string> word: @tr("Translation probe");
+    out property <string> frames: @tr("{n} frame" | "{n} frames" % 2);
+}

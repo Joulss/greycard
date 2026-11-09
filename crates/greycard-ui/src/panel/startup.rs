@@ -356,6 +356,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         tracing::warn!("the window's app id was not set: {e}");
     }
     let app = App::new()?;
+    // The language, now that a component exists and before the window
+    // shows.
+    crate::panel::prefs::start_language(&app, &remembered.language);
     // A size asked for on the command line, for a capture, in place of
     // the layout's preferred one; the screen's fit still applies.
     if let Some((w, h)) = cli.window {
@@ -2316,6 +2319,7 @@ fn merged(
     settings.theme = kept.theme;
     settings.scroll_bars = kept.scroll_bars;
     settings.scroll_bar_size = kept.scroll_bar_size;
+    settings.language = kept.language;
     settings.ui_scale_system =
         crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
     if panes_from_file {
@@ -2540,6 +2544,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // Written as the Settings sheet's scroll bar rows are chosen.
         scroll_bars: String::new(),
         scroll_bar_size: String::new(),
+        // Written as the Settings sheet's language is chosen.
+        language: String::new(),
     }
 }
 

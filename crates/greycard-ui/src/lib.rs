@@ -12,6 +12,7 @@ pub mod edit_in;
 pub mod files;
 pub mod filter;
 pub mod gpu_marker;
+pub mod i18n;
 pub mod import;
 pub mod instance;
 pub mod log;

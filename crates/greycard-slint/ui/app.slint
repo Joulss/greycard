@@ -47,6 +47,7 @@ import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
 import { ImportSheet } from "panel/import-sheet.slint";
 import { SettingsSheet } from "panel/settings-sheet.slint";
+export { LanguageWords } from "panel/settings-sheet.slint";
 import { GridSheet } from "panel/grid.slint";
 import { LoadingCard } from "panel/loading.slint";
 import { Filmstrip } from "panel/strip.slint";
@@ -2521,6 +2522,10 @@ export component App inherits Window {
     callback scroll-bars-changed();
     in-out property <string> scroll-bar-size <=> ScrollBars.size;
     callback scroll-bar-size-changed();
+    /// The Settings sheet's Language row (`SettingsSheet`).
+    in property <[string]> languages;
+    in-out property <int> language-index;
+    callback language-changed();
     in property <int> sidecars-elsewhere: 0;
     /// How many frames are open, which the count and the move run
     /// over; and whether this run writes sidecars at all.
@@ -5793,6 +5798,9 @@ export component App inherits Window {
         scroll-bars-changed => { root.scroll-bars-changed(); }
         scroll-bar-size <=> root.scroll-bar-size;
         scroll-bar-size-changed => { root.scroll-bar-size-changed(); }
+        languages: root.languages;
+        language-index <=> root.language-index;
+        language-changed => { root.language-changed(); }
         one-section <=> root.one-section;
         one-section-changed => { root.one-section-changed(); }
         start-choice <=> root.start-choice;

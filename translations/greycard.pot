@@ -1,0 +1,14 @@
+# The window's strings, from the Slint files and the Rust, for translators.
+# Written by scripts/translations.sh; edit the language files, not this one.
+# This file is distributed under the same license as greycard (GPL-3.0-or-later).
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: greycard\n"
+"Report-Msgid-Bugs-To: https://github.com/jessolmstead/greycard/issues\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
