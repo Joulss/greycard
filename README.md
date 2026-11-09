@@ -41,13 +41,16 @@ complete, battle-tested editor.
   can turn off.
 - **Quick culling** from the camera's embedded previews, so getting
   through a shoot is smooth.
+- **Merges in the editor.** A bracket to HDR, frames to a panorama, a
+  stack to one focus, handheld or not, each a linear DNG that edits
+  as a raw.
 - **Export from a script.** `greycard export IMG_0001.CR3 out.jpg`
   writes a frame under its saved edit with no window, no GPU, and no
   desktop, so it runs over SSH; give several frames and a folder for a
   set, and a preset or a long edge as flags
   ([the guide](docs/guide/export.md#from-the-command-line)).
-- **Fast and familiar.** Native Rust, Slint and the GPU, so sliders
-  update as you drag. The layout will feel at home if you're coming
+- **Fast and familiar.** Native Rust, Slint and the GPU, demosaic
+  included, so frames open quickly and sliders update as you drag. The layout will feel at home if you're coming
   from Lightroom Classic. Lightroom presets load, and a Lightroom
   catalog comes across with its ratings, edits and collections.
 - **The best open source algorithms.** greycard is GPL, so parts of the
@@ -85,7 +88,7 @@ and unpack it.
 - **Linux:** `sh install.sh`, or take the `.AppImage` instead, make it
   executable and run it (it needs FUSE, or `--appimage-extract-and-run`).
 - **macOS:** open the `.dmg` and drag greycard to Applications (Apple
-  silicon, macOS 13.4 or newer); the `.tar.gz`'s `sh install.sh` also
+  silicon or Intel, macOS 13.4 or newer); the `.tar.gz`'s `sh install.sh` also
   adds the `greycard` command. [Step by step](docs/testing-on-a-mac.md).
 - **Windows:** double-click `install.cmd`, or just run
   `bin\greycard-ui.exe` from the unpacked folder. `register.cmd` adds
