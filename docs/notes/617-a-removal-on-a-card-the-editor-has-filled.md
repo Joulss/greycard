@@ -78,7 +78,10 @@ the log says so each time.
 ## Not verified
 
 - On a real card: that the budget rises by what is let go, and that
-  the 8 GB laptop's frame now makes its three removals. After an
-  admitted removal the walk makes the sets again while the UNet is
-  still held for the queue, so the pressure may move to the ops
-  after the fill; the tester's next log says.
+  the 8 GB laptop's frame now makes its three removals. The walk
+  makes the sets again after an admitted removal, but on a discrete
+  card under 12 GB the policy holds nothing between fills
+  (`queued_up_to`), so the UNet is gone by then and the sets come
+  back onto a card mostly free; only a card large enough to hold the
+  UNet across a queue remakes them beside it, and that card has the
+  room by the same policy's bounds. The tester's next log says.
