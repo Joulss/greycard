@@ -629,3 +629,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§615. A lens off the body's mount, in the picker](notes/615-a-lens-off-the-bodys-mount-in-the-picker.md) (2026-11-08)
 - [§616. The window in other languages](notes/616-the-window-in-other-languages.md) (2026-11-08)
 - [§617. A removal on a card the editor has filled](notes/617-a-removal-on-a-card-the-editor-has-filled.md) (2026-11-09)
+- [§620. Thumbnail marks centered in their badges](notes/620-thumbnail-marks-centered-in-their-badges.md) (2026-11-09)

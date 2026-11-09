@@ -1766,7 +1766,7 @@ export component ThumbBadges inherits Rectangle {
                     : root.label == 4 ? @tr("blue") : @tr("purple"))
             : "");
     width: badges.preferred-width;
-    height: root.glyph + 6px;
+    height: root.glyph + 3px;
     border-radius: Theme.radius-sm;
     // Its own scrim: a badge must read over a white sky and a black
     // shadow alike, and what is behind it is the picture, or the
@@ -1777,27 +1777,42 @@ export component ThumbBadges inherits Rectangle {
         padding-right: root.glyph / 3;
         spacing: root.glyph / 4.5;
         alignment: center;
-        if root.flag > 0: Image {
-            source: root.flag == 2 ? @image-url("icons/x.svg") : @image-url("icons/flag.svg");
-            colorize: root.flag == 2 ? Theme.label-red : Theme.over-text;
+        if root.flag > 0: Rectangle {
             width: root.glyph;
-            height: root.glyph;
+            height: root.height;
+            Image {
+                source: root.flag == 2 ? @image-url("icons/x.svg") : @image-url("icons/flag.svg");
+                colorize: root.flag == 2 ? Theme.label-red : Theme.over-text;
+                width: root.glyph;
+                height: root.glyph;
+                y: (parent.height - self.height) / 2;
+            }
         }
-        for s in min(root.rating, root.stars): Image {
-            source: @image-url("icons/star.svg");
-            colorize: Theme.over-text;
+        for s in min(root.rating, root.stars): Rectangle {
             width: root.glyph;
-            height: root.glyph;
+            height: root.height;
+            Image {
+                source: @image-url("icons/star.svg");
+                colorize: Theme.over-text;
+                width: root.glyph;
+                height: root.glyph;
+                y: (parent.height - self.height) / 2;
+            }
         }
         if root.label > 0: Rectangle {
             width: root.glyph - 2px;
-            height: root.glyph - 2px;
-            border-radius: (root.glyph - 2px) / 3.5;
-            background: root.label == 1 ? Theme.label-red
-                : root.label == 2 ? Theme.label-yellow
-                : root.label == 3 ? Theme.label-green
-                : root.label == 4 ? Theme.label-blue
-                : Theme.label-purple;
+            height: root.height;
+            Rectangle {
+                width: root.glyph - 2px;
+                height: root.glyph - 2px;
+                y: (parent.height - self.height) / 2;
+                border-radius: (root.glyph - 2px) / 3.5;
+                background: root.label == 1 ? Theme.label-red
+                    : root.label == 2 ? Theme.label-yellow
+                    : root.label == 3 ? Theme.label-green
+                    : root.label == 4 ? Theme.label-blue
+                    : Theme.label-purple;
+            }
         }
     }
 }
@@ -1822,34 +1837,49 @@ export component ThumbMarks inherits Rectangle {
     marks := HorizontalLayout {
         padding-left: root.glyph / 3;
         padding-right: root.glyph / 3;
-        spacing: root.glyph / 4.5;
+        spacing: Theme.space-1;
         alignment: center;
-        if root.edited: Image {
-            source: @image-url("icons/pencil.svg");
-            colorize: Theme.over-text-secondary;
+        if root.edited: Rectangle {
             width: root.glyph;
-            height: root.glyph;
-            accessible-role: image;
-            // Spoken by a screen reader: a thumbnail's badge
-            accessible-label: @tr("Edited");
+            height: root.height;
+            Image {
+                source: @image-url("icons/pencil.svg");
+                colorize: Theme.over-text-secondary;
+                width: root.glyph;
+                height: root.glyph;
+                y: (parent.height - self.height) / 2;
+                accessible-role: image;
+                // Spoken by a screen reader: a thumbnail's badge
+                accessible-label: @tr("Edited");
+            }
         }
-        if root.exported: Image {
-            source: @image-url("icons/image-down.svg");
-            colorize: Theme.over-text-secondary;
+        if root.exported: Rectangle {
             width: root.glyph;
-            height: root.glyph;
-            accessible-role: image;
-            // Spoken by a screen reader: a thumbnail's badge
-            accessible-label: @tr("Exported");
+            height: root.height;
+            Image {
+                source: @image-url("icons/image-down.svg");
+                colorize: Theme.over-text-secondary;
+                width: root.glyph;
+                height: root.glyph;
+                y: (parent.height - self.height) / 2;
+                accessible-role: image;
+                // Spoken by a screen reader: a thumbnail's badge
+                accessible-label: @tr("Exported");
+            }
         }
-        if root.collected: Image {
-            source: @image-url("icons/bookmark.svg");
-            colorize: Theme.over-text-secondary;
+        if root.collected: Rectangle {
             width: root.glyph;
-            height: root.glyph;
-            accessible-role: image;
-            // Spoken by a screen reader: a thumbnail's badge
-            accessible-label: @tr("In a collection");
+            height: root.height;
+            Image {
+                source: @image-url("icons/bookmark.svg");
+                colorize: Theme.over-text-secondary;
+                width: root.glyph;
+                height: root.glyph;
+                y: (parent.height - self.height) / 2;
+                accessible-role: image;
+                // Spoken by a screen reader: a thumbnail's badge
+                accessible-label: @tr("In a collection");
+            }
         }
         if root.paired: Text {
             text: "+JPEG";

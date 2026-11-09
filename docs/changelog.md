@@ -3,6 +3,15 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.12.0
+
+### Fixes
+
+- The color label dot and the edit and export marks sit centered in
+  their thumbnail badges, with more room between the marks in the
+  strip and grid
+  ([§620](https://github.com/jessolmstead/greycard/blob/master/docs/notes/620-thumbnail-marks-centered-in-their-badges.md)).
+
 ## 0.11.0, 2026-11-09
 
 Handheld HDR and focus stacks, the demosaic on the GPU, the window
