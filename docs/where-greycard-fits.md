@@ -3,8 +3,8 @@
 A raw editor that works on the light the camera caught, keeps your
 folders in charge, and runs on Linux, macOS and Windows. This page
 says what the other editors chose and what greycard does differently,
-and ends with what is built and what is planned. Updated for 0.7.0,
-October 2026.
+and ends with what is built and what is planned. Updated for 0.11.0,
+November 2026.
 
 ## The short version
 
@@ -138,12 +138,12 @@ planned.
 
 ## Where it stands
 
-Built, as of 0.10.0:
+Built, as of 0.11.0:
 
 - **Pipeline.** rawler decoding. Linear Rec.2020 from the camera
   matrix to the monitor profile, soft proofing, AgX as a second
-  display curve. RCD, AMaZE and dual demosaic, Markesteijn for
-  X-Trans with the profiled denoise, hot pixel repair and chromatic
+  display curve. RCD, AMaZE and dual demosaic, on the GPU where
+  there is one, Markesteijn for X-Trans with the profiled denoise, hot pixel repair and chromatic
   aberration correction on it too. Highlight reconstruction, chromatic aberration and
   defringe, DCP profiles, a profiled denoiser and a learned one, on
   Core ML on Apple silicon, deconvolution sharpening, lensfun
@@ -151,7 +151,7 @@ Built, as of 0.10.0:
   DNG's own corrections read. Every operation has a CPU reference and
   a test.
 - **Editing.** Exposure, tone, curves, a color mixer, grading, black
-  and white, texture, clarity, structure, dehaze, grain, vignette, and
+  and white, a live white balance on a JPEG or TIFF too, texture, clarity, structure, dehaze, grain, vignette, and
   an Auto for the tones. Crop, rotation, an auto level, guided perspective.
   Heal, clone, learned fill, and a generative remove that puts the
   frame's grain back. Scopes.
@@ -191,7 +191,8 @@ Built, as of 0.10.0:
   Intel, and Windows, with a Windows on ARM build that is new and
   tentative. A Report a
   problem button that fills in the version, OS and GPU. A release
-  check that can be turned off.
+  check that can be turned off. Every word of the window in a
+  translator's catalog, English shipped so far.
 
 Planned, in order: tethering, and the learned denoiser for X-Trans.
 
