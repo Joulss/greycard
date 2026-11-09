@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use greycard_library::{Change, Pairing, Roots};
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::archive::{self, Ask, Beat, Direction, Frames, Heard, Plan, Report};
@@ -125,9 +126,8 @@ struct Running {
     /// Bytes copied so far, or frames done for the rejects.
     bytes: Arc<AtomicU64>,
     total: u64,
-    /// What the card says it is doing: "backing up to", "moving the
-    /// rejects on".
-    doing: &'static str,
+    /// What the job is doing, for the card's line and the log.
+    doing: Doing,
     /// The bar is by frames, not bytes: the rejects' moves are renames,
     /// over in no time whatever the size.
     by_files: bool,
@@ -269,11 +269,93 @@ fn labels(st: &State, roots: &[PathBuf]) -> ModelRc<slint::SharedString> {
     ModelRc::new(VecModel::from(names))
 }
 
+/// "1 frame", "3 frames", in English: the log's, and the rejects'.
 fn frames_word(n: usize) -> String {
     if n == 1 {
         "1 frame".into()
     } else {
         format!("{n} frames")
+    }
+}
+
+/// [`frames_word`] as the window shows it.
+fn frames_shown(n: usize) -> String {
+    tr!("{n} frame" | "{n} frames" % n)
+}
+
+/// What a job on an archive is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Doing {
+    BackUp,
+    BringBack,
+    MoveRejects,
+    DeleteRejects,
+}
+
+impl Doing {
+    /// The job in the log's words.
+    pub(crate) fn log(self) -> &'static str {
+        match self {
+            Self::BackUp => "backing up to",
+            Self::BringBack => "bringing back to",
+            Self::MoveRejects => "moving the rejects on",
+            Self::DeleteRejects => "deleting the rejects from",
+        }
+    }
+
+    /// The card's line: what is done of the job on `label`, of
+    /// `total`, and whether it stops after the frame in hand.
+    pub(crate) fn line(self, label: &str, done: &str, total: &str, stopping: bool) -> String {
+        match (self, stopping) {
+            (Self::BackUp, false) => tr!(
+                "backing up to {label}: {done} of {total}",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::BackUp, true) => tr!(
+                "backing up to {label}: {done} of {total}; stopping after this frame",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::BringBack, false) => tr!(
+                "bringing back to {label}: {done} of {total}",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::BringBack, true) => tr!(
+                "bringing back to {label}: {done} of {total}; stopping after this frame",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::MoveRejects, false) => tr!(
+                "moving the rejects on {label}: {done} of {total}",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::MoveRejects, true) => tr!(
+                "moving the rejects on {label}: {done} of {total}; stopping after this frame",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::DeleteRejects, false) => tr!(
+                "deleting the rejects from {label}: {done} of {total}",
+                label = label,
+                done = done,
+                total = total
+            ),
+            (Self::DeleteRejects, true) => tr!(
+                "deleting the rejects from {label}: {done} of {total}; stopping after this frame",
+                label = label,
+                done = done,
+                total = total
+            ),
+        }
     }
 }
 
@@ -299,35 +381,39 @@ pub(crate) fn show(st: &State, app: &App) {
     let count_of = |a: &Path| counts.iter().find(|(c, _)| c == a).map(|(_, n)| *n);
     let not_on = |(n, u): (usize, usize), label: &str| header_words(n, u, label);
     let (header, verb, items) = match &side {
-        _ if choices.is_empty() => (String::new(), "", Vec::new()),
+        _ if choices.is_empty() => (String::new(), String::new(), Vec::new()),
         Side::Local { .. } => {
             // The first archive with a count names the button; each
             // choice in the menu carries its own.
             let words = counts
                 .first()
                 .map(|(a, n)| not_on(*n, &roots.label(a)))
-                .unwrap_or_else(|| "Back up...".into());
+                .unwrap_or_else(|| tr!("Back up..."));
             let items = choices
                 .iter()
                 .map(|a| {
                     let label = roots.label(a);
                     match count_of(a) {
-                        Some(n) => format!("Back up to {label} ({})...", not_on(n, &label)),
-                        None => format!("Back up to {label}..."),
+                        Some(n) => tr!(
+                            "Back up to {label} ({count})...",
+                            count = not_on(n, &label),
+                            label = label
+                        ),
+                        None => tr!("Back up to {label}...", label = label),
                     }
                 })
                 .collect();
-            (words, "Back up", items)
+            (words, tr!("Back up"), items)
         }
         Side::Archive { .. } => (
-            "Bring back...".into(),
-            "Bring back",
+            tr!("Bring back..."),
+            tr!("Bring back"),
             choices
                 .iter()
-                .map(|r| format!("Bring back to {}...", roots.label(r)))
+                .map(|r| tr!("Bring back to {label}...", label = roots.label(r)))
                 .collect(),
         ),
-        Side::None => (String::new(), "", Vec::new()),
+        Side::None => (String::new(), String::new(), Vec::new()),
     };
     app.set_archive_header(header.into());
     app.set_archive_verb(verb.into());
@@ -343,10 +429,21 @@ pub(crate) fn show(st: &State, app: &App) {
 /// every frame is known to be there.
 pub(crate) fn header_words(missing: usize, unknown: usize, label: &str) -> String {
     match (missing, unknown) {
-        (0, 0) => format!("All on {label}"),
-        (n, 0) => format!("{} not on {label}", frames_word(n)),
-        (0, u) => format!("{} not known on {label}", frames_word(u)),
-        (n, u) => format!("{} not on {label}, {u} not known", frames_word(n)),
+        (0, 0) => tr!("All on {label}", label = label),
+        (n, 0) => tr!(
+            "{n} frame not on {label}" | "{n} frames not on {label}" % n,
+            label = label
+        ),
+        (0, u) => tr!(
+            "{n} frame not known on {label}" | "{n} frames not known on {label}" % u,
+            label = label
+        ),
+        (n, u) => tr!(
+            "{n} frame not on {label}, {unknown} not known"
+                | "{n} frames not on {label}, {unknown} not known" % n,
+            label = label,
+            unknown = u
+        ),
     }
 }
 
@@ -362,10 +459,10 @@ pub(crate) fn menu_asked(st: &State, app: &App) {
     let side = side_of_frames(st, &frames);
     let choices = choices(st, &side);
     let verb = match (&side, choices.is_empty()) {
-        (_, true) => "",
-        (Side::Local { .. }, _) => "Back up",
-        (Side::Archive { .. }, _) => "Bring back",
-        (Side::None, _) => "",
+        (_, true) => String::new(),
+        (Side::Local { .. }, _) => tr!("Back up"),
+        (Side::Archive { .. }, _) => tr!("Bring back"),
+        (Side::None, _) => String::new(),
     };
     app.set_archive_verb(verb.into());
     app.set_archive_choices(labels(st, &choices));
@@ -387,7 +484,7 @@ pub(crate) enum Pressed {
 pub(crate) fn ask(state: &Rc<Shared>, app: &App, from: Pressed, choice: usize) {
     let mut st = state.borrow_mut();
     if st.archive.running.is_some() {
-        app.set_status("a backup is still under way".into());
+        app.set_status(tr!("a backup is still under way").into());
         return;
     }
     let chosen = chosen_frames(&st);
@@ -431,15 +528,17 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, from: Pressed, choice: usize) {
         && f.is_empty()
     {
         if let Some(&i) = offline.first() {
-            crate::rows::say_offline_for(&st, app, i, ": nothing to copy");
+            crate::rows::say_offline_for(&st, app, i, &tr!(": nothing to copy"));
         } else {
-            app.set_status("nothing is chosen to copy".into());
+            app.set_status(tr!("nothing is chosen to copy").into());
         }
         return;
     }
     let choices = choices(&st, &side);
     let Some(other) = choices.get(choice).cloned() else {
-        app.set_status("there is no archive to copy to: mark a root as one from its menu".into());
+        app.set_status(
+            tr!("there is no archive to copy to: mark a root as one from its menu").into(),
+        );
         return;
     };
     let archive = match &side {
@@ -448,9 +547,9 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, from: Pressed, choice: usize) {
     };
     if st.archive.aside.iter().any(|(_, a)| *a == archive) {
         app.set_status(
-            format!(
-                "still waiting on {}; try again shortly",
-                st.views.library.roots.label(&archive)
+            tr!(
+                "still waiting on {label}; try again shortly",
+                label = st.views.library.roots.label(&archive)
             )
             .into(),
         );
@@ -525,13 +624,13 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, from: Pressed, choice: usize) {
         }
         Side::None => {
             app.set_status(
-                "these frames are under more than one root: back up a root's or a folder's at a time"
+                tr!("these frames are under more than one root: back up a root's or a folder's at a time")
                     .into(),
             );
             return;
         }
     };
-    app.set_status(format!("looking at what is on {}...", asked.label).into());
+    app.set_status(tr!("looking at what is on {label}...", label = asked.label).into());
     // The sheet is up from the press, saying it is looking, so the
     // press is seen to have done something while an archive over the
     // wire takes its second or two to answer; the look fills it in.
@@ -547,17 +646,17 @@ pub(crate) fn ask(state: &Rc<Shared>, app: &App, from: Pressed, choice: usize) {
 fn fill_looking(app: &App, asked: &Asked) {
     let label = &asked.label;
     let title = match asked.ask.direction {
-        Direction::BackUp => format!("Back up to {label}"),
-        Direction::BringBack => format!("Bring back to {label}"),
+        Direction::BackUp => tr!("Back up to {label}", label = label),
+        Direction::BringBack => tr!("Bring back to {label}", label = label),
     };
     app.set_archive_title(title.into());
-    app.set_archive_text(format!("Looking at what is on {label}...").into());
+    app.set_archive_text(tr!("Looking at what is on {label}...", label = label).into());
     app.set_archive_named("".into());
     app.set_archive_dest(asked.ask.dest.to_string_lossy().into_owned().into());
     app.set_archive_dest_note("".into());
     app.set_archive_rejects(-1);
     app.set_archive_include_rejects(false);
-    app.set_archive_confirm("Looking...".into());
+    app.set_archive_confirm(tr!("Looking...").into());
     app.set_archive_can_confirm(false);
 }
 
@@ -651,15 +750,18 @@ fn settle(
 fn gone_words(gone: &[Pairing], archive_label: &str) -> String {
     match gone {
         [] => String::new(),
-        [p] => format!(
-            "forgot that {} was backed up to {}: that folder is no longer on {archive_label}",
-            p.source.display(),
-            p.dest.display(),
+        [p] => tr!(
+            "forgot that {source} was backed up to {dest}: that folder is no longer on {archive}",
+            source = p.source.display(),
+            dest = p.dest.display(),
+            archive = archive_label
         ),
-        many => format!(
-            "forgot {} backups whose folders are no longer on {archive_label}: {}",
-            many.len(),
-            some_names(&many.iter().map(|p| p.source.as_path()).collect::<Vec<_>>())
+        many => tr!(
+            "forgot {n} backup whose folder is no longer on {archive}: {names}"
+                | "forgot {n} backups whose folders are no longer on {archive}: {names}"
+                    % many.len(),
+            archive = archive_label,
+            names = some_names(&many.iter().map(|p| p.source.as_path()).collect::<Vec<_>>())
         ),
     }
 }
@@ -709,7 +811,10 @@ fn look(st: &mut State, app: &App) {
                 .find(|(_, a)| !**a)
                 .map(|(l, _)| l)
             {
-                return Err(format!("{name} isn't reachable; nothing was copied"));
+                return Err(tr!(
+                    "{name} isn't reachable; nothing was copied",
+                    name = name
+                ));
             }
             let gone = gone_pairings(&pairings, &local, &archive, beat);
             if let Some(how) = &to_settle {
@@ -724,7 +829,7 @@ fn look(st: &mut State, app: &App) {
         land_look,
     );
     if !sent {
-        app.set_status("the look at the archive could not be started".into());
+        app.set_status(tr!("the look at the archive could not be started").into());
         st.archive.asked = None;
     }
 }
@@ -753,10 +858,10 @@ fn land_look(
                 ROOT_WAIT.as_secs()
             );
             app.set_status(
-                format!(
-                    "{} timed out after {} s; nothing was copied",
-                    asked.label,
-                    ROOT_WAIT.as_secs()
+                tr!(
+                    "{label} timed out after {seconds} s; nothing was copied",
+                    label = asked.label,
+                    seconds = ROOT_WAIT.as_secs()
                 )
                 .into(),
             );
@@ -767,7 +872,7 @@ fn land_look(
                 "archive: the look at {} stopped without a report",
                 asked.label
             );
-            app.set_status("the look at the archive failed; the log has why".into());
+            app.set_status(tr!("the look at the archive failed; the log has why").into());
             close(&mut st, app);
         }
         Heard::Done { late: true, .. } => {}
@@ -819,7 +924,7 @@ fn some_names(paths: &[&Path]) -> String {
     const SHOWN: usize = 6;
     let mut words: Vec<String> = paths.iter().take(SHOWN).map(|p| file_name(p)).collect();
     if paths.len() > SHOWN {
-        words.push(format!("and {} more", paths.len() - SHOWN));
+        words.push(tr!("and {n} more", n = paths.len() - SHOWN));
     }
     words.join(", ")
 }
@@ -828,77 +933,106 @@ fn some_names(paths: &[&Path]) -> String {
 fn fill(app: &App, asked: &Asked, plan: &Plan) {
     let label = &asked.label;
     let (verb, title) = match asked.ask.direction {
-        Direction::BackUp => ("Back up", format!("Back up to {label}")),
-        Direction::BringBack => ("Bring back", format!("Bring back to {label}")),
+        Direction::BackUp => (tr!("Back up"), tr!("Back up to {label}", label = label)),
+        Direction::BringBack => (
+            tr!("Bring back"),
+            tr!("Bring back to {label}", label = label),
+        ),
     };
     let (n, bytes) = plan.copies();
     let sidecars = plan.sidecars_only();
     let (same, elsewhere) = plan.same();
     let mut lines = Vec::new();
-    let with = if plan.ask.sidecars {
-        ", with their sidecars"
-    } else {
-        ""
-    };
     if n > 0 {
-        lines.push(format!(
-            "{} to copy, {}{with}.",
-            frames_word(n),
-            archive::size_words(bytes)
-        ));
+        let size = archive::size_words(bytes);
+        lines.push(if plan.ask.sidecars {
+            tr!(
+                "{n} frame to copy, {size}, with their sidecars."
+                    | "{n} frames to copy, {size}, with their sidecars." % n,
+                size = size
+            )
+        } else {
+            tr!(
+                "{n} frame to copy, {size}." | "{n} frames to copy, {size}." % n,
+                size = size
+            )
+        });
     }
     if !plan.ask.sidecars {
-        lines.push("Sidecars are off for this run.".into());
+        lines.push(tr!("Sidecars are off for this run."));
     }
     if sidecars > 0 {
-        let here = match asked.ask.direction {
-            Direction::BackUp => "here",
-            Direction::BringBack => "on the archive",
-        };
-        lines.push(format!(
-            "{} already there {} newer sidecars {here}; only the sidecars copy.",
-            frames_word(sidecars),
-            if sidecars == 1 { "has" } else { "have" }
-        ));
+        lines.push(match asked.ask.direction {
+            Direction::BackUp => tr!(
+                "{n} frame already there has newer sidecars here; only the sidecars copy."
+                    | "{n} frames already there have newer sidecars here; only the sidecars copy."
+                    % sidecars
+            ),
+            Direction::BringBack => tr!(
+                "{n} frame already there has newer sidecars on the archive; only the sidecars copy."
+                    | "{n} frames already there have newer sidecars on the archive; only the sidecars copy."
+                    % sidecars
+            ),
+        });
     }
     if same > 0 {
-        let at = match asked.ask.direction {
-            Direction::BackUp => format!("on {label}"),
-            Direction::BringBack => "here".into(),
-        };
-        let mut line = format!("{} already {at}", frames_word(same));
-        if elsewhere > 0 {
-            line.push_str(&format!(", {elsewhere} under a different folder"));
-        }
-        line.push_str(", skipped.");
-        lines.push(line);
+        lines.push(match (asked.ask.direction, elsewhere > 0) {
+            (Direction::BackUp, false) => tr!(
+                "{n} frame already on {label}, skipped."
+                    | "{n} frames already on {label}, skipped."
+                    % same,
+                label = label
+            ),
+            (Direction::BackUp, true) => tr!(
+                "{n} frame already on {label}, {elsewhere} under a different folder, skipped."
+                    | "{n} frames already on {label}, {elsewhere} under a different folder, skipped."
+                    % same,
+                label = label,
+                elsewhere = elsewhere
+            ),
+            (Direction::BringBack, false) => tr!(
+                "{n} frame already here, skipped." | "{n} frames already here, skipped." % same
+            ),
+            (Direction::BringBack, true) => tr!(
+                "{n} frame already here, {elsewhere} under a different folder, skipped."
+                    | "{n} frames already here, {elsewhere} under a different folder, skipped."
+                    % same,
+                elsewhere = elsewhere
+            ),
+        });
     }
     if n == 0 && sidecars == 0 {
-        lines.push("Nothing to copy.".into());
+        lines.push(tr!("Nothing to copy."));
     }
     let mut named = Vec::new();
     let theirs = plan.theirs_newer();
     if !theirs.is_empty() {
-        let whose = match asked.ask.direction {
-            Direction::BackUp => format!("{label}'s"),
-            Direction::BringBack => "the one here".into(),
-        };
-        named.push(format!(
-            "Skipped, {whose} sidecar is the newer: {}.",
-            some_names(&theirs)
-        ));
+        named.push(match asked.ask.direction {
+            Direction::BackUp => tr!(
+                "Skipped, {label}'s sidecar is the newer: {names}.",
+                label = label,
+                names = some_names(&theirs)
+            ),
+            Direction::BringBack => tr!(
+                "Skipped, the one here sidecar is the newer: {names}.",
+                names = some_names(&theirs)
+            ),
+        });
     }
     let taken = plan.taken();
     if !taken.is_empty() {
-        named.push(format!(
-            "Skipped, the name is taken there: {}.",
-            some_names(&taken)
+        named.push(tr!(
+            "Skipped, the name is taken there: {names}.",
+            names = some_names(&taken)
         ));
     }
     let unreadable = plan.unreadable();
     if !unreadable.is_empty() {
         let paths: Vec<&Path> = unreadable.iter().map(|(p, _)| *p).collect();
-        named.push(format!("Could not be read: {}.", some_names(&paths)));
+        named.push(tr!(
+            "Could not be read: {names}.",
+            names = some_names(&paths)
+        ));
     }
     app.set_archive_title(title.into());
     app.set_archive_text(lines.join("\n").into());
@@ -906,13 +1040,13 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
     app.set_archive_dest(plan.ask.dest.to_string_lossy().into_owned().into());
     let note = match (asked.ask.direction, asked.unpaired) {
         (Direction::BackUp, _) => {
-            format!("Under {label}; remembered for this folder.")
+            tr!("Under {label}; remembered for this folder.", label = label)
         }
         (Direction::BringBack, true) => {
-            format!("Not from {label}: choose a place under it.")
+            tr!("Not from {label}: choose a place under it.", label = label)
         }
         (Direction::BringBack, false) => {
-            format!("Where it was backed up from, under {label}.")
+            tr!("Where it was backed up from, under {label}.", label = label)
         }
     };
     app.set_archive_dest_note(note.into());
@@ -923,11 +1057,16 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
     app.set_archive_include_rejects(plan.ask.include_rejects);
     app.set_archive_confirm(
         if n > 0 {
-            format!("{verb} {}", frames_word(n))
+            match asked.ask.direction {
+                Direction::BackUp => tr!("Back up {n} frame" | "Back up {n} frames" % n),
+                Direction::BringBack => {
+                    tr!("Bring back {n} frame" | "Bring back {n} frames" % n)
+                }
+            }
         } else if sidecars > 0 {
-            format!("Copy the sidecars of {}", frames_word(sidecars))
+            tr!("Copy the sidecars of {n} frame" | "Copy the sidecars of {n} frames" % sidecars)
         } else {
-            verb.to_string()
+            verb
         }
         .into(),
     );
@@ -951,10 +1090,10 @@ pub(crate) fn look_again(state: &Rc<Shared>, app: &App) {
             .any(|c| c == std::path::Component::ParentDir)
     {
         app.set_archive_dest_note(
-            format!(
-                "The folder has to be under {} ({}).",
-                asked.label,
-                asked.other.display()
+            tr!(
+                "The folder has to be under {label} ({folder}).",
+                label = asked.label,
+                folder = asked.other.display()
             )
             .into(),
         );
@@ -966,7 +1105,7 @@ pub(crate) fn look_again(state: &Rc<Shared>, app: &App) {
     asked.settle = None;
     asked.ask.include_rejects = app.get_archive_include_rejects();
     app.set_archive_can_confirm(false);
-    app.set_archive_confirm("Looking...".into());
+    app.set_archive_confirm(tr!("Looking...").into());
     look(&mut st, app);
 }
 
@@ -1001,15 +1140,16 @@ pub(crate) fn answered(state: &Rc<Shared>, app: &App, yes: bool) {
     }
     if st.archive.running.is_some() || st.archive.aside.iter().any(|(_, a)| *a == asked.archive) {
         app.set_status(
-            "not copied: another job on an archive started meanwhile; ask again once it is done"
-                .into(),
+            tr!(
+                "not copied: another job on an archive started meanwhile; ask again once it is done"
+            )
+            .into(),
         );
         return;
     }
     if !st.window.deletes_allowed {
-        let why = "not copied: a capture, an export or a timing run never copies";
-        tracing::info!("{why}");
-        app.set_status(why.into());
+        tracing::info!("not copied: a capture, an export or a timing run never copies");
+        app.set_status(tr!("not copied: a capture, an export or a timing run never copies").into());
         return;
     }
     // The folder chosen is kept as this folder's pairing (§219).
@@ -1036,8 +1176,8 @@ fn start(st: &mut State, app: &App, asked: Asked, plan: Plan) {
         bytes: bytes.clone(),
         total,
         doing: match asked.ask.direction {
-            Direction::BackUp => "backing up to",
-            Direction::BringBack => "bringing back to",
+            Direction::BackUp => Doing::BackUp,
+            Direction::BringBack => Doing::BringBack,
         },
         by_files: false,
         label: asked.label.clone(),
@@ -1055,7 +1195,20 @@ fn start(st: &mut State, app: &App, asked: Asked, plan: Plan) {
         plan.ask.dest.display()
     );
     app.set_archive_fraction(0.0);
-    app.set_archive_line(format!("{doing} {} to {}...", frames_word(n), asked.label).into());
+    app.set_archive_line(
+        match asked.ask.direction {
+            Direction::BackUp => tr!(
+                "backing up {n} frame to {label}..." | "backing up {n} frames to {label}..." % n,
+                label = asked.label
+            ),
+            Direction::BringBack => tr!(
+                "bringing back {n} frame to {label}..."
+                    | "bringing back {n} frames to {label}..." % n,
+                label = asked.label
+            ),
+        }
+        .into(),
+    );
     app.set_archive_running(true);
     let index = plan.ask.index.clone();
     let (direction, label) = (asked.ask.direction, asked.label.clone());
@@ -1080,7 +1233,7 @@ fn start(st: &mut State, app: &App, asked: Asked, plan: Plan) {
     if !sent {
         st.archive.running = None;
         app.set_archive_running(false);
-        app.set_status("the copy could not be started; nothing was copied".into());
+        app.set_status(tr!("the copy could not be started; nothing was copied").into());
         return;
     }
     start_timer(st, app);
@@ -1116,35 +1269,24 @@ fn tick(st: &State, app: &App) {
         done as f32 / r.total as f32
     };
     app.set_archive_fraction(fraction);
-    let doing = r.doing;
-    let canceling = if r.cancel.load(Ordering::Relaxed) {
-        "; stopping after this frame"
+    let (done, total) = if r.by_files {
+        (done.to_string(), frames_shown(r.total as usize))
     } else {
-        ""
+        (archive::size_words(done), archive::size_words(r.total))
     };
-    app.set_archive_line(
-        format!(
-            "{doing} {}: {} of {}{canceling}",
-            r.label,
-            if r.by_files {
-                done.to_string()
-            } else {
-                archive::size_words(done)
-            },
-            if r.by_files {
-                frames_word(r.total as usize)
-            } else {
-                archive::size_words(r.total)
-            }
-        )
-        .into(),
-    );
+    let stopping = r.cancel.load(Ordering::Relaxed);
+    app.set_archive_line(r.doing.line(&r.label, &done, &total, stopping).into());
 }
 
 /// Cancel: the copy stops once the frame it is on is done.
 pub(crate) fn cancel(st: &State, app: &App) {
     if let Some(r) = &st.archive.running {
         r.cancel.store(true, Ordering::SeqCst);
+        tracing::info!(
+            "archive: {} {}: stopping after this frame",
+            r.doing.log(),
+            r.label
+        );
         tick(st, app);
     }
 }
@@ -1179,10 +1321,10 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
                 st.archive.timer.stop();
                 app.set_archive_running(false);
                 app.set_status(
-                    format!(
-                        "{} timed out after {} s; stopping after this frame",
-                        r.label,
-                        ROOT_WAIT.as_secs()
+                    tr!(
+                        "{label} timed out after {seconds} s; stopping after this frame",
+                        label = r.label,
+                        seconds = ROOT_WAIT.as_secs()
                     )
                     .into(),
                 );
@@ -1199,7 +1341,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
             st.archive.aside.retain(|(t, _)| *t != token);
             tracing::error!("archive: the copy's thread ended without a report");
             app.set_status(
-                "the copy stopped without a report; the next Back up checks it (see the log)"
+                tr!("the copy stopped without a report; the next Back up checks it (see the log)")
                     .into(),
             );
             rejects::run_due(&mut st, app);
@@ -1218,7 +1360,7 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
             } = result;
             let mut words = summary(&report, direction, &label);
             if late {
-                words = format!("the timed-out copy finished: {words}");
+                words = tr!("the timed-out copy finished: {words}", words = words);
             }
             tracing::info!("archive: {words}");
             for (f, why) in &report.failed {
@@ -1244,72 +1386,81 @@ fn land_run(state: &Rc<Shared>, app: &App, _worker: &Rc<Worker>, token: u64, hea
 /// What a copy did, in a line.
 pub(crate) fn summary(report: &Report, direction: Direction, label: &str) -> String {
     let mut parts = Vec::new();
-    let to = if label.is_empty() {
-        String::new()
-    } else {
-        format!(" to {label}")
-    };
-    let verb = match direction {
-        Direction::BackUp => "backed up",
-        Direction::BringBack => "brought back",
-    };
-    let bytes: u64 = report.copied.iter().map(|c| c.2).sum();
-    parts.push(format!(
-        "{verb} {}{to} ({})",
-        frames_word(report.copied.len()),
-        archive::size_words(bytes)
-    ));
+    let n = report.copied.len();
+    let size = archive::size_words(report.copied.iter().map(|c| c.2).sum());
+    parts.push(match (direction, label.is_empty()) {
+        (Direction::BackUp, true) => tr!(
+            "backed up {n} frame ({size})" | "backed up {n} frames ({size})" % n,
+            size = size
+        ),
+        (Direction::BackUp, false) => tr!(
+            "backed up {n} frame to {label} ({size})"
+                | "backed up {n} frames to {label} ({size})" % n,
+            label = label,
+            size = size
+        ),
+        (Direction::BringBack, true) => tr!(
+            "brought back {n} frame ({size})" | "brought back {n} frames ({size})" % n,
+            size = size
+        ),
+        (Direction::BringBack, false) => tr!(
+            "brought back {n} frame to {label} ({size})"
+                | "brought back {n} frames to {label} ({size})" % n,
+            label = label,
+            size = size
+        ),
+    });
     if report.sidecars_only > 0 {
-        parts.push(format!(
-            "the sidecars of {} already there",
-            frames_word(report.sidecars_only)
-        ));
+        parts.push(tr!("the sidecars of {n} frame already there"
+            | "the sidecars of {n} frames already there"
+                % report.sidecars_only));
     }
     if report.same > 0 {
-        parts.push(format!("{} already there", report.same));
+        parts.push(tr!("{n} already there" | "{n} already there" % report.same));
     }
     if !report.theirs_newer.is_empty() {
         let paths: Vec<&Path> = report.theirs_newer.iter().map(PathBuf::as_path).collect();
-        parts.push(format!(
-            "skipped, the other side's sidecar is newer: {}",
-            some_names(&paths)
+        parts.push(tr!(
+            "skipped, the other side's sidecar is newer: {names}",
+            names = some_names(&paths)
         ));
     }
     if !report.taken.is_empty() {
         let paths: Vec<&Path> = report.taken.iter().map(PathBuf::as_path).collect();
-        parts.push(format!(
-            "left, another file has the name: {}",
-            some_names(&paths)
+        parts.push(tr!(
+            "left, another file has the name: {names}",
+            names = some_names(&paths)
         ));
     }
     if !report.failed.is_empty() {
         let (f, why) = &report.failed[0];
-        parts.push(format!(
-            "{} failed: {} ({why}{})",
-            report.failed.len(),
-            file_name(f),
-            if report.failed.len() > 1 {
-                "; the log has the rest"
-            } else {
-                ""
-            }
-        ));
+        let many = report.failed.len();
+        parts.push(if many > 1 {
+            tr!(
+                "{n} failed: {name} ({why}; the log has the rest)"
+                    | "{n} failed: {name} ({why}; the log has the rest)" % many,
+                name = file_name(f),
+                why = why
+            )
+        } else {
+            tr!(
+                "{n} failed: {name} ({why})" | "{n} failed: {name} ({why})" % many,
+                name = file_name(f),
+                why = why
+            )
+        });
     }
     if !report.stale.is_empty() {
-        parts.push(format!(
-            "removed {} left by an earlier copy that did not finish",
-            if report.stale.len() == 1 {
-                "a temporary file".to_string()
-            } else {
-                format!("{} temporary files", report.stale.len())
-            }
+        parts.push(tr!(
+            "removed a temporary file left by an earlier copy that did not finish"
+                | "removed {n} temporary files left by an earlier copy that did not finish"
+                    % report.stale.len()
         ));
     }
     if report.canceled > 0 {
-        parts.push(format!(
-            "canceled, {} not copied",
-            frames_word(report.canceled)
-        ));
+        parts
+            .push(tr!("canceled, {n} frame not copied"
+                | "canceled, {n} frames not copied" % report.canceled));
     }
     parts.join("; ")
 }
@@ -1445,18 +1596,20 @@ pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
             .collect();
         if archives.is_empty() {
             app.set_delete_archive(if frames.len() == 1 {
-                "It is on no other root.".into()
+                tr!("It is on no other root.").into()
             } else {
-                format!("All {} are on no other root.", frames.len()).into()
+                tr!("All {n} are on no other root."
+                    | "All {n} are on no other root." % frames.len())
+                .into()
             });
             return;
         }
     }
     app.set_delete_archive(
         if elsewhere {
-            "Looking for copies of these on the other roots..."
+            tr!("Looking for copies of these on the other roots...")
         } else {
-            "Looking for these on the archives..."
+            tr!("Looking for these on the archives...")
         }
         .into(),
     );
@@ -1525,7 +1678,7 @@ fn land_delete(
         } => app.set_delete_archive(result.into()),
         Heard::Done { late: true, .. } => {}
         Heard::Aside | Heard::Lost => app.set_delete_archive(
-            "An archive isn't reachable; unknown whether these are on it.".into(),
+            tr!("An archive isn't reachable; unknown whether these are on it.").into(),
         ),
     }
 }
@@ -1547,38 +1700,55 @@ pub(crate) fn delete_words(
         .iter()
         .filter(|w| w.on.is_empty() && !w.unknown.is_empty())
         .count();
-    let (also, none_of, an) = if elsewhere {
-        ("also on", "no other root", "another root")
-    } else {
-        ("on", "no archive", "an archive")
-    };
     let mut words = if n == 0 {
         String::new()
     } else if let Some(k) = (0..labels.len()).find(|k| on.iter().all(|w| w.on.contains(k))) {
-        if n == 1 {
-            format!("It is {also} {}.", labels[k])
-        } else {
-            format!("All {n} are {also} {}.", labels[k])
+        let label = &labels[k];
+        match (n, elsewhere) {
+            (1, true) => tr!("It is also on {label}.", label = label),
+            (1, false) => tr!("It is on {label}.", label = label),
+            (n, true) => tr!(
+                "All {n} are also on {label}." | "All {n} are also on {label}." % n,
+                label = label
+            ),
+            (n, false) => tr!(
+                "All {n} are on {label}." | "All {n} are on {label}." % n,
+                label = label
+            ),
         }
     } else {
         let none = on
             .iter()
             .filter(|w| w.on.is_empty() && w.unknown.is_empty())
             .count();
-        match none {
-            0 if unknown == 0 => format!("All {n} are {also} {an}."),
-            0 => String::new(),
-            1 if n == 1 => format!("It is on {none_of}."),
-            1 => format!("1 of these is on {none_of}."),
-            none => format!("{none} of these are on {none_of}."),
+        match (none, elsewhere) {
+            (0, true) if unknown == 0 => {
+                tr!("All {n} are also on another root." | "All {n} are also on another root." % n)
+            }
+            (0, false) if unknown == 0 => {
+                tr!("All {n} are on an archive." | "All {n} are on an archive." % n)
+            }
+            (0, _) => String::new(),
+            (1, true) if n == 1 => tr!("It is on no other root."),
+            (1, false) if n == 1 => tr!("It is on no archive."),
+            (none, true) => {
+                tr!("{n} of these is on no other root."
+                    | "{n} of these are on no other root." % none)
+            }
+            (none, false) => {
+                tr!("{n} of these is on no archive." | "{n} of these are on no archive." % none)
+            }
         }
     };
     match unknown {
         0 => {}
-        1 if n == 1 => words.push_str(&format!(
-            " Unsure whether it is {also} {an}; Back up checks it fully."
-        )),
-        u => words.push_str(&format!(" {u} unsure; Back up checks them fully.")),
+        1 if n == 1 => words.push_str(&if elsewhere {
+            tr!(" Unsure whether it is also on another root; Back up checks it fully.")
+        } else {
+            tr!(" Unsure whether it is on an archive; Back up checks it fully.")
+        }),
+        u => words.push_str(&tr!(" {n} unsure; Back up checks them fully."
+            | " {n} unsure; Back up checks them fully." % u)),
     }
     let quiet: Vec<&str> = labels
         .iter()
@@ -1587,7 +1757,7 @@ pub(crate) fn delete_words(
         .map(|(l, _)| l.as_str())
         .collect();
     if !quiet.is_empty() {
-        words.push_str(&format!(" Not reachable: {}.", quiet.join(", ")));
+        words.push_str(&tr!(" Not reachable: {names}.", names = quiet.join(", ")));
     }
     words.trim().to_string()
 }
@@ -1600,12 +1770,14 @@ pub(crate) fn toggle(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &P
         match crate::roots::edit_roots(&mut st, |r| r.set_archive(dir, on)) {
             Ok(true) => {}
             Ok(false) => {
-                app.set_status(format!("{} is not in the library", dir.display()).into());
+                app.set_status(
+                    tr!("{folder} is not in the library", folder = dir.display()).into(),
+                );
                 return;
             }
             Err(e) => {
                 tracing::warn!("library: roots not saved: {e}");
-                app.set_status(format!("not changed: {e}").into());
+                app.set_status(tr!("not changed: {why}", why = e).into());
                 return;
             }
         }
@@ -1621,9 +1793,9 @@ pub(crate) fn toggle(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &P
         );
         app.set_status(
             if on {
-                format!("{name} is now an archive")
+                tr!("{name} is now an archive", name = name)
             } else {
-                format!("{name} is no longer an archive; nothing moved")
+                tr!("{name} is no longer an archive; nothing moved", name = name)
             }
             .into(),
         );

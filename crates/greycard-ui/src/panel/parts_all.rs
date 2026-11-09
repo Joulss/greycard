@@ -25,6 +25,7 @@ use greycard_edit::Edit;
 use greycard_edit::history::person_label;
 use greycard_edit::mask::{Person, Shape};
 use greycard_edit::preset::Preset;
+use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::ai::{PersonOn, Picked};
@@ -94,7 +95,8 @@ pub(crate) struct Batch {
 impl Offer {
     /// The offer's words: every frame, the one picked on too.
     pub(crate) fn words(&self) -> String {
-        format!("Use this person on all {} pictures", self.others.len() + 1)
+        let n = self.others.len() + 1;
+        tr!("Use this person on all {n} picture" | "Use this person on all {n} pictures" % n)
     }
 
     /// The shape as the pick left it.
@@ -106,19 +108,29 @@ impl Offer {
 impl Batch {
     /// What the status line says of it once every frame has answered.
     pub(crate) fn words(&self) -> String {
-        let mut said = format!(
-            "used this person on {} of {} pictures",
-            self.used, self.count
+        let mut said = tr!(
+            "used this person on {used} of {n} picture"
+                | "used this person on {used} of {n} pictures" % self.count,
+            used = self.used
         );
-        let mut and = |n: usize, what: &str| {
-            if n > 0 {
-                said.push_str(&format!("; {n} {what}"));
-            }
-        };
-        and(self.settled, "kept its own person");
-        and(self.not_found, "not found");
-        and(self.changed, "changed since");
-        and(self.failed, "could not be looked at");
+        if self.settled > 0 {
+            said.push_str(&tr!(
+                "; {n} kept its own person" | "; {n} kept its own person" % self.settled
+            ));
+        }
+        if self.not_found > 0 {
+            said.push_str(&tr!("; {n} not found" | "; {n} not found" % self.not_found));
+        }
+        if self.changed > 0 {
+            said.push_str(&tr!(
+                "; {n} changed since" | "; {n} changed since" % self.changed
+            ));
+        }
+        if self.failed > 0 {
+            said.push_str(&tr!(
+                "; {n} could not be looked at" | "; {n} could not be looked at" % self.failed
+            ));
+        }
         said
     }
 }
@@ -310,7 +322,7 @@ pub(crate) fn used(st: &mut State, app: &App, worker: &Worker) {
     };
     if stands(st, &offer, &st.develop.edit).is_none() {
         show(st, app);
-        app.set_status("this mask no longer has the person picked".into());
+        app.set_status(tr!("this mask no longer has the person picked").into());
         return;
     }
     st.develop.people_all.reached = None;
@@ -336,7 +348,7 @@ pub(crate) fn used(st: &mut State, app: &App, worker: &Worker) {
         })
         .collect();
     if jobs.is_empty() {
-        app.set_status("the other pictures no longer have this mask".into());
+        app.set_status(tr!("the other pictures no longer have this mask").into());
         return;
     }
     let all = &mut st.develop.people_all;
@@ -361,10 +373,8 @@ pub(crate) fn used(st: &mut State, app: &App, worker: &Worker) {
         worker.send(Job::PersonOn(Box::new(job)));
     }
     app.set_status(
-        format!(
-            "looking for this person on {n} more picture{}",
-            if n == 1 { "" } else { "s" }
-        )
+        tr!("looking for this person on {n} more picture"
+            | "looking for this person on {n} more pictures" % n)
         .into(),
     );
 }
@@ -507,15 +517,16 @@ pub(crate) fn landed(
     }
     if b.waiting.is_empty() {
         let said = b.words();
-        tracing::info!("{said}");
+        tracing::info!("people batch: {said}");
         st.develop.people_all.batch = None;
         app.set_status(said.into());
     } else {
         let looked = b.count - 1 - b.waiting.len();
         app.set_status(
-            format!(
-                "looking for this person: {looked} of {} pictures looked at",
-                b.count - 1
+            tr!(
+                "looking for this person: {looked} of {n} picture looked at"
+                    | "looking for this person: {looked} of {n} pictures looked at" % b.count - 1,
+                looked = looked
             )
             .into(),
         );

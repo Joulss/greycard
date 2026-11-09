@@ -31,6 +31,7 @@ use greycard_edit_io::on_disk::Fresh;
 use greycard_engine::merge::{self, Options, Step, focus, pano};
 use greycard_library::Rehash;
 use greycard_library::collections::Reference;
+use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::panel::browser::chosen_frames;
@@ -184,7 +185,7 @@ pub(crate) fn ask(st: &mut State, app: &App, worker: &Worker, kind: Kind) {
         }
     }
     if cells.len() < 2 {
-        app.set_status("choose two frames or more to merge".into());
+        app.set_status(tr!("choose two frames or more to merge").into());
         return;
     }
     let files: Vec<PathBuf> = cells
@@ -319,20 +320,28 @@ fn queue(st: &mut State, app: &App, worker: &Worker, job: Job) {
     });
     match start {
         Some(job) => send_off(st, app, worker, job),
-        None => app.set_status(QUEUED.into()),
+        None => app.set_status(queued().into()),
     }
 }
 
 /// The status line for a merge asked while another runs.
-const QUEUED: &str = "these frames are merged once the merge in hand is done";
+fn queued() -> String {
+    tr!("these frames are merged once the merge in hand is done")
+}
 
 /// A merge's progress as the status line says it.
 fn step_line(step: Step) -> String {
     match step {
-        Step::Frame { index, of } => format!("merging frame {index} of {of}"),
-        Step::Placing => "merging: placing the frames".to_string(),
-        Step::Blending { index, of } => format!("merging: blending frame {index} of {of}"),
-        Step::Writing => "merging: writing the file".to_string(),
+        Step::Frame { index, of } => {
+            tr!("merging frame {index} of {of}", index = index, of = of)
+        }
+        Step::Placing => tr!("merging: placing the frames"),
+        Step::Blending { index, of } => tr!(
+            "merging: blending frame {index} of {of}",
+            index = index,
+            of = of
+        ),
+        Step::Writing => tr!("merging: writing the file"),
     }
 }
 
@@ -602,7 +611,14 @@ fn denoise_models() -> greycard_engine::testing::PlainDenoiser {
 /// it is done, the next asked run after it.
 #[cfg(not(test))]
 fn send_off(_st: &mut State, app: &App, _worker: &Worker, job: Job) {
-    app.set_status(format!("merging frame 1 of {}", job.frames()).into());
+    app.set_status(
+        tr!(
+            "merging frame {index} of {of}",
+            index = 1,
+            of = job.frames()
+        )
+        .into(),
+    );
     let app_weak = app.as_weak();
     let spawned = std::thread::Builder::new()
         .name("greycard merge".into())
@@ -659,7 +675,14 @@ fn send_off(_st: &mut State, app: &App, _worker: &Worker, job: Job) {
 /// it: there is no event loop to land it on.
 #[cfg(test)]
 fn send_off(st: &mut State, app: &App, _worker: &Worker, job: Job) {
-    app.set_status(format!("merging frame 1 of {}", job.frames()).into());
+    app.set_status(
+        tr!(
+            "merging frame {index} of {of}",
+            index = 1,
+            of = job.frames()
+        )
+        .into(),
+    );
     let done = job.run(&|line| {
         HEARD.with(|h| {
             if let Some(heard) = h.borrow_mut().as_mut() {
@@ -696,7 +719,7 @@ fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, done: Done) {
         Ok(made) => made,
         Err(e) => {
             tracing::warn!("merge: {e:#}");
-            app.set_status(format!("not merged: {e:#}").into());
+            app.set_status(tr!("not merged: {why}", why = format!("{e:#}")).into());
             return;
         }
     };
@@ -705,9 +728,9 @@ fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, done: Done) {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let said = format!(
-        "merged {} into {name}",
-        greycard_engine::queue::frames(done.frames)
+    let said = tr!(
+        "merged {n} frame into {name}" | "merged {n} frames into {name}" % done.frames,
+        name = name
     );
     let stack = match done.lands {
         Lands::Beside { stack } => stack,
@@ -1036,7 +1059,7 @@ mod tests {
         with_queue(|q| q.running = true);
         state.borrow_mut().views.picked = vec![cell(0), cell(1)];
         app.invoke_merge_hdr();
-        assert_eq!(app.get_status(), QUEUED);
+        assert_eq!(app.get_status(), queued());
         with_queue(|q| {
             assert_eq!(q.waiting.len(), 1);
             q.waiting.clear();

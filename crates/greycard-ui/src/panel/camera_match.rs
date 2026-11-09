@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use greycard_engine::camera_match::{self as fit, Group, Plan, Progress, Survey};
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::show_looks;
@@ -69,7 +70,12 @@ fn progress_view(stopped: bool, p: &Progress) -> Option<(Option<f32>, Option<Str
             total,
         } => Some((
             Some((*done as f32 / (*total).max(1) as f32).clamp(0.0, 1.0)),
-            Some(format!("{index} of {of} frames \u{b7} {group}")),
+            Some(tr!(
+                "{index} of {n} frame \u{b7} {group}"
+                    | "{index} of {n} frames \u{b7} {group}" % *of,
+                index = index,
+                group = group
+            )),
         )),
         Progress::Bar { done, total } => Some((
             Some((*done as f32 / (*total).max(1) as f32).clamp(0.0, 1.0)),
@@ -77,23 +83,30 @@ fn progress_view(stopped: bool, p: &Progress) -> Option<(Option<f32>, Option<Str
         )),
         Progress::Fit { group, done, of } => Some((
             None,
-            Some(format!("{done} of {of} held out \u{b7} {group}")),
+            Some(tr!(
+                "{done} of {of} held out \u{b7} {group}",
+                done = done,
+                of = of,
+                group = group
+            )),
         )),
         Progress::Done(_) => None,
     }
 }
 
 /// What Stop says: a fit under way is not looked at until it is done.
-fn stopping_words(fitting: bool) -> &'static str {
+fn stopping_words(fitting: bool) -> String {
     if fitting {
-        "stopping after this group..."
+        tr!("stopping after this group...")
     } else {
-        "stopping after this frame..."
+        tr!("stopping after this frame...")
     }
 }
 
 /// The line under Fit once a run has gone to its end.
-const DONE_NOTE: &str = "Done. Change a group, the scope or Replace existing looks to fit again.";
+fn done_note() -> String {
+    tr!("Done. Change a group, the scope or Replace existing looks to fit again.")
+}
 
 /// The scopes, as the sheet names them.
 pub(crate) const LIBRARY: &str = "Library";
@@ -189,11 +202,16 @@ impl Sheet {
     /// what a refit is for.
     fn curve_note(&self) -> String {
         let under = self.curve.phrase();
-        let mut out = format!("Fits under {under}; the look applies only there.");
+        let mut out = tr!(
+            "Fits under {curve}; the look applies only there.",
+            curve = under
+        );
         if let Some((name, _)) = &self.refit {
             match (&self.survey, self.groups().is_some_and(|g| !g.is_empty())) {
-                (Some(_), false) => out.push_str(&format!(" Nothing here to refit {name} from.")),
-                _ => out.push_str(&format!(" Refitting {name}.")),
+                (Some(_), false) => {
+                    out.push_str(&tr!(" Nothing here to refit {name} from.", name = name))
+                }
+                _ => out.push_str(&tr!(" Refitting {name}.", name = name)),
             }
         }
         out
@@ -263,11 +281,14 @@ fn survey(
     stop: &AtomicBool,
 ) -> Result<Survey, String> {
     if at.scope == LIBRARY {
-        let (path, roots) = at.library.as_ref().ok_or("no library is indexed")?;
+        let (path, roots) = at
+            .library
+            .as_ref()
+            .ok_or_else(|| tr!("no library is indexed"))?;
         let lib = greycard_library::Library::open_read_only(path).map_err(|e| e.to_string())?;
         return fit::survey_library(&lib, Some(roots)).map_err(|e| e.to_string());
     }
-    let folder = at.folder.as_ref().ok_or("no folder is open")?;
+    let folder = at.folder.as_ref().ok_or_else(|| tr!("no folder is open"))?;
     if let Some((path, roots)) = &at.library
         && roots.iter().any(|r| folder.starts_with(r))
         && let Some(found) = from_index(path, folder)
@@ -327,49 +348,52 @@ fn indexed_whole(ids: &[Option<i64>]) -> bool {
 /// will do with it.
 pub(crate) fn group_line(g: &Group, plan: &Plan) -> String {
     let n = g.frames.len();
-    let mut out = format!(
-        "{}: {n} frame{}, {} with the adaptive settings off",
-        g.name(),
-        if n == 1 { "" } else { "s" },
-        g.fixed()
+    let mut out = tr!(
+        "{name}: {n} frame, {fixed} with the adaptive settings off"
+            | "{name}: {n} frames, {fixed} with the adaptive settings off" % n,
+        name = g.name(),
+        fixed = g.fixed()
     );
     match plan {
         Plan::Fit { replaces } => {
-            out.push_str(&format!(" — fits on {} of them", g.candidates()));
+            out.push_str(&tr!(" — fits on {n} of them", n = g.candidates()));
             if g.left_out() > 0 {
-                out.push_str(&format!(
-                    "; the {} with an adaptive setting on are left out",
-                    g.left_out()
+                out.push_str(&tr!(
+                    "; the {n} with an adaptive setting on are left out",
+                    n = g.left_out()
                 ));
             }
             if g.one_folder() {
-                out.push_str("; all from one folder, so the fit will be narrow");
+                out.push_str(&tr!("; all from one folder, so the fit will be narrow"));
             }
             if let Some(warning) = replaces {
                 out.push_str(&format!("; {warning}"));
             }
         }
         Plan::Borrow { from, replaces, .. } => {
-            out.push_str(&format!(" — too few; borrows the look fitted on {from}"));
+            out.push_str(&tr!(
+                " — too few; borrows the look fitted on {from}",
+                from = from
+            ));
             if let Some(warning) = replaces {
                 out.push_str(&format!("; {warning}"));
             }
         }
-        Plan::Donor => out.push_str(" — read only, for a borrow"),
-        Plan::Skip(why) if why == fit::NOT_CHOSEN => out.push_str(" — not chosen"),
-        Plan::Skip(why) => out.push_str(&format!(" — skipped: {why}")),
+        Plan::Donor => out.push_str(&tr!(" — read only, for a borrow")),
+        Plan::Skip(why) if why == fit::NOT_CHOSEN => out.push_str(&tr!(" — not chosen")),
+        Plan::Skip(why) => out.push_str(&tr!(" — skipped: {why}", why = why)),
     }
     out
 }
 
 /// What a chosen group that borrows must also say: that the group it
 /// borrows from is not being fitted. Empty for anything else.
-fn donor_note(plan: &Plan, chosen: &[bool]) -> &'static str {
+fn donor_note(plan: &Plan, chosen: &[bool]) -> String {
     match plan {
         Plan::Borrow { donor, .. } if !chosen.get(*donor).copied().unwrap_or(true) => {
-            "; its source is unchecked, so read only"
+            tr!("; its source is unchecked, so read only")
         }
-        _ => "",
+        _ => String::new(),
     }
 }
 
@@ -380,27 +404,28 @@ fn donor_note(plan: &Plan, chosen: &[bool]) -> &'static str {
 /// them.
 pub(crate) fn fit_label(checked: usize, have_groups: bool, donors: usize) -> (String, String) {
     match (checked, have_groups) {
-        (0, true) => ("Fit".into(), "No group is checked.".into()),
-        (0, false) => ("Fit".into(), String::new()),
+        (0, true) => (tr!("Fit"), tr!("No group is checked.")),
+        (0, false) => (tr!("Fit"), String::new()),
         (n, _) => {
-            let plural = |n: usize| if n == 1 { "" } else { "s" };
             let note = if donors > 0 {
-                format!(
-                    "Also reads {donors} unchecked group{} to borrow from.",
-                    plural(donors)
-                )
+                tr!("Also reads {n} unchecked group to borrow from."
+                    | "Also reads {n} unchecked groups to borrow from." % donors)
             } else {
                 String::new()
             };
-            (format!("Fit {n} group{}", plural(n)), note)
+            (tr!("Fit {n} group" | "Fit {n} groups" % n), note)
         }
     }
 }
 
 /// What the list says when it has no group in it.
-pub(crate) const NO_GROUP: &str = "No camera with a fixed picture style here.";
+pub(crate) fn no_group() -> String {
+    tr!("No camera with a fixed picture style here.")
+}
 /// What the list says while the scope is surveyed.
-pub(crate) const READING: &str = "Reading the frames' picture styles...";
+pub(crate) fn reading() -> String {
+    tr!("Reading the frames' picture styles...")
+}
 
 /// What the list says when it has no group, and the line under it:
 /// while the survey runs, that it is reading and how far it has got;
@@ -408,13 +433,19 @@ pub(crate) const READING: &str = "Reading the frames' picture styles...";
 /// group, and what it left out.
 fn survey_words(sheet: &Sheet) -> (String, String) {
     match (&sheet.survey, &sheet.failed) {
-        (Some(survey), _) => (NO_GROUP.into(), summary(survey)),
+        (Some(survey), _) => (no_group(), summary(survey)),
         (None, Some(why)) => (why.clone(), String::new()),
         (None, None) => (
-            READING.into(),
+            reading(),
             sheet
                 .reading
-                .map(|(done, of)| format!("Reading picture styles: {done} of {of}"))
+                .map(|(done, of)| {
+                    tr!(
+                        "Reading picture styles: {done} of {of}",
+                        done = done,
+                        of = of
+                    )
+                })
                 .unwrap_or_default(),
         ),
     }
@@ -424,23 +455,14 @@ fn survey_words(sheet: &Sheet) -> (String, String) {
 pub(crate) fn summary(survey: &Survey) -> String {
     let mut out = Vec::new();
     if survey.unread > 0 {
-        out.push(format!(
-            "{} raw{} here {} no picture style read yet.",
-            survey.unread,
-            if survey.unread == 1 { "" } else { "s" },
-            if survey.unread == 1 { "has" } else { "have" },
-        ));
+        out.push(tr!("{n} raw here has no picture style read yet."
+            | "{n} raws here have no picture style read yet."
+                % survey.unread));
     }
     if survey.no_style > 0 {
-        out.push(format!(
-            "{} raw{} no fixed picture style and {} not grouped.",
-            survey.no_style,
-            if survey.no_style == 1 {
-                " has"
-            } else {
-                "s have"
-            },
-            if survey.no_style == 1 { "is" } else { "are" },
+        out.push(tr!(
+            "{n} raw has no fixed picture style and is not grouped."
+                | "{n} raws have no fixed picture style and are not grouped." % survey.no_style
         ));
     }
     out.join(" ")
@@ -495,7 +517,7 @@ fn show(st: &State, app: &App) {
             let (label, note) = fit_label(n, !groups.is_empty(), donors);
             app.set_match_fit_label(label.into());
             app.set_match_fit_note(if sheet.done {
-                DONE_NOTE.into()
+                done_note().into()
             } else {
                 note.into()
             });
@@ -503,7 +525,7 @@ fn show(st: &State, app: &App) {
         }
         _ => {
             app.set_match_groups(ModelRc::new(VecModel::from(Vec::<MatchGroup>::new())));
-            app.set_match_fit_label("Fit".into());
+            app.set_match_fit_label(tr!("Fit").into());
             app.set_match_fit_note("".into());
             app.set_match_can_fit(false);
         }
@@ -605,9 +627,9 @@ pub(crate) fn open(st: &mut State, app: &App, refit: Option<String>) {
     app.set_match_scopes(strings(&scopes));
     app.set_match_scope_note(
         if library {
-            ""
+            String::new()
         } else {
-            "No library yet: this folder only."
+            tr!("No library yet: this folder only.")
         }
         .into(),
     );
@@ -644,7 +666,7 @@ fn start_run(st: &mut State, app: &App) {
         return;
     }
     let Some(store) = greycard_edit_io::looks::store_dir() else {
-        app.set_match_progress("There is no look directory on this machine.".into());
+        app.set_match_progress(tr!("There is no look directory on this machine.").into());
         app.set_match_fraction(-1.0);
         return;
     };
@@ -663,7 +685,7 @@ fn start_run(st: &mut State, app: &App) {
     st.camera_match.generation += 1;
     let generation = st.camera_match.generation;
     show(st, app);
-    app.set_match_progress("starting...".into());
+    app.set_match_progress(tr!("starting...").into());
     app.set_match_fraction(-1.0);
     let app_weak = app.as_weak();
     // Each message is handled on the window's thread, in order.
@@ -725,17 +747,20 @@ fn start_run(st: &mut State, app: &App) {
                     started.elapsed().as_secs_f64()
                 );
                 let words = match (stopped, written) {
-                    (true, _) => format!("Stopped. {written} written."),
-                    (false, 0) => "Done: no look written.".to_string(),
-                    (false, 1) => format!("Done: 1 look written to {}.", store.display()),
-                    (false, n) => format!("Done: {n} looks written to {}.", store.display()),
+                    (true, _) => tr!("Stopped. {n} written.", n = written),
+                    (false, 0) => tr!("Done: no look written."),
+                    (false, n) => tr!(
+                        "Done: {n} look written to {folder}."
+                            | "Done: {n} looks written to {folder}." % n,
+                        folder = store.display()
+                    ),
                 };
                 (words, !stopped)
             }
             Err(panic) => {
                 let why = crate::worker::panic_message(&*panic);
                 tracing::error!("camera match: {why}");
-                (format!("The fit stopped: {why}"), false)
+                (tr!("The fit stopped: {why}", why = why), false)
             }
         };
         post(Message::Finished { end, complete });
@@ -1067,13 +1092,13 @@ mod tests {
         finish(&mut st, true);
         assert!(!app.get_match_can_fit());
         assert!(app.get_match_done());
-        assert_eq!(app.get_match_fit_note(), DONE_NOTE);
+        assert_eq!(app.get_match_fit_note(), done_note());
         // A box pressed is a new choice: Fit again.
         st.camera_match.toggle(1).unwrap();
         show(&st, &app);
         assert!(app.get_match_can_fit());
         assert!(!app.get_match_done());
-        assert_ne!(app.get_match_fit_note(), DONE_NOTE);
+        assert_ne!(app.get_match_fit_note(), done_note());
         // Stopped, or failed, the run is not over its choices: Fit stays.
         finish(&mut st, false);
         assert!(app.get_match_can_fit());
@@ -1471,11 +1496,11 @@ mod tests {
 
         st.camera_match = Sheet::default();
         show(&st, &app);
-        assert_eq!(app.get_match_list_note(), READING);
+        assert_eq!(app.get_match_list_note(), reading());
         assert_eq!(app.get_match_summary(), "");
         st.camera_match.reading = Some((120, 800));
         show(&st, &app);
-        assert_eq!(app.get_match_list_note(), READING);
+        assert_eq!(app.get_match_list_note(), reading());
         assert_eq!(
             app.get_match_summary(),
             "Reading picture styles: 120 of 800"
@@ -1496,7 +1521,7 @@ mod tests {
             no_style: 3,
         });
         show(&st, &app);
-        assert_eq!(app.get_match_list_note(), NO_GROUP);
+        assert_eq!(app.get_match_list_note(), no_group());
         assert!(
             app.get_match_summary()
                 .starts_with("3 raws have no fixed picture style"),

@@ -5,6 +5,7 @@ use greycard_core::color::{WhitePoint, resolve_white_balance};
 use greycard_core::develop::defringe;
 use greycard_edit::curve::Channel;
 use greycard_edit::geometry::Geometry;
+use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::color::{preview_white, show_mixer_band, store_mixer_band, white_profile};
@@ -110,16 +111,16 @@ impl NeutralMiss {
     /// The status line's words, for the Neutral dropper or for Auto.
     pub(crate) fn said(&self, auto: bool) -> String {
         let what = if auto {
-            "auto white balance"
+            tr!("auto white balance")
         } else {
-            "white balance"
+            tr!("white balance")
         };
         match self {
-            Self::Waiting => format!("{what}: wait for the develop"),
-            Self::NoProfile => format!("{what}: no camera profile for this frame"),
-            Self::NoWhite if auto => format!("{what}: nothing neutral to read"),
-            Self::NoWhite => "nothing to read there".to_string(),
-            Self::Unresolved(e) => format!("{what}: {e}"),
+            Self::Waiting => tr!("{what}: wait for the develop", what = what),
+            Self::NoProfile => tr!("{what}: no camera profile for this frame", what = what),
+            Self::NoWhite if auto => tr!("{what}: nothing neutral to read", what = what),
+            Self::NoWhite => tr!("nothing to read there"),
+            Self::Unresolved(e) => tr!("{what}: {why}", what = what, why = e),
         }
     }
 }
@@ -232,8 +233,9 @@ const AUTO_WHITE_ACROSS: u32 = 512;
 
 /// What the Auto white balance says when the picture has too little
 /// that is neither clipped nor black to read a white from.
-pub(crate) const AUTO_WHITE_TOO_LITTLE: &str =
-    "auto white balance: not enough of the picture to read";
+pub(crate) fn auto_white_too_little() -> String {
+    tr!("auto white balance: not enough of the picture to read")
+}
 
 #[cfg(test)]
 thread_local! {
@@ -296,7 +298,7 @@ pub(crate) fn auto_white(mut st: crate::shared::HeldMut<'_>, app: &App) {
             Err(miss) => miss,
         },
         Ok(None) => {
-            app.set_status(AUTO_WHITE_TOO_LITTLE.into());
+            app.set_status(auto_white_too_little().into());
             return;
         }
         Err(miss) => miss,
@@ -501,26 +503,28 @@ pub(crate) fn dropper_reads_develop(st: &State) -> bool {
 /// [`NeutralMiss::Waiting`]'s.
 pub(crate) fn waiting_said(kind: &str) -> String {
     let what = match kind {
-        "White" => "white balance",
-        "Curve" => "curve",
-        "Range" => "color range",
-        "Defringe" => "defringe",
-        _ => "color mixer",
+        "White" => tr!("white balance"),
+        "Curve" => tr!("curve"),
+        "Range" => tr!("color range"),
+        "Defringe" => tr!("defringe"),
+        _ => tr!("color mixer"),
     };
-    format!("{what}: wait for the develop")
+    tr!("{what}: wait for the develop", what = what)
 }
 
 /// The hint the status line shows for a dropper in hand.
-pub(crate) fn picking_hint(kind: &str) -> &'static str {
+pub(crate) fn picking_hint(kind: &str) -> String {
     match kind {
-        "White" => "click something neutral; Esc to finish",
-        "Curve" => "click a tone to add a point, drag up or down to move it; Esc to finish",
-        "Range" => "click a color to center the mask's hue on it; Esc to finish",
+        "White" => tr!("click something neutral; Esc to finish"),
+        "Curve" => tr!("click a tone to add a point, drag up or down to move it; Esc to finish"),
+        "Range" => tr!("click a color to center the mask's hue on it; Esc to finish"),
         "Defringe" => {
-            "defringe is off while picking; zoom to 1:1 and click a fringe; Esc to finish"
+            tr!("defringe is off while picking; zoom to 1:1 and click a fringe; Esc to finish")
         }
         _ => {
-            "click a color for its band, drag up or down for saturation, sideways for hue; Esc to finish"
+            tr!(
+                "click a color for its band, drag up or down for saturation, sideways for hue; Esc to finish"
+            )
         }
     }
 }
@@ -945,7 +949,7 @@ pub(crate) fn zoom_label(zoom: f32) -> slint::SharedString {
     if zoom > 0.0 {
         format!("{}%", (zoom * 100.0).round() as i32).into()
     } else {
-        "Fit".into()
+        tr!("Fit").into()
     }
 }
 
@@ -1730,10 +1734,7 @@ pub(crate) fn choose_icc(
     chooser::choose_open(
         title,
         start,
-        (
-            "ICC profiles".to_string(),
-            vec!["*.icc".into(), "*.icm".into()],
-        ),
+        (tr!("ICC profiles"), vec!["*.icc".into(), "*.icm".into()]),
         move |chosen| {
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(app) = app_weak.upgrade() else {
@@ -1971,7 +1972,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if !same {
                 app.set_picking(kind.clone());
                 let hint = picking_hint(kind.as_str());
-                crate::panel::deliver::show_hint(&app, &mut state.borrow_mut(), hint);
+                crate::panel::deliver::show_hint(&app, &mut state.borrow_mut(), &hint);
                 // The defringe's dropper wants the pass's input on
                 // screen, not its output: see `edit_to_develop`.
                 if kind == "Defringe" {
@@ -2065,7 +2066,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     };
                     let Some(hue) = defringe::deviation_hue(px, mean, DEFRINGE_PICK_FLOOR) else {
                         app.set_status(
-                            "no fringe there: that color does not depart from its neighbors'"
+                            tr!("no fringe there: that color does not depart from its neighbors'")
                                 .into(),
                         );
                         return;
@@ -2101,10 +2102,10 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     // the window would not take it in anyway: say so.
                     let floor = app.get_range_chroma();
                     app.set_status(if s.chroma() < floor {
-                        format!(
-                            "that color is nearly grey (chroma {:.1}, under the floor's {:.1}): lower Chroma to take it in",
-                            s.chroma() * 100.0,
-                            floor * 100.0
+                        tr!(
+                            "that color is nearly grey (chroma {chroma}, under the floor's {floor}): lower Chroma to take it in",
+                            chroma = format!("{:.1}", s.chroma() * 100.0),
+                            floor = format!("{:.1}", floor * 100.0)
                         )
                         .into()
                     } else {
@@ -3961,7 +3962,7 @@ pub(crate) mod tests {
         assert!(app.get_fetch_open());
         assert!(
             app.get_fetch_text()
-                .starts_with(crate::panel::assets::LENSES_WHY)
+                .starts_with(&crate::panel::assets::lenses_why())
         );
 
         app.set_fetch_open(false);
@@ -4354,7 +4355,7 @@ pub(crate) mod tests {
         // Too little to read: nothing moves, and the status says why.
         AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((vec![[0.99; 3]; 1000], 40)));
         app.invoke_wb_auto();
-        assert_eq!(app.get_status(), AUTO_WHITE_TOO_LITTLE);
+        assert_eq!(app.get_status(), auto_white_too_little());
         assert!(app.get_as_shot());
 
         let grid: Vec<[f32; 3]> = (0..2000)

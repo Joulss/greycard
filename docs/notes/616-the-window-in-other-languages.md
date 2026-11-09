@@ -284,3 +284,70 @@ French catalog merged, all untranslated.
 - Strings Rust sets and Slint compares or shows (mask kinds, the
   archive verbs, the rawtherapee rows' "frame" label, the denoise
   tiers, the lens makers' "All", match scopes): the Rust wrapping's.
+
+### The develop side's Rust strings
+
+The words the window shows from twenty-one files of
+`crates/greycard-ui/src/panel` (the develop side: masks, the viewport's
+droppers, the archive's sheets, assets and their download sheets, the
+export, crop, camera match, People and its batch, retouch, culling, the
+edit's menus, history and snapshots, versions, the Original, merges, the
+export queue and its view) go through `tr!`: status lines, sheet titles,
+texts, notes and buttons, picker rows, and errors shown. The English
+reads as it did, word for word, but for two corrections the plurals
+brought: the camera match's progress says "1 of 1 frame" and the People
+batch's "of 1 picture looked at", where both said the plural before. A
+test sets no language, so every test still reads English.
+
+- **Placeholders by name.** A value is passed by name
+  (`{name}`, `{folder}`, `{why}`), never captured: `tr!` fills
+  `{}`, `{0}`, and `{name}` only, so a formatted value (`{:.2}`, `{e:#}`,
+  `{:+.0}`) is formatted first and passed as a string.
+- **Plurals whole.** Counts built by hand ("frame" plus "s", "it was" or
+  "they were", "has" or "have") are `tr!` plurals of the whole sentence,
+  the English forms as they were. `queue::frames`, `delete::count`, and
+  the archive's `frames_word` are no longer spliced into a shown sentence
+  from these files.
+- **One sentence a case.** Sentences assembled from a verb and a
+  preposition chosen by direction ("backing up" or "bringing back",
+  "on {label}" or "here", "also on" or "on") are written out a case each,
+  so a translator sees whole sentences.
+- **Constants to functions.** A shown `const &str` (the hints, the edge
+  and runtime lines, the Original's word, the camera match's notes)
+  became a function returning the translated string; the Original's
+  status, which is compared with what the status line says, compares
+  with the same function. `FROM_THE_FILE` and `ALL_MAKERS` stay as
+  English constants for the tests only.
+- **Kept English for the log.** The archive's `frames_word` stays
+  English (the log reads it, and the rejects' module replaces "frame"
+  by "reject" in it). What a job on an archive is doing is an enum,
+  `Doing` (back up, bring back, move the rejects, delete them), with
+  the log's words and the card's line as whole sentences a case, the
+  stopping clause inside them; the rejects' module sets it.
+- **Log lines anchored.** A log line that repeats a shown line starts
+  with an English word of its own ("export:", "rejects:", "versions:",
+  "people batch:"), so a translated status still reads in the log.
+
+Left bare on purpose: keys and values compared with the Slint side
+(tabs, tool kinds, aspect and scope names, `PICKING`, `PARAMETRIC`,
+`CULL_TAB`, `NO_PRESET`), stored names (a mask's first-shape name,
+"Snapshot N"), the `--sheet` capture's sample text and the command
+line's errors, the log, and the request nouns `rows::request` takes
+(its own module pluralizes them by appending "s").
+
+*Verified.*
+
+- `cargo fmt --all`; `cargo clippy -p greycard-ui --all-targets -- -D
+  warnings`; `cargo test -p greycard-ui` on lavapipe.
+- `xtr` over the twenty-one files: 452 messages, every one a shown
+  string, no key and no log line.
+
+*Not verified.*
+
+- Any of it in another language: no catalog has a translation yet.
+- Lines that are both shown and logged carry the translated text after
+  their English anchor once a language is chosen.
+- Shown words that come from other crates or other files (the engine's
+  reasons and step names, `export_queue::sets` and `count_line`,
+  `delete::companion_words`, shape and part labels, the chooser's
+  titles, which `chooser` takes as `&'static str`) are not wrapped here.

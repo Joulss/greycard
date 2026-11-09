@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::export_queue::{self, Entry, QueuedFrame};
@@ -109,9 +110,17 @@ pub(crate) fn refused(st: &State, what: &str) -> bool {
 pub(crate) fn heading(entry: &Entry) -> String {
     let sheet = entry.sheet.settings().describe();
     match (&entry.folder, entry.sheet.subfolder().ok().flatten()) {
-        (Some(folder), _) => format!("{sheet}, to {}", crate::report::path_shown(folder)),
-        (None, Some(sub)) => format!("{sheet}, to {} beside each original", sub.display()),
-        (None, None) => format!("{sheet}, beside each original"),
+        (Some(folder), _) => tr!(
+            "{sheet}, to {folder}",
+            sheet = sheet,
+            folder = crate::report::path_shown(folder)
+        ),
+        (None, Some(sub)) => tr!(
+            "{sheet}, to {folder} beside each original",
+            sheet = sheet,
+            folder = sub.display()
+        ),
+        (None, None) => tr!("{sheet}, beside each original", sheet = sheet),
     }
 }
 

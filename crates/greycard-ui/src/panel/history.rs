@@ -4,6 +4,7 @@ use std::rc::Rc;
 use greycard_edit::{Edit, Exported, Row};
 use greycard_library::export_record::{no_version, not_kept, record_export_on_disk, take_seed};
 use greycard_render::finish;
+use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::cull::leave_cull;
@@ -96,9 +97,9 @@ fn state_name(sidecar: &greycard_edit::Line, i: usize) -> String {
             Edit::raw_defaults().contains(&plain) || Edit::picture_defaults().contains(state)
         } =>
         {
-            "Original".to_string()
+            tr!("Original")
         }
-        None => "Earliest kept".to_string(),
+        None => tr!("Earliest kept"),
     }
 }
 
@@ -240,7 +241,10 @@ pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
             let note = if unseen.is_empty() {
                 String::new()
             } else {
-                format!("; the {} shown once restored", unseen.join(" and "))
+                tr!(
+                    "; the {what} shown once restored",
+                    what = unseen.join(&tr!(" and "))
+                )
             };
             if st.develop.status_kept.is_none() {
                 st.develop.status_kept = Some(app.get_status());
@@ -271,10 +275,26 @@ pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
 /// does ("row", or one of its icons: "restore", "rename", "remove").
 fn snapshot_hint(name: &str, taken: &str, part: &str) -> String {
     match part {
-        "restore" => format!("{name}, {taken}; click to restore it"),
-        "rename" => format!("{name}, {taken}; click to rename it"),
-        "remove" => format!("{name}, {taken}; click to remove it"),
-        _ => format!("{name}, {taken}; click to restore, double-click to rename"),
+        "restore" => tr!(
+            "{name}, {taken}; click to restore it",
+            name = name,
+            taken = taken
+        ),
+        "rename" => tr!(
+            "{name}, {taken}; click to rename it",
+            name = name,
+            taken = taken
+        ),
+        "remove" => tr!(
+            "{name}, {taken}; click to remove it",
+            name = name,
+            taken = taken
+        ),
+        _ => tr!(
+            "{name}, {taken}; click to restore, double-click to rename",
+            name = name,
+            taken = taken
+        ),
     }
 }
 
@@ -386,7 +406,7 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
         // generation is superseded now and will not land, so the
         // words it was holding for would otherwise sit unread.
         st.develop.status_after_develop = None;
-        app.set_status("developing...".into());
+        app.set_status(tr!("developing...").into());
         app.set_busy(true);
         worker.send(Job::Develop {
             edit: edit_to_develop(app, &st.develop.edit),
@@ -544,22 +564,27 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 Some((edit, Row::Exported { state, export }, _)) => {
                     let e = &sidecar.exports(state)[export];
                     let preset = match &e.preset {
-                        Some(p) => format!(" with the export preset {p}"),
+                        Some(p) => tr!(" with the export preset {name}", name = p),
                         None => String::new(),
                     };
-                    let what = format!(
-                        "{}, exported {}{preset}; click to go back to the state it was \
+                    let what = tr!(
+                        "{file}, exported {when}{preset}; click to go back to the state it was \
                          exported from",
-                        e.file,
-                        local_date_of(e.at)
+                        file = e.file,
+                        when = local_date_of(e.at),
+                        preset = preset
                     );
                     peek(&mut st, &app, Some(edit), &what);
                 }
                 Some((edit, Row::State(i), name)) => {
                     let what = if i == sidecar.position() {
-                        format!("the current state: {name}")
+                        tr!("the current state: {name}", name = name)
                     } else {
-                        format!("step {i}: {name}; click to make it current")
+                        tr!(
+                            "step {i}: {name}; click to make it current",
+                            i = i,
+                            name = name
+                        )
                     };
                     peek(&mut st, &app, Some(edit), &what);
                 }
@@ -601,7 +626,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             write_sidecar(&mut st, c);
             show_history(&st, &app);
             app.set_snapshot_editing(i as i32);
-            app.set_status(format!("{name} taken; type a name for it").into());
+            app.set_status(tr!("{name} taken; type a name for it", name = name).into());
         });
     }
     {
@@ -633,7 +658,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     .is_some_and(|l| l.restore_snapshot(i as usize))
                 {
                     leave_cull(&mut st, &app, &worker, None);
-                    app.set_status(format!("{name} restored").into());
+                    app.set_status(tr!("{name} restored", name = name).into());
                 }
                 return;
             }
@@ -647,14 +672,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 // showing the command line's overrides is not: it
                 // takes the snapshot's state all the same.
                 if st.launch.overridden.is_some() {
-                    app.set_status(format!("{name} restored").into());
+                    app.set_status(tr!("{name} restored", name = name).into());
                     take_current(&mut st, &app, &worker);
                 } else {
-                    app.set_status(format!("{name} is the current state").into());
+                    app.set_status(tr!("{name} is the current state", name = name).into());
                 }
                 return;
             }
-            app.set_status(format!("{name} restored").into());
+            app.set_status(tr!("{name} restored", name = name).into());
             take_current(&mut st, &app, &worker);
         });
     }
@@ -729,7 +754,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             peek(&mut st, &app, None, "");
             write_sidecar(&mut st, c);
             show_history(&st, &app);
-            app.set_status(format!("{} removed", removed.name).into());
+            app.set_status(tr!("{name} removed", name = removed.name).into());
         });
     }
 }

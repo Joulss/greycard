@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use greycard_edit::{Edit, Preset, preset};
+use greycard_ui::tr;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::panel::browser::file_name;
@@ -40,43 +41,44 @@ pub(crate) fn offer_lenses_once(st: &mut State, app: &App) {
 }
 
 /// The first line of the lens profiles' unprompted offer.
-pub(crate) const LENSES_WHY: &str = "No lens profiles installed; lenses aren't corrected.";
+pub(crate) fn lenses_why() -> String {
+    tr!("No lens profiles installed; lenses aren't corrected.")
+}
 
 /// Open the download sheet for the lens database: `unprompted` when
 /// no one asked for it, and the sheet says why it is up.
 pub(crate) fn offer_lenses(st: &mut State, app: &App, unprompted: bool) {
     st.sheets.fetch = Some(Fetch::Lenses);
-    app.set_fetch_title("Download the lens profiles?".into());
-    let details = format!(
-        "The lensfun database, about {} KB from {}.
-License: {} ({}).
-Kept in {}.",
-        greycard_lens::store::APPROX_BYTES / 1000,
-        greycard_lens::store::SOURCES[0]
+    app.set_fetch_title(tr!("Download the lens profiles?").into());
+    let details = tr!(
+        "The lensfun database, about {size} KB from {host}.
+License: {license} ({url}).
+Kept in {kept_in}.",
+        size = greycard_lens::store::APPROX_BYTES / 1000,
+        host = greycard_lens::store::SOURCES[0]
             .split('/')
             .nth(2)
-            .unwrap_or("its site"),
-        greycard_lens::store::LICENSE.0,
-        greycard_lens::store::LICENSE.1,
-        greycard_lens::Store::user().map_or("no cache directory".to_string(), |s| s
-            .root()
-            .display()
-            .to_string()),
+            .map_or_else(|| tr!("its site"), str::to_string),
+        license = greycard_lens::store::LICENSE.0,
+        url = greycard_lens::store::LICENSE.1,
+        kept_in = greycard_lens::Store::user().map_or_else(
+            |_| tr!("no cache directory"),
+            |s| s.root().display().to_string()
+        ),
     );
     // Unasked, the sheet says first why it is up: the reason is the
     // news, and the particulars follow it.
     let text = if unprompted {
-        format!("{LENSES_WHY}\n\n{details}")
+        format!("{}\n\n{details}", lenses_why())
     } else {
         details
     };
     app.set_fetch_text(text.into());
-    let note = "Their own license.";
     app.set_fetch_note(
         if unprompted {
-            format!("{note} Not now won't ask again; it's also in LENS.")
+            tr!("Their own license. Not now won't ask again; it's also in LENS.")
         } else {
-            note.to_string()
+            tr!("Their own license.")
         }
         .into(),
     );
@@ -94,8 +96,11 @@ fn mb(bytes: u64) -> u64 {
 /// changed and publishes itself says so, and under whose license.
 pub(crate) fn model_note(model: &greycard_ai::Model) -> String {
     match model.modified {
-        Some(_) => format!("greycard's faster copy; {} license.", model.license.name),
-        None => "Its own license.".to_string(),
+        Some(_) => tr!(
+            "greycard's faster copy; {license} license.",
+            license = model.license.name
+        ),
+        None => tr!("Its own license."),
     }
 }
 
@@ -144,36 +149,34 @@ pub(crate) fn offered(
     let note = model_note(model);
     app.set_fetch_note(
         if falls_back {
-            format!(
-                "Your Subject model runs on the CPU here; a GPU version is {} MB. {note}",
-                mb(model.bytes()),
+            tr!(
+                "Your Subject model runs on the CPU here; a GPU version is {size} MB. {note}",
+                size = mb(model.bytes()),
+                note = note
             )
         } else {
             note
         }
         .into(),
     );
-    app.set_fetch_title(format!("Download {}?", model.name).into());
+    app.set_fetch_title(tr!("Download {name}?", name = model.name).into());
     app.set_fetch_text(
-        format!(
-            "{} MB from {}.
-License: {} ({}).
-Kept in {}.",
-            mb(model.bytes()),
-            model.files[0]
+        tr!(
+            "{size} MB from {host}.
+License: {license} ({url}).
+Kept in {kept_in}.",
+            size = mb(model.bytes()),
+            host = model.files[0]
                 .url
                 .split('/')
                 .nth(2)
-                .unwrap_or("the model host"),
-            model.license.name,
-            model.license.url,
-            st.develop
-                .store
-                .as_ref()
-                .map_or("no cache directory".to_string(), |s| s
-                    .root()
-                    .display()
-                    .to_string()),
+                .map_or_else(|| tr!("the model host"), str::to_string),
+            license = model.license.name,
+            url = model.license.url,
+            kept_in = st.develop.store.as_ref().map_or_else(
+                || tr!("no cache directory"),
+                |s| s.root().display().to_string()
+            ),
         )
         .into(),
     );
@@ -193,7 +196,9 @@ pub(crate) enum AfterRuntime {
 }
 
 /// The sheet's title for the CPU-only runtime.
-pub(crate) const RUNTIME_TITLE: &str = "Download ONNX Runtime for the CPU?";
+pub(crate) fn runtime_title() -> String {
+    tr!("Download ONNX Runtime for the CPU?")
+}
 
 /// Where the AI features are off until Microsoft's CPU-only runtime is
 /// fetched, and it was neither declined nor failed to arrive this
@@ -245,7 +250,7 @@ pub(crate) fn offer_runtime(
         return;
     };
     st.sheets.fetch = Some(Fetch::Runtime(why, next));
-    app.set_fetch_title(RUNTIME_TITLE.into());
+    app.set_fetch_title(runtime_title().into());
     let reason = why.reason();
     let mut chars = reason.chars();
     let reason = chars
@@ -253,31 +258,33 @@ pub(crate) fn offer_runtime(
         .map(|c| c.to_uppercase().chain(chars).collect::<String>())
         .unwrap_or_default();
     app.set_fetch_text(
-        format!(
+        tr!(
             "{reason}, so the AI features are off.
 
 {name} runs them on the CPU only, slower: {download} MB from {host}, {kept} MB kept.
 License: {license} ({url}).
 Kept in {kept_in}.",
+            reason = reason,
             name = runtime.name.split(',').next().unwrap_or(runtime.name),
             download = mb(runtime.archive.bytes),
-            host = runtime.archive.url.split('/').nth(2).unwrap_or("its site"),
+            host = runtime
+                .archive
+                .url
+                .split('/')
+                .nth(2)
+                .map_or_else(|| tr!("its site"), str::to_string),
             kept = mb(runtime.bytes()),
             license = runtime.license.name,
             url = runtime.license.url,
-            kept_in = st
-                .develop
-                .store
-                .as_ref()
-                .map_or("no cache directory".to_string(), |s| s
-                    .root()
-                    .display()
-                    .to_string()),
+            kept_in = st.develop.store.as_ref().map_or_else(
+                || tr!("no cache directory"),
+                |s| s.root().display().to_string()
+            ),
         )
         .into(),
     );
     app.set_fetch_note(
-        "Microsoft's own build, as published. Not now keeps the AI features off this session."
+        tr!("Microsoft's own build, as published. Not now keeps the AI features off this session.")
             .into(),
     );
     app.set_fetch_open(true);
@@ -316,8 +323,9 @@ fn runtime_declined(
 
 /// The status line once the Subject model is declined for a Whole
 /// person's edge.
-pub(crate) const EDGE_DECLINED: &str =
-    "Whole person keeps its coarser edge without the Subject model";
+pub(crate) fn edge_declined() -> String {
+    tr!("Whole person keeps its coarser edge without the Subject model")
+}
 
 /// Open the model sheet for the Subject file `model`, for a Whole
 /// person's finer edge: the mask is made meanwhile with the coarser
@@ -334,10 +342,10 @@ pub(crate) fn offer_edge(st: &mut State, app: &App, model: &'static greycard_ai:
     }
     st.sheets.fetch = Some(Fetch::Edge(model));
     app.set_fetch_note(
-        format!(
+        tr!(
             "For a Whole person's finer edge, hair against the sky; the mask is made \
-             meanwhile with a coarser one. {}",
-            model_note(model)
+             meanwhile with a coarser one. {note}",
+            note = model_note(model)
         )
         .into(),
     );
@@ -388,12 +396,16 @@ pub(crate) fn show_presets_missing(st: &State, app: &App) {
 /// The settings' words for the shipped presets not in the store.
 pub(crate) fn presets_missing_words(store: bool, missing: &[String]) -> String {
     if !store {
-        return "No configuration directory to keep presets in.".into();
+        return tr!("No configuration directory to keep presets in.");
     }
     match missing {
-        [] => "Every default preset is in the list.".into(),
-        [one] => format!("{one} is not in the list."),
-        [rest @ .., last] => format!("{} and {last} are not in the list.", rest.join(", ")),
+        [] => tr!("Every default preset is in the list."),
+        [one] => tr!("{name} is not in the list.", name = one),
+        [rest @ .., last] => tr!(
+            "{names} and {last} are not in the list.",
+            names = rest.join(", "),
+            last = last
+        ),
     }
 }
 
@@ -435,7 +447,7 @@ const STATUS_ROOM: usize = 80;
 pub(crate) fn import_presets(st: &mut State, app: &App, paths: &[PathBuf]) {
     let Some(store) = st.develop.preset_store.as_ref() else {
         tracing::warn!("preset import: no configuration directory to save into");
-        app.set_status("no configuration directory to keep presets in".into());
+        app.set_status(tr!("no configuration directory to keep presets in").into());
         return;
     };
     // A folder is its preset files, each with the group it gives them
@@ -481,16 +493,23 @@ fn bring(store: &preset::Store, path: &Path, folder: Option<&str>) -> Brought {
 pub(crate) fn refusal_words(file: &str, e: &greycard_edit_io::preset::ImportError) -> String {
     use greycard_edit_io::preset::ImportError;
     match e {
-        ImportError::Unreadable(e) => format!("{file} could not be read: {e}."),
-        ImportError::NotAPreset(why) => format!("{file} is not a preset: {why}."),
-        ImportError::Newer(_) => format!("{file} is {e}."),
-        ImportError::Nameless => format!("{file} was not imported: {e}."),
-        ImportError::Taken(name) => {
-            format!("{file} was not imported: there is a preset called \"{name}\" already.")
+        ImportError::Unreadable(e) => {
+            tr!("{file} could not be read: {why}.", file = file, why = e)
         }
-        ImportError::Unsaved(_, e) => format!(
-            "{file} could not be written into the list: {}.",
-            preset::plain(e)
+        ImportError::NotAPreset(why) => {
+            tr!("{file} is not a preset: {why}.", file = file, why = why)
+        }
+        ImportError::Newer(_) => tr!("{file} is {why}.", file = file, why = e),
+        ImportError::Nameless => tr!("{file} was not imported: {why}.", file = file, why = e),
+        ImportError::Taken(name) => tr!(
+            "{file} was not imported: there is a preset called \"{name}\" already.",
+            file = file,
+            name = name
+        ),
+        ImportError::Unsaved(_, e) => tr!(
+            "{file} could not be written into the list: {why}.",
+            file = file,
+            why = preset::plain(e)
         ),
     }
 }
@@ -500,7 +519,10 @@ pub(crate) fn import_report(brought: &[Brought]) -> Report {
     let line = |name: &str, carried: &str, passed: &[String]| {
         let mut line = format!("{name} ({carried})");
         if !passed.is_empty() {
-            line.push_str(&format!("; no place here for {}", passed.join(", ")));
+            line.push_str(&tr!(
+                "; no place here for {names}",
+                names = passed.join(", ")
+            ));
         }
         line
     };
@@ -512,7 +534,7 @@ pub(crate) fn import_report(brought: &[Brought]) -> Report {
         },
     ] = brought
     {
-        let status = format!("imported {}", line(name, carried, passed));
+        let status = tr!("imported {what}", what = line(name, carried, passed));
         if status.chars().count() <= STATUS_ROOM {
             return Report::Status(status);
         }
@@ -536,16 +558,20 @@ pub(crate) fn import_report(brought: &[Brought]) -> Report {
         }
     }
     let title = match (names.as_slice(), brought.len()) {
-        ([name], 1) => format!("Imported {name}"),
-        ([], 1) => "Not imported".to_string(),
-        ([], _) => "No presets imported".to_string(),
-        (_, n) if names.len() == n => format!("Imported {n} presets"),
-        (_, n) => format!("Imported {} of {n} presets", names.len()),
+        ([name], 1) => tr!("Imported {name}", name = name),
+        ([], 1) => tr!("Not imported"),
+        ([], _) => tr!("No presets imported"),
+        (_, n) if names.len() == n => tr!("Imported {n} preset" | "Imported {n} presets" % n),
+        (_, n) => tr!(
+            "Imported {done} of {n} preset" | "Imported {done} of {n} presets" % n,
+            done = names.len()
+        ),
     };
     let note = if passed_any {
-        "What had no place here is named as Lightroom names it; set it by hand where a \
-         picture wants it."
-            .to_string()
+        tr!(
+            "What had no place here is named as Lightroom names it; set it by hand where a \
+             picture wants it."
+        )
     } else {
         String::new()
     };
@@ -592,9 +618,20 @@ pub(crate) fn show_import_report(app: &App, report: Report) {
 }
 
 /// The picker's first row: the lens the file names, or none.
-pub(crate) const FROM_THE_FILE: &str = "From the file";
+fn from_the_file() -> String {
+    tr!("From the file")
+}
 
 /// The Maker row's first entry: every maker's lenses.
+fn all_makers() -> String {
+    tr!("All")
+}
+
+/// [`from_the_file`] and [`all_makers`] in English, as the tests read
+/// them.
+#[cfg(test)]
+pub(crate) const FROM_THE_FILE: &str = "From the file";
+#[cfg(test)]
 pub(crate) const ALL_MAKERS: &str = "All";
 
 /// The Maker row's entries for `options` under the words `filter`:
@@ -615,9 +652,7 @@ pub(crate) fn lens_makers(
         .collect();
     makers.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
     makers.dedup();
-    std::iter::once(ALL_MAKERS.to_string())
-        .chain(makers)
-        .collect()
+    std::iter::once(all_makers()).chain(makers).collect()
 }
 
 /// Whether the words `filter` let an option be listed, maker aside:
@@ -672,7 +707,7 @@ pub(crate) fn lens_rows(
 ) -> LensRows {
     use greycard_edit::LensChoice;
     let mut keys = vec![String::new()];
-    let mut labels = vec![FROM_THE_FILE.to_string()];
+    let mut labels = vec![from_the_file()];
     for o in options {
         if maker.is_none_or(|m| m == o.maker) && lens_listed(o, filter) {
             keys.push(o.choice.key());
@@ -684,7 +719,7 @@ pub(crate) fn lens_rows(
     let label = match (listed, chosen) {
         (Some(o), _) => o.label.clone(),
         (None, LensChoice::Database(name) | LensChoice::Lcp(name)) => name.clone(),
-        (None, LensChoice::FromFile) => FROM_THE_FILE.to_string(),
+        (None, LensChoice::FromFile) => from_the_file(),
     };
     let index = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
         let shown = listed.is_none() && maker.is_none() && lens_matches(&label, filter);
@@ -852,9 +887,9 @@ fn show_lens_as(
     app.set_lens_available(matches!(report, LensReport::Found { .. }));
     app.set_lens_profile(
         match report {
-            LensReport::NoDatabase => "no lens profiles on this machine".to_string(),
-            LensReport::NoLensName => "the file names no lens".to_string(),
-            LensReport::Unknown(name) => format!("no profile for {name}"),
+            LensReport::NoDatabase => tr!("no lens profiles on this machine"),
+            LensReport::NoLensName => tr!("the file names no lens"),
+            LensReport::Unknown(name) => tr!("no profile for {name}", name = name),
             LensReport::Found {
                 lens,
                 camera: true,
@@ -864,12 +899,12 @@ fn show_lens_as(
                 lens,
                 camera: true,
                 smaller_sensor: true,
-            } => format!("{lens} (measured on a smaller sensor)"),
+            } => tr!("{lens} (measured on a smaller sensor)", lens = lens),
             LensReport::Found {
                 lens,
                 camera: false,
                 ..
-            } => format!("{lens} (body unknown)"),
+            } => tr!("{lens} (body unknown)", lens = lens),
         }
         .into(),
     );
@@ -888,7 +923,7 @@ fn body_of(st: &State) -> greycard_edit::camera::Body<'_> {
 pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
     let body = body_of(st);
     let mut names = vec![slint::SharedString::from(greycard_edit::camera::EMBEDDED)];
-    let mut labels = vec![slint::SharedString::from("Embedded")];
+    let mut labels = vec![slint::SharedString::from(tr!("Embedded"))];
     let embedded = chosen.is_embedded();
     let chosen_name = chosen.name().to_string();
     let chosen = chosen_name.as_str();
@@ -928,7 +963,7 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     // still shown, and chosen, so the panel says what the edit says.
     if !embedded && !names.iter().any(|n| n.as_str() == chosen) {
         names.push(chosen.into());
-        labels.push(format!("{chosen} (missing)").into());
+        labels.push(tr!("{name} (missing)", name = chosen).into());
     }
     app.set_camera_profile_names(ModelRc::new(VecModel::from(names)));
     app.set_camera_profile_labels(ModelRc::new(VecModel::from(labels)));
@@ -936,11 +971,16 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     app.set_camera_profile_note(
         match (st.develop.profiles.len(), hidden) {
             (0, _) => match greycard_edit_io::profiles::store_dir() {
-                Some(dir) => format!("No profiles yet: put DCP files in {}.", dir.display()),
-                None => "No profile directory on this machine.".to_string(),
+                Some(dir) => tr!(
+                    "No profiles yet: put DCP files in {folder}.",
+                    folder = dir.display()
+                ),
+                None => tr!("No profile directory on this machine."),
             },
             (_, 0) => String::new(),
-            (_, n) => format!("{n} more there, for other cameras."),
+            (_, n) => {
+                tr!("{n} more there, for other cameras." | "{n} more there, for other cameras." % n)
+            }
         }
         .into(),
     );
@@ -1029,7 +1069,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     // camera match's sheet on the look's group.
     let (mismatch, refit) =
         match greycard_edit::look::mismatch(&st.develop.looks, chosen_name, curve) {
-            Some((text, true)) => (text, format!("Refit under {}…", curve.phrase())),
+            Some((text, true)) => (text, tr!("Refit under {curve}…", curve = curve.phrase())),
             Some((text, false)) => (text, String::new()),
             None => greycard_edit::look::stale(
                 &st.develop.looks,
@@ -1037,7 +1077,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
                 curve,
                 greycard_match::FIT_VERSION,
             )
-            .map(|text| (text, "Refit…".to_string()))
+            .map(|text| (text, tr!("Refit…")))
             .unwrap_or_default(),
         };
     app.set_look_mismatch(mismatch.into());
@@ -1064,11 +1104,11 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
         // says it was made in when that is not the usual sRGB.
         Some(entry) => entry.described(),
         None if st.develop.looks.is_empty() => match greycard_edit_io::looks::store_dir() {
-            Some(dir) => format!(
-                "No looks yet. Add .cube or HaldCLUT .png files to {}.",
-                dir.display()
+            Some(dir) => tr!(
+                "No looks yet. Add .cube or HaldCLUT .png files to {folder}.",
+                folder = dir.display()
             ),
-            None => "No look directory on this machine.".to_string(),
+            None => tr!("No look directory on this machine."),
         },
         None => String::new(),
     };
@@ -1168,14 +1208,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 (Fetch::Every, yes) => crate::panel::models::answered(&mut st, &app, yes),
                 (Fetch::Edge(_), false) => {
                     st.sheets.edge_declined = true;
-                    app.set_status(EDGE_DECLINED.into());
+                    app.set_status(edge_declined().into());
                 }
                 (Fetch::Model(model), false) if model.id == greycard_ai::SAM3.id => {
                     st.sheets.declined.push(model.id);
                     crate::panel::parts::model_answered(&mut st, &app, false);
                     if st.develop.part_pending.is_none() {
                         app.set_status(
-                            "without the People model a People shape masks nothing".into(),
+                            tr!("without the People model a People shape masks nothing").into(),
                         );
                     }
                 }
@@ -1191,7 +1231,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         crate::panel::deliver::show_hint(
                             &app,
                             &mut st,
-                            crate::panel::retouch::RETOUCH_HINT,
+                            &crate::panel::retouch::retouch_hint(),
                         );
                     }
                 }
@@ -1201,13 +1241,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         // The masks waiting on it turn to the original,
                         // which the next frame offers.
                         app.window().request_redraw();
-                        "without the GPU model the original Subject model is offered"
+                        tr!("without the GPU model the original Subject model is offered")
                     } else if model.id == greycard_ai::FILL.id {
-                        "without the model a fill is left as it was"
+                        tr!("without the model a fill is left as it was")
                     } else if greycard_ai::DENOISERS.iter().any(|(_, m)| m.id == model.id) {
-                        "without the model the engine's own denoise stands in"
+                        tr!("without the model the engine's own denoise stands in")
                     } else {
-                        "without the model the shape masks nothing"
+                        tr!("without the model the shape masks nothing")
                     };
                     app.set_status(lost.into());
                     // A Landscape press waiting on the sky's model says
@@ -1221,9 +1261,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         st.sheets.fetching = true;
                         st.sheets.runtime_next = Some(next);
                         app.set_status(
-                            format!(
-                                "downloading {}",
-                                runtime.name.split(',').next().unwrap_or("")
+                            tr!(
+                                "downloading {name}",
+                                name = runtime.name.split(',').next().unwrap_or("")
                             )
                             .into(),
                         );
@@ -1237,7 +1277,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 }
                 (Fetch::Lenses, false) => {
                     app.set_status(
-                        "without the profiles the lens is corrected by hand only".into(),
+                        tr!("without the profiles the lens is corrected by hand only").into(),
                     );
                     // Asked once: the offer does not come back on its
                     // own, this run or the next. Not from a batch run,
@@ -1492,12 +1532,12 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let mut st = state.borrow_mut();
             let name = app.get_preset_name().trim().to_string();
             if name.is_empty() {
-                app.set_status("a preset needs a name".into());
+                app.set_status(tr!("a preset needs a name").into());
                 return;
             }
             let choice = st.sheets.preset_checks.choice();
             if choice.is_empty() {
-                app.set_status("choose what the preset carries".into());
+                app.set_status(tr!("choose what the preset carries").into());
                 return;
             }
             // The demosaic as the open frame runs it, which is what its
@@ -1512,32 +1552,33 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 preset = crate::preset_fit::curve_fitted(&preset, path);
             }
             if preset.is_empty() {
-                app.set_status("choose what the preset carries".into());
+                app.set_status(tr!("choose what the preset carries").into());
                 return;
             }
             app.set_preset_open(false);
             match st.develop.preset_store.as_ref().map(|s| s.save(&preset)) {
                 Some(Ok(path)) => {
                     app.set_status(
-                        format!(
-                            "saved {} ({}) to {}",
-                            preset.name,
-                            preset::carried_words(preset.sections.len(), preset.parts.len()),
-                            path.display()
+                        tr!(
+                            "saved {name} ({carried}) to {path}",
+                            name = preset.name,
+                            carried =
+                                preset::carried_words(preset.sections.len(), preset.parts.len()),
+                            path = path.display()
                         )
                         .into(),
                     );
                 }
                 Some(Err(e)) => {
                     tracing::warn!("preset {}: not saved: {e}", preset.name);
-                    app.set_status(format!("saving {}: {e}", preset.name).into());
+                    app.set_status(tr!("saving {name}: {why}", name = preset.name, why = e).into());
                 }
                 None => {
                     tracing::warn!(
                         "preset {}: no configuration directory to save into",
                         preset.name
                     );
-                    app.set_status("no configuration directory to save into".into());
+                    app.set_status(tr!("no configuration directory to save into").into());
                 }
             }
             refresh_presets(&mut st, &app);
@@ -1575,16 +1616,18 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     });
                     app.set_status(
                         if restorable {
-                            format!("{name} removed; Settings can restore it")
+                            tr!("{name} removed; Settings can restore it", name = name)
                         } else {
-                            format!("{name} removed")
+                            tr!("{name} removed", name = name)
                         }
                         .into(),
                     );
                 }
                 Some(Err(e)) => {
                     tracing::warn!("preset {}: not removed: {e}", entry.preset.name);
-                    app.set_status(format!("removing {}: {e}", entry.preset.name).into());
+                    app.set_status(
+                        tr!("removing {name}: {why}", name = entry.preset.name, why = e).into(),
+                    );
                 }
                 None => {}
             }
@@ -1607,18 +1650,18 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 .map(|s| s.restore_shipped())
             {
                 Some(Ok(names)) if names.is_empty() => {
-                    app.set_status("every default preset is in the list".into());
+                    app.set_status(tr!("every default preset is in the list").into());
                 }
                 Some(Ok(names)) => {
                     tracing::info!("presets restored: {}", names.join(", "));
-                    app.set_status(format!("restored {}", names.join(", ")).into());
+                    app.set_status(tr!("restored {names}", names = names.join(", ")).into());
                 }
                 Some(Err(e)) => {
                     tracing::warn!("presets: not restored: {e}");
-                    app.set_status(format!("restoring the default presets: {e}").into());
+                    app.set_status(tr!("restoring the default presets: {why}", why = e).into());
                 }
                 None => {
-                    app.set_status("no configuration directory to restore into".into());
+                    app.set_status(tr!("no configuration directory to restore into").into());
                 }
             }
             refresh_presets(&mut st, &app);
@@ -1632,14 +1675,14 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let start = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
             let app_weak = app.as_weak();
-            app.set_status("choosing presets to import...".into());
+            app.set_status(tr!("choosing presets to import...").into());
             // As many as the user picks, Lightroom's and this engine's
             // together. A test opens no chooser: it answers as a cancel.
             chooser::choose_open_many(
                 "Import presets",
                 start,
                 (
-                    "Presets".to_string(),
+                    tr!("Presets"),
                     vec![
                         "*.xmp".into(),
                         "*.XMP".into(),
@@ -1660,7 +1703,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         let mut st = state.borrow_mut();
                         match chosen {
                             Ok(paths) if paths.is_empty() => {
-                                app.set_status("import canceled".into());
+                                app.set_status(tr!("import canceled").into());
                             }
                             Ok(paths) => import_presets(&mut st, &app, &paths),
                             Err(e) => {
@@ -1736,7 +1779,7 @@ mod tests {
             st.sheets.declined.is_empty(),
             "a Subject shape is still offered"
         );
-        assert_eq!(app.get_status(), EDGE_DECLINED);
+        assert_eq!(app.get_status(), edge_declined());
     }
 
     /// Where the processor cannot run greycard's ONNX Runtime and the
@@ -1783,7 +1826,7 @@ mod tests {
         assert!(runtime_first_for(&mut state.borrow_mut(), &app, why, sky));
         assert!(app.get_fetch_open());
         assert_eq!(state.borrow().sheets.fetch, Some(Fetch::Runtime(why, sky)));
-        assert_eq!(app.get_fetch_title(), RUNTIME_TITLE);
+        assert_eq!(app.get_fetch_title(), runtime_title());
         let text = app.get_fetch_text().to_string();
         for said in [
             "This processor (Intel(R) Core(TM) i5-3450 CPU @ 3.10GHz) has no AVX2, BMI2 or FMA",
@@ -1915,7 +1958,7 @@ mod tests {
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(app.get_fetch_open(), "offered");
         assert_eq!(state.borrow().sheets.fetch, Some(Fetch::Lenses));
-        assert!(app.get_fetch_text().starts_with(LENSES_WHY));
+        assert!(app.get_fetch_text().starts_with(&lenses_why()));
 
         // Not now: remembered, and the next picture asks nothing.
         app.invoke_fetch_answered(false);
@@ -1937,7 +1980,7 @@ mod tests {
         // whatever was answered before.
         app.invoke_fetch_lenses();
         assert!(app.get_fetch_open());
-        assert!(!app.get_fetch_text().contains(LENSES_WHY));
+        assert!(!app.get_fetch_text().contains(&lenses_why()));
     }
 
     #[test]

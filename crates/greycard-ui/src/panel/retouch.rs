@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use greycard_edit::Edit;
 use greycard_edit::retouch::{FillChoice, Method as RetouchMethod, Patch};
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::ai::FillHaves;
@@ -12,8 +13,9 @@ use crate::worker::Worker;
 use crate::{App, Shared, State, outline};
 
 /// What the status line says while a repair tool is in hand.
-pub(crate) const RETOUCH_HINT: &str =
-    "click or drag to repair; scroll for size; drag pins to move; Esc to finish";
+pub(crate) fn retouch_hint() -> String {
+    tr!("click or drag to repair; scroll for size; drag pins to move; Esc to finish")
+}
 
 /// A patch's shape in the picture's units: the rings of its edge and
 /// of its feather's start, for the points, radius and feather they
@@ -340,7 +342,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.develop.placing = None;
             app.set_placing("".into());
             app.set_retouch_mode(kind);
-            crate::panel::deliver::show_hint(&app, &mut st, RETOUCH_HINT);
+            crate::panel::deliver::show_hint(&app, &mut st, &retouch_hint());
             show_patches(&st, &st.develop.edit, &app);
             if offer {
                 st.sheets.remove_offered = true;
@@ -744,7 +746,7 @@ mod tests {
                 "Fill",
                 "declining keeps LaMa's Fill"
             );
-            assert_eq!(app.get_status(), super::RETOUCH_HINT);
+            assert_eq!(app.get_status(), super::retouch_hint());
         }
         app.invoke_retouch_toggled("Fill".into());
         assert!(!fill(&app), "offered once");
@@ -1066,7 +1068,7 @@ mod tests {
             app.set_panel_tab("Retouch".into());
             app.invoke_retouch_toggled("Fill".into());
             assert_eq!(app.get_retouch_mode(), "Fill", "{how}");
-            assert_eq!(app.get_status(), super::RETOUCH_HINT, "{how}");
+            assert_eq!(app.get_status(), super::retouch_hint(), "{how}");
             down(&app);
             assert_eq!(app.get_retouch_mode(), "", "{how}");
             assert_eq!(app.get_status(), "", "{how}: the hint goes");

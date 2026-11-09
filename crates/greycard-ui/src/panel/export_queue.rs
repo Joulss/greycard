@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::export_queue::{self, Entry, QueuedFrame};
@@ -225,7 +226,7 @@ pub(crate) fn show_queue(st: &State, app: &App) {
         .enumerate()
         .map(|(i, e)| QueueRow {
             name: export_queue::name(e).into(),
-            frames: queue::frames(e.frames.len()).into(),
+            frames: tr!("{n} frame" | "{n} frames" % e.frames.len()).into(),
             folder: export_queue::place_shown(e).into(),
             running: on == Some(i),
         })
@@ -268,7 +269,7 @@ pub(crate) fn keep(st: &State) {
 fn left_behind(n: usize) -> String {
     match n {
         0 => String::new(),
-        n => format!("; {} not there, left queued", queue::frames(n)),
+        n => tr!("; {n} frame not there, left queued" | "; {n} frames not there, left queued" % n),
     }
 }
 
@@ -304,7 +305,7 @@ fn queue_pressed(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, 
     // A mark asked for with nothing to draw would fail every frame
     // when the queue runs: say so now and keep the sheet up.
     if let Some(Err(e)) = sheet.settings().watermark.as_ref().map(|m| m.check()) {
-        app.set_status(format!("not queued: {e:#}").into());
+        app.set_status(tr!("not queued: {why}", why = format!("{e:#}")).into());
         app.set_export_open(true);
         return;
     }
@@ -314,14 +315,14 @@ fn queue_pressed(state: &Rc<Shared>, app: &App, pressed: &crate::versions::Key, 
     let sub = match sheet.subfolder() {
         Ok(sub) => sub,
         Err(e) => {
-            app.set_status(format!("not queued: {e}").into());
+            app.set_status(tr!("not queued: {why}", why = e).into());
             app.set_export_open(true);
             return;
         }
     };
     let entry = entry_of(frames, sheet, preset_in_use(app));
     if entry.frames.is_empty() {
-        app.set_status("nothing to queue".into());
+        app.set_status(tr!("nothing to queue").into());
         return;
     }
     let mut st = state.borrow_mut();
@@ -375,10 +376,9 @@ pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
     keep(st);
     show_queue(st, app);
     app.set_status(
-        format!(
-            "{} queued; {} in the queue",
-            queue::frames(n),
-            export_queue::sets(st.work.export_queue.len())
+        tr!(
+            "{n} frame queued; {sets} in the queue" | "{n} frames queued; {sets} in the queue" % n,
+            sets = export_queue::sets(st.work.export_queue.len())
         )
         .into(),
     );
@@ -387,11 +387,11 @@ pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
 /// Export the queue: its entries in order, from the first.
 pub(crate) fn run(st: &mut State, app: &App) {
     if st.work.exporting.is_some() || st.work.export_choosing || st.work.queue_run.is_some() {
-        app.set_status("an export is running; the queue waits for it".into());
+        app.set_status(tr!("an export is running; the queue waits for it").into());
         return;
     }
     if st.work.export_queue.is_empty() {
-        app.set_status("nothing queued".into());
+        app.set_status(tr!("nothing queued").into());
         return;
     }
     begin_at(st, app, 0, 0, Whole::new());
@@ -446,7 +446,7 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize, whole: 
         found_files(st, app, probe, found);
         return;
     }
-    app.set_status("looking for the queued files...".into());
+    app.set_status(tr!("looking for the queued files...").into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let found = look(&checks, folder.as_deref(), png.as_deref());
@@ -482,28 +482,32 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         show_queue(st, app);
         tracing::warn!("export queue stopped: {why}");
         app.set_status(
-            format!(
-                "the queue stopped: {why}; {} left in the queue",
-                export_queue::count_line(&st.work.export_queue)
+            tr!(
+                "the queue stopped: {why}; {left} left in the queue",
+                why = why,
+                left = export_queue::count_line(&st.work.export_queue)
             )
             .into(),
         );
     };
     // An export begun while the files were looked for has the worker.
     if st.work.exporting.is_some() {
-        stop(st, "another export began".into());
+        stop(st, tr!("another export began"));
         return;
     }
     if !found.folder {
         let folder = entry.folder.clone().unwrap_or_default();
-        stop(st, format!("{} is not there", folder.display()));
+        stop(st, tr!("{folder} is not there", folder = folder.display()));
         return;
     }
     if !found.mark {
         let png = mark_png(entry).unwrap_or_default();
         stop(
             st,
-            format!("the watermark's PNG {} is not there", png.display()),
+            tr!(
+                "the watermark's PNG {file} is not there",
+                file = png.display()
+            ),
         );
         return;
     }
@@ -590,21 +594,27 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         crate::panel::queue_view::changed(st, app);
         keep(st);
     }
-    let deleted_said = match deleted_names.as_slice() {
-        [] => String::new(),
-        names => format!(
-            "; {} {} deleted; not exported",
-            crate::panel::deliver::listed(names),
-            if names.len() == 1 { "was" } else { "were" }
-        ),
+    let deleted = match deleted_names.as_slice() {
+        [] => None,
+        names => Some(tr!(
+            "{names} was deleted; not exported"
+                | "{names} were deleted; not exported" % names.len(),
+            names = crate::panel::deliver::listed(names)
+        )),
     };
+    // Joined onto a line that says more, after its own words.
+    let deleted_said = deleted
+        .as_ref()
+        .map(|d| format!("; {d}"))
+        .unwrap_or_default();
     if frames.is_empty() {
         let said = if missing.is_empty() {
-            deleted_said.trim_start_matches("; ").to_string()
+            deleted.unwrap_or_default()
         } else {
-            format!(
-                "{} not there; left queued{deleted_said}",
-                crate::panel::deliver::listed(&missing)
+            tr!(
+                "{names} not there; left queued{deleted}",
+                names = crate::panel::deliver::listed(&missing),
+                deleted = deleted_said
             )
         };
         app.set_status(said.into());
@@ -653,10 +663,11 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     }
     show_queue(st, app);
     app.set_status(
-        format!(
-            "exporting {} from the queue, {} after it...{deleted_said}",
-            queue::frames(count),
-            export_queue::sets(after)
+        tr!(
+            "exporting {n} frame from the queue, {sets} after it...{deleted}"
+                | "exporting {n} frames from the queue, {sets} after it...{deleted}" % count,
+            sets = export_queue::sets(after),
+            deleted = deleted_said
         )
         .into(),
     );
@@ -727,25 +738,41 @@ pub(crate) fn set_done(
     let behind = left_behind(run.left_behind);
     if set.is_canceled() {
         let left = match st.work.export_queue.len() {
-            0 => "nothing left in the queue".to_string(),
-            _ => format!(
-                "{} left in the queue",
-                export_queue::count_line(&st.work.export_queue)
+            0 => tr!("nothing left in the queue"),
+            _ => tr!(
+                "{left} left in the queue",
+                left = export_queue::count_line(&st.work.export_queue)
             ),
         };
-        app.set_status(format!("{line}{behind}; {left}").into());
+        app.set_status(
+            tr!(
+                "{line}{behind}; {left}",
+                line = line,
+                behind = behind,
+                left = left
+            )
+            .into(),
+        );
         return;
     }
     if next >= st.work.export_queue.len() {
         let end = if st.work.export_queue.is_empty() {
-            "the queue is done".to_string()
+            tr!("the queue is done")
         } else {
-            format!(
-                "{} left in the queue",
-                export_queue::count_line(&st.work.export_queue)
+            tr!(
+                "{left} left in the queue",
+                left = export_queue::count_line(&st.work.export_queue)
             )
         };
-        app.set_status(format!("{line}{behind}; {end}").into());
+        app.set_status(
+            tr!(
+                "{line}{behind}; {left}",
+                line = line,
+                behind = behind,
+                left = end
+            )
+            .into(),
+        );
         return;
     }
     begin_at(st, app, next, run.left_behind, run.whole);
@@ -756,7 +783,7 @@ pub(crate) fn set_done(
 /// let go of.
 pub(crate) fn clear(st: &mut State, app: &App) {
     if st.work.queue_run.as_ref().is_some_and(|r| r.set.is_some()) {
-        app.set_status("the queue is running; stop it first".into());
+        app.set_status(tr!("the queue is running; stop it first").into());
         return;
     }
     let n = st.work.export_queue.len();
@@ -765,7 +792,13 @@ pub(crate) fn clear(st: &mut State, app: &App) {
     crate::panel::queue_view::changed(st, app);
     keep(st);
     show_queue(st, app);
-    app.set_status(format!("export queue cleared ({})", export_queue::sets(n)).into());
+    app.set_status(
+        tr!(
+            "export queue cleared ({sets})",
+            sets = export_queue::sets(n)
+        )
+        .into(),
+    );
 }
 
 /// Take set `index` out of the queue and the file at once. Not the set

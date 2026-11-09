@@ -9,6 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use greycard_edit::Edit;
+use greycard_ui::tr;
 use slint::{ComponentHandle, Model};
 
 use crate::panel::browser::{file_name, open_row, row_of, show_badges, show_thumb, thumb_turns};
@@ -41,7 +42,7 @@ fn settle_panel(st: &mut State, app: &App) {
 /// sidecar that is not in hand. None when it can.
 fn refused(st: &mut State, app: &App, c: usize) -> Option<String> {
     if st.culling.cull.is_some() {
-        return Some("a version is made from the editor, not while culling".into());
+        return Some(tr!("a version is made from the editor, not while culling"));
     }
     unready(st, app, c)
 }
@@ -50,12 +51,12 @@ fn refused(st: &mut State, app: &App, c: usize) -> Option<String> {
 /// under compare it is how the loser goes.
 fn unready(st: &mut State, app: &App, c: usize) -> Option<String> {
     if crate::panel::delete::held(st, c) {
-        return Some("a delete is under way".into());
+        return Some(tr!("a delete is under way"));
     }
     if !crate::rows::load_frame(st, app, c) {
         return Some(
-            crate::rows::refused(st, c, "no version is made")
-                .unwrap_or_else(|| "no version is made".into()),
+            crate::rows::refused(st, c, &tr!("no version is made"))
+                .unwrap_or_else(|| tr!("no version is made")),
         );
     }
     None
@@ -77,7 +78,7 @@ pub(crate) fn new_version(
 ) {
     let mut st = state.borrow_mut();
     let Some(c) = cell_for(&st, from_menu) else {
-        app.set_status("no frame to make a version of".into());
+        app.set_status(tr!("no frame to make a version of").into());
         return;
     };
     if let Some(why) = refused(&mut st, app, c) {
@@ -102,7 +103,7 @@ pub(crate) fn new_version(
         st.sidecars[file].new_version(from.as_deref(), None)
     };
     let Some(id) = id else {
-        app.set_status("the version it was to be made from is gone".into());
+        app.set_status(tr!("the version it was to be made from is gone").into());
         return;
     };
     let name = st.sidecars[file]
@@ -131,7 +132,14 @@ pub(crate) fn new_version(
     if let Some(row) = row_of(&st, at) {
         open_row(&mut st, app, worker, row as i32, false);
     }
-    app.set_status(format!("made {name} of {}", file_name(&path)).into());
+    app.set_status(
+        tr!(
+            "made {name} of {file}",
+            name = name,
+            file = file_name(&path)
+        )
+        .into(),
+    );
     ask_name(&mut st, app, &path, &id, &name, true);
 }
 
@@ -144,22 +152,22 @@ fn ask_name(st: &mut State, app: &App, path: &Path, id: &str, name: &str, fresh:
     });
     app.set_collection_sheet_title(
         if fresh {
-            "Name the new version"
+            tr!("Name the new version")
         } else {
-            "Rename the version"
+            tr!("Rename the version")
         }
         .into(),
     );
     app.set_collection_sheet_note(
-        format!(
-            "A version of {}, with an edit of its own; the rating, flag, label and keywords are the file's",
-            file_name(path)
+        tr!(
+            "A version of {file}, with an edit of its own; the rating, flag, label and keywords are the file's",
+            file = file_name(path)
         )
         .into(),
     );
     app.set_collection_sheet_asks_name(true);
-    app.set_collection_sheet_verb(if fresh { "Name" } else { "Rename" }.into());
-    app.set_collection_sheet_placeholder("The version's name".into());
+    app.set_collection_sheet_verb(if fresh { tr!("Name") } else { tr!("Rename") }.into());
+    app.set_collection_sheet_placeholder(tr!("The version's name").into());
     app.set_collection_sheet_name(name.into());
     app.set_collection_sheet_open(true);
 }
@@ -170,7 +178,7 @@ pub(crate) fn ask_rename(st: &mut State, app: &App, from_menu: bool) {
         return;
     };
     let (Some(id), Some(name)) = (st.version_of(c).map(str::to_string), st.version_name(c)) else {
-        app.set_status("the file's own frame is renamed as a file, not as a version".into());
+        app.set_status(tr!("the file's own frame is renamed as a file, not as a version").into());
         return;
     };
     let path = st.path_of(c).clone();
@@ -182,7 +190,7 @@ pub(crate) fn ask_rename(st: &mut State, app: &App, from_menu: bool) {
 /// A blank name, or the name it has, changes nothing.
 pub(crate) fn renamed(st: &mut State, app: &App, path: &Path, id: &str, typed: &str) {
     let Some(c) = st.find_cell(&Key::of(path, Some(id))) else {
-        app.set_status("that version is gone; nothing renamed".into());
+        app.set_status(tr!("that version is gone; nothing renamed").into());
         return;
     };
     if let Some(why) = refused(st, app, c) {
@@ -201,7 +209,15 @@ pub(crate) fn renamed(st: &mut State, app: &App, path: &Path, id: &str, typed: &
     write_file(st, file);
     show_names(st, app, file);
     tracing::info!("{}: {was} renamed {now}", file_name(path));
-    app.set_status(format!("{was} of {} is {now} now", file_name(path)).into());
+    app.set_status(
+        tr!(
+            "{was} of {file} is {now} now",
+            was = was,
+            file = file_name(path),
+            now = now
+        )
+        .into(),
+    );
 }
 
 /// The version names on the cells of file `file`, as the sidecar says
@@ -235,7 +251,7 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
         return;
     };
     let Some(id) = st.version_of(c).map(str::to_string) else {
-        app.set_status("the original is swapped from one of its versions".into());
+        app.set_status(tr!("the original is swapped from one of its versions").into());
         return;
     };
     if let Some(why) = refused(st, app, c) {
@@ -254,9 +270,9 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
         // The read the load brought had no such version: deleted
         // elsewhere, and the cells follow at the next turn.
         app.set_status(
-            format!(
-                "that version of {} is gone; nothing swapped",
-                file_name(&path)
+            tr!(
+                "that version of {file} is gone; nothing swapped",
+                file = file_name(&path)
             )
             .into(),
         );
@@ -295,7 +311,14 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
         }
     }
     tracing::info!("{}: {name} swapped with the original", file_name(&path));
-    app.set_status(format!("{name} and the original of {} swapped", file_name(&path)).into());
+    app.set_status(
+        tr!(
+            "{name} and the original of {file} swapped",
+            name = name,
+            file = file_name(&path)
+        )
+        .into(),
+    );
 }
 
 /// What the delete sheet asks over versions while it is up: the frames,
@@ -316,33 +339,33 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, cells: &[usize]) {
         .filter_map(|&c| st.key_of(c))
         .collect();
     let Some(first) = cells.iter().find(|&&c| st.version_of(c).is_some()) else {
-        app.set_status("no version is chosen".into());
+        app.set_status(tr!("no version is chosen").into());
         return;
     };
     let title = match keys.len() {
-        1 => format!(
-            "Delete the version {} of {}?",
-            st.version_name(*first).unwrap_or_default(),
-            file_name(st.path_of(*first))
+        1 => tr!(
+            "Delete the version {name} of {file}?",
+            name = st.version_name(*first).unwrap_or_default(),
+            file = file_name(st.path_of(*first))
         ),
-        n => format!("Delete {n} versions?"),
+        n => tr!("Delete {n} version?" | "Delete {n} versions?" % n),
     };
     let text = if keys.len() == 1 {
-        "The file and its other versions stay."
+        tr!("The file and its other versions stay.")
     } else {
-        "The files and their other versions stay."
+        tr!("The files and their other versions stay.")
     };
     app.set_delete_title(title.into());
     app.set_delete_text(text.into());
-    app.set_delete_note("Its edit, history and snapshots go with it.".into());
+    app.set_delete_note(tr!("Its edit, history and snapshots go with it.").into());
     app.set_delete_archive("".into());
     app.set_delete_trash(true);
     app.set_delete_permanent(false);
     app.set_delete_confirm(
         if keys.len() == 1 {
-            "Delete version"
+            tr!("Delete version")
         } else {
-            "Delete versions"
+            tr!("Delete versions")
         }
         .into(),
     );
@@ -383,7 +406,11 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
         if let Some(taken) = st.sidecars[file].delete_version(id) {
             // Gone from its sidecar, the version leaves its stack.
             crate::stacks::version_left(st, file, id);
-            gone.push(format!("{} of {}", taken.name, file_name(&key.path)));
+            gone.push(tr!(
+                "{name} of {file}",
+                name = taken.name,
+                file = file_name(&key.path)
+            ));
             if !files.contains(&file) {
                 files.push(file);
             }
@@ -399,11 +426,11 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
         app.set_rows_held(true);
     }
     let said = match gone.as_slice() {
-        [] => "nothing deleted".to_string(),
-        [one] => format!("deleted the version {one}"),
-        many => format!("deleted {} versions", many.len()),
+        [] => tr!("nothing deleted"),
+        [one] => tr!("deleted the version {name}", name = one),
+        many => tr!("deleted {n} version" | "deleted {n} versions" % many.len()),
     };
-    tracing::info!("{said}");
+    tracing::info!("versions: {said}");
     app.set_status(said.into());
 }
 
@@ -437,7 +464,7 @@ pub(crate) fn compare_set(st: &State, file: usize) -> (Vec<usize>, usize) {
 /// and the status line says how many were left out.
 pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: bool) {
     let Some(c) = cell_for(st, from_menu) else {
-        app.set_status("no frame to compare".into());
+        app.set_status(tr!("no frame to compare").into());
         return;
     };
     let Some(file) = st.file_at(c) else {
@@ -447,7 +474,7 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
     let name = file_name(&path);
     let (set, left) = compare_set(st, file);
     if set.len() < 2 {
-        app.set_status(format!("{name} has no versions to compare").into());
+        app.set_status(tr!("{name} has no versions to compare", name = name).into());
         return;
     }
     let focus = if set.contains(&c) { c } else { set[0] };
@@ -465,24 +492,25 @@ pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: boo
     }
     fit_compare(st, app, &path, None);
     let said = if left > 0 {
-        format!(
-            "comparing {name} and {} of its versions; {}",
-            set.len() - 1,
-            left_out(left, &name)
+        tr!(
+            "comparing {name} and {n} of its versions; {left}"
+                | "comparing {name} and {n} of its versions; {left}" % set.len() - 1,
+            name = name,
+            left = left_out(left, &name)
         )
     } else {
-        format!("comparing {name} and its versions")
+        tr!("comparing {name} and its versions", name = name)
     };
-    tracing::info!("{said}");
+    tracing::info!("versions: {said}");
     app.set_status(said.into());
 }
 
 /// The status line's word for `left` versions of `name` that compare
 /// did not show.
 fn left_out(left: usize, name: &str) -> String {
-    format!(
-        "{left} more version{} of {name} left out",
-        if left == 1 { "" } else { "s" }
+    tr!(
+        "{n} more version of {name} left out" | "{n} more versions of {name} left out" % left,
+        name = name
     )
 }
 
@@ -584,7 +612,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     return;
                 }
                 if st.sheets.deleting.is_some() {
-                    app.set_status("a delete is still under way".into());
+                    app.set_status(tr!("a delete is still under way").into());
                     return;
                 }
                 let Some(c) = cell_for(&st, true) else {

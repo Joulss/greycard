@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use greycard_edit::geometry::Geometry;
 use greycard_edit::{Edit, Sidecar, meta};
+use greycard_ui::tr;
 use slint::wgpu_30::wgpu as gpu;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -427,7 +428,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         show_overlays(st, app, true);
         say_placeholder(app, shown, small, local, (st.develop.zoom, own));
     }
-    app.set_status("developing...".into());
+    app.set_status(tr!("developing...").into());
     app.set_busy(true);
     crate::panel::browser::walked_to(st, c);
     worker.send(crate::panel::browser::open_job(st, c, edit));
@@ -1742,7 +1743,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
     if !holding {
         let status = cull_status(cull, c, st.develop.zoom, shown_now, &names);
         if shown_now && let Some(said) = cull.said.take() {
-            app.set_status(format!("{said}; {status}").into());
+            app.set_status(tr!("{said}; {status}", said = said, status = status).into());
             cull.status = status;
         } else if cull.status != status {
             cull.status = status.clone();
@@ -1950,7 +1951,7 @@ pub(crate) fn tile_name(path: &Path, id: Option<&Arc<str>>, name: Option<&str>) 
 pub(crate) fn plate_words(named: &Named) -> String {
     let what = picture_words(named.size, named.small, named.local);
     match named.version.as_deref() {
-        Some(v) if !v.is_empty() => format!("{v}, {what}"),
+        Some(v) if !v.is_empty() => tr!("{version}, {what}", version = v, what = what),
         _ => what,
     }
 }
@@ -1960,17 +1961,25 @@ pub(crate) fn plate_words(named: &Named) -> String {
 /// kept in the cache.
 pub(crate) fn picture_words((w, h): (u32, u32), small: bool, from: cull::Origin) -> String {
     if from == cull::Origin::Edit {
-        format!("the edit, {w} \u{d7} {h}")
+        tr!("the edit, {w} \u{d7} {h}", w = w, h = h)
     } else if from == cull::Origin::Local {
-        format!("the local preview, {w} \u{d7} {h}")
+        tr!("the local preview, {w} \u{d7} {h}", w = w, h = h)
     } else if from == cull::Origin::Companion && small {
-        format!("a small camera JPEG beside the raw, {w} \u{d7} {h}")
+        tr!(
+            "a small camera JPEG beside the raw, {w} \u{d7} {h}",
+            w = w,
+            h = h
+        )
     } else if from == cull::Origin::Companion {
-        format!("the camera's JPEG beside the raw, {w} \u{d7} {h}")
+        tr!(
+            "the camera's JPEG beside the raw, {w} \u{d7} {h}",
+            w = w,
+            h = h
+        )
     } else if small {
-        format!("a small camera preview, {w} \u{d7} {h}")
+        tr!("a small camera preview, {w} \u{d7} {h}", w = w, h = h)
     } else {
-        format!("the camera JPEG, {w} \u{d7} {h}")
+        tr!("the camera JPEG, {w} \u{d7} {h}", w = w, h = h)
     }
 }
 
@@ -1985,27 +1994,42 @@ pub(crate) fn cull_status(
     names: &[Named],
 ) -> String {
     let mode = if cull.compare > 1 {
-        format!("culling, {} up", cull.compare)
+        tr!("culling, {n} up", n = cull.compare)
     } else {
-        "culling".to_string()
+        tr!("culling")
     };
     if let Some(why) = cull.failed.get(&current) {
         if why == cull::NO_LOCAL_PREVIEW {
-            return format!("{mode}: nothing to show; {why}");
+            return tr!("{mode}: nothing to show; {why}", mode = mode, why = why);
         }
-        return format!("{mode}: no camera preview ({why}); Enter develops");
+        return tr!(
+            "{mode}: no camera preview ({why}); Enter develops",
+            mode = mode,
+            why = why
+        );
     }
     let Some(named) = names.iter().find(|n| n.file == current) else {
-        return format!("{mode}: decoding the camera JPEG...");
+        return tr!("{mode}: decoding the camera JPEG...", mode = mode);
     };
     if !shown {
-        return format!("{mode}: decoding the camera JPEG...");
+        return tr!("{mode}: decoding the camera JPEG...", mode = mode);
     }
     let what = plate_words(named);
     let at = zoom_words(zoom, named.own);
     match &cull.note {
-        Some(note) => format!("{mode}: {what}, {at}; Enter develops; {note}"),
-        None => format!("{mode}: {what}, {at}; Enter develops"),
+        Some(note) => tr!(
+            "{mode}: {what}, {at}; Enter develops; {note}",
+            mode = mode,
+            what = what,
+            at = at,
+            note = note
+        ),
+        None => tr!(
+            "{mode}: {what}, {at}; Enter develops",
+            mode = mode,
+            what = what,
+            at = at
+        ),
     }
 }
 
@@ -2014,13 +2038,13 @@ pub(crate) fn cull_status(
 /// (`own` false), that it is until the full one decodes.
 pub(crate) fn zoom_words(zoom: f32, own: bool) -> String {
     if zoom <= 0.0 {
-        "fitted".to_string()
+        tr!("fitted")
     } else if own {
         format!("{}%", (zoom * 100.0).round() as i32)
     } else {
-        format!(
-            "{}%, screen-size copy until the full one decodes",
-            (zoom * 100.0).round() as i32
+        tr!(
+            "{percent}%, screen-size copy until the full one decodes",
+            percent = (zoom * 100.0).round() as i32
         )
     }
 }
@@ -2114,8 +2138,9 @@ fn rejects_where_of(st: &State, files: &[usize]) -> Option<String> {
             let shoot = dunce::canonicalize(folders[0]).unwrap_or_else(|_| folders[0].into());
             Some(cull::rejects_dir(&shoot).display().to_string())
         }
-        n => Some(format!(
-            "a rejects folder in each of the {n} folders they are in"
+        n => Some(tr!(
+            "a rejects folder in each of the {n} folder they are in"
+                | "a rejects folder in each of the {n} folders they are in" % n
         )),
     }
 }
@@ -2141,24 +2166,22 @@ pub(crate) fn to_move_out(st: &State, i: usize) -> bool {
 /// The move-rejects sheet: how many frames and where they would go.
 pub(crate) fn ask_rejects(st: &State, app: &App) {
     if st.sheets.deleting.is_some() {
-        app.set_status("a delete is still under way".into());
+        app.set_status(tr!("a delete is still under way").into());
         return;
     }
     let n = reject_count(st);
     if n == 0 {
-        app.set_status("no frames are flagged reject".into());
+        app.set_status(tr!("no frames are flagged reject").into());
         return;
     }
     let Some(dir) = rejects_where(st) else {
         return;
     };
     app.set_rejects_text(
-        format!(
-            "{n} frame{} flagged reject, with {} sidecar{}, will be moved to {}.",
-            if n == 1 { "" } else { "s" },
-            if n == 1 { "its" } else { "their" },
-            if n == 1 { "" } else { "s" },
-            dir
+        tr!(
+            "{n} frame flagged reject, with its sidecar, will be moved to {folder}."
+                | "{n} frames flagged reject, with their sidecars, will be moved to {folder}." % n,
+            folder = dir
         )
         .into(),
     );
@@ -2170,7 +2193,7 @@ pub(crate) fn ask_rejects(st: &State, app: &App) {
 /// nearest one left.
 pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     if st.sheets.deleting.is_some() {
-        app.set_status("a delete is still under way".into());
+        app.set_status(tr!("a delete is still under way").into());
         return;
     }
     // A batch of sidecars still out lands first, or its renames would
@@ -2190,7 +2213,13 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         Ok(m) => m,
         Err(e) => {
             tracing::error!("moving the rejects: {e:#}");
-            app.set_status(format!("the rejects could not be moved: {e:#}").into());
+            app.set_status(
+                tr!(
+                    "the rejects could not be moved: {why}",
+                    why = format!("{e:#}")
+                )
+                .into(),
+            );
             return;
         }
     };
@@ -2200,18 +2229,16 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     // Where the ones that went, went: said while the list still has
     // them where they were.
     let dir = rejects_where_of(st, &moved.files).unwrap_or_default();
-    let mut status = format!(
-        "moved {} frame{}{} and {} sidecar{} to {}",
-        moved.files.len(),
-        if moved.files.len() == 1 { "" } else { "s" },
-        crate::delete::companion_words(moved.companions.len()),
-        moved.sidecars,
-        if moved.sidecars == 1 { "" } else { "s" },
-        dir
+    let mut status = tr!(
+        "moved {n} frame{companions} and {sidecars} to {folder}"
+            | "moved {n} frames{companions} and {sidecars} to {folder}" % moved.files.len(),
+        companions = crate::delete::companion_words(moved.companions.len()),
+        sidecars = sidecars_word(moved.sidecars),
+        folder = dir
     );
     status.push_str(&left_words(&moved.skipped));
     status.push_str(&half_words(&moved.companions_left));
-    tracing::info!("{status}");
+    tracing::info!("rejects: {status}");
     hand_moves(st, &moved);
     hand_folders(st, &moved);
     drop_files(st, app, worker, &moved.files, status);
@@ -2267,20 +2294,16 @@ fn left_words(skipped: &[(usize, String)]) -> String {
     let Some((_, why)) = skipped.first() else {
         return String::new();
     };
-    format!(
-        "; {} left where {} ({why}{})",
-        skipped.len(),
-        if skipped.len() == 1 {
-            "it was"
-        } else {
-            "they were"
-        },
-        if skipped.len() > 1 {
-            "; the log has each"
-        } else {
-            ""
-        }
+    tr!(
+        "; {n} left where it was ({why})"
+            | "; {n} left where they were ({why}; the log has each)" % skipped.len(),
+        why = why
     )
+}
+
+/// "1 sidecar", "3 sidecars", as a move's line says them.
+fn sidecars_word(n: usize) -> String {
+    tr!("{n} sidecar" | "{n} sidecars" % n)
 }
 
 /// The camera's JPEGs a move left behind their raws, as the status
@@ -2289,15 +2312,11 @@ fn half_words(left: &[(PathBuf, String)]) -> String {
     let Some((jpeg, why)) = left.first() else {
         return String::new();
     };
-    format!(
-        "; {} stayed behind {} ({}: {why})",
-        crate::delete::count(left.len(), "camera JPEG"),
-        if left.len() == 1 {
-            "its raw"
-        } else {
-            "their raws"
-        },
-        file_name(jpeg)
+    tr!(
+        "; {n} camera JPEG stayed behind its raw ({name}: {why})"
+            | "; {n} camera JPEGs stayed behind their raws ({name}: {why})" % left.len(),
+        name = file_name(jpeg),
+        why = why
     )
 }
 
@@ -2360,7 +2379,7 @@ pub(crate) fn show_back(st: &State, app: &App) {
         // by a bare relative name (`rejects/A.CR3`, the folder above
         // the working one) has no name in its path, and is looked up.
         [one] => folder_name(one),
-        _ => "their folders".into(),
+        _ => tr!("their folders"),
     };
     app.set_back_count(frames.len() as i32);
     app.set_back_to(to.into());
@@ -2374,12 +2393,12 @@ pub(crate) fn show_back(st: &State, app: &App) {
 /// flag comes off in its sidecar where it now is.
 pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
     if st.sheets.deleting.is_some() {
-        app.set_status("a delete is still under way".into());
+        app.set_status(tr!("a delete is still under way").into());
         return;
     }
     let frames = back_frames(st);
     if frames.is_empty() {
-        app.set_status("no frame chosen is in a rejects folder".into());
+        app.set_status(tr!("no frame chosen is in a rejects folder").into());
         return;
     }
     crate::panel::saves::finish(st, None);
@@ -2390,29 +2409,26 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
     // Said while the list still has them where they were.
     let above = folders_above(st, &moved.files);
     let mut status = match above.as_slice() {
-        [] => "nothing moved back".to_string(),
-        many => format!(
-            "moved {} frame{}{} and {} sidecar{} back to {}",
-            moved.files.len(),
-            if moved.files.len() == 1 { "" } else { "s" },
-            crate::delete::companion_words(moved.companions.len()),
-            moved.sidecars,
-            if moved.sidecars == 1 { "" } else { "s" },
-            match many {
+        [] => tr!("nothing moved back"),
+        many => tr!(
+            "moved {n} frame{companions} and {sidecars} back to {folder}"
+                | "moved {n} frames{companions} and {sidecars} back to {folder}"
+                    % moved.files.len(),
+            companions = crate::delete::companion_words(moved.companions.len()),
+            sidecars = sidecars_word(moved.sidecars),
+            folder = match many {
                 [one] => dunce::canonicalize(one)
                     .unwrap_or_else(|_| one.clone())
                     .display()
                     .to_string(),
-                _ => format!(
-                    "the folder above each of the {} rejects folders",
-                    many.len()
-                ),
+                _ => tr!("the folder above each of the {n} rejects folder"
+                    | "the folder above each of the {n} rejects folders" % many.len()),
             }
         ),
     };
     status.push_str(&left_words(&moved.skipped));
     status.push_str(&half_words(&moved.companions_left));
-    tracing::info!("{status}");
+    tracing::info!("rejects: {status}");
     // The frames' flags written at their new paths, then the index told
     // of the moves, then both folders passed over. A save's word that
     // reaches the index before the move's makes a row at the new path,
@@ -2631,9 +2647,9 @@ pub(crate) fn show_filter(st: &State, app: &App) {
             // A color says itself; the chip for no color at all has
             // nothing to say it with, so it says it in words.
             text: if *l == meta::Label::None {
-                "No label"
+                tr!("No label")
             } else {
-                ""
+                String::new()
             }
             .into(),
             count: counts.labels[n] as i32,
@@ -2719,7 +2735,7 @@ fn apply_filter_said(state: &Rc<Shared>, app: &App, settled: bool, say_errors: b
     // A term typed that does not parse is looked for as a word, as
     // it was before the field took terms, and the reason is said.
     if say_errors && let Some(e) = st.views.filter.typed().errors.first() {
-        app.set_status(format!("filter: {e}").into());
+        app.set_status(tr!("filter: {why}", why = e).into());
     }
     match next {
         Some(row) => {
@@ -2757,7 +2773,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             if state.borrow().current.is_none() {
-                app.set_status("nothing to cull: open a folder".into());
+                app.set_status(tr!("nothing to cull: open a folder").into());
                 return;
             }
             if library {
@@ -2795,7 +2811,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             if st.current.is_none() {
-                app.set_status("nothing to cull: open a folder".into());
+                app.set_status(tr!("nothing to cull: open a folder").into());
                 return;
             }
             to_cull(&mut st, &app, &worker);
@@ -7429,7 +7445,7 @@ mod tests {
         let (state, _worker) = state_for(&app, folder(1));
         app.invoke_select(0);
         app.invoke_retouch_toggled("Clone".into());
-        assert_eq!(app.get_status(), crate::panel::retouch::RETOUCH_HINT);
+        assert_eq!(app.get_status(), crate::panel::retouch::retouch_hint());
         enter_cull(&mut state.borrow_mut(), &app, 1);
         assert_eq!(app.get_retouch_mode(), "");
         assert_eq!(app.get_status(), "");

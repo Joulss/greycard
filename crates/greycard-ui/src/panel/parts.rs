@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use greycard_edit::mask::{Component, Mode, PARTS, PartKind, Person, Route, Shape};
+use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::ai::{Ask, Asking, Candidate, Key};
@@ -82,7 +83,7 @@ fn part_step(st: &State, part: &PartKind) -> Option<Step> {
 /// if it is not downloaded.
 pub(crate) fn chosen(st: &mut State, app: &App, label: &str, mode: &str) {
     let Some(part) = by_label(label) else {
-        app.set_status(format!("{label} is not on the People menu").into());
+        app.set_status(tr!("{label} is not on the People menu", label = label).into());
         return;
     };
     let Some(index) = st.develop.target else {
@@ -116,7 +117,7 @@ pub(crate) fn chosen(st: &mut State, app: &App, label: &str, mode: &str) {
         Some(Step::Offer(model, falls_back)) => offer_model(st, app, model, falls_back),
         _ => {
             st.develop.part_pending = None;
-            app.set_status("the People model is not downloaded".into());
+            app.set_status(tr!("the People model is not downloaded").into());
         }
     }
 }
@@ -127,7 +128,7 @@ fn ask_people(app: &App, part: &PartKind) {
             w.send(Job::People);
         }
     });
-    let status = before_run(&part.route).unwrap_or("finding the people");
+    let status = before_run(&part.route).map_or_else(|| tr!("finding the people"), str::to_string);
     app.set_status(status.into());
 }
 
@@ -141,7 +142,7 @@ pub(crate) fn model_answered(st: &mut State, app: &App, have: bool) {
         ask_people(app, pending.part);
     } else {
         st.develop.part_pending = None;
-        app.set_status("without the People model no person or part can be found".into());
+        app.set_status(tr!("without the People model no person or part can be found").into());
     }
 }
 
@@ -170,7 +171,7 @@ pub(crate) fn people_found(
         Ok(p) => p,
         Err(e) => {
             tracing::error!("People mask: {e}");
-            app.set_status(format!("People mask: {e}").into());
+            app.set_status(tr!("People mask: {why}", why = e).into());
             return false;
         }
     };
@@ -194,7 +195,7 @@ pub(crate) fn people_found(
             why: Asking::Unsure,
         },
     });
-    arm(st, app, "click the person, or All people");
+    arm(st, app, &tr!("click the person, or All people"));
     false
 }
 
@@ -241,7 +242,12 @@ fn add(st: &mut State, app: &App, pending: &Pending, person: Option<Person>) -> 
     show_edit(st, &st.develop.edit, app, st.develop.target);
     let status = before_run(&pending.part.route)
         .map(str::to_string)
-        .unwrap_or_else(|| format!("finding the {}", pending.part.label.to_lowercase()));
+        .unwrap_or_else(|| {
+            tr!(
+                "finding the {part}",
+                part = pending.part.label.to_lowercase()
+            )
+        });
     app.set_status(status.into());
     true
 }
@@ -281,7 +287,7 @@ fn repick(
         let label = greycard_edit::mask::part_of(phrase).map_or("part", |k| k.label);
         let status = before_run(&route)
             .map(str::to_string)
-            .unwrap_or_else(|| format!("finding the {}", label.to_lowercase()));
+            .unwrap_or_else(|| tr!("finding the {part}", part = label.to_lowercase()));
         st.develop.part_asks.remove(&(id, component));
         show_edit(st, &st.develop.edit, app, st.develop.target);
         app.set_status(status.into());
@@ -301,7 +307,7 @@ pub(crate) fn pressed(st: &mut State, app: &App, x: f32, y: f32) -> Option<bool>
     let (w, h) = st.develop.source_size;
     let aspect = if w > 0 { h as f32 / w as f32 } else { 1.0 };
     let Some(i) = crate::ai::picked(&choosing.ask.people, at, aspect) else {
-        app.set_status("no one there: click a person, or All people".into());
+        app.set_status(tr!("no one there: click a person, or All people").into());
         return Some(false);
     };
     let person = choosing.ask.people[i].person();

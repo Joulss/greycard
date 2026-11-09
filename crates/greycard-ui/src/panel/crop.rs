@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use greycard_edit::geometry::{Aspect, Crop, Geometry, Guide, Handle, MAX_ANGLE, MAX_TILT};
+use greycard_ui::tr;
 use slint::ComponentHandle;
 
 use crate::panel::viewport::{effective_zoom, view_to_plane, view_to_source};
@@ -907,7 +908,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 // Two lines that say nothing: the same line twice, or a
                 // pair crossing at the center. Keep the tool in hand
                 // rather than setting a wrong angle silently.
-                app.set_status("the guide needs two different lines".into());
+                app.set_status(tr!("the guide needs two different lines").into());
                 app.window().request_redraw();
                 return;
             };

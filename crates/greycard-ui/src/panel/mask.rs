@@ -8,6 +8,7 @@ use greycard_edit::mask::{Component, MIN_RADIUS, Mask, Mode, Pick, Shape, on_ang
 use greycard_edit::retouch::{Method as RetouchMethod, Patch};
 use greycard_edit::{Adjustment, Edit, Look};
 use greycard_render::refine::MaskPicture;
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::ai::{Key, prompted};
@@ -226,7 +227,7 @@ pub(crate) fn component_heading(mask: &Mask, i: usize) -> String {
 /// trimmed, and by its place in the list when it has none.
 pub(crate) fn heading_name(name: &str, index: usize) -> String {
     match name.trim() {
-        "" => format!("Adjustment {}", index + 1),
+        "" => tr!("Adjustment {n}", n = index + 1),
         name => name.to_string(),
     }
 }
@@ -300,13 +301,15 @@ fn made_at_once(kind: &str) -> bool {
 }
 
 /// What the status line says once a shape made at once is in.
-fn made_hint(kind: &str) -> &'static str {
+fn made_hint(kind: &str) -> String {
     match kind {
-        "Subject" => "finding the subject",
-        "Background" => "finding the background",
-        "Sky" => "finding the sky",
-        "Color" => "click a color in the picture to center the window on it; Esc to keep the skin",
-        _ => "",
+        "Subject" => tr!("finding the subject"),
+        "Background" => tr!("finding the background"),
+        "Sky" => tr!("finding the sky"),
+        "Color" => {
+            tr!("click a color in the picture to center the window on it; Esc to keep the skin")
+        }
+        _ => String::new(),
     }
 }
 
@@ -574,8 +577,9 @@ pub(crate) fn learned_anew(st: &mut State, version: Option<Arc<str>>) {
 
 /// The status line while the first Whole person of a session loads the
 /// Subject model for its edge.
-pub(crate) const EDGE_LOADING: &str =
-    "finding the whole person; loading Subject for its edge takes a few seconds the first time";
+pub(crate) fn edge_loading() -> String {
+    tr!("finding the whole person; loading Subject for its edge takes a few seconds the first time")
+}
 
 /// The rasters kept drawn across a reopen that are to be asked for
 /// again now: those of shapes still held and switched on. Each stays in
@@ -717,7 +721,7 @@ pub(crate) fn ask_for(st: &mut State, app: &App, mut wants: Vec<(Key, Shape)>) {
                 if !st.sheets.edge_loaded
                     && (have(&greycard_ai::SUBJECT) || have(&greycard_ai::SUBJECT_WEBGPU))
                 {
-                    app.set_status(EDGE_LOADING.into());
+                    app.set_status(edge_loading().into());
                 }
                 let due = std::mem::take(&mut st.sheets.edge_offer_due);
                 if let Some(subject) = edge_offer(
@@ -751,12 +755,17 @@ pub(crate) fn fetch_failed(
         failed.push(id);
     }
     if id == greycard_ai::SUBJECT_WEBGPU.id {
-        format!(
-            "the GPU Subject model could not be fetched ({message}); the original is offered instead"
+        tr!(
+            "the GPU Subject model could not be fetched ({message}); the original is offered instead",
+            message = message
         )
     } else {
         let short = name.split(',').next().unwrap_or(name);
-        format!("{short} could not be fetched: {message}")
+        tr!(
+            "{name} could not be fetched: {message}",
+            name = short,
+            message = message
+        )
     }
 }
 
@@ -822,15 +831,15 @@ pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
 pub(crate) const MIN_STEP: f32 = 1.0 / greycard_edit::brush::RASTER_WIDTH as f32;
 
 /// What the status line says while a tool is in hand.
-pub(crate) fn placing_hint(kind: &str) -> &'static str {
+pub(crate) fn placing_hint(kind: &str) -> String {
     match kind {
-        "Brush" => "paint; scroll for size; Esc to finish",
-        "Object" => "click to add, right-click to exclude, or drag a box; Esc to finish",
-        "Sky" => "click to add sky, right-click to remove; Esc to finish",
+        "Brush" => tr!("paint; scroll for size; Esc to finish"),
+        "Object" => tr!("click to add, right-click to exclude, or drag a box; Esc to finish"),
+        "Sky" => tr!("click to add sky, right-click to remove; Esc to finish"),
         "Linear" => {
-            "drag to place; drag an end line to turn and stretch, Alt to move just that end"
+            tr!("drag to place; drag an end line to turn and stretch, Alt to move just that end")
         }
-        _ => "drag to place",
+        _ => tr!("drag to place"),
     }
 }
 
@@ -839,11 +848,13 @@ pub(crate) fn placing_hint(kind: &str) -> &'static str {
 /// correct (a click cannot add a sky the model does not see: the gate
 /// is the rule that must never fail); without SAM a click that adds
 /// sky does nothing, and a right click still takes what is not sky out.
-pub(crate) fn sky_pick(no_sky: bool, have_sam: bool) -> Result<&'static str, &'static str> {
+pub(crate) fn sky_pick(no_sky: bool, have_sam: bool) -> Result<String, String> {
     if no_sky {
-        Err("no sky found in this picture")
+        Err(tr!("no sky found in this picture"))
     } else if !have_sam {
-        Ok("right-click to remove sky (adding needs the Object model); Esc to finish")
+        Ok(tr!(
+            "right-click to remove sky (adding needs the Object model); Esc to finish"
+        ))
     } else {
         Ok(placing_hint("Sky"))
     }
@@ -861,7 +872,7 @@ fn arm_range_pick(app: &App, state: &Shared, kind: &str) {
     if app.get_picking() != "Range" {
         app.invoke_pick_started("Range".into());
     }
-    crate::panel::deliver::show_hint(app, &mut state.borrow_mut(), made_hint(kind));
+    crate::panel::deliver::show_hint(app, &mut state.borrow_mut(), &made_hint(kind));
 }
 
 /// The mask painted over the picture: the one whose row is under the
@@ -983,7 +994,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             if st.develop.edit.adjustments.len() >= MAX_LOCALS {
-                app.set_status(format!("at most {MAX_LOCALS} adjustments").into());
+                app.set_status(
+                    tr!("at most {n} adjustment" | "at most {n} adjustments" % MAX_LOCALS).into(),
+                );
                 return;
             }
             let edit = read_edit(&app, &st.develop.edit, st.develop.target);
@@ -1141,7 +1154,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             tool_in_hand(&mut st, &app);
             app.set_placing_into(true);
             app.set_placing(kind.clone());
-            crate::panel::deliver::show_hint(&app, &mut st, hint);
+            crate::panel::deliver::show_hint(&app, &mut st, &hint);
         });
     }
     {
@@ -1372,7 +1385,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let mut st = state.borrow_mut();
             if st.develop.edit.adjustments.len() >= MAX_LOCALS {
-                app.set_status(format!("at most {MAX_LOCALS} adjustments").into());
+                app.set_status(
+                    tr!("at most {n} adjustment" | "at most {n} adjustments" % MAX_LOCALS).into(),
+                );
                 return;
             }
             // As a delete: a tool in hand keeps the index it was armed
@@ -1806,7 +1821,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     app.set_component(which.saturating_sub(1) as i32);
                     show_edit(&st, &st.develop.edit, &app, st.develop.target);
                 }
-                app.set_status("nothing placed".into());
+                app.set_status(tr!("nothing placed").into());
             }
             drop(st);
             app.invoke_view_changed();

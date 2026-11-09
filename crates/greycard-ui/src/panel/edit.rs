@@ -8,6 +8,7 @@ use greycard_edit::{
     WhiteBalance,
 };
 use greycard_edit_io::xmp;
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::{show_looks, show_profiles};
@@ -546,7 +547,7 @@ pub(crate) fn develop_soon(
             };
             let mut st = state.borrow_mut();
             st.develop.generation += 1;
-            app.set_status("developing...".into());
+            app.set_status(tr!("developing...").into());
             app.set_busy(true);
             worker.send(Job::Develop {
                 edit: edit_to_develop(&app, &st.develop.edit),
@@ -584,16 +585,16 @@ pub(crate) fn show_demosaic(
 pub(crate) fn demosaic_menu(
     mosaic: crate::panel::browser::OpenMosaic,
     stored: Demosaic,
-) -> (Vec<Demosaic>, Demosaic, &'static str) {
+) -> (Vec<Demosaic>, Demosaic, String) {
     use crate::panel::browser::OpenMosaic;
     match mosaic {
         OpenMosaic::Known(m) if !Demosaic::for_kind(m).is_empty() => {
-            (Demosaic::for_kind(m), stored.resolve(m), "")
+            (Demosaic::for_kind(m), stored.resolve(m), String::new())
         }
-        OpenMosaic::Known(_) => (vec![stored], stored, "no demosaic for this mosaic"),
-        OpenMosaic::NotMosaic => (vec![stored], stored, "not a mosaic"),
-        OpenMosaic::Unreadable => (vec![stored], stored, "the raw could not be read"),
-        OpenMosaic::Unknown => (vec![stored], stored, "reading the raw"),
+        OpenMosaic::Known(_) => (vec![stored], stored, tr!("no demosaic for this mosaic")),
+        OpenMosaic::NotMosaic => (vec![stored], stored, tr!("not a mosaic")),
+        OpenMosaic::Unreadable => (vec![stored], stored, tr!("the raw could not be read")),
+        OpenMosaic::Unknown => (vec![stored], stored, tr!("reading the raw")),
     }
 }
 
@@ -739,7 +740,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
 
 /// The adjustments' names on the panel's list, Global first.
 pub(crate) fn show_names(edit: &Edit, app: &App) {
-    let mut names = vec![slint::SharedString::from("Global")];
+    let mut names = vec![slint::SharedString::from(tr!("Global"))];
     names.extend(
         edit.adjustments
             .iter()
@@ -1250,7 +1251,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                     };
                     let mut st = state.borrow_mut();
                     st.develop.generation += 1;
-                    app.set_status("developing...".into());
+                    app.set_status(tr!("developing...").into());
                     app.set_busy(true);
                     worker.send(Job::Develop {
                         edit: edit_to_develop(&app, &st.develop.edit),

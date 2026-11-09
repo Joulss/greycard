@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use greycard_edit::Edit;
+use greycard_ui::tr;
 use slint::{ComponentHandle, SharedString};
 
 use crate::panel::deliver::Landed;
@@ -20,7 +21,9 @@ use crate::worker::{Developed, Job, WhiteBase, Worker};
 use crate::{App, Shared, State, WORKER, finish};
 
 /// What the status line says while the Original shows.
-pub(crate) const WORD: &str = "Original";
+pub(crate) fn word() -> String {
+    tr!("Original")
+}
 
 /// The Original on show, and what it swaps.
 #[derive(Default)]
@@ -180,10 +183,11 @@ pub(crate) fn key(st: &mut State, app: &App, worker: &Worker) {
     o.on = true;
     o.edit = Some(edit.clone());
     let status = app.get_status();
-    if status != WORD {
+    let word = word();
+    if status != word.as_str() {
         o.status = Some(status);
     }
-    app.set_status(WORD.into());
+    app.set_status(word.into());
     app.set_original_on(true);
     // A develop on its way, either picture's, is not wanted now.
     st.develop.generation += 1;
@@ -219,7 +223,7 @@ pub(crate) fn off(st: &mut State, app: &App, follows: bool) {
     o.asked = None;
     let edited = o.edited.take();
     if let Some(status) = o.status.take()
-        && app.get_status() == WORD
+        && app.get_status() == word().as_str()
     {
         app.set_status(status);
     }
@@ -277,7 +281,7 @@ pub(crate) fn landing(st: &mut State, app: &App, generation: u64) -> bool {
     o.asked = None;
     o.edited = None;
     if let Some(status) = o.status.take()
-        && app.get_status() == WORD
+        && app.get_status() == word().as_str()
     {
         app.set_status(status);
     }
@@ -439,7 +443,7 @@ mod tests {
         assert_eq!(drawn(&state, &app).light.exposure, 1.0);
         press(&app, "\\");
         assert!(app.get_original_on());
-        assert_eq!(app.get_status(), WORD);
+        assert_eq!(app.get_status(), word());
         let asked = state
             .borrow()
             .develop
@@ -450,7 +454,7 @@ mod tests {
         // Until its picture is up the edit's is drawn as it was.
         assert_eq!(drawn(&state, &app).light.exposure, 1.0);
         deliver(&app, asked);
-        assert_eq!(app.get_status(), WORD, "the develop's line took over");
+        assert_eq!(app.get_status(), word(), "the develop's line took over");
         assert!(
             state.borrow().develop.pending.is_some(),
             "its picture goes up"
@@ -482,7 +486,7 @@ mod tests {
         app.invoke_view_changed();
         assert!(!state.borrow().develop.original.on);
         assert!(!app.get_original_on());
-        assert_ne!(app.get_status(), WORD);
+        assert_ne!(app.get_status(), word());
     }
 
     /// The Original's picture is kept with its own white, not the
@@ -545,7 +549,7 @@ mod tests {
         deliver_with(&app, generation, edits_white(), vec![7]);
         assert!(!state.borrow().develop.original.on);
         assert!(!app.get_original_on());
-        assert_ne!(app.get_status(), WORD);
+        assert_ne!(app.get_status(), word());
         assert_eq!(state.borrow().develop.generation, generation);
         assert_eq!(state.borrow().develop.fills_pending, vec![7]);
         land(&state, &app);

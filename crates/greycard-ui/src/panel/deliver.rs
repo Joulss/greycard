@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Method as RetouchMethod;
 use greycard_edit::{Edit, WhiteBalance};
+use greycard_ui::tr;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::panel::assets::{
@@ -95,8 +96,8 @@ pub(crate) fn making_line(making: crate::thumbpool::Making) -> String {
     use crate::thumbpool::Making;
     match making {
         Making::Over | Making::Left(0) => String::new(),
-        Making::Left(n) => format!("making {}...", crate::delete::count(n, "picture")),
-        Making::Uncounted => "making pictures...".into(),
+        Making::Left(n) => tr!("making {n} picture..." | "making {n} pictures..." % n),
+        Making::Uncounted => tr!("making pictures..."),
     }
 }
 
@@ -106,7 +107,7 @@ pub(crate) fn listed(names: &[String]) -> String {
     match names {
         [] => String::new(),
         [one] => one.clone(),
-        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+        [first @ .., last] => tr!("{first} and {last}", first = first.join(", "), last = last),
     }
 }
 
@@ -541,9 +542,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     app.set_noise_unavailable("".into());
                     app.set_learned_unavailable(
                         if xtrans {
-                            "learned: not on X-Trans yet"
+                            tr!("learned: not on X-Trans yet")
                         } else {
-                            ""
+                            String::new()
                         }
                         .into(),
                     );
@@ -562,17 +563,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 SourceKind::Picture { space, bits } => {
                     app.set_raw_input(false);
-                    app.set_noise_unavailable("raw only".into());
+                    app.set_noise_unavailable(tr!("raw only").into());
                     app.set_learned_unavailable("".into());
                     app.set_source_note(
-                        format!(
-                            "{}-bit {} read as {space}; already rendered",
-                            bits,
-                            st.current
+                        tr!(
+                            "{bits}-bit {kind} read as {space}; already rendered",
+                            bits = bits,
+                            kind = st
+                                .current
                                 .and_then(|i| st.path_at(i))
                                 .and_then(|f| f.extension())
                                 .map(|e| e.to_string_lossy().to_ascii_uppercase())
-                                .unwrap_or_else(|| "picture".into())
+                                .unwrap_or_else(|| tr!("picture")),
+                            space = space
                         )
                         .into(),
                     );
@@ -663,13 +666,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let detailed = match detail {
                 Some((s, ran)) => {
                     let how = match ran {
-                        DetailRan::Cpu(secs) => format!("in {secs:.2} s"),
-                        DetailRan::Gpu => "on the GPU".into(),
-                        DetailRan::Kept => "kept".into(),
+                        DetailRan::Cpu(secs) => tr!("in {secs} s", secs = format!("{secs:.2}")),
+                        DetailRan::Gpu => tr!("on the GPU"),
+                        DetailRan::Kept => tr!("kept"),
                     };
-                    format!(
-                        ", local contrast at {} and {} px {how}",
-                        s.texture_radius, s.clarity_radius
+                    tr!(
+                        ", local contrast at {texture} and {clarity} px {how}",
+                        texture = s.texture_radius,
+                        clarity = s.clarity_radius,
+                        how = how
                     )
                 }
                 None => String::new(),
@@ -692,10 +697,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.develop.image_size = (0, 0);
             }
             let dehazed = match dehaze {
-                Some(d) => format!(
-                    ", dehazed {:+.0} to a mean transmission of {:.2}",
-                    d.amount * 100.0,
-                    d.transmission_mean
+                Some(d) => tr!(
+                    ", dehazed {amount} to a mean transmission of {mean}",
+                    amount = format!("{:+.0}", d.amount * 100.0),
+                    mean = format!("{:.2}", d.transmission_mean)
                 ),
                 None => String::new(),
             };
@@ -703,10 +708,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 Some(s) => {
                     app.set_sharpen_measured_radius(s.radius);
                     app.set_sharpen_measured_threshold(s.threshold);
-                    format!(
-                        ", sharpened at radius {:.2} over {:.0}% of it",
-                        s.radius,
-                        s.blend_mean * 100.0
+                    tr!(
+                        ", sharpened at radius {radius} over {share}% of it",
+                        radius = format!("{:.2}", s.radius),
+                        share = format!("{:.0}", s.blend_mean * 100.0)
                     )
                 }
                 None => String::new(),
@@ -747,10 +752,16 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     version,
                     provider,
                     seconds,
-                } => format!(", learned denoiser {version} on {provider} in {seconds:.1} s"),
-                LearnedReport::Cached { seconds } => {
-                    format!(", learned denoiser from the cache in {seconds:.1} s")
-                }
+                } => tr!(
+                    ", learned denoiser {version} on {provider} in {seconds} s",
+                    version = version,
+                    provider = provider,
+                    seconds = format!("{seconds:.1}")
+                ),
+                LearnedReport::Cached { seconds } => tr!(
+                    ", learned denoiser from the cache in {seconds} s",
+                    seconds = format!("{seconds:.1}")
+                ),
                 LearnedReport::Missing(model) => {
                     if st.sheets.fetch.is_none()
                         && !st.sheets.fetching
@@ -758,34 +769,34 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     {
                         offer_model(&mut st, app, model, false);
                     }
-                    ", the engine's denoise until the model is fetched".to_string()
+                    tr!(", the engine's denoise until the model is fetched")
                 }
                 LearnedReport::Failed(message) => {
                     tracing::warn!("learned denoiser failed: {message}; the engine's denoise");
-                    format!(", the engine's denoise: the learned one failed ({message})")
+                    tr!(
+                        ", the engine's denoise: the learned one failed ({message})",
+                        message = message
+                    )
                 }
-                LearnedReport::Unavailable(why) => format!(", no denoise: {why}"),
+                LearnedReport::Unavailable(why) => tr!(", no denoise: {why}", why = why),
             };
             // The fills: made, or left as they were and why. A missing
             // model is offered, as the denoiser's is.
             let mut fill_note = String::new();
             if !fills.made.is_empty() {
-                fill_note.push_str(&format!(
-                    ", {} filled by the model in {:.1} s",
-                    listed(&fills.made),
-                    fills.seconds
+                fill_note.push_str(&tr!(
+                    ", {names} filled by the model in {seconds} s",
+                    names = listed(&fills.made),
+                    seconds = format!("{:.1}", fills.seconds)
                 ));
             }
             if !fills.missing.is_empty() {
                 let names: Vec<String> = fills.missing.iter().map(|(n, _)| n.clone()).collect();
-                fill_note.push_str(&format!(
-                    ", {} left as {} until the fill model is fetched",
-                    listed(&names),
-                    if names.len() == 1 {
-                        "it was"
-                    } else {
-                        "they were"
-                    }
+                fill_note.push_str(&tr!(
+                    ", {names} left as it was until the fill model is fetched"
+                        | ", {names} left as they were until the fill model is fetched"
+                            % names.len(),
+                    names = listed(&names)
                 ));
                 // The first model waited on that can be had here: the
                 // generative remove, or its four steps, not on a
@@ -811,12 +822,17 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
             }
             for name in &fills.no_gpu {
-                fill_note.push_str(&format!(", {name} left as it was: the remove needs a GPU"));
+                fill_note.push_str(&tr!(
+                    ", {name} left as it was: the remove needs a GPU",
+                    name = name
+                ));
             }
             for (name, why) in &fills.failed {
                 tracing::warn!("fill {name} failed: {why}");
-                fill_note.push_str(&format!(
-                    ", {name} left as it was: the fill model failed ({why})"
+                fill_note.push_str(&tr!(
+                    ", {name} left as it was: the fill model failed ({why})",
+                    name = name,
+                    why = why
                 ));
             }
             // A preset or a sync's own words ("Muted Slide onto 3
@@ -846,16 +862,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 // The set's own words first: the develop's line runs
                 // long with a note or two of its own, and the set's
                 // is the one a snapshot's width must not clip.
+                let developed = tr!(
+                    "{width}x{height}, developed in {seconds} s",
+                    width = image.width(),
+                    height = image.height(),
+                    seconds = format!("{seconds:.2}")
+                );
                 app.set_status(
                     format!(
-                        "{prefix}{}x{}, developed in {seconds:.2} s{on_cpu}{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
-                        image.width(),
-                        image.height()
+                        "{prefix}{developed}{on_cpu}{detailed}{dehazed}{sharpened}{learned_note}{fill_note}"
                     )
                     .into(),
                 );
             } else {
-                show_hint(app, &mut st, picking_hint(picking.as_str()));
+                show_hint(app, &mut st, &picking_hint(picking.as_str()));
             }
             // Its line goes to the log; the status line says what shows.
             if original {
@@ -864,7 +884,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     image.width(),
                     image.height()
                 );
-                app.set_status(crate::panel::original::WORD.into());
+                app.set_status(crate::panel::original::word().into());
             }
             // The picture the viewport draws from the next frame on,
             // whether it takes a camera picture's place or stands
@@ -928,14 +948,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // is left when more than one fill is ahead.
             if generation == state.borrow().develop.generation {
                 app.set_fill_fraction(0.0);
-                let count = if of > 1 {
-                    format!(", {} of {of}", made + 1)
+                let status = if of > 1 {
+                    tr!(
+                        "developing... the fill model is at work on {name}, {at} of {of}",
+                        name = name,
+                        at = made + 1,
+                        of = of
+                    )
                 } else {
-                    String::new()
+                    tr!(
+                        "developing... the fill model is at work on {name}",
+                        name = name
+                    )
                 };
-                app.set_status(
-                    format!("developing... the fill model is at work on {name}{count}").into(),
-                );
+                app.set_status(status.into());
             }
         }
         // The bar under way with the fill: how many of its steps are
@@ -958,7 +984,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // Recorded whether or not the develop is still the wanted one.
             tracing::error!("failed: {message}");
             if generation == st.develop.generation {
-                app.set_status(format!("failed: {message}").into());
+                app.set_status(tr!("failed: {message}", message = message).into());
                 app.set_busy(false);
                 // No fill of it is coming.
                 st.develop.fills_pending.clear();
@@ -1068,7 +1094,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if let Some(note) = note {
                 app.set_status(note.into());
             } else if let Some(p) = provider {
-                app.set_status(format!("{name} found on {p} in {seconds:.2} s").into());
+                app.set_status(
+                    tr!(
+                        "{name} found on {provider} in {seconds} s",
+                        name = name,
+                        provider = p,
+                        seconds = format!("{seconds:.2}")
+                    )
+                    .into(),
+                );
             }
             app.window().request_redraw();
         }
@@ -1129,7 +1163,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.develop.quiet.remove(&key);
             tracing::error!("mask: {message}");
             if let Some(shape) = st.develop.asked.get(&key).cloned() {
-                app.set_status(format!("mask: {message}").into());
+                app.set_status(tr!("mask: {message}", message = message).into());
                 let file = st.develop.learned_of.clone();
                 st.develop.masks_failed.insert(key, (shape, file));
                 // A capture waiting on this shape is waiting no more.
@@ -1145,10 +1179,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             crate::panel::models::progress(&mut state.borrow_mut(), app, name, file, done, total);
             let short = name.split(',').next().unwrap_or(name);
             app.set_status(
-                format!(
-                    "downloading {short}: {} of {} MB",
-                    done / 1_000_000,
-                    total / 1_000_000
+                tr!(
+                    "downloading {name}: {done} of {total} MB",
+                    name = short,
+                    done = done / 1_000_000,
+                    total = total / 1_000_000
                 )
                 .into(),
             );
@@ -1160,7 +1195,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.develop.masks_failed.clear();
             st.sheets.fetch_failed.retain(|id| *id != model.id);
             let short = model.name.split(',').next().unwrap_or(model.name);
-            app.set_status(format!("{short} is ready").into());
+            app.set_status(tr!("{name} is ready", name = short).into());
             if model.id == greycard_ai::SAM3.id {
                 crate::panel::parts::model_answered(&mut st, app, true);
             }
@@ -1204,7 +1239,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.sheets.fetch_failed.retain(|id| *id != runtime.id);
             let short = runtime.name.split(',').next().unwrap_or(runtime.name);
             app.set_status(
-                format!("{short} is ready: the AI features run on the CPU, slower").into(),
+                tr!(
+                    "{name} is ready: the AI features run on the CPU, slower",
+                    name = short
+                )
+                .into(),
             );
             runtime_arrived(&mut st, app);
             // What runs here is asked again; a fetch of every model goes on.
@@ -1256,10 +1295,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::LensesFetching { done, total } => {
             app.set_status(
-                format!(
-                    "downloading the lens profiles: {} of {} KB",
-                    done / 1000,
-                    total / 1000
+                tr!(
+                    "downloading the lens profiles: {done} of {total} KB",
+                    done = done / 1000,
+                    total = total / 1000
                 )
                 .into(),
             );
@@ -1280,7 +1319,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::LensesFetched => {
             let mut st = state.borrow_mut();
             st.sheets.fetching = false;
-            app.set_status("the lens profiles are ready".into());
+            app.set_status(tr!("the lens profiles are ready").into());
             // A fetch of every model held behind it goes on.
             crate::panel::models::pump(&mut st, app);
             // The develop keys in the index were made with the old
@@ -1308,7 +1347,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             st.sheets.fetching = false;
             tracing::error!("the lens profiles could not be fetched: {message}");
-            app.set_status(format!("the lens profiles could not be fetched: {message}").into());
+            app.set_status(
+                tr!(
+                    "the lens profiles could not be fetched: {message}",
+                    message = message
+                )
+                .into(),
+            );
             crate::panel::models::pump(&mut st, app);
         }
         Outcome::SetFrameStarted { set, index, name } => {
@@ -1364,8 +1409,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 queue::Done::Skipped { path } => {
                     tracing::warn!("skipped {at}: {} is there already", path.display());
                     if set.total == 1 {
-                        let line =
-                            format!("{} is there already: nothing exported", file_name(&path));
+                        let line = tr!(
+                            "{name} is there already: nothing exported",
+                            name = file_name(&path)
+                        );
                         state.borrow_mut().work.export_one_line = Some((set.clone(), line));
                     }
                 }
@@ -1396,9 +1443,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             });
             // Said on the terminal without -v when not all went.
             if tally.failed.is_empty() && tally.canceled == 0 {
-                tracing::info!("{line}");
+                tracing::info!("export: {line}");
             } else {
-                tracing::warn!("{line}");
+                tracing::warn!("export: {line}");
             }
             if exporting(&st, &set) {
                 st.work.exporting = None;
@@ -1442,7 +1489,7 @@ fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) 
             .any(|p| p.method == RetouchMethod::Fill);
     if (denoiser || fill) && st.culling.cull.is_none() {
         st.develop.generation += 1;
-        app.set_status("developing...".into());
+        app.set_status(tr!("developing...").into());
         app.set_busy(true);
         let turn = current_turn(st);
         WORKER.with(|w| {
@@ -1565,25 +1612,30 @@ pub(crate) fn exported_line(
     left_out: &[String],
 ) -> String {
     let mut said = match note {
-        Some(note) => format!(" ({note})"),
+        Some(note) => tr!(" ({note})", note = note),
         None => String::new(),
     };
     let parts = crate::ai::parts_left_out(left_out);
     let missing = left_out.len() - parts.0 - parts.1;
     if missing > 0 {
-        said.push_str(&format!(", without {}", left_out_words(missing)));
+        said.push_str(&tr!(", without {what}", what = left_out_words(missing)));
     }
     said.push_str(&crate::ai::parts_words(false, parts));
-    format!("exported {} in {seconds:.2} s{said}", file_name(path))
+    tr!(
+        "exported {name} in {seconds} s{said}",
+        name = file_name(path),
+        seconds = format!("{seconds:.2}"),
+        said = said
+    )
 }
 
 /// "one thing the edit names that ...", "2 things": what a status line
 /// says of an export's left-out items, the log having the list.
 pub(crate) fn left_out_words(n: usize) -> String {
-    match n {
-        1 => "one thing the edit names that this machine has not got (see the log)".into(),
-        n => format!("{n} things the edit names that this machine has not got (see the log)"),
-    }
+    tr!(
+        "one thing the edit names that this machine has not got (see the log)"
+            | "{n} things the edit names that this machine has not got (see the log)" % n
+    )
 }
 
 /// Whether `set` is the one the window is exporting, rather than one
@@ -1716,7 +1768,7 @@ pub(crate) fn start_set(
     // Nothing to write would never be said done: the spinner would run
     // and a batch run would wait for ever.
     if frames.is_empty() {
-        app.set_status("nothing to export".into());
+        app.set_status(tr!("nothing to export").into());
         if st.window.batch {
             st.launch.failed = true;
             let _ = slint::quit_event_loop();
@@ -1758,7 +1810,7 @@ pub(crate) fn start_set(
         set.place(),
         set.settings.describe()
     );
-    app.set_status(format!("exporting {}...", queue::frames(frames.len())).into());
+    app.set_status(tr!("exporting {n} frame..." | "exporting {n} frames..." % frames.len()).into());
     app.set_export_running(true);
     app.set_export_stopping(false);
     st.work.exporting = Some(set.clone());
@@ -1807,8 +1859,8 @@ fn start_or_ask(st: &mut State, app: &App, set: Pending, on_exists: export::OnEx
         .collect();
         if !there.is_empty() {
             let title = match there.as_slice() {
-                [one] => format!("{} is there already", file_name(one)),
-                _ => format!("{} files are there already", there.len()),
+                [one] => tr!("{name} is there already", name = file_name(one)),
+                _ => tr!("{n} file is there already" | "{n} files are there already" % there.len()),
             };
             let files: Vec<slint::SharedString> = there
                 .iter()
@@ -1818,7 +1870,7 @@ fn start_or_ask(st: &mut State, app: &App, set: Pending, on_exists: export::OnEx
             app.set_overwrite_files(ModelRc::new(VecModel::from(files)));
             app.set_export_open(false);
             app.set_overwrite_open(true);
-            app.set_status(format!("{title}: overwrite?").into());
+            app.set_status(tr!("{title}: overwrite?", title = title).into());
             // One question at a time: another Export waits for this.
             st.work.export_choosing = true;
             st.work.export_pending = Some(set);
@@ -1840,7 +1892,7 @@ fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
         2 => export::OnExists::Overwrite,
         _ => {
             st.work.export_choosing = false;
-            app.set_status("export canceled".into());
+            app.set_status(tr!("export canceled").into());
             return;
         }
     };
@@ -1866,9 +1918,9 @@ pub(crate) fn folder_line(st: &State, typed: &str, room: usize) -> String {
         return String::new();
     }
     if !sub.is_empty() {
-        const BESIDE: &str = " beside each original";
-        let left = room.saturating_sub(BESIDE.len()).max(4);
-        return format!("{}{BESIDE}", Sheet::elide_front(&sub, left));
+        let beside = tr!(" beside each original");
+        let left = room.saturating_sub(beside.chars().count()).max(4);
+        return format!("{}{beside}", Sheet::elide_front(&sub, left));
     }
     let Some(raw) = st.current.and_then(|c| st.path_at(c)) else {
         return String::new();
@@ -1979,8 +2031,8 @@ fn probe_name(attempt: u32) -> String {
 fn folder_problem_probing(folder: &Path, name: impl Fn(u32) -> String) -> Option<String> {
     let shown = folder.display();
     match std::fs::metadata(folder) {
-        Err(_) => return Some(format!("{shown} is not there")),
-        Ok(m) if !m.is_dir() => return Some(format!("{shown} is not a folder")),
+        Err(_) => return Some(tr!("{folder} is not there", folder = shown)),
+        Ok(m) if !m.is_dir() => return Some(tr!("{folder} is not a folder", folder = shown)),
         Ok(_) => {}
     }
     for attempt in 0..2 {
@@ -1999,7 +2051,7 @@ fn folder_problem_probing(folder: &Path, name: impl Fn(u32) -> String) -> Option
             Err(_) => break,
         }
     }
-    Some(format!("{shown} cannot be written to"))
+    Some(tr!("{folder} cannot be written to", folder = shown))
 }
 
 /// [`folder_problem`] for `folder`, on a thread of its own since the
@@ -2069,7 +2121,7 @@ fn choose_export_folder(state: &Rc<Shared>, app: &App) {
         st.work.export_choosing = true;
         st.work.export_looking.take()
     };
-    app.set_status("choosing the folder exports go to...".into());
+    app.set_status(tr!("choosing the folder exports go to...").into());
     ask_folder(app, start, move |app, chosen| {
         let Some(state) = STATE.with(|s| s.borrow().clone()) else {
             return;
@@ -2083,18 +2135,18 @@ fn choose_export_folder(state: &Rc<Shared>, app: &App) {
                     app.set_export_subfolder("".into());
                     show_edited(app, &st.work.export_presets);
                 }
-                format!("exports go to {}", folder.display())
+                tr!("exports go to {folder}", folder = folder.display())
             }
-            Ok(None) => "the export folder is as it was".to_string(),
+            Ok(None) => tr!("the export folder is as it was"),
             Err(e) => {
                 tracing::warn!("folder chooser: {e:#}");
                 chooser::chooser_failed(&e)
             }
         };
         if let Some(waiting) = overtaken {
-            line.push_str(&format!(
-                "; the export waiting on {} was not started",
-                waiting.display()
+            line.push_str(&tr!(
+                "; the export waiting on {folder} was not started",
+                folder = waiting.display()
             ));
         }
         app.set_status(line.into());
@@ -2125,7 +2177,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 // Escape is the window's again while the frame in
                 // hand finishes.
                 app.set_export_stopping(true);
-                app.set_status("stopping the export after the frame in hand...".into());
+                app.set_status(tr!("stopping the export after the frame in hand...").into());
             }
         });
     }
@@ -2184,7 +2236,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let st = state.borrow();
             if let Some(p) = sheet::find(&st.work.export_presets, &name) {
                 show_sheet(&app, &p.sheet);
-                app.set_status(format!("export preset {}", p.name).into());
+                app.set_status(tr!("export preset {name}", name = p.name).into());
             }
             show_presets_picker(&app, &st.work.export_presets, Some(&name));
             keep_presets(&st, &app);
@@ -2199,7 +2251,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             };
             let name = name.trim();
             if name.is_empty() || sheet::reserved(name) {
-                app.set_status(format!("{NO_PRESET} is the picker's; choose another name").into());
+                app.set_status(
+                    tr!(
+                        "{none} is the picker's; choose another name",
+                        none = NO_PRESET
+                    )
+                    .into(),
+                );
                 return;
             }
             let mut st = state.borrow_mut();
@@ -2207,7 +2265,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if sheet::save_as(&mut st.work.export_presets, name, &current) {
                 show_presets_picker(&app, &st.work.export_presets, Some(name));
                 keep_presets(&st, &app);
-                app.set_status(format!("export preset {name} saved").into());
+                app.set_status(tr!("export preset {name} saved", name = name).into());
             }
         });
     }
@@ -2232,7 +2290,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             if sheet::delete(&mut st.work.export_presets, &name) {
                 show_presets_picker(&app, &st.work.export_presets, None);
                 keep_presets(&st, &app);
-                app.set_status(format!("export preset {name} deleted").into());
+                app.set_status(tr!("export preset {name} deleted", name = name).into());
             }
         });
     }
@@ -2372,7 +2430,7 @@ pub(crate) fn pressed_frames(
         // The frame on screen with a panel that is not its own (its
         // root offline, its sidecar not read): nothing to export, and
         // the worker's open picture is another frame's.
-        if on_screen && let Some(why) = crate::rows::refused(&st, p, "nothing is exported") {
+        if on_screen && let Some(why) = crate::rows::refused(&st, p, &tr!("nothing is exported")) {
             app.set_status(why.into());
             return None;
         }
@@ -2419,14 +2477,14 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
     // A mark asked for with nothing to draw: say so and keep
     // the sheet up, rather than write the picture unmarked.
     if let Some(Err(e)) = settings.watermark.as_ref().map(|m| m.check()) {
-        app.set_status(format!("not exported: {e:#}").into());
+        app.set_status(tr!("not exported: {why}", why = format!("{e:#}")).into());
         app.set_export_open(true);
         return;
     }
     let on_exists = sheet.on_exists();
     let sub = match sheet.subfolder() {
         Err(e) => {
-            app.set_status(format!("not exported: {e}").into());
+            app.set_status(tr!("not exported: {why}", why = e).into());
             app.set_export_open(true);
             return;
         }
@@ -2462,7 +2520,7 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
         st.work.export_looking = Some(folder.clone());
         st.work.export_checks
     };
-    app.set_status(format!("exporting to {}...", folder.display()).into());
+    app.set_status(tr!("exporting to {folder}...", folder = folder.display()).into());
     let go = move |app: &App, folder: PathBuf| {
         let Some(state) = STATE.with(|s| s.borrow().clone()) else {
             return;
@@ -2494,7 +2552,7 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
             st.work.export_looking = None;
             // Another export under way since: this one is not started.
             if st.work.exporting.is_some() || st.work.export_choosing {
-                app.set_status("not exported: another export is under way".into());
+                app.set_status(tr!("not exported: another export is under way").into());
                 return;
             }
         }
@@ -2502,7 +2560,7 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
             return go(app, folder);
         };
         tracing::warn!("export folder: {why}");
-        app.set_status(format!("{why}: choose another folder").into());
+        app.set_status(tr!("{why}: choose another folder", why = why).into());
         state.borrow_mut().work.export_choosing = true;
         ask_folder(app, folder, move |app, chosen| {
             if let Some(state) = STATE.with(|s| s.borrow().clone()) {
@@ -2514,11 +2572,16 @@ fn export_gathered(state: &Rc<Shared>, app: &App, raw: PathBuf, frames: SetFrame
             }
             match chosen {
                 Ok(Some(folder)) => go(app, folder),
-                Ok(None) => app.set_status(format!("not exported: {why}").into()),
+                Ok(None) => app.set_status(tr!("not exported: {why}", why = why).into()),
                 Err(e) => {
                     tracing::warn!("folder chooser: {e:#}");
                     app.set_status(
-                        format!("not exported: {why}; {}", chooser::chooser_failed(&e)).into(),
+                        tr!(
+                            "not exported: {why}; {failed}",
+                            why = why,
+                            failed = chooser::chooser_failed(&e)
+                        )
+                        .into(),
                     );
                 }
             }

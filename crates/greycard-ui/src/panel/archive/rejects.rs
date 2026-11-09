@@ -466,7 +466,11 @@ fn start(
         cancel: cancel.clone(),
         bytes: count.clone(),
         total: items.len() as u64,
-        doing,
+        doing: if matches!(kind, Kind::Delete(_)) {
+            super::Doing::DeleteRejects
+        } else {
+            super::Doing::MoveRejects
+        },
         by_files: true,
         label: label.clone(),
         token,
