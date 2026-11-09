@@ -51,16 +51,16 @@ export component WhiteBalanceSection inherits Section {
     property <float> shown-mired: round(root.temperature) == 0 ? 0 : round(root.temperature);
     property <float> shown-tint: round(root.tint * 1000) == 0 ? 0 : round(root.tint * 1000) / 1000;
 
-    title: "WHITE BALANCE";
+    title: @tr("WHITE BALANCE");
     icon: @image-url("../icons/thermometer.svg");
     collapsed <=> root.collapsed-wb;
     if !root.local: Toggle {
-        label: "As shot";
+        label: @tr("As shot");
         checked <=> root.as-shot;
         toggled => { root.as-shot-toggled(); }
     }
     if root.local && !root.picture: Toggle {
-        label: "Follow global";
+        label: @tr("Follow global");
         enabled: root.live;
         checked <=> root.relative;
         toggled => { root.relative-toggled(); }
@@ -69,7 +69,7 @@ export component WhiteBalanceSection inherits Section {
     // higher temperature renders warmer, a positive
     // tint (a green white point) renders magenta.
     EditSlider {
-        label: "Temperature";
+        label: @tr("Temperature");
         enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #4d86e8 0%, #cfd6dc 50%, #f0b24a 100%);
@@ -99,7 +99,7 @@ export component WhiteBalanceSection inherits Section {
         }
     }
     EditSlider {
-        label: "Tint";
+        label: @tr("Tint");
         enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #5fbf5f 0%, #cfd6dc 50%, #d65fd6 100%);
@@ -129,11 +129,11 @@ export component WhiteBalanceSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         if !root.local: PanelButton {
-            text: "Auto";
+            text: @tr("Auto");
             clicked => { root.wb-auto(); }
         }
         PanelButton {
-            text: "Neutral";
+            text: @tr("Neutral");
             icon: @image-url("../icons/pipette.svg");
             // On a mask the patch is made neutral under the mask, and
             // the mask's white is switched on to do it.
@@ -167,7 +167,7 @@ export component ColorSection inherits Section {
         root.band-colors[0] 100%);
     callback view-changed();
 
-    title: "COLOR";
+    title: @tr("COLOR");
     owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-color;
@@ -175,7 +175,7 @@ export component ColorSection inherits Section {
     on <=> root.color-enabled;
     switched => { root.view-changed(); }
     EditSlider {
-        label: "Vibrance";
+        label: @tr("Vibrance");
         enabled: root.color-enabled;
         tinted: true;
         tint: root.spectrum;
@@ -190,7 +190,7 @@ export component ColorSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Saturation";
+        label: @tr("Saturation");
         enabled: root.color-enabled;
         tinted: true;
         tint: root.spectrum;
@@ -229,7 +229,7 @@ export component MixerSection inherits Section {
     property <bool> mixer-acts: root.mixer-enabled && !root.mixer-superseded;
     callback view-changed();
 
-    title: "COLOR MIXER";
+    title: @tr("COLOR MIXER");
     owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-mixer;
@@ -249,7 +249,7 @@ export component MixerSection inherits Section {
         selected(i) => { root.mixer-band-changed(); }
     }
     EditSlider {
-        label: "Hue";
+        label: @tr("Hue");
         enabled: root.mixer-acts;
         // Which way each way goes: the band's
         // own color in the middle, its
@@ -269,7 +269,7 @@ export component MixerSection inherits Section {
         changed(v) => { root.mixer-changed(); }
     }
     EditSlider {
-        label: "Saturation";
+        label: @tr("Saturation");
         enabled: root.mixer-acts;
         minimum: -1;
         maximum: 1;
@@ -282,7 +282,7 @@ export component MixerSection inherits Section {
         changed(v) => { root.mixer-changed(); }
     }
     EditSlider {
-        label: "Luminance";
+        label: @tr("Luminance");
         enabled: root.mixer-acts;
         minimum: -1;
         maximum: 1;
@@ -297,14 +297,14 @@ export component MixerSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         PanelButton {
-            text: "Pick";
+            text: @tr("Pick");
             icon: @image-url("../icons/pipette.svg");
             enabled: root.mixer-acts;
             primary: root.picking == "Mixer";
             clicked => { root.pick-started("Mixer"); }
         }
         PanelButton {
-            text: "Reset";
+            text: @tr("Reset");
             icon: @image-url("../icons/rotate-ccw.svg");
             // Dead while the black and white
             // has the section: a section
@@ -341,7 +341,7 @@ export component BlackWhiteSection inherits Section {
     callback bw-reset();
     callback view-changed();
 
-    title: "BLACK & WHITE";
+    title: @tr("BLACK & WHITE");
     icon: @image-url("../icons/contrast.svg");
     collapsed <=> root.collapsed-bw;
     switchable: true;
@@ -353,6 +353,7 @@ export component BlackWhiteSection inherits Section {
     // needing the switch thrown first.
     Segmented {
         options: ["None", "Red", "Orange", "Yellow", "Green", "Blue"];
+        labels: [@tr("None"), @tr("Red"), @tr("Orange"), @tr("Yellow"), @tr("Green"), @tr("Blue")];
         current <=> root.bw-filter;
         selected(v) => { root.bw-filter-changed(); }
     }
@@ -363,7 +364,7 @@ export component BlackWhiteSection inherits Section {
         selected(i) => { root.bw-band-changed(); }
     }
     EditSlider {
-        label: "Weight";
+        label: @tr("Weight");
         enabled: root.bw-enabled;
         // Dark at the left, the band's own
         // color at the right: which way the
@@ -391,7 +392,7 @@ export component BlackWhiteSection inherits Section {
     // filter keeps its shape and only its
     // depth changes: the row still says Red.
     EditSlider {
-        label: "Strength";
+        label: @tr("Strength");
         enabled: root.bw-enabled;
         minimum: 0;
         // `bw::STRENGTH_MAX`, which
@@ -410,7 +411,7 @@ export component BlackWhiteSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         PanelButton {
-            text: "Reset";
+            text: @tr("Reset");
             icon: @image-url("../icons/rotate-ccw.svg");
             clicked => { root.bw-reset(); }
         }
@@ -502,7 +503,7 @@ export component GradingSection inherits Section {
     callback grade-reset();
     callback view-changed();
 
-    title: "COLOR GRADING";
+    title: @tr("COLOR GRADING");
     owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-grading;
@@ -521,7 +522,7 @@ export component GradingSection inherits Section {
         enabled: root.grading-enabled;
         chosen: root.grade-range == root.grade-big;
         in-hand: root.wheel-hand == root.grade-big;
-        accessible-label: "Enlarged wheel";
+        accessible-label: @tr("Enlarged wheel");
         pressed(x, y, hold) => { root.grade-press(root.grade-big, x, y, hold); }
         moved(x, y) => { root.grade-move(root.grade-big, x, y); }
         released => { root.grade-release(); }
@@ -529,7 +530,7 @@ export component GradingSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
-        for name[i] in ["Shadows", "Mid-tones", "Highlights"]: VerticalLayout {
+        for name[i] in [@tr("Shadows"), @tr("Mid-tones"), @tr("Highlights")]: VerticalLayout {
             spacing: Theme.space-1;
             alignment: end;
             if root.grade-big != i && i < root.grade-images.length: GradeWheel {
@@ -537,7 +538,7 @@ export component GradingSection inherits Section {
                 enabled: root.grading-enabled;
                 chosen: root.grade-range == i;
                 in-hand: root.wheel-hand == i;
-                accessible-label: name + " wheel";
+                accessible-label: @tr("{} wheel", name);
                 pressed(x, y, hold) => { root.grade-press(i, x, y, hold); }
                 moved(x, y) => { root.grade-move(i, x, y); }
                 released => { root.grade-release(); }
@@ -548,7 +549,7 @@ export component GradingSection inherits Section {
                 border-radius: Theme.radius-sm;
                 background: name-area.has-hover ? Theme.hover : transparent;
                 accessible-role: button;
-                accessible-label: (root.grade-big == i ? "Shrink " : "Enlarge ") + name;
+                accessible-label: root.grade-big == i ? @tr("Shrink {}", name) : @tr("Enlarge {}", name);
                 accessible-action-default => { name-area.choose(); }
                 name-area := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
@@ -580,7 +581,7 @@ export component GradingSection inherits Section {
         }
     }
     EditSlider {
-        label: "Hue";
+        label: @tr("Hue");
         enabled: root.grading-enabled;
         minimum: 0;
         maximum: 360;
@@ -592,7 +593,7 @@ export component GradingSection inherits Section {
         changed(v) => { root.grade-changed(); }
     }
     EditSlider {
-        label: "Strength";
+        label: @tr("Strength");
         enabled: root.grading-enabled;
         minimum: 0;
         maximum: 1;
@@ -605,7 +606,7 @@ export component GradingSection inherits Section {
         changed(v) => { root.grade-changed(); }
     }
     EditSlider {
-        label: "Balance";
+        label: @tr("Balance");
         enabled: root.grading-enabled;
         minimum: -1;
         maximum: 1;
@@ -621,7 +622,7 @@ export component GradingSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         PanelButton {
-            text: "Reset";
+            text: @tr("Reset");
             icon: @image-url("../icons/rotate-ccw.svg");
             clicked => { root.grade-reset(); }
         }
@@ -646,7 +647,7 @@ export component TintSection inherits Section {
     callback tint-reset();
     callback view-changed();
 
-    title: "TINT";
+    title: @tr("TINT");
     owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-tint;
@@ -691,7 +692,7 @@ export component TintSection inherits Section {
         }
     }
     EditSlider {
-        label: "Hue";
+        label: @tr("Hue");
         enabled: root.tint-enabled;
         // The Oklab hue circle along the
         // track: which color each way is,
@@ -711,7 +712,7 @@ export component TintSection inherits Section {
         changed(v) => { root.tint-changed(); }
     }
     EditSlider {
-        label: "Amount";
+        label: @tr("Amount");
         enabled: root.tint-enabled;
         minimum: 0;
         maximum: 1;
@@ -741,7 +742,7 @@ export component TintSection inherits Section {
         }
         Rectangle { horizontal-stretch: 1; }
         PanelButton {
-            text: "Reset";
+            text: @tr("Reset");
             icon: @image-url("../icons/rotate-ccw.svg");
             clicked => { root.tint-reset(); }
         }

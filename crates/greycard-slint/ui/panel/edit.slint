@@ -27,7 +27,7 @@ export component LightSection inherits Section {
     callback view-changed();
     callback light-auto();
 
-    title: "LIGHT";
+    title: @tr("LIGHT");
     owner: root.target-name;
     icon: @image-url("../icons/sun.svg");
     collapsed <=> root.collapsed-light;
@@ -35,7 +35,7 @@ export component LightSection inherits Section {
     on <=> root.light-enabled;
     switched => { root.view-changed(); }
     EditSlider {
-        label: "Exposure";
+        label: @tr("Exposure");
         minimum: -5;
         maximum: 5;
         default: 0;
@@ -46,7 +46,7 @@ export component LightSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Contrast";
+        label: @tr("Contrast");
         logarithmic: true;
         minimum: 0.5;
         maximum: 2;
@@ -58,7 +58,7 @@ export component LightSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Highlights";
+        label: @tr("Highlights");
         minimum: -2;
         maximum: 2;
         default: 0;
@@ -69,7 +69,7 @@ export component LightSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Shadows";
+        label: @tr("Shadows");
         minimum: -2;
         maximum: 2;
         default: 0;
@@ -80,7 +80,7 @@ export component LightSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Whites";
+        label: @tr("Whites");
         minimum: -2;
         maximum: 2;
         default: 0;
@@ -91,7 +91,7 @@ export component LightSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Blacks";
+        label: @tr("Blacks");
         minimum: -0.3;
         maximum: 0.3;
         default: 0;
@@ -108,7 +108,7 @@ export component LightSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         PanelButton {
-            text: "Auto";
+            text: @tr("Auto");
             enabled: root.raw-input;
             clicked => { root.light-auto(); }
         }
@@ -116,12 +116,13 @@ export component LightSection inherits Section {
     if root.show-display-curve: VerticalLayout {
         spacing: 4px;
         Text {
-            text: "Display curve";
+            text: @tr("Display curve");
             color: Theme.text;
             font-size: Theme.font-sm;
         }
         Segmented {
             options: ["Per channel", "AgX"];
+            labels: [@tr("Per channel"), "AgX"];
             current <=> root.display-curve;
             selected(v) => { root.view-changed(); }
         }
@@ -132,7 +133,7 @@ export component LightSection inherits Section {
 // renamed in one place: the Rust side's is `greycard_edit::LEARNED_CHROMA`,
 // and a test holds the two to the same word.
 export global NoiseWords {
-    out property <string> chroma: "Chroma";
+    out property <string> chroma: @tr("Chroma");
 }
 
 export component NoiseSection inherits Section {
@@ -163,7 +164,7 @@ export component NoiseSection inherits Section {
     callback develop-changed();
     callback merge-again();
 
-    title: "NOISE";
+    title: @tr("NOISE");
     icon: @image-url("../icons/sparkles.svg");
     hint: root.unavailable != "" ? root.unavailable : root.learned-unavailable;
     collapsed <=> root.collapsed-noise;
@@ -177,12 +178,16 @@ export component NoiseSection inherits Section {
     if !root.again: Segmented {
         options: root.learned-unavailable == "" ? root.denoise-tiers
             : root.denoise-learned == "off" ? ["off"] : ["off", root.denoise-learned];
+        // The tiers' names are the values; only the "off" this side
+        // adds is shown in words of its own.
+        labels: root.learned-unavailable == "" ? []
+            : root.denoise-learned == "off" ? [@tr("off")] : [@tr("off"), root.denoise-learned];
         enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
         current <=> root.denoise-learned;
         selected(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Luma";
+        label: @tr("Luma");
         enabled: root.unavailable == "" && root.learned-unavailable == "" && root.denoise-learned != "off";
         minimum: 0;
         maximum: 1;
@@ -219,19 +224,19 @@ export component NoiseSection inherits Section {
             current <=> root.again-tier;
         }
         PanelButton {
-            text: "Denoise the frames and merge again";
+            text: @tr("Denoise the frames and merge again");
             enabled: root.unavailable == "" && !root.merging;
             clicked => { root.merge-again(); }
         }
     }
     Toggle {
-        label: "Denoise";
+        label: @tr("Denoise");
         enabled: root.unavailable == "" && root.denoise-learned == "off";
         checked <=> root.denoise;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Strength";
+        label: @tr("Strength");
         enabled: root.unavailable == "" && root.denoise && root.denoise-learned == "off";
         minimum: 0.5;
         maximum: 3;
@@ -248,7 +253,7 @@ export component NoiseSection inherits Section {
 // renamed in one place: the Rust side's is `greycard_edit::STRUCTURE`,
 // and a test holds the two to the same word.
 export global DetailWords {
-    out property <string> structure: "Structure";
+    out property <string> structure: @tr("Structure");
 }
 
 export component DetailSection inherits Section {
@@ -267,7 +272,7 @@ export component DetailSection inherits Section {
     in-out property <float> detail-sharpen;
     callback develop-changed();
 
-    title: "DETAIL";
+    title: @tr("DETAIL");
     icon: @image-url("../icons/blend.svg");
     owner: root.target-name;
     collapsed <=> root.collapsed-detail;
@@ -275,7 +280,7 @@ export component DetailSection inherits Section {
     on <=> root.detail-enabled;
     switched => { root.develop-changed(); }
     EditSlider {
-        label: "Texture";
+        label: @tr("Texture");
         enabled: root.detail-enabled;
         minimum: -1;
         maximum: 1;
@@ -288,7 +293,7 @@ export component DetailSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Clarity";
+        label: @tr("Clarity");
         enabled: root.detail-enabled;
         minimum: -1;
         maximum: 1;
@@ -314,7 +319,7 @@ export component DetailSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Dehaze";
+        label: @tr("Dehaze");
         enabled: root.detail-enabled;
         minimum: -1;
         maximum: 1;
@@ -327,7 +332,7 @@ export component DetailSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     if root.local: EditSlider {
-        label: "Sharpen";
+        label: @tr("Sharpen");
         enabled: root.detail-enabled;
         minimum: -1;
         maximum: 1;
@@ -355,20 +360,20 @@ export component SharpenSection inherits Section {
     callback view-changed();
     callback develop-changed();
 
-    title: "SHARPEN";
+    title: @tr("SHARPEN");
     icon: @image-url("../icons/focus.svg");
     collapsed <=> root.collapsed-sharpen;
     switchable: true;
     on <=> root.sharpen;
     switched => { root.develop-changed(); }
     Toggle {
-        label: "Auto radius";
+        label: @tr("Auto radius");
         enabled: root.sharpen;
         checked <=> root.sharpen-auto-radius;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Radius";
+        label: @tr("Radius");
         enabled: root.sharpen && !root.sharpen-auto-radius;
         minimum: 0.4;
         maximum: 2;
@@ -377,12 +382,12 @@ export component SharpenSection inherits Section {
         steps: Steps.hundredths;
         value <=> root.sharpen-radius;
         text: root.sharpen-auto-radius
-            ? (root.sharpen-measured-radius > 0 ? "auto " + round(root.sharpen-measured-radius * 100) / 100 : "auto")
+            ? (root.sharpen-measured-radius > 0 ? @tr("auto {}", round(root.sharpen-measured-radius * 100) / 100) : @tr("auto"))
             : round(root.sharpen-radius * 100) / 100;
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Iterations";
+        label: @tr("Iterations");
         enabled: root.sharpen;
         minimum: 5;
         maximum: 50;
@@ -394,13 +399,13 @@ export component SharpenSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     Toggle {
-        label: "Auto threshold";
+        label: @tr("Auto threshold");
         enabled: root.sharpen;
         checked <=> root.sharpen-auto-threshold;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Threshold";
+        label: @tr("Threshold");
         enabled: root.sharpen && !root.sharpen-auto-threshold;
         minimum: 0;
         maximum: 2;
@@ -410,12 +415,12 @@ export component SharpenSection inherits Section {
         value <=> root.sharpen-threshold;
         scale: 100;
         text: root.sharpen-auto-threshold
-            ? "auto " + round(root.sharpen-measured-threshold * 100) + "%"
+            ? @tr("auto {}", round(root.sharpen-measured-threshold * 100) + "%")
             : round(root.sharpen-threshold * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
     Toggle {
-        label: "Show mask";
+        label: @tr("Show mask");
         enabled: root.sharpen;
         checked <=> root.show-sharpen-mask;
         toggled => { root.view-changed(); }
@@ -431,14 +436,14 @@ export component VignetteSection inherits Section {
     in-out property <float> vignette-roundness;
     callback view-changed();
 
-    title: "VIGNETTE";
+    title: @tr("VIGNETTE");
     icon: @image-url("../icons/circle-dashed.svg");
     collapsed <=> root.collapsed-vignette;
     switchable: true;
     on <=> root.vignette-enabled;
     switched => { root.view-changed(); }
     EditSlider {
-        label: "Amount";
+        label: @tr("Amount");
         minimum: -5;
         maximum: 5;
         default: 0;
@@ -449,7 +454,7 @@ export component VignetteSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Midpoint";
+        label: @tr("Midpoint");
         minimum: 0;
         maximum: 1;
         default: 0.5;
@@ -461,7 +466,7 @@ export component VignetteSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Feather";
+        label: @tr("Feather");
         minimum: 0;
         maximum: 1;
         default: 0.5;
@@ -473,7 +478,7 @@ export component VignetteSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Roundness";
+        label: @tr("Roundness");
         minimum: -1;
         maximum: 1;
         default: 0;
@@ -494,14 +499,14 @@ export component GrainSection inherits Section {
     in-out property <string> grain-kind;
     callback view-changed();
 
-    title: "GRAIN";
+    title: @tr("GRAIN");
     icon: @image-url("../icons/grip.svg");
     collapsed <=> root.collapsed-grain;
     switchable: true;
     on <=> root.grain-enabled;
     switched => { root.view-changed(); }
     EditSlider {
-        label: "Amount";
+        label: @tr("Amount");
         minimum: 0;
         maximum: 1;
         default: 0;
@@ -513,7 +518,7 @@ export component GrainSection inherits Section {
         changed(v) => { root.view-changed(); }
     }
     EditSlider {
-        label: "Size";
+        label: @tr("Size");
         minimum: 0.1;
         maximum: 2;
         default: 0.5;
@@ -525,6 +530,7 @@ export component GrainSection inherits Section {
     }
     Segmented {
         options: ["Cubic", "Tabular"];
+        labels: [@tr("Cubic"), @tr("Tabular")];
         current <=> root.grain-kind;
         selected(k) => { root.view-changed(); }
     }
@@ -541,9 +547,9 @@ export component DemosaicSection inherits Section {
     // A pick from the menu: the window stores it in the edit.
     callback picked(string);
 
-    title: "DEMOSAIC";
+    title: @tr("DEMOSAIC");
     icon: @image-url("../icons/grid-2x2.svg");
-    hint: root.raw-input ? root.menu-hint : "raw only";
+    hint: root.raw-input ? root.menu-hint : @tr("raw only");
     collapsed <=> root.collapsed-demosaic;
     if root.raw-input: Segmented {
         options: root.demosaics;

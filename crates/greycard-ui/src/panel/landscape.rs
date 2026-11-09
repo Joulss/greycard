@@ -458,7 +458,7 @@ mod tests {
             .expect("the button");
         let row = before.rsplit("HorizontalLayout {").next().unwrap();
         assert!(row.contains("root.add-shape(\"Sky\""), "{row}");
-        assert!(button.contains("text: \"Landscape\";"));
+        assert!(button.contains("text: @tr(\"Landscape\");"));
         assert!(button.contains("mountain.svg"));
         assert!(button.contains("root.find-landscape(root.shape-mode)"));
         let menu = button.split("Menu {").nth(1).unwrap();

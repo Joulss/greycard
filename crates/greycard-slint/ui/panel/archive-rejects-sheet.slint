@@ -86,7 +86,7 @@ export component ArchiveRejectsSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.answered(0); }
                     }
                     if root.trash-text != "": DangerButton {

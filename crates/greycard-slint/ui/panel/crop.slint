@@ -37,15 +37,24 @@ export component CropSection inherits Section {
             root.custom-focused = false;
             Typing.close-all();
         }
+        aspect-box.current-index = root.aspect-index(root.aspect-name);
+    }
+    // The aspects by their names, which the edit keeps and the Rust
+    // side compares; the box shows each in words, at the same index.
+    property <[string]> aspects: ["Free", "Original", "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", "Custom"];
+    pure function aspect-index(name: string) -> int {
+        return name == "Free" ? 0 : name == "Original" ? 1 : name == "1:1" ? 2 : name == "3:2" ? 3
+            : name == "4:3" ? 4 : name == "5:4" ? 5 : name == "16:9" ? 6 : name == "65:24" ? 7
+            : name == "Custom" ? 8 : -1;
     }
 
-    title: "CROP";
+    title: @tr("CROP");
     icon: @image-url("../icons/crop.svg");
     collapsed <=> root.collapsed-crop;
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
-            text: root.crop-mode ? "Done" : "Crop";
+            text: root.crop-mode ? @tr("Done") : @tr("Crop");
             icon: @image-url("../icons/crop.svg");
             primary: root.crop-mode;
             clicked => { root.crop-clicked(); }
@@ -55,7 +64,7 @@ export component CropSection inherits Section {
         // makes the next drag draw wherever it starts. As the Level
         // does, it brings crop mode with it.
         PanelButton {
-            text: "Draw";
+            text: @tr("Draw");
             icon: @image-url("../icons/pencil.svg");
             primary: root.crop-draw-armed;
             clicked => {
@@ -70,20 +79,23 @@ export component CropSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Aspect"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-        ComboBox {
-            model: ["Free", "Original", "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", "Custom"];
-            current-value <=> root.aspect-name;
-            selected(v) => { root.geometry-changed(); }
+        Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        aspect-box := ComboBox {
+            model: [@tr("Free"), @tr("Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
+            current-index: root.aspect-index(root.aspect-name);
+            selected(v) => {
+                root.aspect-name = root.aspects[self.current-index];
+                root.geometry-changed();
+            }
         }
     }
     if root.aspect-name == "Custom": HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Custom"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Custom"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         LineEdit {
             text <=> root.aspect-custom;
             placeholder-text: "W:H";
-            accessible-label: "Custom aspect";
+            accessible-label: @tr("Custom aspect");
             // Enter or Escape gives the keys back to the window.
             accepted(t) => { root.geometry-changed(); Typing.done += 1; }
             edited(t) => { root.geometry-changed(); }
@@ -103,7 +115,7 @@ export component CropSection inherits Section {
     // Free nothing reads the flag, so the switch is greyed and a
     // click is nothing.
     Toggle {
-        label: "Portrait";
+        label: @tr("Portrait");
         checked: root.portrait-shown;
         enabled: root.portrait-live;
         follows: true;
@@ -134,7 +146,7 @@ export component RotateSection inherits Section {
     callback straightened();
     callback focus-keys();
 
-    title: "ROTATE";
+    title: @tr("ROTATE");
     icon: @image-url("../icons/rotate-cw.svg");
     collapsed <=> root.collapsed-rotate;
     // The level drawn by hand, and found: the picture's dominant line
@@ -142,7 +154,7 @@ export component RotateSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
-            text: "Level";
+            text: @tr("Level");
             icon: @image-url("../icons/ruler.svg");
             primary: root.level-mode;
             clicked => {
@@ -154,7 +166,7 @@ export component RotateSection inherits Section {
             }
         }
         PanelButton {
-            text: "Auto level";
+            text: @tr("Auto level");
             clicked => { root.straightened(); }
         }
     }
@@ -164,38 +176,38 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "";
             icon: @image-url("../icons/rotate-ccw.svg");
-            words: "Rotate left: part of the edit";
+            words: @tr("Rotate left: part of the edit");
             accessible-role: button;
-            accessible-label: "Rotate left";
+            accessible-label: @tr("Rotate left");
             clicked => { root.geometry-turned(1); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/rotate-cw.svg");
-            words: "Rotate right: part of the edit";
+            words: @tr("Rotate right: part of the edit");
             accessible-role: button;
-            accessible-label: "Rotate right";
+            accessible-label: @tr("Rotate right");
             clicked => { root.geometry-turned(-1); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/flip-horizontal.svg");
-            words: "Flip";
+            words: @tr("Flip");
             accessible-role: button;
-            accessible-label: "Flip";
+            accessible-label: @tr("Flip");
             clicked => { root.geometry-flipped(false); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/flip-vertical.svg");
-            words: "Flip vertical";
+            words: @tr("Flip vertical");
             accessible-role: button;
-            accessible-label: "Flip vertical";
+            accessible-label: @tr("Flip vertical");
             clicked => { root.geometry-flipped(true); }
         }
     }
     EditSlider {
-        label: "Angle";
+        label: @tr("Angle");
         minimum: -45;
         maximum: 45;
         default: 0;
@@ -214,20 +226,20 @@ export component RotateSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
-            text: "Turn left";
+            text: @tr("Turn left");
             icon: @image-url("../icons/rotate-ccw.svg");
-            words: "Turn the frame left";
+            words: @tr("Turn the frame left");
             clicked => { root.frame-turned(-1); }
         }
         PanelButton {
-            text: "Turn right";
+            text: @tr("Turn right");
             icon: @image-url("../icons/rotate-cw.svg");
-            words: "Turn the frame right";
+            words: @tr("Turn the frame right");
             clicked => { root.frame-turned(1); }
         }
     }
     Text {
-        text: "Not part of the edit.";
+        text: @tr("Not part of the edit.");
         font-size: Theme.font-xs;
         color: Theme.text-secondary;
         wrap: word-wrap;
@@ -247,7 +259,7 @@ export component PerspectiveSection inherits Section {
     callback guide-dropped();
     callback focus-keys();
 
-    title: "PERSPECTIVE";
+    title: @tr("PERSPECTIVE");
     icon: @image-url("../icons/keystone.svg");
     collapsed <=> root.collapsed-perspective;
     // The guide: two strokes along lines of the
@@ -256,7 +268,7 @@ export component PerspectiveSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
-            text: "Verticals";
+            text: @tr("Verticals");
             icon: @image-url("../icons/ruler.svg");
             primary: root.guide-mode == "Vertical";
             clicked => {
@@ -268,7 +280,7 @@ export component PerspectiveSection inherits Section {
             }
         }
         PanelButton {
-            text: "Horizontals";
+            text: @tr("Horizontals");
             icon: @image-url("../icons/ruler.svg");
             primary: root.guide-mode == "Horizontal";
             clicked => {
@@ -281,7 +293,7 @@ export component PerspectiveSection inherits Section {
         }
     }
     EditSlider {
-        label: "Vertical";
+        label: @tr("Vertical");
         minimum: -40;
         maximum: 40;
         default: 0;
@@ -292,7 +304,7 @@ export component PerspectiveSection inherits Section {
         changed(v) => { root.geometry-changed(); }
     }
     EditSlider {
-        label: "Horizontal";
+        label: @tr("Horizontal");
         minimum: -40;
         maximum: 40;
         default: 0;
@@ -307,7 +319,7 @@ export component PerspectiveSection inherits Section {
     // sections are one edit, and a Reset inside
     // any one of them would read as that one's.
     PanelButton {
-        text: "Reset all";
+        text: @tr("Reset all");
         icon: @image-url("../icons/undo-2.svg");
         clicked => { root.geometry-reset(); }
     }

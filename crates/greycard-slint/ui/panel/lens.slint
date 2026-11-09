@@ -44,7 +44,7 @@ export component LensSection inherits Section {
     callback fetch-lenses();
     callback develop-changed();
 
-    title: "LENS";
+    title: @tr("LENS");
     icon: @image-url("../icons/aperture.svg");
     collapsed <=> root.collapsed-lens;
     switchable: true;
@@ -58,7 +58,7 @@ export component LensSection inherits Section {
     // width of its own.
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Maker"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Maker"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         ComboBox {
             min-width: 64px;
             horizontal-stretch: 1;
@@ -69,8 +69,8 @@ export component LensSection inherits Section {
         LineEdit {
             width: 96px;
             text <=> root.lens-filter;
-            placeholder-text: "Find a lens";
-            accessible-label: "Find a lens";
+            placeholder-text: @tr("Find a lens");
+            accessible-label: @tr("Find a lens");
             edited(t) => { root.lens-rows-changed(); }
             // Enter or Escape gives the keys back to the window.
             accepted(t) => { Typing.done += 1; }
@@ -83,7 +83,7 @@ export component LensSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Lens"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Lens"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         ComboBox {
             model: root.lens-choice-labels;
             current-index <=> root.lens-choice-index;
@@ -100,36 +100,36 @@ export component LensSection inherits Section {
         wrap: word-wrap;
     }
     if !root.lens-database: PanelButton {
-        text: "Get lens profiles";
+        text: @tr("Get lens profiles");
         icon: @image-url("../icons/image-down.svg");
         clicked => { root.fetch-lenses(); }
     }
     Toggle {
-        label: "Profile";
+        label: @tr("Profile");
         enabled: root.lens-available;
         checked <=> root.lens-profile-on;
         toggled => { root.develop-changed(); }
     }
     Toggle {
-        label: "Distortion";
+        label: @tr("Distortion");
         enabled: root.lens-available && root.lens-profile-on;
         checked <=> root.lens-distortion;
         toggled => { root.develop-changed(); }
     }
     Toggle {
-        label: "Chromatic aberration";
+        label: @tr("Chromatic aberration");
         enabled: root.lens-available && root.lens-profile-on && !root.lens-ca-measured;
         checked <=> root.lens-ca;
         toggled => { root.develop-changed(); }
     }
     Toggle {
-        label: "Vignetting";
+        label: @tr("Vignetting");
         enabled: root.lens-available && root.lens-profile-on;
         checked <=> root.lens-vignetting;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Manual";
+        label: @tr("Manual");
         minimum: -0.5;
         maximum: 0.5;
         default: 0;
@@ -144,7 +144,7 @@ export component LensSection inherits Section {
     // radius scaled beyond the green's, in
     // tenths of a percent.
     EditSlider {
-        label: "Red / cyan";
+        label: @tr("Red / cyan");
         minimum: -0.01;
         maximum: 0.01;
         default: 0;
@@ -156,7 +156,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Blue / yellow";
+        label: @tr("Blue / yellow");
         minimum: -0.01;
         maximum: 0.01;
         default: 0;
@@ -168,12 +168,12 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     Toggle {
-        label: "Auto scale";
+        label: @tr("Auto scale");
         checked <=> root.lens-auto-scale;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Scale";
+        label: @tr("Scale");
         enabled: !root.lens-auto-scale;
         minimum: 0.5;
         maximum: 2;
@@ -189,12 +189,12 @@ export component LensSection inherits Section {
     // different fault from the lateral one the
     // profile and the two sliders above correct.
     Toggle {
-        label: "Defringe";
+        label: @tr("Defringe");
         checked <=> root.lens-defringe;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Radius";
+        label: @tr("Radius");
         enabled: root.lens-defringe;
         minimum: 0.5;
         maximum: 5;
@@ -206,7 +206,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Threshold";
+        label: @tr("Threshold");
         enabled: root.lens-defringe;
         minimum: 0;
         maximum: 100;
@@ -226,7 +226,7 @@ export component LensSection inherits Section {
     // deviation hue and moves the nearer
     // window's center to it.
     Text {
-        text: "Purple";
+        text: @tr("Purple");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
         font-size: Theme.font-xs;
         font-weight: Theme.weight-semibold;
@@ -234,7 +234,7 @@ export component LensSection inherits Section {
         horizontal-alignment: left;
     }
     EditSlider {
-        label: "Center";
+        label: @tr("Center");
         enabled: root.lens-defringe;
         tinted: true;
         tint: root.hue-circle;
@@ -248,7 +248,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Width";
+        label: @tr("Width");
         enabled: root.lens-defringe;
         minimum: 10;
         maximum: 360;
@@ -260,7 +260,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Amount";
+        label: @tr("Amount");
         enabled: root.lens-defringe;
         minimum: 0;
         maximum: 1;
@@ -273,7 +273,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     Text {
-        text: "Green";
+        text: @tr("Green");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
         font-size: Theme.font-xs;
         font-weight: Theme.weight-semibold;
@@ -281,7 +281,7 @@ export component LensSection inherits Section {
         horizontal-alignment: left;
     }
     EditSlider {
-        label: "Center";
+        label: @tr("Center");
         enabled: root.lens-defringe;
         tinted: true;
         tint: root.hue-circle;
@@ -295,7 +295,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Width";
+        label: @tr("Width");
         enabled: root.lens-defringe;
         minimum: 10;
         maximum: 360;
@@ -307,7 +307,7 @@ export component LensSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     EditSlider {
-        label: "Amount";
+        label: @tr("Amount");
         enabled: root.lens-defringe;
         minimum: 0;
         maximum: 1;
@@ -323,7 +323,7 @@ export component LensSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         PanelButton {
-            text: "Pick hue";
+            text: @tr("Pick hue");
             icon: @image-url("../icons/pipette.svg");
             enabled: root.lens-defringe;
             primary: root.picking == "Defringe";

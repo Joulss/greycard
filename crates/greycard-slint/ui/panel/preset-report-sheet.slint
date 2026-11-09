@@ -83,7 +83,7 @@ export component PresetReportSheet inherits Rectangle {
                 HorizontalLayout {
                     alignment: end;
                     ok := PanelButton {
-                        text: "OK";
+                        text: @tr("OK");
                         primary: true;
                         clicked => { root.report-open = false; }
                     }

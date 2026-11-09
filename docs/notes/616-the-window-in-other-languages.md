@@ -189,3 +189,98 @@ values, so `{{` is a brace either way.
 - The scan's heuristics on every pattern the wrapping will meet, and
   `element_binds`' look for `labels` beside an `options`.
 - A Hant or Hans locale on a real system.
+
+### The Slint files wrapped
+
+**Every shown string in the Slint files is in `@tr`.** 901 `@tr`
+calls where there were 4, over 48 files. A plain string became
+`@tr("...")`; a sentence built with `+` became one format string,
+`@tr("Remove {} from the list?", name)`, so a translator may move the
+value; a count became a plural, `@tr("Move {n} reject..." | "Move {n}
+rejects..." % n)`, including the ones English only shows for two or
+more ("Export {n} frames"), since other languages' plural rules pick a
+singular form at 21. The English a reader sees is unchanged, word for
+word, with one exception in principle: a thumbnail's spoken rating now
+takes its plural from the stars counted, not the rating, which differs
+only if `meta::STARS` were 1.
+
+**Shown and compared, kept apart.** `Segmented` gained `labels`, the
+shown words by index; `options` stay the English values the host and
+`current` compare. 36 rows bind labels; a row whose options are all
+data (color spaces, formats) needs none. The same split, by other
+means, where a value is shown:
+- the crop's aspect ComboBox shows translated names and keeps the
+  English name by index (`current-index` both ways, through the
+  existing `changed aspect-name`);
+- the settings categories show `category-words` by index;
+- the watermark's place and the border's color, shown under their
+  pickers, go through `position-words` and `border-words`;
+- the learned denoise row's "off", which this side adds, has a label;
+  the tiers' names from Rust are shown as they are.
+
+**Values stay bare.** A string handed to a callback (`add-part("Face")`,
+`add-shape("Sky")`, `pick-started(...)`) is a key, never wrapped.
+
+**Not only the scanned bindings.** Words in properties the scan does
+not read were wrapped by hand: the preset, noise, and detail word
+globals, the label menu's names, the grade wheels' names, the
+history's Reset action, a root's spoken value, the key field's "Press
+a key", the sidecar counts, the proof badge, the status line's
+"preparing...", the canvas names, and the window's defaults for
+words Rust sets later (zoom, sheet verbs, fetch answers).
+
+**The scan.** Un-ignored, so `cargo test -p greycard-slint` runs it,
+and it passes at 0. Three fixes found on the way, and a test that a compared operand
+exempts only itself: `mode == "a" ? "Shown" : "Other"` still reports
+both branches: an element's id
+(`hint := Text`) and a property read in an `if` (`root.placeholder:
+Rectangle`) were taken for bindings, and a value compared (`mode ==
+"Copy"`) for a shown one. Each has a line in the scanner's own test.
+
+**Spoken values.** `accessible-value` is a shown binding in the scan
+now. The Segmented rows whose labels are words (Monitor, Soft proof,
+its intent, Fill, Format, and the retouch Fill row) speak the label,
+not the English value, by a ternary at each row.
+
+**The allow-list** grew by 17 data strings to 65: glyphs written as
+escapes (`\u{00b0}`, `\u{2030}`, `\u{00d7}`, the owner's dot), the
+mired unit, the hint keys C and S, `+JPEG` and `RAW+JPEG`, the
+placeholders `{name}`, `W:H`, and the time shift's example, and the
+color spaces and AgX as Segmented labels. The import sheet's name
+tokens, `{date} {yyyy} ...`, go in as an argument to their sentence,
+so no translator sees them as words to change.
+
+**The catalog.** `scripts/translations.sh` over the result: 645
+messages in `translations/greycard.pot`, every one from a Slint file
+(the Rust side's `tr!` strings come with the Rust wrapping), no
+context, no duplicate (msguniq -d finds none), no test string. The
+French catalog merged, all untranslated.
+
+*Verified.*
+
+- The scan over the real files: 0 bare strings; its own test with
+  the new cases.
+- `cargo test -p greycard-slint -p greycard-ui` on lavapipe: all pass
+  (the scan's 2, the library's 178, the binary's 1414 with 5 ignored,
+  the export tests' 3). The first run found two source-text tests
+  reading the mask panel for bare words, and with them a real slip:
+  the parts menu's callback was handed `@tr("Face")`, a translated
+  key the Rust side looks up by English label. The key is bare again;
+  the two tests now look for `@tr(...)`.
+- fmt; clippy --all-targets -D warnings on greycard-slint and
+  greycard-ui.
+- The `.pot` and the French `.po` regenerated: 645 messages, no
+  msgctxt, no duplicate, French's plural header kept.
+
+*Not verified.*
+
+- A translated window: no catalog has a translation yet, so no
+  `@tr` has been seen to change; the probe crate stands for it.
+- Each changed sentence read on screen: the tests that assert a
+  shown string cover many, not all; the rest are checked by reading
+  the diff.
+- The aspect box after a pick on screen (the index round trip is
+  exercised only through the tests that set `aspect-name`).
+- Strings Rust sets and Slint compares or shows (mask kinds, the
+  archive verbs, the rawtherapee rows' "frame" label, the denoise
+  tiers, the lens makers' "All", match scopes): the Rust wrapping's.

@@ -5,6 +5,7 @@
 # through bare and fails on any other string a shown binding holds
 # outside @tr.
 "greycard"
+# Glyphs and punctuation.
 " "
 " %"
 " /"
@@ -18,6 +19,11 @@
 "/"
 "°"
 "×"
+"\u{00b7}  "
+"\u{00b0}"
+"\u{00d7}"
+"\u{2030}"
+# Numbers, sizes, and examples of values.
 "0"
 "+0.000"
 "1"
@@ -42,13 +48,29 @@
 "5"
 "50%"
 "8192"
+# Units.
 " EV"
 " K"
 " px"
 "px"
 "x"
+" mired"
+# Keys, as a hint names them.
+"C"
+"S"
+# Color spaces, channels, file formats, and forms of a value.
 "R/G"
 "RGB"
 "sRGB"
 "JPEG"
 "PNG"
+"+JPEG"
+"RAW+JPEG"
+"{name}"
+"W:H"
+"+1:00:00, 5m, -30s"
+"Adobe RGB"
+"Display P3"
+"Rec.2020"
+"AgX"
+"B/Y"

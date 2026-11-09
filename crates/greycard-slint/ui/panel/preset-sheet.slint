@@ -50,19 +50,19 @@ export component PresetSheet inherits Rectangle {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
                 Text {
-                    text: "Save preset";
+                    text: @tr("Save preset");
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
                     color: Theme.text;
                 }
                 preset-name-edit := LineEdit {
                     text <=> root.preset-name;
-                    placeholder-text: "Name";
+                    placeholder-text: @tr("Name");
                     accepted(t) => { root.preset-saved(); }
                     init => { self.focus(); }
                 }
                 Text {
-                    text: "Checked: only what differs from the defaults.";
+                    text: @tr("Checked: only what differs from the defaults.");
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                     wrap: word-wrap;
@@ -80,11 +80,11 @@ export component PresetSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.preset-open = false; }
                     }
                     PanelButton {
-                        text: "Save";
+                        text: @tr("Save");
                         icon: @image-url("../icons/save.svg");
                         primary: true;
                         enabled: root.preset-name != "";

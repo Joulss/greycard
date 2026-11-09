@@ -93,6 +93,27 @@ export component ExportSheet inherits Rectangle {
     /// less its label, the button and the gaps, at a conservative 7px
     /// a character; the text also elides whatever still overflows.
     property <int> folder-room: max(8, floor((root.sheet-width - 2 * Theme.space-5 - 68px - 88px - 2 * Theme.space-2) / 7px));
+    /// A watermark place's words: the setting keeps the English name.
+    pure function position-words(place: string) -> string {
+        return place == "Top left" ? @tr("Top left")
+            : place == "Top" ? @tr("Top")
+            : place == "Top right" ? @tr("Top right")
+            : place == "Left" ? @tr("Left")
+            : place == "Center" ? @tr("Center")
+            : place == "Right" ? @tr("Right")
+            : place == "Bottom left" ? @tr("Bottom left")
+            : place == "Bottom" ? @tr("Bottom")
+            : place == "Bottom right" ? @tr("Bottom right")
+            : place;
+    }
+    /// A border color's words: the setting keeps the English name.
+    pure function border-words(color: string) -> string {
+        return color == "White" ? @tr("White")
+            : color == "Light grey" ? @tr("Light grey")
+            : color == "Dark grey" ? @tr("Dark grey")
+            : color == "Black" ? @tr("Black")
+            : color;
+    }
     /// The long edge the sheet asks for; 0 is the picture's own.
     pure function export-edge() -> int {
         if (root.export-size == "Full") { return 0; }
@@ -226,14 +247,14 @@ export component ExportSheet inherits Rectangle {
                     padding-bottom: Theme.space-3;
                     spacing: Theme.space-2;
                     Text {
-                        text: root.set-count > 1 ? "Export " + root.set-count + " frames" : "Export";
+                        text: root.set-count > 1 ? @tr("Export {n} frame" | "Export {n} frames" % root.set-count) : @tr("Export");
                         font-size: Theme.font-lg;
                         font-weight: Theme.weight-medium;
                         color: Theme.text;
                     }
                     Text {
                         text: root.set-count > 1
-                            ? root.file-name + " and " + (root.set-count - 1) + (root.set-count == 2 ? " other" : " others") + ", each under its own edit"
+                            ? @tr("{} and {n} other, each under its own edit" | "{} and {n} others, each under its own edit" % (root.set-count - 1), root.file-name)
                             : root.file-name;
                         wrap: word-wrap;
                         font-size: Theme.font-sm;
@@ -241,7 +262,7 @@ export component ExportSheet inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Preset"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text { text: @tr("Preset"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         presets := ComboBox {
                             horizontal-stretch: 1;
                             model: root.export-presets;
@@ -249,7 +270,7 @@ export component ExportSheet inherits Rectangle {
                             selected(v) => { root.naming = false; root.export-preset-chosen(v); }
                         }
                         Text {
-                            text: root.export-preset-edited ? "(edited)" : "";
+                            text: root.export-preset-edited ? @tr("(edited)") : "";
                             width: 52px;
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;
@@ -260,14 +281,14 @@ export component ExportSheet inherits Rectangle {
                         spacing: Theme.space-2;
                         padding-left: 68px + Theme.space-2;
                         PanelButton {
-                            text: "Save as...";
+                            text: @tr("Save as...");
                             clicked => {
                                 root.new-name = root.export-preset == "None" ? "" : root.export-preset;
                                 root.naming = true;
                             }
                         }
                         PanelButton {
-                            text: "Delete";
+                            text: @tr("Delete");
                             enabled: root.export-preset != "None" && root.export-preset != "";
                             clicked => { root.export-preset-deleted(); }
                         }
@@ -275,11 +296,11 @@ export component ExportSheet inherits Rectangle {
                     }
                     if root.naming: HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text { text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         LineEdit {
                             horizontal-stretch: 1;
                             text <=> root.new-name;
-                            placeholder-text: "Web 2048";
+                            placeholder-text: @tr("Web 2048");
                             accepted(t) => {
                                 if (t.to-lowercase() != "none" && t != "") { root.naming = false; root.export-preset-saved(t); }
                             }
@@ -287,13 +308,13 @@ export component ExportSheet inherits Rectangle {
                         }
                         PanelButton {
                             // Over a preset of that name, in any case.
-                            text: root.export-preset-exists(root.new-name) ? "Replace" : "Save";
+                            text: root.export-preset-exists(root.new-name) ? @tr("Replace") : @tr("Save");
                             primary: true;
                             enabled: root.new-name != "" && root.new-name.to-lowercase() != "none";
                             clicked => { root.naming = false; root.export-preset-saved(root.new-name); }
                         }
                         PanelButton {
-                            text: "Cancel";
+                            text: @tr("Cancel");
                             clicked => { root.naming = false; }
                         }
                     }
@@ -310,11 +331,11 @@ export component ExportSheet inherits Rectangle {
                         spacing: Theme.space-2;
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; current <=> root.export-format; }
+                            Text { text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit")]; current <=> root.export-format; }
                         }
                         EditSlider {
-                            label: "Quality";
+                            label: @tr("Quality");
                             enabled: root.export-format == "JPEG";
                             minimum: 50;
                             maximum: 100;
@@ -326,12 +347,12 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Long edge"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; current <=> root.export-size; }
+                            Text { text: @tr("Long edge"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; labels: [@tr("Full"), "4096", "2048", "1024", @tr("Custom")]; current <=> root.export-size; }
                         }
                         if root.export-size == "Custom": HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Pixels"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Pixels"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 width: 96px;
                                 text <=> root.export-custom;
@@ -344,7 +365,7 @@ export component ExportSheet inherits Rectangle {
                                 text: root.frame-width > 0
                                     ? (root.export-resizes()
                                         ? root.export-width() + " × " + root.export-height()
-                                        : root.frame-width + " × " + root.frame-height + ", as it is")
+                                        : @tr("{} × {}, as it is", root.frame-width, root.frame-height))
                                     : "";
                                 color: Theme.text-secondary;
                                 font-size: Theme.font-sm;
@@ -355,38 +376,38 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Sharpen"; width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["Off", "Low", "Standard", "High"]; current <=> root.export-sharpen; }
+                            Text { text: @tr("Sharpen"); width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Off", "Low", "Standard", "High"]; labels: [@tr("Off"), @tr("Low"), @tr("Standard"), @tr("High")]; current <=> root.export-sharpen; }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             Segmented { options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
                         }
                         Toggle {
-                            label: "Embed profile";
+                            label: @tr("Embed profile");
                             checked <=> root.export-embed;
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Metadata"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["All", "No edit", "None"]; current <=> root.export-metadata; }
+                            Text { text: @tr("Metadata"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["All", "No edit", "None"]; labels: [@tr("All"), @tr("No edit"), @tr("None")]; current <=> root.export-metadata; }
                         }
                         // Typed, every export goes into it beside each frame
                         // with no chooser; left empty, the chooser asks.
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Subfolder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Subfolder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> root.export-subfolder;
-                                placeholder-text: "None: the folder below";
+                                placeholder-text: @tr("None: the folder below");
                             }
                         }
                         // Always there, so the sheet does not move as the
                         // field is typed in: blank when there is nothing to say.
                         Text {
-                            text: root.sub-name != "" ? "Saved in " + root.sub-name + " beside each original."
+                            text: root.sub-name != "" ? @tr("Saved in {} beside each original.", root.sub-name)
                                 : root.sub-problem != "" ? root.sub-problem : " ";
                             color: root.sub-problem != "" ? Theme.warn-yellow : Theme.text-secondary;
                             font-size: Theme.font-sm;
@@ -396,7 +417,7 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Name"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> root.export-name;
@@ -414,29 +435,29 @@ export component ExportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["Increment", "Overwrite", "Skip"]; current <=> root.export-on-exists; }
+                            Text { text: @tr("If it exists"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Increment", "Overwrite", "Skip"]; labels: [@tr("Increment"), @tr("Overwrite"), @tr("Skip")]; current <=> root.export-on-exists; }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Watermark"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["Off", "Text", "Image"]; current <=> root.export-mark; }
+                            Text { text: @tr("Watermark"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Segmented { options: ["Off", "Text", "Image"]; labels: [@tr("Off"), @tr("Text"), @tr("Image")]; current <=> root.export-mark; }
                         }
                         if root.export-mark == "Text": HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Text"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Text"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> root.export-mark-text;
-                                placeholder-text: "© Your Name";
+                                placeholder-text: @tr("© Your Name");
                             }
-                            Segmented { width: 110px; options: ["White", "Black"]; current <=> root.export-mark-color; }
+                            Segmented { width: 110px; options: ["White", "Black"]; labels: [@tr("White"), @tr("Black")]; current <=> root.export-mark-color; }
                         }
                         if root.export-mark == "Image": HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Image"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Image"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             Text {
-                                text: root.export-mark-image-name == "" ? "No PNG chosen" : root.export-mark-image-name;
+                                text: root.export-mark-image-name == "" ? @tr("No PNG chosen") : root.export-mark-image-name;
                                 color: root.export-mark-image-name == "" ? Theme.text-muted : Theme.text-secondary;
                                 font-size: Theme.font-sm;
                                 vertical-alignment: center;
@@ -444,7 +465,7 @@ export component ExportSheet inherits Rectangle {
                                 overflow: elide;
                             }
                             PanelButton {
-                                text: "Choose...";
+                                text: @tr("Choose...");
                                 clicked => { root.export-mark-choose(); keys.focus(); }
                             }
                         }
@@ -458,7 +479,7 @@ export component ExportSheet inherits Rectangle {
                                 spacing: Theme.space-1;
                                 PositionGrid { current <=> root.export-mark-position; }
                                 Text {
-                                    text: root.export-mark-position;
+                                    text: root.position-words(root.export-mark-position);
                                     color: Theme.text-secondary;
                                     font-size: Theme.font-xs;
                                 }
@@ -467,7 +488,7 @@ export component ExportSheet inherits Rectangle {
                                 horizontal-stretch: 1;
                                 spacing: 0;
                                 EditSlider {
-                                    label: "Size";
+                                    label: @tr("Size");
                                     minimum: 1;
                                     maximum: 50;
                                     default: 15;
@@ -477,7 +498,7 @@ export component ExportSheet inherits Rectangle {
                                     text: round(root.export-mark-size * 10) / 10 + " %";
                                 }
                                 EditSlider {
-                                    label: "Margin";
+                                    label: @tr("Margin");
                                     minimum: 0;
                                     maximum: 10;
                                     default: 2;
@@ -487,7 +508,7 @@ export component ExportSheet inherits Rectangle {
                                     text: round(root.export-mark-margin * 10) / 10 + " %";
                                 }
                                 EditSlider {
-                                    label: "Opacity";
+                                    label: @tr("Opacity");
                                     minimum: 5;
                                     maximum: 100;
                                     default: 60;
@@ -503,14 +524,14 @@ export component ExportSheet inherits Rectangle {
                         // color both picks it and turns the border on.
                         HorizontalLayout {
                             spacing: 4px;
-                            Text { text: "Border"; width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Border"); width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             for choice in [
-                                { name: "Off", fill: Theme.base, word: "Off", wide: true },
+                                { name: "Off", fill: Theme.base, word: @tr("Off"), wide: true },
                                 { name: "White", fill: #ffffff, word: "", wide: false },
                                 { name: "Light grey", fill: #cccccc, word: "", wide: false },
                                 { name: "Dark grey", fill: #333333, word: "", wide: false },
                                 { name: "Black", fill: #000000, word: "", wide: false },
-                                { name: "Match", fill: Theme.base, word: "Match", wide: true },
+                                { name: "Match", fill: Theme.base, word: @tr("Match"), wide: true },
                             ]: Rectangle {
                                 property <bool> on: choice.name == "Off" ? !root.export-border
                                     : root.export-border && choice.name == root.export-border-color;
@@ -540,7 +561,7 @@ export component ExportSheet inherits Rectangle {
                                 }
                             }
                             Text {
-                                text: root.export-border && root.export-border-color != "Match" ? root.export-border-color : "";
+                                text: root.export-border && root.export-border-color != "Match" ? root.border-words(root.export-border-color) : "";
                                 color: Theme.text-secondary;
                                 font-size: Theme.font-xs;
                                 vertical-alignment: center;
@@ -549,7 +570,7 @@ export component ExportSheet inherits Rectangle {
                             }
                         }
                         if root.export-border: EditSlider {
-                            label: "Width";
+                            label: @tr("Width");
                             minimum: 0.5;
                             maximum: 25;
                             default: 5;
@@ -559,10 +580,9 @@ export component ExportSheet inherits Rectangle {
                             text: round(root.export-border-width * 10) / 10 + " %";
                         }
                         if root.export-border: Text {
-                            text: "Added outside the picture"
-                                + (root.frame-width > 0
-                                    ? "; the file is " + (root.export-width() + 2 * root.border-band()) + " × " + (root.export-height() + 2 * root.border-band()) + "."
-                                    : ".");
+                            text: root.frame-width > 0
+                                ? @tr("Added outside the picture; the file is {} × {}.", root.export-width() + 2 * root.border-band(), root.export-height() + 2 * root.border-band())
+                                : @tr("Added outside the picture.");
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;
                             wrap: word-wrap;
@@ -579,7 +599,7 @@ export component ExportSheet inherits Rectangle {
                     // it stays in view with it however short the window.
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Folder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text { text: @tr("Folder"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         Text {
                             text: root.folder-line;
                             color: Theme.text-secondary;
@@ -589,25 +609,25 @@ export component ExportSheet inherits Rectangle {
                             overflow: elide;
                         }
                         PanelButton {
-                            text: "Choose...";
+                            text: @tr("Choose...");
                             clicked => { root.export-folder-choose(); keys.focus(); }
                         }
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
-                            text: "Cancel";
+                            text: @tr("Cancel");
                             clicked => { root.export-open = false; }
                         }
                         // What Export would send, kept to be sent later.
                         PanelButton {
-                            text: "Add to queue";
+                            text: @tr("Add to queue");
                             clicked => { root.export-open = false; root.queue-add(); }
                         }
                     }
                     // Into the folder the row shows, with no dialog.
                     PanelButton {
-                        text: "Export";
+                        text: @tr("Export");
                         icon: @image-url("../icons/image-down.svg");
                         primary: true;
                         enabled: root.sub-problem == "";
@@ -646,7 +666,7 @@ export component ExportSheet inherits Rectangle {
                                             overflow: elide;
                                         }
                                         Text {
-                                            text: row.running ? row.frames + ", running" : row.frames;
+                                            text: row.running ? @tr("{}, running", row.frames) : row.frames;
                                             color: row.running ? Theme.text : Theme.text-secondary;
                                             font-size: Theme.font-xs;
                                             vertical-alignment: center;
@@ -662,7 +682,7 @@ export component ExportSheet inherits Rectangle {
                                         Rectangle {
                                             width: root.queue-row-height;
                                             accessible-role: button;
-                                            accessible-label: "Remove " + row.name;
+                                            accessible-label: @tr("Remove {}", row.name);
                                             accessible-enabled: !row.running;
                                             accessible-action-default => { if (!row.running) { root.queue-remove(i); } }
                                             Image {
@@ -690,7 +710,7 @@ export component ExportSheet inherits Rectangle {
                     if root.queue-sets > 0 && !root.confirm-clear: HorizontalLayout {
                         spacing: Theme.space-2;
                         Text {
-                            text: root.queue-running ? root.queue-line + ", running" : root.queue-line;
+                            text: root.queue-running ? @tr("{}, running", root.queue-line) : root.queue-line;
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
@@ -698,12 +718,12 @@ export component ExportSheet inherits Rectangle {
                             overflow: elide;
                         }
                         PanelButton {
-                            text: "Export the queue";
+                            text: @tr("Export the queue");
                             enabled: !root.exporting;
                             clicked => { root.export-open = false; root.queue-run(); }
                         }
                         PanelButton {
-                            text: "Clear";
+                            text: @tr("Clear");
                             enabled: !root.queue-running;
                             clicked => { root.confirm-clear = true; }
                         }
@@ -711,7 +731,7 @@ export component ExportSheet inherits Rectangle {
                     if root.queue-sets > 0 && root.confirm-clear: HorizontalLayout {
                         spacing: Theme.space-2;
                         Text {
-                            text: "Clear the queue of " + root.queue-sets + (root.queue-sets == 1 ? " set?" : " sets?");
+                            text: @tr("Clear the queue of {n} set?" | "Clear the queue of {n} sets?" % root.queue-sets);
                             color: Theme.text-secondary;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
@@ -719,11 +739,11 @@ export component ExportSheet inherits Rectangle {
                             wrap: word-wrap;
                         }
                         PanelButton {
-                            text: "Cancel";
+                            text: @tr("Cancel");
                             clicked => { root.confirm-clear = false; }
                         }
                         PanelButton {
-                            text: "Clear";
+                            text: @tr("Clear");
                             primary: true;
                             clicked => { root.confirm-clear = false; root.queue-clear(); }
                         }

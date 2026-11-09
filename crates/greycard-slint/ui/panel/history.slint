@@ -82,7 +82,7 @@ export component SnapshotsSection inherits Section {
     }
     changed selected => { root.hold-restore(); }
 
-    title: "SNAPSHOTS";
+    title: @tr("SNAPSHOTS");
     icon: @image-url("../icons/image.svg");
     collapsed <=> root.collapsed-snapshots;
     shares: true;
@@ -183,8 +183,8 @@ export component SnapshotsSection inherits Section {
                         // icon names it without restoring it.
                         restore := SnapshotIcon {
                             icon: @image-url("../icons/undo-2.svg");
-                            label: "Restore " + name;
-                            words: "Restore";
+                            label: @tr("Restore {}", name);
+                            words: @tr("Restore");
                             clicked => {
                                 root.hold-restore();
                                 if (root.selected >= 0) { root.snapshot-restored(i); }
@@ -192,8 +192,8 @@ export component SnapshotsSection inherits Section {
                         }
                         rename := SnapshotIcon {
                             icon: @image-url("../icons/pencil.svg");
-                            label: "Rename " + name;
-                            words: "Rename";
+                            label: @tr("Rename {}", name);
+                            words: @tr("Rename");
                             // As the double-click: never over another
                             // row's name being typed.
                             clicked => {
@@ -204,8 +204,8 @@ export component SnapshotsSection inherits Section {
                         }
                         bin := SnapshotIcon {
                             icon: @image-url("../icons/trash-2.svg");
-                            label: "Remove " + name;
-                            words: "Remove";
+                            label: @tr("Remove {}", name);
+                            words: @tr("Remove");
                             clicked => {
                                 root.hold-restore();
                                 root.snapshot-deleted(i);
@@ -217,14 +217,14 @@ export component SnapshotsSection inherits Section {
         }
     }
     if root.snapshot-names.length == 0: Text {
-        text: "None yet.";
+        text: @tr("None yet.");
         max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-muted;
         wrap: word-wrap;
     }
     PanelButton {
-        text: "Take";
+        text: @tr("Take");
         icon: @image-url("../icons/plus.svg");
         enabled: root.selected >= 0;
         clicked => { root.snapshot-taken(); }
@@ -242,8 +242,8 @@ export component HistorySection inherits Section {
     in property <bool> resettable;
     callback reset-asked();
 
-    title: "HISTORY";
-    action: root.resettable ? "Reset to Original" : "";
+    title: @tr("HISTORY");
+    action: root.resettable ? @tr("Reset to Original") : "";
     action-clicked => { root.reset-asked(); }
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
@@ -324,7 +324,7 @@ export component HistorySection inherits Section {
         }
     }
     if root.history-rows.length == 0: Text {
-        text: "No changes yet.";
+        text: @tr("No changes yet.");
         max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-muted;

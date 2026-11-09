@@ -21,7 +21,7 @@ component WordChip inherits Rectangle {
     border-color: Theme.border;
     background: Theme.raised;
     accessible-role: button;
-    accessible-label: "Keyword " + root.word;
+    accessible-label: @tr("Keyword {}", root.word);
     accessible-action-default => { root.removed(); }
     HorizontalLayout {
         padding-left: Theme.space-2;
@@ -90,7 +90,7 @@ export component MetaSection inherits Section {
     callback keyword-focused();
     callback focus-keys();
 
-    title: "METADATA";
+    title: @tr("METADATA");
     icon: @image-url("../icons/pencil.svg");
     collapsed <=> root.collapsed-metadata;
 
@@ -117,16 +117,16 @@ export component MetaSection inherits Section {
     // where the section is over the grid, is narrower than the panel,
     // and a field there beside its name would run past its edge.
     Text {
-        text: "Title";
+        text: @tr("Title");
         color: Theme.text;
         font-size: Theme.font-sm;
         vertical-alignment: center;
     }
     LineEdit {
         text <=> root.title-text;
-        accessible-label: "Frame title";
+        accessible-label: @tr("Frame title");
         enabled: root.frame-meta-on;
-        placeholder-text: root.frame-title-mixed ? "Mixed" : "";
+        placeholder-text: root.frame-title-mixed ? @tr("Mixed") : "";
         edited(t) => { root.title-dirty = true; }
         // Enter sends it and gives the keys back; the focus going
         // elsewhere sends it too.
@@ -148,7 +148,7 @@ export component MetaSection inherits Section {
         }
     }
     Text {
-        text: "Keywords";
+        text: @tr("Keywords");
         color: Theme.text;
         font-size: Theme.font-sm;
         vertical-alignment: center;
@@ -175,9 +175,9 @@ export component MetaSection inherits Section {
     }
     keyword-field := LineEdit {
         text <=> root.keyword-text;
-        accessible-label: "Add keywords";
+        accessible-label: @tr("Add keywords");
         enabled: root.frame-meta-on;
-        placeholder-text: "Add keywords";
+        placeholder-text: @tr("Add keywords");
         edited(t) => { root.keyword-typed(t); }
         // Enter takes the completion picked, or what is typed; on an
         // empty field it gives the keys back.
@@ -253,8 +253,7 @@ export component MetaSection inherits Section {
         }
     }
     if root.set-count > 1: Text {
-        text: "What is typed goes on all " + root.set-count
-            + " frames chosen; a dimmed word is on some of them.";
+        text: @tr("What is typed goes on all {n} frame chosen; a dimmed word is on some of them." | "What is typed goes on all {n} frames chosen; a dimmed word is on some of them." % root.set-count);
         color: Theme.text-muted;
         font-size: Theme.font-xs;
         wrap: word-wrap;

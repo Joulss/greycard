@@ -782,7 +782,7 @@ export component Viewport inherits Rectangle {
         border-radius: Theme.radius-sm;
         background: root.plate-ground;
         placeholder-word := Text {
-            text: "camera preview";
+            text: @tr("camera preview");
             color: Theme.over-text;
             font-size: Theme.font-xs;
             vertical-alignment: center;
@@ -847,7 +847,7 @@ export component Viewport inherits Rectangle {
             horizontal-alignment: center;
         }
         TipArea {
-            words: "Soft proof on (S turns it off)";
+            words: @tr("Soft proof on (S turns it off)");
             clicked => { root.proof-off(); }
         }
     }
@@ -1242,7 +1242,7 @@ export component Viewport inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: 12px;
         width: 140px;
-        text: "All people";
+        text: @tr("All people");
         icon: @image-url("../icons/users-round.svg");
         primary: true;
         clicked => { root.all-people(); }
@@ -1416,10 +1416,10 @@ export component Viewport inherits Rectangle {
             background: root.plate-ground;
             hint := Text {
                 text: root.guide-kept.length == 2
-                    ? "Now the second line"
+                    ? @tr("Now the second line")
                     : root.guide-mode == "Vertical"
-                        ? "Drag along two lines that should stand upright"
-                        : "Drag along two lines that should lie flat";
+                        ? @tr("Drag along two lines that should stand upright")
+                        : @tr("Drag along two lines that should lie flat");
                 color: #ffffff;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;

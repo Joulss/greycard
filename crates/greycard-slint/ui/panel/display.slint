@@ -14,7 +14,7 @@ export component ProofSection inherits Section {
     callback proof-changed();
     callback choose-proof-file();
 
-    title: "SOFT PROOF";
+    title: @tr("SOFT PROOF");
     icon: @image-url("../icons/image.svg");
     collapsed <=> root.collapsed-proof;
     hint: "S";
@@ -23,13 +23,14 @@ export component ProofSection inherits Section {
     switched => { root.proof-changed(); }
     Segmented {
         options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
+        labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
         current <=> root.proof-profile;
         selected(p) => { root.proof-changed(); }
     }
     if root.proof-profile == "File": HorizontalLayout {
         spacing: Theme.space-2;
         Text {
-            text: root.proof-file == "" ? "No profile chosen" : root.proof-file;
+            text: root.proof-file == "" ? @tr("No profile chosen") : root.proof-file;
             color: root.proof-file == "" ? Theme.text-muted : Theme.text-secondary;
             font-size: Theme.font-sm;
             vertical-alignment: center;
@@ -37,17 +38,18 @@ export component ProofSection inherits Section {
             horizontal-stretch: 1;
         }
         PanelButton {
-            text: "Choose...";
+            text: @tr("Choose...");
             clicked => { root.choose-proof-file(); }
         }
     }
     Segmented {
         options: ["Perceptual", "Relative"];
+        labels: [@tr("Perceptual"), @tr("Relative")];
         current <=> root.proof-intent;
         selected(i) => { root.proof-changed(); }
     }
     Toggle {
-        label: "Gamut warning";
+        label: @tr("Gamut warning");
         enabled: root.proofing;
         checked <=> root.gamut-warning;
         toggled => { root.proof-changed(); }
@@ -67,11 +69,12 @@ export component MonitorSection inherits Section {
     in property <[color]> canvas-colors;
     callback canvas-changed();
 
-    title: "MONITOR";
+    title: @tr("MONITOR");
     icon: @image-url("../icons/maximize.svg");
     collapsed <=> root.collapsed-monitor;
     Segmented {
         options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
+        labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
         current <=> root.display-profile;
         selected(p) => { root.display-changed(); }
     }
@@ -83,7 +86,7 @@ export component MonitorSection inherits Section {
     if root.display-profile == "File": HorizontalLayout {
         spacing: Theme.space-2;
         Text {
-            text: root.display-file == "" ? "No profile chosen" : root.display-file;
+            text: root.display-file == "" ? @tr("No profile chosen") : root.display-file;
             color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
             font-size: Theme.font-sm;
             vertical-alignment: center;
@@ -91,7 +94,7 @@ export component MonitorSection inherits Section {
             horizontal-stretch: 1;
         }
         PanelButton {
-            text: "Choose...";
+            text: @tr("Choose...");
             clicked => { root.choose-display-file(); }
         }
     }
@@ -103,7 +106,7 @@ export component MonitorSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Canvas"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Swatches {
             colors: root.canvas-colors;
             current <=> root.canvas-choice;

@@ -17,9 +17,9 @@ export component CameraSection inherits Section {
     in property <string> camera-profile-warning;
     callback camera-profile-picked();
 
-    title: "CAMERA PROFILE";
+    title: @tr("CAMERA PROFILE");
     icon: @image-url("../icons/camera.svg");
-    hint: root.raw-input ? "" : "raw only";
+    hint: root.raw-input ? "" : @tr("raw only");
     collapsed <=> root.collapsed-camera;
     // The list: the file's own calibrations
     // first, then the profiles in the profile
@@ -114,7 +114,7 @@ export component LookSection inherits Section {
     callback view-changed();
     callback match-asked();
 
-    title: "LOOK";
+    title: @tr("LOOK");
     icon: @image-url("../icons/film.svg");
     collapsed <=> root.collapsed-look;
     // The list: no look first, then the tables
@@ -141,8 +141,8 @@ export component LookSection inherits Section {
                     // "Fit" included, and the panel's tests find the
                     // footer's Fit by its label.
                     accessible-label: row.heading
-                        ? (row.folded ? "Unfold " : "Fold ") + row.label
-                        : "Look " + row.label;
+                        ? (row.folded ? @tr("Unfold {}", row.label) : @tr("Fold {}", row.label))
+                        : @tr("Look {}", row.label);
                     clicked => {
                         if (row.heading) {
                             root.look-group-toggled(row.name);
@@ -185,7 +185,7 @@ export component LookSection inherits Section {
                         overflow: elide;
                     }
                     if row.own: Text {
-                        text: "this camera";
+                        text: @tr("this camera");
                         color: Theme.accent-text;
                         font-size: Theme.font-xs;
                         vertical-alignment: center;
@@ -228,7 +228,7 @@ export component LookSection inherits Section {
         }
     }
     EditSlider {
-        label: "Strength";
+        label: @tr("Strength");
         enabled: root.look-name != "none";
         minimum: 0;
         maximum: 1;
@@ -280,12 +280,12 @@ export component LookSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         if root.look-renamable: PanelButton {
-            text: "Rename…";
+            text: @tr("Rename…");
             icon: @image-url("../icons/pencil.svg");
             clicked => { root.look-rename-asked(); }
         }
         if root.look-removable: PanelButton {
-            text: "Remove this look…";
+            text: @tr("Remove this look…");
             icon: @image-url("../icons/trash-2.svg");
             clicked => { root.look-remove-asked(); }
         }
@@ -296,13 +296,13 @@ export component LookSection inherits Section {
         // The camera match: a look fitted per body
         // and picture style from the raws' JPEGs.
         PanelButton {
-            text: "Fit this camera's look…";
+            text: @tr("Fit this camera's look…");
             clicked => { root.match-asked(); }
         }
         // Back to no look at a full strength,
         // which is what the section opens at.
         PanelButton {
-            text: "Reset";
+            text: @tr("Reset");
             icon: @image-url("../icons/rotate-ccw.svg");
             clicked => {
                 root.look-name = "none";

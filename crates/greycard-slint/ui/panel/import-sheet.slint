@@ -29,11 +29,11 @@ component FolderRow inherits HorizontalLayout {
         overflow: elide;
     }
     if root.clearable && root.path != "": PanelButton {
-        text: "Clear";
+        text: @tr("Clear");
         clicked => { root.clear(); }
     }
     PanelButton {
-        text: "Choose...";
+        text: @tr("Choose...");
         clicked => { root.choose(); }
     }
 }
@@ -102,19 +102,20 @@ export component ImportSheet inherits Rectangle {
                     padding-bottom: Theme.space-2;
                     spacing: Theme.space-2;
                     Text {
-                        text: "Import";
+                        text: @tr("Import");
                         font-size: Theme.font-lg;
                         font-weight: Theme.weight-medium;
                         color: Theme.text;
                     }
                     Segmented {
                         options: ["Copy", "Add in place"];
+                        labels: [@tr("Copy"), @tr("Add in place")];
                         current <=> root.import-mode;
                     }
                     Text {
                         text: root.import-mode == "Copy"
-                            ? "Copies are verified; the card is untouched."
-                            : "Adds a folder and its subfolders to the library where it is; nothing is copied.";
+                            ? @tr("Copies are verified; the card is untouched.")
+                            : @tr("Adds a folder and its subfolders to the library where it is; nothing is copied.");
                         wrap: word-wrap;
                             height: self.preferred-height;
                         font-size: Theme.font-xs;
@@ -124,9 +125,9 @@ export component ImportSheet inherits Rectangle {
                     if root.import-mode == "Add in place": VerticalLayout {
                         spacing: Theme.space-2;
                         FolderRow {
-                            label: "Folder";
+                            label: @tr("Folder");
                             path: root.import-place;
-                            empty: "No folder chosen";
+                            empty: @tr("No folder chosen");
                             choose => { root.import-choose("place"); }
                         }
                         HorizontalLayout {
@@ -143,9 +144,9 @@ export component ImportSheet inherits Rectangle {
                     if root.import-mode == "Copy": VerticalLayout {
                         spacing: Theme.space-2;
                         FolderRow {
-                            label: "From";
+                            label: @tr("From");
                             path: root.import-source;
-                            empty: "No card found";
+                            empty: @tr("No card found");
                             choose => { root.import-choose("source"); }
                         }
                         HorizontalLayout {
@@ -159,23 +160,23 @@ export component ImportSheet inherits Rectangle {
                             }
                         }
                         FolderRow {
-                            label: "To";
+                            label: @tr("To");
                             path: root.import-destination;
-                            empty: "No folder chosen";
+                            empty: @tr("No folder chosen");
                             choose => { root.import-choose("destination"); }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Folders"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Folders"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> root.import-subfolder;
-                                placeholder-text: "none";
+                                placeholder-text: @tr("none");
                             }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Name"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Name"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> root.import-name;
@@ -185,7 +186,7 @@ export component ImportSheet inherits Rectangle {
                         HorizontalLayout {
                             padding-left: 76px + Theme.space-2;
                             Text {
-                                text: "{date} {yyyy} {mm} {dd} {name} {camera} {seq} {folder}; a / in Folders makes a folder in a folder.";
+                                text: @tr("{}; a / in Folders makes a folder in a folder.", "{date} {yyyy} {mm} {dd} {name} {camera} {seq} {folder}");
                                 wrap: word-wrap;
                             height: self.preferred-height;
                                 font-size: Theme.font-xs;
@@ -204,7 +205,7 @@ export component ImportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
-                            Text { text: "Preset"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            Text { text: @tr("Preset"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             ComboBox {
                                 horizontal-stretch: 1;
                                 model: root.import-presets;
@@ -212,9 +213,9 @@ export component ImportSheet inherits Rectangle {
                             }
                         }
                         FolderRow {
-                            label: "Backup";
+                            label: @tr("Backup");
                             path: root.import-backup;
-                            empty: "None: one copy only";
+                            empty: @tr("None: one copy only");
                             clearable: true;
                             choose => { root.import-choose("backup"); }
                             clear => { root.import-backup-cleared(); }
@@ -230,11 +231,11 @@ export component ImportSheet inherits Rectangle {
                             }
                         }
                         Toggle {
-                            label: "Verify against the card";
+                            label: @tr("Verify against the card");
                             checked <=> root.import-verify;
                         }
                         Text {
-                            text: "Verify compares every byte (slower).";
+                            text: @tr("Verify compares every byte (slower).");
                             wrap: word-wrap;
                             height: self.preferred-height;
                             font-size: Theme.font-xs;
@@ -249,13 +250,14 @@ export component ImportSheet inherits Rectangle {
                 spacing: Theme.space-2;
                 alignment: end;
                 PanelButton {
-                    text: "Cancel";
+                    text: @tr("Cancel");
                     clicked => { root.import-open = false; }
                 }
                 PanelButton {
                     // Add in place copies nothing, and says so.
-                    property <string> verb: root.import-mode == "Copy" ? "Import" : "Add";
-                    text: root.import-count == 1 ? verb + " 1 frame" : verb + " " + root.import-count + " frames";
+                    text: root.import-mode == "Copy"
+                        ? @tr("Import {n} frame" | "Import {n} frames" % root.import-count)
+                        : @tr("Add {n} frame" | "Add {n} frames" % root.import-count);
                     icon: @image-url("../icons/camera.svg");
                     primary: true;
                     enabled: root.import-ready;

@@ -44,7 +44,9 @@ export component RootRow inherits Rectangle {
     accessible-role: button;
     accessible-label: root.text;
     accessible-description: root.path;
-    accessible-value: (root.archive ? "archive, " : "") + (root.offline ? "offline" : root.count);
+    accessible-value: root.archive
+        ? (root.offline ? @tr("archive, offline") : @tr("archive, {}", root.count))
+        : (root.offline ? @tr("offline") : root.count);
     // The one open is the list's selected item, for a screen reader
     // as for the eye.
     accessible-item-selectable: true;
@@ -122,7 +124,7 @@ export component RootRow inherits Rectangle {
             y: (parent.height - self.height) / 2;
         }
         Text {
-            text: root.offline ? "offline" : root.count;
+            text: root.offline ? @tr("offline") : root.count;
             color: Theme.text-muted;
             font-size: Theme.font-xs;
             vertical-alignment: center;
@@ -203,7 +205,7 @@ export component RootsSection inherits Section {
     property <string> menu-path;
     property <bool> menu-archive;
 
-    title: "ROOTS";
+    title: @tr("ROOTS");
     icon: @image-url("../icons/folder-open.svg");
     collapsed <=> root.collapsed-roots;
 
@@ -232,23 +234,23 @@ export component RootsSection inherits Section {
                 }
                 MenuSeparator { }
                 MenuItem {
-                    title: "Rename...";
+                    title: @tr("Rename...");
                     activated => { root.rename(root.menu-path); root.menu-done(); }
                 }
                 MenuItem {
-                    title: "Use as an archive";
+                    title: @tr("Use as an archive");
                     checkable: true;
                     checked: root.menu-archive;
                     activated => { root.archive-toggled(root.menu-path); root.menu-done(); }
                 }
                 MenuItem {
-                    title: "Remove from library";
+                    title: @tr("Remove from library");
                     activated => { root.removed(root.menu-path); root.menu-done(); }
                 }
             }
         }
         if root.roots.length > 0: RootRow {
-            text: "All roots";
+            text: @tr("All roots");
             count: root.all-count;
             on: root.all-on;
             menu-shown => { return root.menu-shown(); }
@@ -281,12 +283,12 @@ export component RootsSection inherits Section {
             spacing: Theme.space-1;
             alignment: start;
             if root.can-add-open: AddLink {
-                text: "+ Add this folder";
+                text: @tr("+ Add this folder");
                 menu-shown => { return root.menu-shown(); }
                 clicked => { root.focus-keys(); root.add-open(); }
             }
             AddLink {
-                text: "+ Add a root...";
+                text: @tr("+ Add a root...");
                 menu-shown => { return root.menu-shown(); }
                 clicked => { root.focus-keys(); root.add(); }
             }

@@ -38,7 +38,7 @@ export component RejectsSheet inherits Rectangle {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
                 Text {
-                    text: "Move the rejects?";
+                    text: @tr("Move the rejects?");
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
                     color: Theme.text;
@@ -50,7 +50,7 @@ export component RejectsSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "Nothing is deleted; Move back undoes it.";
+                    text: @tr("Nothing is deleted; Move back undoes it.");
                     font-size: Theme.font-sm;
                     color: Theme.text-secondary;
                     wrap: word-wrap;
@@ -59,11 +59,11 @@ export component RejectsSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.rejects-answered(false); }
                     }
                     PanelButton {
-                        text: "Move";
+                        text: @tr("Move");
                         icon: @image-url("../icons/folder-open.svg");
                         primary: true;
                         clicked => { root.rejects-answered(true); }

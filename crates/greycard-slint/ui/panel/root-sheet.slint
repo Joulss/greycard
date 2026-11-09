@@ -43,7 +43,7 @@ export component RootSheet inherits Rectangle {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
                 Text {
-                    text: "Name this library folder";
+                    text: @tr("Name this library folder");
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
                     color: Theme.text;
@@ -62,7 +62,7 @@ export component RootSheet inherits Rectangle {
                     init => { self.focus(); self.select-all(); }
                 }
                 Text {
-                    text: "Empty uses the folder's name. The folder isn't renamed.";
+                    text: @tr("Empty uses the folder's name. The folder isn't renamed.");
                     font-size: Theme.font-xs;
                     color: Theme.text-muted;
                     wrap: word-wrap;
@@ -71,11 +71,11 @@ export component RootSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.open = false; }
                     }
                     PanelButton {
-                        text: "Save";
+                        text: @tr("Save");
                         primary: true;
                         clicked => { root.done(); }
                     }

@@ -300,9 +300,9 @@ export component GridSheet inherits Rectangle {
                     }
                     if root.import-line == "": chosen-name := Text {
                         text: root.selected >= 0 && root.selected < root.thumbs.length
-                            ? root.thumbs[root.selected].name
-                                + (root.set-count > 1 ? " and " + (root.set-count - 1)
-                                    + (root.set-count == 2 ? " other" : " others") : "")
+                            ? (root.set-count > 1
+                                ? @tr("{} and {n} other" | "{} and {n} others" % (root.set-count - 1), root.thumbs[root.selected].name)
+                                : root.thumbs[root.selected].name)
                             : "";
                         color: Theme.text;
                         font-size: Theme.font-sm;
@@ -348,16 +348,16 @@ export component GridSheet inherits Rectangle {
                         }
                     }
                     if root.queue-view && root.queue-line != "": Text {
-                        text: root.queue-running ? root.queue-line + ", running" : root.queue-line;
+                        text: root.queue-running ? @tr("{}, running", root.queue-line) : root.queue-line;
                         color: Theme.text-secondary;
                         font-size: Theme.font-xs;
                         vertical-alignment: center;
                         overflow: elide;
                     }
                     if root.queue-view: PanelButton {
-                        text: "Export the queue";
+                        text: @tr("Export the queue");
                         icon: @image-url("../icons/image-down.svg");
-                        words: "Export every queued set, in order";
+                        words: @tr("Export every queued set, in order");
                         enabled: root.queue-can-run;
                         clicked => { root.focus-keys(); root.queue-run(); }
                     }
@@ -366,8 +366,8 @@ export component GridSheet inherits Rectangle {
                     // count it took the last label chips off the row
                     // below at the editor's default width.
                     Text {
-                        text: root.thumbs.length + (root.thumbs.length == 1 ? " frame · " : " frames · ")
-                            + (root.sort-menu.label == "" ? "" : "by " + root.sort-menu.label + " · ")
+                        text: @tr("{n} frame" | "{n} frames" % root.thumbs.length) + " · "
+                            + (root.sort-menu.label == "" ? "" : @tr("by {}", root.sort-menu.label) + " · ")
                             + round(root.grid-cell / 1px) + " px";
                         color: Theme.text-muted;
                         font-size: Theme.font-xs;
@@ -403,8 +403,8 @@ export component GridSheet inherits Rectangle {
                     // back is in both, as it is in CULLING beside Move
                     // rejects. One menu, so the header keeps its width.
                     PanelButton {
-                        text: root.reject-count == 0 ? "Rejects"
-                            : root.reject-count == 1 ? "1 reject" : root.reject-count + " rejects";
+                        text: root.reject-count == 0 ? @tr("Rejects")
+                            : @tr("{n} reject" | "{n} rejects" % root.reject-count);
                         icon: @image-url("../icons/folder-open.svg");
                         clicked => {
                             root.focus-keys();
@@ -416,15 +416,15 @@ export component GridSheet inherits Rectangle {
                             enabled: false;
                             Menu {
                                 MenuItem {
-                                    title: root.reject-count == 0 ? "No rejects to move"
-                                        : "Move " + root.reject-count
-                                            + (root.reject-count == 1 ? " reject..." : " rejects...");
+                                    title: root.reject-count == 0 ? @tr("No rejects to move")
+                                        : @tr("Move {n} reject..." | "Move {n} rejects..." % root.reject-count);
                                     enabled: root.reject-count > 0;
                                     activated => { root.rejects-asked(); }
                                 }
                                 if root.back-count > 0: MenuItem {
-                                    title: (root.back-count > 1 ? "Move " + root.back-count + " frames back to "
-                                        : "Move back to ") + root.back-to;
+                                    title: root.back-count > 1
+                                        ? @tr("Move {n} frame back to {}" | "Move {n} frames back to {}" % root.back-count, root.back-to)
+                                        : @tr("Move back to {}", root.back-to);
                                     activated => { root.move-back(); root.menu-done(); }
                                 }
                                 MenuSeparator { }
@@ -437,7 +437,7 @@ export component GridSheet inherits Rectangle {
                                 // nothing. The timer is for a pick from
                                 // a sub-menu, and this menu has none.
                                 MenuItem {
-                                    title: "Delete rejects folder...";
+                                    title: @tr("Delete rejects folder...");
                                     enabled: !root.queue-view;
                                     activated => { root.delete-asked("rejects"); }
                                 }
@@ -450,7 +450,7 @@ export component GridSheet inherits Rectangle {
                         }
                     }
                     PanelButton {
-                        text: "Lightbox";
+                        text: @tr("Lightbox");
                         icon: @image-url("../icons/grid-2x2.svg");
                         clicked => { root.focus-keys(); root.lightbox-asked(); }
                     }
@@ -538,7 +538,7 @@ export component GridSheet inherits Rectangle {
                     border-width: 1px;
                     border-color: Theme.border;
                     accessible-role: button;
-                    accessible-label: "Folder " + t.name;
+                    accessible-label: @tr("Folder {}", t.name);
                     accessible-value: t.count;
                     accessible-action-default => { root.tile-picked(k); }
                     animate background { duration: Theme.quick; }
@@ -747,7 +747,7 @@ export component GridSheet inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.border-strong;
                         Text {
-                            text: "Unreadable";
+                            text: @tr("Unreadable");
                             color: Theme.text-muted;
                             font-size: Theme.font-xs;
                             horizontal-alignment: center;
@@ -760,7 +760,7 @@ export component GridSheet inherits Rectangle {
                     if root.lightbox && t.pending && t.big.width == 0: Text {
                         width: parent.width;
                         height: parent.height;
-                        text: "Developing";
+                        text: @tr("Developing");
                         color: Theme.dark-muted;
                         font-size: Theme.font-xs;
                         horizontal-alignment: center;
@@ -1058,7 +1058,7 @@ export component GridSheet inherits Rectangle {
                 x: parent.width - Theme.scrollbar-band;
                 width: Theme.scrollbar-band;
                 height: parent.height;
-                label: "Grid scroll";
+                label: @tr("Grid scroll");
                 scroll: root.grid-scroll;
                 max: root.grid-max;
                 awake <=> root.bar-awake;
@@ -1083,7 +1083,7 @@ export component GridSheet inherits Rectangle {
                 enabled: false;
                 Menu {
                     MenuItem {
-                        title: "Reveal in file manager";
+                        title: @tr("Reveal in file manager");
                         activated => { root.tile-reveal(root.menu-tile); root.menu-done(); }
                     }
                 }

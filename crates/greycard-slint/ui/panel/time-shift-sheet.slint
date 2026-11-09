@@ -68,6 +68,7 @@ export component TimeShiftSheet inherits Rectangle {
                 }
                 Segmented {
                     options: ["Shift by", "Set this frame to"];
+                    labels: [@tr("Shift by"), @tr("Set this frame to")];
                     current <=> root.shift-mode;
                     selected(o) => { root.shift-edited(); }
                 }
@@ -102,7 +103,7 @@ export component TimeShiftSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "The camera's own time is kept: Clear shift goes back to it.";
+                    text: @tr("The camera's own time is kept: Clear shift goes back to it.");
                     font-size: Theme.font-xs;
                     color: Theme.text-muted;
                     wrap: word-wrap;
@@ -111,17 +112,17 @@ export component TimeShiftSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Clear shift";
+                        text: @tr("Clear shift");
                         enabled: root.shift-can-clear;
                         clicked => { root.shift-answered(2); }
                     }
                     Rectangle { }
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.shift-answered(0); }
                     }
                     PanelButton {
-                        text: "Apply";
+                        text: @tr("Apply");
                         primary: true;
                         enabled: root.shift-ready;
                         clicked => { root.shift-answered(1); }

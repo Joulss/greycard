@@ -1245,7 +1245,7 @@ export component EditSlider inherits Rectangle {
         y: (root.height - self.height) / 2;
         height: Theme.control-height - 4px;
         shown: root.text;
-        label: root.label + " value";
+        label: @tr("{} value", root.label);
         enabled: root.enabled;
         nudges: true;
         nudged(way, big) => { root.bump(way, big); }
@@ -1452,8 +1452,12 @@ export component PanelButton inherits Rectangle {
 }
 
 // A row of choices, one selected: for a short list of named options.
+// `options` are the values, which `current` and `selected` compare and
+// the host keeps; `labels`, when given, are the words shown for them
+// by index, so a value can stay the same in every language.
 export component Segmented inherits Rectangle {
     in property <[string]> options;
+    in property <[string]> labels;
     in-out property <string> current;
     in property <bool> enabled: true;
     /// Whether a click makes its option current itself; false for a
@@ -1482,7 +1486,7 @@ export component Segmented inherits Rectangle {
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
             Text {
-                text: option;
+                text: i < root.labels.length ? root.labels[i] : option;
                 color: !usable ? Theme.text-muted : on ? Theme.text : Theme.text-secondary;
                 font-size: Theme.font-xs;
                 font-weight: on ? Theme.weight-medium : Theme.weight-regular;
@@ -1749,12 +1753,12 @@ export component ThumbBadges inherits Rectangle {
     // What it shows, in words: "3 stars, pick, red".
     accessible-role: image;
     accessible-label: (root.rating > 0
-            ? min(root.rating, root.stars) + (root.rating == 1 ? " star" : " stars") : "")
-        + (root.flag > 0 ? (root.rating > 0 ? ", " : "") + (root.flag == 2 ? "reject" : "pick") : "")
+            ? @tr("{n} star" | "{n} stars" % min(root.rating, root.stars)) : "")
+        + (root.flag > 0 ? (root.rating > 0 ? ", " : "") + (root.flag == 2 ? @tr("reject") : @tr("pick")) : "")
         + (root.label > 0
             ? (root.rating > 0 || root.flag > 0 ? ", " : "")
-                + (root.label == 1 ? "red" : root.label == 2 ? "yellow" : root.label == 3 ? "green"
-                    : root.label == 4 ? "blue" : "purple")
+                + (root.label == 1 ? @tr("red") : root.label == 2 ? @tr("yellow") : root.label == 3 ? @tr("green")
+                    : root.label == 4 ? @tr("blue") : @tr("purple"))
             : "");
     width: badges.preferred-width;
     height: root.glyph + 6px;
@@ -1821,7 +1825,7 @@ export component ThumbMarks inherits Rectangle {
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
-            accessible-label: "Edited";
+            accessible-label: @tr("Edited");
         }
         if root.exported: Image {
             source: @image-url("icons/image-down.svg");
@@ -1829,7 +1833,7 @@ export component ThumbMarks inherits Rectangle {
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
-            accessible-label: "Exported";
+            accessible-label: @tr("Exported");
         }
         if root.collected: Image {
             source: @image-url("icons/bookmark.svg");
@@ -1837,7 +1841,7 @@ export component ThumbMarks inherits Rectangle {
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
-            accessible-label: "In a collection";
+            accessible-label: @tr("In a collection");
         }
         if root.paired: Text {
             text: "+JPEG";
@@ -1846,7 +1850,7 @@ export component ThumbMarks inherits Rectangle {
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
             accessible-role: text;
-            accessible-label: "With the camera's JPEG";
+            accessible-label: @tr("With the camera's JPEG");
         }
     }
 }
@@ -1870,8 +1874,8 @@ export component ThumbStack inherits Rectangle {
     background: touch.has-hover ? #000000cc : #00000080;
     accessible-role: button;
     accessible-label: root.open
-        ? "Frame " + root.place + " of a stack of " + root.count + ", open"
-        : "Stack of " + root.count;
+        ? @tr("Frame {} of a stack of {}, open", root.place, root.count)
+        : @tr("Stack of {}", root.count);
     accessible-action-default => { root.clicked(); }
     row := HorizontalLayout {
         padding-left: root.glyph / 3;
@@ -1912,7 +1916,7 @@ export component ThumbTag inherits Rectangle {
     border-radius: Theme.radius-sm;
     background: #00000080;
     accessible-role: text;
-    accessible-label: "Version " + root.name;
+    accessible-label: @tr("Version {}", root.name);
     words := Text {
         x: root.glyph / 3;
         width: parent.width - root.glyph * 2 / 3;
@@ -2241,7 +2245,7 @@ export component ScrollPane {
         width: ScrollBars.band;
         height: root.max-x > 0 ? parent.height - ScrollBars.band : parent.height;
         fades: false;
-        label: "Scroll";
+        label: @tr("Scroll");
         scroll: -flick.content-y;
         max: root.max-y;
         scroll-to(to) => { flick.content-y = -clamp(to, 0px, root.max-y); }
@@ -2265,7 +2269,7 @@ export component ScrollPane {
         height: ScrollBars.band;
         width: root.max-y > 0 ? parent.width - ScrollBars.band : parent.width;
         fades: false;
-        label: "Scroll";
+        label: @tr("Scroll");
         scroll: -flick.content-x;
         max: root.max-x;
         scroll-to(to) => { flick.content-x = -clamp(to, 0px, root.max-x); }

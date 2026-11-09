@@ -33,7 +33,7 @@ export component CurvesSection inherits Section {
     callback parametric-changed();
     callback view-changed();
 
-    title: "CURVES";
+    title: @tr("CURVES");
     owner: root.target-name;
     icon: @image-url("../icons/spline.svg");
     collapsed <=> root.collapsed-curves;
@@ -42,11 +42,13 @@ export component CurvesSection inherits Section {
     switched => { root.view-changed(); }
     Segmented {
         options: ["Parametric", "Point"];
+        labels: [@tr("Parametric"), @tr("Point")];
         current <=> root.curve-mode;
         selected(v) => { root.curve-mode-changed(); }
     }
     if root.curve-mode == "Point": Segmented {
         options: ["RGB", "Red", "Green", "Blue", "R/G", "B/Y"];
+        labels: ["RGB", @tr("Red"), @tr("Green"), @tr("Blue"), "R/G", "B/Y"];
         current <=> root.curve-channel;
         selected(v) => { root.curve-channel-changed(); }
     }
@@ -63,7 +65,7 @@ export component CurvesSection inherits Section {
         spacing: Theme.space-2;
         alignment: start;
         Text {
-            text: "In";
+            text: @tr("In");
             color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
             font-size: Theme.font-sm;
             vertical-alignment: center;
@@ -73,13 +75,13 @@ export component CurvesSection inherits Section {
             height: Theme.control-height - 4px;
             boxed: true;
             enabled: root.curves-enabled && root.curve-selected >= 0;
-            label: "Point in";
+            label: @tr("Point in");
             shown: root.curve-selected >= 0 ? root.curve-point-in : "";
             committed(typed) => { root.curve-typed("in", typed); }
         }
         Rectangle { width: Theme.space-2; }
         Text {
-            text: "Out";
+            text: @tr("Out");
             color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
             font-size: Theme.font-sm;
             vertical-alignment: center;
@@ -89,13 +91,13 @@ export component CurvesSection inherits Section {
             height: Theme.control-height - 4px;
             boxed: true;
             enabled: root.curves-enabled && root.curve-selected >= 0;
-            label: "Point out";
+            label: @tr("Point out");
             shown: root.curve-selected >= 0 ? root.curve-point-out : "";
             committed(typed) => { root.curve-typed("out", typed); }
         }
     }
     if root.curve-mode == "Parametric": EditSlider {
-        label: "Highlights";
+        label: @tr("Highlights");
         enabled: root.curves-enabled;
         minimum: -1;
         maximum: 1;
@@ -108,7 +110,7 @@ export component CurvesSection inherits Section {
         changed(v) => { root.parametric-changed(); }
     }
     if root.curve-mode == "Parametric": EditSlider {
-        label: "Lights";
+        label: @tr("Lights");
         enabled: root.curves-enabled;
         minimum: -1;
         maximum: 1;
@@ -121,7 +123,7 @@ export component CurvesSection inherits Section {
         changed(v) => { root.parametric-changed(); }
     }
     if root.curve-mode == "Parametric": EditSlider {
-        label: "Darks";
+        label: @tr("Darks");
         enabled: root.curves-enabled;
         minimum: -1;
         maximum: 1;
@@ -134,7 +136,7 @@ export component CurvesSection inherits Section {
         changed(v) => { root.parametric-changed(); }
     }
     if root.curve-mode == "Parametric": EditSlider {
-        label: "Shadows";
+        label: @tr("Shadows");
         enabled: root.curves-enabled;
         minimum: -1;
         maximum: 1;
@@ -150,14 +152,14 @@ export component CurvesSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         if root.curve-mode == "Point": PanelButton {
-            text: "Pick";
+            text: @tr("Pick");
             icon: @image-url("../icons/pipette.svg");
             enabled: root.curves-enabled;
             primary: root.picking == "Curve";
             clicked => { root.pick-started("Curve"); }
         }
         PanelButton {
-            text: "Reset";
+            text: @tr("Reset");
             icon: @image-url("../icons/rotate-ccw.svg");
             clicked => { root.curve-reset(); }
         }

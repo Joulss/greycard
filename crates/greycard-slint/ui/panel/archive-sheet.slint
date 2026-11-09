@@ -77,7 +77,7 @@ export component ArchiveSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "To this folder:";
+                    text: @tr("To this folder:");
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                 }
@@ -92,14 +92,12 @@ export component ArchiveSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 if root.rejects >= 0: Toggle {
-                    label: root.rejects == 1
-                        ? "Include the rejects folder (1 frame)"
-                        : "Include the rejects folder (" + root.rejects + " frames)";
+                    label: @tr("Include the rejects folder ({n} frame)" | "Include the rejects folder ({n} frames)" % root.rejects);
                     checked <=> root.include-rejects;
                     toggled => { root.look-again(); }
                 }
                 Text {
-                    text: "Copies are verified; nothing is deleted.";
+                    text: @tr("Copies are verified; nothing is deleted.");
                     font-size: Theme.font-xs;
                     color: Theme.text-muted;
                     wrap: word-wrap;
@@ -108,7 +106,7 @@ export component ArchiveSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.answered(false); }
                     }
                     PanelButton {
@@ -167,7 +165,7 @@ export component ArchiveCard inherits Rectangle {
             overflow: elide;
         }
         PanelButton {
-            text: "Cancel";
+            text: @tr("Cancel");
             clicked => { root.cancel(); }
         }
     }

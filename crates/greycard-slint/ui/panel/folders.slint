@@ -21,12 +21,12 @@ export component FoldersSection inherits Section {
     /// The keys take the focus back after a press: nothing here keeps it.
     callback focus-keys();
 
-    title: "FOLDERS";
+    title: @tr("FOLDERS");
     icon: @image-url("../icons/folder-open.svg");
     collapsed <=> root.collapsed-folders;
     shares: true;
     Toggle {
-        label: "With subfolders";
+        label: @tr("With subfolders");
         checked <=> root.subfolders;
         toggled => { root.subfolders-changed(); root.focus-keys(); }
     }
@@ -90,7 +90,7 @@ export component FoldersSection inherits Section {
                                 enabled: row.children;
                                 mouse-cursor: row.children ? MouseCursor.pointer : MouseCursor.default;
                                 accessible-role: button;
-                                accessible-label: (row.expanded ? "Fold " : "Unfold ") + row.name;
+                                accessible-label: row.expanded ? @tr("Fold {}", row.name) : @tr("Unfold {}", row.name);
                                 clicked => { root.folded(i); root.focus-keys(); }
                             }
                         }

@@ -19,14 +19,14 @@ import { PresetRow } from "../structs.slint";
 // `panel::preset_list`, and its refusals are the store's, said on the
 // sheet or the status line.
 export global PresetWords {
-    out property <string> favorites: "Favorites";
-    out property <string> add-favorite: "Add to favorites";
-    out property <string> remove-favorite: "Remove from favorites";
-    out property <string> move-to-group: "Move to group";
-    out property <string> new-group: "New group...";
-    out property <string> rename-group: "Rename group...";
-    out property <string> remove-from-group: "Remove from group";
-    out property <string> group-name: "Group name";
+    out property <string> favorites: @tr("Favorites");
+    out property <string> add-favorite: @tr("Add to favorites");
+    out property <string> remove-favorite: @tr("Remove from favorites");
+    out property <string> move-to-group: @tr("Move to group");
+    out property <string> new-group: @tr("New group...");
+    out property <string> rename-group: @tr("Rename group...");
+    out property <string> remove-from-group: @tr("Remove from group");
+    out property <string> group-name: @tr("Group name");
 }
 
 // A star: Lucide's outline, the one the badges draw filled.
@@ -86,7 +86,7 @@ export component PresetsSection inherits Section {
     property <bool> menu-favorite;
     property <bool> menu-header;
 
-    title: "PRESETS";
+    title: @tr("PRESETS");
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
     shares: true;
@@ -261,7 +261,7 @@ export component PresetsSection inherits Section {
                         Rectangle {
                             width: Theme.control-height - 6px;
                             accessible-role: button;
-                            accessible-label: "Remove " + row.text;
+                            accessible-label: @tr("Remove {}", row.text);
                             accessible-action-default => { root.confirm-remove = row.index; }
                             Image {
                                 source: @image-url("../icons/trash-2.svg");
@@ -272,7 +272,7 @@ export component PresetsSection inherits Section {
                                 y: (parent.height - self.height) / 2;
                             }
                             preset-bin := TipArea {
-                                words: "Remove";
+                                words: @tr("Remove");
                                 mouse-cursor: MouseCursor.pointer;
                                 clicked => { root.confirm-remove = row.index; }
                             }
@@ -283,7 +283,7 @@ export component PresetsSection inherits Section {
         }
     }
     if root.preset-names.length == 0: Text {
-        text: "Save the edit or import a Lightroom preset.";
+        text: @tr("Save the edit or import a Lightroom preset.");
         // Held to its lines: the box alone takes the section's share.
         max-height: self.preferred-height;
         font-size: Theme.font-xs;
@@ -293,7 +293,7 @@ export component PresetsSection inherits Section {
     // The question names the preset on a line of its own, which wraps,
     // as the pane is too narrow for a long name on a button.
     if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: Text {
-        text: "Remove " + root.preset-names[root.confirm-remove] + " from the list?";
+        text: @tr("Remove {} from the list?", root.preset-names[root.confirm-remove]);
         max-height: self.preferred-height;
         font-size: Theme.font-xs;
         color: Theme.text-secondary;
@@ -302,11 +302,11 @@ export component PresetsSection inherits Section {
     if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
-            text: "Cancel";
+            text: @tr("Cancel");
             clicked => { root.confirm-remove = -1; }
         }
         PanelButton {
-            text: "Remove";
+            text: @tr("Remove");
             primary: true;
             clicked => {
                 let i = root.confirm-remove;
@@ -318,12 +318,12 @@ export component PresetsSection inherits Section {
     if root.confirm-remove < 0 || root.confirm-remove >= root.preset-names.length: HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
-            text: "Import...";
+            text: @tr("Import...");
             icon: @image-url("../icons/folder-open.svg");
             clicked => { root.preset-import(); }
         }
         PanelButton {
-            text: "Save...";
+            text: @tr("Save...");
             icon: @image-url("../icons/save.svg");
             enabled: root.selected >= 0;
             clicked => { root.preset-save-open(); }
@@ -333,7 +333,7 @@ export component PresetsSection inherits Section {
     // from this frame that is never saved. Ctrl+Shift+S. A row of its
     // own, as the pane is too narrow for a third button beside two.
     PanelButton {
-        text: "Sync...";
+        text: @tr("Sync...");
         icon: @image-url("../icons/layers.svg");
         enabled: root.set-count > 1;
         clicked => { root.sync-open-asked(); }

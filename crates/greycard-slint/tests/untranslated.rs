@@ -12,13 +12,14 @@
 use std::path::{Path, PathBuf};
 
 /// The properties whose strings are shown.
-const SHOWN: [&str; 15] = [
+const SHOWN: [&str; 16] = [
     "text",
     "words",
     "placeholder-text",
     "placeholder",
     "accessible-label",
     "accessible-description",
+    "accessible-value",
     "title",
     "label",
     "note",
@@ -74,6 +75,7 @@ fn bare_strings(source: &str, allowed: &[String]) -> Vec<Bare> {
                     let text = &code[at + 1..end.saturating_sub(1).max(at + 1)];
                     if tr_depths.is_empty()
                         && !text.is_empty()
+                        && !compared(&code, at, end)
                         && !allowed.iter().any(|a| a == text)
                     {
                         found.push(Bare {
@@ -139,10 +141,11 @@ fn element_binds(code: &str, at: usize, name: &str) -> bool {
     (start..end).any(|i| binding_at(bytes, i, name))
 }
 
-/// Whether `name:` (a binding, not `name <=>` or part of a longer
-/// name) starts at `at`.
+/// Whether `name:` (a binding, not `name <=>`, an element's id
+/// `name :=`, a property read `root.name: Element` in an `if`, or part
+/// of a longer name) starts at `at`.
 fn binding_at(bytes: &[u8], at: usize, name: &str) -> bool {
-    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'-' || b == b'_';
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.';
     if !bytes[at..].starts_with(name.as_bytes()) || (at > 0 && ident(bytes[at - 1])) {
         return false;
     }
@@ -151,7 +154,18 @@ fn binding_at(bytes: &[u8], at: usize, name: &str) -> bool {
         .iter()
         .take_while(|b| **b == b' ' || **b == b'\t')
         .count();
-    after.get(skip) == Some(&b':')
+    after.get(skip) == Some(&b':') && after.get(skip + 1) != Some(&b'=')
+}
+
+/// Whether the string from `at` to `end` is an operand of `==` or
+/// `!=`: a value compared, never shown.
+fn compared(code: &str, at: usize, end: usize) -> bool {
+    let before = code[..at].trim_end();
+    let after = code[end..].trim_start();
+    before.ends_with("==")
+        || before.ends_with("!=")
+        || after.starts_with("==")
+        || after.starts_with("!=")
 }
 
 /// Where the string opening at `at` ends, one past its closing quote.
@@ -254,10 +268,8 @@ fn allowed(text: &str) -> Vec<String> {
 }
 
 /// Every Slint file of the window: a string it shows is in `@tr`, or on
-/// the allow-list. Ignored until the wrapping of the window's strings
-/// lands, which un-ignores it.
+/// the allow-list.
 #[test]
-#[ignore = "the window's strings are wrapped in @tr next; that change un-ignores this"]
 fn every_shown_string_is_translatable() {
     let ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
     let allowed = allowed(
@@ -295,8 +307,8 @@ fn every_shown_string_is_translatable() {
 }
 
 /// The scan finds a bare string in each shown binding, by its line, and
-/// lets through `@tr`, the allow-list, the empty string, comments, and
-/// bindings that are not shown.
+/// lets through `@tr`, the allow-list, the empty string, comments,
+/// compared values, element ids, and bindings that are not shown.
 #[test]
 fn the_scan_finds_bare_strings_by_line() {
     let source = r#"component A {
@@ -324,6 +336,12 @@ fn the_scan_finds_bare_strings_by_line() {
     Segmented { options: ["One", "Two"]; current <=> root.c; }
     Segmented { options: ["Kept"]; labels: [@tr("Kept")]; }
     Toggle { label: "Toggle"; note: @tr("Wrapped note"); }
+    Text { text: root.mode == "Copy" ? @tr("Copies") : "Fold" != root.m ? @tr("Adds") : ""; }
+    hint := Text { color: red; }
+    if root.placeholder: Rectangle { x: root.m == "Kept" ? 1px : 0px; }
+    Text { text: "Last"; }
+    Text { text: root.mode == "a" ? "Shown" : "Other"; }
+    Rectangle { accessible-value: root.on ? "Value" : root.n; }
 }"#;
     let found = bare_strings(source, &["greycard".to_string()]);
     let got: Vec<(usize, &str, bool)> = found
@@ -344,6 +362,10 @@ fn the_scan_finds_bare_strings_by_line() {
             (23, "One", true),
             (23, "Two", true),
             (25, "Toggle", false),
+            (29, "Last", false),
+            (30, "Shown", false),
+            (30, "Other", false),
+            (31, "Value", false),
         ]
     );
 }

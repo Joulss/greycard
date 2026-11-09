@@ -59,7 +59,7 @@ export component LookRemoveSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 Text {
-                    text: root.remove-files.length == 1 ? "This file goes:" : "These files go:";
+                    text: root.remove-files.length == 1 ? @tr("This file goes:") : @tr("These files go:");
                     font-size: Theme.font-sm;
                     color: Theme.text-secondary;
                 }
@@ -88,15 +88,15 @@ export component LookRemoveSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.remove-answered(0); }
                     }
                     if root.remove-permanent: DangerButton {
-                        text: "Delete permanently";
+                        text: @tr("Delete permanently");
                         clicked => { root.remove-answered(2); }
                     }
                     if root.remove-trash: PanelButton {
-                        text: "Move to the trash";
+                        text: @tr("Move to the trash");
                         icon: @image-url("../icons/trash-2.svg");
                         primary: true;
                         clicked => { root.remove-answered(1); }

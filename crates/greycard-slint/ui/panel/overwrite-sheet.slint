@@ -54,8 +54,8 @@ export component OverwriteSheet inherits Rectangle {
                 }
                 Text {
                     text: root.overwrite-files.length == 1
-                        ? "Overwrite writes over this file:"
-                        : "Overwrite writes over each of these files:";
+                        ? @tr("Overwrite writes over this file:")
+                        : @tr("Overwrite writes over each of these files:");
                     font-size: Theme.font-sm;
                     color: Theme.text-secondary;
                 }
@@ -75,7 +75,7 @@ export component OverwriteSheet inherits Rectangle {
                     }
                 }
                 Text {
-                    text: "Keep both writes each beside the one there, under the next free name.";
+                    text: @tr("Keep both writes each beside the one there, under the next free name.");
                     font-size: Theme.font-sm;
                     color: Theme.text-secondary;
                     wrap: word-wrap;
@@ -84,16 +84,16 @@ export component OverwriteSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.overwrite-answered(0); }
                     }
                     DangerButton {
-                        text: "Overwrite";
+                        text: @tr("Overwrite");
                         icon: @image-url("../icons/save.svg");
                         clicked => { root.overwrite-answered(2); }
                     }
                     PanelButton {
-                        text: "Keep both";
+                        text: @tr("Keep both");
                         primary: true;
                         clicked => { root.overwrite-answered(1); }
                     }

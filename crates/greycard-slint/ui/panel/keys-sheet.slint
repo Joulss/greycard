@@ -42,15 +42,15 @@ export component KeysSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-3;
                     Text {
-                        text: "Keys";
+                        text: @tr("Keys");
                         font-size: Theme.font-lg;
                         font-weight: Theme.weight-medium;
                         color: Theme.text;
                         vertical-alignment: center;
                     }
                     search := LineEdit {
-                        placeholder-text: "Search keys";
-                        accessible-label: "Search keys";
+                        placeholder-text: @tr("Search keys");
+                        accessible-label: @tr("Search keys");
                         edited(t) => { root.searched(t); }
                         init => { self.focus(); }
                     }
@@ -98,7 +98,7 @@ export component KeysSheet inherits Rectangle {
                             }
                         }
                         if root.rows.length == 0: Text {
-                            text: "No key does that.";
+                            text: @tr("No key does that.");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                         }
@@ -107,9 +107,9 @@ export component KeysSheet inherits Rectangle {
                 HorizontalLayout {
                     alignment: end;
                     PanelButton {
-                        text: "Close";
+                        text: @tr("Close");
                         accessible-role: button;
-                        accessible-label: "Close the keys";
+                        accessible-label: @tr("Close the keys");
                         clicked => { root.open = false; }
                     }
                 }

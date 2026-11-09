@@ -42,7 +42,7 @@ component Fold inherits Rectangle {
     in-out property <bool> open;
     height: Theme.icon + Theme.space-1;
     accessible-role: button;
-    accessible-label: "Details";
+    accessible-label: @tr("Details");
     accessible-expandable: true;
     accessible-expanded: root.open;
     accessible-action-default => { root.open = !root.open; }
@@ -60,7 +60,7 @@ component Fold inherits Rectangle {
             animate transform-rotation { duration: 120ms; easing: ease-out; }
         }
         Text {
-            text: "Details";
+            text: @tr("Details");
             font-size: Theme.font-xs;
             color: head.has-hover ? Theme.text : Theme.text-secondary;
             vertical-alignment: center;
@@ -249,7 +249,7 @@ export component LightroomSheet inherits Rectangle {
                                     }
                                 }
                                 PanelButton {
-                                    text: "Choose...";
+                                    text: @tr("Choose...");
                                     enabled: !root.lr-busy;
                                     clicked => { root.lr-choose-root(i); }
                                 }
@@ -271,7 +271,7 @@ export component LightroomSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     Text {
-                        text: "Collection set";
+                        text: @tr("Collection set");
                         color: Theme.text;
                         font-size: Theme.font-sm;
                         vertical-alignment: center;
@@ -279,17 +279,15 @@ export component LightroomSheet inherits Rectangle {
                     LineEdit {
                         horizontal-stretch: 1;
                         text <=> root.lr-set;
-                        placeholder-text: "none: the collections at the top";
+                        placeholder-text: @tr("none: the collections at the top");
                     }
                 }
                 if root.lr-has-creations: Toggle {
-                    label: "Books, prints, slideshows, and web pages as collections";
+                    label: @tr("Books, prints, slideshows, and web pages as collections");
                     checked <=> root.lr-creations;
                 }
                 if root.lr-already > 0: Toggle {
-                    label: root.lr-already == 1
-                        ? "Write over the 1 frame with edits here already"
-                        : "Write over the " + root.lr-already + " frames with edits here already";
+                    label: @tr("Write over the {n} frame with edits here already" | "Write over the {n} frames with edits here already" % root.lr-already);
                     checked <=> root.lr-force;
                 }
             }
@@ -310,29 +308,29 @@ export component LightroomSheet inherits Rectangle {
                 spacing: Theme.space-2;
                 alignment: end;
                 if root.lr-step < 2: PanelButton {
-                    text: "Cancel";
+                    text: @tr("Cancel");
                     enabled: !root.lr-running;
                     clicked => { root.lr-cancel(); }
                 }
                 if root.lr-step == 1: PanelButton {
-                    text: "Back";
+                    text: @tr("Back");
                     enabled: !root.lr-busy;
                     clicked => { root.lr-back(); }
                 }
                 if root.lr-step == 0: PanelButton {
-                    text: "Check";
+                    text: @tr("Check");
                     primary: true;
                     enabled: !root.lr-busy && root.lr-roots.length > 0;
                     clicked => { root.lr-check(); }
                 }
                 if root.lr-step == 1: PanelButton {
-                    text: "Write";
+                    text: @tr("Write");
                     primary: true;
                     enabled: !root.lr-busy && root.lr-ready;
                     clicked => { root.lr-write(); }
                 }
                 if root.lr-step == 2: PanelButton {
-                    text: "OK";
+                    text: @tr("OK");
                     primary: true;
                     clicked => { root.lr-open = false; }
                 }
@@ -348,7 +346,7 @@ export component LightroomSheet inherits Rectangle {
             height: more.preferred-height + 6px;
             background: Theme.surface;
             more := Text {
-                text: "Scroll for more";
+                text: @tr("Scroll for more");
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
                 horizontal-alignment: right;

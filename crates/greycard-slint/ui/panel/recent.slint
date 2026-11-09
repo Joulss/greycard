@@ -33,7 +33,7 @@ export component FolderName inherits Rectangle {
     property <bool> tipped;
     height: 18px;
     accessible-role: button;
-    accessible-label: "Recently opened";
+    accessible-label: @tr("Recently opened");
     accessible-description: root.path;
     accessible-value: root.name;
     accessible-action-default => {
@@ -85,7 +85,7 @@ export component FolderName inherits Rectangle {
             horizontal-stretch: 1;
         }
         if root.note == "": Text {
-            text: root.name != "" ? root.name : "Recently opened";
+            text: root.name != "" ? root.name : @tr("Recently opened");
             color: ta.has-hover ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-xs;
             font-weight: root.name != "" ? Theme.weight-medium : Theme.weight-regular;
@@ -94,7 +94,7 @@ export component FolderName inherits Rectangle {
             min-width: 24px;
         }
         if root.note == "" && root.root-name != "": Text {
-            text: "in " + root.root-name;
+            text: @tr("in {}", root.root-name);
             color: Theme.text-muted;
             font-size: Theme.font-xs;
             vertical-alignment: center;
@@ -129,12 +129,12 @@ export component RecentMenu inherits Rectangle {
         enabled: false;
         Menu {
             MenuItem {
-                title: "Recently opened";
+                title: @tr("Recently opened");
                 enabled: false;
             }
             MenuSeparator { }
             if root.folders.length == 0: MenuItem {
-                title: "No folders yet";
+                title: @tr("No folders yet");
                 enabled: false;
             }
             for f in root.folders: MenuItem {

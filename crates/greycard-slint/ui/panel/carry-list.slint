@@ -25,7 +25,7 @@ component Check inherits Rectangle {
     accessible-checkable: true;
     // A heading partly on reads as checked, and says it is partly.
     accessible-checked: root.state != 0;
-    accessible-description: root.state == 1 ? "partly checked" : "";
+    accessible-description: root.state == 1 ? @tr("partly checked") : "";
     accessible-label: root.a11y;
     accessible-action-default => { root.toggled(); }
 
@@ -115,11 +115,11 @@ export component CarryList inherits VerticalLayout {
         spacing: Theme.space-2;
         alignment: start;
         check-all := PanelButton {
-            text: "Check all";
+            text: @tr("Check all");
             clicked => { root.all(true); }
         }
         PanelButton {
-            text: "Uncheck all";
+            text: @tr("Uncheck all");
             clicked => { root.all(false); }
         }
     }
@@ -156,6 +156,7 @@ export component CarryList inherits VerticalLayout {
                     width: parent.width;
                     height: parent.height - 2px;
                     options: ["Replace masks", "Add to masks"];
+                    labels: [@tr("Replace masks"), @tr("Add to masks")];
                     current: row.state == 1 ? "Add to masks" : "Replace masks";
                     selected(o) => { root.join-chosen(o == "Add to masks"); }
                 }

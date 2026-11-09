@@ -15,10 +15,10 @@ export component CollectionSheet inherits Rectangle {
     /// The field is there; without it the sheet is a question.
     in property <bool> asks-name: true;
     /// The button that answers it: Save, Create, Delete.
-    in property <string> verb: "Save";
+    in property <string> verb: @tr("Save");
     in-out property <string> name;
     /// The field's hint.
-    in property <string> placeholder: "Name, or Set/Name";
+    in property <string> placeholder: @tr("Name, or Set/Name");
     callback done();
 
     background: #000000a0;
@@ -74,7 +74,7 @@ export component CollectionSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.open = false; }
                     }
                     PanelButton {

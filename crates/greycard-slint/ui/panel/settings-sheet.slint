@@ -42,7 +42,7 @@ component BindChip inherits Rectangle {
     in property <string> does;
     in property <bool> warn;
     callback listen();
-    property <string> shown: self.on ? "Press a key" : root.keys;
+    property <string> shown: self.on ? @tr("Press a key") : root.keys;
     width: 112px;
     height: Theme.control-height;
     border-radius: Theme.radius-md;
@@ -249,12 +249,10 @@ export component SettingsSheet inherits Rectangle {
     }
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
-    property <string> elsewhere-words: root.sidecars-elsewhere == 1
-        ? "1 sidecar"
-        : root.sidecars-elsewhere + " sidecars";
+    property <string> elsewhere-words: @tr("{n} sidecar" | "{n} sidecars" % root.sidecars-elsewhere);
     property <string> frames-words: root.open-frames == 1
-        ? "the open frame"
-        : "the " + root.open-frames + " open frames";
+        ? @tr("the open frame")
+        : @tr("the {n} open frame" | "the {n} open frames" % root.open-frames);
     /// The category shown, one of `categories`; kept between runs by
     /// the host, which hears of a change.
     in-out property <string> category: "Interface";
@@ -271,6 +269,9 @@ export component SettingsSheet inherits Rectangle {
     /// 3 log): the host opens it in the file manager.
     callback dir-clicked(int);
     property <[string]> categories: ["Interface", "Library", "Editing", "Models", "Keys", "About"];
+    /// The categories in words, by index: the names above are what is
+    /// kept and compared.
+    property <[string]> category-words: [@tr("Interface"), @tr("Library"), @tr("Editing"), @tr("Models"), @tr("Keys"), @tr("About")];
     property <length> column-w: 132px;
     property <length> pane-w: 440px;
     /// The focus goes to the column: a row left focused in the category
@@ -390,7 +391,7 @@ export component SettingsSheet inherits Rectangle {
                         spacing: Theme.space-3;
                         alignment: start;
                         Text {
-                            text: "Settings";
+                            text: @tr("Settings");
                             font-size: Theme.font-lg;
                             font-weight: Theme.weight-medium;
                             color: Theme.text;
@@ -426,20 +427,20 @@ export component SettingsSheet inherits Rectangle {
                                 VerticalLayout {
                                     padding: 2px;
                                     spacing: 2px;
-                                    for name in root.categories: Rectangle {
+                                    for name[i] in root.categories: Rectangle {
                                         property <bool> on: name == root.category;
                                         height: Theme.control-height;
                                         border-radius: Theme.radius-sm;
                                         background: self.on ? Theme.raised : (pick.has-hover ? Theme.hover : transparent);
                                         animate background { duration: Theme.quick; }
                                         accessible-role: tab;
-                                        accessible-label: name;
+                                        accessible-label: root.category-words[i];
                                         accessible-checked: self.on;
                                         accessible-action-default => { root.choose(name); }
                                         Text {
                                             x: Theme.space-3;
                                             width: parent.width - 2 * Theme.space-3;
-                                            text: name;
+                                            text: root.category-words[i];
                                             color: parent.on ? Theme.text : Theme.text-secondary;
                                             font-size: Theme.font-sm;
                                             font-weight: parent.on ? Theme.weight-medium : Theme.weight-regular;
@@ -478,14 +479,14 @@ export component SettingsSheet inherits Rectangle {
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
                             Text {
-                                text: "INTERFACE";
+                                text: @tr("INTERFACE");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Scale"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Scale"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
                                     text <=> root.ui-scale;
@@ -495,46 +496,49 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: "%"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             Text {
-                                text: "Type and controls, on top of the system's own scaling.";
+                                text: @tr("Type and controls, on top of the system's own scaling.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
                             }
                             if root.ui-scale-by-hand: Text {
-                                text: "SLINT_SCALE_FACTOR is set, and wins over this.";
+                                text: @tr("SLINT_SCALE_FACTOR is set, and wins over this.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
                             }
                             if !root.ui-scale-by-hand && root.ui-scale-percent != root.ui-scale-started: Text {
-                                text: "Applies at the next start.";
+                                text: @tr("Applies at the next start.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Theme"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Theme"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Charcoal", "Grey", "Light"];
+                                    labels: [@tr("Charcoal"), @tr("Grey"), @tr("Light")];
                                     current <=> root.theme;
                                     selected => { root.theme-changed(); }
                                 }
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Scroll bars"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Scroll bars"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Fade", "Stay"];
+                                    labels: [@tr("Fade"), @tr("Stay")];
                                     current <=> root.scroll-bars;
                                     selected => { root.scroll-bars-changed(); }
                                 }
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Scroll bar size"; width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Scroll bar size"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Thin", "Medium", "Wide"];
+                                    labels: [@tr("Thin"), @tr("Medium"), @tr("Wide")];
                                     current <=> root.scroll-bar-size;
                                     selected => { root.scroll-bar-size-changed(); }
                                 }
@@ -558,7 +562,7 @@ export component SettingsSheet inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             Toggle {
-                                label: "One section open at a time";
+                                label: @tr("One section open at a time");
                                 checked <=> root.one-section;
                                 toggled => { root.one-section-changed(); }
                             }
@@ -574,16 +578,17 @@ export component SettingsSheet inherits Rectangle {
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
                             Text {
-                                text: "LIBRARY";
+                                text: @tr("LIBRARY");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Start in"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Start in"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Last folder", "Chosen folder"];
+                                    labels: [@tr("Last folder"), @tr("Chosen folder")];
                                     current: root.start-choice;
                                     picks: false;
                                     selected(c) => { root.start-picked(c); }
@@ -600,18 +605,19 @@ export component SettingsSheet inherits Rectangle {
                                 Rectangle { width: 68px; }
                                 Segmented {
                                     options: ["Loupe", "Library"];
+                                    labels: [@tr("Loupe"), @tr("Library")];
                                     current <=> root.start-view;
                                     selected => { root.start-view-changed(); }
                                 }
                             }
                             Toggle {
-                                label: "Show the filter bar";
+                                label: @tr("Show the filter bar");
                                 checked <=> root.filter-bar;
                                 toggled => { root.filter-bar-changed(); }
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Cell size"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Cell size"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
                                     text <=> root.grid-cell-typed;
@@ -621,22 +627,23 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: "px"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             Toggle {
-                                label: "Resize with the wheel";
+                                label: @tr("Resize with the wheel");
                                 checked <=> root.wheel-resizes;
                                 toggled => { root.wheel-resizes-changed(); }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "SIDECARS";
+                                text: @tr("SIDECARS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Edits go"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Edits go"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Beside the raw", "Hidden folder"];
+                                    labels: [@tr("Beside the raw"), @tr("Hidden folder")];
                                     current <=> root.sidecar-placement;
                                     selected => {
                                         root.confirming = false;
@@ -646,14 +653,14 @@ export component SettingsSheet inherits Rectangle {
                             }
                             Text {
                                 text: root.sidecar-placement == "Hidden folder"
-                                    ? "In a hidden .greycard folder."
-                                    : "IMG_0001.CR3.gcd, beside the raw.";
+                                    ? @tr("In a hidden .greycard folder.")
+                                    : @tr("IMG_0001.CR3.gcd, beside the raw.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-secondary;
                                 wrap: word-wrap;
                             }
                             Text {
-                                text: "Sidecars move when next saved.";
+                                text: @tr("Sidecars move when next saved.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
@@ -662,19 +669,18 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 Text {
                                     text: !root.sidecars-written
-                                        ? "Sidecars are not written this run (--no-sidecars), so none are moved."
+                                        ? @tr("Sidecars are not written this run (--no-sidecars), so none are moved.")
                                         : root.sidecars-elsewhere < 0
-                                        ? "Counting the sidecars of " + root.frames-words + "..."
+                                        ? @tr("Counting the sidecars of {}...", root.frames-words)
                                         : root.sidecars-elsewhere == 0
-                                        ? "Every sidecar of " + root.frames-words + " is in the chosen place."
-                                        : root.elsewhere-words + " of " + root.frames-words + " "
-                                            + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
+                                        ? @tr("Every sidecar of {} is in the chosen place.", root.frames-words)
+                                        : @tr("{} of {} is in the other place." | "{} of {} are in the other place." % root.sidecars-elsewhere, root.elsewhere-words, root.frames-words);
                                     font-size: Theme.font-xs;
                                     color: Theme.text-secondary;
                                     wrap: word-wrap;
                                 }
                                 if !root.confirming: PanelButton {
-                                    text: root.open-frames == 1 ? "Move the open frame's sidecar" : "Move the open frames' sidecars";
+                                    text: root.open-frames == 1 ? @tr("Move the open frame's sidecar") : @tr("Move the open frames' sidecars");
                                     icon: @image-url("../icons/folder-open.svg");
                                     enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
                                     clicked => { root.confirming = true; }
@@ -682,11 +688,11 @@ export component SettingsSheet inherits Rectangle {
                                 if root.confirming: HorizontalLayout {
                                     spacing: Theme.space-2;
                                     PanelButton {
-                                        text: "Cancel";
+                                        text: @tr("Cancel");
                                         clicked => { root.confirming = false; }
                                     }
                                     PanelButton {
-                                        text: "Move " + root.elsewhere-words;
+                                        text: @tr("Move {}", root.elsewhere-words);
                                         primary: true;
                                         clicked => {
                                             root.confirming = false;
@@ -702,12 +708,12 @@ export component SettingsSheet inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             Toggle {
-                                label: "Write XMP sidecars";
+                                label: @tr("Write XMP sidecars");
                                 checked <=> root.xmp-sidecars;
                                 toggled => { root.xmp-changed(); }
                             }
                             Text {
-                                text: "Rating, label and keywords, for Lightroom and darktable.";
+                                text: @tr("Rating, label and keywords, for Lightroom and darktable.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
@@ -720,21 +726,21 @@ export component SettingsSheet inherits Rectangle {
                                 color: Theme.text-secondary;
                             }
                             Toggle {
-                                label: "Treat a JPEG beside its raw as a separate frame";
+                                label: @tr("Treat a JPEG beside its raw as a separate frame");
                                 checked <=> root.jpegs-apart;
                                 toggled => { root.jpegs-apart-changed(); }
                             }
                             Text {
                                 text: root.jpegs-apart
-                                    ? "IMG_0001.JPG is a frame of its own, with its own rating."
-                                    : "IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG.";
+                                    ? @tr("IMG_0001.JPG is a frame of its own, with its own rating.")
+                                    : @tr("IMG_0001.JPG goes with IMG_0001.CR3: one frame, marked +JPEG.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "THUMBNAILS";
+                                text: @tr("THUMBNAILS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
@@ -750,14 +756,14 @@ export component SettingsSheet inherits Rectangle {
                                     horizontal-stretch: 1;
                                 }
                                 if root.thumb-cache-entries > 0: PanelButton {
-                                    text: "Clear";
+                                    text: @tr("Clear");
                                     width: 96px;
                                     clicked => { root.thumb-cache-clear(); }
                                 }
                             }
                             if root.thumb-cache-on: HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Keep up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Keep up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
                                     text <=> root.thumb-cache-cap;
@@ -765,11 +771,11 @@ export component SettingsSheet inherits Rectangle {
                                     input-type: number;
                                     accepted => { root.thumb-cache-cap-changed(); }
                                 }
-                                Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                                Text { text: @tr("MB, 0 for none"); color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             if root.thumb-cache-on: HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Previews up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Previews up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
                                     text <=> root.preview-cache-cap;
@@ -777,24 +783,24 @@ export component SettingsSheet inherits Rectangle {
                                     input-type: number;
                                     accepted => { root.preview-cache-cap-changed(); }
                                 }
-                                Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                                Text { text: @tr("MB, 0 for none"); color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             Text {
-                                text: "Previews let you cull offline drives; about 0.5 MB a frame.";
+                                text: @tr("Previews let you cull offline drives; about 0.5 MB a frame.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "NETWORK FOLDERS";
+                                text: @tr("NETWORK FOLDERS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Rescan every"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Rescan every"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
                                     text <=> root.network-poll-minutes;
@@ -802,10 +808,10 @@ export component SettingsSheet inherits Rectangle {
                                     input-type: number;
                                     accepted => { root.network-poll-changed(); }
                                 }
-                                Text { text: "minutes, 0 for never"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                                Text { text: @tr("minutes, 0 for never"); color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             Text {
-                                text: "Shares can't be watched, so they're rescanned.";
+                                text: @tr("Shares can't be watched, so they're rescanned.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
@@ -823,7 +829,7 @@ export component SettingsSheet inherits Rectangle {
                             spacing: Theme.space-3;
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Canvas"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 canvas-row := Segmented {
                                     options: root.canvas-names;
                                     current: root.canvas-names[root.canvas-choice];
@@ -842,12 +848,16 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Monitor"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Monitor"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 monitor-row := Segmented {
                                     options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
+                                    labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
                                     current <=> root.display-profile;
                                     accessible-role: list;
-                                    accessible-value: self.current;
+                                    // Spoken as the label shown.
+                                    accessible-value: self.current == "System" ? @tr("System")
+                                        : self.current == "File" ? @tr("File")
+                                        : self.current;
                                     selected(p) => { root.display-changed(); }
                                 }
                             }
@@ -863,7 +873,7 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 padding-left: 68px + Theme.space-2;
                                 Text {
-                                    text: root.display-file == "" ? "No profile chosen" : root.display-file;
+                                    text: root.display-file == "" ? @tr("No profile chosen") : root.display-file;
                                     font-size: Theme.font-xs;
                                     color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
                                     vertical-alignment: center;
@@ -871,18 +881,21 @@ export component SettingsSheet inherits Rectangle {
                                     horizontal-stretch: 1;
                                 }
                                 PanelButton {
-                                    text: "Choose...";
+                                    text: @tr("Choose...");
                                     clicked => { root.choose-display-file(); }
                                 }
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Soft proof"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Soft proof"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 proof-row := Segmented {
                                     options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
+                                    labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
                                     current <=> root.proof-profile;
                                     accessible-role: list;
-                                    accessible-value: self.current;
+                                    // Spoken as the label shown.
+                                    accessible-value: self.current == "File" ? @tr("File")
+                                        : self.current;
                                     selected(p) => { root.proof-changed(); }
                                 }
                             }
@@ -890,7 +903,7 @@ export component SettingsSheet inherits Rectangle {
                                 spacing: Theme.space-2;
                                 padding-left: 68px + Theme.space-2;
                                 Text {
-                                    text: root.proof-file == "" ? "No profile chosen" : root.proof-file;
+                                    text: root.proof-file == "" ? @tr("No profile chosen") : root.proof-file;
                                     font-size: Theme.font-xs;
                                     color: root.proof-file == "" ? Theme.text-muted : Theme.text-secondary;
                                     vertical-alignment: center;
@@ -898,7 +911,7 @@ export component SettingsSheet inherits Rectangle {
                                     horizontal-stretch: 1;
                                 }
                                 PanelButton {
-                                    text: "Choose...";
+                                    text: @tr("Choose...");
                                     clicked => { root.choose-proof-file(); }
                                 }
                             }
@@ -906,67 +919,77 @@ export component SettingsSheet inherits Rectangle {
                                 padding-left: 68px + Theme.space-2;
                                 intent-row := Segmented {
                                     options: ["Perceptual", "Relative"];
+                                    labels: [@tr("Perceptual"), @tr("Relative")];
                                     current <=> root.proof-intent;
                                     accessible-role: list;
-                                    accessible-value: self.current;
+                                    // Spoken as the label shown.
+                                    accessible-value: self.current == "Perceptual" ? @tr("Perceptual")
+                                        : self.current == "Relative" ? @tr("Relative")
+                                        : self.current;
                                     selected(i) => { root.proof-changed(); }
                                 }
                             }
                             Toggle {
-                                label: "Lens corrections on new edits";
+                                label: @tr("Lens corrections on new edits");
                                 checked <=> root.lens-on-new;
                                 toggled => { root.lens-on-new-changed(); }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "CROP";
+                                text: @tr("CROP");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Aspect"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Original", "Last used", "Free"];
+                                    labels: [@tr("Original"), @tr("Last used"), @tr("Free")];
                                     current <=> root.crop-start;
                                     selected => { root.crop-start-changed(); }
                                 }
                             }
                             Text {
                                 text: root.crop-start == "Last used"
-                                    ? "An uncropped frame's crop opens at the aspect last picked."
+                                    ? @tr("An uncropped frame's crop opens at the aspect last picked.")
                                     : root.crop-start == "Free"
-                                    ? "An uncropped frame's crop opens free, any shape."
-                                    : "An uncropped frame's crop opens at the frame's own shape.";
+                                    ? @tr("An uncropped frame's crop opens free, any shape.")
+                                    : @tr("An uncropped frame's crop opens at the frame's own shape.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "RETOUCH";
+                                text: @tr("RETOUCH");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Fill"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Fill"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 fill-row := Segmented {
                                     options: ["Patch", "Fast", "Best"];
-                                    tips: ["From the picture around it, at once", "The remove in four steps: quicker, rougher on large areas", "The remove in full"];
+                                    labels: [@tr("Patch"), @tr("Fast"), @tr("Best")];
+                                    tips: [@tr("From the picture around it, at once"), @tr("The remove in four steps: quicker, rougher on large areas"), @tr("The remove in full")];
                                     why-not: root.fill-why-not;
                                     current <=> root.fill-choice;
                                     picks: false;
                                     accessible-role: list;
-                                    accessible-value: self.current;
+                                    // Spoken as the label shown.
+                                    accessible-value: self.current == "Patch" ? @tr("Patch")
+                                        : self.current == "Fast" ? @tr("Fast")
+                                        : self.current == "Best" ? @tr("Best")
+                                        : self.current;
                                     selected(c) => { root.fill-chosen(c); }
                                 }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "PRESETS";
+                                text: @tr("PRESETS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
@@ -982,37 +1005,40 @@ export component SettingsSheet inherits Rectangle {
                                     horizontal-stretch: 1;
                                 }
                                 if root.presets-missing > 0: PanelButton {
-                                    text: "Restore";
+                                    text: @tr("Restore");
                                     width: 96px;
                                     clicked => { root.presets-restore(); }
                                 }
                             }
                             Text {
-                                text: "Restores removed built-in presets.";
+                                text: @tr("Restores removed built-in presets.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "EXPORT";
+                                text: @tr("EXPORT");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 format-row := Segmented {
                                     options: ["JPEG", "PNG", "TIFF 16-bit"];
+                                    labels: ["JPEG", "PNG", @tr("TIFF 16-bit")];
                                     current <=> root.export-format;
                                     accessible-role: list;
-                                    accessible-value: self.current;
+                                    // Spoken as the label shown.
+                                    accessible-value: self.current == "TIFF 16-bit" ? @tr("TIFF 16-bit")
+                                        : self.current;
                                 }
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                                Text { text: @tr("Color"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 space-row := Segmented {
                                     options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"];
                                     current <=> root.export-space;
@@ -1023,7 +1049,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 spacing: Theme.space-2;
                                 Text {
-                                    text: "Edit in";
+                                    text: @tr("Edit in");
                                     width: 68px;
                                     height: Theme.control-height;
                                     color: Theme.text;
@@ -1051,7 +1077,7 @@ export component SettingsSheet inherits Rectangle {
                                     HorizontalLayout {
                                         alignment: start;
                                         PanelButton {
-                                            text: "Add...";
+                                            text: @tr("Add...");
                                             clicked => { root.edit-in-add(); }
                                         }
                                     }
@@ -1069,7 +1095,7 @@ export component SettingsSheet inherits Rectangle {
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
                             Text {
-                                text: "MODELS";
+                                text: @tr("MODELS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
@@ -1143,7 +1169,7 @@ export component SettingsSheet inherits Rectangle {
                             padding-bottom: Theme.space-2;
                             spacing: Theme.space-3;
                             Text {
-                                text: "KEYS";
+                                text: @tr("KEYS");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
@@ -1198,7 +1224,7 @@ export component SettingsSheet inherits Rectangle {
                             HorizontalLayout {
                                 alignment: end;
                                 PanelButton {
-                                    text: "Reset to defaults";
+                                    text: @tr("Reset to defaults");
                                     // The button's click takes the focus from a
                                     // row listening; the focus goes back to the
                                     // column either way.
@@ -1221,23 +1247,23 @@ export component SettingsSheet inherits Rectangle {
                             spacing: Theme.space-3;
                             HorizontalLayout {
                                 spacing: Theme.space-2;
-                                Text { text: "Version"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text { text: @tr("Version"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 Text { text: root.version; font-size: Theme.font-sm; color: Theme.text-secondary; horizontal-stretch: 1; }
                             }
                             Rectangle { height: Theme.space-1; }
                             Text {
-                                text: "UPDATES";
+                                text: @tr("UPDATES");
                                 font-size: Theme.font-xs;
                                 font-weight: Theme.weight-medium;
                                 color: Theme.text-secondary;
                             }
                             Toggle {
-                                label: "Check for a new version at launch";
+                                label: @tr("Check for a new version at launch");
                                 checked <=> root.update-check;
                                 toggled => { root.update-check-changed(); }
                             }
                             Text {
-                                text: "Once a day; sends only the version number.";
+                                text: @tr("Once a day; sends only the version number.");
                                 font-size: Theme.font-xs;
                                 color: Theme.text-muted;
                                 wrap: word-wrap;
@@ -1253,7 +1279,7 @@ export component SettingsSheet inherits Rectangle {
                                     horizontal-stretch: 1;
                                 }
                                 PanelButton {
-                                    text: "Check now";
+                                    text: @tr("Check now");
                                     width: 96px;
                                     enabled: !root.update-checking;
                                     clicked => { root.update-check-now(); }
@@ -1263,7 +1289,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.settings-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: settings-path.preferred-height;
-                                Text { text: "Settings"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text { text: @tr("Settings"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 settings-path := Text {
                                     text: root.settings-dir;
                                     font-size: Theme.font-sm;
@@ -1279,7 +1305,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.library-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: library-path.preferred-height;
-                                Text { text: "Library"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text { text: @tr("Library"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 library-path := Text {
                                     text: root.library-dir;
                                     font-size: Theme.font-sm;
@@ -1295,7 +1321,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.caches-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: caches-path.preferred-height;
-                                Text { text: "Caches"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text { text: @tr("Caches"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 caches-path := Text {
                                     text: root.caches-dir;
                                     font-size: Theme.font-sm;
@@ -1311,7 +1337,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.log-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: log-path.preferred-height;
-                                Text { text: "Log"; width: 68px; color: Theme.text; font-size: Theme.font-sm; }
+                                Text { text: @tr("Log"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 log-path := Text {
                                     text: root.log-dir;
                                     font-size: Theme.font-sm;
@@ -1332,7 +1358,7 @@ export component SettingsSheet inherits Rectangle {
                     padding-top: Theme.space-2;
                     alignment: end;
                     PanelButton {
-                        text: "Done";
+                        text: @tr("Done");
                         primary: true;
                         width: 96px;
                         clicked => { root.settings-open = false; }

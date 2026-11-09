@@ -1080,14 +1080,17 @@ mod tests {
         // The button says People, under a two-person icon Subject's
         // one-person icon is told from.
         let button = slint.split("parts-button := PanelButton {").nth(1).unwrap();
-        assert!(button.contains("text: \"People\";"));
+        assert!(button.contains("text: @tr(\"People\");"));
         assert!(button.contains("users-round.svg"));
         let first = button.split("Menu {").nth(1).unwrap();
         let (top, rest) = first.split_once("MenuSeparator").unwrap();
         assert_eq!(top.matches("MenuItem").count(), 1, "{top}");
         assert!(top.contains("add-part(\"Whole person\""));
         let group = rest.split("MenuItem").nth(1).unwrap();
-        assert!(group.contains("title: \"Face\"; enabled: false"), "{group}");
+        assert!(
+            group.contains("title: @tr(\"Face\"); enabled: false"),
+            "{group}"
+        );
     }
 
     /// The view as it stands: the zoom asked for, the center and the

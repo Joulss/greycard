@@ -129,15 +129,15 @@ export component DeleteSheet inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.delete-answered(0); }
                     }
                     if root.delete-permanent: DangerButton {
-                        text: "Delete permanently";
+                        text: @tr("Delete permanently");
                         clicked => { root.delete-answered(2); }
                     }
                     if root.delete-trash && root.delete-confirm == "": PanelButton {
-                        text: "Move to the trash";
+                        text: @tr("Move to the trash");
                         icon: @image-url("../icons/trash-2.svg");
                         primary: true;
                         clicked => { root.delete-answered(1); }

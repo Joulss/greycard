@@ -128,9 +128,7 @@ export component RawTherapeeSheet inherits Rectangle {
             }
             // The foot: the switch, then the buttons.
             if root.rt-step == 0 && root.rt-held > 0: Toggle {
-                label: root.rt-held == 1
-                    ? "Write over the 1 frame developed or rated here already"
-                    : "Write over the " + root.rt-held + " frames developed or rated here already";
+                label: @tr("Write over the {n} frame developed or rated here already" | "Write over the {n} frames developed or rated here already" % root.rt-held);
                 enabled: !root.rt-busy;
                 checked <=> root.rt-force;
                 toggled => { root.rt-force-toggled(); }
@@ -146,18 +144,18 @@ export component RawTherapeeSheet inherits Rectangle {
                     vertical-alignment: center;
                 }
                 if root.rt-step == 0: PanelButton {
-                    text: "Cancel";
+                    text: @tr("Cancel");
                     enabled: !root.rt-writing;
                     clicked => { root.rt-open = false; }
                 }
                 if root.rt-step == 0: PanelButton {
-                    text: "Write";
+                    text: @tr("Write");
                     primary: true;
                     enabled: !root.rt-busy && root.rt-ready;
                     clicked => { root.rt-write(); }
                 }
                 if root.rt-step == 1: PanelButton {
-                    text: "OK";
+                    text: @tr("OK");
                     primary: true;
                     clicked => { root.rt-open = false; }
                 }
@@ -173,7 +171,7 @@ export component RawTherapeeSheet inherits Rectangle {
             height: more.preferred-height + 6px;
             background: Theme.surface;
             more := Text {
-                text: "The report goes on below: scroll for the rest.";
+                text: @tr("The report goes on below: scroll for the rest.");
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
                 horizontal-alignment: right;

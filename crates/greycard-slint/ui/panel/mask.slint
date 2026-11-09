@@ -75,7 +75,7 @@ export component AdjustmentsList inherits Section {
     // A row's pitch in the list.
     property <length> pitch: Theme.control-height + 2px;
 
-    title: "ADJUSTMENTS";
+    title: @tr("ADJUSTMENTS");
     icon: @image-url("../icons/layers.svg");
     note: root.collapsed ? root.adjustment-names[root.target] : "";
     collapsed <=> root.collapsed-adjustments;
@@ -119,19 +119,19 @@ export component AdjustmentsList inherits Section {
             enabled: false;
             Menu {
                 if root.menu-row > 0: MenuItem {
-                    title: "Duplicate mask";
+                    title: @tr("Duplicate mask");
                     activated => { root.duplicate-mask(root.menu-row - 1); root.menu-done(); }
                 }
                 if root.menu-row > 0: MenuItem {
-                    title: "Copy mask";
+                    title: @tr("Copy mask");
                     activated => { root.copy-mask(root.menu-row - 1); root.menu-done(); }
                 }
                 if root.menu-row > 0: MenuItem {
-                    title: "Copy masks";
+                    title: @tr("Copy masks");
                     activated => { root.copy-masks(); root.menu-done(); }
                 }
                 if root.mask-held: MenuItem {
-                    title: "Paste mask";
+                    title: @tr("Paste mask");
                     activated => { root.paste-mask(); root.menu-done(); }
                 }
             }
@@ -234,7 +234,7 @@ export component AdjustmentsList inherits Section {
                             if on && i > 0: Rectangle {
                                 width: Theme.control-height - 4px;
                                 accessible-role: button;
-                                accessible-label: "Remove " + name;
+                                accessible-label: @tr("Remove {}", name);
                                 accessible-action-default => { root.delete-adjustment(); }
                                 Image {
                                     source: @image-url("../icons/trash-2.svg");
@@ -245,7 +245,7 @@ export component AdjustmentsList inherits Section {
                                     y: (parent.height - self.height) / 2;
                                 }
                                 bin := TipArea {
-                                    words: "Remove";
+                                    words: @tr("Remove");
                                     mouse-cursor: MouseCursor.pointer;
                                     clicked => { root.delete-adjustment(); }
                                 }
@@ -257,7 +257,7 @@ export component AdjustmentsList inherits Section {
         }
     }
     PanelButton {
-        text: "New mask";
+        text: @tr("New mask");
         icon: @image-url("../icons/plus.svg");
         clicked => { root.new-mask(); }
     }
@@ -337,7 +337,7 @@ export component AdjustmentsSection inherits Section {
     // can be typed at once. Let go once taken.
     in-out property <bool> name-wanted: false;
 
-    title: "MASK";
+    title: @tr("MASK");
     owner: root.adjustment-names[root.target];
     icon: @image-url("../icons/layers.svg");
     collapsed <=> root.collapsed-mask;
@@ -366,8 +366,8 @@ export component AdjustmentsSection inherits Section {
                 spacing: Theme.space-2;
                 name-field := LineEdit {
                     text <=> root.adjustment-name;
-                    placeholder-text: "Name";
-                    accessible-label: "Mask name";
+                    placeholder-text: @tr("Name");
+                    accessible-label: @tr("Mask name");
                     edited(t) => { root.renamed(); }
                     // Enter or Escape gives the keys back to the
                     // window.
@@ -381,19 +381,19 @@ export component AdjustmentsSection inherits Section {
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     Toggle {
-                        label: "Show mask";
+                        label: @tr("Show mask");
                         checked <=> root.show-mask;
                         toggled => { root.show-mask-toggled(); root.view-changed(); }
                     }
                     Toggle {
-                        label: "Invert";
+                        label: @tr("Invert");
                         checked <=> root.mask-invert;
                         toggled => { root.view-changed(); }
                     }
                 }
                 // The whole mask's edge drawn onto the picture's.
                 EditSlider {
-                    label: "Refine edge";
+                    label: @tr("Refine edge");
                     label-width: 84px;
                     minimum: 0;
                     maximum: 1;
@@ -408,7 +408,7 @@ export component AdjustmentsSection inherits Section {
             }
         }
         Text {
-            text: "Shapes";
+            text: @tr("Shapes");
             color: Theme.text-secondary;
             font-size: Theme.font-xs;
             font-weight: Theme.weight-medium;
@@ -481,7 +481,7 @@ export component AdjustmentsSection inherits Section {
                                 border-width: invert-focus.has-focus ? 2px : 0;
                                 border-color: Theme.focus-ring;
                                 accessible-role: button;
-                                accessible-label: "Invert this shape";
+                                accessible-label: @tr("Invert this shape");
                                 Image {
                                     source: @image-url("../icons/contrast.svg");
                                     colorize: inverted ? Theme.accent-text : (invert-hit.has-hover || invert-focus.has-focus ? Theme.text : Theme.text-secondary);
@@ -516,7 +516,7 @@ export component AdjustmentsSection inherits Section {
                                     border-width: 1px;
                                     border-color: Theme.border;
                                     tip-text := Text {
-                                        text: "Invert this shape";
+                                        text: @tr("Invert this shape");
                                         color: Theme.text;
                                         font-size: Theme.font-xs;
                                         x: Theme.space-2;
@@ -531,7 +531,7 @@ export component AdjustmentsSection inherits Section {
                             Rectangle {
                                 width: Theme.control-height - 4px;
                                 accessible-role: button;
-                                accessible-label: "Remove this shape";
+                                accessible-label: @tr("Remove this shape");
                                 accessible-action-default => { root.delete-shape-at(i); }
                                 Text {
                                     text: "\u{00d7}";
@@ -543,7 +543,7 @@ export component AdjustmentsSection inherits Section {
                                     height: 100%;
                                 }
                                 cross := TipArea {
-                                    words: "Remove";
+                                    words: @tr("Remove");
                                     mouse-cursor: MouseCursor.pointer;
                                     clicked => { root.delete-shape-at(i); }
                                 }
@@ -570,7 +570,7 @@ export component AdjustmentsSection inherits Section {
                 Rectangle {
                     width: Theme.control-height;
                     accessible-role: button;
-                    accessible-label: "Not now";
+                    accessible-label: @tr("Not now");
                     accessible-action-default => { root.people-offer-dismissed(); }
                     Text {
                         text: "\u{00d7}";
@@ -582,7 +582,7 @@ export component AdjustmentsSection inherits Section {
                         height: 100%;
                     }
                     offer-cross := TipArea {
-                        words: "Not now";
+                        words: @tr("Not now");
                         mouse-cursor: MouseCursor.pointer;
                         clicked => { root.people-offer-dismissed(); }
                     }
@@ -612,7 +612,7 @@ export component AdjustmentsSection inherits Section {
                         overflow: elide;
                     }
                     if root.has-feather: EditSlider {
-                        label: "Feather";
+                        label: @tr("Feather");
                         minimum: 0;
                         maximum: 1;
                         default: 0.5;
@@ -628,7 +628,7 @@ export component AdjustmentsSection inherits Section {
                     if root.component-kind == "Luminance": VerticalLayout {
                         spacing: Theme.space-2;
                         EditSlider {
-                            label: "Low";
+                            label: @tr("Low");
                             minimum: 0;
                             maximum: 1;
                             default: 0.7;
@@ -644,7 +644,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
-                            label: "Low fade";
+                            label: @tr("Low fade");
                             minimum: 0;
                             maximum: 0.5;
                             default: 0.1;
@@ -656,7 +656,7 @@ export component AdjustmentsSection inherits Section {
                             changed(v) => { root.view-changed(); }
                         }
                         EditSlider {
-                            label: "High";
+                            label: @tr("High");
                             minimum: 0;
                             maximum: 1;
                             default: 1;
@@ -671,7 +671,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
-                            label: "High fade";
+                            label: @tr("High fade");
                             minimum: 0;
                             maximum: 0.5;
                             default: 0;
@@ -691,13 +691,13 @@ export component AdjustmentsSection inherits Section {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             PanelButton {
-                                text: "Pick";
+                                text: @tr("Pick");
                                 icon: @image-url("../icons/pipette.svg");
                                 primary: root.picking == "Range";
                                 clicked => { root.pick-started("Range"); }
                             }
                             Text {
-                                text: "Sample";
+                                text: @tr("Sample");
                                 color: Theme.text-secondary;
                                 font-size: Theme.font-xs;
                                 vertical-alignment: center;
@@ -712,7 +712,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
-                            label: "Hue";
+                            label: @tr("Hue");
                             label-width: 84px;
                             tinted: true;
                             tint: root.hue-circle;
@@ -726,7 +726,7 @@ export component AdjustmentsSection inherits Section {
                             changed(v) => { root.view-changed(); }
                         }
                         EditSlider {
-                            label: "Width";
+                            label: @tr("Width");
                             label-width: 84px;
                             minimum: 0;
                             maximum: 180;
@@ -738,7 +738,7 @@ export component AdjustmentsSection inherits Section {
                             changed(v) => { root.view-changed(); }
                         }
                         EditSlider {
-                            label: "Hue fade";
+                            label: @tr("Hue fade");
                             label-width: 84px;
                             minimum: 0;
                             maximum: 90;
@@ -750,7 +750,7 @@ export component AdjustmentsSection inherits Section {
                             changed(v) => { root.view-changed(); }
                         }
                         EditSlider {
-                            label: "Chroma";
+                            label: @tr("Chroma");
                             label-width: 84px;
                             minimum: 0;
                             maximum: 0.2;
@@ -767,7 +767,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
-                            label: "Chroma fade";
+                            label: @tr("Chroma fade");
                             label-width: 84px;
                             minimum: 0;
                             maximum: 0.1;
@@ -792,7 +792,7 @@ export component AdjustmentsSection inherits Section {
             if root.placing == "Brush": VerticalLayout {
                 spacing: Theme.space-2;
                 EditSlider {
-                    label: "Size";
+                    label: @tr("Size");
                     minimum: 0.002;
                     maximum: 0.5;
                     default: 0.05;
@@ -804,7 +804,7 @@ export component AdjustmentsSection inherits Section {
                     changed(v) => { }
                 }
                 EditSlider {
-                    label: "Feather";
+                    label: @tr("Feather");
                     minimum: 0;
                     maximum: 1;
                     default: 0.5;
@@ -816,7 +816,7 @@ export component AdjustmentsSection inherits Section {
                     changed(v) => { }
                 }
                 EditSlider {
-                    label: "Flow";
+                    label: @tr("Flow");
                     minimum: 0;
                     maximum: 1;
                     default: 1;
@@ -829,6 +829,7 @@ export component AdjustmentsSection inherits Section {
                 }
                 Segmented {
                     options: ["Add", "Subtract", "Erase"];
+                    labels: [@tr("Add"), @tr("Subtract"), @tr("Erase")];
                     current <=> root.brush-op;
                 }
             }
@@ -837,7 +838,7 @@ export component AdjustmentsSection inherits Section {
             // the order reads mask, shapes, the chosen shape's
             // settings, then how to add another).
             Text {
-                text: "Add a shape";
+                text: @tr("Add a shape");
                 color: Theme.text-secondary;
                 font-size: Theme.font-xs;
                 font-weight: Theme.weight-medium;
@@ -860,26 +861,27 @@ export component AdjustmentsSection inherits Section {
                     // first shape has no answer to.
                     if root.component-names.length > 0: Segmented {
                         accessible-role: button;
-                        accessible-label: "Next shape mode";
+                        accessible-label: @tr("Next shape mode");
                         options: ["Add", "Subtract", "Intersect"];
+                        labels: [@tr("Add"), @tr("Subtract"), @tr("Intersect")];
                         current <=> root.shape-mode;
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
-                            text: "Linear";
+                            text: @tr("Linear");
                             icon: @image-url("../icons/plus.svg");
                             primary: root.placing == "Linear" && root.placing-into;
                             clicked => { root.add-shape("Linear", root.shape-mode); }
                         }
                         PanelButton {
-                            text: "Radial";
+                            text: @tr("Radial");
                             icon: @image-url("../icons/plus.svg");
                             primary: root.placing == "Radial" && root.placing-into;
                             clicked => { root.add-shape("Radial", root.shape-mode); }
                         }
                         PanelButton {
-                            text: root.component-kind == "Brush" ? "Paint" : "Brush";
+                            text: root.component-kind == "Brush" ? @tr("Paint") : @tr("Brush");
                             icon: root.component-kind == "Brush" ? @image-url("../icons/brush.svg") : @image-url("../icons/plus.svg");
                             primary: root.placing == "Brush" && root.placing-into;
                             clicked => { root.add-shape("Brush", root.shape-mode); }
@@ -888,14 +890,14 @@ export component AdjustmentsSection inherits Section {
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
-                            text: "Subject";
+                            text: @tr("Subject");
                             icon: @image-url("../icons/user-round.svg");
                             clicked => { root.add-shape("Subject", root.shape-mode); }
                         }
                         // The Subject model's complement: everything a look
                         // should reach but the subject, with no shape drawn.
                         PanelButton {
-                            text: "Background";
+                            text: @tr("Background");
                             icon: @image-url("../icons/image.svg");
                             clicked => { root.add-shape("Background", root.shape-mode); }
                         }
@@ -904,7 +906,7 @@ export component AdjustmentsSection inherits Section {
                         spacing: Theme.space-2;
                         // On a chosen sky, clicks that correct it.
                         PanelButton {
-                            text: root.component-kind == "Sky" ? "Pick" : "Sky";
+                            text: root.component-kind == "Sky" ? @tr("Pick") : @tr("Sky");
                             icon: @image-url("../icons/cloud.svg");
                             primary: root.placing == "Sky" && root.placing-into;
                             clicked => { root.add-shape("Sky", root.shape-mode); }
@@ -920,7 +922,7 @@ export component AdjustmentsSection inherits Section {
                                     landscape-menu.show({ x: 0, y: self.height });
                                 }
                             }
-                            text: "Landscape";
+                            text: @tr("Landscape");
                             icon: @image-url("../icons/mountain.svg");
                             clicked => { root.find-landscape(root.shape-mode); }
                             landscape-menu := ContextMenuArea {
@@ -939,7 +941,7 @@ export component AdjustmentsSection inherits Section {
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
-                            text: root.component-kind == "Object" ? "Pick" : "Object";
+                            text: root.component-kind == "Object" ? @tr("Pick") : @tr("Object");
                             icon: @image-url("../icons/mouse-pointer-click.svg");
                             primary: root.placing == "Object" && root.placing-into;
                             clicked => { root.add-shape("Object", root.shape-mode); }
@@ -957,7 +959,7 @@ export component AdjustmentsSection inherits Section {
                                     parts-menu.show({ x: 0, y: self.height });
                                 }
                             }
-                            text: "People";
+                            text: @tr("People");
                             icon: @image-url("../icons/users-round.svg");
                             primary: root.placing == "Part";
                             clicked => { parts-menu.show({ x: 0, y: self.height }); }
@@ -966,27 +968,27 @@ export component AdjustmentsSection inherits Section {
                                 height: 0px;
                                 enabled: false;
                                 Menu {
-                                    MenuItem { title: "Whole person"; activated => { root.add-part("Whole person", root.shape-mode); } }
+                                    MenuItem { title: @tr("Whole person"); activated => { root.add-part("Whole person", root.shape-mode); } }
                                     MenuSeparator { }
-                                    MenuItem { title: "Face"; enabled: false; }
-                                    MenuItem { title: "Face"; activated => { root.add-part("Face", root.shape-mode); } }
-                                    MenuItem { title: "Facial skin"; activated => { root.add-part("Facial skin", root.shape-mode); } }
-                                    MenuItem { title: "Eyebrows"; activated => { root.add-part("Eyebrows", root.shape-mode); } }
-                                    MenuItem { title: "Eyes"; activated => { root.add-part("Eyes", root.shape-mode); } }
-                                    MenuItem { title: "Iris"; activated => { root.add-part("Iris", root.shape-mode); } }
-                                    MenuItem { title: "Lips"; activated => { root.add-part("Lips", root.shape-mode); } }
-                                    MenuItem { title: "Teeth"; activated => { root.add-part("Teeth", root.shape-mode); } }
+                                    MenuItem { title: @tr("Face"); enabled: false; }
+                                    MenuItem { title: @tr("Face"); activated => { root.add-part("Face", root.shape-mode); } }
+                                    MenuItem { title: @tr("Facial skin"); activated => { root.add-part("Facial skin", root.shape-mode); } }
+                                    MenuItem { title: @tr("Eyebrows"); activated => { root.add-part("Eyebrows", root.shape-mode); } }
+                                    MenuItem { title: @tr("Eyes"); activated => { root.add-part("Eyes", root.shape-mode); } }
+                                    MenuItem { title: @tr("Iris"); activated => { root.add-part("Iris", root.shape-mode); } }
+                                    MenuItem { title: @tr("Lips"); activated => { root.add-part("Lips", root.shape-mode); } }
+                                    MenuItem { title: @tr("Teeth"); activated => { root.add-part("Teeth", root.shape-mode); } }
                                     MenuSeparator { }
-                                    MenuItem { title: "Body"; enabled: false; }
-                                    MenuItem { title: "Skin"; activated => { root.add-part("Skin", root.shape-mode); } }
-                                    MenuItem { title: "Hair"; activated => { root.add-part("Hair", root.shape-mode); } }
-                                    MenuItem { title: "Hands"; activated => { root.add-part("Hands", root.shape-mode); } }
+                                    MenuItem { title: @tr("Body"); enabled: false; }
+                                    MenuItem { title: @tr("Skin"); activated => { root.add-part("Skin", root.shape-mode); } }
+                                    MenuItem { title: @tr("Hair"); activated => { root.add-part("Hair", root.shape-mode); } }
+                                    MenuItem { title: @tr("Hands"); activated => { root.add-part("Hands", root.shape-mode); } }
                                     MenuSeparator { }
-                                    MenuItem { title: "Clothing"; enabled: false; }
-                                    MenuItem { title: "Top"; activated => { root.add-part("Top", root.shape-mode); } }
-                                    MenuItem { title: "Bottoms"; activated => { root.add-part("Bottoms", root.shape-mode); } }
-                                    MenuItem { title: "Shoes"; activated => { root.add-part("Shoes", root.shape-mode); } }
-                                    MenuItem { title: "All clothing"; activated => { root.add-part("All clothing", root.shape-mode); } }
+                                    MenuItem { title: @tr("Clothing"); enabled: false; }
+                                    MenuItem { title: @tr("Top"); activated => { root.add-part("Top", root.shape-mode); } }
+                                    MenuItem { title: @tr("Bottoms"); activated => { root.add-part("Bottoms", root.shape-mode); } }
+                                    MenuItem { title: @tr("Shoes"); activated => { root.add-part("Shoes", root.shape-mode); } }
+                                    MenuItem { title: @tr("All clothing"); activated => { root.add-part("All clothing", root.shape-mode); } }
                                 }
                             }
                         }
@@ -994,12 +996,12 @@ export component AdjustmentsSection inherits Section {
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
-                            text: "Luminance";
+                            text: @tr("Luminance");
                             icon: @image-url("../icons/sun.svg");
                             clicked => { root.add-shape("Luminance", root.shape-mode); }
                         }
                         PanelButton {
-                            text: "Color";
+                            text: @tr("Color");
                             icon: @image-url("../icons/palette.svg");
                             clicked => { root.add-shape("Color", root.shape-mode); }
                         }

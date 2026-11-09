@@ -59,7 +59,7 @@ export component CullSection inherits Section {
     callback archive-rejects-asked(int);
     callback focus-keys();
 
-    title: "CULLING";
+    title: @tr("CULLING");
     icon: @image-url("../icons/image.svg");
     hint: "C";
     collapsed <=> root.collapsed-culling;
@@ -70,30 +70,30 @@ export component CullSection inherits Section {
     // as the filter's group names do.
     property <bool> picture-over: 68px + 2 * Theme.space-2 + camera-jpeg.preferred-width
         + developed.preferred-width > self.width - self.padding-left - self.padding-right;
-    if root.picture-over: Text { text: "Picture"; color: Theme.text; font-size: Theme.font-sm; }
+    if root.picture-over: Text { text: @tr("Picture"); color: Theme.text; font-size: Theme.font-sm; }
     HorizontalLayout {
         spacing: Theme.space-2;
-        if !root.picture-over: Text { text: "Picture"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        if !root.picture-over: Text { text: @tr("Picture"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         camera-jpeg := PanelButton {
-            text: "Camera JPEG";
+            text: @tr("Camera JPEG");
             primary: !root.developed;
             accessible-role: button;
-            accessible-label: "Camera JPEG pictures";
+            accessible-label: @tr("Camera JPEG pictures");
             accessible-checked: !root.developed;
             clicked => { root.focus-keys(); root.source-asked(false); }
         }
         developed := PanelButton {
-            text: "Developed";
+            text: @tr("Developed");
             primary: root.developed;
             accessible-role: button;
-            accessible-label: "Developed pictures";
+            accessible-label: @tr("Developed pictures");
             accessible-checked: root.developed;
             clicked => { root.focus-keys(); root.source-asked(true); }
         }
     }
     Text {
-        text: root.developed ? "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter develops"
-            : "1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare · Enter develops";
+        text: root.developed ? @tr("1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter develops")
+            : @tr("1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare · Enter develops");
         font-size: Theme.font-xs;
         color: Theme.text-secondary;
         wrap: word-wrap;
@@ -102,17 +102,17 @@ export component CullSection inherits Section {
     // camera's tag got wrong. Nothing develops.
     HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Turn"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Turn"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         PanelButton {
-            text: "Left";
+            text: @tr("Left");
             icon: @image-url("../icons/rotate-ccw.svg");
-            words: "Turn the frame left";
+            words: @tr("Turn the frame left");
             clicked => { root.frame-turned(-1); }
         }
         PanelButton {
-            text: "Right";
+            text: @tr("Right");
             icon: @image-url("../icons/rotate-cw.svg");
-            words: "Turn the frame right";
+            words: @tr("Turn the frame right");
             clicked => { root.frame-turned(1); }
         }
     }
@@ -121,7 +121,7 @@ export component CullSection inherits Section {
     // 280px at its narrowest, could not hold
     // the header's one row.
     if root.filter-bar: Text {
-        text: "Show";
+        text: @tr("Show");
         color: Theme.text;
         font-size: Theme.font-sm;
         vertical-alignment: center;
@@ -155,7 +155,7 @@ export component CullSection inherits Section {
     // The compare view is the camera JPEG's alone.
     if !root.developed: HorizontalLayout {
         spacing: Theme.space-2;
-        Text { text: "Compare"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Text { text: @tr("Compare"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Segmented {
             // Three is shown only while Compare versions has put the
             // view at three; it is never offered otherwise.
@@ -168,13 +168,13 @@ export component CullSection inherits Section {
     // until asked for, and the keys go back to the picture after
     // the press, as the filter's chips give them back.
     Toggle {
-        label: "Move on after a rating, flag or label";
+        label: @tr("Move on after a rating, flag or label");
         checked <=> root.move-on;
         toggled => { root.move-on-changed(); root.focus-keys(); }
     }
     PanelButton {
-        text: root.reject-count == 0 ? "No rejects to move"
-            : "Move " + root.reject-count + (root.reject-count == 1 ? " reject..." : " rejects...");
+        text: root.reject-count == 0 ? @tr("No rejects to move")
+            : @tr("Move {n} reject..." | "Move {n} rejects..." % root.reject-count);
         icon: @image-url("../icons/folder-open.svg");
         enabled: root.reject-count > 0;
         clicked => { root.rejects-asked(); }
@@ -182,20 +182,21 @@ export component CullSection inherits Section {
     // The way back, for a frame in a rejects folder: no sheet, since
     // nothing is written over and the frame can go out again.
     if root.back-count > 0: PanelButton {
-        text: (root.back-count > 1 ? "Move " + root.back-count + " frames back to " : "Move back to ")
-            + root.back-to;
+        text: root.back-count > 1
+            ? @tr("Move {n} frame back to {}" | "Move {n} frames back to {}" % root.back-count, root.back-to)
+            : @tr("Move back to {}", root.back-to);
         icon: @image-url("../icons/folder-open.svg");
         clicked => { root.move-back(); }
     }
     // Deleting, beside moving: each opens a sheet that names the
     // count and the folder, and nothing goes until it is answered.
     PanelButton {
-        text: "Delete selection...";
+        text: @tr("Delete selection...");
         icon: @image-url("../icons/trash-2.svg");
         clicked => { root.delete-asked("selection"); }
     }
     PanelButton {
-        text: "Delete rejects folder...";
+        text: @tr("Delete rejects folder...");
         icon: @image-url("../icons/trash-2.svg");
         enabled: !root.queue-view;
         clicked => { root.delete-asked("rejects"); }
@@ -208,7 +209,7 @@ export component CullSection inherits Section {
         clicked => { root.archive-rejects-asked(i); }
     }
     PanelButton {
-        text: "Develop";
+        text: @tr("Develop");
         icon: @image-url("../icons/sliders-horizontal.svg");
         primary: true;
         clicked => { root.cull-leave(); }

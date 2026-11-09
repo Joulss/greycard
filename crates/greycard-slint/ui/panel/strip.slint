@@ -180,7 +180,7 @@ export component Filmstrip inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.border-strong;
                         Text {
-                            text: "Unreadable";
+                            text: @tr("Unreadable");
                             color: Theme.text-muted;
                             font-size: Theme.font-xs;
                             horizontal-alignment: center;
@@ -327,7 +327,7 @@ export component Filmstrip inherits Rectangle {
         y: parent.height - root.strip-foot;
         width: parent.width;
         height: root.strip-foot;
-        label: "Strip scroll";
+        label: @tr("Strip scroll");
         scroll: -strip.content-x;
         max: root.strip-max;
         awake <=> root.bar-awake;

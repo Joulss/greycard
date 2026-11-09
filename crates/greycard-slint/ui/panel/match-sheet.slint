@@ -31,7 +31,7 @@ export component MatchSheet inherits Rectangle {
     in property <bool> match-can-fit;
     /// The Fit button's words, counting the groups checked, and the
     /// reason under it when it is off.
-    in property <string> match-fit-label: "Fit";
+    in property <string> match-fit-label: @tr("Fit");
     in property <string> match-fit-note;
     /// A group's box pressed, by its place in the list.
     callback match-group-toggled(int);
@@ -83,13 +83,13 @@ export component MatchSheet inherits Rectangle {
             padding-bottom: Theme.space-2;
             spacing: Theme.space-3;
             Text {
-                text: "Fit this camera's look";
+                text: @tr("Fit this camera's look");
                 font-size: Theme.font-lg;
                 font-weight: Theme.weight-medium;
                 color: Theme.text;
             }
             Text {
-                text: "Fits a look per camera and picture style to its JPEGs. Groups under 20 frames borrow or are skipped.";
+                text: @tr("Fits a look per camera and picture style to its JPEGs. Groups under 20 frames borrow or are skipped.");
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
                 wrap: word-wrap;
@@ -163,7 +163,7 @@ export component MatchSheet inherits Rectangle {
                                     accessible-role: checkbox;
                                     accessible-checkable: true;
                                     accessible-checked: group.checked;
-                                    accessible-label: "Fit " + group.name;
+                                    accessible-label: @tr("Fit {}", group.name);
                                     box-ta := TouchArea {
                                         enabled: !root.match-running;
                                         mouse-cursor: MouseCursor.pointer;
@@ -190,7 +190,7 @@ export component MatchSheet inherits Rectangle {
                 }
             }
             Toggle {
-                label: "Replace existing looks";
+                label: @tr("Replace existing looks");
                 checked <=> root.match-replace;
                 enabled: !root.match-running;
                 toggled => { root.match-replace-toggled(); }
@@ -236,7 +236,7 @@ export component MatchSheet inherits Rectangle {
                 padding-top: Theme.space-3;
                 spacing: Theme.space-2;
                 PanelButton {
-                    text: root.match-running ? "Stop" : "Close";
+                    text: root.match-running ? @tr("Stop") : @tr("Close");
                     primary: root.match-done && !root.match-running;
                     clicked => {
                         if (root.match-running) { root.match-cancel(); } else { root.match-close(); }

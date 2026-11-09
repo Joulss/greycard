@@ -11,8 +11,8 @@ export component ModelSheet inherits Rectangle {
     /// The two answers' words, and whether the one that declines is the
     /// default, drawn as the primary: a fetch of every model asks Now
     /// or As needed, As needed the default.
-    in property <string> fetch-yes: "Download";
-    in property <string> fetch-no: "Not now";
+    in property <string> fetch-yes: @tr("Download");
+    in property <string> fetch-no: @tr("Not now");
     in property <bool> fetch-no-default: false;
     callback fetch-answered(bool);
 

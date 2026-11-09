@@ -290,14 +290,14 @@ export component FilterBar inherits Rectangle {
             HorizontalLayout {
                 spacing: Theme.space-2;
                 Text {
-                    text: "Stars";
+                    text: @tr("Stars");
                     color: Theme.text-secondary;
                     font-size: Theme.font-xs;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                 }
                 Chip {
-                    text: root.exact ? "exactly" : "or more";
+                    text: root.exact ? @tr("exactly") : @tr("or more");
                     shows-count: false;
                     tight: true;
                     on: root.exact;
@@ -316,7 +316,7 @@ export component FilterBar inherits Rectangle {
                 }
             }
             Text {
-                text: "Flag";
+                text: @tr("Flag");
                 color: Theme.text-secondary;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
@@ -334,7 +334,7 @@ export component FilterBar inherits Rectangle {
                 }
             }
             Text {
-                text: "Label";
+                text: @tr("Label");
                 color: Theme.text-secondary;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
@@ -391,7 +391,7 @@ export component FilterBar inherits Rectangle {
                         clicked(ctrl) => { root.star-picked(i); }
                     }
                     Chip {
-                        text: root.exact ? "exactly" : "or more";
+                        text: root.exact ? @tr("exactly") : @tr("or more");
                         shows-count: false;
                         on: root.exact;
                         clicked(ctrl) => { root.exact-toggled(); }
@@ -424,7 +424,7 @@ export component FilterBar inherits Rectangle {
             if !root.stacked: Rectangle { horizontal-stretch: 1; }
             field := LineEdit {
                 text <=> root.text;
-                placeholder-text: "Name, keyword, or camera:R6 iso>=3200";
+                placeholder-text: @tr("Name, keyword, or camera:R6 iso>=3200");
                 // Wide enough for a few words and no wider: a field
                 // the width of the window reads as the header rather
                 // than as one control in it. In the header it gives
@@ -461,7 +461,7 @@ export component FilterBar inherits Rectangle {
             // The grid's header says the order on its top row instead,
             // where it takes no room from the chips.
             Text {
-                text: root.shown + " of " + root.total
+                text: @tr("{} of {}", root.shown, root.total)
                     + (root.stacked && root.sort.label != "" ? " · " + root.sort.label : "");
                 color: root.on ? Theme.text : Theme.text-muted;
                 font-size: Theme.font-xs;
@@ -470,13 +470,13 @@ export component FilterBar inherits Rectangle {
             // The buttons keep their words: the chips before them give
             // way first, clipped at a narrow window.
             if root.can-save: PanelButton {
-                text: "Save...";
+                text: @tr("Save...");
                 min-width: self.preferred-width;
                 enabled: root.on;
                 clicked => { root.released(); root.save-smart(); }
             }
             PanelButton {
-                text: "Clear";
+                text: @tr("Clear");
                 min-width: self.preferred-width;
                 enabled: root.on;
                 clicked => { root.cleared(); root.released(); }
