@@ -152,6 +152,7 @@ export component FrameMenu inherits Rectangle {
             if root.count > 1: MenuItem {
                 enabled: !root.queue;
                 title: @tr("Sync {n} frame to {}..." | "Sync {n} frames to {}..." % (root.count - 1),
+                    // Fills {} in 'Sync N frames to {}...' for an unnamed open frame
                     root.current == "" ? @tr("this one") : root.current);
                 activated => { root.sync(); }
             }
@@ -270,6 +271,7 @@ export component FrameMenu inherits Rectangle {
             Menu {
                 title: @tr("Label");
                 enabled: root.can-meta;
+                // Label menu: the fifth label; the four others are in Color
                 for name[n] in [@tr("None"), @tr("Red"), @tr("Yellow"), @tr("Green"), @tr("Blue"), @tr("Purple")]: MenuItem {
                     title: name;
                     checkable: n > 0;
@@ -337,10 +339,12 @@ export component FrameMenu inherits Rectangle {
                 activated => { root.move-back(); }
             }
             if root.archive-verb != "" && root.archive-choices.length == 1: MenuItem {
+                // Frame menu: {} is Back up or Bring back, then an archive's name
                 title: @tr("{} to {}...", root.archive-verb, root.archive-choices[0]);
                 activated => { root.archive(0); }
             }
             if root.archive-verb != "" && root.archive-choices.length > 1: Menu {
+                // Frame menu: {} is Back up or Bring back, over a list of archives
                 title: @tr("{} to", root.archive-verb);
                 for name[i] in root.archive-choices: MenuItem {
                     title: name + "...";

@@ -782,6 +782,7 @@ export component Viewport inherits Rectangle {
         border-radius: Theme.radius-sm;
         background: root.plate-ground;
         placeholder-word := Text {
+            // The word over the stand-in picture while the frame develops
             text: @tr("camera preview");
             color: Theme.over-text;
             font-size: Theme.font-xs;
@@ -1242,6 +1243,7 @@ export component Viewport inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: 12px;
         width: 140px;
+        // People mask: the button over the picture that takes everyone in it
         text: @tr("All people");
         icon: @image-url("../icons/users-round.svg");
         primary: true;

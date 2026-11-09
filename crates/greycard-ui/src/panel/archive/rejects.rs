@@ -366,7 +366,7 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
         _ => tr!("No trash on {label}: deletes are permanent.", label = label),
     };
     let note = tr!(
-        "Move files them in a rejects folder on {label}. {delete_note}",
+        "Move puts them in a rejects folder on {label}. {delete_note}",
         label = label,
         delete_note = delete_note
     );

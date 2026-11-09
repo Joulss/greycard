@@ -503,6 +503,7 @@ pub(crate) fn dropper_reads_develop(st: &State) -> bool {
 /// [`NeutralMiss::Waiting`]'s.
 pub(crate) fn waiting_said(kind: &str) -> String {
     let what = match kind {
+        // A tool waiting: 'white balance: wait for the develop'
         "White" => tr!("white balance"),
         "Curve" => tr!("curve"),
         "Range" => tr!("color range"),
@@ -1734,6 +1735,7 @@ pub(crate) fn choose_icc(
     chooser::choose_open(
         title,
         start,
+        // The file chooser's filter name for profiles
         (tr!("ICC profiles"), vec!["*.icc".into(), "*.icm".into()]),
         move |chosen| {
             let _ = slint::invoke_from_event_loop(move || {

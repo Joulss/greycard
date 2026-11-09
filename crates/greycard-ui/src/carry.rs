@@ -389,6 +389,7 @@ fn split_at(heights: &[usize]) -> usize {
 /// greycard-edit's section and part titles, which the sheet shows
 /// through `text`, marked here for the catalog.
 const _MARK_SECTIONS: [&str; 19] = [
+    // Sync sheet: a section of the edit
     crate::marked::tr!("Light"),
     crate::marked::tr!("Display curve"),
     crate::marked::tr!("White balance"),
@@ -421,10 +422,12 @@ const _MARK_PARTS: [&str; 41] = [
     crate::marked::tr!("Vibrance"),
     crate::marked::tr!("Saturation"),
     crate::marked::tr!("Parametric"),
+    // Sync sheet: the color mixer's parts
     crate::marked::tr!("RGB"),
     crate::marked::tr!("Red"),
     crate::marked::tr!("Green"),
     crate::marked::tr!("Blue"),
+    // Sync sheet: the lens correction's parts
     crate::marked::tr!("R/G"),
     crate::marked::tr!("B/Y"),
     crate::marked::tr!("Orange"),
@@ -432,6 +435,7 @@ const _MARK_PARTS: [&str; 41] = [
     crate::marked::tr!("Aqua"),
     crate::marked::tr!("Purple"),
     crate::marked::tr!("Magenta"),
+    // Sync sheet: the black and white filter's part
     crate::marked::tr!("Weights"),
     crate::marked::tr!("Strength"),
     crate::marked::tr!("Mid-tones"),
@@ -451,6 +455,7 @@ const _MARK_PARTS: [&str; 41] = [
     crate::marked::tr!("Feather"),
     crate::marked::tr!("Roundness"),
     crate::marked::tr!("Size"),
+    // Sync sheet: the grain's kind
     crate::marked::tr!("Type"),
     crate::marked::tr!("Structure"),
 ];

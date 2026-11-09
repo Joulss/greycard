@@ -25,6 +25,7 @@ component ShiftChoice inherits HorizontalLayout {
     Segmented {
         width: 112px;
         options: ["Set", "Shift"];
+        // Sync sheet: set every frame to this value, or shift each by it
         labels: [@tr("Set"), @tr("Shift")];
         current: root.shift ? "Shift" : "Set";
         enabled: root.enabled;

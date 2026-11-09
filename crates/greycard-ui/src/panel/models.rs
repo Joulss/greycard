@@ -224,23 +224,27 @@ pub(crate) fn brief(message: &str) -> String {
 
 /// The line's words while the CPU-only runtime comes first.
 pub(crate) fn after_runtime() -> String {
+    // Models list: a model's state
     tr!("after the runtime")
 }
 
 /// A line's words for a model to fetch, or any with no store.
 pub(crate) fn not_fetched() -> String {
+    // Models list: a model's state
     tr!("not fetched")
 }
 
 /// The lines' words while the machine is probed.
 pub(crate) fn checking() -> String {
-    tr!("checking this machine…")
+    // Models list: a model's state
+    tr!("checking this machine...")
 }
 
 /// What a line says of where its model stands.
 fn status(all: &FetchAll, model: &Model, stands: &Stands) -> String {
     for (m, pct) in all.coming.iter().chain(&all.sheet) {
         if m.id == model.id {
+            // Models list: a model's state
             return tr!("fetching {pct}%", pct = pct);
         }
     }
@@ -248,6 +252,7 @@ fn status(all: &FetchAll, model: &Model, stands: &Stands) -> String {
         return if all.runtime.is_some() || all.runtime_coming.is_some() {
             after_runtime()
         } else {
+            // Models list: a model's state
             tr!("queued")
         };
     }
@@ -256,10 +261,13 @@ fn status(all: &FetchAll, model: &Model, stands: &Stands) -> String {
     if *stands != Stands::Have
         && let Some((_, why)) = all.failed.iter().find(|(id, _)| *id == model.id)
     {
+        // Models list: a model's state
         return tr!("failed: {why}", why = why);
     }
     match stands {
+        // Models list: a model's state
         Stands::Have => tr!("in the store"),
+        // Models list: a model's state
         Stands::Skip(why) => tr!("skipped: {}", why.short()),
         Stands::AfterRuntime => after_runtime(),
         Stands::Fetch => not_fetched(),
@@ -656,7 +664,9 @@ pub(crate) fn offer_once(st: &mut State, app: &App) -> bool {
     app.set_fetch_title(offer_title().into());
     app.set_fetch_text(offer_text(&here, &plan).into());
     app.set_fetch_note(offer_note(&here, &plan).into());
+    // The fetch-every-model ask's two buttons
     app.set_fetch_yes(tr!("Now").into());
+    // The fetch-every-model ask's two buttons
     app.set_fetch_no(tr!("As needed").into());
     app.set_fetch_no_default(true);
     app.set_fetch_open(true);
@@ -869,7 +879,7 @@ mod tests {
         assert!(
             lines(&app)
                 .iter()
-                .all(|l| l.status == "checking this machine…")
+                .all(|l| l.status == "checking this machine...")
         );
         assert!(!app.get_models_fetch_enabled());
         crate::testing::remove_scratch(state, store.root());

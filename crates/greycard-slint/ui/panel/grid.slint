@@ -367,6 +367,7 @@ export component GridSheet inherits Rectangle {
                     // below at the editor's default width.
                     Text {
                         text: @tr("{n} frame" | "{n} frames" % root.thumbs.length) + " · "
+                            // Grid header: 'by capture time', after the frame count
                             + (root.sort-menu.label == "" ? "" : @tr("by {}", root.sort-menu.label) + " · ")
                             + round(root.grid-cell / 1px) + " px";
                         color: Theme.text-muted;
@@ -538,6 +539,7 @@ export component GridSheet inherits Rectangle {
                     border-width: 1px;
                     border-color: Theme.border;
                     accessible-role: button;
+                    // Spoken by a screen reader: a folder tile
                     accessible-label: @tr("Folder {}", t.name);
                     accessible-value: t.count;
                     accessible-action-default => { root.tile-picked(k); }
@@ -747,6 +749,7 @@ export component GridSheet inherits Rectangle {
                         border-width: 1px;
                         border-color: Theme.border-strong;
                         Text {
+                            // A tile's word when its picture could not be read
                             text: @tr("Unreadable");
                             color: Theme.text-muted;
                             font-size: Theme.font-xs;
@@ -760,6 +763,7 @@ export component GridSheet inherits Rectangle {
                     if root.lightbox && t.pending && t.big.width == 0: Text {
                         width: parent.width;
                         height: parent.height;
+                        // A tile's word while its picture is made
                         text: @tr("Developing");
                         color: Theme.dark-muted;
                         font-size: Theme.font-xs;
@@ -1058,6 +1062,7 @@ export component GridSheet inherits Rectangle {
                 x: parent.width - Theme.scrollbar-band;
                 width: Theme.scrollbar-band;
                 height: parent.height;
+                // Spoken by a screen reader: the grid's scroll bar
                 label: @tr("Grid scroll");
                 scroll: root.grid-scroll;
                 max: root.grid-max;

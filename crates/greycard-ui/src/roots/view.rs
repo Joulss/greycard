@@ -501,19 +501,19 @@ fn give_up_view(st: &mut State, app: &App) {
     app.set_status(tr!("the library's frames did not come in; the list is as it was").into());
 }
 
-/// The bar's words: "Reading sidecars… 3,400 of 11,711", or "Waiting
-/// on Archive…" when `waiting` names the root a stalled read is under.
+/// The bar's words: "Reading sidecars... 3,400 of 11,711", or "Waiting
+/// on Archive..." when `waiting` names the root a stalled read is under.
 pub(crate) fn loading_words(read: usize, total: usize, waiting: Option<&str>) -> String {
     if total == 0 {
         // Nothing read from disk: the roots and the folders being
         // looked at, up to their wait each.
-        return tr!("Looking at the library's folders…");
+        return tr!("Looking at the library's folders...");
     }
     if let Some(root) = waiting {
-        return tr!("Waiting on {root}…", root = root);
+        return tr!("Waiting on {root}...", root = root);
     }
     tr!(
-        "Reading sidecars… {read} of {total}",
+        "Reading sidecars... {read} of {total}",
         read = grouped(read),
         total = grouped(total)
     )

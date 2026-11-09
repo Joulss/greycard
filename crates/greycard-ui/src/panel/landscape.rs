@@ -13,7 +13,6 @@ use greycard_ai::landscape::Offer;
 use greycard_edit::mask::{Component, Mode, Shape};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::i18n::text;
 use crate::panel::assets::offer_model;
 use crate::panel::edit::{read_edit, show_edit};
 use crate::panel::mask::{Step, name_first_shape, step};
@@ -188,15 +187,19 @@ pub(crate) fn found(
     );
 }
 
-/// The shapes' kinds as "finding the ..." says them, in lower case,
-/// marked for the catalog.
-const _LOWER_KINDS: [&str; 5] = [
-    crate::marked::tr!("sky"),
-    crate::marked::tr!("water"),
-    crate::marked::tr!("foliage"),
-    crate::marked::tr!("mountain"),
-    crate::marked::tr!("building"),
-];
+/// The status while a shape of `kind` is found: a whole sentence a
+/// kind, since "finding the {}" with a noun dropped in does not
+/// translate (the noun's article and gender are the sentence's).
+fn finding(kind: &str) -> String {
+    match kind {
+        "Sky" => tr!("finding the sky"),
+        "Water" => tr!("finding the water"),
+        "Foliage" => tr!("finding the foliage"),
+        "Mountain" => tr!("finding the mountain"),
+        "Building" => tr!("finding the building"),
+        _ => tr!("finding the landscape"),
+    }
+}
 
 /// A shape picked from the menu, by kind, into the mask the button was
 /// pressed on; whether the edit changed.
@@ -233,7 +236,7 @@ pub(crate) fn chosen(st: &mut State, app: &App, kind: &str) -> bool {
     st.develop.target = Some(index);
     app.set_component(which as i32);
     show_edit(st, &st.develop.edit, app, st.develop.target);
-    app.set_status(tr!("finding the {}", text(&kind.to_lowercase())).into());
+    app.set_status(finding(kind).into());
     true
 }
 
@@ -329,15 +332,16 @@ mod tests {
             .collect()
     }
 
-    /// The kinds "finding the ..." says, marked in lower case for the
-    /// catalog, are the landscape's: the sky, then every group.
+    /// Every kind the landscape offers, the sky and each group, has a
+    /// "finding the ..." line of its own, none falling to the general one.
     #[test]
-    fn the_lower_kinds_are_the_landscape_s() {
-        let kinds: Vec<String> = std::iter::once(Kind::Sky)
-            .chain(Group::ALL.into_iter().map(Kind::Group))
-            .map(|kind| kind_of(&Offer { kind, area: 0.0 }).to_lowercase())
-            .collect();
-        assert_eq!(kinds, _LOWER_KINDS);
+    fn every_kind_has_its_finding_line() {
+        for kind in std::iter::once(Kind::Sky).chain(Group::ALL.into_iter().map(Kind::Group)) {
+            let word = kind_of(&Offer { kind, area: 0.0 });
+            let said = finding(word);
+            assert_ne!(said, finding("Nothing"), "{word}");
+            assert!(said.contains(&word.to_lowercase()), "{word}: {said}");
+        }
     }
 
     #[test]

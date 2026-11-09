@@ -54,6 +54,7 @@ export component CropSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
+            // Crop section: the button that leaves the crop
             text: root.crop-mode ? @tr("Done") : @tr("Crop");
             icon: @image-url("../icons/crop.svg");
             primary: root.crop-mode;
@@ -64,6 +65,7 @@ export component CropSection inherits Section {
         // makes the next drag draw wherever it starts. As the Level
         // does, it brings crop mode with it.
         PanelButton {
+            // Crop section: the button that starts a new crop drawn by hand
             text: @tr("Draw");
             icon: @image-url("../icons/pencil.svg");
             primary: root.crop-draw-armed;
@@ -81,6 +83,7 @@ export component CropSection inherits Section {
         spacing: Theme.space-2;
         Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         aspect-box := ComboBox {
+            // Crop aspect choices
             model: [@tr("Free"), @tr("aspect" => "Original"), "1:1", "3:2", "4:3", "5:4", "16:9", "65:24", @tr("Custom")];
             current-index: root.aspect-index(root.aspect-name);
             selected(v) => {
@@ -115,6 +118,7 @@ export component CropSection inherits Section {
     // Free nothing reads the flag, so the switch is greyed and a
     // click is nothing.
     Toggle {
+        // Crop section: the toggle that stands the aspect upright
         label: @tr("Portrait");
         checked: root.portrait-shown;
         enabled: root.portrait-live;
@@ -154,6 +158,7 @@ export component RotateSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
+            // Rotate section: the button that takes the level tool in hand
             text: @tr("Level");
             icon: @image-url("../icons/ruler.svg");
             primary: root.level-mode;
@@ -192,6 +197,7 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "";
             icon: @image-url("../icons/flip-horizontal.svg");
+            // Rotate section: flip the frame left to right
             words: @tr("Flip");
             accessible-role: button;
             accessible-label: @tr("Flip");
@@ -200,6 +206,7 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "";
             icon: @image-url("../icons/flip-vertical.svg");
+            // Rotate section: flip the frame top to bottom
             words: @tr("Flip vertical");
             accessible-role: button;
             accessible-label: @tr("Flip vertical");
@@ -268,6 +275,7 @@ export component PerspectiveSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
+            // Perspective section: the slider
             text: @tr("Verticals");
             icon: @image-url("../icons/ruler.svg");
             primary: root.guide-mode == "Vertical";
@@ -280,6 +288,7 @@ export component PerspectiveSection inherits Section {
             }
         }
         PanelButton {
+            // Perspective section: the slider
             text: @tr("Horizontals");
             icon: @image-url("../icons/ruler.svg");
             primary: root.guide-mode == "Horizontal";
@@ -293,6 +302,7 @@ export component PerspectiveSection inherits Section {
         }
     }
     EditSlider {
+        // Perspective section: the slider
         label: @tr("Vertical");
         minimum: -40;
         maximum: 40;
@@ -304,6 +314,7 @@ export component PerspectiveSection inherits Section {
         changed(v) => { root.geometry-changed(); }
     }
     EditSlider {
+        // Perspective section: the slider
         label: @tr("Horizontal");
         minimum: -40;
         maximum: 40;

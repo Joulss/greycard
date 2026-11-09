@@ -37,6 +37,41 @@ To update a catalog after the window's wording changed, run
 `scripts/translations.sh` (see [building.md](building.md)) or ask in
 the pull request: new strings arrive empty and changed ones fuzzy.
 
+## Where a string shows
+
+Each entry names the file it comes from (`#:`), and many carry a
+note (`#.`) saying where in the window it shows and what it does.
+The file alone places most of them:
+
+| File | Where it shows |
+| --- | --- |
+| `ui/app.slint` | The window itself: the menus, the top bar, the asks |
+| `ui/controls.slint` | Shared controls: thumbnails, sliders, scroll bars, mostly words a screen reader speaks |
+| `ui/panel/edit.slint`, `color.slint`, `curve.slint`, `lens.slint`, `crop.slint`, `retouch.slint`, `mask.slint`, `assets.slint` | The develop panel's sections, in that order top to bottom; a heading in capitals is a section's title |
+| `ui/panel/cull.slint` | The Culling section, in the Loupe's Cull mode |
+| `ui/panel/deliver.slint` | The export sheet and the export queue |
+| `ui/panel/settings-sheet.slint` | The Settings sheet, by category |
+| `ui/panel/*-sheet.slint` | The other sheets, named after what they do |
+| `ui/panel/grid.slint`, `strip.slint`, `filter.slint`, `folders.slint`, `roots.slint`, `collections.slint`, `recent.slint`, `navigator.slint` | The Library: the grid, the filmstrip, the filter bar, and the left pane's lists |
+| `ui/panel/frame-menu.slint` | A frame's right-click menu |
+| `ui/panel/history.slint`, `presets.slint`, `meta.slint`, `scopes.slint` | The right pane's other sections |
+| `src/panel/*.rs` | The status line at the bottom and a sheet's own sentences, for the part the file is named after |
+| `src/keys.rs` | The keys sheet: each action's words and the headings |
+| `src/rows.rs`, `src/tags.rs`, `src/sort.rs`, `src/filter.rs` | The status line's words for a change of rating, flag, label, order, or filter |
+
+A few shapes to know:
+
+- A **heading in capitals** (`WHITE BALANCE`) is a section's title in
+  the develop panel. Keep the capitals if your language uses them for
+  that; otherwise write it as your language writes a heading.
+- An entry starting with a **comma, semicolon, or space** (`, {}
+  backed up`) is a tail joined onto another sentence. Keep the
+  punctuation and the space.
+- A note saying **spoken by a screen reader** is never drawn; it is
+  what a screen reader says for a control.
+- **Key names** (`Esc`, `Ctrl`, `Shift`) and the **search's own
+  words** (`camera:`, `iso>=`) stay as they are.
+
 ## Placeholders
 
 A `{}` in a string is a value the window fills in, in order;

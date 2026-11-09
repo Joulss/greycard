@@ -103,6 +103,7 @@ impl Stars {
         if exact {
             n.to_string()
         } else if n == 0 {
+            // Filter: the rating choice that passes every frame
             tr!("Any")
         } else if n >= STARS {
             STARS.to_string()
@@ -255,13 +256,20 @@ pub fn facet_slot(facet: Facet) -> usize {
 pub fn facet_caption(facet: Facet) -> &'static str {
     use crate::marked;
     match facet {
+        // Filter bar: a facet's chip
         Facet::Camera => marked::tr!("Camera"),
+        // Filter bar: a facet's chip
         Facet::Lens => marked::tr!("Lens"),
+        // Filter bar: a facet's chip
         Facet::Kind => marked::tr!("Kind"),
+        // Filter bar: a facet's chip
         Facet::Style => marked::tr!("Style"),
         Facet::Iso => "ISO",
+        // Filter bar: a facet's chip, the focal length
         Facet::Focal => marked::tr!("Focal"),
+        // Filter bar: a facet's chip, the capture day
         Facet::Date => marked::tr!("Day"),
+        // Filter bar: a facet's chip
         Facet::Keyword => marked::tr!("Keyword"),
     }
 }
@@ -302,6 +310,7 @@ const _MARK_LOWER_NAMES: [&str; 9] = [
 pub fn facet_chip_text(facet: Facet, label: &str) -> String {
     match facet {
         Facet::Focal => format!("{label} mm"),
+        // Filter bar: the kind chip for raws
         Facet::Kind if label == greycard_library::filter::RAW => tr!("Raw"),
         Facet::Kind => label.to_uppercase(),
         _ => label.to_string(),

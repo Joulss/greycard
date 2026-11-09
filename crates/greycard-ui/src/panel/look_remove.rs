@@ -242,7 +242,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         app.set_status(
             tr!(
                 "{names} is a link and stays; nothing is removed through one"
-                    | "{names} are a link and stays; nothing is removed through one"
+                    | "{names} are links and stay; nothing is removed through one"
                         % link_names.len(),
                 names = link_names.join(", ")
             )
@@ -276,7 +276,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         // removes some of its tables, not the look.
         note = tr!(
             "{names} is a link and stays. {note}"
-                | "{names} are a link and stays. {note}" % link_names.len(),
+                | "{names} are links and stay. {note}" % link_names.len(),
             names = link_names.join(", "),
             note = note
         );
@@ -882,7 +882,7 @@ mod tests {
             slint::platform::update_timers_and_animations();
         }
         let remove = |app: &App| {
-            let (at, size) = crate::testing::labeled(app, "Remove this look…");
+            let (at, size) = crate::testing::labeled(app, "Remove this look...");
             click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
             slint::platform::update_timers_and_animations();
             assert!(app.get_look_remove_open());

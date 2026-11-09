@@ -62,6 +62,7 @@ impl Tags {
 /// says so. The flag's past tense is the one a culler says aloud.
 pub fn notice(change: &Change) -> String {
     match change {
+        // The undo list's name for a change: 'Undo: No stars'
         Change::Rating(0) => tr!("No stars"),
         Change::Rating(n) => tr!("{n} star" | "{n} stars" % *n),
         Change::Flag(Flag::Pick) => tr!("Pick"),
@@ -104,6 +105,7 @@ pub fn signed(secs: i64) -> String {
 /// no word, and reads as lost.
 pub fn hidden_by_filter(change: &Change, who: &str, many: bool, filter: &str) -> String {
     let done = match change {
+        // In 'N frames rated 3 and hidden by the filter'
         Change::Rating(n) => tr!("rated {n}", n = n),
         Change::Flag(Flag::Pick) => tr!("picked"),
         Change::Flag(Flag::Reject) => tr!("rejected"),

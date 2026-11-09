@@ -350,6 +350,7 @@ impl Request {
     /// One request of the kind: "the rating key", "the open of x.cr3".
     pub(crate) fn the(&self) -> String {
         match self {
+            // The request's name in 'X was not applied to it' and 'X dropped'
             Request::Open(name) => tr!("the open of {name}", name = name),
             Request::RatingKey => tr!("the rating key"),
             Request::FlagKey => tr!("the flag key"),

@@ -106,6 +106,7 @@ export component MonitorSection inherits Section {
     }
     HorizontalLayout {
         spacing: Theme.space-2;
+        // Monitor section: the canvas shade row
         Text { text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Swatches {
             colors: root.canvas-colors;

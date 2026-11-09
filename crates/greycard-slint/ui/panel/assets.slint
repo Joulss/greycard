@@ -19,6 +19,7 @@ export component CameraSection inherits Section {
 
     title: @tr("CAMERA PROFILE");
     icon: @image-url("../icons/camera.svg");
+    // Camera profile: the hint by the heading when the frame is no raw
     hint: root.raw-input ? "" : @tr("raw only");
     collapsed <=> root.collapsed-camera;
     // The list: the file's own calibrations
@@ -141,7 +142,9 @@ export component LookSection inherits Section {
                     // "Fit" included, and the panel's tests find the
                     // footer's Fit by its label.
                     accessible-label: row.heading
+                        // Look section: a look's fold button; {} is the look's name
                         ? (row.folded ? @tr("Unfold {}", row.label) : @tr("Fold {}", row.label))
+                        // Spoken by a screen reader: a look's row; {} is its name
                         : @tr("Look {}", row.label);
                     clicked => {
                         if (row.heading) {
@@ -185,6 +188,7 @@ export component LookSection inherits Section {
                         overflow: elide;
                     }
                     if row.own: Text {
+                        // Look section: the tag on a look fitted to the open frame's camera
                         text: @tr("this camera");
                         color: Theme.accent-text;
                         font-size: Theme.font-xs;
@@ -228,6 +232,7 @@ export component LookSection inherits Section {
         }
     }
     EditSlider {
+        // Look section: the slider
         label: @tr("Strength");
         enabled: root.look-name != "none";
         minimum: 0;
@@ -280,12 +285,12 @@ export component LookSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         if root.look-renamable: PanelButton {
-            text: @tr("Rename…");
+            text: @tr("Rename...");
             icon: @image-url("../icons/pencil.svg");
             clicked => { root.look-rename-asked(); }
         }
         if root.look-removable: PanelButton {
-            text: @tr("Remove this look…");
+            text: @tr("Remove this look...");
             icon: @image-url("../icons/trash-2.svg");
             clicked => { root.look-remove-asked(); }
         }
@@ -296,7 +301,7 @@ export component LookSection inherits Section {
         // The camera match: a look fitted per body
         // and picture style from the raws' JPEGs.
         PanelButton {
-            text: @tr("Fit this camera's look…");
+            text: @tr("Fit this camera's look...");
             clicked => { root.match-asked(); }
         }
         // Back to no look at a full strength,

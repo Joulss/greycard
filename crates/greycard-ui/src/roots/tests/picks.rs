@@ -1122,10 +1122,10 @@ fn a_dropped_read_clears_the_bar() {
     assert!(state.borrow().views.loads.timer.running());
     crate::rows::bar_tick(&state, &app, &worker, since + Duration::from_millis(300));
     assert!(app.get_loading_shown(), "the frames' bar, after the moment");
-    assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 1");
+    assert_eq!(app.get_loading_line(), "Reading sidecars... 0 of 1");
     let waited = since + LOADING_WAITING_AFTER + Duration::from_millis(500);
     crate::rows::bar_tick(&state, &app, &worker, waited);
-    assert_eq!(app.get_loading_line(), "Waiting on a…");
+    assert_eq!(app.get_loading_line(), "Waiting on a...");
     assert!(!state.borrow().views.library.loading, "not the view's read");
     // The list replaced: the request goes, the bar with it.
     open_listing(

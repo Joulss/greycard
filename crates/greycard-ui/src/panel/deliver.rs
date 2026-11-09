@@ -574,6 +574,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                                 .and_then(|i| st.path_at(i))
                                 .and_then(|f| f.extension())
                                 .map(|e| e.to_string_lossy().to_ascii_uppercase())
+                                // Export status: the picture's kind when its file has no extension
                                 .unwrap_or_else(|| tr!("picture")),
                             space = space
                         )
@@ -666,6 +667,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let detailed = match detail {
                 Some((s, ran)) => {
                     let how = match ran {
+                        // The develop's line in the status: how the local contrast ran
                         DetailRan::Cpu(secs) => tr!("in {secs} s", secs = format!("{secs:.2}")),
                         DetailRan::Gpu => tr!("on the GPU"),
                         DetailRan::Kept => tr!("kept"),

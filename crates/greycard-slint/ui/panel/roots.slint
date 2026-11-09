@@ -45,7 +45,9 @@ export component RootRow inherits Rectangle {
     accessible-label: root.text;
     accessible-description: root.path;
     accessible-value: root.archive
+        // Spoken by a screen reader: a root's state; {} is its frame count
         ? (root.offline ? @tr("archive, offline") : @tr("archive, {}", root.count))
+        // Spoken by a screen reader: a root's state
         : (root.offline ? @tr("offline") : root.count);
     // The one open is the list's selected item, for a screen reader
     // as for the eye.

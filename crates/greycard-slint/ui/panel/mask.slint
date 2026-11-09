@@ -367,6 +367,7 @@ export component AdjustmentsSection inherits Section {
                 name-field := LineEdit {
                     text <=> root.adjustment-name;
                     placeholder-text: @tr("Name");
+                    // Spoken by a screen reader: the mask's name field
                     accessible-label: @tr("Mask name");
                     edited(t) => { root.renamed(); }
                     // Enter or Escape gives the keys back to the
@@ -644,6 +645,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
+                            // Luminance range: the fade at the dark end
                             label: @tr("Low fade");
                             minimum: 0;
                             maximum: 0.5;
@@ -671,6 +673,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
+                            // Luminance range: the fade at the light end
                             label: @tr("High fade");
                             minimum: 0;
                             maximum: 0.5;
@@ -697,6 +700,7 @@ export component AdjustmentsSection inherits Section {
                                 clicked => { root.pick-started("Range"); }
                             }
                             Text {
+                                // Color range: the button that reads a color off the picture
                                 text: @tr("Sample");
                                 color: Theme.text-secondary;
                                 font-size: Theme.font-xs;
@@ -738,6 +742,7 @@ export component AdjustmentsSection inherits Section {
                             changed(v) => { root.view-changed(); }
                         }
                         EditSlider {
+                            // Color range: the fade
                             label: @tr("Hue fade");
                             label-width: 84px;
                             minimum: 0;
@@ -767,6 +772,7 @@ export component AdjustmentsSection inherits Section {
                             }
                         }
                         EditSlider {
+                            // Color range: the fade
                             label: @tr("Chroma fade");
                             label-width: 84px;
                             minimum: 0;
@@ -816,6 +822,7 @@ export component AdjustmentsSection inherits Section {
                     changed(v) => { }
                 }
                 EditSlider {
+                    // Brush: the slider
                     label: @tr("Opacity");
                     minimum: 0;
                     maximum: 1;
@@ -829,6 +836,7 @@ export component AdjustmentsSection inherits Section {
                 }
                 Segmented {
                     options: ["Add", "Subtract", "Erase"];
+                    // Brush: what a stroke does
                     labels: [@tr("Add"), @tr("Subtract"), @tr("Erase")];
                     current <=> root.brush-op;
                 }
@@ -861,26 +869,31 @@ export component AdjustmentsSection inherits Section {
                     // first shape has no answer to.
                     if root.component-names.length > 0: Segmented {
                         accessible-role: button;
+                        // Spoken by a screen reader: the shape mode button
                         accessible-label: @tr("Next shape mode");
                         options: ["Add", "Subtract", "Intersect"];
+                        // Shape mode: the shape cuts the mask down to where both are
                         labels: [@tr("Add"), @tr("Subtract"), @tr("Intersect")];
                         current <=> root.shape-mode;
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         PanelButton {
+                            // Add a shape: the kinds
                             text: @tr("Linear");
                             icon: @image-url("../icons/plus.svg");
                             primary: root.placing == "Linear" && root.placing-into;
                             clicked => { root.add-shape("Linear", root.shape-mode); }
                         }
                         PanelButton {
+                            // Add a shape: the kinds
                             text: @tr("Radial");
                             icon: @image-url("../icons/plus.svg");
                             primary: root.placing == "Radial" && root.placing-into;
                             clicked => { root.add-shape("Radial", root.shape-mode); }
                         }
                         PanelButton {
+                            // Add a shape: a brush; once one exists its button says Paint
                             text: root.component-kind == "Brush" ? @tr("Paint") : @tr("Brush");
                             icon: root.component-kind == "Brush" ? @image-url("../icons/brush.svg") : @image-url("../icons/plus.svg");
                             primary: root.placing == "Brush" && root.placing-into;

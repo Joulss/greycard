@@ -191,10 +191,13 @@ pub(crate) fn button_words(choice: Choice) -> String {
 pub(crate) fn way_words(by: SortBy) -> [&'static str; 2] {
     match by {
         SortBy::Taken | SortBy::Edited => {
+            // Sort menu: the two ways up for capture time and date edited
             [marked::tr!("Oldest first"), marked::tr!("Newest first")]
         }
+        // Sort menu: the two ways up for the name
         SortBy::Name => [marked::tr!("A to Z"), marked::tr!("Z to A")],
         SortBy::Rating | SortBy::Focus => {
+            // Sort menu: the two ways up for rating and focus
             [marked::tr!("Lowest first"), marked::tr!("Highest first")]
         }
     }
@@ -203,6 +206,7 @@ pub(crate) fn way_words(by: SortBy) -> [&'static str; 2] {
 /// The order's words as a sentence says them, in lower case, their
 /// own entries in the catalog.
 const _LOWER_WORDS: [&str; 10] = [
+    // The sort in the grid header's 'by {}', lower case
     crate::marked::tr!("hand order"),
     crate::marked::tr!("capture time"),
     crate::marked::tr!("name"),
@@ -218,6 +222,7 @@ const _LOWER_WORDS: [&str; 10] = [
 /// `SortBy::words`, which greycard-library holds, marked here for the
 /// catalog: the menu translates them where it shows them.
 const _BY_WORDS: [&str; 5] = [
+    // Sort menu: what the frames are sorted by
     marked::tr!("Capture time"),
     marked::tr!("Name"),
     marked::tr!("Rating"),

@@ -22,6 +22,7 @@ component CollectionRow inherits Rectangle {
     background: root.chip.on ? Theme.selection : (ta.has-hover ? Theme.hover : transparent);
     accessible-role: button;
     accessible-label: (root.chip.set == "" ? "" : root.chip.set + "/") + root.chip.name;
+    // Spoken by a screen reader: the kind of a row in the collections list
     accessible-description: root.chip.smart ? @tr("smart collection") : @tr("collection");
     accessible-value: root.chip.smart ? "" : root.chip.count;
     accessible-item-selectable: true;
@@ -149,6 +150,7 @@ export component CollectionsSection inherits Section {
                     activated => { root.rename(root.menu-id); root.menu-done(); }
                 }
                 if !root.menu-smart: MenuItem {
+                    // A collection's menu: show it in capture order rather than hand order
                     title: @tr("Capture order");
                     checkable: true;
                     checked: root.menu-capture;

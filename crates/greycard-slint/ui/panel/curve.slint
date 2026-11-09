@@ -65,6 +65,7 @@ export component CurvesSection inherits Section {
         spacing: Theme.space-2;
         alignment: start;
         Text {
+            // Curves: the input axis of the point under the pointer
             text: @tr("In");
             color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
             font-size: Theme.font-sm;
@@ -81,6 +82,7 @@ export component CurvesSection inherits Section {
         }
         Rectangle { width: Theme.space-2; }
         Text {
+            // Curves: the output axis of the point under the pointer
             text: @tr("Out");
             color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
             font-size: Theme.font-sm;
@@ -110,6 +112,7 @@ export component CurvesSection inherits Section {
         changed(v) => { root.parametric-changed(); }
     }
     if root.curve-mode == "Parametric": EditSlider {
+        // Parametric curve: the slider for the light tones
         label: @tr("Lights");
         enabled: root.curves-enabled;
         minimum: -1;
@@ -123,6 +126,7 @@ export component CurvesSection inherits Section {
         changed(v) => { root.parametric-changed(); }
     }
     if root.curve-mode == "Parametric": EditSlider {
+        // Parametric curve: the slider for the dark tones
         label: @tr("Darks");
         enabled: root.curves-enabled;
         minimum: -1;

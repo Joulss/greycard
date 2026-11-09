@@ -76,7 +76,9 @@ pub(crate) fn move_sidecars(files: &[PathBuf], placement: greycard_edit::Placeme
 pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) -> String {
     let n = moved.moved;
     let place = match placement {
+        // Fills {place} in 'Moved N sidecars {place}'
         greycard_edit::Placement::Beside => tr!("beside their raws"),
+        // Fills {place} in 'Moved N sidecars {place}'
         greycard_edit::Placement::Folder => tr!("into the hidden folder"),
     };
     let mut words = tr!(
@@ -416,7 +418,7 @@ pub(crate) fn thumb_cache_words(shown: CacheShown) -> String {
     let whole = |b: u64| format!("{:.0}", mb(b));
     match shown {
         CacheShown::Missing => tr!("No cache folder: thumbnails are rebuilt each time."),
-        CacheShown::Counting => tr!("Counting…"),
+        CacheShown::Counting => tr!("Counting..."),
         CacheShown::Known { usage, cap: 0, .. } if usage.total().entries == 0 => {
             tr!("Off: thumbnails are rebuilt each time.")
         }
@@ -489,7 +491,7 @@ fn show_thumb_cache(app: &App, worker: &Worker) {
 /// or an eviction over a large cache takes seconds, and a lock the
 /// worker holds is waited for there — and show the cache as it is
 /// after. A cache the startup count has not finished with is not
-/// walked again here: the line says "Counting…" until the count is
+/// walked again here: the line says "Counting..." until the count is
 /// seeded, looked for a few times a second without holding the lock.
 fn on_the_cache(
     app: &App,
@@ -1712,7 +1714,7 @@ mod tests {
         );
         assert_eq!(both.entries(), 352);
         assert_eq!(CacheShown::Counting.entries(), 0);
-        assert_eq!(thumb_cache_words(CacheShown::Counting), "Counting…");
+        assert_eq!(thumb_cache_words(CacheShown::Counting), "Counting...");
         assert!(thumb_cache_words(CacheShown::Missing).starts_with("No cache"));
     }
 

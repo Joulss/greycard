@@ -58,6 +58,7 @@ Kept in {kept_in}.",
         host = greycard_lens::store::SOURCES[0]
             .split('/')
             .nth(2)
+            // Stands in for the lens database host's name when its URL has none
             .map_or_else(|| tr!("its site"), str::to_string),
         license = greycard_lens::store::LICENSE.0,
         url = greycard_lens::store::LICENSE.1,
@@ -170,6 +171,7 @@ Kept in {kept_in}.",
                 .url
                 .split('/')
                 .nth(2)
+                // Stands in for the model host's name when its URL has none
                 .map_or_else(|| tr!("the model host"), str::to_string),
             license = model.license.name,
             url = model.license.url,
@@ -622,6 +624,7 @@ pub(crate) fn show_import_report(app: &App, report: Report) {
 
 /// The picker's first row: the lens the file names, or none.
 fn from_the_file() -> String {
+    // Lens picker: the first row, the lens the file names
     tr!("From the file")
 }
 
@@ -926,6 +929,7 @@ fn body_of(st: &State) -> greycard_edit::camera::Body<'_> {
 pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileChoice, app: &App) {
     let body = body_of(st);
     let mut names = vec![slint::SharedString::from(greycard_edit::camera::EMBEDDED)];
+    // Camera profile picker: the raw's own embedded profile
     let mut labels = vec![slint::SharedString::from(tr!("Embedded"))];
     let embedded = chosen.is_embedded();
     let chosen_name = chosen.name().to_string();
@@ -1072,7 +1076,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     // camera match's sheet on the look's group.
     let (mismatch, refit) =
         match greycard_edit::look::mismatch(&st.develop.looks, chosen_name, curve) {
-            Some((text, true)) => (text, tr!("Refit under {curve}…", curve = curve.phrase())),
+            Some((text, true)) => (text, tr!("Refit under {curve}...", curve = curve.phrase())),
             Some((text, false)) => (text, String::new()),
             None => greycard_edit::look::stale(
                 &st.develop.looks,
@@ -1080,7 +1084,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
                 curve,
                 greycard_match::FIT_VERSION,
             )
-            .map(|text| (text, tr!("Refit…")))
+            .map(|text| (text, tr!("Refit...")))
             .unwrap_or_default(),
         };
     app.set_look_mismatch(mismatch.into());
@@ -1687,6 +1691,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 tr!("Import presets"),
                 start,
                 (
+                    // The file chooser's filter name for preset files
                     tr!("Presets"),
                     vec![
                         "*.xmp".into(),

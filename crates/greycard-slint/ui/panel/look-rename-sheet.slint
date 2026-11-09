@@ -115,7 +115,7 @@ export component LookRenameSheet inherits Rectangle {
                         clicked => { root.rename-answered(false); }
                     }
                     PanelButton {
-                        text: root.rename-working ? @tr("Renaming…") : @tr("Rename");
+                        text: root.rename-working ? @tr("Renaming...") : @tr("Rename");
                         primary: true;
                         enabled: root.rename-ready;
                         clicked => { root.rename-answered(true); }

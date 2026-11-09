@@ -42,6 +42,7 @@ component Fold inherits Rectangle {
     in-out property <bool> open;
     height: Theme.icon + Theme.space-1;
     accessible-role: button;
+    // Lightroom import sheet: the button that unfolds the report
     accessible-label: @tr("Details");
     accessible-expandable: true;
     accessible-expanded: root.open;
@@ -279,7 +280,7 @@ export component LightroomSheet inherits Rectangle {
                     LineEdit {
                         horizontal-stretch: 1;
                         text <=> root.lr-set;
-                        placeholder-text: @tr("none: the collections at the top");
+                        placeholder-text: @tr("None: the collections at the top");
                     }
                 }
                 if root.lr-has-creations: Toggle {
@@ -313,23 +314,27 @@ export component LightroomSheet inherits Rectangle {
                     clicked => { root.lr-cancel(); }
                 }
                 if root.lr-step == 1: PanelButton {
+                    // Lightroom import sheet: the buttons
                     text: @tr("Back");
                     enabled: !root.lr-busy;
                     clicked => { root.lr-back(); }
                 }
                 if root.lr-step == 0: PanelButton {
+                    // Lightroom import sheet: the buttons
                     text: @tr("Check");
                     primary: true;
                     enabled: !root.lr-busy && root.lr-roots.length > 0;
                     clicked => { root.lr-check(); }
                 }
                 if root.lr-step == 1: PanelButton {
+                    // Lightroom import sheet: the buttons
                     text: @tr("Write");
                     primary: true;
                     enabled: !root.lr-busy && root.lr-ready;
                     clicked => { root.lr-write(); }
                 }
                 if root.lr-step == 2: PanelButton {
+                    // Lightroom import sheet: the buttons
                     text: @tr("OK");
                     primary: true;
                     clicked => { root.lr-open = false; }

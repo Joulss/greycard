@@ -857,9 +857,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let app = weak.unwrap();
             let st = state.borrow();
             let (title, now) = match which.as_str() {
+                // The folder chooser's title for the import sheet's row
                 "source" => (tr!("Import from"), &st.import.source),
+                // The folder chooser's title for the import sheet's row
                 "destination" => (tr!("Import to"), &st.import.destination),
+                // The folder chooser's title for the import sheet's row
                 "place" => (tr!("Add to the library in place"), &st.import.place),
+                // The folder chooser's title for the import sheet's row
                 _ => (tr!("Back up to"), &st.import.backup),
             };
             let start = now

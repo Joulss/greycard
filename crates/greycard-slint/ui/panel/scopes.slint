@@ -302,6 +302,7 @@ export component PanelHead inherits VerticalLayout {
                 opacity: root.scope-mask-active ? 1 : 0.45;
                 animate background { duration: Theme.quick; }
                 selection-label := Text {
+                    // Scopes: the button that reads the selected area only
                     text: @tr("Selection");
                     color: parent.on ? Theme.text : Theme.text-secondary;
                     font-size: Theme.font-xs;

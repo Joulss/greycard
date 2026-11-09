@@ -290,6 +290,7 @@ export component FilterBar inherits Rectangle {
             HorizontalLayout {
                 spacing: Theme.space-2;
                 Text {
+                    // Filter bar: the rating row
                     text: @tr("Stars");
                     color: Theme.text-secondary;
                     font-size: Theme.font-xs;
@@ -297,6 +298,7 @@ export component FilterBar inherits Rectangle {
                     horizontal-stretch: 1;
                 }
                 Chip {
+                    // Filter bar: the rating's two modes
                     text: root.exact ? @tr("exactly") : @tr("or more");
                     shows-count: false;
                     tight: true;
@@ -316,6 +318,7 @@ export component FilterBar inherits Rectangle {
                 }
             }
             Text {
+                // Filter bar: the flag row
                 text: @tr("Flag");
                 color: Theme.text-secondary;
                 font-size: Theme.font-xs;
@@ -334,6 +337,7 @@ export component FilterBar inherits Rectangle {
                 }
             }
             Text {
+                // Filter bar: the label row
                 text: @tr("Label");
                 color: Theme.text-secondary;
                 font-size: Theme.font-xs;
@@ -424,6 +428,7 @@ export component FilterBar inherits Rectangle {
             if !root.stacked: Rectangle { horizontal-stretch: 1; }
             field := LineEdit {
                 text <=> root.text;
+                // Filter bar's search hint; camera: and iso>= stay English
                 placeholder-text: @tr("Name, keyword, or camera:R6 iso>=3200");
                 // Wide enough for a few words and no wider: a field
                 // the width of the window reads as the header rather
@@ -461,6 +466,7 @@ export component FilterBar inherits Rectangle {
             // The grid's header says the order on its top row instead,
             // where it takes no room from the chips.
             Text {
+                // Filter bar: frames shown of the frames in the folder
                 text: @tr("{} of {}", root.shown, root.total)
                     + (root.stacked && root.sort.label != "" ? " · " + root.sort.label : "");
                 color: root.on ? Theme.text : Theme.text-muted;
@@ -470,6 +476,7 @@ export component FilterBar inherits Rectangle {
             // The buttons keep their words: the chips before them give
             // way first, clipped at a narrow window.
             if root.can-save: PanelButton {
+                // Filter bar: save the filter as a smart collection
                 text: @tr("Save...");
                 min-width: self.preferred-width;
                 enabled: root.on;

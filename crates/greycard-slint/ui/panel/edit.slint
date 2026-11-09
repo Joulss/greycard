@@ -181,6 +181,7 @@ export component NoiseSection inherits Section {
         // The tiers' names are the values; only the "off" this side
         // adds is shown in words of its own.
         labels: root.learned-unavailable == "" ? []
+            // Noise: the learned denoiser's choice when it is off
             : root.denoise-learned == "off" ? [@tr("off")] : [@tr("off"), root.denoise-learned];
         enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
         current <=> root.denoise-learned;
@@ -253,6 +254,7 @@ export component NoiseSection inherits Section {
 // renamed in one place: the Rust side's is `greycard_edit::STRUCTURE`,
 // and a test holds the two to the same word.
 export global DetailWords {
+    // Noise: the slider
     out property <string> structure: @tr("Structure");
 }
 
@@ -382,6 +384,7 @@ export component SharpenSection inherits Section {
         steps: Steps.hundredths;
         value <=> root.sharpen-radius;
         text: root.sharpen-auto-radius
+            // Sharpen: the radius field's word while the radius is automatic
             ? (root.sharpen-measured-radius > 0 ? @tr("auto {}", round(root.sharpen-measured-radius * 100) / 100) : @tr("auto"))
             : round(root.sharpen-radius * 100) / 100;
         changed(v) => { root.develop-changed(); }
@@ -420,6 +423,7 @@ export component SharpenSection inherits Section {
         changed(v) => { root.develop-changed(); }
     }
     Toggle {
+        // Sharpen: show where the sharpen lands
         label: @tr("Show mask");
         enabled: root.sharpen;
         checked <=> root.show-sharpen-mask;
@@ -530,6 +534,7 @@ export component GrainSection inherits Section {
     }
     Segmented {
         options: ["Cubic", "Tabular"];
+        // Grain: the two kinds of grain
         labels: [@tr("Cubic"), @tr("Tabular")];
         current <=> root.grain-kind;
         selected(k) => { root.view-changed(); }

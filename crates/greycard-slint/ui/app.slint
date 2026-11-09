@@ -1285,6 +1285,7 @@ export component App inherits Window {
     /// The group sheet: a new group's name, or a group's new name.
     in-out property <bool> preset-group-sheet-open: false;
     in-out property <string> preset-group-sheet-name;
+    // The preset group sheet's button when a new group is made
     in property <string> preset-group-sheet-verb: @tr("Create");
     /// Why the name typed was refused; empty for none.
     in property <string> preset-group-sheet-note;
@@ -2012,6 +2013,7 @@ export component App inherits Window {
     in property <bool> match-can-fit;
     /// The Fit button's words, which count the groups checked, and why
     /// it is off when it is.
+    // The camera match sheet's Fit button; it also reads 'Fit N groups'
     in property <string> match-fit-label: @tr("Fit");
     in property <string> match-fit-note;
     callback match-group-toggled(int);
@@ -2159,6 +2161,7 @@ export component App inherits Window {
     out property <[color]> canvas-colors: [#0f0f0f, #262626, #2e2e2e, #444444, #ffffff];
     /// The same five by name, as the settings file and the Settings
     /// sheet's row spell them (`render::CANVAS_NAMES`).
+    // The five canvas shades, in Settings and the View menu
     out property <[string]> canvas-names: [@tr("Black"), @tr("Dark grey"), @tr("Mid grey"), @tr("Light grey"), @tr("White")];
     /// A light surround, white: the plates and strokes over the
     /// viewport take a denser scrim, so they read on it as on black.
@@ -2245,13 +2248,16 @@ export component App inherits Window {
     in-out property <string> fetch-title: "";
     in-out property <string> fetch-text: "";
     in-out property <string> fetch-note: "";
+    // The download ask's yes button, for a model or the lens database
     in property <string> fetch-yes: @tr("Download");
+    // The download ask's button that declines for now
     in property <string> fetch-no: @tr("Not now");
     in property <bool> fetch-no-default: false;
     callback fetch-answered(bool);
     // The Settings sheet's Models category: a line a model, the Fetch
     // all button's words and whether it can be pressed, and a note.
     in property <[ModelLine]> models-lines: [];
+    // The models ask's button that fetches every model
     in property <string> models-fetch-label: @tr("Fetch all");
     in property <bool> models-fetch-enabled: false;
     in property <string> models-note: "";
@@ -3621,6 +3627,7 @@ export component App inherits Window {
                     if !root.frozen: Segmented {
                         width: 56px;
                         options: ["Cull"];
+                        // The Loupe's mode button at the top of the develop panel
                         labels: [@tr("Cull")];
                         // Rust enters Cull, or says why not.
                         picks: false;
@@ -3639,6 +3646,7 @@ export component App inherits Window {
                     }
                     if !root.frozen: Segmented {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
+                        // The Loupe's mode buttons at the top of the develop panel
                         labels: [@tr("Develop"), @tr("Crop"), @tr("Masks"), @tr("Retouch")];
                         current <=> root.panel-tab;
                         selected(t) => { root.tab-chosen(t); }
@@ -4430,6 +4438,7 @@ export component App inherits Window {
                                     // The key beside it where there is one:
                                     // a Mac's is the green button.
                                     MenuItem {
+                                        // View menu
                                         title: Platform.os == OperatingSystemType.macos ? @tr("Full screen") : @tr("Full screen (F11)");
                                         activated => { root.full-screen-toggled(); root.menu-done(); }
                                     }
@@ -4437,6 +4446,7 @@ export component App inherits Window {
                             }
                         }
                         PanelButton {
+                            // File menu
                             text: root.export-running ? @tr("Stop export") : @tr("Export...");
                             icon: @image-url("icons/image-down.svg");
                             primary: !root.export-running;
@@ -4525,7 +4535,9 @@ export component App inherits Window {
         height: 40px;
         quiet: root.all-hidden();
         light-ground: root.canvas-light;
+        // View menu
         label: @tr("Right panel");
+        // View menu
         words: root.right-hidden ? @tr("Show panel") : @tr("Hide panel");
         icon: root.right-hidden ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-right.svg");
         clicked => { root.right-hidden = !root.right-hidden; keys.focus(); }
@@ -4562,7 +4574,9 @@ export component App inherits Window {
         height: 16px;
         quiet: root.all-hidden();
         light-ground: root.canvas-light;
+        // View menu: the filmstrip
         label: @tr("Strip");
+        // View menu: the filmstrip
         words: root.strip-hidden ? @tr("Show strip") : @tr("Hide strip");
         icon: root.strip-hidden ? @image-url("icons/chevron-up.svg") : @image-url("icons/chevron-down.svg");
         clicked => { root.strip-hidden = !root.strip-hidden; keys.focus(); }
@@ -4739,6 +4753,7 @@ export component App inherits Window {
             padding-bottom: 0;
             spacing: Theme.space-2;
             PanelButton {
+                // The view button at the top left: the grid
                 text: @tr("Library");
                 icon: @image-url("icons/library.svg");
                 primary: root.grid-open;
@@ -4756,6 +4771,7 @@ export component App inherits Window {
                 }
             }
             PanelButton {
+                // The view button at the top left: one frame
                 text: @tr("Loupe");
                 icon: @image-url("icons/image.svg");
                 primary: !root.grid-open;
@@ -4824,6 +4840,7 @@ export component App inherits Window {
                     vertical-stretch: 0;
                     spacing: 2px;
                     PanelButton {
+                        // File menu
                         text: @tr("Open folder...");
                         icon: @image-url("icons/folder-open.svg");
                         clicked => { keys.focus(); root.open-folder(); }
@@ -4856,6 +4873,7 @@ export component App inherits Window {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             PanelButton {
+                                // File menu
                                 text: @tr("Import...");
                                 horizontal-stretch: 1;
                                 clicked => { keys.focus(); root.rt-offer-import(); }
@@ -4900,10 +4918,12 @@ export component App inherits Window {
                                 // no `menu-done`, whose timer would take
                                 // it back.
                                 MenuItem {
+                                    // File menu, under Import
                                     title: @tr("From a card or folder...");
                                     activated => { root.import-asked(); }
                                 }
                                 MenuItem {
+                                    // File menu, under Import
                                     title: @tr("A Lightroom catalog...");
                                     activated => { root.lr-asked(); }
                                 }
@@ -5225,6 +5245,7 @@ export component App inherits Window {
             if root.update-version != "": HorizontalLayout {
                 spacing: Theme.space-2;
                 PanelButton {
+                    // Help menu: a newer version is out; {} is its number
                     text: @tr("{} is available", root.update-version);
                     icon: @image-url("icons/sparkles.svg");
                     horizontal-stretch: 1;
@@ -5233,6 +5254,7 @@ export component App inherits Window {
                 PanelButton {
                     icon: @image-url("icons/x.svg");
                     accessible-role: button;
+                    // Help menu: under the version note
                     accessible-label: @tr("Not now: do not offer {} again", root.update-version);
                     words: @tr("Not now");
                     width: Theme.control-height;
@@ -5272,6 +5294,7 @@ export component App inherits Window {
                         // The sheet takes the focus itself: no
                         // `menu-done`, whose timer would take it back.
                         MenuItem {
+                            // Help menu: the keys sheet, with the key that opens it
                             title: @tr("Keys (?)");
                             activated => { root.keys-open = true; }
                         }

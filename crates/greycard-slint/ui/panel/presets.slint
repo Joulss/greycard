@@ -333,6 +333,7 @@ export component PresetsSection inherits Section {
     // from this frame that is never saved. Ctrl+Shift+S. A row of its
     // own, as the pane is too narrow for a third button beside two.
     PanelButton {
+        // Presets section: the button that opens the sync sheet
         text: @tr("Sync...");
         icon: @image-url("../icons/layers.svg");
         enabled: root.set-count > 1;

@@ -94,6 +94,7 @@ export component FolderName inherits Rectangle {
             min-width: 24px;
         }
         if root.note == "" && root.root-name != "": Text {
+            // Recently opened: the root a folder is under, 'in Archive'
             text: @tr("in {}", root.root-name);
             color: Theme.text-muted;
             font-size: Theme.font-xs;

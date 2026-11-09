@@ -97,8 +97,10 @@ fn state_name(sidecar: &greycard_edit::Line, i: usize) -> String {
             Edit::raw_defaults().contains(&plain) || Edit::picture_defaults().contains(state)
         } =>
         {
+            // History: the first step, the frame as it came
             tr!("Original")
         }
+        // History: the first step kept once earlier ones were dropped
         None => tr!("Earliest kept"),
     }
 }

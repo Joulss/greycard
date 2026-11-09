@@ -2042,6 +2042,7 @@ pub(crate) fn cull_status(
 /// (`own` false), that it is until the full one decodes.
 pub(crate) fn zoom_words(zoom: f32, own: bool) -> String {
     if zoom <= 0.0 {
+        // Culling status: the zoom when the picture is fitted to the window
         tr!("fitted")
     } else if own {
         format!("{}%", (zoom * 100.0).round() as i32)

@@ -1014,7 +1014,7 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
                 names = some_names(&theirs)
             ),
             Direction::BringBack => tr!(
-                "Skipped, the one here sidecar is the newer: {names}.",
+                "Skipped, the sidecar here is the newer: {names}.",
                 names = some_names(&theirs)
             ),
         });

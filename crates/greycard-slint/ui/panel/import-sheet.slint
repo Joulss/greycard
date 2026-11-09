@@ -109,6 +109,7 @@ export component ImportSheet inherits Rectangle {
                     }
                     Segmented {
                         options: ["Copy", "Add in place"];
+                        // Import sheet: copy the files in, or add them where they are
                         labels: [@tr("Copy"), @tr("Add in place")];
                         current <=> root.import-mode;
                     }
@@ -144,6 +145,7 @@ export component ImportSheet inherits Rectangle {
                     if root.import-mode == "Copy": VerticalLayout {
                         spacing: Theme.space-2;
                         FolderRow {
+                            // Import sheet: the source row
                             label: @tr("From");
                             path: root.import-source;
                             empty: @tr("No card found");
@@ -160,6 +162,7 @@ export component ImportSheet inherits Rectangle {
                             }
                         }
                         FolderRow {
+                            // Import sheet: the destination row
                             label: @tr("To");
                             path: root.import-destination;
                             empty: @tr("No folder chosen");
@@ -167,10 +170,12 @@ export component ImportSheet inherits Rectangle {
                         }
                         HorizontalLayout {
                             spacing: Theme.space-2;
+                            // Import sheet: the subfolder pattern row
                             Text { text: @tr("Folders"); width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                             LineEdit {
                                 horizontal-stretch: 1;
                                 text <=> root.import-subfolder;
+                                // Import sheet: the subfolder pattern when it is empty
                                 placeholder-text: @tr("none");
                             }
                         }
@@ -213,6 +218,7 @@ export component ImportSheet inherits Rectangle {
                             }
                         }
                         FolderRow {
+                            // Import sheet: the backup row
                             label: @tr("Backup");
                             path: root.import-backup;
                             empty: @tr("None: one copy only");

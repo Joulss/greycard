@@ -6,10 +6,13 @@ use super::*;
 fn the_bar_s_words_group_the_thousands() {
     assert_eq!(
         loading_words(3400, 11711, None),
-        "Reading sidecars… 3,400 of 11,711"
+        "Reading sidecars... 3,400 of 11,711"
     );
-    assert_eq!(loading_words(0, 1, None), "Reading sidecars… 0 of 1");
-    assert_eq!(loading_words(0, 1, Some("Archive")), "Waiting on Archive…");
+    assert_eq!(loading_words(0, 1, None), "Reading sidecars... 0 of 1");
+    assert_eq!(
+        loading_words(0, 1, Some("Archive")),
+        "Waiting on Archive..."
+    );
     assert_eq!(grouped(0), "0");
     assert_eq!(grouped(999), "999");
     assert_eq!(grouped(1000), "1,000");
@@ -48,20 +51,20 @@ fn a_slow_view_shows_its_bar_after_the_wait_and_drops_it_on_landing() {
     tick_on(LOADING_TICK + Duration::from_millis(1));
     assert!(app.get_loading_shown());
     assert!((app.get_loading_fraction() - 1.0 / 3.0).abs() < 1e-6);
-    assert_eq!(app.get_loading_line(), "Reading sidecars… 1 of 3");
+    assert_eq!(app.get_loading_line(), "Reading sidecars... 1 of 3");
     read_so_far(&state, 2);
     tick_on(LOADING_TICK + Duration::from_millis(1));
     assert!((app.get_loading_fraction() - 2.0 / 3.0).abs() < 1e-6);
-    assert_eq!(app.get_loading_line(), "Reading sidecars… 2 of 3");
+    assert_eq!(app.get_loading_line(), "Reading sidecars... 2 of 3");
     // The count standing still names the root the read waits on,
     // and the count is back as soon as it moves.
     let moved = state.borrow().views.library.progress_counted.unwrap();
     let later = moved + LOADING_WAITING_AFTER + Duration::from_millis(500);
     loading_tick(&mut state.borrow_mut(), &app, later);
-    assert_eq!(app.get_loading_line(), "Waiting on a…");
+    assert_eq!(app.get_loading_line(), "Waiting on a...");
     read_so_far(&state, 3);
     loading_tick(&mut state.borrow_mut(), &app, later);
-    assert_eq!(app.get_loading_line(), "Reading sidecars… 3 of 3");
+    assert_eq!(app.get_loading_line(), "Reading sidecars... 3 of 3");
     // The read itself counts: what it brings is all three.
     land(&state, &app, &worker, look.run());
     {
@@ -132,7 +135,11 @@ fn the_timer_gives_up_on_a_stopped_read_and_not_a_moving_one() {
     tick(READ_GIVES_UP + LOADING_STALLED);
     assert!(state.borrow().views.library.loading, "still moving: kept");
     assert!(app.get_loading_shown());
-    assert_eq!(app.get_loading_line(), "Waiting on a…", "ten seconds still");
+    assert_eq!(
+        app.get_loading_line(),
+        "Waiting on a...",
+        "ten seconds still"
+    );
     // Stopped: the count at 2 for longer than LOADING_STALLED.
     tick(READ_GIVES_UP + Duration::from_secs(5) + LOADING_STALLED + Duration::from_secs(1));
     {
@@ -170,13 +177,13 @@ fn a_late_total_shows_the_count_before_waiting() {
     let since = state.borrow().views.library.loading_since.unwrap();
     let tick = |at: Duration| loading_tick(&mut state.borrow_mut(), &app, since + at);
     tick(Duration::from_secs(2));
-    assert_eq!(app.get_loading_line(), "Waiting on a…", "nothing moved");
+    assert_eq!(app.get_loading_line(), "Waiting on a...", "nothing moved");
     let progress = state.borrow().views.library.progress.clone().unwrap();
     progress.total.store(2, Ordering::Relaxed);
     tick(Duration::from_millis(2100));
-    assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 2");
+    assert_eq!(app.get_loading_line(), "Reading sidecars... 0 of 2");
     tick(Duration::from_millis(3200));
-    assert_eq!(app.get_loading_line(), "Waiting on a…");
+    assert_eq!(app.get_loading_line(), "Waiting on a...");
     drop(look);
     state.borrow_mut().views.index_reader = None;
     drop(state);
@@ -195,7 +202,7 @@ fn a_view_given_up_on_or_overtaken_drops_its_bar() {
         Some(Instant::now() - READ_GIVES_UP - Duration::from_secs(1));
     tick_on(LOADING_TICK + Duration::from_millis(1));
     assert!(app.get_loading_shown(), "still reading, and said so");
-    assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 3");
+    assert_eq!(app.get_loading_line(), "Reading sidecars... 0 of 3");
     refresh_view(&state, &app, &worker);
     assert!(!app.get_loading_shown());
     assert!(!state.borrow().views.library.loading_timer.running());

@@ -149,6 +149,7 @@ const POINTER: &[Binding] = &[
 /// groups them.
 pub(crate) const TABLE: &[Group] = &[
     Group {
+        // Keys sheet: a heading
         title: marked::tr!("Moving around"),
         lines: &[
             // The Loupe's step: the grid's and the lightbox's arrows
@@ -194,6 +195,7 @@ pub(crate) const TABLE: &[Group] = &[
         ],
     },
     Group {
+        // Keys sheet: a heading
         title: marked::tr!("Views"),
         lines: &[
             act(
@@ -282,10 +284,12 @@ pub(crate) const TABLE: &[Group] = &[
         ],
     },
     Group {
+        // Keys sheet: a heading
         title: marked::tr!("Rating and sorting"),
         lines: &[
             shown(
                 &["1", "2", "3", "4", "5", "0"],
+                // Keys sheet: the key column for the rating keys
                 marked::tr!("1 to 5, 0"),
                 marked::tr!("Set a rating, or clear it"),
             ),
@@ -298,6 +302,7 @@ pub(crate) const TABLE: &[Group] = &[
             ),
             shown(
                 &["6", "7", "8", "9"],
+                // Keys sheet: the key column for the label keys
                 marked::tr!("6 to 9"),
                 marked::tr!("Red, yellow, green or blue label (again to clear)"),
             ),
@@ -411,6 +416,7 @@ pub(crate) const TABLE: &[Group] = &[
     // `ui/controls.slint`), not the handler's: no chords, and the
     // window has these keys back once no slider has the focus.
     Group {
+        // Keys sheet: a heading
         title: marked::tr!("Sliders"),
         lines: &[
             shown(
@@ -429,6 +435,7 @@ pub(crate) const TABLE: &[Group] = &[
         ],
     },
     Group {
+        // Keys sheet: a heading
         title: marked::tr!("Files, sheets and help"),
         lines: &[
             shown(
@@ -588,6 +595,7 @@ const LOUPE: View = View {
 /// chord with the word after it; the rest translated as one.
 fn shown_words(s: &str) -> String {
     if let Some((a, b)) = s.split_once(" or ") {
+        // Keys sheet: two keys that do the same
         return tr!("{} or {}", a, b);
     }
     match s.rsplit_once('+') {
@@ -1202,6 +1210,7 @@ pub(crate) fn binding_rows(map: &Keymap, mac: bool) -> Vec<BindRow> {
                 String::new()
             } else {
                 let others: Vec<String> = others.iter().map(|o| text(o)).collect();
+                // Keys sheet: a second key for the same action
                 platform(&tr!("Also: {}", others.join("; ")), mac)
             };
             out.push(BindRow {

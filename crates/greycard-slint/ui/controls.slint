@@ -1245,6 +1245,7 @@ export component EditSlider inherits Rectangle {
         y: (root.height - self.height) / 2;
         height: Theme.control-height - 4px;
         shown: root.text;
+        // Spoken by a screen reader: the typed value of the slider named {}
         label: @tr("{} value", root.label);
         enabled: root.enabled;
         nudges: true;
@@ -1753,11 +1754,15 @@ export component ThumbBadges inherits Rectangle {
     // What it shows, in words: "3 stars, pick, red".
     accessible-role: image;
     accessible-label: (root.rating > 0
+            // Spoken by a screen reader for a thumbnail: its stars
             ? @tr("{n} star" | "{n} stars" % min(root.rating, root.stars)) : "")
+        // Spoken by a screen reader for a thumbnail: its flag
         + (root.flag > 0 ? (root.rating > 0 ? ", " : "") + (root.flag == 2 ? @tr("reject") : @tr("pick")) : "")
         + (root.label > 0
             ? (root.rating > 0 || root.flag > 0 ? ", " : "")
+                // Spoken by a screen reader for a thumbnail: its label
                 + (root.label == 1 ? @tr("red") : root.label == 2 ? @tr("yellow") : root.label == 3 ? @tr("green")
+                    // Spoken by a screen reader for a thumbnail: its label
                     : root.label == 4 ? @tr("blue") : @tr("purple"))
             : "");
     width: badges.preferred-width;
@@ -1825,6 +1830,7 @@ export component ThumbMarks inherits Rectangle {
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
+            // Spoken by a screen reader: a thumbnail's badge
             accessible-label: @tr("Edited");
         }
         if root.exported: Image {
@@ -1833,6 +1839,7 @@ export component ThumbMarks inherits Rectangle {
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
+            // Spoken by a screen reader: a thumbnail's badge
             accessible-label: @tr("Exported");
         }
         if root.collected: Image {
@@ -1841,6 +1848,7 @@ export component ThumbMarks inherits Rectangle {
             width: root.glyph;
             height: root.glyph;
             accessible-role: image;
+            // Spoken by a screen reader: a thumbnail's badge
             accessible-label: @tr("In a collection");
         }
         if root.paired: Text {
@@ -1850,6 +1858,7 @@ export component ThumbMarks inherits Rectangle {
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
             accessible-role: text;
+            // Spoken by a screen reader: a thumbnail's badge
             accessible-label: @tr("With the camera's JPEG");
         }
     }
@@ -1874,7 +1883,9 @@ export component ThumbStack inherits Rectangle {
     background: touch.has-hover ? #000000cc : #00000080;
     accessible-role: button;
     accessible-label: root.open
+        // Spoken by a screen reader: a thumbnail's stack badge
         ? @tr("Frame {} of a stack of {}, open", root.place, root.count)
+        // Spoken by a screen reader: a thumbnail's stack badge
         : @tr("Stack of {}", root.count);
     accessible-action-default => { root.clicked(); }
     row := HorizontalLayout {
@@ -1916,6 +1927,7 @@ export component ThumbTag inherits Rectangle {
     border-radius: Theme.radius-sm;
     background: #00000080;
     accessible-role: text;
+    // Spoken by a screen reader: a thumbnail's version badge
     accessible-label: @tr("Version {}", root.name);
     words := Text {
         x: root.glyph / 3;
@@ -2245,6 +2257,7 @@ export component ScrollPane {
         width: ScrollBars.band;
         height: root.max-x > 0 ? parent.height - ScrollBars.band : parent.height;
         fades: false;
+        // Spoken by a screen reader: a scroll bar
         label: @tr("Scroll");
         scroll: -flick.content-y;
         max: root.max-y;

@@ -60,6 +60,7 @@ export component WhiteBalanceSection inherits Section {
         toggled => { root.as-shot-toggled(); }
     }
     if root.local && !root.picture: Toggle {
+        // White balance in a mask: take the picture's own
         label: @tr("Follow global");
         enabled: root.live;
         checked <=> root.relative;
@@ -133,6 +134,7 @@ export component WhiteBalanceSection inherits Section {
             clicked => { root.wb-auto(); }
         }
         PanelButton {
+            // White balance: the dropper's button, click something neutral
             text: @tr("Neutral");
             icon: @image-url("../icons/pipette.svg");
             // On a mask the patch is made neutral under the mask, and
@@ -353,6 +355,7 @@ export component BlackWhiteSection inherits Section {
     // needing the switch thrown first.
     Segmented {
         options: ["None", "Red", "Orange", "Yellow", "Green", "Blue"];
+        // Black & white: the color filters, None for no filter
         labels: [@tr("None"), @tr("Red"), @tr("Orange"), @tr("Yellow"), @tr("Green"), @tr("Blue")];
         current <=> root.bw-filter;
         selected(v) => { root.bw-filter-changed(); }
@@ -364,6 +367,7 @@ export component BlackWhiteSection inherits Section {
         selected(i) => { root.bw-band-changed(); }
     }
     EditSlider {
+        // Black & white: the filter's slider
         label: @tr("Weight");
         enabled: root.bw-enabled;
         // Dark at the left, the band's own
@@ -522,6 +526,7 @@ export component GradingSection inherits Section {
         enabled: root.grading-enabled;
         chosen: root.grade-range == root.grade-big;
         in-hand: root.wheel-hand == root.grade-big;
+        // Spoken by a screen reader: the color grading wheel shown large
         accessible-label: @tr("Enlarged wheel");
         pressed(x, y, hold) => { root.grade-press(root.grade-big, x, y, hold); }
         moved(x, y) => { root.grade-move(root.grade-big, x, y); }
@@ -538,6 +543,7 @@ export component GradingSection inherits Section {
                 enabled: root.grading-enabled;
                 chosen: root.grade-range == i;
                 in-hand: root.wheel-hand == i;
+                // Spoken by a screen reader: the color grading wheel for {}
                 accessible-label: @tr("{} wheel", name);
                 pressed(x, y, hold) => { root.grade-press(i, x, y, hold); }
                 moved(x, y) => { root.grade-move(i, x, y); }
@@ -549,6 +555,7 @@ export component GradingSection inherits Section {
                 border-radius: Theme.radius-sm;
                 background: name-area.has-hover ? Theme.hover : transparent;
                 accessible-role: button;
+                // Color grading: show the {} wheel large, or small again
                 accessible-label: root.grade-big == i ? @tr("Shrink {}", name) : @tr("Enlarge {}", name);
                 accessible-action-default => { name-area.choose(); }
                 name-area := TouchArea {
@@ -712,6 +719,7 @@ export component TintSection inherits Section {
         changed(v) => { root.tint-changed(); }
     }
     EditSlider {
+        // Tint section: the slider
         label: @tr("Amount");
         enabled: root.tint-enabled;
         minimum: 0;

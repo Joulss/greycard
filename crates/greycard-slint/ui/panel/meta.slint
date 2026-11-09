@@ -21,6 +21,7 @@ component WordChip inherits Rectangle {
     border-color: Theme.border;
     background: Theme.raised;
     accessible-role: button;
+    // Spoken by a screen reader: a keyword chip
     accessible-label: @tr("Keyword {}", root.word);
     accessible-action-default => { root.removed(); }
     HorizontalLayout {
@@ -126,6 +127,7 @@ export component MetaSection inherits Section {
         text <=> root.title-text;
         accessible-label: @tr("Frame title");
         enabled: root.frame-meta-on;
+        // Metadata: the Title hint when the chosen frames' titles differ
         placeholder-text: root.frame-title-mixed ? @tr("Mixed") : "";
         edited(t) => { root.title-dirty = true; }
         // Enter sends it and gives the keys back; the focus going
@@ -175,6 +177,7 @@ export component MetaSection inherits Section {
     }
     keyword-field := LineEdit {
         text <=> root.keyword-text;
+        // Metadata: the keyword field's hint
         accessible-label: @tr("Add keywords");
         enabled: root.frame-meta-on;
         placeholder-text: @tr("Add keywords");

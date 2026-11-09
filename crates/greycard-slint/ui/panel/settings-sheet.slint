@@ -42,6 +42,7 @@ component BindChip inherits Rectangle {
     in property <string> does;
     in property <bool> warn;
     callback listen();
+    // Keys: the binding's field while it listens
     property <string> shown: self.on ? @tr("Press a key") : root.keys;
     width: 112px;
     height: Theme.control-height;
@@ -249,9 +250,12 @@ export component SettingsSheet inherits Rectangle {
     }
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
+    // Sidecars: the move row's count
     property <string> elsewhere-words: @tr("{n} sidecar" | "{n} sidecars" % root.sidecars-elsewhere);
     property <string> frames-words: root.open-frames == 1
+        // Sidecars: what the move row moves
         ? @tr("the open frame")
+        // Sidecars: what the move row moves
         : @tr("the {n} open frame" | "the {n} open frames" % root.open-frames);
     /// The category shown, one of `categories`; kept between runs by
     /// the host, which hears of a change.
@@ -271,6 +275,7 @@ export component SettingsSheet inherits Rectangle {
     property <[string]> categories: ["Interface", "Library", "Editing", "Models", "Keys", "About"];
     /// The categories in words, by index: the names above are what is
     /// kept and compared.
+    // Settings: the category names on the sheet's left
     property <[string]> category-words: [@tr("Interface"), @tr("Library"), @tr("Editing"), @tr("Models"), @tr("Keys"), @tr("About")];
     property <length> column-w: 132px;
     property <length> pane-w: 440px;
@@ -528,6 +533,7 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: @tr("Scroll bars"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Fade", "Stay"];
+                                    // Scroll bars: fade when idle, or stay
                                     labels: [@tr("Fade"), @tr("Stay")];
                                     current <=> root.scroll-bars;
                                     selected => { root.scroll-bars-changed(); }
@@ -538,6 +544,7 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: @tr("Scroll bar size"); width: root.interface-label-w; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Thin", "Medium", "Wide"];
+                                    // Scroll bar size
                                     labels: [@tr("Thin"), @tr("Medium"), @tr("Wide")];
                                     current <=> root.scroll-bar-size;
                                     selected => { root.scroll-bar-size-changed(); }
@@ -562,6 +569,7 @@ export component SettingsSheet inherits Rectangle {
                                 wrap: word-wrap;
                             }
                             Toggle {
+                                // Interface: the develop panel's sections
                                 label: @tr("One section open at a time");
                                 checked <=> root.one-section;
                                 toggled => { root.one-section-changed(); }
@@ -763,6 +771,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                             if root.thumb-cache-on: HorizontalLayout {
                                 spacing: Theme.space-2;
+                                // Thumbnails: before the size field
                                 Text { text: @tr("Keep up to"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
@@ -771,6 +780,7 @@ export component SettingsSheet inherits Rectangle {
                                     input-type: number;
                                     accepted => { root.thumb-cache-cap-changed(); }
                                 }
+                                // Thumbnails: after the size field
                                 Text { text: @tr("MB, 0 for none"); color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             if root.thumb-cache-on: HorizontalLayout {
@@ -800,6 +810,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
+                                // Network folders: before the minutes field
                                 Text { text: @tr("Rescan every"); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 LineEdit {
                                     width: 96px;
@@ -808,6 +819,7 @@ export component SettingsSheet inherits Rectangle {
                                     input-type: number;
                                     accepted => { root.network-poll-changed(); }
                                 }
+                                // Network folders: after the minutes field
                                 Text { text: @tr("minutes, 0 for never"); color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                             }
                             Text {
@@ -848,6 +860,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
+                                // Editing: the monitor profile row
                                 Text { text: @tr("Monitor"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 monitor-row := Segmented {
                                     options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
@@ -887,6 +900,7 @@ export component SettingsSheet inherits Rectangle {
                             }
                             HorizontalLayout {
                                 spacing: Theme.space-2;
+                                // Editing: the soft proof row
                                 Text { text: @tr("Soft proof"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 proof-row := Segmented {
                                     options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
@@ -946,6 +960,7 @@ export component SettingsSheet inherits Rectangle {
                                 Text { text: @tr("Aspect"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                                 Segmented {
                                     options: ["Original", "Last used", "Free"];
+                                    // Editing: the aspect a new crop opens at
                                     labels: [@tr("aspect" => "Original"), @tr("Last used"), @tr("Free")];
                                     current <=> root.crop-start;
                                     selected => { root.crop-start-changed(); }
@@ -1077,6 +1092,7 @@ export component SettingsSheet inherits Rectangle {
                                     HorizontalLayout {
                                         alignment: start;
                                         PanelButton {
+                                            // Export presets: the button that adds one
                                             text: @tr("Add...");
                                             clicked => { root.edit-in-add(); }
                                         }
@@ -1247,6 +1263,7 @@ export component SettingsSheet inherits Rectangle {
                             spacing: Theme.space-3;
                             HorizontalLayout {
                                 spacing: Theme.space-2;
+                                // About: the version row
                                 Text { text: @tr("Version"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 Text { text: root.version; font-size: Theme.font-sm; color: Theme.text-secondary; horizontal-stretch: 1; }
                             }
@@ -1321,6 +1338,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.caches-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: caches-path.preferred-height;
+                                // About: the cache folder's row
                                 Text { text: @tr("Caches"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 caches-path := Text {
                                     text: root.caches-dir;
@@ -1337,6 +1355,7 @@ export component SettingsSheet inherits Rectangle {
                             if root.log-dir != "": HorizontalLayout {
                                 spacing: Theme.space-2;
                                 min-height: log-path.preferred-height;
+                                // About: the log folder's row
                                 Text { text: @tr("Log"); width: 68px; color: Theme.text; font-size: Theme.font-sm; }
                                 log-path := Text {
                                     text: root.log-dir;

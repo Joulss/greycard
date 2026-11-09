@@ -740,6 +740,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
 
 /// The adjustments' names on the panel's list, Global first.
 pub(crate) fn show_names(edit: &Edit, app: &App) {
+    // The adjustments list: the whole-picture row above the masks
     let mut names = vec![slint::SharedString::from(tr!("Global"))];
     names.extend(
         edit.adjustments
