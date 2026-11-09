@@ -11,8 +11,19 @@ design note behind it.
   sit on separate, darker, square cards. Their titles keep the
   original size and colors. Folders and Presets align their rows and
   chevrons; inner borders and section rules are gone. Sliders sit
-  closer together, and segmented controls have no outer border
+  closer together, with more room before the actions below them
   (issue 80)
+  ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-sections-on-cards.md)).
+- The panel and scope choices read as square tabs; other segmented
+  choices can keep equal widths, a border, or rounded corners as needed.
+  Panel buttons lose their outlines, and small spacing changes tidy the
+  controls and lists
+  ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-sections-on-cards.md)).
+- The scope choices and Selection sit inside the scope box. All scope
+  views share its height, and Vector keeps the photo information in
+  view, so changing views no longer shifts the controls below. A gap
+  remains below the panel tabs as sections scroll, including below the
+  pinned Masks list; vertical scrollbar thumbs are centered at rest
   ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-sections-on-cards.md)).
 
 ## 0.11.0, 2026-11-09
