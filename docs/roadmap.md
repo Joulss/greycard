@@ -185,8 +185,6 @@ the reasoning lives in `docs/notes.md`.
 
 - [ ] A Windows installer (Inno Setup or WiX) from the release
       workflow, signed
-- [ ] i18n foundation: every window string translatable, one catalog,
-      a Language setting (issue 75, §616)
 
 ### Speed
 
@@ -637,10 +635,13 @@ clears or a tester asks for it.
       sandbox's cache; the one install path Linux testers ask for
       first, and where the other open editors are found (an outside
       review, 2026-11-02)
-- [ ] Translations: the window's strings through Slint's `@tr` and a
-      gettext catalog, English the source, the first languages the
-      ones testers offer (issue 75 offers French); the guide and the
+- [ ] The first translations, the languages testers offer (issue 75
+      offers French), on the §616 catalog; the English strings read
+      once for wording before a translator starts; the guide and the
       release notes stay English (an outside review, 2026-11-02)
+- [ ] A `with_translation_domain` setter in slint-build, patched on
+      the fork and sent upstream, in place of the build script
+      renaming the package to pick the catalog (§616)
 - [ ] Every section switch and button a bindable action in the keys
       table (§390), so a key applies the lens correction or opens the
       crop; a key that applies a named preset beside it
