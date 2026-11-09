@@ -1071,6 +1071,11 @@ clears or a tester asks for it.
       creeping when the drag nears its edge (2026-11-06)
 - [ ] Sync from the open frame onto the selection by a middle-click
       on it, as DaVinci does (issue 56, 2026-10-30)
+- [ ] The open frame changed within a selection without letting the
+      selection go, as Camera Raw's Alt+click and Lightroom's click on
+      a chosen frame do (issue 110, 2026-11-09)
+- [ ] Edits made to every selected frame as they are made, the
+      sections chosen once (issue 110, 2026-11-09)
 - [ ] Dust and scratches on a film scan found and healed in one go,
       each spot listed so a wrong one can be removed or redrawn; the
       camera-scanning workflow alongside digital raws (reddit,
@@ -1109,6 +1114,15 @@ clears or a tester asks for it.
 - [ ] A tablet in hand: the brush's size set without a wheel and seen
       while its slider drags, the pen's pressure on the flow, and the
       shortcuts a pen can reach (discussion 59, 2026-11-06)
+- [ ] A luminance curve beside the channels', bending the tone and
+      leaving the color; kin to the master curve on a norm
+      (discussion 59, 2026-11-09)
+- [ ] A root's row and "With subfolders" agreeing: the row lists
+      everything under the root while the switch shows off and the
+      tree marks the root as if for its own frames; waits on which
+      way to settle it (discussion 59, 2026-11-09)
+- [ ] Alt+Left and Alt+Right as back and forward beside the mouse's
+      buttons (discussion 59, 2026-11-09)
 - [ ] An export batch timed end to end on a few hundred edited
       frames, masks and fills included, and the slow stage found; a
       tester's job took days against hours in Lightroom, the switching
