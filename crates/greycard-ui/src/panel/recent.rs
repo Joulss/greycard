@@ -55,8 +55,9 @@ fn folder_of(files: &[PathBuf], canonical: &HashMap<PathBuf, PathBuf>) -> Option
 /// The list the browser now holds is open: the folder it is, if it is
 /// one, recorded at the front of Recently opened and named in the
 /// pane. A run with no settings file to write (a capture, an export,
-/// a test) keeps the list in the window only.
-pub(crate) fn opened(st: &mut State, app: &App) {
+/// a test) keeps the list in the window only. `left` is the frame
+/// current on the list before, for the history.
+pub(crate) fn opened(st: &mut State, app: &App, left: Option<PathBuf>) {
     st.views.recent.open = match &st.views.view {
         crate::roots::View::Folder => folder_of(&st.files, &st.views.library.canonical),
         // A folder of a root's tree is a folder opened, with or without
@@ -86,7 +87,7 @@ pub(crate) fn opened(st: &mut State, app: &App) {
     }
     app.set_open_folder_note("".into());
     let here = crate::panel::visited::place_of(st);
-    st.views.visited.landed(here);
+    st.views.visited.landed(here, left);
     show(st, app);
     // RawTherapee's profiles beside its frames, offered once.
     crate::panel::rawtherapee::folder_opened(st, app);

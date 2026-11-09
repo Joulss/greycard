@@ -14,6 +14,10 @@ design note behind it.
 
 ### Fixes
 
+- The mouse's back and forward buttons come back to a folder, a root,
+  or a collection on the frame you left it on, not the first
+  (discussion 59,
+  [§620](https://github.com/jessolmstead/greycard/blob/master/docs/notes/620-back-and-forward-come-back-on-the-frame-left.md)).
 - The shadows' clipping paint covers only what is black. It had also
   covered any color outside the output space at any brightness, a
   third of one frame in dim warm light

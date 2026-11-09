@@ -330,7 +330,9 @@ pub(crate) fn leave(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, loupe: b
             true
         }
         (View::Folder, None) => false,
-        (view, _) => crate::roots::open_view_on(state, app, worker, view, Some(path)),
+        (view, _) => {
+            crate::roots::open_view_on(state, app, worker, view, crate::roots::On::Frame(path))
+        }
     };
     if !sent {
         crate::roots::open_nothing(state, app, worker);

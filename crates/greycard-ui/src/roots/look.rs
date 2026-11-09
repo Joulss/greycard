@@ -344,10 +344,8 @@ impl Look {
         // The frame to open: the file last open matched to the list by
         // its folder's canonical form, which is in hand here.
         let select = match (&self.purpose, &files) {
-            (Purpose::Open { select, .. }, Some(files)) if !files.is_empty() => match select {
-                Select::Row(i) => (*i).min(files.len() - 1),
-                Select::Last(None) => 0,
-                Select::Last(Some(last)) => {
+            (Purpose::Open { select, .. }, Some(files)) if !files.is_empty() => {
+                let find = |last: &PathBuf| {
                     let want = greycard_library::key_path(last);
                     files
                         .iter()
@@ -357,9 +355,15 @@ impl Look {
                             }
                             _ => false,
                         })
-                        .unwrap_or(0)
+                };
+                match select {
+                    Select::Row(i) => (*i).min(files.len() - 1),
+                    Select::Last(last) => last.as_ref().and_then(find).unwrap_or(0),
+                    Select::Left(left, last) => find(left)
+                        .or_else(|| last.as_ref().and_then(find))
+                        .unwrap_or(0),
                 }
-            },
+            }
             _ => 0,
         };
         // The frame on screen under a root this read found offline is not

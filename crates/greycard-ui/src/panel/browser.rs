@@ -1803,6 +1803,18 @@ pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
 /// not one, is said and the list left alone rather than emptied under
 /// the user's feet.
 pub(crate) fn open_folder(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+    open_folder_on(state, app, worker, dir, None);
+}
+
+/// [`open_folder`], on `left` when the folder has it: the frame a place
+/// on the history was left on (§594), else as an open by hand.
+pub(crate) fn open_folder_on(
+    state: &Rc<Shared>,
+    app: &App,
+    worker: &Rc<Worker>,
+    dir: &Path,
+    left: Option<PathBuf>,
+) {
     // A folder opened by hand while the index is still opening wins
     // over the view the launch asked for: that view is not opened
     // over it once the index is open.
@@ -1810,12 +1822,16 @@ pub(crate) fn open_folder(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, di
     state.borrow_mut().views.visited.opened_by_hand();
     let last = settings::Settings::load().shared.last_file;
     let last = (!last.is_empty()).then(|| PathBuf::from(last));
+    let select = match left {
+        Some(left) => crate::roots::Select::Left(left, last),
+        None => crate::roots::Select::Last(last),
+    };
     crate::roots::open_listing(
         state,
         app,
         worker,
         crate::roots::Listing::Folder(dir.to_path_buf()),
-        crate::roots::Select::Last(last),
+        select,
     );
 }
 
@@ -1945,6 +1961,8 @@ pub(crate) fn open_loaded(
     drop_placeholder(&mut st, app);
     st.culling.hold = None;
     st.culling.prefetch.want(Vec::new());
+    // The frame the list is left on, for the history's back and forward.
+    let left = crate::panel::visited::frame_of(&st);
     st.current = None;
     crate::panel::look_preview::end(&st, app);
     st.views.picked.clear();
@@ -2007,7 +2025,7 @@ pub(crate) fn open_loaded(
     // place (`wanted`, cleared when the index fails or there is none,
     // so no view is waited on for ever).
     if st.views.library.wanted.is_none() {
-        crate::panel::recent::opened(&mut st, app);
+        crate::panel::recent::opened(&mut st, app, left);
     }
     let ids = started.elapsed();
     // What the command line asked of the first frame, onto its

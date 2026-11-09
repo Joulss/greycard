@@ -88,21 +88,33 @@ pub(super) fn read_order(st: &State, view: &View) -> Option<greycard_library::Or
 /// what it has meanwhile. An open is asked for by hand, so every folder
 /// is looked at again.
 pub(crate) fn open_view(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, view: View) {
-    open_view_on(state, app, worker, view, None);
+    open_view_on(state, app, worker, view, On::Screen);
 }
 
-/// [`open_view`], starting with `on` on the frame it names when the
-/// view has it (with none named, on the first) rather than on the
-/// frame on screen: the way back from the export queue's view, whose
-/// frame is the queue's. False when no read was sent: the index not
-/// open yet (the view opened once it is), the collection gone, or the
-/// index unreadable.
+/// Which frame a view opens on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum On {
+    /// The frame on screen when the view has it, else the file last
+    /// open, else the first.
+    Screen,
+    /// The frame named when the view has it, with none named or not
+    /// there the first: the way back from the export queue's view,
+    /// whose frame is the queue's.
+    Frame(Option<PathBuf>),
+    /// The frame a place on the history was left on (§594) when the
+    /// view has it, else as `Screen`.
+    Left(PathBuf),
+}
+
+/// [`open_view`], starting on the frame `on` says. False when no read
+/// was sent: the index not open yet (the view opened once it is), the
+/// collection gone, or the index unreadable.
 pub(crate) fn open_view_on(
     state: &Rc<Shared>,
     app: &App,
     _worker: &Rc<Worker>,
     view: View,
-    on: Option<Option<PathBuf>>,
+    on: On,
 ) -> bool {
     let mut st = state.borrow_mut();
     st.views.visited.opened_by_hand();
@@ -236,9 +248,8 @@ pub(crate) fn open_nothing(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
     show(&st, app);
 }
 
-/// A view's read sent off the window's thread: the frame on screen (or
-/// the one `on` names, or the first when it names none) kept when it is
-/// in the new list, the folders
+/// A view's read sent off the window's thread: the frame `on` says
+/// kept when it is in the new list, the folders
 /// looked at again, and the bar put up if the read is slow. `order` is
 /// what it is read in.
 // The view, its source, its count and time asked, and what the read keeps.
@@ -252,7 +263,7 @@ fn send_view(
     asked: Instant,
     at: Option<String>,
     order: Option<greycard_library::Order>,
-    on: Option<Option<PathBuf>>,
+    on: On,
 ) {
     let mut st = state.borrow_mut();
     // As a folder's listing: a batch of sidecars out lands before
@@ -261,15 +272,19 @@ fn send_view(
     st.views.view_generation += 1;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
-    let last = if count == 0 {
-        None
+    let screen = |st: &State| {
+        crate::panel::visited::frame_of(st).or_else(|| {
+            let last = settings::Settings::load().shared.last_file;
+            (!last.is_empty()).then(|| PathBuf::from(last))
+        })
+    };
+    let select = if count == 0 {
+        Select::Last(None)
     } else {
         match on {
-            Some(on) => on,
-            None => st.current.and_then(|c| st.path_at(c)).cloned().or_else(|| {
-                let last = settings::Settings::load().shared.last_file;
-                (!last.is_empty()).then(|| PathBuf::from(last))
-            }),
+            On::Screen => Select::Last(screen(&st)),
+            On::Frame(on) => Select::Last(on),
+            On::Left(left) => Select::Left(left, screen(&st)),
         }
     };
     st.views.library.readable.clear();
@@ -300,7 +315,7 @@ fn send_view(
         purpose: Purpose::Open {
             view,
             asked,
-            select: Select::Last(last),
+            select,
         },
     };
     drop(st);

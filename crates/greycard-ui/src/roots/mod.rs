@@ -88,7 +88,7 @@ pub(crate) use self::{
         add_and_open, edit_roots, one_root_named, recount, root_name, said, show, taken_from_file,
     },
     view::{
-        loading_words, open_listing, open_nothing, open_view, open_view_on, read_view_now,
+        On, loading_words, open_listing, open_nothing, open_view, open_view_on, read_view_now,
         refresh_view,
     },
     watcher::{poll_every, restart_poll, start},
@@ -343,6 +343,9 @@ pub(crate) enum Select {
     /// off the window's thread, since matching a path to the list makes
     /// folders canonical.
     Last(Option<PathBuf>),
+    /// The first file, if it is in the list (the frame a place on the
+    /// history was left on, §594), else as `Last` the second.
+    Left(PathBuf, Option<PathBuf>),
 }
 
 /// What a folder's open lists.

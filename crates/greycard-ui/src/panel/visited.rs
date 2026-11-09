@@ -10,7 +10,9 @@
 //! else land first (a tile clicked meanwhile), or nothing land at all
 //! (a folder emptied meanwhile), the history holds what was shown. A
 //! place no longer there is dropped, and one not answering passed over
-//! and kept, each with a line in the log. The history is the window's,
+//! and kept, each with a line in the log. Each place on a stack keeps
+//! the frame current when it was left, and back or forward opens it on
+//! that frame when its list still has it. The history is the window's,
 //! for the session.
 
 use std::fmt;
@@ -50,6 +52,15 @@ impl fmt::Display for Place {
     }
 }
 
+/// A place on a stack, with the frame current when it was left: its
+/// file, as the selection keeps files (§156), not a row the filter and
+/// the sort move. None when no frame was current.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Stop {
+    place: Place,
+    frame: Option<PathBuf>,
+}
+
 /// A press's place asked for and not landed yet: where it is on the
 /// stack it was taken from, counted from the nearest, and the places
 /// nearer it found gone.
@@ -65,12 +76,15 @@ struct Asked {
 #[derive(Default)]
 pub(crate) struct Visited {
     /// Nearest last.
-    back: Vec<Place>,
+    back: Vec<Stop>,
     /// Nearest last.
-    forward: Vec<Place>,
+    forward: Vec<Stop>,
     /// The last place that landed. A list that is no place (the export
     /// queue, files from several folders) leaves it be.
     here: Option<Place>,
+    /// The list shown is the one `here` names: false over a list that
+    /// is no place, whose frame is not the place's to keep.
+    shown: bool,
     asked: Option<Asked>,
     /// A press's look at the disk is out; a press meanwhile is dropped.
     looking: bool,
@@ -95,18 +109,23 @@ enum Answer {
 }
 
 impl Visited {
-    /// The browser lists `place` now. The place here (a list read
-    /// again) and no place (the export queue) move nothing; a place on
-    /// the way a press asked for moves the stacks that far; any other
-    /// is a new open.
-    pub(crate) fn landed(&mut self, place: Option<Place>) {
+    /// The browser lists `place` now, `left` the frame current on the
+    /// list before it. The place here (a list read again) and no place
+    /// (the export queue) move nothing; a place on the way a press
+    /// asked for moves the stacks that far; any other is a new open.
+    /// The place left goes on a stack with `left`.
+    pub(crate) fn landed(&mut self, place: Option<Place>, left: Option<PathBuf>) {
         let Some(place) = place else {
+            self.shown = false;
             return;
         };
         if self.here.as_ref() == Some(&place) {
+            self.shown = true;
             return;
         }
-        let here = self.here.take();
+        let frame = left.filter(|_| self.shown);
+        self.shown = true;
+        let here = self.here.take().map(|place| Stop { place, frame });
         if let Some(asked) = self.asked.take()
             && let Some(at) = self.on_the_way(&asked, &place)
         {
@@ -149,13 +168,13 @@ impl Visited {
     fn on_the_way(&mut self, asked: &Asked, place: &Place) -> Option<usize> {
         let (from, _) = self.stacks(asked.back);
         let n = from.len();
-        if asked.at >= n || from[n - 1 - asked.at] != asked.to {
+        if asked.at >= n || from[n - 1 - asked.at].place != asked.to {
             return None;
         }
-        (0..=asked.at).find(|d| !asked.gone.contains(d) && from[n - 1 - d] == *place)
+        (0..=asked.at).find(|d| !asked.gone.contains(d) && from[n - 1 - d].place == *place)
     }
 
-    fn stacks(&mut self, back: bool) -> (&mut Vec<Place>, &mut Vec<Place>) {
+    fn stacks(&mut self, back: bool) -> (&mut Vec<Stop>, &mut Vec<Stop>) {
         if back {
             (&mut self.back, &mut self.forward)
         } else {
@@ -166,11 +185,12 @@ impl Visited {
     /// The place `at` down the stack landed: it and every place nearer
     /// it taken from the stack, and the place left given to the other
     /// with those passed over that are not gone, the nearest to the
-    /// place landed on top, as a browser's back of several steps.
-    fn way_taken(&mut self, back: bool, at: usize, gone: &[usize], here: Option<Place>) {
+    /// place landed on top, as a browser's back of several steps. Each
+    /// keeps its frame.
+    fn way_taken(&mut self, back: bool, at: usize, gone: &[usize], here: Option<Stop>) {
         let (from, onto) = self.stacks(back);
         let n = from.len();
-        let passed: Vec<Place> = from.drain(n - 1 - at..).rev().collect();
+        let passed: Vec<Stop> = from.drain(n - 1 - at..).rev().collect();
         if let Some(here) = here {
             push(onto, here);
         }
@@ -198,11 +218,17 @@ impl Visited {
     }
 }
 
-fn push(stack: &mut Vec<Place>, place: Place) {
-    stack.push(place);
+fn push(stack: &mut Vec<Stop>, stop: Stop) {
+    stack.push(stop);
     if stack.len() > KEPT {
         stack.remove(0);
     }
+}
+
+/// The frame current now, as a stack keeps it: one frame, a selection
+/// of several kept as the frame current.
+pub(crate) fn frame_of(st: &State) -> Option<PathBuf> {
+    st.current.and_then(|c| st.path_at(c)).cloned()
 }
 
 /// The place the browser lists now, after `recent::opened` has named
@@ -220,8 +246,9 @@ pub(crate) fn place_of(st: &State) -> Option<Place> {
 
 /// `place` opened as its own way of opening it would: a folder under
 /// a root as its row in the tree opens it, the switch as it stands; a
-/// folder under none as Open folder does.
-fn open(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, place: &Place) {
+/// folder under none as Open folder does. On `frame` when its list has
+/// it, else on the frame that way would start on.
+fn open(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, place: &Place, frame: Option<PathBuf>) {
     let view = {
         let st = state.borrow();
         match place {
@@ -236,8 +263,13 @@ fn open(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, place: &Place) {
         }
     };
     match (view, place) {
-        (Some(view), _) => crate::roots::open_view(state, app, worker, view),
-        (None, Place::Folder(dir)) => crate::panel::browser::open_folder(state, app, worker, dir),
+        (Some(view), _) => {
+            let on = frame.map_or(crate::roots::On::Screen, crate::roots::On::Left);
+            crate::roots::open_view_on(state, app, worker, view, on);
+        }
+        (None, Place::Folder(dir)) => {
+            crate::panel::browser::open_folder_on(state, app, worker, dir, frame);
+        }
         (None, _) => {}
     }
 }
@@ -371,7 +403,7 @@ struct Press {
     back: bool,
     generation: u64,
     /// The stack as it was, nearest last.
-    stack: Vec<Place>,
+    stack: Vec<Stop>,
     /// The first candidate, from the nearest: past a place the last
     /// press this way asked for and has not landed.
     start: usize,
@@ -410,7 +442,7 @@ pub(crate) fn go(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, back: bool)
             .iter()
             .rev()
             .skip(start)
-            .map(|p| check(&st, p))
+            .map(|s| check(&st, &s.place))
             .collect();
         st.views.visited.looking = true;
         let press = Press {
@@ -486,14 +518,15 @@ fn arrive(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, press: Press, answ
             );
             return;
         }
-        let places: Vec<&Place> = press.stack.iter().rev().skip(press.start).collect();
+        let stops: Vec<&Stop> = press.stack.iter().rev().skip(press.start).collect();
         let mut gone = press.gone.clone();
         let mut found = None;
-        for (k, (place, answer)) in places.iter().zip(answers).enumerate() {
+        for (k, (stop, answer)) in stops.iter().zip(answers).enumerate() {
             let at = press.start + k;
+            let place = &stop.place;
             match answer {
                 Answer::There => {
-                    found = Some((at, (*place).clone()));
+                    found = Some((at, (*stop).clone()));
                     break;
                 }
                 Answer::Gone(why) => {
@@ -505,7 +538,7 @@ fn arrive(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, press: Press, answ
                 }
             }
         }
-        let Some((at, to)) = found else {
+        let Some((at, Stop { place: to, frame })) = found else {
             // A press past one still out leaves that one be: only the
             // places this press found gone, all beyond it, are dropped,
             // so its place stays where it was asked for.
@@ -530,11 +563,12 @@ fn arrive(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, press: Press, answ
                 to: to.clone(),
             },
             to,
+            frame,
         )
     };
     // Opened as by hand, which lets go of any ask, and then asked.
-    let (asked, to) = to;
-    open(state, app, worker, &to);
+    let (asked, to, frame) = to;
+    open(state, app, worker, &to, frame);
     state.borrow_mut().views.visited.asked = Some(asked);
 }
 
@@ -578,6 +612,18 @@ mod tests {
 
     fn folder(name: &str) -> Place {
         Place::Folder(PathBuf::from(name))
+    }
+
+    /// A folder on a stack, left with no frame current.
+    fn stop(name: &str) -> Stop {
+        Stop {
+            place: folder(name),
+            frame: None,
+        }
+    }
+
+    fn places(stack: &[Stop]) -> Vec<Place> {
+        stack.iter().map(|s| s.place.clone()).collect()
     }
 
     /// A mouse button pressed and let go at `at`, as the window has it.
@@ -762,10 +808,10 @@ mod tests {
     fn the_stacks_move_when_the_place_asked_for_lands() {
         let mut v = Visited::default();
         for p in ["a", "b", "c", "d"] {
-            v.landed(Some(folder(p)));
+            v.landed(Some(folder(p)), None);
         }
-        v.landed(Some(folder("d")));
-        assert_eq!(v.back, [folder("a"), folder("b"), folder("c")]);
+        v.landed(Some(folder("d")), None);
+        assert_eq!(places(&v.back), [folder("a"), folder("b"), folder("c")]);
         // Back three, b found gone on the way.
         v.asked = Some(Asked {
             back: true,
@@ -773,9 +819,13 @@ mod tests {
             gone: vec![1],
             to: folder("a"),
         });
-        v.landed(Some(folder("a")));
+        v.landed(Some(folder("a")), None);
         assert!(v.back.is_empty());
-        assert_eq!(v.forward, [folder("d"), folder("c")], "c next forward");
+        assert_eq!(
+            places(&v.forward),
+            [folder("d"), folder("c")],
+            "c next forward"
+        );
         assert_eq!(v.here, Some(folder("a")));
     }
 
@@ -784,16 +834,16 @@ mod tests {
     #[test]
     fn a_superseded_ask_leaves_what_was_shown() {
         let mut v = Visited::default();
-        v.landed(Some(folder("a")));
-        v.landed(Some(folder("b")));
+        v.landed(Some(folder("a")), None);
+        v.landed(Some(folder("b")), None);
         v.asked = Some(Asked {
             back: true,
             at: 0,
             gone: Vec::new(),
             to: folder("a"),
         });
-        v.landed(Some(folder("c")));
-        assert_eq!(v.back, [folder("a"), folder("b")]);
+        v.landed(Some(folder("c")), None);
+        assert_eq!(places(&v.back), [folder("a"), folder("b")]);
         assert!(v.forward.is_empty());
         assert!(v.asked.is_none());
     }
@@ -824,7 +874,7 @@ mod tests {
         press(&state, &app, &worker, true);
         assert_eq!(open_now(&state), Some(a.clone()), "past b");
         assert_eq!(
-            state.borrow().views.visited.forward,
+            places(&state.borrow().views.visited.forward),
             [Place::Folder(c.clone()), Place::Folder(b.clone())]
         );
         drop(state);
@@ -836,13 +886,13 @@ mod tests {
     #[test]
     fn the_queue_leaves_the_history_be() {
         let mut v = Visited::default();
-        v.landed(Some(folder("a")));
-        v.landed(Some(folder("b")));
-        v.forward.push(folder("c"));
-        v.landed(None);
-        v.landed(Some(folder("b")));
-        assert_eq!(v.back, [folder("a")]);
-        assert_eq!(v.forward, [folder("c")]);
+        v.landed(Some(folder("a")), None);
+        v.landed(Some(folder("b")), None);
+        v.forward.push(stop("c"));
+        v.landed(None, None);
+        v.landed(Some(folder("b")), None);
+        assert_eq!(places(&v.back), [folder("a")]);
+        assert_eq!(places(&v.forward), [folder("c")]);
         assert_eq!(v.here, Some(folder("b")));
     }
 
@@ -872,7 +922,7 @@ mod tests {
         let st = state.borrow();
         assert!(!st.views.visited.looking);
         assert!(st.views.visited.asked.is_none());
-        assert_eq!(st.views.visited.back, [Place::Folder(a.clone())]);
+        assert_eq!(places(&st.views.visited.back), [Place::Folder(a.clone())]);
         drop(st);
         drop(state);
         crate::testing::remove_dir_retry(&dir);
@@ -902,8 +952,11 @@ mod tests {
         assert_eq!(open_now(&state), Some(a.clone()));
         {
             let st = state.borrow();
-            assert_eq!(st.views.visited.back, [Place::Folder(x.clone())]);
-            assert_eq!(st.views.visited.forward, [Place::Folder(b.clone())]);
+            assert_eq!(places(&st.views.visited.back), [Place::Folder(x.clone())]);
+            assert_eq!(
+                places(&st.views.visited.forward),
+                [Place::Folder(b.clone())]
+            );
         }
         press(&state, &app, &worker, false);
         assert_eq!(open_now(&state), Some(b.clone()), "forward to b kept");
@@ -932,9 +985,8 @@ mod tests {
         shoot(&b);
         open_dir(&state, &app, &worker, &b);
         let st = state.borrow();
-        let folders = |v: &[Place]| v.to_vec();
         assert_eq!(
-            folders(&st.views.visited.back),
+            places(&st.views.visited.back),
             [a, b.clone(), c].map(Place::Folder)
         );
         assert!(st.views.visited.forward.is_empty());
@@ -950,7 +1002,7 @@ mod tests {
     fn a_first_press_landing_late_keeps_the_second() {
         let mut v = Visited::default();
         for p in ["a", "b", "c", "d"] {
-            v.landed(Some(folder(p)));
+            v.landed(Some(folder(p)), None);
         }
         v.asked = Some(Asked {
             back: true,
@@ -958,14 +1010,14 @@ mod tests {
             gone: Vec::new(),
             to: folder("b"),
         });
-        v.landed(Some(folder("c")));
-        assert_eq!(v.back, [folder("a"), folder("b")]);
-        assert_eq!(v.forward, [folder("d")]);
+        v.landed(Some(folder("c")), None);
+        assert_eq!(places(&v.back), [folder("a"), folder("b")]);
+        assert_eq!(places(&v.forward), [folder("d")]);
         let asked = v.asked.clone().expect("the second press still out");
         assert_eq!((asked.at, asked.to.clone()), (0, folder("b")));
-        v.landed(Some(folder("b")));
-        assert_eq!(v.back, [folder("a")]);
-        assert_eq!(v.forward, [folder("d"), folder("c")]);
+        v.landed(Some(folder("b")), None);
+        assert_eq!(places(&v.back), [folder("a")]);
+        assert_eq!(places(&v.forward), [folder("d"), folder("c")]);
     }
 
     /// Places gone taken off from the farthest, so the nearer keep
@@ -973,11 +1025,11 @@ mod tests {
     #[test]
     fn places_gone_are_dropped_from_the_farthest() {
         let mut v = Visited {
-            back: ["a", "b", "c", "d"].map(folder).to_vec(),
+            back: ["a", "b", "c", "d"].map(stop).to_vec(),
             ..Visited::default()
         };
         v.drop_gone(true, &[0, 2]);
-        assert_eq!(v.back, [folder("a"), folder("c")]);
+        assert_eq!(places(&v.back), [folder("a"), folder("c")]);
     }
 
     /// The walk stops at the first place there, looking no further, and
@@ -999,5 +1051,235 @@ mod tests {
         assert_eq!(answers.len(), LOOKS);
         assert!(answers.iter().all(|a| *a == Answer::Gone("not there")));
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    fn left(place: &str, frame: Option<&str>) -> Stop {
+        Stop {
+            place: folder(place),
+            frame: frame.map(PathBuf::from),
+        }
+    }
+
+    fn file(name: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(name))
+    }
+
+    /// A place goes on the back stack with the frame current when it
+    /// was left, or none; back gives the place left to the forward
+    /// stack with its own frame, the places passed over keeping theirs.
+    #[test]
+    fn a_place_keeps_the_frame_it_was_left_on() {
+        let mut v = Visited::default();
+        v.landed(Some(folder("a")), file("a/1"));
+        v.landed(Some(folder("b")), file("a/3"));
+        v.landed(Some(folder("c")), None);
+        v.landed(Some(folder("d")), file("c/2"));
+        assert_eq!(
+            v.back,
+            [
+                left("a", Some("a/3")),
+                left("b", None),
+                left("c", Some("c/2"))
+            ]
+        );
+        // Back two, from d on d/5.
+        v.asked = Some(Asked {
+            back: true,
+            at: 1,
+            gone: Vec::new(),
+            to: folder("b"),
+        });
+        v.landed(Some(folder("b")), file("d/5"));
+        assert_eq!(v.back, [left("a", Some("a/3"))]);
+        assert_eq!(
+            v.forward,
+            [left("d", Some("d/5")), left("c", Some("c/2"))],
+            "c keeps its frame, d has the one it was left on"
+        );
+        // Forward one, from b on b/4.
+        v.asked = Some(Asked {
+            back: false,
+            at: 0,
+            gone: Vec::new(),
+            to: folder("c"),
+        });
+        v.landed(Some(folder("c")), file("b/4"));
+        assert_eq!(v.back, [left("a", Some("a/3")), left("b", Some("b/4"))]);
+        assert_eq!(v.forward, [left("d", Some("d/5"))]);
+    }
+
+    /// The export queue's frame is not the place's: a place left from
+    /// over the queue keeps none, one read again keeps its own.
+    #[test]
+    fn the_queue_s_frame_is_not_the_place_s() {
+        let mut v = Visited::default();
+        v.landed(Some(folder("a")), None);
+        v.landed(None, file("a/2"));
+        v.landed(Some(folder("b")), file("q/1"));
+        assert_eq!(v.back, [left("a", None)]);
+        v.landed(None, file("b/1"));
+        v.landed(Some(folder("b")), file("q/1"));
+        v.landed(Some(folder("c")), file("b/2"));
+        assert_eq!(v.back, [left("a", None), left("b", Some("b/2"))]);
+    }
+
+    /// The stacks hold a hundred places, the oldest going first, each
+    /// with its frame.
+    #[test]
+    fn the_stack_keeps_its_last_hundred() {
+        let mut v = Visited::default();
+        for i in 0..=KEPT + 1 {
+            let prev = i.checked_sub(1).map(|p| format!("{p}/x"));
+            v.landed(Some(folder(&i.to_string())), prev.map(PathBuf::from));
+        }
+        assert_eq!(v.back.len(), KEPT);
+        assert_eq!(v.back[0], left("1", Some("1/x")));
+        assert_eq!(v.back[KEPT - 1], left("100", Some("100/x")));
+    }
+
+    /// A folder of `n` frames, 0.tif and on.
+    fn shoot_of(dir: &Path, n: usize) -> Vec<PathBuf> {
+        std::fs::create_dir_all(dir).unwrap();
+        (0..n)
+            .map(|i| {
+                let f = dir.join(format!("{i}.tif"));
+                std::fs::write(&f, b"").unwrap();
+                f
+            })
+            .collect()
+    }
+
+    fn current(state: &Rc<Shared>) -> Option<PathBuf> {
+        frame_of(&state.borrow())
+    }
+
+    /// The frame `f` of the list made current, as a click on it does.
+    fn pick(state: &Rc<Shared>, app: &App, f: &Path) {
+        let row = {
+            let st = state.borrow();
+            let i = st.files.iter().position(|p| p == f).expect("in the list");
+            crate::panel::browser::row_of(&st, i).expect("shown")
+        };
+        app.invoke_select(row as i32);
+        assert_eq!(current(state).as_deref(), Some(f));
+    }
+
+    /// Back and forward between two folders from the disk land on the
+    /// frame each was left on, not the first; a frame gone since falls
+    /// back to the first, as before; an open by hand is as before.
+    #[test]
+    fn back_and_forward_land_on_the_frame_left() {
+        let dir = scratch_dir("visited-frames");
+        let dir = dunce::canonicalize(&dir).unwrap();
+        let a = shoot_of(&dir.join("a"), 4);
+        let b = shoot_of(&dir.join("b"), 3);
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        // As in a session: a list landing opens its frame.
+        state.borrow_mut().launch.setup_ran = true;
+        open_dir(&state, &app, &worker, &dir.join("a"));
+        pick(&state, &app, &a[2]);
+        open_dir(&state, &app, &worker, &dir.join("b"));
+        assert_eq!(current(&state), Some(b[0].clone()), "a new open as before");
+        pick(&state, &app, &b[1]);
+        press(&state, &app, &worker, true);
+        assert_eq!(open_now(&state), Some(dir.join("a")));
+        assert_eq!(current(&state), Some(a[2].clone()), "back on a's frame");
+        press(&state, &app, &worker, false);
+        assert_eq!(open_now(&state), Some(dir.join("b")));
+        assert_eq!(current(&state), Some(b[1].clone()), "forward on b's frame");
+        // a's frame gone: back to a as an open of it would land.
+        std::fs::remove_file(&a[2]).unwrap();
+        press(&state, &app, &worker, true);
+        assert_eq!(open_now(&state), Some(dir.join("a")));
+        assert_eq!(
+            current(&state),
+            Some(a[0].clone()),
+            "the frame gone, the first"
+        );
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A root's folder, every root, and a collection, each left on a
+    /// frame: back and forward land on it.
+    #[test]
+    fn views_and_collections_come_back_on_their_frame() {
+        use greycard_library::fixture::{A7, R5, R6, write_frame};
+        let dir = scratch_dir("visited-views");
+        let dir = dunce::canonicalize(&dir).unwrap();
+        let root = dir.join("photos");
+        let (one, two) = (root.join("one"), root.join("two"));
+        let mut files = Vec::new();
+        for (k, folder) in [&one, &two].into_iter().enumerate() {
+            std::fs::create_dir_all(folder).unwrap();
+            for (i, n) in ["x.tif", "y.tif", "z.tif"].iter().enumerate() {
+                let p = folder.join(n);
+                write_frame(&p, [&R5, &R6, &A7][i], (k * 3 + i) as u16 + 1);
+                files.push(p);
+            }
+        }
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        drop(writer);
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.launch.setup_ran = true;
+            st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.views.sort = crate::sort::Kept::by_name();
+            st.views.library.roots.add(&root).unwrap();
+            st.views.collections.dir = Some(dir.join(crate::collections::DIR));
+        }
+        let view = |state: &Rc<Shared>, v: View| {
+            crate::roots::open_view(state, &app, &worker, v);
+            land_sent(state, &app, &worker);
+        };
+        view(&state, View::Roots(None));
+        pick(&state, &app, &files[4]);
+        // A collection of two's x and z.
+        let id = {
+            let mut st = state.borrow_mut();
+            let at: Vec<usize> = [&files[3], &files[5]]
+                .iter()
+                .map(|f| st.files.iter().position(|p| p == *f).unwrap())
+                .collect();
+            let frames = crate::panel::collections::frames_of(&st, &at);
+            let mut c = crate::collections::Collection::new("picks");
+            c.add(&frames);
+            let id = c.id.clone();
+            st.views.collections.list.push(c);
+            st.views.collections.save(&id);
+            id
+        };
+        view(&state, crate::tree::view_for(&root, &one, false));
+        pick(&state, &app, &files[1]);
+        view(&state, View::Collection { id: id.clone() });
+        pick(&state, &app, &files[5]);
+        press(&state, &app, &worker, true);
+        assert_eq!(
+            current(&state),
+            Some(files[1].clone()),
+            "the folder on its frame"
+        );
+        press(&state, &app, &worker, true);
+        assert_eq!(state.borrow().views.view, View::Roots(None));
+        assert_eq!(
+            current(&state),
+            Some(files[4].clone()),
+            "every root on its frame"
+        );
+        press(&state, &app, &worker, false);
+        assert_eq!(current(&state), Some(files[1].clone()));
+        press(&state, &app, &worker, false);
+        assert_eq!(state.borrow().views.view, View::Collection { id });
+        assert_eq!(
+            current(&state),
+            Some(files[5].clone()),
+            "the collection on its frame"
+        );
+        crate::testing::remove_scratch(state, &dir);
     }
 }

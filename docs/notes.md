@@ -631,3 +631,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§617. A removal on a card the editor has filled](notes/617-a-removal-on-a-card-the-editor-has-filled.md) (2026-11-09)
 - [§618. The shadows' paint is for black](notes/618-the-shadows-paint-is-for-black.md) (2026-11-09)
 - [§619. A Windows installer](notes/619-a-windows-installer.md) (2026-11-09)
+- [§620. Back and forward come back on the frame left](notes/620-back-and-forward-come-back-on-the-frame-left.md) (2026-11-09)

@@ -920,7 +920,8 @@ fn change_in_place(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, view: Vie
     // The frame on screen brought into view when the merge lands: the
     // rows round it may have come or gone.
     st.views.sort_reveal = true;
-    crate::panel::recent::opened(&mut st, app);
+    let left = crate::panel::visited::frame_of(&st);
+    crate::panel::recent::opened(&mut st, app, left);
     want(&mut st, app);
     crate::roots::show(&st, app);
     crate::panel::sort::show(&st, app);
