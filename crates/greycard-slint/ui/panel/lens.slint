@@ -93,12 +93,15 @@ export component LensSection inherits Section {
             }
         }
     }
+    Rectangle { height: Theme.space-1; }
     Text {
         text: root.lens-profile;
+        font-weight: Theme.weight-semibold;
         color: root.lens-available ? Theme.text : Theme.text-secondary;
         font-size: Theme.font-sm;
         wrap: word-wrap;
     }
+    Rectangle { height: Theme.space-1; }
     if !root.lens-database: PanelButton {
         text: @tr("Get lens profiles");
         icon: @image-url("../icons/image-down.svg");

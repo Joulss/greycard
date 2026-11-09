@@ -24,6 +24,7 @@ export component ProofSection inherits Section {
     Segmented {
         options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
         labels: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", @tr("File")];
+        rounded: false;
         current <=> root.proof-profile;
         selected(p) => { root.proof-changed(); }
     }
@@ -42,10 +43,12 @@ export component ProofSection inherits Section {
             clicked => { root.choose-proof-file(); }
         }
     }
+    Rectangle { height: Theme.space-1; }
     Segmented {
         options: ["Perceptual", "Relative"];
         labels: [@tr("Perceptual"), @tr("Relative")];
         equal-width: true;
+        bordered: true;
         current <=> root.proof-intent;
         selected(i) => { root.proof-changed(); }
     }
@@ -76,6 +79,7 @@ export component MonitorSection inherits Section {
     Segmented {
         options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
         labels: [@tr("System"), "sRGB", "Adobe RGB", "Display P3", @tr("File")];
+        rounded: false;
         current <=> root.display-profile;
         selected(p) => { root.display-changed(); }
     }
@@ -99,12 +103,13 @@ export component MonitorSection inherits Section {
             clicked => { root.choose-display-file(); }
         }
     }
-    Text {
+    if root.display-note != "": Text {
         text: root.display-note;
         color: Theme.text-muted;
         font-size: Theme.font-xs;
         wrap: word-wrap;
     }
+    Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
         // Monitor section: the canvas shade row

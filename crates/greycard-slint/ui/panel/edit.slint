@@ -186,6 +186,7 @@ export component NoiseSection inherits Section {
             // Noise: the learned denoiser's choice when it is off
             : root.denoise-learned == "off" ? [@tr("off")] : [@tr("off"), root.denoise-learned];
         enabled: root.unavailable == "" && (root.learned-unavailable == "" || root.denoise-learned != "off");
+        rounded: false;
         current <=> root.denoise-learned;
         selected(v) => { root.develop-changed(); }
     }
@@ -563,6 +564,7 @@ export component DemosaicSection inherits Section {
     if root.raw-input: Segmented {
         options: root.demosaics;
         enabled: root.menu-hint == "";
+        rounded: false;
         current <=> root.demosaic;
         selected(v) => { root.picked(v); }
     }

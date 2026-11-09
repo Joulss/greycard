@@ -371,6 +371,7 @@ export component BlackWhiteSection inherits Section {
         options: ["None", "Red", "Orange", "Yellow", "Green", "Blue"];
         // Black & white: the color filters, None for no filter
         labels: [@tr("None"), @tr("Red"), @tr("Orange"), @tr("Yellow"), @tr("Green"), @tr("Blue")];
+        rounded: false;
         current <=> root.bw-filter;
         selected(v) => { root.bw-filter-changed(); }
     }

@@ -44,12 +44,15 @@ export component CurvesSection inherits Section {
         options: ["Parametric", "Point"];
         labels: [@tr("Parametric"), @tr("Point")];
         equal-width: true;
+        bordered: true;
         current <=> root.curve-mode;
         selected(v) => { root.curve-mode-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     if root.curve-mode == "Point": Segmented {
         options: ["RGB", "Red", "Green", "Blue", "R/G", "B/Y"];
         labels: ["RGB", @tr("Red"), @tr("Green"), @tr("Blue"), "R/G", "B/Y"];
+        rounded: false;
         current <=> root.curve-channel;
         selected(v) => { root.curve-channel-changed(); }
     }
