@@ -328,8 +328,7 @@ export component Section inherits VerticalLayout {
         background: Theme.base;
         HorizontalLayout {
             spacing: Theme.space-2;
-            padding-left: Theme.space-2;
-            padding-right: Theme.space-2;
+            padding: Theme.space-2;
             Rectangle {
                 horizontal-stretch: 1;
                 height: Theme.icon + Theme.space-1;
@@ -496,7 +495,7 @@ export component Section inherits VerticalLayout {
             spacing: Theme.space-1;
             padding-left: Theme.space-3;
             padding-right: Theme.space-3;
-            padding-bottom: Theme.space-2;
+            padding-bottom: Theme.space-3;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
@@ -1462,6 +1461,10 @@ export component Segmented inherits Rectangle {
     /// Why each option cannot be chosen, by index: one with words is
     /// greyed, takes no click, and says them in place of its tip.
     in property <[string]> why-not;
+    // Whether the options are all the same width, or each just wide
+    // enough for its label. The host may set this to true when it
+    // knows the labels
+    in property <bool> equal-width: false;
     callback selected(string);
     height: Theme.control-height;
     border-radius: Theme.radius-md;
@@ -1477,7 +1480,9 @@ export component Segmented inherits Rectangle {
             border-radius: Theme.radius-sm;
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
-            Text {
+            min-width: root.equal-width ? 0px : label.preferred-width;
+            preferred-width: root.equal-width ? 0px : label.preferred-width;
+            label := Text {
                 text: i < root.labels.length ? root.labels[i] : option;
                 color: !usable ? Theme.text-muted : on ? Theme.text : Theme.text-secondary;
                 font-size: Theme.font-xs;

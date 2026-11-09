@@ -43,6 +43,7 @@ export component CurvesSection inherits Section {
     Segmented {
         options: ["Parametric", "Point"];
         labels: [@tr("Parametric"), @tr("Point")];
+        equal-width: true;
         current <=> root.curve-mode;
         selected(v) => { root.curve-mode-changed(); }
     }
@@ -63,41 +64,47 @@ export component CurvesSection inherits Section {
     // The selected point's coordinates, to type: greyed with none.
     if root.curve-mode == "Point": HorizontalLayout {
         spacing: Theme.space-2;
-        alignment: start;
-        Text {
-            // Curves: the input axis of the point under the pointer
-            text: @tr("In");
-            color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
-            font-size: Theme.font-sm;
-            vertical-alignment: center;
+        alignment: space-between;
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            Text {
+                // Curves: the input axis of the point under the pointer
+                text: @tr("In");
+                color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
+                font-size: Theme.font-sm;
+                vertical-alignment: center;
+            }
+            ValueField {
+                width: 48px;
+                height: Theme.control-height - 4px;
+                boxed: true;
+                enabled: root.curves-enabled && root.curve-selected >= 0;
+                label: @tr("Point in");
+                shown: root.curve-selected >= 0 ? root.curve-point-in : "";
+                committed(typed) => { root.curve-typed("in", typed); }
+            }
         }
-        ValueField {
-            width: 48px;
-            height: Theme.control-height - 4px;
-            boxed: true;
-            enabled: root.curves-enabled && root.curve-selected >= 0;
-            label: @tr("Point in");
-            shown: root.curve-selected >= 0 ? root.curve-point-in : "";
-            committed(typed) => { root.curve-typed("in", typed); }
-        }
-        Rectangle { width: Theme.space-2; }
-        Text {
-            // Curves: the output axis of the point under the pointer
-            text: @tr("Out");
-            color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
-            font-size: Theme.font-sm;
-            vertical-alignment: center;
-        }
-        ValueField {
-            width: 48px;
-            height: Theme.control-height - 4px;
-            boxed: true;
-            enabled: root.curves-enabled && root.curve-selected >= 0;
-            label: @tr("Point out");
-            shown: root.curve-selected >= 0 ? root.curve-point-out : "";
-            committed(typed) => { root.curve-typed("out", typed); }
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            Text {
+                // Curves: the output axis of the point under the pointer
+                text: @tr("Out");
+                color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
+                font-size: Theme.font-sm;
+                vertical-alignment: center;
+            }
+            ValueField {
+                width: 48px;
+                height: Theme.control-height - 4px;
+                boxed: true;
+                enabled: root.curves-enabled && root.curve-selected >= 0;
+                label: @tr("Point out");
+                shown: root.curve-selected >= 0 ? root.curve-point-out : "";
+                committed(typed) => { root.curve-typed("out", typed); }
+            }
         }
     }
+    if root.curve-mode == "Parametric": Rectangle { height: Theme.space-1; }
     if root.curve-mode == "Parametric": EditSlider {
         label: @tr("Highlights");
         enabled: root.curves-enabled;
@@ -152,6 +159,9 @@ export component CurvesSection inherits Section {
         text: (root.para-shadows >= 0 ? "+" : "") + round(root.para-shadows * 100);
         changed(v) => { root.parametric-changed(); }
     }
+
+    Rectangle { height: Theme.space-1; }
+
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;

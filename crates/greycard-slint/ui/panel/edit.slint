@@ -123,6 +123,7 @@ export component LightSection inherits Section {
         Segmented {
             options: ["Per channel", "AgX"];
             labels: [@tr("Per channel"), "AgX"];
+            equal-width: true;
             current <=> root.display-curve;
             selected(v) => { root.view-changed(); }
         }
@@ -536,6 +537,7 @@ export component GrainSection inherits Section {
         options: ["Cubic", "Tabular"];
         // Grain: the two kinds of grain
         labels: [@tr("Cubic"), @tr("Tabular")];
+        equal-width: true;
         current <=> root.grain-kind;
         selected(k) => { root.view-changed(); }
     }

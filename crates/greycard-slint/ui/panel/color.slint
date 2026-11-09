@@ -249,12 +249,18 @@ export component MixerSection inherits Section {
     // say is kept, and comes back as it was.
     superseded: root.mixer-superseded;
     switched => { root.view-changed(); }
+
+    Rectangle { height: Theme.space-1; }
+
     Swatches {
         colors: root.band-colors;
         enabled: root.mixer-acts;
         current <=> root.mixer-band;
         selected(i) => { root.mixer-band-changed(); }
     }
+
+    Rectangle { height: Theme.space-1; }
+
     EditSlider {
         label: @tr("Hue");
         enabled: root.mixer-acts;
@@ -300,6 +306,9 @@ export component MixerSection inherits Section {
         text: (root.mixer-luminance >= 0 ? "+" : "") + round(root.mixer-luminance * 100) / 100 + " EV";
         changed(v) => { root.mixer-changed(); }
     }
+
+    Rectangle { height: Theme.space-1; }
+    
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
@@ -365,12 +374,14 @@ export component BlackWhiteSection inherits Section {
         current <=> root.bw-filter;
         selected(v) => { root.bw-filter-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     Swatches {
         colors: root.band-colors;
         enabled: root.bw-enabled;
         current <=> root.bw-band;
         selected(i) => { root.bw-band-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     EditSlider {
         // Black & white: the filter's slider
         label: @tr("Weight");
@@ -416,6 +427,7 @@ export component BlackWhiteSection inherits Section {
             + mod(root.bw-strength-cents, 100) + "x";
         changed(v) => { root.view-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
@@ -630,6 +642,7 @@ export component GradingSection inherits Section {
         text: (root.grade-balance >= 0 ? "+" : "") + round(root.grade-balance * 100);
         changed(v) => { root.view-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
@@ -737,6 +750,7 @@ export component TintSection inherits Section {
         text: round(root.tint-amount * 100) + "%";
         changed(v) => { root.tint-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;

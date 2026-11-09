@@ -45,6 +45,7 @@ export component ProofSection inherits Section {
     Segmented {
         options: ["Perceptual", "Relative"];
         labels: [@tr("Perceptual"), @tr("Relative")];
+        equal-width: true;
         current <=> root.proof-intent;
         selected(i) => { root.proof-changed(); }
     }

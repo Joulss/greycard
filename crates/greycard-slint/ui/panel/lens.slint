@@ -323,6 +323,7 @@ export component LensSection inherits Section {
         text: round(root.lens-defringe-green-amount * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
+    Rectangle { height: Theme.space-1; }
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
