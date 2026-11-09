@@ -7,222 +7,171 @@ design note behind it.
 
 ### Develop
 
-- With a GPU, the editor's demosaic runs there: the default (AMaZE
-  and VNG4), and RCD, VNG4, and their duals chosen by hand, so a
-  frame's picture lands sooner on its first open and its neighbors'
-  are made sooner ahead of it
+- With a GPU, the demosaic runs there, so a frame's first picture
+  lands sooner and the frames ahead are ready sooner
   ([§591](https://github.com/jessolmstead/greycard/blob/master/docs/notes/591-a-quick-demosaic-on-the-gpu-and-the-default-behind-it.md)).
-- Switching to a frame not yet seen develops quicker on a machine
-  with a GPU: the default demosaic keeps its intermediate result on
-  the graphics card instead of sending it back and forth
+- Switching to a frame not yet seen is quicker with a GPU: the
+  demosaic's working result stays on the card
   ([§606](https://github.com/jessolmstead/greycard/blob/master/docs/notes/606-the-gpu-duals-detail-stays-on-the-device.md)).
-- A JPEG, PNG, or rendered TIFF has a live WHITE BALANCE: the sliders
-  move the picture from its own white in mired and Duv, with As shot,
-  Auto, the dropper, and a mask's offset as on a raw
+- A JPEG, PNG, or TIFF has a live WHITE BALANCE, with As shot, Auto,
+  the dropper, and a mask's offset as on a raw
   ([§602](https://github.com/jessolmstead/greycard/blob/master/docs/notes/602-white-balance-on-a-picture.md)).
-- A JPEG, TIFF, or PNG now opens with the lens profile's distortion,
-  vignetting, and chromatic aberration corrections off, so an export
-  opened again is not corrected twice; the lens is still matched and
-  one switch turns a correction on (discussion 90)
+- A JPEG, PNG, or TIFF opens with its lens corrections off, so an
+  export opened again is not corrected twice (discussion 90)
   ([§608](https://github.com/jessolmstead/greycard/blob/master/docs/notes/608-a-pictures-lens-corrections-start-off.md)).
-
-- Backslash shows the frame as it was, its Original, under the same
-  crop and zoom, and back; any other key or change shows the edit
-  again (issue 100)
+- Backslash shows the frame's Original under the same crop and zoom,
+  and back (issue 100)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
-- Ctrl and the wheel zoom with the brush or a repair tool in hand, and
-  + and − zoom the Loupe a step (issue 94)
+- Ctrl and the wheel zoom with a tool in hand; + and − zoom the Loupe
+  a step (issue 94)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 - Settings > Editing > Lens corrections on new edits: off, a raw with
-  no sidecar yet starts with its lens corrections off; raws that
-  already have a sidecar keep theirs (issue 101)
+  no sidecar starts uncorrected (issue 101)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
-- Ctrl and a click on the picture with a color wheel at zero in hand
-  also sets its amount from the color's saturation; a wheel with an
-  amount keeps it (discussion 59)
+- A Ctrl-click on the picture with a color wheel at zero sets its
+  amount from the color too (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
-- With a brush or a repair's patch in hand, `[` and `]` size it as the
-  wheel does, wherever the turn is bound; with nothing in hand they
-  still turn the frame (discussion 59)
+- With a brush or a repair tool in hand, `[` and `]` size it; with
+  nothing in hand they still turn the frame (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
-- Shift or Ctrl and a bracket step the brush's feather or flow by
-  0.05, half the old step (discussion 59)
+- Shift or Ctrl and a bracket step the feather or the opacity by 5%,
+  half the old step (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
-- A lens on another mount, on an adapter, is in the Lens picker: type
-  part of its name in Find a lens and it appears after the body's own,
-  with the mounts it was calibrated on
+- A lens on an adapter is in the Lens picker: type part of its name
+  and it appears with the mounts it was calibrated on
   ([§615](https://github.com/jessolmstead/greycard/blob/master/docs/notes/615-a-lens-off-the-bodys-mount-in-the-picker.md)).
 
 ### Models
 
-- Fetch every model at once: Settings, Models lists each model with
-  its license, its size, and whether it is in the store, and Fetch all
-  brings those this machine runs, one at a time, saying what it skips
-  and why. The first picture opened offers the same once, As needed
-  the default
+- Settings > Models lists every model with its license and size, and
+  Fetch all brings those this machine runs. The first picture opened
+  offers the same once
   ([§598](https://github.com/jessolmstead/greycard/blob/master/docs/notes/598-fetch-every-model-at-once.md)).
 
 ### Library
 
-- A mouse's back and forward buttons over the grid go to the folders
-  visited, as a browser's do: back returns to the folder a subfolder
-  was opened from, forward goes there again. The arrow keys step the
-  frames
+- The mouse's back and forward buttons over the grid go to the folders
+  visited, as a browser's do
   ([§594](https://github.com/jessolmstead/greycard/blob/master/docs/notes/594-back-and-forward-as-the-folders-visited.md)).
-- Walking through a shoot, the frames ahead are made further in
-  advance: with the memory for it, three ahead in the direction you
-  are walking and one behind, so quick steps still land on a ready
-  base
+- Walking through a shoot, three frames ahead and one behind are made
+  ready, so quick steps land on a finished base
   ([§601](https://github.com/jessolmstead/greycard/blob/master/docs/notes/601-the-prefetch-deeper-in-the-walks-direction.md)).
 
 ### Masks
 
-- A brush's Subtract now takes away from the whole mask under it, so
-  painting under Subtract over a Luminance, Subject, or Sky mask cuts
-  it there; Erase clears what the brush itself added or cut. Sidecars
-  from earlier builds open as they looked
+- A brush's Subtract takes away from the whole mask under it, Luminance,
+  Subject, or Sky included; Erase clears what the brush itself did
   ([§595](https://github.com/jessolmstead/greycard/blob/master/docs/notes/595-one-brush-row.md)).
-- A mask row's right-click menu has Copy masks: it copies the frame's
-  settings with only the masks checked, so Paste settings on other
-  frames carries every mask, and you can uncheck one on the sheet
+- Copy masks on a mask row's menu copies the frame's masks alone, for
+  Paste settings on other frames
   ([§597](https://github.com/jessolmstead/greycard/blob/master/docs/notes/597-copy-masks-on-a-mask-rows-menu.md)).
-- On a card the editor has filled, a Sky, Subject, or Background mask is no longer refused: the editor first lets go of its own working memory on the card, and if the card is still short the mask runs on the CPU, slower but made (issue 91)
+- On a card the editor has filled, a learned mask is no longer
+  refused: the editor frees its own memory first, and failing that
+  runs the mask on the CPU (issue 91)
   ([§610](https://github.com/jessolmstead/greycard/blob/master/docs/notes/610-a-learned-mask-on-a-card-the-editor-has-filled.md)).
-- Shift pressed or let go in the middle of a drag holds or frees a
-  Linear or Radial from the next move, placing it and on its handles
-  alike (discussion 59)
+- Shift pressed or released mid-drag holds or frees a Linear or
+  Radial from the next move (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ### The window
 
-- Settings > Interface has a Language row: System, or any language
-  greycard carries a translation of, in force from the next start.
-  greycard ships English alone for now; docs/translating.md says how
-  to add a language
+- Settings > Interface has a Language row. greycard ships English
+  alone for now; docs/translating.md says how to add a language
   ([§616](https://github.com/jessolmstead/greycard/blob/master/docs/notes/616-the-window-in-other-languages.md)).
-- Settings > Keys can move the Loupe's frame step (← →) and the turn
-  ([ ]), and Backspace or Delete while a key listens leaves an action
-  on no key; the grid and the lightbox keep their arrows (discussion
-  59)
+- Settings > Keys can move the Loupe's frame step and the turn, and
+  Backspace or Delete while a key listens unbinds an action
+  (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
-- The middle button: a middle drag moves the picture under any tool,
-  a middle click zooms to 200% there and back, held during a
-  gradient's or a brush's drag it keeps the line straight, and a
-  middle click on the panel's Sync button syncs on your last choice
-  without the sheet
+- The middle button: a drag pans under any tool, a click zooms to 200%
+  and back, held in a gradient's or brush's drag it keeps the line
+  straight, and on Sync it syncs on your last choice
   ([§599](https://github.com/jessolmstead/greycard/blob/master/docs/notes/599-the-middle-button.md)).
-- A file or folder name cut short in the strip, the grid and its
-  header, the Develop panel's head, or the folder tree shows whole at
-  the pointer after a moment's rest (issue 88)
+- A name cut short in the strip, the grid, the panel head, or the
+  folder tree shows whole at the pointer (issue 88)
   ([§609](https://github.com/jessolmstead/greycard/blob/master/docs/notes/609-a-name-cut-short-whole-at-the-pointer.md)).
-- The left pane's lists (Folders, Collections, Presets, Snapshots, and
-  History) now divide the pane's height between them instead of each
-  sitting in a small box of its own: folding one gives its room to the
-  rest, dragging the gap between two moves room from one to the other
-  and is remembered, and a double-click there evens them (issue 79)
+- The left pane's lists share its height: fold one and the rest grow,
+  drag the gap between two, double-click to even them (issue 79)
   ([§603](https://github.com/jessolmstead/greycard/blob/master/docs/notes/603-the-left-panes-sections-share-its-height.md)).
-- A hairline runs along the top of each section, so the Develop
-  panel's sections, the Masks tab's, and the left pane's read apart at
-  a glance; the spacing is as it was (issue 80)
+- A hairline tops each section, so they read apart at a glance
+  (issue 80)
   ([§604](https://github.com/jessolmstead/greycard/blob/master/docs/notes/604-the-develop-sections-told-apart.md)).
 - Drag the left pane's or the Develop panel's inner edge to set its
-  width, or the strip's top edge to set its thumbnails' size; a
-  double-click on an edge resets it, and the sizes are remembered
+  width, and the strip's top edge for its thumbnails' size;
+  double-click resets
   ([§605](https://github.com/jessolmstead/greycard/blob/master/docs/notes/605-the-panes-and-the-strip-take-a-size.md)).
 
 ### Export
 
-- Exports from the editor and from `greycard export` develop on the
-  GPU when the machine has one, so the two give the same file. Files
-  differ slightly from 0.10's, which were made on the CPU. For a CPU
-  render, use `--cpu` on `greycard export` or `--cpu-ops` on the
-  editor's `--export`
+- Exports from the editor and `greycard export` develop on the GPU
+  when there is one, so the two give the same file; `--cpu` keeps the
+  CPU render. Files differ slightly from 0.10's
   ([§600](https://github.com/jessolmstead/greycard/blob/master/docs/notes/600-the-command-lines-export-on-the-gpu.md)).
-- An export on a machine with a GPU now runs the Detail section, the
-  dehaze, and the sharpen there too, so the editor's export of the
-  open frame reuses the viewport's work; `--cpu` still renders on the
-  CPU alone
+- The Detail section, dehaze, and sharpen run on the GPU in an export
+  too, so the open frame's export reuses the viewport's work
   ([§607](https://github.com/jessolmstead/greycard/blob/master/docs/notes/607-the-exports-detail-dehaze-and-sharpen-on-the-gpu.md)).
 
 ### Merge
 
 - A bracket shot by hand merges: each frame is fitted onto the
-  reference as a shift, a turn, and a scale, not a shift alone, so the
-  corners line up as the middle does
+  reference by shift, turn, and scale
   ([§612](https://github.com/jessolmstead/greycard/blob/master/docs/notes/612-the-handheld-bracket-and-stack.md)).
-- When a frame of a bracket had moved, what moved in the scene between
-  frames (a person, a branch, a wave) is taken from the reference
-  alone instead of doubled; `greycard merge hdr --deghost on|off|auto`
-  sets it on the command line
+- What moved in the scene between frames is taken from the reference
+  alone instead of doubled; `--deghost on|off|auto` on the command line
   ([§612](https://github.com/jessolmstead/greycard/blob/master/docs/notes/612-the-handheld-bracket-and-stack.md)).
-- Frames a bracket or a focus stack moves are resampled with Lanczos-3
-  instead of bilinear, so they keep their detail
+- Moved frames are resampled with Lanczos-3 instead of bilinear, so
+  they keep their detail
   ([§612](https://github.com/jessolmstead/greycard/blob/master/docs/notes/612-the-handheld-bracket-and-stack.md)).
 
 ### Fixes
 
 - Canon EOS R8 Mark II raws open
   ([§586](https://github.com/jessolmstead/greycard/blob/master/docs/notes/586-the-canon-eos-r8-mark-ii.md)).
-- On Linux the window carries an app id, so GNOME's dock pins it to
-  its desktop entry and shows its icon (issue 86)
+- On Linux, GNOME's dock pins the window to its desktop entry and
+  shows its icon (issue 86)
   ([§587](https://github.com/jessolmstead/greycard/blob/master/docs/notes/587-the-windows-app-id.md)).
-- The Navigator keeps one height, the picture fitted inside, so the
-  sections under it no longer jump while a frame loads or between
-  portrait and landscape (issue 81)
+- The Navigator keeps one height, so the sections under it no longer
+  jump (issue 81)
   ([§588](https://github.com/jessolmstead/greycard/blob/master/docs/notes/588-the-navigator-keeps-one-height.md)).
-- The Paste settings sheet works from the keyboard: Paste has the
-  focus as it opens, so Enter pastes the checks as they stand; Tab and
-  Shift+Tab go round every check and button; Space toggles a check and
-  Enter fires the default button, in the preset sheet too (issue 78)
+- The Paste settings and preset sheets work from the keyboard: Enter,
+  Tab, and Space do what you expect (issue 78)
   ([§589](https://github.com/jessolmstead/greycard/blob/master/docs/notes/589-the-paste-sheet-from-the-keys.md)).
-- The display curve (Per channel or AgX) goes with Copy and Paste
-  settings, Sync, and presets as a section of its own, Display curve,
-  on by default; it travels only between raws, since a JPEG or TIFF
-  has no switch (issue 82)
+- The display curve goes with Copy, Paste, Sync, and presets as its
+  own section, between raws (issue 82)
   ([§590](https://github.com/jessolmstead/greycard/blob/master/docs/notes/590-the-display-curve-goes-with-a-copy.md)).
-- Deleting the selected frame or version, moving it out with the
-  rejects, stacking, or unstacking no longer scrolls the filmstrip or
-  the grid so the next frame lands at the far edge: both stay where
-  they were and scroll only when the frame chosen next would be off
-  screen, and then by the least (issues 83 and 84)
+- Deleting, rejecting, stacking, or unstacking no longer scrolls the
+  strip or the grid to the far edge (issues 83 and 84)
   ([§592](https://github.com/jessolmstead/greycard/blob/master/docs/notes/592-the-strip-holds-still-under-a-delete.md)).
-- A rating and a label from FastRawViewer or Photo Mechanic in a bare
-  `IMG.xmp` beside a raw and its JPEG now show on the raw; greycard
-  never writes into that shared file, and a rating given here stands
-  until the culling tool changes its own (issue 31)
+- A rating and label from FastRawViewer or Photo Mechanic in a bare
+  `IMG.xmp` beside a raw and its JPEG show on the raw; greycard never
+  writes that file (issue 31)
   ([§593](https://github.com/jessolmstead/greycard/blob/master/docs/notes/593-a-culling-tools-xmp-beside-a-raw-and-its-jpeg.md)).
-- A generative fill is no longer made again when the picture under it
-  moves only by rounding, as when the develop runs on the CPU instead
-  of the GPU (issue 92); every fill is made once more at this version
-  on a machine whose develop runs on the GPU
+- A generative fill is no longer remade when the picture under it
+  moves only by rounding (issue 92); every fill is made once more at
+  this version on a GPU machine
   ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
-- On a card with room to spare, the models stay loaded between fills
-  and masks instead of loading again each time (issue 92)
-  ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
-- An edited frame with a generative fill shows its edit in the strip
-  and the grid without being opened first, once the fill has been made
+- On a card with room, the models stay loaded between fills and masks
   (issue 92)
   ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
-- A Sky, Subject, or other learned mask already made no longer flashes
-  when you switch to its frame: the picture comes up with the mask on
-  (issue 96)
+- An edited frame with a fill shows its edit in the strip and the grid
+  without being opened first (issue 92)
+  ([§611](https://github.com/jessolmstead/greycard/blob/master/docs/notes/611-a-fill-that-survives-rounding-and-a-card-kept-while-it-has-room.md)).
+- A learned mask already made no longer flashes when you switch to its
+  frame (issue 96)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 - Esc puts Heal, Clone, and Fill down, as it does the brush (issue 97)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
 - The Keywords field keeps its height however many keywords a frame
-  carries; the section grows and the panel scrolls (issue 98)
+  carries (issue 98)
   ([§613](https://github.com/jessolmstead/greycard/blob/master/docs/notes/613-six-tester-items-after-0-10-0.md)).
-- The brush's ring, and the repair tool's, stay under the pointer
-  with Shift or Space held, so a feather change by Shift and a bracket
-  shows; they hide only while a drag pans (discussion 59)
+- The brush's and the repair tool's rings stay visible with Shift or
+  Space held, hiding only while a drag pans (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
-- Shift on a color wheel holds the hue and reads the amount along it,
-  so a drag in through the center stops at zero instead of climbing
-  on the far side (discussion 59)
+- Shift on a color wheel stops at zero through the center instead of
+  climbing on the far side (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
-- The brush's Flow slider is named Opacity, which is what it does: a
-  stroke lays down at most that much however often it passes over a
-  spot, and a new stroke builds on it (discussion 59)
+- The brush's Flow slider is named Opacity, which is what it does: one
+  stroke lays down at most that much, and a new stroke builds on it
+  (discussion 59)
   ([§614](https://github.com/jessolmstead/greycard/blob/master/docs/notes/614-eight-notes-from-a-few-minutes-with-0-10-0.md)).
 
 ## 0.10.0, 2026-11-06
