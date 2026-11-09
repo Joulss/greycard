@@ -132,9 +132,8 @@ with no interface toolkit, tone-mapping choice or edit schema in it.
 Tested with Canon, Fujifilm GFX and X-Trans, Sony, Panasonic and
 Nikon bodies.
 
-Not yet for anyone on an Intel Mac, since the ONNX runtime ships no
-WebGPU build for it, or anyone whose camera rawler does not decode; support goes upstream to rawler, not into a
-fork. A phone app, cloud sync and a preset marketplace are not
+Not yet for anyone whose camera rawler does not decode; support
+goes upstream to rawler, not into a fork. A phone app, cloud sync and a preset marketplace are not
 planned.
 
 ## Where it stands
@@ -188,8 +187,9 @@ Built, as of 0.10.0:
 - **Merge.** A bracket to HDR, on a tripod or by hand, frames shot
   turning to a panorama, and a focus stack, each to a linear DNG that edits as a
   raw, with the frames denoised first if asked.
-- **Around it.** Packages for Linux, macOS, and Windows, with Intel
-  Mac and Windows on ARM builds that are new and tentative. A Report a
+- **Around it.** Packages for Linux, macOS on Apple silicon and
+  Intel, and Windows, with a Windows on ARM build that is new and
+  tentative. A Report a
   problem button that fills in the version, OS and GPU. A release
   check that can be turned off.
 

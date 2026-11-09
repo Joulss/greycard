@@ -69,8 +69,8 @@ Panasonic raws.
   means royalties. I'm working on it.
 - The Windows build isn't signed yet, so you have to click past a
   warning the first time.
-- The Intel Mac build is new, and nobody has run it on an Intel Mac
-  yet; the generative remove is not available on it.
+- The Intel Mac build is new, and the generative remove is not
+  available on it.
 - There is a Windows on ARM build, though a release can still go out
   without it while it's new. Its AI features run on the CPU alone,
   through a runtime it offers to download the first time you use one,

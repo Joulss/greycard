@@ -20,8 +20,9 @@ expect, please [report it](#reporting-a-problem).
   ([On an older processor](guide/masks.md#on-an-older-processor)).
 - **On Linux, glibc 2.39 or newer**: Ubuntu 24.04, Fedora 40, Debian
   13, or later. The tarball and the AppImage both need it.
-- **A Mac with an Apple chip**, if you're on a Mac. There is no build
-  for Intel Macs.
+- **A Mac with an Apple chip or an Intel one**, if you're on a Mac.
+  The Intel build is newer, and the generative remove is not
+  available on it.
 - **On Windows on ARM**, the `aarch64-windows` zip. It is a new build
   and not yet tried on a real machine. Its AI features (the learned
   masks, the eraser, and the learned denoiser) run on the CPU alone,
@@ -62,8 +63,9 @@ unpack it.
   Its settings, cache, and downloaded models are the same ones an
   installed copy uses, so the two can be swapped. It needs the same
   glibc as the tarball ([Before you start](#before-you-start)).
-- **macOS:** open `greycard-<version>-aarch64-macos.dmg` and drag
-  greycard onto Applications. The app is signed and notarized, so it
+- **macOS:** open `greycard-<version>-aarch64-macos.dmg`, or
+  `-x86_64-macos.dmg` on an Intel Mac, and drag greycard onto
+  Applications. The app is signed and notarized, so it
   opens with one question the first time. For the `greycard` command
   too, take the `.tar.gz` instead and run `sh install.sh`;
   [testing-on-a-mac.md](testing-on-a-mac.md) has both step by step.
