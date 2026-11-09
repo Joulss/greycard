@@ -1208,7 +1208,7 @@ impl Library {
         read_only: bool,
         handler: fn(i32) -> bool,
     ) -> Result<Library> {
-        let conn = if read_only {
+        let mut conn = if read_only {
             Connection::open_with_flags(
                 path,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -1560,7 +1560,7 @@ impl Library {
     /// this wait; it sleeps as long as it likes and answers whether to
     /// try again. For a caller that wants to hear, while it waits, that
     /// the wait is a lock's and not the disk's.
-    pub fn set_busy_handler(&self, handler: fn(i32) -> bool) -> Result<()> {
+    pub fn set_busy_handler(&mut self, handler: fn(i32) -> bool) -> Result<()> {
         self.conn.busy_handler(Some(handler))?;
         Ok(())
     }

@@ -633,3 +633,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§619. A Windows installer](notes/619-a-windows-installer.md) (2026-11-09)
 - [§620. Back and forward come back on the frame left](notes/620-back-and-forward-come-back-on-the-frame-left.md) (2026-11-09)
 - [§621. A clicked button passes the keys on](notes/621-a-clicked-button-passes-the-keys-on.md) (2026-11-09)
+- [§622. SQLite 3.54.1, for RUSTSEC-2026-0459](notes/622-sqlite-3-54-1-for-rustsec-2026-0459.md) (2026-11-09)

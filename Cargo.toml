@@ -76,7 +76,7 @@ libc = "0.2"
 memmap2 = "0.9"
 naga = { version = "30", features = ["wgsl-in"] }
 pollster = "0.4"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 sha2 = "0.10"
 tar = "0.4"
 ureq = "3"

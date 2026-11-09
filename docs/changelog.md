@@ -22,6 +22,9 @@ design note behind it.
   a panel button, switch, or toggle, so an undo crosses a tool's Reset
   without the pointer first crossing the picture (discussion 59,
   [§621](https://github.com/jessolmstead/greycard/blob/master/docs/notes/621-a-clicked-button-passes-the-keys-on.md)).
+- The library's SQLite is 3.54.1, past CVE-2026-119375 (a database
+  opened beside a mismatched `-wal` file could read stale memory)
+  ([§622](https://github.com/jessolmstead/greycard/blob/master/docs/notes/622-sqlite-3-54-1-for-rustsec-2026-0459.md)).
 - The shadows' clipping paint covers only what is black. It had also
   covered any color outside the output space at any brightness, a
   third of one frame in dim warm light

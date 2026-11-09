@@ -574,7 +574,7 @@ fn score_after(path: &Path, nudged: &mpsc::Receiver<()>, asker: &Asker, wanted: 
         }
         if lib.is_none() {
             match Library::open(path) {
-                Ok(l) => {
+                Ok(mut l) => {
                     if let Err(e) = l.set_busy_handler(lane_busy) {
                         tracing::debug!("index: the focus scores' busy handler: {e}");
                     }
