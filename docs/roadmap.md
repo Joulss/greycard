@@ -636,9 +636,12 @@ clears or a tester asks for it.
       first, and where the other open editors are found (an outside
       review, 2026-11-02)
 - [ ] The first translations, the languages testers offer (issue 75
-      offers French), on the §616 catalog; the English strings read
-      once for wording before a translator starts; the guide and the
-      release notes stay English (an outside review, 2026-11-02)
+      offers French), on the §616 catalog; before a translator starts,
+      the English strings read once for wording and every short entry
+      given a comment saying where it shows ("Develop > Light, the
+      slider's name"), which the extractors lift from the `//` line
+      above it; the guide and the release notes stay English (an
+      outside review, 2026-11-02)
 - [ ] A `with_translation_domain` setter in slint-build, patched on
       the fork and sent upstream, in place of the build script
       renaming the package to pick the catalog (§616)
