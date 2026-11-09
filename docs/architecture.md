@@ -19,7 +19,7 @@ Start here, in this order:
 
 ## 1. The crates and the layer rule
 
-Sixteen crates under `crates/`, and the fuzz targets in `fuzz/`.
+Seventeen crates under `crates/`, and the fuzz targets in `fuzz/`.
 "Depends on" is the crate's normal dependencies among our own crates,
 as its `Cargo.toml` has them; test-only dependencies are left out.
 
@@ -37,6 +37,7 @@ as its `Cargo.toml` has them; test-only dependencies are left out.
 | `greycard-viewport` | The viewport's shader and its renderer, the scopes' binning, the monitor's display table, and the device's loss flag; no Slint type | core, edit, gpu, render |
 | `greycard-engine` | The stage list and the walk, the worker and its jobs, the reduced develop, the thumbnail pool, the previews, the edit's pictures, the models' side, the export queue, sheet, and headless run, the settings subset, and the camera match's runner and the measurement runners over the export's develop | core, edit, edit-io, lens, gpu, render, ai, match, library |
 | `greycard-slint` | The `.slint` files compiled to Rust, a crate of its own so a change to the editor's code does not recompile them | none |
+| `greycard-i18n-probe` | A test of the window's translation mechanism on a catalog of its own: one `.slint` component, one French `.po`, select and read; never shipped (`publish = false`) | none |
 | `greycard-ui` | The editor: the window, its `State`, the panels and sheets; a library target of its windowless modules beside the `greycard-ui` binary | core, edit, edit-io, lens, gpu, render, ai, library, match, engine, viewport, slint |
 | `greycard-cli` | The `greycard` binary: `develop`, `export`, `merge`, `library`, `models`, `lenses`, and the rest | core, edit, edit-io, lens, gpu, ai, library, engine |
 | `greycard-bench` | The demosaic benchmark and the denoiser's training data | core, ai |
@@ -53,7 +54,8 @@ The layers, each crate naming only crates on rows below its own:
 1   greycard-edit   greycard-gpu   greycard-ai   greycard-lens   greycard-match
 0   greycard-core   (rawler, rawcolor)        greycard-slint (Slint)
 
-    tools: greycard-bench (core, ai), ort-dylib, fuzz/ (core, edit, edit-io, library)
+    tools: greycard-bench (core, ai), ort-dylib, greycard-i18n-probe,
+           fuzz/ (core, edit, edit-io, library)
 ```
 
 rawler and rawcolor are core's, but not core's alone: edit-io reads

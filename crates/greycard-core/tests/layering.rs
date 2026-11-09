@@ -35,6 +35,7 @@ const EDGES: &[(&str, &[&str])] = &[
         ],
     ),
     ("greycard-slint", &[]),
+    ("greycard-i18n-probe", &[]),
     (
         "greycard-ui",
         &[
