@@ -18,6 +18,10 @@ design note behind it.
   or a collection on the frame you left it on, not the first
   (discussion 59,
   [§620](https://github.com/jessolmstead/greycard/blob/master/docs/notes/620-back-and-forward-come-back-on-the-frame-left.md)).
+- Ctrl+Z, Escape, and the other shortcuts work right after a click on
+  a panel button, switch, or toggle, so an undo crosses a tool's Reset
+  without the pointer first crossing the picture (discussion 59,
+  [§621](https://github.com/jessolmstead/greycard/blob/master/docs/notes/621-a-clicked-button-passes-the-keys-on.md)).
 - The shadows' clipping paint covers only what is black. It had also
   covered any color outside the output space at any brightness, a
   third of one frame in dim warm light

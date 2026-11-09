@@ -5,7 +5,7 @@
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented, Typing, ScrollPane } from "../controls.slint";
+import { Tips, TipArea, Section, EditSlider, Steps, Toggle, PanelButton, Segmented, Typing, ScrollPane, ButtonKeys } from "../controls.slint";
 
 // The list: Global, then each mask with its switch, the chosen one
 // with its bin; then New mask. It never scrolls with the sections
@@ -497,7 +497,7 @@ export component AdjustmentsSection inherits Section {
                                             root.invert-shape-toggled(i);
                                             return accept;
                                         }
-                                        return reject;
+                                        return ButtonKeys.pass(e) ? accept : reject;
                                     }
                                 }
                                 invert-hit := TouchArea {

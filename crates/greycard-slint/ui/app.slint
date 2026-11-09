@@ -9,9 +9,9 @@ import { Palette } from "std-widgets.slint";
 import { Theme, ScrollBars } from "theme.slint";
 // The theme's name is read on the Rust side's tests.
 export { Theme, ScrollBars } from "theme.slint";
-import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
-export { Typing, TypedNumber, SliderKeys } from "controls.slint";
+export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
 import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
@@ -2776,6 +2776,17 @@ export component App inherits Window {
     }
     property <int> export-keys-back;
     property <int> export-key-passed;
+    // A focused button's or switch's keys that are not its own: the
+    // window's, as a slider's are. Not under a sheet whose card has
+    // keys of its own (Escape, Return), which take what its controls
+    // turn away. The import, Lightroom, RawTherapee, match, and model
+    // sheets have none: the window's keys serve them, Escape and all.
+    property <int> button-passed: ButtonKeys.passed;
+    changed button-passed => { keys.key-pressed(ButtonKeys.passed-key); }
+    // Named by the five, so a sheet added later keeps its keys.
+    property <bool> sheet-up: root.sheet-open()
+        && !(root.import-open || root.lr-open || root.rt-open || root.match-open || root.fetch-open);
+    changed sheet-up => { ButtonKeys.sheet-up = root.sheet-up; }
 
     // A sheet closed from the Rust side (an answer invoked, not
     // clicked) takes its focus with it: the keys are the window's
@@ -3178,14 +3189,17 @@ export component App inherits Window {
                 if (!root.sheet-open() && !root.import-running) { root.import-asked(); }
                 return accept;
             }
+            // Not under a sheet: the export's sheet over another, or
+            // a set sent behind one.
             if (chord == "Ctrl+Shift+E") {
-                root.export-asked();
+                if (!root.sheet-open()) { root.export-asked(); }
                 return accept;
             }
             // darktable's Ctrl+E: the selection sent as the sheet last
             // sent one, into its folder, with no sheet; before any
             // export has set the sheet, the sheet.
             if (chord == "Ctrl+E") {
+                if (root.sheet-open()) { return accept; }
                 if (root.can-export() && root.export-remembered()) { root.export(); } else { root.export-asked(); }
                 return accept;
             }

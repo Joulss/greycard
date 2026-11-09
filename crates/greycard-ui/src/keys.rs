@@ -3177,6 +3177,149 @@ mod tests {
         assert!(app.get_crop_mode());
     }
 
+    /// Ctrl+`key`, pressed and let go.
+    fn ctrl(app: &App, key: &str) {
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Control.into(),
+        });
+        press(app, key);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Control.into(),
+        });
+    }
+
+    /// A click on a Reset leaves the pointer on the panel and the keys
+    /// with the button, which passes the ones it does not use to the
+    /// window: Ctrl+Z undoes the reset.
+    #[test]
+    fn ctrl_z_after_a_reset_button_undoes_the_reset() {
+        use crate::testing::{click, labeled};
+        let (app, state, _worker) = develop_window();
+        press(&app, "r");
+        app.set_geo_angle(3.0);
+        crate::panel::edit::record_panel(&mut state.borrow_mut(), &app);
+        let (at, size) = labeled(&app, "Reset all");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_geo_angle(), 0.0, "reset");
+        ctrl(&app, "z");
+        assert_eq!(app.get_geo_angle(), 3.0, "the reset undone");
+    }
+
+    /// A clicked button keeps Space and Return, which press it, and
+    /// Tab, Slint's move on; the rest are the window's, Escape too.
+    #[test]
+    fn a_clicked_button_keeps_its_own_keys_and_passes_the_rest() {
+        use crate::testing::{click, labeled};
+        let (app, _state, _worker) = develop_window();
+        let passed = || app.global::<crate::ButtonKeys>().get_passed();
+        press(&app, "r");
+        let (at, size) = labeled(&app, "Flip");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(app.get_geo_flip());
+        press(&app, Key::Return);
+        assert!(!app.get_geo_flip(), "Return presses it");
+        press(&app, " ");
+        assert!(app.get_geo_flip(), "Space presses it");
+        let before = passed();
+        press(&app, Key::Tab);
+        assert_eq!(passed(), before, "Tab is Slint's");
+        press(&app, Key::Escape);
+        assert_eq!(passed(), before + 1);
+        assert!(!app.get_crop_mode(), "Escape leaves the crop");
+    }
+
+    /// The import sheet has no keys of its own, the window's serve it:
+    /// Escape after a click on one of its buttons closes it.
+    #[test]
+    fn escape_after_a_click_on_the_import_sheet_closes_it() {
+        use crate::testing::{click, labeled, settle};
+        // No state, so Choose asks the desktop for nothing.
+        let app = window(3);
+        app.set_import_open(true);
+        settle(&app);
+        assert!(!app.global::<crate::ButtonKeys>().get_sheet_up());
+        let (at, size) = labeled(&app, "Choose...");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        press(&app, Key::Escape);
+        assert_eq!(app.global::<crate::ButtonKeys>().get_passed(), 1);
+        assert!(!app.get_import_open(), "closed by the window's Escape");
+    }
+
+    /// The keys a click on the match sheet now passes on are still
+    /// the window's under a sheet: no export sheet over it, by either
+    /// key.
+    #[test]
+    fn the_export_keys_are_nobodys_under_the_match_sheet() {
+        use crate::testing::{click, labeled, settle};
+        let (app, _state, _worker) = develop_window();
+        // The no-op worker never lands the frame: done, as far as an
+        // export asks.
+        app.set_busy(false);
+        let export_keys = |shift: bool| {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Control.into(),
+            });
+            if shift {
+                shifted(&app, "E");
+            } else {
+                press(&app, "e");
+            }
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Control.into(),
+            });
+        };
+        // With no sheet up, each key brings the export's sheet.
+        for shift in [true, false] {
+            export_keys(shift);
+            assert!(app.get_export_open(), "shift {shift}");
+            app.set_export_open(false);
+            settle(&app);
+        }
+        app.set_match_open(true);
+        settle(&app);
+        let (at, size) = labeled(&app, "Replace existing looks");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let passed = app.global::<crate::ButtonKeys>().get_passed();
+        for shift in [true, false] {
+            export_keys(shift);
+            assert!(!app.get_export_open(), "no export sheet over the match");
+        }
+        assert!(
+            app.global::<crate::ButtonKeys>().get_passed() > passed,
+            "passed on"
+        );
+        assert!(app.get_match_open());
+    }
+
+    /// Under a sheet with keys of its own, a clicked button's keys go
+    /// up to the sheet's, never to the window under it.
+    #[test]
+    fn a_button_on_a_sheet_keeps_the_keys_from_the_window() {
+        use crate::testing::{click, labeled, settle};
+        // No state, so the check asks nothing of the network.
+        let app = window(3);
+        app.set_settings_category("About".into());
+        app.set_settings_open(true);
+        settle(&app);
+        assert!(app.global::<crate::ButtonKeys>().get_sheet_up());
+        let (at, size) = labeled(&app, "Check now");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        press(&app, "g");
+        assert!(!app.get_grid_open(), "not the window's G");
+        assert_eq!(app.global::<crate::ButtonKeys>().get_passed(), 0);
+        // The button has the keys: with the sheet's flag down, the
+        // same key would have gone on.
+        app.global::<crate::ButtonKeys>().set_sheet_up(false);
+        press(&app, "g");
+        assert_eq!(app.global::<crate::ButtonKeys>().get_passed(), 1);
+        app.global::<crate::ButtonKeys>().set_sheet_up(true);
+        press(&app, Key::Escape);
+        assert!(!app.get_settings_open(), "the sheet's own Escape");
+        assert_eq!(app.global::<crate::ButtonKeys>().get_passed(), 1);
+        settle(&app);
+        assert!(!app.global::<crate::ButtonKeys>().get_sheet_up());
+    }
+
     #[test]
     fn the_guide_is_this_releases() {
         let url = guide_url();

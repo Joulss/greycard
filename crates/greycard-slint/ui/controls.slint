@@ -148,6 +148,27 @@ export component NameTip {
     }
 }
 
+// A key a focused button or switch does not take. The window's keys
+// sit beside the panel, not over it, so a key a control turned away
+// would go nowhere: the control hands it on here, as a slider does,
+// and the window takes it as its own. Not Tab, Slint's move to the
+// next control, and not under a sheet, whose own keys sit over its
+// controls and take what they turn away.
+export global ButtonKeys {
+    // Set by the window.
+    in-out property <bool> sheet-up: false;
+    // Counted up, and the key.
+    in-out property <int> passed: 0;
+    in-out property <KeyEvent> passed-key;
+    // Whether `e` went on to the window.
+    public function pass(e: KeyEvent) -> bool {
+        if (ButtonKeys.sheet-up || e.text == Key.Tab || e.text == Key.Backtab) { return false; }
+        ButtonKeys.passed-key = e;
+        ButtonKeys.passed += 1;
+        return true;
+    }
+}
+
 // A switch on its own, smaller than a Toggle's, for a header.
 export component Switch inherits Rectangle {
     in-out property <bool> checked: true;
@@ -185,7 +206,7 @@ export component Switch inherits Rectangle {
                 root.toggled();
                 return accept;
             }
-            return reject;
+            return ButtonKeys.pass(e) ? accept : reject;
         }
     }
     ta := TouchArea {
@@ -1313,7 +1334,7 @@ export component Toggle inherits Rectangle {
                 root.toggled();
                 return accept;
             }
-            return reject;
+            return ButtonKeys.pass(e) ? accept : reject;
         }
     }
     ta := TouchArea {
@@ -1416,7 +1437,7 @@ export component PanelButton inherits Rectangle {
         }
         key-pressed(e) => {
             if (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
-            return reject;
+            return ButtonKeys.pass(e) ? accept : reject;
         }
     }
     ta := TipArea {

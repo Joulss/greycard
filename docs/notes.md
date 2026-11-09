@@ -632,3 +632,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§618. The shadows' paint is for black](notes/618-the-shadows-paint-is-for-black.md) (2026-11-09)
 - [§619. A Windows installer](notes/619-a-windows-installer.md) (2026-11-09)
 - [§620. Back and forward come back on the frame left](notes/620-back-and-forward-come-back-on-the-frame-left.md) (2026-11-09)
+- [§621. A clicked button passes the keys on](notes/621-a-clicked-button-passes-the-keys-on.md) (2026-11-09)

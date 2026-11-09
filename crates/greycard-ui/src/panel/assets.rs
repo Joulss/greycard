@@ -117,6 +117,12 @@ pub(crate) fn offer_model(
     model: &'static greycard_ai::Model,
     falls_back: bool,
 ) {
+    // Not over another sheet, as the lens profiles' offer: an export
+    // that lands under Settings would otherwise stack this over it.
+    // Dropped; the next need of the model asks again.
+    if app.invoke_sheet_open() {
+        return;
+    }
     offered(st, app, model, falls_back);
 }
 
@@ -1749,6 +1755,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A model's offer waits for no sheet: under Settings it is
+    /// dropped, nothing stacked over it; with the sheet gone it is made
+    /// (or, with no runtime here, the line says why).
+    #[test]
+    fn a_model_is_not_offered_over_another_sheet() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        app.set_settings_open(true);
+        offer_model(&mut state.borrow_mut(), &app, &greycard_ai::FILL, false);
+        assert!(!app.get_fetch_open());
+        assert_eq!(state.borrow().sheets.fetch, None);
+        assert_eq!(app.get_status(), "");
+        app.set_settings_open(false);
+        offer_model(&mut state.borrow_mut(), &app, &greycard_ai::FILL, false);
+        assert!(app.get_fetch_open() || !app.get_status().is_empty());
     }
 
     /// The Subject model offered for a Whole person's edge, declined:
