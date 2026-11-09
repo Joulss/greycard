@@ -31,25 +31,25 @@ export component FoldersSection inherits Section {
         toggled => { root.subfolders-changed(); root.focus-keys(); }
     }
     if root.rows.length > 0: Rectangle {
-        border-radius: Theme.radius-md;
         background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
         // Three rows, or the list when shorter, and as much more of the
         // list as the pane's share gives it (app.slint), the rest a
         // scroll away, so a root of a thousand folders never pushes
         // the pane past the window.
-        property <length> floor: min(folder-list.preferred-height, 3 * (Theme.control-height - 8px) + 6px);
+        property <length> floor: min(folder-list.preferred-height, 3 * (Theme.control-height - 6px) + 8px);
         preferred-height: self.floor;
         min-height: self.floor;
         max-height: folder-list.preferred-height;
         vertical-stretch: 1;
         folder-pane := ScrollPane {
+            // Align the first chevron with the section's header, past
+            // the body's inset and the row's own left padding.
+            x: -Theme.space-2;
+            width: parent.width + Theme.space-2;
             folder-list := VerticalLayout {
-                padding: 2px;
                 spacing: 1px;
                 for row[i] in root.rows: Rectangle {
-                    height: Theme.control-height - 8px;
+                    height: Theme.control-height - 6px;
                     border-radius: Theme.radius-sm;
                     background: row.open ? Theme.selection
                         : folder-row.has-hover ? Theme.hover : transparent;
@@ -68,20 +68,20 @@ export component FoldersSection inherits Section {
                         clicked => { root.picked(i); root.focus-keys(); }
                     }
                     HorizontalLayout {
-                        padding-left: 2px + row.depth * 12px;
+                        padding-left: Theme.space-1 + row.depth * Theme.icon;
                         // Clears the scroll bar's band, as the
                         // snapshots' bins do.
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
-                        spacing: 2px;
+                        spacing: Theme.space-1;
                         // The triangle, or its room, so names at one
                         // depth line up whether or not they fold.
                         Rectangle {
-                            width: 14px;
+                            width: Theme.icon;
                             if row.children: Image {
                                 source: @image-url("../icons/chevron-right.svg");
                                 colorize: fold.has-hover ? Theme.text : Theme.text-muted;
-                                width: 10px;
-                                height: 10px;
+                                width: Theme.icon;
+                                height: Theme.icon;
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                                 transform-rotation: row.expanded ? 90deg : 0deg;

@@ -224,8 +224,8 @@ export global Folds {
     in-out property <int> let-go: 0;
 }
 
-// A section: a header of icon, title and chevron over a rule, and
-// the body under it. The header folds the body away and back. A
+// A section: a card with an icon, title and chevron in its header,
+// and the body under it. The header folds the body away and back. A
 // section with an effect carries a switch at the header's right: off,
 // the picture is as if the section were not there, and the body's
 // settings stay as they are, dimmed, for when it is on again.
@@ -261,9 +261,6 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
-    // The hairline along the section's top; off where a rule is drawn
-    // there already (under the Masks tab's pinned list).
-    in property <bool> line-above: true;
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -323,14 +320,16 @@ export component Section inherits VerticalLayout {
     // one child of the body that stretches. Its other children must
     // each have a bounded height.
     in property <bool> shares: false;
-    spacing: 6px;
-    padding-top: Theme.space-1;
-    // The header, with a hairline along the section's top, in the
-    // padding above it: a run of folded sections reads as a list of
-    // headers. Drawn outside the header's box, so it takes no room.
+    spacing: 0px;
+    // The card sits in the panel's gap between sections. The header and
+    // folding body each paint their own part, so the header's height
+    // stays fixed while the body opens.
     Rectangle {
+        background: Theme.base;
         HorizontalLayout {
             spacing: Theme.space-2;
+            padding-left: Theme.space-2;
+            padding-right: Theme.space-2;
             Rectangle {
                 horizontal-stretch: 1;
                 height: Theme.icon + Theme.space-1;
@@ -442,21 +441,11 @@ export component Section inherits VerticalLayout {
                 toggled => { root.switched(); }
             }
         }
-        Rectangle {
-            y: -root.padding-top;
-            height: 1px;
-            width: 100%;
-            background: Theme.border;
-            visible: root.line-above;
-        }
-    }
-    Rectangle {
-        height: 1px;
-        background: Theme.border;
     }
     // The body, clipped to nothing when folded.
     fold-box := Rectangle {
         clip: true;
+        background: Theme.base;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
         animate full { duration: root.fold-time; easing: ease-out; }
         // For the sliders' focus walk alone: closed all the way, the
@@ -505,6 +494,9 @@ export component Section inherits VerticalLayout {
             height: !root.shares ? self.preferred-height
                 : max(parent.height, self.preferred-height, parent.folding ? parent.span : 0px);
             spacing: Theme.space-1;
+            padding-left: Theme.space-3;
+            padding-right: Theme.space-3;
+            padding-bottom: Theme.space-2;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
@@ -869,7 +861,7 @@ export component EditSlider inherits Rectangle {
     accessible-value-step: root.step;
     accessible-enabled: root.enabled;
 
-    height: Theme.control-height;
+    height: Theme.control-height - Theme.space-1;
     // Wider for a section whose labels run long; the sliders of one
     // block share it so their tracks line up.
     in property <length> label-width: 68px;
@@ -1474,7 +1466,6 @@ export component Segmented inherits Rectangle {
     height: Theme.control-height;
     border-radius: Theme.radius-md;
     background: Theme.base;
-    border-width: 1px;
     border-color: Theme.border;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {

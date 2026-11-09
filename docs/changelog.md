@@ -3,6 +3,18 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.12.0
+
+### The window
+
+- The Develop panel's sections, the Masks tab's, and the left pane's
+  sit on separate, darker, square cards. Their titles keep the
+  original size and colors. Folders and Presets align their rows and
+  chevrons; inner borders and section rules are gone. Sliders sit
+  closer together, and segmented controls have no outer border
+  (issue 80)
+  ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-sections-on-cards.md)).
+
 ## 0.11.0, 2026-11-09
 
 Handheld HDR and focus stacks, the demosaic on the GPU, the window

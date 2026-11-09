@@ -252,10 +252,7 @@ export component HistorySection inherits Section {
     collapsed <=> root.collapsed-history;
     shares: true;
     if root.history-rows.length > 0: Rectangle {
-        border-radius: Theme.radius-md;
         background: Theme.base;
-        border-width: 1px;
-        border-color: Theme.border;
         // As the folders' box: three rows at least, whatever sits
         // below the pane's sections (the pane scrolls before this box
         // shrinks past them), and the pane's share past them up to the

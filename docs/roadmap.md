@@ -780,9 +780,6 @@ clears or a tester asks for it.
       collapsed section's share goes to the open ones, each section's
       list scrolls on its own, the shares kept in the settings
       (issue 79, 2026-11-07)
-- [ ] The develop panel's sections told apart at a glance: a header
-      shade, a little more room between sections, without losing the
-      compact look (issue 80's Lightroom comparison, 2026-11-07)
 - [ ] A software GPU when there is none: the worker and greycard-gpu
       ask wgpu for a high-performance adapter and stop when there is
       no adapter at all (a headless box, a VM, a remote desktop), so
