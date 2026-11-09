@@ -71,6 +71,9 @@ pub struct Settings {
     /// The panel's sections folded away, by the names the panel
     /// keeps them under.
     pub collapsed: Vec<String>,
+    /// The Develop sections' order, by their stable panel names.
+    /// Missing or unknown names are reconciled with the current UI.
+    pub develop_order: Vec<String>,
     /// The left pane's lists' weights in sharing its height, by
     /// section name, as the gaps between them were last dragged; a
     /// list not named weighs one. Read leniently: a weight that is no
@@ -706,6 +709,7 @@ impl Default for Settings {
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
             mat: false,
             collapsed: Vec::new(),
+            develop_order: Vec::new(),
             shares: Default::default(),
             one_section: false,
             grid_cell: crate::grid::CELL,
@@ -1127,6 +1131,7 @@ mod tests {
             canvas_color: "Mid grey".into(),
             mat: true,
             collapsed: vec!["grain".into(), "demosaic".into()],
+            develop_order: vec!["white-balance".into(), "look".into()],
             shares: [("presets".to_string(), 1.5), ("history".to_string(), 0.5)].into(),
             one_section: true,
             grid_cell: 256.0,
