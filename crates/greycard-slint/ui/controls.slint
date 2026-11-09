@@ -432,12 +432,15 @@ export component Section inherits VerticalLayout {
                     clicked => { root.action-clicked(); }
                 }
             }
-            if root.switchable: Switch {
-                checked <=> root.on;
-                enabled: !root.superseded;
-                force-off: root.superseded;
+            if root.switchable: VerticalLayout {
+                padding-top: 2px;
                 y: (parent.height - self.height) / 2;
-                toggled => { root.switched(); }
+                Switch {
+                    checked <=> root.on;
+                    enabled: !root.superseded;
+                    force-off: root.superseded;
+                    toggled => { root.switched(); }
+                }
             }
         }
     }
@@ -1347,7 +1350,7 @@ export component PanelButton inherits Rectangle {
     property <bool> clicked-in: false;
     height: Theme.control-height;
     border-radius: Theme.radius-md;
-    border-width: root.primary && root.enabled ? 0 : 1px;
+    // border-width: root.primary && root.enabled ? 0 : 1px;
     border-color: fs.has-focus ? Theme.focus-ring : Theme.border-strong;
     background: !root.enabled ? Theme.base
         : root.primary ? (ta.pressed ? Theme.accent-pressed : ta.has-hover ? Theme.accent-hover : Theme.accent)
@@ -1465,19 +1468,21 @@ export component Segmented inherits Rectangle {
     // enough for its label. The host may set this to true when it
     // knows the labels
     in property <bool> equal-width: false;
+    in property <bool> bordered: false;
+    in property <bool> rounded: true;
     callback selected(string);
     height: Theme.control-height;
-    border-radius: Theme.radius-md;
     background: Theme.base;
+    border-width: root.bordered ? 1px : 0;
     border-color: Theme.border;
+    border-radius: root.rounded ? Theme.radius-sm : 0px;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {
-        padding: 2px;
         spacing: 2px;
         for option[i] in root.options: Rectangle {
             property <bool> on: option == root.current;
             property <bool> usable: root.why-not[i] == "";
-            border-radius: Theme.radius-sm;
+            border-radius: root.rounded ? Theme.radius-sm : 0px;
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
             min-width: root.equal-width ? 0px : label.preferred-width;
@@ -2153,7 +2158,7 @@ export component ScrollBand inherits TouchArea {
             property <length> long: round(root.thumb-len / 1phx) * 1phx;
             property <length> edge: round(((root.horizontal ? parent.height : parent.width) - 4px) / 1phx) * 1phx;
             animate thick { duration: 150ms; easing: ease-out; }
-            x: root.horizontal ? self.at : self.edge - self.thick;
+            x: root.horizontal ? self.at : self.edge - (ScrollBars.lit + self.thick) / 2;
             y: root.horizontal ? self.edge - self.thick : self.at;
             width: root.horizontal ? self.long : self.thick;
             height: root.horizontal ? self.thick : self.long;
