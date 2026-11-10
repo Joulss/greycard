@@ -1,5 +1,6 @@
-//! The mouse's back and forward buttons over the grid: the places the
-//! browser has listed, kept as a web browser keeps the pages visited.
+//! The mouse's back and forward buttons over the grid, and Alt+← and
+//! Alt+→ there: the places the browser has listed, kept as a web
+//! browser keeps the pages visited.
 //!
 //! A place is a folder, all the roots, or a collection. Every list the
 //! browser takes lands through `recent::opened`, which hands the place
@@ -411,7 +412,8 @@ struct Press {
     gone: Vec<usize>,
 }
 
-/// A mouse's back (or forward) button over the grid: the nearest place
+/// A mouse's back (or forward) button over the grid, or Alt+← (Alt+→)
+/// there (`keys.rs`): the nearest place
 /// that way that is still there, asked for. A press again before it
 /// lands goes on past it, as a browser's would. Nothing while a menu is
 /// up (the grid asks first), and a press while a look from the last is
@@ -710,6 +712,39 @@ mod tests {
         assert_eq!(open_now(&state), Some(a.clone()));
         press(&state, &app, &worker, true);
         assert_eq!(open_now(&state), Some(a.clone()), "nothing before");
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Alt+← and Alt+→ in the grid go back and forward as the side
+    /// buttons do.
+    #[test]
+    fn alt_and_the_arrows_go_back_and_forward() {
+        use slint::platform::{Key, WindowEvent};
+        let alt = |app: &App, key: Key| {
+            app.window().dispatch_event(WindowEvent::KeyPressed {
+                text: Key::Alt.into(),
+            });
+            crate::testing::press(app, key);
+            app.window().dispatch_event(WindowEvent::KeyReleased {
+                text: Key::Alt.into(),
+            });
+        };
+        let dir = scratch_dir("visited-alt");
+        let a = shoot(&dir.join("a"));
+        let b = shoot(&dir.join("b"));
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        open_dir(&state, &app, &worker, &a);
+        open_dir(&state, &app, &worker, &b);
+        app.set_grid_open(true);
+        land_sent(&state, &app, &worker);
+        alt(&app, Key::LeftArrow);
+        land_sent(&state, &app, &worker);
+        assert_eq!(open_now(&state), Some(a.clone()), "back");
+        alt(&app, Key::RightArrow);
+        land_sent(&state, &app, &worker);
+        assert_eq!(open_now(&state), Some(b.clone()), "forward");
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }

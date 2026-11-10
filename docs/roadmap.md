@@ -432,7 +432,8 @@ ask for first.
       RawTherapee and ART do, so Adobe's Camera Standard, Landscape,
       and Portrait differ from each other (issue #49, 0.8.1; §122
       applies the matrix and hue map only); the tone curve stays a
-      Look choice. After 0.9.0
+      Look choice. After 0.9.0. Asked for again with a sunset whose
+      purples ART's DCP Vivid kept (discussion 59, 2026-11-10)
 - [ ] An Adobe lens profile's off-center optic and its green-channel
       and tangential chromatic terms, unmapped in §497 (a center field
       in core's LensCorrection first)
@@ -1069,8 +1070,11 @@ clears or a tester asks for it.
       threshold so a click still applies, a drop on a folded header
       counted, a drop on Favorites as the star, and the list's pane
       creeping when the drag nears its edge (2026-11-06)
-- [ ] Sync from the open frame onto the selection by a middle-click
-      on it, as DaVinci does (issue 56, 2026-10-30)
+- [ ] A middle click on any frame in the strip or the grid syncs that
+      frame's edit onto the selection, as DaVinci does: the frame
+      clicked is the source, open or not, and the sections are the
+      last sync's, as the Sync button's middle click takes them (§599;
+      issue 56, 2026-10-30)
 - [ ] The open frame changed within a selection without letting the
       selection go, as Camera Raw's Alt+click and Lightroom's click on
       a chosen frame do (issue 110, 2026-11-09)
@@ -1121,8 +1125,13 @@ clears or a tester asks for it.
       everything under the root while the switch shows off and the
       tree marks the root as if for its own frames; waits on which
       way to settle it (discussion 59, 2026-11-09)
-- [ ] Alt+Left and Alt+Right as back and forward beside the mouse's
-      buttons (discussion 59, 2026-11-09)
+- [ ] A mask's Show mask and Invert switches each beside their own
+      word; side by side, "Invert" reads as the label of Show mask's
+      switch (discussion 59, 2026-11-10)
+- [ ] Ctrl+Z in Develop and the library takes back a rating, flag, or
+      label when that was the last thing done, and brings back a frame
+      the filter hid; Cull already does, and every mark is recorded
+      wherever it is made (issue 115, 2026-11-10)
 - [ ] An export batch timed end to end on a few hundred edited
       frames, masks and fills included, and the slow stage found; a
       tester's job took days against hours in Lightroom, the switching

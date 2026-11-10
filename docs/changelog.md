@@ -19,6 +19,13 @@ design note behind it.
   monitor since unplugged opens on one that is there (issue 114,
   [§623](https://github.com/jessolmstead/greycard/blob/master/docs/notes/623-the-window-opens-as-it-was-closed.md)).
 
+### Library
+
+- Alt+← and Alt+→ go back and forward through the folders visited in
+  the grid, as the mouse's side buttons do, and can be rebound under
+  Settings, Keys (discussion 59,
+  [§624](https://github.com/jessolmstead/greycard/blob/master/docs/notes/624-alt-arrows-go-back-and-forward.md)).
+
 ### Fixes
 
 - The mouse's back and forward buttons come back to a folder, a root,

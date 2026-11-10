@@ -145,10 +145,11 @@ bug form.
 To change a key, open **Settings** (Ctrl+,) and choose **Keys**:
 click an action's key, then press the new one, modifiers and all;
 **Esc** keeps the old. The grid's stack key follows the soft proof's
-(S). The frame step (← →) and the turn ([ ]) are a key each way; the
-step's Shift form follows its keys, and the step moved is the
-Loupe's: the grid and the lightbox keep the arrows. With a brush or a
-repair in hand the brackets size it wherever the turn is bound. The
+(S). The frame step (← →), the way back and forward (Alt+← →), and
+the turn ([ ]) are a key each way; the step's Shift form follows its
+keys, and the step moved is the Loupe's: the grid and the lightbox
+keep the arrows. With a brush or a repair in hand the brackets size
+it wherever the turn is bound. The
 other lines with more than one key (the up and down arrows, the
 ratings, flags, and labels, + −, F6 to F8, Redo, and the filter's),
 **Enter**, **Tab**, and **F11** cannot be moved, but an action can
@@ -167,13 +168,15 @@ shows your own.
 | Shift+← → | Previous or next frame, added to the selection |
 | ↑ ↓ | In the grid, the frame above or below (with Shift, added) |
 | Home, End | The first or the last frame (with Shift, added) |
+| Alt+← → | In the grid, back or forward through the folders visited |
 | Ctrl+A | Select every frame shown |
 | Ctrl+click | Add a frame to the selection, or take it out |
 | Shift+click | Select every frame from the open one to this one (with Ctrl, added) |
 
-In the grid, a mouse's back and forward buttons go to the folders
-visited, as a browser's do: back returns to the folder a subfolder
-was opened from, and forward goes there again.
+In the grid, **Alt+←** and **Alt+→**, or a mouse's back and forward
+buttons, go to the folders visited, as a browser's do: back returns
+to the folder a subfolder was opened from, and forward goes there
+again.
 
 ### Views
 

@@ -2992,6 +2992,14 @@ export component App inherits Window {
                 }
                 if (chord == "Left" || chord == "Shift+Left") { root.grid-step(-1, 0, root.grid-cols, e.modifiers.shift); return accept; }
                 if (chord == "Right" || chord == "Shift+Right") { root.grid-step(1, 0, root.grid-cols, e.modifiers.shift); return accept; }
+                // The mouse's back and forward side buttons, as a
+                // browser's Alt+arrows have them, with the buttons'
+                // guards: not while a menu is up, and once for a held
+                // key, since a button does not repeat.
+                if (chord == "Alt+Left" || chord == "Alt+Right") {
+                    if (!e.repeat && !root.menu-shown()) { root.visit-folder(chord == "Alt+Left"); }
+                    return accept;
+                }
                 if (chord == "Up" || chord == "Shift+Up") { root.grid-step(0, -1, root.grid-cols, e.modifiers.shift); return accept; }
                 if (chord == "Down" || chord == "Shift+Down") { root.grid-step(0, 1, root.grid-cols, e.modifiers.shift); return accept; }
                 // The sheet's top or its foot, and the frame there

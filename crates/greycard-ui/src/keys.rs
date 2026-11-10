@@ -187,6 +187,15 @@ pub(crate) const TABLE: &[Group] = &[
                 "Home, End",
                 marked::tr!("The first or the last frame (with Shift, added)"),
             ),
+            // The mouse's back and forward side buttons over the grid
+            // (`panel::visited`). Not Cmd+[ and Cmd+] on a Mac as well:
+            // Ctrl+[ and Ctrl+] are the brush's opacity.
+            pair(
+                ["visit-back", "visit-forward"],
+                &["Alt+Left", "Alt+Right"],
+                "Alt+← →",
+                marked::tr!("In the grid, back or forward through the folders visited"),
+            ),
             act(
                 "select-all",
                 &["Ctrl+A"],
@@ -2448,7 +2457,7 @@ mod tests {
         // under the headings.
         let rows = binding_rows(&Keymap::default(), false);
         let pairs = actions().iter().filter(|a| a.paired).count();
-        assert_eq!(pairs, 2, "the step and the turn");
+        assert_eq!(pairs, 3, "the step, the way back, and the turn");
         assert_eq!(
             rows.iter().filter(|r| !r.heading).count(),
             actions().len() - pairs
@@ -3318,6 +3327,119 @@ mod tests {
         assert_eq!(app.global::<crate::ButtonKeys>().get_passed(), 1);
         settle(&app);
         assert!(!app.global::<crate::ButtonKeys>().get_sheet_up());
+    }
+
+    /// `key` pressed with Alt held.
+    fn alt(app: &App, key: impl Into<SharedString>) {
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Alt.into(),
+        });
+        press(app, key);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Alt.into(),
+        });
+    }
+
+    /// A window whose way back and forward is counted, not taken.
+    fn visits_of(app: &App) -> Rc<RefCell<Vec<bool>>> {
+        let visits = Rc::new(RefCell::new(Vec::new()));
+        let asked = visits.clone();
+        app.on_visit_folder(move |back| asked.borrow_mut().push(back));
+        visits
+    }
+
+    /// Alt+← and Alt+→ are the mouse's side buttons: in the grid and
+    /// the lightbox, once for a held key, and nobody's in the Loupe,
+    /// under a sheet, or in the filter's words. The plain arrows still
+    /// step the frames.
+    #[test]
+    fn alt_and_the_arrows_go_back_and_forward_in_the_grid() {
+        let (app, _state, _worker) = develop_window();
+        let visits = visits_of(&app);
+        let left = SharedString::from(Key::LeftArrow);
+        let right = SharedString::from(Key::RightArrow);
+        alt(&app, left.clone());
+        assert!(visits.borrow().is_empty(), "not in the Loupe");
+
+        press(&app, "g");
+        assert!(app.get_grid_open());
+        let selected = app.get_selected();
+        alt(&app, left.clone());
+        alt(&app, right.clone());
+        assert_eq!(*visits.borrow(), [true, false]);
+        assert_eq!(app.get_selected(), selected, "no frame stepped");
+        press(&app, right.clone());
+        assert_eq!(app.get_selected(), selected + 1, "the arrow steps");
+
+        // Held: once.
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Alt.into(),
+        });
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: left.clone() });
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressRepeated { text: left.clone() });
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: left.clone() });
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Alt.into(),
+        });
+        assert_eq!(visits.borrow().len(), 3);
+
+        press(&app, "l");
+        assert!(app.get_lightbox());
+        alt(&app, right.clone());
+        assert_eq!(visits.borrow().last(), Some(&false), "the lightbox's too");
+        press(&app, "l");
+
+        app.set_keys_open(true);
+        alt(&app, left.clone());
+        assert_eq!(visits.borrow().len(), 4, "nobody's under a sheet");
+        press(&app, Key::Escape);
+        slint::platform::update_timers_and_animations();
+
+        // The filter's words have the keys first.
+        press(&app, "/");
+        slint::platform::update_timers_and_animations();
+        alt(&app, left.clone());
+        assert_eq!(visits.borrow().len(), 4, "the field's");
+    }
+
+    /// After a click on a button the keys stay with it, which passes
+    /// them on: G and then Alt+← still go back.
+    #[test]
+    fn alt_left_after_a_clicked_button_goes_back() {
+        use crate::testing::{click, labeled};
+        let (app, _state, _worker) = develop_window();
+        let visits = visits_of(&app);
+        press(&app, "r");
+        let (at, size) = labeled(&app, "Flip");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let passed = app.global::<crate::ButtonKeys>().get_passed();
+        press(&app, "g");
+        assert!(app.get_grid_open());
+        alt(&app, Key::LeftArrow);
+        assert_eq!(*visits.borrow(), [true]);
+        assert!(app.global::<crate::ButtonKeys>().get_passed() >= passed + 2);
+    }
+
+    /// The way back moved to another key goes by it, and Alt+← is then
+    /// nobody's.
+    #[test]
+    fn the_way_back_rebound_goes_by_its_new_key() {
+        let mut map = Keymap::default();
+        assert!(map.set("visit-back", "Q"));
+        assert_eq!(map.resolve("Q", false, GRID), "Alt+Left");
+        assert_eq!(map.resolve("Alt+Left", false, GRID), "");
+        assert_eq!(map.resolve("Alt+Right", false, GRID), "Alt+Right");
+        let (app, _state, _worker) = develop_window();
+        let visits = visits_of(&app);
+        KEYMAP.with(|m| *m.borrow_mut() = map);
+        press(&app, "g");
+        alt(&app, Key::LeftArrow);
+        assert!(visits.borrow().is_empty());
+        press(&app, "q");
+        assert_eq!(*visits.borrow(), [true]);
     }
 
     #[test]

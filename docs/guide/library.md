@@ -64,9 +64,9 @@ switches between Cull and Develop.
 In the grid:
 
 - The arrow keys move the selection, and **Home** and **End** go to
-  the first and last frame. A mouse's back and forward buttons go
-  back to the folder you came from and forward again, as a
-  browser's do, each on the frame you left it on.
+  the first and last frame. **Alt+←** and **Alt+→**, or a mouse's
+  back and forward buttons, go back to the folder you came from and
+  forward again, as a browser's do, each on the frame you left it on.
 - The scroll bar down the right edge, and the one under the
   filmstrip, show where you are in the folder; drag either, or click
   its track to page.

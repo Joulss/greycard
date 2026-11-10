@@ -402,7 +402,8 @@ time, the sheet also offers **Delete permanently**, which can't be
 undone. Enter never presses that one. Where there is no trash at all,
 the sheet says "No trash here: this is permanent."
 
-## Mouse buttons
+## Back and forward
 
-In the grid, a mouse's back and forward side buttons go to the
-folders visited, as a browser's do; ← and → step the frames.
+In the grid, **Alt+←** and **Alt+→**, or a mouse's back and forward
+side buttons, go to the folders visited, as a browser's do; ← and →
+step the frames.
