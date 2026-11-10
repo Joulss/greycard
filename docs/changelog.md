@@ -12,6 +12,13 @@ design note behind it.
   Installed apps to remove. The zip is still there
   ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-a-windows-installer.md)).
 
+### Window
+
+- The window opens as it was closed: its size, whether it was
+  maximized, and, except on Wayland, its place. A window closed on a
+  monitor since unplugged opens on one that is there (issue 114,
+  [§623](https://github.com/jessolmstead/greycard/blob/master/docs/notes/623-the-window-opens-as-it-was-closed.md)).
+
 ### Fixes
 
 - The mouse's back and forward buttons come back to a folder, a root,

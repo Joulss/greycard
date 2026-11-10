@@ -2149,6 +2149,43 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// The window is written at the close and not by the timer's
+    /// writes, which keep the file's; a window this build does not know
+    /// stays in the file.
+    #[test]
+    fn the_window_is_written_at_the_close_alone() {
+        use crate::window_fit::kept;
+        let other = r#"{"windows": {"second": {"width": 900, "height": 600}}}"#;
+        let (app, state, _worker, _timer, choices, dir) = kept_window_over(Some(other));
+        kept::start();
+        let screen = kept::Screen {
+            name: "DP-1".into(),
+            position: (0, 0),
+            size: (2560, 1440),
+            scale: 1.0,
+        };
+        let normal = kept::normal_of((1300, 850), 1.0, Some((40, 30)), Some(&screen));
+        kept::observe_as(kept::State::default(), normal);
+        open_editing(&app);
+        click_row(&app, "monitor-row", "Adobe RGB");
+        let file = file_after_a_tick();
+        assert_eq!(file.display_profile, "Adobe RGB");
+        assert_eq!(file.windows.keys().collect::<Vec<_>>(), ["second"]);
+        choices.write(&app, &state.borrow(), true);
+        kept::stop();
+        let file = crate::settings::Settings::load();
+        assert_eq!(file.windows.keys().collect::<Vec<_>>(), ["main", "second"]);
+        let main = &file.windows["main"];
+        assert_eq!(
+            (main.width, main.height, main.at, main.maximized),
+            (1300.0, 850.0, Some([40.0, 30.0]), false)
+        );
+        assert_eq!(main.monitor.as_ref().unwrap().name, "DP-1");
+        assert_eq!(file.windows["second"].width, 900.0);
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// The export's format and color space: a row of the sheet is the
     /// export sheet's choice, and the export sheet's shows on the row.
     #[test]

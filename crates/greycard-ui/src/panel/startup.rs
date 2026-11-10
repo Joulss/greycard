@@ -235,6 +235,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // the user's setting, so it comes out the same on any machine; a
     // variable set by hand still wins.
     let capture = cli.snapshot.is_some() || cli.screenshot.is_some();
+    // The window as the last run closed it, unless the command line
+    // owns this one (`keeps_window`).
+    let memory = crate::window_fit::kept::Memory::of(keeps_window(&cli), &remembered.windows);
     let ui_scale = crate::window_fit::scale::start(
         if capture { 100 } else { remembered.ui_scale },
         remembered.ui_scale_system,
@@ -284,7 +287,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // slot filled once the window is made. The same handler holds the
     // window's scale to the system's times the setting.
     let select_backend = |settings: WGPUSettings| {
-        let (fit, fit_slot) = crate::window_fit::handler(ui_scale);
+        let (fit, fit_slot) = crate::window_fit::handler(ui_scale, memory.clone());
         slint::BackendSelector::new()
             .require_wgpu_30(WGPUConfiguration::Automatic(settings))
             .with_winit_custom_application_handler(fit)
@@ -2330,6 +2333,7 @@ fn merged(
     settings.scroll_bars = kept.scroll_bars;
     settings.scroll_bar_size = kept.scroll_bar_size;
     settings.language = kept.language;
+    settings.windows = kept.windows;
     settings.ui_scale_system =
         crate::window_fit::scale::system_seen().unwrap_or(kept.ui_scale_system);
     if panes_from_file {
@@ -2375,7 +2379,14 @@ impl Choices {
         }
         tracing::debug!("settings: the panel's choices written");
         let panes = self.panes_from_file;
-        settings::Settings::change(|file| *file = merged(now.clone(), std::mem::take(file), panes));
+        settings::Settings::change(|file| {
+            *file = merged(now.clone(), std::mem::take(file), panes);
+            // The window as it closes, at the close alone: not as it is
+            // dragged, for a write a second.
+            if closing {
+                crate::window_fit::kept::store(&mut file.windows);
+            }
+        });
         *self.last.borrow_mut() = now;
     }
 }
@@ -2556,7 +2567,18 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         scroll_bar_size: String::new(),
         // Written as the Settings sheet's language is chosen.
         language: String::new(),
+        // The window's own, put on the file at the close (`Choices`).
+        windows: Default::default(),
     }
+}
+
+/// Whether the run opens as the last closed the window and keeps it for
+/// the next: not one the command line owns (a capture, a timing run,
+/// keys sent), whose window must open the same on every machine, nor
+/// one sized by `--window`, which wins over the kept size. A
+/// headless run has no window, and the test harness none of winit's.
+pub(crate) fn keeps_window(cli: &crate::Cli) -> bool {
+    !scripted_start(cli) && cli.keys.is_none() && cli.window.is_none()
 }
 
 /// Whether the command line owns this run's start: a capture or a

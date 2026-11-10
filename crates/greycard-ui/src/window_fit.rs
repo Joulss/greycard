@@ -16,6 +16,7 @@ use slint::ComponentHandle;
 use crate::App;
 
 pub(crate) mod full_screen;
+pub(crate) mod kept;
 pub(crate) mod scale;
 pub(crate) mod work_area;
 
@@ -91,9 +92,10 @@ pub(crate) type Slot = std::rc::Rc<std::cell::RefCell<Option<slint::Weak<App>>>>
 /// was not running; a size set then goes into the window's attributes,
 /// so the window is created, and placed (centered, on a Mac), at the
 /// fitted size rather than shown at the preferred one and resized
-/// under the user's eyes. Nothing remembers a window's size between
-/// runs, so there is none here to respect; and with no window yet
-/// there is none maximized or full screen to leave alone.
+/// under the user's eyes. A window kept from the last run (`kept`)
+/// opens at its size, through the same fit, at its place and maximized
+/// as it was; with no window yet there is none maximized or full
+/// screen to leave alone.
 ///
 /// It also holds the window's scale to the system's times the
 /// setting (`scale`), and sets a slider's way for each wheel event
@@ -103,16 +105,22 @@ pub(crate) struct Handler {
     slot: Slot,
     done: bool,
     follow: scale::Follow,
+    memory: kept::Memory,
+    /// A maximize asked again once the window is shown (X11).
+    maximize_owed: bool,
 }
 
-/// The handler to give the backend, under this run's `scale`, and the
-/// slot to put the window in once it is built.
-pub(crate) fn handler(scale: Scale) -> (Handler, Slot) {
+/// The handler to give the backend, under this run's `scale` and with
+/// the window kept from the last run (`memory`), and the slot to put
+/// the window in once it is built.
+pub(crate) fn handler(scale: Scale, memory: kept::Memory) -> (Handler, Slot) {
     let slot = Slot::default();
     let handler = Handler {
         slot: slot.clone(),
         done: false,
         follow: scale::Follow::new(scale),
+        memory,
+        maximize_owed: false,
     };
     (handler, slot)
 }
@@ -127,11 +135,26 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         if !std::mem::replace(&mut self.done, true) {
             let app = self.slot.borrow().as_ref().and_then(|w| w.upgrade());
             if let Some(app) = app {
-                let size = fit_window(&app, event_loop, self.follow.scale());
+                let (size, maximized) = fit_window(
+                    &app,
+                    event_loop,
+                    self.follow.scale(),
+                    self.memory.kept.as_ref(),
+                );
                 self.follow.planned(size);
-                if starts_maximized() {
+                self.follow
+                    .least((app.get_least_width(), app.get_least_height()));
+                // The shortcut's Run setting wins over what was kept.
+                let shortcut = starts_maximized();
+                if shortcut {
                     tracing::info!("window: opened maximized, as the shortcut asks");
+                }
+                if shortcut || maximized {
                     app.window().set_maximized(true);
+                    self.maximize_owed = is_x11(event_loop);
+                }
+                if self.memory.on {
+                    kept::start();
                 }
             }
         }
@@ -162,6 +185,43 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         {
             full_screen::resized(w.fullscreen().is_some());
         }
+        use slint::winit_030::winit::event::WindowEvent as E;
+        let main = |slint_window: &slint::Window| {
+            self.slot
+                .borrow()
+                .as_ref()
+                .and_then(|w| w.upgrade())
+                .is_some_and(|app| std::ptr::eq(app.window(), slint_window))
+        };
+        let (Some(w), Some(slint_window)) = (winit_window, slint_window) else {
+            return slint::winit_030::EventResult::Propagate;
+        };
+        if !(self.memory.on || self.maximize_owed) || !main(slint_window) {
+            return slint::winit_030::EventResult::Propagate;
+        }
+        // On X11 a maximize asked before the window is mapped goes to an
+        // unmapped window, which a window manager is free to pass over
+        // (Mutter does): asked again once the window is shown. Nothing
+        // is read meanwhile, so the gap is not taken for a normal window.
+        if self.maximize_owed {
+            if matches!(event, E::Resized(_) | E::Moved(_) | E::Focused(_))
+                && w.is_visible() == Some(true)
+            {
+                self.maximize_owed = false;
+                if !w.is_maximized() {
+                    tracing::info!("window: maximized again, now that it is shown");
+                    w.set_maximized(true);
+                }
+            }
+            return slint::winit_030::EventResult::Propagate;
+        }
+        // The editor's window as it is sized and moved, for the close;
+        // nothing once a close is asked, the window's withdrawal.
+        match event {
+            E::CloseRequested => kept::close_requested(),
+            E::Resized(_) | E::Moved(_) => kept::observe(w, slint_window.is_visible()),
+            _ => {}
+        }
         slint::winit_030::EventResult::Propagate
     }
 
@@ -169,6 +229,8 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         &mut self,
         _event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
     ) -> slint::winit_030::EventResult {
+        // Before the close's write, which reads what was kept.
+        kept::exiting();
         crate::panel::startup::exiting();
         slint::winit_030::EventResult::Propagate
     }
@@ -434,18 +496,32 @@ fn is_wayland(event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop)
     }
 }
 
+/// Whether winit runs on X11.
+fn is_x11(event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop) -> bool {
+    cfg!(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "android"
+        ))
+    )) && !is_wayland(event_loop)
+}
+
 /// The fit, with what winit reports, and its line in the log. The size
 /// asked for is the layout's preferred one: before the window exists
 /// Slint's window holds the layout's least, and applies the preferred
 /// size only as it creates the window, when no size was set. The
 /// size it opens at, in logical pixels: fitted, or as asked
-/// (`scale::unfitted`).
+/// (`scale::unfitted`); and whether the window kept (`kept`) was
+/// maximized.
 fn fit_window(
     app: &App,
     event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
     scale: Scale,
-) -> (f32, f32) {
-    let asked = (app.get_asked_width(), app.get_asked_height());
+    kept: Option<&kept::Kept>,
+) -> ((f32, f32), bool) {
+    let layout = (app.get_asked_width(), app.get_asked_height());
     let wayland = is_wayland(event_loop);
     let handles: Vec<_> = event_loop.available_monitors().collect();
     let home = opens_on(event_loop, &handles);
@@ -463,53 +539,153 @@ fn fit_window(
             }
         })
         .collect();
+    let screens: Vec<_> = handles.iter().map(kept::Screen::of).collect();
     let least = (app.get_least_width(), app.get_least_height());
-    let plan = plan(wayland, asked, &monitors, scale, least);
+    let restored = kept.and_then(|k| kept::restore(k, wayland, &screens, &monitors, scale, least));
+    if let Some(r) = &restored {
+        tracing::info!("{}", r.line);
+    }
+    let from_kept = restored.is_some();
+    let (asked, plan, place, maximized) = match restored {
+        Some(r) => (r.size, r.plan, r.at, r.maximized),
+        None => (
+            layout,
+            plan(wayland, layout, &monitors, scale, least),
+            None,
+            false,
+        ),
+    };
     tracing::info!("{}", plan.line());
-    let opened = match plan {
-        Plan::Fit { opened, at, .. } => {
-            if cfg!(windows)
-                && let Some((x, y)) = at
-            {
-                tracing::info!("window: placed at {x},{y} in the work area");
-                app.window()
-                    .set_position(slint::PhysicalPosition::new(x, y));
+    // macOS creates the window at points. A logical position is handed
+    // to winit as points, as set, unless SLINT_SCALE_FACTOR is set (an
+    // interface scale other than 100 %, or by hand), when Slint makes
+    // pixels of it at that factor and winit points again at the main
+    // screen's scale: there pixels at the primary display's scale,
+    // which is the main screen's but with displays at two scales.
+    // Elsewhere the desktop's pixels.
+    let place = place.map(|p| -> slint::WindowPosition {
+        if !cfg!(target_os = "macos") {
+            slint::PhysicalPosition::new(p.physical.0, p.physical.1).into()
+        } else if scale == Scale::System {
+            slint::LogicalPosition::new(p.points.0 as f32, p.points.1 as f32).into()
+        } else {
+            let main = event_loop
+                .primary_monitor()
+                .map_or(1.0, |m| m.scale_factor());
+            slint::PhysicalPosition::new(
+                (p.points.0 * main).round() as i32,
+                (p.points.1 * main).round() as i32,
+            )
+            .into()
+        }
+    });
+    let opening = opening(&plan, asked, from_kept, place, scale, least, cfg!(windows));
+    if let Some(note) = &opening.note {
+        tracing::info!("{note}");
+    }
+    apply(app.window(), &opening);
+    (opening.planned, maximized)
+}
+
+/// What the window is opened as, set before it exists.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Opening {
+    /// None for the layout's preferred size, which Slint applies as it
+    /// creates the window.
+    pub(crate) size: Option<slint::WindowSize>,
+    pub(crate) position: Option<slint::WindowPosition>,
+    /// The logical size it opens at, for the scale's correction.
+    pub(crate) planned: (f32, f32),
+    /// A line for the log.
+    pub(crate) note: Option<String>,
+}
+
+/// The opening from the fit's `plan` of the size `asked` (the layout's
+/// preferred, or a size `kept` from the last run in Slint's pixels),
+/// a kept `place` as the window is created at, the run's `scale` and the
+/// layout's `least`; `center` where the fit's own place is taken
+/// (Windows).
+pub(crate) fn opening(
+    plan: &Plan,
+    asked: (f32, f32),
+    kept: bool,
+    place: Option<slint::WindowPosition>,
+    scale: Scale,
+    least: (f32, f32),
+    center: bool,
+) -> Opening {
+    match plan {
+        Plan::Fit {
+            opened, at: fit, ..
+        } => {
+            let centered = fit.filter(|_| center && place.is_none());
+            Opening {
+                size: Some(slint::LogicalSize::new(opened.0, opened.1).into()),
+                position: place.or(centered.map(|p| slint::PhysicalPosition::new(p.0, p.1).into())),
+                planned: *opened,
+                note: centered
+                    .map(|p| format!("window: placed at {},{} in the work area", p.0, p.1)),
             }
-            opened
         }
         // Nothing fitted: the size asked for, which under the interface
         // scale is set smaller by its percentage, so the window covers
-        // what it would at 100 % rather than that times the scale.
+        // what it would at 100 % rather than that times the scale. A
+        // kept size is in Slint's pixels already.
         Plan::Wayland | Plan::NoMonitor(_) => {
-            let size = scale::unfitted(scale, asked, least);
-            if size == asked {
-                return asked;
+            let size = if kept {
+                (asked.0.max(least.0).round(), asked.1.max(least.1).round())
+            } else {
+                scale::unfitted(scale, asked, least)
+            };
+            if !kept && size == asked {
+                return Opening {
+                    size: None,
+                    position: None,
+                    planned: asked,
+                    note: None,
+                };
             }
-            tracing::info!(
-                "window: at {:.0}x{:.0} under the interface scale",
-                size.0,
-                size.1
-            );
+            let note = (!kept).then(|| {
+                format!(
+                    "window: at {:.0}x{:.0} under the interface scale",
+                    size.0, size.1
+                )
+            });
             // On Wayland the window opens at 1 times the setting
             // (`scale::decide`), and the size goes in at that factor as
             // pixels: Slint 1.18 sends a logical one on to winit as
             // logical once the window exists, and winit makes pixels of
             // it at its own scale, 1 until the compositor's comes,
             // which leaves the window the percentage too small.
-            if plan == Plan::Wayland {
+            let set = if *plan == Plan::Wayland && matches!(scale, Scale::Times(_)) {
                 let factor = scale.on(1.0) as f32;
-                app.window().set_size(slint::PhysicalSize::new(
+                slint::PhysicalSize::new(
                     (size.0 * factor).round() as u32,
                     (size.1 * factor).round() as u32,
-                ));
-                return size;
+                )
+                .into()
+            } else {
+                slint::LogicalSize::new(size.0, size.1).into()
+            };
+            Opening {
+                size: Some(set),
+                position: None,
+                planned: size,
+                note,
             }
-            size
         }
-    };
-    app.window()
-        .set_size(slint::LogicalSize::new(opened.0, opened.1));
-    opened
+    }
+}
+
+/// The opening, set on the window before it exists: Slint keeps each
+/// in the attributes it creates the window with.
+pub(crate) fn apply(window: &slint::Window, opening: &Opening) {
+    if let Some(p) = &opening.position {
+        window.set_position(p.clone());
+    }
+    if let Some(size) = &opening.size {
+        window.set_size(size.clone());
+    }
 }
 
 #[cfg(test)]
@@ -893,6 +1069,152 @@ mod tests {
             plan(false, ASKED, &[small, none], Scale::System, LEAST).line(),
             "window: monitor 180x200 at 1.00x, opening at 560x509"
         );
+    }
+
+    /// What the window is opened as, from the fit: the fitted size, the
+    /// fit's own place on Windows alone, a kept place anywhere; and
+    /// with nothing fitted the size as asked, held to the least, a kept
+    /// one not shrunk again by the interface scale.
+    #[test]
+    fn the_opening_from_the_plan() {
+        let fit = Plan::Fit {
+            monitor: (1920.0, 1080.0),
+            scale: 1.0,
+            work: None,
+            opened: (1400.0, 900.0),
+            at: Some((10, 20)),
+        };
+        let o = opening(&fit, ASKED, false, None, Scale::System, LEAST, false);
+        assert_eq!(o.size, Some(slint::LogicalSize::new(1400.0, 900.0).into()));
+        assert_eq!((o.position, o.planned), (None, (1400.0, 900.0)));
+        let o = opening(&fit, ASKED, false, None, Scale::System, LEAST, true);
+        assert_eq!(
+            o.position,
+            Some(slint::PhysicalPosition::new(10, 20).into())
+        );
+        let o = opening(
+            &fit,
+            ASKED,
+            true,
+            Some(slint::PhysicalPosition::new(300, 40).into()),
+            Scale::System,
+            LEAST,
+            true,
+        );
+        assert_eq!(
+            o.position,
+            Some(slint::PhysicalPosition::new(300, 40).into())
+        );
+        // Wayland, as the layout asks: Slint's own preferred size.
+        let o = opening(
+            &Plan::Wayland,
+            ASKED,
+            false,
+            None,
+            Scale::System,
+            LEAST,
+            false,
+        );
+        assert_eq!(o.size, None);
+        // Under 150 %, the layout's size over the percentage, as pixels
+        // at 1.5; a kept size already in Slint's pixels the same.
+        let o = opening(
+            &Plan::Wayland,
+            ASKED,
+            false,
+            None,
+            Scale::Times(1.5),
+            LEAST,
+            false,
+        );
+        assert_eq!(o.size, Some(slint::PhysicalSize::new(1500, 800).into()));
+        assert_eq!(o.planned, (1000.0, 533.0));
+        let o = opening(
+            &Plan::Wayland,
+            (1000.0, 600.0),
+            true,
+            None,
+            Scale::Times(1.5),
+            LEAST,
+            false,
+        );
+        assert_eq!(o.size, Some(slint::PhysicalSize::new(1500, 900).into()));
+        let o = opening(
+            &Plan::Wayland,
+            (1000.0, 300.0),
+            true,
+            None,
+            Scale::System,
+            LEAST,
+            false,
+        );
+        assert_eq!(o.size, Some(slint::LogicalSize::new(1000.0, 509.0).into()));
+    }
+
+    /// A kept window applied to the editor's window: its size fitted to
+    /// the monitor present, its place, and maximized. A run sized by
+    /// `--window`, a capture, or keys sent keeps none and reads none.
+    #[test]
+    fn a_kept_window_opens_as_it_was_closed() {
+        let app = crate::testing::window(1);
+        let screen = kept::Screen {
+            name: "eDP-1".into(),
+            position: (0, 0),
+            size: (1920, 1080),
+            scale: 1.0,
+        };
+        let monitors = [m(screen.size, screen.scale)];
+        let record = kept::Kept {
+            width: 1700.0,
+            height: 1000.0,
+            at: Some([60.0, 30.0]),
+            maximized: true,
+            monitor: Some(kept::KeptMonitor {
+                name: "eDP-1".into(),
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            }),
+        };
+        let r = kept::restore(
+            &record,
+            false,
+            std::slice::from_ref(&screen),
+            &monitors,
+            Scale::System,
+            LEAST,
+        )
+        .unwrap();
+        let place =
+            r.at.map(|p| slint::PhysicalPosition::new(p.physical.0, p.physical.1).into());
+        let o = opening(&r.plan, r.size, true, place, Scale::System, LEAST, false);
+        apply(app.window(), &o);
+        if r.maximized {
+            app.window().set_maximized(true);
+        }
+        let size = app.window().size().to_logical(app.window().scale_factor());
+        // 1920 x 1080 less the guess's 80 x 140; moved in to fit.
+        assert_eq!((size.width, size.height), (1700.0, 940.0));
+        assert_eq!(
+            o.position,
+            Some(slint::PhysicalPosition::new(60, 30).into())
+        );
+        assert!(app.window().is_maximized());
+
+        let cli = |args: &[&str]| {
+            let all = std::iter::once("greycard-ui").chain(args.iter().copied());
+            crate::panel::startup::keeps_window(&crate::Cli::try_parse_from(all).unwrap())
+        };
+        use clap::Parser;
+        assert!(cli(&[]));
+        assert!(!cli(&["--window", "800x600"]));
+        assert!(!cli(&["--snapshot", "x.png"]));
+        assert!(!cli(&["--screenshot", "x.png"]));
+        assert!(!cli(&["--keys", "down"]));
+        let windows: kept::Windows = [("main".to_string(), record)].into();
+        assert!(kept::Memory::of(false, &windows).kept.is_none());
+        assert!(kept::Memory::of(true, &windows).kept.is_some());
     }
 
     /// The fit's inputs in the running editor: the preferred size the

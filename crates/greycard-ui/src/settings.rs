@@ -283,6 +283,16 @@ pub struct Settings {
     /// tag with no catalog is kept as written and reads as English.
     #[serde(deserialize_with = "string_leniently")]
     pub language: String,
+    /// Each window as it was closed, by its name ("main"): its normal
+    /// size, whether it was maximized, and its place on which monitor
+    /// (`window_fit::kept`). This machine's alone, so here and never in
+    /// `shared`. Written at the close; a name this build does not know
+    /// is kept as read, and an entry that is no record is left out.
+    #[serde(
+        deserialize_with = "windows_leniently",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub windows: crate::window_fit::kept::Windows,
 }
 
 /// The Settings sheet's categories, top to bottom, by the names the
@@ -508,6 +518,28 @@ where
             Ok(Default::default())
         }
     }
+}
+
+fn windows_leniently<'de, D>(d: D) -> Result<crate::window_fit::kept::Windows, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut out = crate::window_fit::kept::Windows::new();
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Object(map) => {
+            for (name, v) in map {
+                match serde_json::from_value(v) {
+                    Ok(kept) => {
+                        out.insert(name, kept);
+                    }
+                    Err(e) => tracing::warn!("settings: windows: {name:?}: {e}; left out"),
+                }
+            }
+        }
+        serde_json::Value::Null => {}
+        other => tracing::warn!("settings: windows is {other}, not a map of windows; none"),
+    }
+    Ok(out)
 }
 
 /// The views a launch may open on, as the Settings sheet's row spells
@@ -751,6 +783,7 @@ impl Default for Settings {
             scroll_bars: SCROLL_BARS[0].into(),
             scroll_bar_size: SCROLL_BAR_SIZES[0].into(),
             language: String::new(),
+            windows: Default::default(),
         }
     }
 }
@@ -1219,6 +1252,23 @@ mod tests {
             scroll_bars: "Stay".into(),
             scroll_bar_size: "Wide".into(),
             language: "fr".into(),
+            windows: [(
+                "main".to_string(),
+                crate::window_fit::kept::Kept {
+                    width: 1400.0,
+                    height: 900.0,
+                    at: Some([120.0, 80.0]),
+                    maximized: true,
+                    monitor: Some(crate::window_fit::kept::KeptMonitor {
+                        name: "DP-1".into(),
+                        x: 0,
+                        y: 0,
+                        width: 3840,
+                        height: 2160,
+                    }),
+                },
+            )]
+            .into(),
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);

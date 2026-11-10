@@ -333,6 +333,12 @@ current log is `greycard-ui.log`, and the three runs before are kept as
 `greycard-ui-1.log` (the latest), `greycard-ui-2.log`, and
 `greycard-ui-3.log`.
 
+The window opens as it was closed: its size, whether it was
+maximized, and its place, unless its monitor is gone or the place is
+off the screens (Wayland lets an app ask for no place, so there only
+the size and the maximize). The settings file keeps it, on this
+machine alone.
+
 A settings file that will not parse, a hand edit with a typo say, is
 moved aside as `settings.json.bad` and the run starts on the defaults.
 A fresh file holding the defaults reappears at the first write, the

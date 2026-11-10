@@ -267,6 +267,54 @@ pub(crate) struct Follow {
     /// The logical size the fit opened the window at, or the one it
     /// asked for: what a correction at its first event sets it to.
     planned: Option<slint::LogicalSize>,
+    /// The first event's correction, held while the window opened
+    /// maximized or full screen: set once it is first normal, so
+    /// un-maximizing gives the size it was fitted to.
+    owed: Option<Owed>,
+    /// The layout's least, logical.
+    least: Option<slint::LogicalSize>,
+}
+
+/// A correction owed: the size, and whether the platform has shown the
+/// window maximized or full screen since.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Owed {
+    size: slint::LogicalSize,
+    seen: bool,
+}
+
+/// The first event's correction to the logical size `size`: set now on
+/// a normal window, and owed on one maximized or full screen, which a
+/// resize would take out of the maximize.
+pub(crate) fn correction(
+    size: slint::LogicalSize,
+    maximized: bool,
+    full: bool,
+) -> (Option<slint::LogicalSize>, Option<Owed>) {
+    if maximized || full {
+        (None, Some(Owed { size, seen: false }))
+    } else {
+        (Some(size), None)
+    }
+}
+
+/// A correction owed at an event that finds the window `maximized` or
+/// `full` as the platform reports it: still owed, and the size to set
+/// now. It is due once the window is normal after the platform has
+/// shown it maximized or full screen, not before: on X11 a maximize
+/// asked before the window is mapped may be passed over and asked
+/// again once it is shown, and a resize in that gap would fight it.
+pub(crate) fn due(
+    owed: Option<Owed>,
+    maximized: bool,
+    full: bool,
+) -> (Option<Owed>, Option<slint::LogicalSize>) {
+    match owed {
+        None => (None, None),
+        Some(o) if maximized || full => (Some(Owed { seen: true, ..o }), None),
+        Some(o) if o.seen => (None, Some(o.size)),
+        Some(o) => (Some(o), None),
+    }
 }
 
 impl Follow {
@@ -275,6 +323,8 @@ impl Follow {
             scale,
             met: HashSet::new(),
             planned: None,
+            owed: None,
+            least: None,
         }
     }
 
@@ -286,6 +336,12 @@ impl Follow {
     /// The logical size the window was fitted to before it was made.
     pub(crate) fn planned(&mut self, size: (f32, f32)) {
         self.planned = Some(slint::LogicalSize::new(size.0, size.1));
+    }
+
+    /// The layout's least, in logical pixels: set on the window again at
+    /// each factor (`window_event`).
+    pub(crate) fn least(&mut self, size: (f32, f32)) {
+        self.least = Some(slint::LogicalSize::new(size.0, size.1));
     }
 
     /// A window's event, before Slint sees it: its first, which checks
@@ -318,6 +374,27 @@ impl Follow {
         if changed.is_none() && matches!(event, winit::event::WindowEvent::Resized(_)) {
             return;
         }
+        // The platform's own state, not Slint's, which holds the
+        // maximize asked before the window existed.
+        let (owed, set) = if self.owed.is_some() {
+            due(
+                self.owed,
+                winit_window.is_maximized(),
+                winit_window.fullscreen().is_some(),
+            )
+        } else {
+            (None, None)
+        };
+        self.owed = owed;
+        if let Some(size) = set {
+            let factor = slint_window.scale_factor();
+            slint_window.set_size(size.to_physical(factor));
+            tracing::info!(
+                "window scale: the correction owed, {:.0}x{:.0} now the window is normal",
+                size.width,
+                size.height
+            );
+        }
         let first = self.met.insert(winit_window.id());
         if !first && changed.is_none() {
             return;
@@ -332,11 +409,30 @@ impl Follow {
         slint_window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
             scale_factor: want,
         });
+        // Slint keeps the window's least as logical constraints and
+        // hands them on only when they change, which a new factor does
+        // not: the platform would hold the least at the old factor's
+        // pixels, on X11 a minimum larger than the screen that no
+        // resize goes under and no maximize fits. Set at this one.
+        if let Some(least) = self.least {
+            let least = least.to_physical(want);
+            winit_window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(
+                least.width,
+                least.height,
+            )));
+        }
         if changed.is_none() {
+            let (now, owed) = correction(
+                self.planned.take().unwrap_or(logical),
+                slint_window.is_maximized(),
+                slint_window.is_fullscreen(),
+            );
             // Physical: a logical size goes to winit as one, which winit
             // turns into pixels at its own scale, not at Slint's.
-            let size = self.planned.take().unwrap_or(logical);
-            slint_window.set_size(size.to_physical(want));
+            if let Some(size) = now {
+                slint_window.set_size(size.to_physical(want));
+            }
+            self.owed = owed;
         }
         slint_window.request_redraw();
         tracing::info!(
@@ -504,6 +600,47 @@ mod tests {
         assert_eq!(unfitted(Scale::ByHand(2.0), asked, least), asked);
         assert_eq!(unfitted(Scale::Times(1.5), asked, least), (1000.0, 533.0));
         assert_eq!(unfitted(Scale::Times(2.0), asked, least), (750.0, 509.0));
+    }
+
+    /// The first event's correction: set on a normal window; owed on a
+    /// maximized or full-screen one, and due once the platform has
+    /// shown it so and then normal.
+    #[test]
+    fn a_maximized_window_is_corrected_once_normal() {
+        let size = slint::LogicalSize::new(1400.0, 900.0);
+        let owed = Owed { size, seen: false };
+        assert_eq!(correction(size, false, false), (Some(size), None));
+        assert_eq!(correction(size, true, false), (None, Some(owed)));
+        assert_eq!(correction(size, false, true), (None, Some(owed)));
+        assert_eq!(due(None, false, false), (None, None));
+        // Maximized, then normal: due.
+        let (held, set) = due(Some(owed), true, false);
+        assert_eq!(set, None);
+        assert_eq!(due(held, false, false), (None, Some(size)));
+        // Full screen the same.
+        let (held, _) = due(Some(owed), false, true);
+        assert_eq!(due(held, false, false), (None, Some(size)));
+    }
+
+    /// X11 with the maximize passed over before the window was mapped:
+    /// events that find it normal before the maximize asked again takes
+    /// leave the correction owed, so it does not fight the maximize.
+    #[test]
+    fn the_correction_waits_for_a_maximize_asked_again() {
+        let size = slint::LogicalSize::new(733.0, 503.0);
+        let (_, owed) = correction(size, true, false);
+        // The first events: the platform has not maximized it.
+        let (owed, set) = due(owed, false, false);
+        assert_eq!(set, None);
+        let (owed, set) = due(owed, false, false);
+        assert_eq!(set, None);
+        // The maximize asked again takes, and stays.
+        let (owed, set) = due(owed, true, false);
+        assert_eq!(set, None);
+        let (owed, set) = due(owed, true, false);
+        assert_eq!(set, None);
+        // Un-maximized by the user: now.
+        assert_eq!(due(owed, false, false), (None, Some(size)));
     }
 
     /// Slint's factor on a monitor, and whether a window is changed:
