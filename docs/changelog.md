@@ -28,6 +28,11 @@ design note behind it.
 
 ### Develop
 
+- Ctrl+Z takes back a rating, flag, or label in Develop and the
+  library when it was the last thing you did, and brings back a frame
+  the filter hid; Ctrl+Shift+Z makes it again. Cull's undo is as it
+  was (issue 115,
+  [§627](https://github.com/jessolmstead/greycard/blob/master/docs/notes/627-undo-takes-back-a-mark-out-of-cull.md)).
 - A middle click on a frame in the filmstrip or the grid syncs its
   edit onto the other selected frames, on the sections your last sync
   took; it sets, never shifts, so a second click changes nothing

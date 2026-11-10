@@ -436,18 +436,120 @@ fn same_develop(a: &Edit, b: &Edit) -> bool {
         && a.detail_wants() == b.detail_wants()
 }
 
+/// Whether an undo (`back`) or a redo out of culling steps the
+/// session's marks rather than the current frame's edit: whichever was
+/// done last ([`tags::marks_first`]). With no frame current, the marks
+/// whenever there is one to step.
+///
+/// [`tags::marks_first`]: crate::tags::marks_first
+pub(crate) fn marks_first(st: &State, back: bool) -> bool {
+    let line = st.current.and_then(|c| st.line(c));
+    let (mark, edit) = if back {
+        (
+            st.culling.tags.undo_order(),
+            line.filter(|l| !l.history.is_empty())
+                .map(|l| l.current_order),
+        )
+    } else {
+        (
+            st.culling.tags.redo_order(),
+            line.and_then(|l| l.redo.last()).map(|s| s.order),
+        )
+    };
+    crate::tags::marks_first(mark, edit)
+}
+
+/// An undo (`back`) or redo out of culling, in its turn: the panel
+/// recorded, then the mark or the edit, whichever [`marks_first`]
+/// says. The row to select and the word, from a mark's step.
+fn step_last(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    back: bool,
+) -> (Option<usize>, Option<String>) {
+    if st.current.is_some() {
+        record_panel(st, app);
+    }
+    if marks_first(st, back) {
+        return crate::panel::browser::step_tags(st, app, back);
+    }
+    step_edit(st, app, worker, back);
+    (None, None)
+}
+
+/// The current frame's edit a step back (`back`) or forward.
+fn step_edit(st: &mut State, app: &App, worker: &Worker, back: bool) {
+    let Some(line) = st.current.and_then(|c| st.line_mut(c)) else {
+        return;
+    };
+    let moved = if back { line.undo() } else { line.redo() };
+    if !moved {
+        return;
+    }
+    take_current(st, app, worker);
+}
+
+/// An undo (`back`) or redo out of culling that waited its turn, the
+/// guards asked again as a press now would ask them: the window may
+/// have moved under it while it waited (a sheet opened, Cull turned
+/// on, the queue's view opened). Under a sheet or in the queue's view
+/// it is dropped, as a press there is; in Cull it is Cull's, the marks
+/// alone.
+fn step_held(state: &Rc<Shared>, app: &App, worker: &Worker, back: bool) {
+    if app.invoke_sheet_open() {
+        return;
+    }
+    let mut st = state.borrow_mut();
+    if crate::panel::cull::cull_mode(&st) {
+        // As the press in Cull: nothing with no frame current.
+        if st.current.is_none() {
+            return;
+        }
+        let (next, _) = crate::panel::browser::step_tags(&mut st, app, back);
+        drop(st);
+        if let Some(row) = next {
+            app.invoke_select(row as i32);
+        }
+        return;
+    }
+    if crate::panel::queue_view::refused(&st, if back { "an undo" } else { "a redo" }) {
+        return;
+    }
+    let (next, said) = step_last(&mut st, app, worker, back);
+    drop(st);
+    show_marks_step(state, app, next, said);
+}
+
+/// After a mark's step out of culling: over to the frame it put back,
+/// and its word on the status line, there being none over the picture
+/// there; held for the develop the move asked for, as a key's word is.
+fn show_marks_step(state: &Rc<Shared>, app: &App, next: Option<usize>, said: Option<String>) {
+    let generation = state.borrow().develop.generation;
+    if let Some(row) = next {
+        app.invoke_select(row as i32);
+    }
+    if let Some(said) = said {
+        let mut st = state.borrow_mut();
+        if st.develop.generation != generation {
+            st.develop.status_after_develop = Some((st.develop.generation, said.clone()));
+        }
+        app.set_status(said.into());
+    }
+}
+
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
-    // Undo and redo walk the sidecar's history.
-    for back in [true, false] {
+    // Undo and redo walk the sidecar's history; the keys (`mixed`)
+    // the session's marks too, when one of those was the last thing
+    // done. The history panel's buttons are the edit's alone, as their
+    // being greyed out says.
+    for (back, mixed) in [(true, true), (false, true), (true, false), (false, false)] {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         let step = move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(c) = st.current else {
-                return;
-            };
             // In culling the keys are the ratings', flags' and
             // labels': undo steps back the session's changes to those
             // and touches no develop, and culling stays up. A request
@@ -456,6 +558,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // last key the user pressed, not the last that landed. The
             // same in Cull drawn developed, whose keys are culling's.
             if crate::panel::cull::cull_mode(&st) {
+                if st.current.is_none() {
+                    return;
+                }
                 drop(st);
                 crate::rows::request(
                     &state,
@@ -469,7 +574,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         crate::rows::Request::Redo
                     },
                     Box::new(move |state, app, _, _| {
-                        let next =
+                        let (next, _) =
                             crate::panel::browser::step_tags(&mut state.borrow_mut(), app, back);
                         if let Some(row) = next {
                             app.invoke_select(row as i32);
@@ -482,20 +587,47 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             }
             // Whatever the panel holds is a state first.
-            record_panel(&mut st, &app);
-            let Some(line) = st.line_mut(c) else {
-                return;
-            };
-            let moved = if back { line.undo() } else { line.redo() };
-            if !moved {
+            if st.current.is_some() {
+                record_panel(&mut st, &app);
+            }
+            // Out of culling a mark is undone too when it was the
+            // last thing done (§117's marks, across frames, beside the
+            // frame's own line), the frame it went on brought back if
+            // the filter hid it. Queued as culling's undo is, behind a
+            // key still waiting on its read, and decided when its turn
+            // comes. Behind a pick's open too, once there are marks to
+            // weigh: the pick is current at once but its line is a
+            // stand-in until the read lands, and the undo is the
+            // frame's own. An edit's undo with no mark in the way is as
+            // it always was, at once.
+            if mixed
+                && (marks_first(&st, back)
+                    || st.views.loads.marks_waiting()
+                    || (st.culling.tags.any() && st.views.loads.open_waiting()))
+            {
+                drop(st);
+                crate::rows::request(
+                    &state,
+                    &app,
+                    &worker,
+                    Vec::new(),
+                    crate::rows::Scope::File,
+                    if back {
+                        crate::rows::Request::Undo
+                    } else {
+                        crate::rows::Request::Redo
+                    },
+                    Box::new(move |state, app, worker, _| step_held(state, app, worker, back)),
+                );
                 return;
             }
-            take_current(&mut st, &app, &worker);
+            step_edit(&mut st, &app, &worker, back);
         };
-        if back {
-            app.on_undo(step);
-        } else {
-            app.on_redo(step);
+        match (back, mixed) {
+            (true, true) => app.on_undo(step),
+            (false, true) => app.on_redo(step),
+            (true, false) => app.on_undo_edit(step),
+            (false, false) => app.on_redo_edit(step),
         }
     }
     // The history's rows: a click makes that state current, a hover
@@ -800,6 +932,386 @@ mod tests {
                 note: None,
                 left_out: Vec::new(),
             },
+        }
+    }
+
+    /// The frame's edit position, its rating, and its flag.
+    fn edit_and_marks(st: &State, i: usize) -> (usize, u8, greycard_edit::meta::Flag) {
+        let s = &st.sidecars[i];
+        (s.position(), s.meta.rating, s.meta.flag)
+    }
+
+    /// Issue 115: a frame rejected in Develop under a filter that
+    /// hides the rejects is gone from the strip, and Ctrl+Z takes the
+    /// reject back, brings the frame back, and goes to it, without
+    /// touching any edit. Ctrl+Shift+Z rejects it again.
+    #[test]
+    fn undo_in_develop_takes_back_a_mark_and_brings_the_frame_back() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        // The rejects hidden.
+        app.invoke_filter_flag_toggled(2, true);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2]);
+
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().views.shown, vec![1, 2]);
+        assert_eq!(state.borrow().current, Some(1), "on to the next frame");
+
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::None);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2]);
+        assert_eq!(state.borrow().current, Some(0), "back on the frame");
+        assert_eq!(app.get_status(), "Undo: Unflagged");
+        for i in 0..3 {
+            assert_eq!(state.borrow().sidecars[i].states(), 1, "no edit moved");
+        }
+
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::Reject);
+        assert_eq!(state.borrow().views.shown, vec![1, 2]);
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(app.get_status(), "Redo: Rejected");
+    }
+
+    /// Last done first: an edit and then a mark undo the mark and
+    /// then the edit; a mark and then an edit undo the edit and leave
+    /// the mark. Redo makes them again the way they were undone, and
+    /// the walk goes back and forth the same each time.
+    #[test]
+    fn undo_in_develop_takes_marks_and_edits_back_in_the_order_they_were_done() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let now = |state: &Rc<Shared>| edit_and_marks(&state.borrow(), 0);
+
+        // An edit, then a mark.
+        app.set_exposure(0.5);
+        save(&app, &state);
+        app.invoke_meta_key("3".into());
+        assert_eq!(now(&state), (1, 3, Flag::None));
+        for _ in 0..2 {
+            app.invoke_undo();
+            assert_eq!(now(&state), (1, 0, Flag::None), "the mark first");
+            app.invoke_undo();
+            assert_eq!(now(&state), (0, 0, Flag::None), "then the edit");
+            assert_eq!(app.get_exposure(), 0.0);
+            app.invoke_undo();
+            assert_eq!(now(&state), (0, 0, Flag::None), "nothing left");
+            app.invoke_redo();
+            assert_eq!(now(&state), (1, 0, Flag::None), "the edit again first");
+            assert_eq!(app.get_exposure(), 0.5);
+            app.invoke_redo();
+            assert_eq!(now(&state), (1, 3, Flag::None), "then the mark");
+            app.invoke_redo();
+            assert_eq!(now(&state), (1, 3, Flag::None), "nothing left");
+        }
+
+        // A mark, then an edit: the edit first, the mark kept.
+        app.invoke_meta_key("p".into());
+        app.set_exposure(1.0);
+        save(&app, &state);
+        assert_eq!(now(&state), (2, 3, Flag::Pick));
+        app.invoke_undo();
+        assert_eq!(now(&state), (1, 3, Flag::Pick), "the edit, the mark left");
+        assert_eq!(app.get_exposure(), 0.5);
+        app.invoke_undo();
+        assert_eq!(now(&state), (1, 3, Flag::None), "then the mark");
+        app.invoke_undo();
+        assert_eq!(now(&state), (1, 0, Flag::None), "the older mark");
+        app.invoke_redo();
+        app.invoke_redo();
+        assert_eq!(now(&state), (1, 3, Flag::Pick), "the marks again, in order");
+        app.invoke_redo();
+        assert_eq!(now(&state), (2, 3, Flag::Pick), "and the edit last");
+
+        // The panel's edit not yet saved is the newest thing: it is
+        // what an undo takes back, and the mark stays.
+        app.set_exposure(2.0);
+        app.invoke_undo();
+        assert_eq!(now(&state), (2, 3, Flag::Pick));
+        assert_eq!(app.get_exposure(), 1.0);
+    }
+
+    /// An edit from before the session is older than any mark made in
+    /// it.
+    #[test]
+    fn an_edit_from_before_the_session_is_undone_after_the_marks() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        {
+            // A step the sidecar was read with.
+            let mut st = state.borrow_mut();
+            let mut e = st.sidecars[0].current.clone();
+            e.light.exposure = 0.5;
+            st.sidecars[0].record(e);
+            st.sidecars[0].current_order = greycard_edit::Order::BEFORE;
+        }
+        app.invoke_select(0);
+        app.invoke_meta_key("2".into());
+        app.invoke_undo();
+        assert_eq!(edit_and_marks(&state.borrow(), 0).0, 1, "the mark first");
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 0);
+        app.invoke_undo();
+        assert_eq!(edit_and_marks(&state.borrow(), 0).0, 0, "then the edit");
+    }
+
+    /// The library's grid: a mark made there is undone there, with a
+    /// frame current or none, and the frame the filter hid comes back
+    /// and is selected.
+    #[test]
+    fn undo_in_the_library_takes_back_a_mark() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(1);
+        app.set_grid_open(true);
+        app.invoke_filter_flag_toggled(2, true);
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().views.shown, vec![0, 2]);
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[1].meta.flag, Flag::None);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2]);
+        assert_eq!(state.borrow().current, Some(1));
+
+        // No frame current: the marks still step.
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[1].meta.flag, Flag::Reject);
+        state.borrow_mut().current = None;
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[1].meta.flag, Flag::None);
+        assert_eq!(state.borrow().views.shown, vec![0, 1, 2]);
+    }
+
+    /// The export queue's view refuses an undo, a mark's as an edit's.
+    #[test]
+    fn the_queue_view_refuses_a_mark_s_undo() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.invoke_meta_key("4".into());
+        assert!(marks_first(&state.borrow(), true));
+        state.borrow_mut().views.view = crate::roots::View::Queue;
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 4);
+    }
+
+    /// The panel's exposure, the frame's edit position, and its marks.
+    type Seen = (f32, usize, u8, greycard_edit::meta::Flag);
+
+    /// An undo or a redo, pressed.
+    type Press = fn(&App);
+
+    fn seen(app: &App, state: &Rc<Shared>) -> Seen {
+        let (p, r, f) = edit_and_marks(&state.borrow(), 0);
+        (app.get_exposure(), p, r, f)
+    }
+
+    /// The review's case A: a mark redone after an edit made since
+    /// its undo is what the next Ctrl+Z takes back, not the edit.
+    #[test]
+    fn undo_takes_back_a_mark_just_redone() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.invoke_meta_key("3".into());
+        app.invoke_undo();
+        app.set_exposure(0.5);
+        save(&app, &state);
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 3, "the mark again");
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 0, "the redo undone");
+        assert_eq!(app.get_exposure(), 0.5, "the edit left");
+    }
+
+    /// Case B: an edit redone after a mark made since its undo is
+    /// what the next Ctrl+Z takes back; and the mirror, a mark undone
+    /// after an edit was is what Ctrl+Shift+Z makes again.
+    #[test]
+    fn undo_takes_back_an_edit_just_redone_and_redo_the_mark_just_undone() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_exposure(0.5);
+        save(&app, &state);
+        app.set_exposure(1.0);
+        save(&app, &state);
+        app.invoke_undo();
+        app.invoke_meta_key("3".into());
+        app.invoke_redo();
+        assert_eq!(
+            seen(&app, &state),
+            (1.0, 2, 3, Flag::None),
+            "the edit again"
+        );
+        app.invoke_undo();
+        assert_eq!(
+            seen(&app, &state),
+            (0.5, 1, 3, Flag::None),
+            "the redo undone"
+        );
+
+        // The mirror: the mark undone after the edit was.
+        app.invoke_undo();
+        assert_eq!(seen(&app, &state), (0.5, 1, 0, Flag::None), "the mark");
+        app.invoke_redo();
+        assert_eq!(
+            seen(&app, &state),
+            (0.5, 1, 3, Flag::None),
+            "the mark again"
+        );
+        app.invoke_redo();
+        assert_eq!(seen(&app, &state), (1.0, 2, 3, Flag::None), "then the edit");
+    }
+
+    /// A longer walk, undos, redos, marks, and edits interleaved: a
+    /// Ctrl+Z always takes back what the Ctrl+Shift+Z before it did,
+    /// and a Ctrl+Shift+Z what the Ctrl+Z before it did.
+    #[test]
+    fn each_undo_and_redo_is_taken_back_by_the_other() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let mut exposure = 0.0;
+        let mut moved = 0;
+        for op in [
+            "e", "3", "u", "e", "r", "p", "u", "u", "r", "e", "u", "x", "r", "r", "u", "5", "r",
+            "u", "u", "u", "e", "r", "r", "r", "u", "1", "u", "u", "r", "e", "r", "u", "u", "u",
+            "u", "u", "r", "r", "r", "r",
+        ] {
+            let before = seen(&app, &state);
+            match op {
+                "e" => {
+                    exposure += 0.25;
+                    app.set_exposure(exposure);
+                    save(&app, &state);
+                }
+                "u" | "r" => {
+                    let back = op == "u";
+                    let (go, again): (Press, Press) = if back {
+                        (App::invoke_undo, App::invoke_redo)
+                    } else {
+                        (App::invoke_redo, App::invoke_undo)
+                    };
+                    go(&app);
+                    let after = seen(&app, &state);
+                    if after != before {
+                        moved += 1;
+                        again(&app);
+                        assert_eq!(seen(&app, &state), before, "{op} taken back");
+                        go(&app);
+                        assert_eq!(seen(&app, &state), after, "{op} made again");
+                    }
+                }
+                key => {
+                    app.invoke_meta_key(key.into());
+                }
+            }
+        }
+        assert!(moved > 20, "the walk moved: {moved}");
+    }
+
+    /// The history panel's buttons step the edit alone, as before
+    /// marks were undone out of Cull; the keys take the mark first.
+    #[test]
+    fn the_history_buttons_step_the_edit_alone() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.set_exposure(0.5);
+        save(&app, &state);
+        app.invoke_meta_key("3".into());
+        app.invoke_undo_edit();
+        assert_eq!(edit_and_marks(&state.borrow(), 0).0, 0, "the edit undone");
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 3, "the mark kept");
+        app.invoke_redo_edit();
+        assert_eq!(edit_and_marks(&state.borrow(), 0).0, 1);
+        // The keys: the button's redo, the last thing done, then the
+        // mark.
+        app.invoke_undo();
+        assert_eq!(edit_and_marks(&state.borrow(), 0).0, 0);
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 3);
+        app.invoke_undo();
+        assert_eq!(
+            state.borrow().sidecars[0].meta.rating,
+            0,
+            "the key: the mark"
+        );
+        // The button's redo: the edit, not the mark undone last.
+        app.invoke_redo_edit();
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 0, "the button: not");
+        assert_eq!(edit_and_marks(&state.borrow(), 0).0, 1);
+    }
+
+    /// A mark's undo goes to the frame it put back at once: the next
+    /// Ctrl+Z is that frame's, never the one the view just left.
+    #[test]
+    fn the_undo_after_a_mark_s_steps_the_frame_it_went_to() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        for i in [1, 0] {
+            app.invoke_select(i);
+            app.set_exposure(0.5);
+            save(&app, &state);
+        }
+        app.invoke_filter_flag_toggled(2, true);
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_undo();
+        assert_eq!(state.borrow().current, Some(0), "moved before it returns");
+        app.invoke_undo();
+        let st = state.borrow();
+        assert_eq!(st.sidecars[0].position(), 0, "the frame gone to");
+        assert_eq!(st.sidecars[1].position(), 1, "the frame left untouched");
+    }
+
+    /// A mark's undo that moves to another frame with a tool in hand or
+    /// the crop open does what a click on the strip does: the same
+    /// open, the tool put down, the crop kept for the frame it lands on.
+    #[test]
+    fn a_mark_s_undo_with_a_tool_or_the_crop_up_moves_as_a_click_does() {
+        // Frame 0 rejected out of the list, frame 1 on screen with a
+        // brush in hand or the crop open; `go` then moves off it.
+        let after = |crop: bool, go: &dyn Fn(&App)| {
+            let app = crate::testing::window(3);
+            let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+            app.invoke_select(1);
+            app.set_panel_tab("Masks".into());
+            app.invoke_new_mask();
+            save(&app, &state);
+            app.invoke_select(0);
+            app.invoke_filter_flag_toggled(2, true);
+            app.invoke_meta_key("x".into());
+            assert_eq!(state.borrow().current, Some(1));
+            if crop {
+                app.set_crop_mode(true);
+                app.invoke_crop_toggled();
+            } else {
+                app.invoke_target_changed(1);
+                app.invoke_add_shape("Brush".into(), "Add".into());
+                assert!(state.borrow().develop.placing.is_some());
+            }
+            let states = state.borrow().sidecars[1].states();
+            go(&app);
+            let st = state.borrow();
+            assert_ne!(st.current, Some(1), "moved off");
+            assert_eq!(st.sidecars[1].states(), states, "nothing recorded");
+            (
+                st.develop.placing.is_some(),
+                app.get_placing().to_string(),
+                app.get_crop_mode(),
+                st.develop.crop_start_due,
+            )
+        };
+        for crop in [false, true] {
+            let undone = after(crop, &|app| app.invoke_undo());
+            let clicked = after(crop, &|app| app.invoke_frame_clicked(1, false, false));
+            assert_eq!(undone, clicked, "crop {crop}");
+            assert!(!undone.0, "the tool down");
         }
     }
 

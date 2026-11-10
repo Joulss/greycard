@@ -3054,19 +3054,24 @@ fn step_to(state: &Rc<Shared>, app: &App, worker: &Worker, row: i32, moves: bool
     }
 }
 
-/// Culling's undo (`back`) or redo: the session's last rating, flag
+/// Culling's undo (`back`) or redo, and the one outside it when a
+/// mark was the last thing done: the session's last rating, flag
 /// or label change taken back or made again, and nothing else, with
 /// the word over the picture saying what it left ("Undo: No stars"). The
 /// row to select after, for the caller to open once the state is
 /// free: the changed frame's, so what changed is on screen, or the
 /// nearest when the filter no longer shows the current one. None
-/// when there was nothing to step, or nothing to move to.
-pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> {
+/// when there was nothing to step, or nothing to move to. With it the
+/// word, for the status line where there is no word over the picture.
+pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> (Option<usize>, Option<String>) {
     let step = if back {
         st.culling.tags.undo()
     } else {
         st.culling.tags.redo()
-    }?;
+    };
+    let Some(step) = step else {
+        return (None, None);
+    };
     let landing = tags::landing(
         &step,
         |p| st.file_by_path(p),
@@ -3096,8 +3101,9 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
     }
     // The step's word, as a key's: silent only when it found no
     // frame to put back.
-    if !landed.is_empty() {
-        say_notice(st, app, tags::step_notice(back, &landed));
+    let said = (!landed.is_empty()).then(|| tags::step_notice(back, &landed));
+    if let Some(word) = &said {
+        say_notice(st, app, word.clone());
     }
     // Over to the frame that changed, if it is not the one on
     // screen and the filter still shows it.
@@ -3107,9 +3113,9 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
             .and_then(|&f| st.file_cell(f))
             .and_then(|c| row_of(st, c))
     {
-        return Some(row);
+        return (Some(row), said);
     }
-    next
+    (next, said)
 }
 
 /// A culling key's change over the whole selection, as the key and

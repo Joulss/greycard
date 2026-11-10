@@ -2177,6 +2177,11 @@ export component App inherits Window {
     in property <bool> can-redo;
     callback undo();
     callback redo();
+    // The history panel's buttons: out of Cull the edit's own steps,
+    // never a mark's, as their being greyed out with the edit's says;
+    // in Cull the marks', as the keys there.
+    callback undo-edit();
+    callback redo-edit();
     callback export();
     /// Whether an export has gone out from the sheet, here or in an
     /// earlier run: Ctrl+E then sends the selection with no sheet.
@@ -3617,8 +3622,8 @@ export component App inherits Window {
                     warn-changed => { root.warn-changed(); }
                     can-undo: root.can-undo && !root.frozen;
                     can-redo: root.can-redo && !root.frozen;
-                    undo => { root.undo(); }
-                    redo => { root.redo(); }
+                    undo => { root.undo-edit(); }
+                    redo => { root.redo-edit(); }
                     set-count: root.set-count;
                     sync-asked => { root.sync-open-asked(); }
                     sync-now-asked => {

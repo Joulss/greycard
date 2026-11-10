@@ -6,7 +6,9 @@
 //! and not a step in developing it (§117). So culling's Ctrl+Z steps
 //! back through these instead: every change the keys, the frame menu
 //! and the panel's Title and Keywords fields made this session,
-//! newest first, and nothing else.
+//! newest first, and nothing else. Out of culling, Ctrl+Z steps
+//! these too when one was done after the frame's last edit
+//! ([`marks_first`]).
 //!
 //! Each step names its frames by path, not by row or index: the list
 //! of files changes under it (a rejects move, a filter, a root added),
@@ -17,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 
+use greycard_edit::Order;
 use greycard_edit::meta::{Change, Flag, Label, Meta};
 
 use crate::tr;
@@ -200,10 +203,14 @@ pub struct Moved {
 /// One key's change, over every frame it moved.
 pub type Step = Vec<Moved>;
 
+/// The session's steps, each with when it was done on the clock the
+/// edit's lines keep too ([`Order`]), so that undo outside culling can
+/// take back whichever was done last, a mark or the frame's edit
+/// ([`marks_first`]).
 #[derive(Debug, Default)]
 pub struct History {
-    undo: Vec<Step>,
-    redo: Vec<Step>,
+    undo: Vec<(Order, Step)>,
+    redo: Vec<(Order, Step)>,
 }
 
 /// As many steps as a long culling pass takes and then some; the
@@ -217,7 +224,7 @@ impl History {
             return;
         }
         self.redo.clear();
-        self.undo.push(step);
+        self.undo.push((Order::next(), step));
         if self.undo.len() > KEPT {
             self.undo.remove(0);
         }
@@ -226,8 +233,8 @@ impl History {
     /// The step to take back, with each frame going to its `before`;
     /// it moves to the redo side.
     pub fn undo(&mut self) -> Option<Step> {
-        let step = self.undo.pop()?;
-        self.redo.push(step.clone());
+        let (_, step) = self.undo.pop()?;
+        self.redo.push((Order::next(), step.clone()));
         Some(step)
     }
 
@@ -235,9 +242,42 @@ impl History {
     /// given as an undo is: `before` the state it leaves, `after` the
     /// state it lands on.
     pub fn redo(&mut self) -> Option<Step> {
-        let step = self.redo.pop()?;
-        self.undo.push(step.clone());
+        let (_, step) = self.redo.pop()?;
+        self.undo.push((Order::next(), step.clone()));
         Some(step.into_iter().map(Moved::reversed).collect())
+    }
+
+    /// Whether there is any step to undo or redo.
+    pub fn any(&self) -> bool {
+        !self.undo.is_empty() || !self.redo.is_empty()
+    }
+
+    /// When the step an undo would take back was last done (made, or
+    /// redone); None when there is none.
+    pub fn undo_order(&self) -> Option<Order> {
+        self.undo.last().map(|(o, _)| *o)
+    }
+
+    /// When the step a redo would make again was undone.
+    pub fn redo_order(&self) -> Option<Order> {
+        self.redo.last().map(|(o, _)| *o)
+    }
+}
+
+/// Whether an undo or a redo outside culling steps the session's
+/// marks rather than the frame's edit. For an undo, `mark` and `edit`
+/// are when the step each would take back was last done (made, or
+/// redone); for a redo, when the step each would make again was
+/// undone (see [`Order`]); each None when there is nothing of the kind
+/// to step. The later goes, either way: an undo takes back what was
+/// done last, a redo makes again what was undone last, so a Ctrl+Z
+/// always takes back the Ctrl+Shift+Z before it and the other way
+/// round. An edit from before the session is older than any mark.
+pub fn marks_first(mark: Option<Order>, edit: Option<Order>) -> bool {
+    match (mark, edit) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(m), Some(e)) => m.tick() > e.tick(),
     }
 }
 
@@ -443,6 +483,39 @@ mod tests {
         assert_eq!(Tags::of(&meta), shifted);
         let said = hidden_by_filter(&Change::TimeShift(60), "f.CR3", false, "date:2026");
         assert!(said.contains("moved in time"), "{said}");
+    }
+
+    #[test]
+    fn the_later_of_a_mark_and_an_edit_steps_first() {
+        let (before, edit, mark) = (Order::BEFORE, Order::next(), Order::next());
+        // The later; the mark when there is no edit to step, and
+        // never a mark that is not there.
+        assert!(marks_first(Some(mark), Some(edit)));
+        assert!(!marks_first(Some(edit), Some(mark)));
+        assert!(marks_first(Some(mark), None));
+        assert!(!marks_first(None, Some(edit)));
+        assert!(!marks_first(None, None));
+        // An edit from before the session is older than any mark.
+        assert!(marks_first(Some(mark), Some(before)));
+    }
+
+    /// A step is stamped each time it is acted on: undone, then
+    /// redone, each later than the last.
+    #[test]
+    fn a_step_is_stamped_when_undone_and_again_when_redone() {
+        let mut h = History::default();
+        let (none, three) = (tags(0, Flag::None), tags(3, Flag::None));
+        assert!(h.undo_order().is_none());
+        h.record(vec![moved("a", &none, &three)]);
+        let done = h.undo_order().unwrap().tick();
+        assert!(done > 0);
+        h.undo();
+        assert!(h.undo_order().is_none());
+        let undone = h.redo_order().unwrap().tick();
+        assert!(undone > done);
+        h.redo();
+        assert!(h.undo_order().unwrap().tick() > undone);
+        assert!(h.redo_order().is_none());
     }
 
     #[test]

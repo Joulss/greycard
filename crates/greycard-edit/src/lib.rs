@@ -75,7 +75,7 @@ pub use edit::{Adjustment, DetailWants, Edit, Look, MAX_MASKS, overlay_changes};
 pub use frames::{
     apply_preset_into, apply_preset_to_line, meta_into, sync_into, sync_learned, turn_into,
 };
-pub use line::{Exported, HISTORY, Line, Row, Snapshot, Step};
+pub use line::{Exported, HISTORY, Line, Order, Row, Snapshot, Step};
 pub use loader::{Loader, NoStores};
 pub use migration::migrate;
 pub use sections::{

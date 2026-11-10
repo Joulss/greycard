@@ -1788,6 +1788,191 @@ fn culling_s_undo_takes_back_the_last_key_pressed_not_the_last_landed() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// Out of culling, with marks this session, an undo pressed while a
+/// pick's read is out waits for the open: the pick is current at once,
+/// but its line is a stand-in, and the undo is the frame's own once it
+/// lands, not nothing on the stand-in.
+#[test]
+fn an_undo_out_of_culling_waits_for_the_pick_s_open() {
+    let (dir, files, writer, app, state, worker) = many_under_a_root("rows-undo-develop", 3);
+    // f01 has a step on disk to undo.
+    let mut s = Sidecar::default();
+    let mut e = s.current.clone();
+    e.light.exposure = 0.5;
+    s.record(e);
+    s.save(&files[1]).unwrap();
+    open_and_land(&state, &app, &worker, 0);
+    assert!(crate::panel::browser::meta_on_selection(
+        &state,
+        &app,
+        &worker,
+        meta::Change::Rating(3)
+    ));
+    app.invoke_undo();
+    assert_eq!(state.borrow().sidecars[0].meta.rating, 0, "the mark undone");
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    assert_eq!(state.borrow().current, Some(1), "current from the pick");
+    app.invoke_undo();
+    assert_eq!(
+        state.borrow().views.loads.whats(),
+        ["open of f01.tif", "undo"],
+        "held behind the open"
+    );
+    crate::rows::land_pending(&state, &app, &worker);
+    {
+        let st = state.borrow();
+        assert_eq!(st.current, Some(1));
+        assert_eq!(st.sidecars[1].position(), 0, "f01's own step undone");
+        assert_eq!(st.sidecars[0].meta.rating, 0, "the mark left undone");
+    }
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The panel saved as the save timer saves it, at `exposure`.
+fn save_exposure(app: &App, state: &Rc<Shared>, exposure: f32) {
+    app.set_exposure(exposure);
+    let mut st = state.borrow_mut();
+    let edit = crate::panel::edit::read_edit(app, &st.develop.edit, st.develop.target);
+    crate::panel::edit::save_edit(&mut st, edit);
+}
+
+/// A rating key over f00, open, and f01, whose read goes out: the key
+/// waits on the read.
+fn rate_waiting(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
+    state.borrow_mut().views.picked = vec![0, 1];
+    assert!(crate::panel::browser::meta_on_selection(
+        state,
+        app,
+        worker,
+        meta::Change::Rating(3)
+    ));
+    assert_eq!(state.borrow().sidecars[0].meta.rating, 0, "waiting");
+}
+
+/// A mark stands in the order where its key was pressed, not where its
+/// read landed: a key that waits on a read, then an edit on the frame
+/// open, and Ctrl+Z takes back the edit first; the reverse, an edit
+/// and then a key that waits, takes back the mark first, whether the
+/// undo is pressed before the read lands or after.
+#[test]
+fn a_mark_waiting_on_its_read_stands_where_its_key_was_pressed() {
+    let (dir, _files, writer, app, state, worker) = many_under_a_root("rows-undo-pressed", 3);
+    open_and_land(&state, &app, &worker, 0);
+    rate_waiting(&app, &state, &worker);
+    save_exposure(&app, &state, 0.5);
+    crate::rows::land_pending(&state, &app, &worker);
+    let seen = |state: &Rc<Shared>| {
+        let st = state.borrow();
+        (
+            st.sidecars[0].position(),
+            st.sidecars[0].meta.rating,
+            st.sidecars[1].meta.rating,
+        )
+    };
+    assert_eq!(seen(&state), (1, 3, 3));
+    app.invoke_undo();
+    assert_eq!(seen(&state), (0, 3, 3), "the edit, done last");
+    app.invoke_undo();
+    assert_eq!(seen(&state), (0, 0, 0), "then the mark");
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+
+    for undo_first in [false, true] {
+        let (dir, _files, writer, app, state, worker) =
+            many_under_a_root(&format!("rows-undo-pressed-{undo_first}"), 3);
+        open_and_land(&state, &app, &worker, 0);
+        save_exposure(&app, &state, 0.5);
+        rate_waiting(&app, &state, &worker);
+        if undo_first {
+            app.invoke_undo();
+        }
+        crate::rows::land_pending(&state, &app, &worker);
+        if !undo_first {
+            assert_eq!(seen(&state), (1, 3, 3));
+            app.invoke_undo();
+        }
+        assert_eq!(seen(&state), (1, 0, 0), "the mark, done last");
+        app.invoke_undo();
+        assert_eq!(seen(&state), (0, 0, 0), "then the edit");
+        state.borrow_mut().views.index_reader = None;
+        drop(state);
+        drop(writer);
+        crate::testing::remove_dir_retry(&dir);
+    }
+}
+
+/// A held undo asks the guards again when its turn comes: Cull turned
+/// on, a sheet opened, or the queue's view opened while the pick's
+/// read was out each leave f01's edit as it was, as a press there
+/// would, and Cull stays up. With `mark_kept` the mark is still there
+/// to undo when the undo is pressed, so it is what the held undo
+/// would step; else f01's own edit is.
+fn a_held_undo_meets(what: &str, mark_kept: bool, meanwhile: fn(&App, &Rc<Shared>)) -> u8 {
+    let (dir, files, writer, app, state, worker) =
+        many_under_a_root(&format!("rows-undo-held-{what}"), 3);
+    let mut s = Sidecar::default();
+    let mut e = s.current.clone();
+    e.light.exposure = 0.5;
+    s.record(e);
+    s.save(&files[1]).unwrap();
+    open_and_land(&state, &app, &worker, 0);
+    assert!(crate::panel::browser::meta_on_selection(
+        &state,
+        &app,
+        &worker,
+        meta::Change::Rating(3)
+    ));
+    if !mark_kept {
+        app.invoke_undo();
+    }
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    app.invoke_undo();
+    assert_eq!(state.borrow().views.loads.whats().last().unwrap(), "undo");
+    meanwhile(&app, &state);
+    let culling = crate::panel::cull::cull_mode(&state.borrow());
+    crate::rows::land_pending(&state, &app, &worker);
+    let rating = {
+        let st = state.borrow();
+        assert_eq!(st.sidecars[1].position(), 1, "{what}: f01's edit kept");
+        assert_eq!(crate::panel::cull::cull_mode(&st), culling, "{what}");
+        st.sidecars[0].meta.rating
+    };
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+    rating
+}
+
+#[test]
+fn a_held_undo_in_cull_is_cull_s() {
+    let rating = a_held_undo_meets("cull", false, |app, _| app.invoke_cull_toggled());
+    assert_eq!(rating, 0, "no mark left to undo");
+    // With a mark to undo, Cull's undo takes it.
+    let rating = a_held_undo_meets("cull-mark", true, |app, _| app.invoke_cull_toggled());
+    assert_eq!(rating, 0, "the mark undone, by Cull's step");
+}
+
+#[test]
+fn a_held_undo_under_a_sheet_is_dropped() {
+    let rating = a_held_undo_meets("sheet", true, |app, _| app.set_keys_open(true));
+    assert_eq!(rating, 3, "the mark not undone");
+    a_held_undo_meets("sheet-edit", false, |app, _| app.set_keys_open(true));
+}
+
+#[test]
+fn a_held_undo_in_the_queue_view_is_dropped() {
+    let rating = a_held_undo_meets("queue", true, |_, state| {
+        state.borrow_mut().views.view = View::Queue;
+    });
+    assert_eq!(rating, 3, "the mark not undone");
+}
+
 /// A burst of passes reported while a read is out: one read is out
 /// at a time, the burst asks for one more after it, and that one is
 /// merged once.

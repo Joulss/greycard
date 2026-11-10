@@ -59,8 +59,8 @@ The raw is never changed: the shift is saved beside the rating, and
 the camera's own time is kept. The capture time under the frame's
 name in the panel shows the shifted time, marked "(shifted +5:00)".
 An export's EXIF carries the shifted time, and so does the `.xmp`
-with **Write XMP sidecars** on. Ctrl+Z in culling takes a shift back,
-as it does a rating.
+with **Write XMP sidecars** on. Ctrl+Z takes a shift back, as it does
+a rating.
 
 Sorting and the Day chips need the library index, so they follow a
 shift for frames under one of your
@@ -103,8 +103,8 @@ the keys are rating keys again.
 Both act on every selected frame, as a rating does. With several
 selected, a keyword only some of them carry is dimmed (click its word
 to put it on the rest), and titles that differ show as **Mixed**; a
-title typed there replaces all of them. In Cull **Ctrl+Z**
-takes back a keyword or a title like a rating.
+title typed there replaces all of them. **Ctrl+Z** takes back a
+keyword or a title like a rating.
 
 Keywords and the title are saved in the `.gcd`, and with **Write XMP
 sidecars** on they go into the XMP as well. The filter's **Keyword**
@@ -162,8 +162,11 @@ They fill in once greycard has indexed the folder.
 - **V** cycles through comparing 1, 2 or 4 frames side by side. The
   **Compare** buttons (**1**, **2**, **4**) do the same. Click a frame
   in the compare view to choose it.
-- **Ctrl+Z** and **Ctrl+Shift+Z** undo and redo your rating, flag and
-  label changes from this session. They don't touch any edit.
+- **Ctrl+Z** and **Ctrl+Shift+Z** undo and redo your rating, flag, and
+  label changes from this session. They don't touch any edit. In
+  Develop and the library the same keys take back a rating, flag, or
+  label too when it was the last thing you did, and bring back a frame
+  the filter hid.
 - **Enter**, **Esc** or **D**, or **Develop** at the CULLING
   section's foot, go to Develop on the frame you are on, on the tab
   you were on before Cull. **C** does too, and so does a click on one

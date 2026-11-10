@@ -1119,10 +1119,6 @@ clears or a tester asks for it.
 - [ ] A mask's Show mask and Invert switches each beside their own
       word; side by side, "Invert" reads as the label of Show mask's
       switch (discussion 59, 2026-11-10)
-- [ ] Ctrl+Z in Develop and the library takes back a rating, flag, or
-      label when that was the last thing done, and brings back a frame
-      the filter hid; Cull already does, and every mark is recorded
-      wherever it is made (issue 115, 2026-11-10)
 - [ ] An export batch timed end to end on a few hundred edited
       frames, masks and fills included, and the slow stage found; a
       tester's job took days against hours in Lightroom, the switching

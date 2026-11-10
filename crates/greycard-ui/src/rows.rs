@@ -465,6 +465,10 @@ pub(crate) struct Pending {
     /// The read is in, or there was nothing to read: ready to run once
     /// every request before it has.
     landed: bool,
+    /// When the request was made: what it records when it runs stands
+    /// in the session's order where the press did
+    /// ([`greycard_edit::Order::during`]), not where its read landed.
+    at: greycard_edit::Order,
 }
 
 /// The dropped requests, said: "3 rating keys and the open of x.cr3".
@@ -523,6 +527,35 @@ impl Loads {
     /// Whether any request is still waiting on its read.
     pub(crate) fn reading(&self) -> bool {
         self.queue.iter().any(|p| !p.landed)
+    }
+
+    /// Whether a request waiting here will record a mark or step the
+    /// marks: a culling key, a keyword, a title, a time shift, or an
+    /// undo or redo queued behind one. An undo pressed meanwhile waits
+    /// its turn, so it takes back the last change asked for, not the
+    /// last that landed.
+    pub(crate) fn marks_waiting(&self) -> bool {
+        self.queue.iter().any(|p| {
+            matches!(
+                p.what,
+                Request::RatingKey
+                    | Request::FlagKey
+                    | Request::LabelKey
+                    | Request::Keyword
+                    | Request::Title
+                    | Request::TimeShift
+                    | Request::Undo
+                    | Request::Redo
+            )
+        })
+    }
+
+    /// Whether a frame's open is waiting here: the pick is current,
+    /// its line a stand-in until the read lands.
+    pub(crate) fn open_waiting(&self) -> bool {
+        self.queue
+            .iter()
+            .any(|p| matches!(p.what, Request::Open(_)))
     }
 
     /// What is queued, in order, for the tests.
@@ -620,6 +653,7 @@ fn queue(
         what,
         pick,
         landed,
+        at: greycard_edit::Order::act(),
     });
     Queued::Later { id, to_read }
 }
@@ -690,6 +724,7 @@ pub(crate) fn request_in(
                 what,
                 pick,
                 landed: true,
+                at: greycard_edit::Order::act(),
             });
             if !cfg!(test) {
                 let app_weak = app.as_weak();
@@ -761,6 +796,7 @@ pub(crate) fn after_mosaics(
         what,
         pick: false,
         landed: false,
+        at: greycard_edit::Order::act(),
     });
     let line = tr!("reading {n} frame..." | "reading {n} frames..." % paths.len());
     app.set_status(line.as_str().into());
@@ -1089,7 +1125,7 @@ pub(crate) fn run_ready(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>) {
         };
         let at = resolve(&state.borrow(), &p.frames, p.scope);
         if let Some(action) = p.action.take() {
-            action(state, app, worker, at.clone());
+            greycard_edit::Order::during(p.at, || action(state, app, worker, at.clone()));
         }
         say_gone(app, &p.frames, &at, &p.what);
     }

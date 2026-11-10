@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::line::Order;
 use crate::meta::Facts;
 use crate::{Edit, Exported, HISTORY, Line, Sidecar, Snapshot, Step, Version};
 
@@ -848,6 +849,7 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
             id: Some(state_id(&parent, edit, label.as_deref())),
             label,
             exports: Vec::new(),
+            order: Order::BEFORE,
         }
     };
     let last_edit = |list: &[(Kind, Step)]| list.last().map(|(_, s)| s.edit.clone());
@@ -1049,6 +1051,7 @@ fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line
         joined.current_label = first.label;
         joined.current_exports = first.exports;
         joined.current_id = first.id;
+        joined.current_order = first.order;
     }
     for state in states {
         joined.push_state(state);
@@ -1108,6 +1111,7 @@ fn states_of(sidecar: &Line) -> Vec<Step> {
         label: sidecar.current_label.clone(),
         exports: sidecar.current_exports.clone(),
         id: sidecar.current_id.clone(),
+        order: sidecar.current_order,
     });
     states
 }
@@ -1216,6 +1220,7 @@ impl Line {
             label: std::mem::replace(&mut self.current_label, state.label),
             exports: std::mem::replace(&mut self.current_exports, state.exports),
             id: std::mem::replace(&mut self.current_id, state.id),
+            order: std::mem::replace(&mut self.current_order, state.order),
         };
         self.history.push(previous);
         self.redo.clear();
@@ -1502,6 +1507,7 @@ mod simulation {
                 label: a.current_label.clone(),
                 exports: Vec::new(),
                 id: a.current_id.clone(),
+                order: a.current_order,
             }))
             .collect();
         let mut shared = HashSet::new();
@@ -1940,6 +1946,7 @@ mod simulation {
                 label: old.current_label.take(),
                 exports: std::mem::take(&mut old.current_exports),
                 id: None,
+                order: Order::BEFORE,
             };
             old.history.push(previous);
             if old.history.len() > HISTORY {
@@ -2708,6 +2715,31 @@ mod tests {
         assert_eq!(joined.current, a.current);
         assert_eq!(joined.current_id, a.current_id);
         assert_eq!(joined.current_label, a.current_label);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A join carries each state's session tick through: a state this
+    /// session made or walked keeps its place in the order undo weighs
+    /// it by, the first state's too.
+    #[test]
+    fn a_join_keeps_the_session_s_ticks() {
+        let dir = scratch("join-ticks");
+        let (mut a, b, local, _) = backed_up(&dir);
+        // Steps this session took on the local copy, the first state's
+        // among them, saved: the local copy is ahead.
+        a.record(exposed(2.0));
+        a.history[0].order = Order::next();
+        save(&mut a, &local, 200, "desk");
+        let ticks = |s: &Sidecar| -> Vec<u64> {
+            s.history
+                .iter()
+                .map(|h| h.order.tick())
+                .chain(std::iter::once(s.current_order.tick()))
+                .collect()
+        };
+        let joined = join(&a, &b);
+        assert_eq!(exposures(&joined), exposures(&a));
+        assert_eq!(ticks(&joined), ticks(&a));
         greycard_core::testing::remove_dir_retry(&dir);
     }
 

@@ -74,6 +74,10 @@ pub struct Line {
     /// States undone, newest first; kept for the session, not written.
     #[serde(skip)]
     pub redo: Vec<Step>,
+    /// When this session made [`Self::current`] current, by a record
+    /// or a redo: see [`Step::order`].
+    #[serde(skip)]
+    pub current_order: Order,
     /// States kept by name, in the order they were taken, outside
     /// the history's cap.
     pub snapshots: Vec<Snapshot>,
@@ -125,6 +129,94 @@ pub struct Step {
     ///
     /// [`Sidecar::fill_ids`]: crate::Sidecar::fill_ids
     pub id: Option<String>,
+    /// When this session last acted on the state, never written: for
+    /// one in the history, when it was made current (recorded, or
+    /// redone); for one waiting to be redone, when it was undone. So
+    /// an undo takes back the later of two kinds of step, and a redo
+    /// makes again the one undone last. [`Order::BEFORE`] for one read
+    /// from the sidecar or carried over by a join.
+    pub order: Order,
+}
+
+/// Where a step stands in the session's order of things done: a tick
+/// of one clock the process keeps for every state a line records and
+/// every rating, flag, or label change the window records, so that
+/// undo can take back whichever of the two was done last (§117's
+/// marks have a history of their own, across frames, beside each
+/// line's). Not part of what a state is: two states equal in all else
+/// are equal whatever their order, so a state read back from disk
+/// equals the one written.
+#[derive(Debug, Clone, Copy, Default, Eq)]
+pub struct Order(u64);
+
+impl PartialEq for Order {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+static CLOCK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How far apart two acts' ticks are: room for the ticks of the work
+/// one act's request does when it runs later ([`Order::during`]).
+const STRIDE: u64 = 1 << 20;
+
+thread_local! {
+    /// The act whose work is running ([`Order::during`]): its tick,
+    /// and how many ticks its work has taken so far.
+    static AS_OF: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
+}
+
+impl Order {
+    /// A state from before the session: older than anything done in it.
+    pub const BEFORE: Self = Self(0);
+
+    /// The next tick: later than every one handed out before it. Inside
+    /// [`Order::during`], the next of the act's own, which stay before
+    /// every act after it however late its work runs.
+    pub fn next() -> Self {
+        if let Some((at, taken)) = AS_OF.get() {
+            let taken = (taken + 1).min(STRIDE - 1);
+            AS_OF.set(Some((at, taken)));
+            return Self(at + taken);
+        }
+        Self(CLOCK.fetch_add(STRIDE, std::sync::atomic::Ordering::Relaxed) + STRIDE)
+    }
+
+    /// The tick of an act being made now, to carry to where its work
+    /// is done: a new one, or inside [`Order::during`] the running
+    /// act's, whose work this is part of.
+    pub fn act() -> Self {
+        match AS_OF.get() {
+            Some((at, _)) => Self(at),
+            None => Self::next(),
+        }
+    }
+
+    /// `work` done in the name of the act ticked `at`: a request queued
+    /// at a key's press and run when its read lands. Every tick it
+    /// takes is the act's, so what it records stands where the press
+    /// did, before anything done after the press and before the work.
+    pub fn during<R>(at: Self, work: impl FnOnce() -> R) -> R {
+        struct Restore(Option<(u64, u64)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                AS_OF.set(self.0);
+            }
+        }
+        let _restore = Restore(AS_OF.replace(Some((at.0, 0))));
+        work()
+    }
+
+    /// The tick, for comparing: 0 for a state from before the session.
+    pub fn tick(self) -> u64 {
+        self.0
+    }
+}
+
+/// The later of two ticks.
+fn later_of(a: Order, b: Order) -> Order {
+    if a.tick() >= b.tick() { a } else { b }
 }
 
 impl Step {
@@ -135,6 +227,7 @@ impl Step {
             label: None,
             exports: Vec::new(),
             id: None,
+            order: Order::BEFORE,
         }
     }
 
@@ -295,6 +388,7 @@ impl<'de> Deserialize<'de> for Step {
             label,
             exports,
             id,
+            order: Order::BEFORE,
         })
     }
 }
@@ -352,6 +446,7 @@ impl Line {
             label: std::mem::replace(&mut self.current_label, label),
             exports: std::mem::take(&mut self.current_exports),
             id: self.current_id.replace(id),
+            order: std::mem::replace(&mut self.current_order, Order::next()),
         };
         self.history.push(previous);
         // The earliest stays; what follows it goes.
@@ -565,7 +660,9 @@ impl Line {
             label: std::mem::replace(&mut self.current_label, previous.label),
             exports: std::mem::replace(&mut self.current_exports, previous.exports),
             id: std::mem::replace(&mut self.current_id, previous.id),
+            order: Order::next(),
         };
+        self.current_order = previous.order;
         self.redo.push(undone);
         true
     }
@@ -600,6 +697,8 @@ impl Line {
             if same {
                 earlier.exports.append(&mut later.exports);
                 earlier.id = later.id.take();
+                // Made current when the later was.
+                earlier.order = later_of(earlier.order, later.order);
             }
             same
         });
@@ -614,6 +713,9 @@ impl Line {
         self.redo.dedup_by(|earlier, later| {
             if later.edit == earlier.edit {
                 std::mem::swap(&mut later.label, &mut earlier.label);
+                // Undone when the last of the two was, so a redo still
+                // makes again what was undone last.
+                later.order = later_of(later.order, earlier.order);
                 let mut merged = std::mem::take(&mut earlier.exports);
                 merged.append(&mut later.exports);
                 later.exports = merged;
@@ -638,6 +740,7 @@ impl Line {
             label: std::mem::replace(&mut self.current_label, next.label),
             exports: std::mem::replace(&mut self.current_exports, next.exports),
             id: std::mem::replace(&mut self.current_id, next.id),
+            order: std::mem::replace(&mut self.current_order, Order::next()),
         };
         self.history.push(current);
         true
@@ -1222,6 +1325,59 @@ mod tests {
             .map(|e| e.file.as_str())
             .collect();
         assert_eq!(files, vec!["first.jpg", "second.jpg"]);
+    }
+
+    /// Two undone states that merge keep the later of their undo
+    /// ticks, so a redo still weighs as undone last.
+    #[test]
+    fn undone_states_that_merge_keep_the_later_tick() {
+        let (placed, done) = a_placed_spot();
+        let mut sidecar = Sidecar::default();
+        assert!(sidecar.record(placed));
+        assert!(sidecar.record(done.clone()));
+        assert!(sidecar.undo());
+        assert!(sidecar.undo());
+        let last = sidecar.redo.last().unwrap().order.tick();
+        assert!(last > sidecar.redo[0].order.tick());
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.redo.len(), 1);
+        assert_eq!(sidecar.redo[0].order.tick(), last);
+    }
+
+    /// Two states in the history that merge keep the later of their
+    /// ticks: undone back to, the merged state was made current when
+    /// the later was, which is what the next undo weighs it by.
+    #[test]
+    fn states_in_the_history_that_merge_keep_the_later_tick() {
+        let (placed, done) = a_placed_spot();
+        let mut sidecar = Sidecar::default();
+        assert!(sidecar.record(placed.clone()));
+        assert!(sidecar.record(done.clone()));
+        let later = sidecar.current_order.tick();
+        let mut brighter = placed;
+        brighter.light.exposure = 0.5;
+        assert!(sidecar.record(brighter));
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 3);
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, done);
+        assert_eq!(sidecar.current_order.tick(), later);
+    }
+
+    /// Work done in an act's name stands where the act did: before an
+    /// act made after it, however late the work runs.
+    #[test]
+    fn work_in_an_act_s_name_takes_the_act_s_ticks() {
+        let pressed = Order::act();
+        let after = Order::next();
+        let (first, second) = Order::during(pressed, || (Order::next(), Order::next()));
+        assert!(pressed.tick() < first.tick());
+        assert!(first.tick() < second.tick());
+        assert!(second.tick() < after.tick());
+        // Out of the act, the clock goes on past every tick before.
+        assert!(Order::next().tick() > after.tick());
+        // A request queued inside the act is the act's too.
+        assert_eq!(Order::during(pressed, Order::act).tick(), pressed.tick());
     }
 
     /// A clone spot as placed, waiting on its source, and as the

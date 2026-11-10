@@ -90,6 +90,9 @@ pub(crate) struct Batch {
     /// The frames that could not be looked at: their read or develop
     /// failed, or they are no longer listed.
     pub(crate) failed: usize,
+    /// When the offer was taken: each step its answers record stands
+    /// in the session's order there, not where the answer landed.
+    pub(crate) at: greycard_edit::Order,
 }
 
 impl Offer {
@@ -366,6 +369,7 @@ pub(crate) fn used(st: &mut State, app: &App, worker: &Worker) {
         not_found: 0,
         changed: 0,
         failed: 0,
+        at: greycard_edit::Order::act(),
     });
     let n = jobs.len();
     for mut job in jobs {
@@ -488,10 +492,12 @@ pub(crate) fn landed(
     if b.id != batch || !b.waiting.remove(&frame) {
         return Landed::Elsewhere;
     }
-    let (carried, label) = (b.carried.clone(), person_label(&b.from));
+    let (carried, label, at) = (b.carried.clone(), person_label(&b.from), b.at);
     let mut where_ = Landed::Elsewhere;
     let counted = match found {
-        Ok(PersonOn::Found(person)) => match put(st, app, &frame, &carried, &person, &label) {
+        Ok(PersonOn::Found(person)) => match greycard_edit::Order::during(at, || {
+            put(st, app, &frame, &carried, &person, &label)
+        }) {
             Ok(at) => {
                 where_ = at;
                 Count::Used
@@ -1065,5 +1071,23 @@ mod tests {
         assert_eq!(person_on(&st, 2), Some(her()));
         assert_eq!(person_in(&st.develop.edit), Some(her()));
         assert_eq!(person_on(&st, 3), Some(two(3)[1].person()));
+    }
+
+    /// A frame's step from the offer stands where the offer was taken,
+    /// not where its answer landed: a mark made while the answers were
+    /// out is later, and Ctrl+Z takes it back first.
+    #[test]
+    fn a_frame_s_step_stands_where_the_offer_was_taken() {
+        let (app, state, _worker) = synced(4, 3);
+        asking_on(&app, &state, 1);
+        pick_second(&app, &state, 1);
+        app.invoke_people_offer_used();
+        app.invoke_meta_key("4".into());
+        answer(&app, &state, 2, PersonOn::Found(two(2)[1].person()));
+        app.invoke_select(2);
+        app.invoke_undo();
+        let st = state.borrow();
+        assert_eq!(st.sidecars[1].meta.rating, 0, "the mark, done last");
+        assert_eq!(person_on(&st, 2), Some(two(2)[1].person()), "the step kept");
     }
 }
