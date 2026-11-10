@@ -7,9 +7,10 @@ design note behind it.
 
 ### Fixes
 
-- The color label dot and the edit and export marks sit centered in
-  their thumbnail badges, with more room between the marks in the
-  strip and grid
+- The flag, stars, color label, and edit, export, and collection marks
+  sit centered in their thumbnail badges. The stack icon lines up with
+  its count, and the marks have more room between them at small sizes
+  in the strip and grid
   ([§620](https://github.com/jessolmstead/greycard/blob/master/docs/notes/620-thumbnail-marks-centered-in-their-badges.md)).
 
 ## 0.11.0, 2026-11-09

@@ -1766,15 +1766,15 @@ export component ThumbBadges inherits Rectangle {
                     : root.label == 4 ? @tr("blue") : @tr("purple"))
             : "");
     width: badges.preferred-width;
-    height: root.glyph + 3px;
+    height: root.glyph + 6px;
     border-radius: Theme.radius-sm;
     // Its own scrim: a badge must read over a white sky and a black
     // shadow alike, and what is behind it is the picture, or the
     // canvas, denser where that is white.
     background: root.light-ground ? Theme.over-plate-dense : #00000099;
     badges := HorizontalLayout {
-        padding-left: root.glyph / 3;
-        padding-right: root.glyph / 3;
+        padding-left: root.glyph / 2;
+        padding-right: root.glyph / 2;
         spacing: root.glyph / 4.5;
         alignment: center;
         if root.flag > 0: Rectangle {
@@ -1837,7 +1837,7 @@ export component ThumbMarks inherits Rectangle {
     marks := HorizontalLayout {
         padding-left: root.glyph / 3;
         padding-right: root.glyph / 3;
-        spacing: Theme.space-1;
+        spacing: max(Theme.space-1, root.glyph / 4.5);
         alignment: center;
         if root.edited: Rectangle {
             width: root.glyph;
@@ -1923,11 +1923,16 @@ export component ThumbStack inherits Rectangle {
         padding-right: root.glyph / 3;
         spacing: root.glyph / 4.5;
         alignment: center;
-        Image {
-            source: @image-url("icons/layers.svg");
-            colorize: touch.has-hover ? Theme.over-text : Theme.over-text-secondary;
+        Rectangle {
             width: root.glyph;
-            height: root.glyph;
+            height: root.height;
+            Image {
+                source: @image-url("icons/layers.svg");
+                colorize: touch.has-hover ? Theme.over-text : Theme.over-text-secondary;
+                width: root.glyph;
+                height: root.glyph;
+                y: (parent.height - self.height) / 2;
+            }
         }
         Text {
             text: root.open ? root.place + "/" + root.count : root.count;
