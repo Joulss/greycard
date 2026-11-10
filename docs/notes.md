@@ -637,3 +637,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§623. The window opens as it was closed](notes/623-the-window-opens-as-it-was-closed.md) (2026-11-09)
 - [§624. Alt+arrows go back and forward](notes/624-alt-arrows-go-back-and-forward.md) (2026-11-10)
 - [§625. A root's row obeys With subfolders](notes/625-a-roots-row-obeys-with-subfolders.md) (2026-11-10)
+- [§626. A middle click on a frame syncs from it](notes/626-a-middle-click-on-a-frame-syncs-from-it.md) (2026-11-10)

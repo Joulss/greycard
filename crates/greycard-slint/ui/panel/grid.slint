@@ -17,6 +17,8 @@ export component GridSheet inherits Rectangle {
     /// A click on a frame, with Ctrl and Shift as they were held
     /// when it was pressed.
     callback frame-clicked(int, bool, bool);
+    /// A middle click on a frame, as the strip has it.
+    callback frame-middle-clicked(int);
     /// A right-click on a frame (or, on a Mac, a Control+click), as
     /// the strip has it: the row and where, in the window's pixels.
     callback frame-menu(int, length, length);
@@ -941,6 +943,8 @@ export component GridSheet inherits Rectangle {
                         property <bool> dragged;
                         property <length> down-x;
                         property <length> down-y;
+                        /// A middle press, as the strip's cell has it.
+                        property <bool> middle;
                         /// Presses of any button, for the name's tip.
                         property <int> downs;
                         mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.pointer;
@@ -956,6 +960,21 @@ export component GridSheet inherits Rectangle {
                         pointer-event(e) => {
                             if (e.kind == PointerEventKind.down) { self.downs += 1; }
                             if (root.side-press(e)) { return; }
+                            if (e.kind == PointerEventKind.cancel) {
+                                self.middle = false;
+                            }
+                            if (e.button == PointerEventButton.middle) {
+                                if (e.kind == PointerEventKind.down) {
+                                    self.middle = !root.menu-shown() && !self.pressed;
+                                } else if (e.kind == PointerEventKind.up && self.middle) {
+                                    self.middle = false;
+                                    if (!self.pressed && !self.dragging
+                                            && self.mouse-x >= 0 && self.mouse-x < self.width
+                                            && self.mouse-y >= 0 && self.mouse-y < self.height) {
+                                        root.frame-middle-clicked(i);
+                                    }
+                                }
+                            }
                             if (e.kind == PointerEventKind.up && self.dragging) {
                                 self.dragging = false;
                                 self.dragged = true;

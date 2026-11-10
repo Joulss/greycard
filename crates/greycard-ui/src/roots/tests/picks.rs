@@ -795,6 +795,73 @@ fn an_offline_frame_is_no_source_for_a_copy_a_sync_or_a_preset() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A middle click on a frame under an offline root is no sync: the
+/// frame is no source, said, and the open frame in the set keeps its
+/// edit and its sidecar.
+#[test]
+fn a_middle_click_on_an_offline_frame_syncs_nothing() {
+    let (dir, _away, files, writer, app, state, worker) = offline_view("offline-middle");
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+    crate::rows::land_pending(&state, &app, &worker);
+    let before = std::fs::read(Sidecar::path_for(&files[0])).unwrap();
+    let steps = state.borrow().sidecars[0].history.len();
+    state.borrow_mut().views.picked = vec![0, 1];
+    app.set_status("".into());
+    app.invoke_frame_sync_asked(1);
+    crate::rows::land_pending(&state, &app, &worker);
+    assert!(
+        app.get_status()
+            .contains("is offline: nothing to sync from"),
+        "{}",
+        app.get_status()
+    );
+    {
+        let st = state.borrow();
+        assert_eq!(st.current, Some(0));
+        assert_eq!(st.sidecars[0].history.len(), steps, "x took no step");
+    }
+    assert_eq!(std::fs::read(Sidecar::path_for(&files[0])).unwrap(), before);
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A middle click while the last one still waits on its source's read
+/// is dropped: one request queued, one sync when the read lands, and
+/// the next click taken again.
+#[test]
+fn a_middle_click_while_the_last_waits_is_dropped() {
+    let (dir, _files, writer, app, state, worker) = rated_under_a_root("middle-waiting");
+    open_view(&state, &app, &worker, View::Roots(None));
+    land_all(&state, &app, &worker);
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+    crate::rows::land_pending(&state, &app, &worker);
+    assert!(!state.borrow().from_row[1].read);
+    let waiting = state.borrow().sheets.frame_sync_waiting.clone();
+    state.borrow_mut().views.picked = vec![0];
+    app.invoke_frame_sync_asked(1);
+    assert!(waiting.get(), "waiting on y's read");
+    let queued = state.borrow().views.loads.queue.len();
+    app.invoke_frame_sync_asked(1);
+    assert_eq!(state.borrow().views.loads.queue.len(), queued, "dropped");
+    crate::rows::land_pending(&state, &app, &worker);
+    assert!(!waiting.get(), "let go once it ran");
+    assert!(state.borrow().from_row[1].read);
+    let said = match &state.borrow().develop.status_after_develop {
+        Some((_, said)) => said.clone(),
+        None => app.get_status().to_string(),
+    };
+    assert!(
+        said.starts_with("synced") || said.ends_with("had these already"),
+        "{said}"
+    );
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// Culling's compare tiles and the loupe's stand-in read a frame's
 /// turns from its row while its sidecar stands in.
 #[test]

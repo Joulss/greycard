@@ -26,6 +26,14 @@ design note behind it.
   Settings, Keys (discussion 59,
   [§624](https://github.com/jessolmstead/greycard/blob/master/docs/notes/624-alt-arrows-go-back-and-forward.md)).
 
+### Develop
+
+- A middle click on a frame in the filmstrip or the grid syncs its
+  edit onto the other selected frames, on the sections your last sync
+  took; it sets, never shifts, so a second click changes nothing
+  (issue 56,
+  [§626](https://github.com/jessolmstead/greycard/blob/master/docs/notes/626-a-middle-click-on-a-frame-syncs-from-it.md)).
+
 ### Fixes
 
 - A root's row under ROOTS obeys With subfolders, as its row in the

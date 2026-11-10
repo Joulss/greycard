@@ -356,6 +356,13 @@ A **middle click** on the Sync button at the top of the develop panel
 syncs straight away, without the sheet, on the sections your last sync
 or paste took (every section but Masks before there was one).
 
+A **middle click** on a frame in the filmstrip or the grid does the
+same from that frame, open or not: its edit goes onto the other
+selected frames, the open one included. A frame outside the selection
+goes onto the whole selection. The same frame stays open and the same
+frames stay selected. It always sets, never shifts (see
+[Set or shift](#set-or-shift)), so a second click changes nothing.
+
 Every section starts checked except **Masks**, because masks are drawn
 around one picture's subject. The sheet lists what a preset's does: a
 heading a section, its parts under it, the open frame's masks by

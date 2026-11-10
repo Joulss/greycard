@@ -15,6 +15,8 @@ export component Filmstrip inherits Rectangle {
     /// A click on a frame, with Ctrl and Shift as they were held
     /// when it was pressed.
     callback frame-clicked(int, bool, bool);
+    /// A middle click on a frame: its sync onto the rest of the set.
+    callback frame-middle-clicked(int);
     /// A right-click on a frame (or, on a Mac, a Control+click): the
     /// row and where, in the window's logical pixels.
     callback frame-menu(int, length, length);
@@ -271,10 +273,31 @@ export component Filmstrip inherits Rectangle {
                     property <bool> ctrl;
                     property <bool> shift;
                     property <bool> menu;
+                    /// A middle press not closing a menu nor inside a
+                    /// left press, which a release over the cell with
+                    /// no left press under way makes a middle click:
+                    /// `clicked` is the left button's alone (§599). A
+                    /// cancel (the grab lost) forgets it.
+                    property <bool> middle;
                     /// Presses of any button, for the name's tip.
                     property <int> downs;
                     mouse-cursor: MouseCursor.pointer;
                     pointer-event(e) => {
+                        if (e.kind == PointerEventKind.cancel) {
+                            self.middle = false;
+                        }
+                        if (e.button == PointerEventButton.middle) {
+                            if (e.kind == PointerEventKind.down) {
+                                self.middle = !root.menu-shown() && !self.pressed;
+                            } else if (e.kind == PointerEventKind.up && self.middle) {
+                                self.middle = false;
+                                if (!self.pressed
+                                        && self.mouse-x >= 0 && self.mouse-x < self.width
+                                        && self.mouse-y >= 0 && self.mouse-y < self.height) {
+                                    root.frame-middle-clicked(i);
+                                }
+                            }
+                        }
                         if (e.kind == PointerEventKind.down) {
                             self.downs += 1;
                             let closing = root.menu-shown();

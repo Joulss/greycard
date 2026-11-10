@@ -92,6 +92,10 @@ pub(crate) struct Sheets {
     /// The checks the last sync or paste laid over the selection,
     /// for the session: a paste's sheet opens with them.
     pub(crate) sync_last: Option<carry::Checks>,
+    /// A middle click's sync from a frame is waiting on its reads: a
+    /// second is dropped until it lands. Shared with the waiting
+    /// action, which lets go of it however it ends, run or dropped.
+    pub(crate) frame_sync_waiting: std::rc::Rc<std::cell::Cell<bool>>,
     /// The frame the sync sheet was opened from, as it read then: its
     /// edit and the light its As shot means (none for a frame whose
     /// raw would not say), for the words the sheet's shifts show.

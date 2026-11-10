@@ -141,6 +141,10 @@ export component App inherits Window {
     /// A middle click on the panel's Sync button: the sync without the
     /// sheet, on the last sync's or paste's choice.
     callback sync-quick-asked();
+    /// A middle click on a frame in the strip or the grid: that frame's
+    /// sync onto the rest of the set, as `sync-quick-asked` is the open
+    /// frame's.
+    callback frame-sync-asked(int);
     // The sync sheet: the current frame's sections, parts and masks,
     // checked, to lay over the rest of the set (`carry.rs`).
     in-out property <bool> sync-open: false;
@@ -4491,6 +4495,9 @@ export component App inherits Window {
             cells: root.strip-cells;
             selected <=> root.selected;
             frame-clicked(a, b, c) => { root.commit-title(); root.frame-clicked(a, b, c); }
+            frame-middle-clicked(r) => {
+                if (!root.sheet-open()) { root.frame-sync-asked(r); }
+            }
             frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
             stack-clicked(r) => { root.stack-badge(r); }
             menu-shown => { return root.menu-shown(); }
@@ -4638,6 +4645,9 @@ export component App inherits Window {
         cells: root.grid-cells;
         selected <=> root.selected;
         frame-clicked(a, b, c) => { root.commit-title(); root.frame-clicked(a, b, c); }
+        frame-middle-clicked(r) => {
+            if (!root.sheet-open()) { root.frame-sync-asked(r); }
+        }
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
         stack-clicked(r) => { root.stack-badge(r); }
         menu-shown => { return root.menu-shown(); }

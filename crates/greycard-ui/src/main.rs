@@ -832,6 +832,7 @@ impl State {
                 sync_asked: None,
                 paste_asked: None,
                 sync_last: None,
+                frame_sync_waiting: Default::default(),
                 sync_source: None,
                 clipboard: None,
                 mask_clipboard: None,

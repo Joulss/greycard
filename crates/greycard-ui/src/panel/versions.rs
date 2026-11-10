@@ -1692,6 +1692,43 @@ mod tests {
         crate::testing::remove_scratch(state, &dir);
     }
 
+    /// A middle click on a version syncs its line onto the file's own,
+    /// open and in the set, as onto another file: one step on the
+    /// file's own line, the version's left as it was, and an undo takes
+    /// the step back.
+    #[test]
+    fn a_middle_click_on_a_version_syncs_it_onto_the_files_own() {
+        let app = window(2);
+        let (state, worker) = state_for(&app, folder(2));
+        let warm = version_of(&state, &app, &worker, 0, "Warm");
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            let mut e = st.line(1).unwrap().current.clone();
+            e.light.exposure = 1.2;
+            assert!(st.line_mut(1).unwrap().record(e));
+            st.views.picked = vec![0, 1];
+        }
+        let warm_steps = state.borrow().line(1).unwrap().history.len();
+        app.invoke_frame_sync_asked(1);
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(app.get_exposure(), 1.2, "the open frame's panel");
+        {
+            let st = state.borrow();
+            assert_eq!(st.current, Some(0));
+            assert_eq!(st.sidecars[0].current.light.exposure, 1.2);
+            assert_eq!(
+                st.sidecars[0].current_label.as_deref(),
+                Some("Sync from IMG_0000 (Warm)")
+            );
+            let line = st.sidecars[0].line(Some(warm.as_str())).unwrap();
+            assert_eq!(line.history.len(), warm_steps, "the version took nothing");
+        }
+        app.invoke_undo();
+        assert_eq!(app.get_exposure(), 0.0);
+        assert_eq!(state.borrow().sidecars[0].current.light.exposure, 0.0);
+    }
+
     /// The ISO's seed is a line's: a version with a strength of its own
     /// keeps it when the file's seed lands on the open cell, a new
     /// version from an unseeded original waits on its own line and takes

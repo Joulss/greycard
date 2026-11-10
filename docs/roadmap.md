@@ -1070,11 +1070,6 @@ clears or a tester asks for it.
       threshold so a click still applies, a drop on a folded header
       counted, a drop on Favorites as the star, and the list's pane
       creeping when the drag nears its edge (2026-11-06)
-- [ ] A middle click on any frame in the strip or the grid syncs that
-      frame's edit onto the selection, as DaVinci does: the frame
-      clicked is the source, open or not, and the sections are the
-      last sync's, as the Sync button's middle click takes them (§599;
-      issue 56, 2026-10-30)
 - [ ] The open frame changed within a selection without letting the
       selection go, as Camera Raw's Alt+click and Lightroom's click on
       a chosen frame do (issue 110, 2026-11-09)

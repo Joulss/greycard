@@ -676,9 +676,19 @@ fn mosaics_unread(
 
 /// The sync the sheet asked for, run now on the window's thread, its
 /// words on the status line.
+///
+/// A sync from a frame middle-clicked in the strip or the grid may
+/// land on the frame on screen. Outside culling the panel is that
+/// frame's, so what it holds is recorded first, the sync lays over its
+/// line as over any target's, and the panel takes the line's new state
+/// and develops, as a paste onto it does; the words ride that develop.
+/// A frame that had the sections already moves nothing, but what the
+/// panel held and the save timer had yet to write is the frame's
+/// newest state, recorded here, so it is written here too.
 fn sync_now(
     state: &Rc<Shared>,
     app: &App,
+    worker: &Worker,
     from: usize,
     targets: &[usize],
     choice: &Choice,
@@ -687,6 +697,13 @@ fn sync_now(
     let profiles = greycard_edit_io::profiles::list();
     let start = std::time::Instant::now();
     let mut st = state.borrow_mut();
+    let on_screen = st.current.filter(|&c| {
+        c != from
+            && targets.contains(&c)
+            && st.culling.cull.is_none()
+            && crate::rows::panel_is_frames(&st, c)
+    });
+    let recorded = on_screen.is_some() && crate::panel::edit::record_panel(&mut st, app);
     let (synced, shift) = sync_onto(&mut st, app, from, targets, choice, modes, &profiles, probe);
     let took = start.elapsed();
     let went = choice_leaving(choice, st.path_at(from).map(PathBuf::as_path));
@@ -695,7 +712,200 @@ fn sync_now(
         said.push_str(&tr!(", each shifted {}", shift.words()));
     }
     tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
+    if let Some(c) = on_screen {
+        if synced.moved.contains(&c) {
+            // The lay wrote the frame's file with the rest.
+            let before = st.develop.generation;
+            take_current_with(&mut st, app, worker, false);
+            if st.develop.generation != before {
+                st.develop.status_after_develop = Some((st.develop.generation, said));
+                return;
+            }
+        } else if recorded
+            && !wrote_file_of(&st, &synced, c)
+            && crate::panel::edit::writable(&st, c)
+        {
+            crate::panel::edit::save_sidecar(&mut st, c);
+        }
+    }
     app.set_status(said.into());
+}
+
+/// A middle click's sync from a frame, held while it waits on its
+/// reads ([`Sheets::frame_sync_waiting`]); let go however its action
+/// ends, run or dropped unrun.
+///
+/// [`Sheets::frame_sync_waiting`]: crate::owners::Sheets::frame_sync_waiting
+struct Waiting(Rc<std::cell::Cell<bool>>);
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+/// The checks a sync from frame `from` without the sheet takes: the
+/// last sync's or paste's over `from`'s masks, the sheet's defaults
+/// before there was one, as [`sync_ready`] readies the Sync button's
+/// middle click.
+fn last_checks(st: &State, app: &App, from: usize) -> carry::Checks {
+    let masks = carry::masks_of(&edit_shown(st, app, from));
+    let mut checks = match &st.sheets.sync_last {
+        Some(kept) => kept.with_masks(masks),
+        None => carry::Checks::new(masks, Section::syncs_by_default),
+    };
+    if curveless(st.path_at(from).map(PathBuf::as_path)) {
+        checks.set_section(Section::DisplayCurve, false);
+    }
+    checks
+}
+
+/// A middle click on frame `from` in the strip or the grid: the Sync
+/// button's middle click with that frame the source, open or not, onto
+/// [`frame_sync_targets`], on the last choice over its masks once its
+/// sidecar is in. The selection and the frame on screen stay. The
+/// guards are the button's: the queue's view, a tool in hand, no
+/// targets.
+///
+/// Unlike the button's, it always sets: the sheet's shifts are left
+/// out, so a second click on the same frame changes nothing, where a
+/// shift would move every target again. A click while the last one
+/// still waits on its reads is dropped.
+fn sync_from_frame(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, from: usize) {
+    let st = state.borrow();
+    if crate::panel::queue_view::refused(&st, "a sync") {
+        return;
+    }
+    let waiting = st.sheets.frame_sync_waiting.clone();
+    if waiting.get() {
+        tracing::info!("sync from a clicked frame dropped: the last one is still waiting");
+        return;
+    }
+    if tool_in_hand(app) {
+        app.set_status(tr!("put the tool down first (Esc), then sync").into());
+        return;
+    }
+    let targets = frame_sync_targets(&st, from);
+    if targets.is_empty() {
+        app.set_status(tr!("choose the frames to sync onto: Ctrl+click or Shift+click").into());
+        return;
+    }
+    let frames: Vec<crate::versions::Key> = std::iter::once(from)
+        .chain(targets.iter().copied())
+        .filter_map(|c| st.key_of(c))
+        .collect();
+    drop(st);
+    tracing::info!("sync from a clicked frame without the sheet, on the last choice");
+    waiting.set(true);
+    let held = Waiting(waiting);
+    run_sync(
+        state,
+        app,
+        worker,
+        frames,
+        None,
+        SyncShift::default(),
+        Some(held),
+    );
+}
+
+/// The frames a sync from frame `from`, clicked in the strip or the
+/// grid, goes onto: the selection less `from`, the frame on screen
+/// among them when `from` is another.
+pub(crate) fn frame_sync_targets(st: &State, from: usize) -> Vec<usize> {
+    chosen_frames(st)
+        .into_iter()
+        .filter(|&c| c != from)
+        .collect()
+}
+
+/// The sync from the first of `frames` onto the rest: their sidecars
+/// requested, the mosaics the library does not know read off the
+/// window's thread, and [`sync_now`] once they are in. `choice` is the
+/// sheet's; `None` takes [`last_checks`] once the source is read.
+/// `held`, a middle click's, goes with the actions to the end.
+fn run_sync(
+    state: &Rc<Shared>,
+    app: &App,
+    worker: &Rc<Worker>,
+    frames: Vec<crate::versions::Key>,
+    choice: Option<Choice>,
+    modes: SyncShift,
+    held: Option<Waiting>,
+) {
+    crate::rows::request(
+        state,
+        app,
+        worker,
+        frames,
+        crate::rows::Scope::Line,
+        crate::rows::Request::Sync,
+        Box::new(move |state, app, worker, at| {
+            let Some(from) = at.first().copied().flatten() else {
+                app.set_status(tr!("the frame to sync from is gone; nothing synced").into());
+                return;
+            };
+            let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
+            let choice = match choice {
+                Some(choice) => choice,
+                None => {
+                    let mut st = state.borrow_mut();
+                    if !crate::rows::is_loaded(&st, from) {
+                        tracing::info!("sync from a clicked frame: its sidecar is not in");
+                        crate::rows::say_offline_for(
+                            &st,
+                            app,
+                            from,
+                            &tr!(": nothing to sync from"),
+                        );
+                        return;
+                    }
+                    let checks = last_checks(&st, app, from);
+                    let choice = checks.choice();
+                    if choice.is_empty() {
+                        app.set_status(tr!("choose what goes across").into());
+                        return;
+                    }
+                    // As the sheet's apply leaves it.
+                    st.sheets.sync_last = Some(checks);
+                    choice
+                }
+            };
+            // The mosaics the library does not know yet are read off
+            // this thread first, and the sync runs when they are in.
+            let (unread, frames) = {
+                let mut st = state.borrow_mut();
+                let frames = std::iter::once(from)
+                    .chain(targets.iter().copied())
+                    .filter_map(|c| st.key_of(c))
+                    .collect();
+                (
+                    mosaics_unread(&mut st, app, from, &targets, &choice),
+                    frames,
+                )
+            };
+            crate::rows::after_mosaics(
+                state,
+                app,
+                worker,
+                unread,
+                frames,
+                crate::rows::Scope::Line,
+                crate::rows::Request::Sync,
+                Box::new(move |state, app, worker, at| {
+                    let _held = held;
+                    let Some(from) = at.first().copied().flatten() else {
+                        app.set_status(
+                            tr!("the frame to sync from is gone; nothing synced").into(),
+                        );
+                        return;
+                    };
+                    let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
+                    sync_now(state, app, worker, from, &targets, &choice, modes);
+                }),
+            );
+        }),
+    );
 }
 
 /// What a shift moves each frame by: the source's difference from where
@@ -2046,56 +2256,23 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 .filter_map(|c| st.key_of(c))
                 .collect();
             drop(st);
-            crate::rows::request(
-                &state,
-                &app,
-                &worker,
-                paths,
-                crate::rows::Scope::Line,
-                crate::rows::Request::Sync,
-                Box::new(move |state, app, worker, at| {
-                    let Some(from) = at.first().copied().flatten() else {
-                        app.set_status(
-                            tr!("the frame to sync from is gone; nothing synced").into(),
-                        );
-                        return;
-                    };
-                    let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
-                    // The mosaics the library does not know yet are read
-                    // off this thread first, and the sync runs when they
-                    // are in.
-                    let (unread, frames) = {
-                        let mut st = state.borrow_mut();
-                        let frames = std::iter::once(from)
-                            .chain(targets.iter().copied())
-                            .filter_map(|c| st.key_of(c))
-                            .collect();
-                        (
-                            mosaics_unread(&mut st, app, from, &targets, &choice),
-                            frames,
-                        )
-                    };
-                    crate::rows::after_mosaics(
-                        state,
-                        app,
-                        worker,
-                        unread,
-                        frames,
-                        crate::rows::Scope::Line,
-                        crate::rows::Request::Sync,
-                        Box::new(move |state, app, _, at| {
-                            let Some(from) = at.first().copied().flatten() else {
-                                app.set_status(
-                                    tr!("the frame to sync from is gone; nothing synced").into(),
-                                );
-                                return;
-                            };
-                            let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
-                            sync_now(state, app, from, &targets, &choice, modes);
-                        }),
-                    );
-                }),
-            );
+            run_sync(&state, &app, &worker, paths, Some(choice), modes, None);
+        });
+    }
+    // A middle click on a frame of the strip or the grid: that frame's
+    // sync onto the rest of the selection, without the sheet.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_frame_sync_asked(move |row| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let from = usize::try_from(row)
+                .ok()
+                .and_then(|r| state.borrow().views.shown.get(r).copied());
+            if let Some(from) = from {
+                sync_from_frame(&state, &app, &worker, from);
+            }
         });
     }
 }
@@ -5490,6 +5667,424 @@ mod tests {
         // The left click is the sheet's, as before.
         click(&app, x, y);
         assert!(app.get_sync_open());
+    }
+
+    /// Frame `c`'s line given an exposure and a vibrance of its own.
+    fn own_edit(state: &Rc<Shared>, c: usize, exposure: f32, vibrance: f32) {
+        let mut st = state.borrow_mut();
+        let mut e = st.line(c).unwrap().current.clone();
+        e.light.exposure = exposure;
+        e.color.vibrance = vibrance;
+        assert!(st.line_mut(c).unwrap().record(e));
+    }
+
+    /// The status line, or the words waiting on the develop the sync
+    /// onto the open frame asked for.
+    fn said(state: &Rc<Shared>, app: &App) -> String {
+        match &state.borrow().develop.status_after_develop {
+            Some((_, said)) => said.clone(),
+            None => app.get_status().to_string(),
+        }
+    }
+
+    /// A middle click on a frame of the set that is not open syncs it
+    /// onto the rest, the open frame among them through its panel, on
+    /// the last sync's choice (Light alone); the set and the open frame
+    /// stay, the source takes nothing, and an undo takes the open
+    /// frame's step back.
+    #[test]
+    fn a_middle_click_on_a_frame_syncs_it_onto_the_rest_of_the_set() {
+        use slint::platform::PointerEventButton;
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = state_for(&app, folder(6));
+        let (x, y) = strip_cell(&app, 1);
+        click(&app, x, y);
+        with_modifier(&app, Key::Control, || {
+            let (x, y) = strip_cell(&app, 3);
+            click(&app, x, y);
+            let (x, y) = strip_cell(&app, 4);
+            click(&app, x, y);
+        });
+        app.set_exposure(0.6);
+        app.invoke_view_changed();
+        app.invoke_sync_open_asked();
+        choose(&app, |s| s == Section::Light);
+        app.invoke_sync_applied();
+        crate::rows::land_pending(&state, &app, &worker);
+        own_edit(&state, 3, -1.0, 0.5);
+        let source_steps = state.borrow().sidecars[3].history.len();
+
+        let (x, y) = strip_cell(&app, 3);
+        crate::testing::click_with(&app, PointerEventButton::Middle, x, y);
+        assert!(!app.get_sync_open(), "no sheet");
+        crate::rows::land_pending(&state, &app, &worker);
+        {
+            let st = state.borrow();
+            assert_eq!(chosen_frames(&st), vec![1, 3, 4], "the set stays");
+            assert_eq!(st.current, Some(1), "the open frame stays");
+            let e = &st.sidecars[4].current;
+            assert_eq!((e.light.exposure, e.color.vibrance), (-1.0, 0.0));
+            assert_eq!(st.sidecars[1].current.light.exposure, -1.0);
+            assert_eq!(
+                st.sidecars[3].history.len(),
+                source_steps,
+                "no step on the source"
+            );
+            assert_eq!(st.sidecars[3].current.color.vibrance, 0.5);
+            assert_eq!(
+                st.sidecars[4].current_label.as_deref(),
+                Some("Sync from IMG_0003.CR3")
+            );
+        }
+        assert_eq!(app.get_selected(), 1);
+        assert_eq!(
+            (app.get_exposure(), app.get_vibrance()),
+            (-1.0, 0.0),
+            "the panel"
+        );
+        assert_eq!(history_rows(&app)[0], "Sync from IMG_0003.CR3");
+        assert_eq!(said(&state, &app), "synced 1 section onto 2 frames");
+        // The open frame's step is undone as any is.
+        app.invoke_undo();
+        assert_eq!(app.get_exposure(), 0.6);
+        assert_eq!(state.borrow().sidecars[1].current.light.exposure, 0.6);
+    }
+
+    /// A middle click on a frame outside the set lands on the whole
+    /// set, here the open frame alone, which keeps its place; on the
+    /// one frame the set holds there is nothing to sync onto. A middle
+    /// press let go on another frame, a tool in hand, and a sheet up
+    /// each sync nothing.
+    #[test]
+    fn a_middle_click_outside_the_set_syncs_onto_the_set() {
+        use slint::platform::PointerEventButton;
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = state_for(&app, folder(6));
+        let (x, y) = strip_cell(&app, 1);
+        click(&app, x, y);
+        own_edit(&state, 2, -1.0, 0.0);
+        let middle = |c: usize| {
+            let (x, y) = strip_cell(&app, c);
+            crate::testing::click_with(&app, PointerEventButton::Middle, x, y);
+            crate::rows::land_pending(&state, &app, &worker);
+        };
+        let untouched = || {
+            assert_eq!(app.get_exposure(), 0.0);
+            assert!(state.borrow().sidecars[1].history.is_empty());
+        };
+
+        // Pressed on frame 2 and let go on frame 3: no click.
+        app.set_status("".into());
+        crate::testing::drag_with(
+            &app,
+            PointerEventButton::Middle,
+            &[strip_cell(&app, 2), strip_cell(&app, 3)],
+        );
+        crate::rows::land_pending(&state, &app, &worker);
+        untouched();
+        assert_eq!(app.get_status(), "");
+        // On the frame the set is: nothing to sync onto.
+        middle(1);
+        assert_eq!(
+            app.get_status(),
+            "choose the frames to sync onto: Ctrl+click or Shift+click"
+        );
+        untouched();
+        // With a tool in hand.
+        app.set_level_mode(true);
+        middle(2);
+        assert_eq!(app.get_status(), "put the tool down first (Esc), then sync");
+        untouched();
+        app.set_level_mode(false);
+        // Under a sheet.
+        app.set_status("".into());
+        app.set_sync_open(true);
+        middle(2);
+        untouched();
+        assert_eq!(app.get_status(), "");
+        app.set_sync_open(false);
+
+        middle(2);
+        assert_eq!(app.get_exposure(), -1.0, "onto the open frame");
+        let st = state.borrow();
+        assert_eq!(chosen_frames(&st), vec![1]);
+        assert_eq!(st.current, Some(1));
+        assert_eq!(st.sidecars[1].current.light.exposure, -1.0);
+        drop(st);
+        let said = said(&state, &app);
+        assert!(
+            said.starts_with("synced ") && said.ends_with(" onto 1 frame"),
+            "{said}"
+        );
+    }
+
+    /// A middle release inside a left press is no middle click, and
+    /// neither is one after the pointer left the window mid-press.
+    #[test]
+    fn a_middle_release_in_a_left_press_or_after_a_cancel_syncs_nothing() {
+        use slint::platform::PointerEventButton;
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = state_for(&app, folder(6));
+        let (x, y) = strip_cell(&app, 1);
+        click(&app, x, y);
+        own_edit(&state, 2, -1.0, 0.0);
+        let position = {
+            let (x, y) = strip_cell(&app, 2);
+            slint::LogicalPosition::new(x, y)
+        };
+        let send = |events: &[WindowEvent]| {
+            for e in events {
+                app.window().dispatch_event(e.clone());
+            }
+            crate::rows::land_pending(&state, &app, &worker);
+        };
+        let pressed = |button| WindowEvent::PointerPressed { position, button };
+        let released = |button| WindowEvent::PointerReleased { position, button };
+        // Left and middle crossed: the left click opens frame 2.
+        send(&[
+            WindowEvent::PointerMoved { position },
+            pressed(PointerEventButton::Middle),
+            pressed(PointerEventButton::Left),
+            released(PointerEventButton::Middle),
+            released(PointerEventButton::Left),
+        ]);
+        assert_eq!(
+            state.borrow().sidecars[1].current.light.exposure,
+            0.0,
+            "no sync"
+        );
+        let (x, y) = strip_cell(&app, 1);
+        click(&app, x, y);
+        assert_eq!(state.borrow().current, Some(1));
+        // A middle press, the pointer out of the window, a release.
+        send(&[
+            WindowEvent::PointerMoved { position },
+            pressed(PointerEventButton::Middle),
+            WindowEvent::PointerExited,
+        ]);
+        send(&[
+            WindowEvent::PointerMoved { position },
+            released(PointerEventButton::Middle),
+        ]);
+        assert_eq!(app.get_exposure(), 0.0, "no sync");
+        assert!(state.borrow().sidecars[1].history.is_empty());
+    }
+
+    /// The last choice a middle click takes, set as a sheet's apply
+    /// leaves it.
+    fn last_is(state: &Rc<Shared>, on: impl Fn(Section) -> bool) {
+        state.borrow_mut().sheets.sync_last = Some(carry::Checks::new(Vec::new(), on));
+    }
+
+    /// A slider moved on the open frame and not yet saved (the save
+    /// timer still out) reaches its sidecar on disk when a middle click
+    /// syncs onto it, whether the sync moved it or found it had the
+    /// sections already.
+    #[test]
+    fn a_middle_click_onto_the_open_frame_writes_what_its_panel_held() {
+        let app = window(3);
+        let dir = crate::testing::scratch_dir("middle-unsaved");
+        std::fs::create_dir_all(&dir).unwrap();
+        let files: Vec<PathBuf> = (0..3)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        let (state, worker) = state_for(&app, files.clone());
+        state.borrow_mut().window.write_sidecars = true;
+        last_is(&state, |s| s == Section::Light);
+        own_edit(&state, 1, 0.5, 0.0);
+        app.invoke_select(0);
+        let on_disk = || {
+            Sidecar::load(&files[0])
+                .unwrap()
+                .map(|s| (s.current.light.exposure, s.current.color.vibrance))
+        };
+        // The same Light as the source, unsaved: nothing moves.
+        app.set_exposure(0.5);
+        app.invoke_view_changed();
+        assert_ne!(on_disk(), Some((0.5, 0.0)), "the timer has not saved it");
+        app.invoke_frame_sync_asked(1);
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(app.get_status(), "the other 1 frame had these already");
+        assert_eq!(on_disk(), Some((0.5, 0.0)), "written all the same");
+        // A Color slider unsaved, and Light from another value: the
+        // frame moves, and both are on disk.
+        own_edit(&state, 1, -0.5, 0.0);
+        app.set_vibrance(0.3);
+        app.invoke_view_changed();
+        app.invoke_frame_sync_asked(1);
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(app.get_exposure(), -0.5);
+        assert_eq!(on_disk(), Some((-0.5, 0.3)));
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A middle click on a frame sets, whatever shift the sheet was
+    /// left on: twice over, the targets are the source's value and the
+    /// second click takes no step.
+    #[test]
+    fn a_second_middle_click_changes_nothing_whatever_the_sheets_shift() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        last_is(&state, |s| s == Section::Light);
+        app.set_sync_shift_exposure(true);
+        own_edit(&state, 1, 1.0, 0.0);
+        app.invoke_select(0);
+        state.borrow_mut().views.picked = vec![0, 2];
+        for _ in 0..2 {
+            app.invoke_frame_sync_asked(1);
+            crate::rows::land_pending(&state, &app, &worker);
+        }
+        let st = state.borrow();
+        assert_eq!(
+            st.sidecars[2].current.light.exposure, 1.0,
+            "set, not shifted"
+        );
+        assert_eq!(st.sidecars[0].current.light.exposure, 1.0);
+        assert_eq!(st.sidecars[2].history.len(), 1, "one step");
+        drop(st);
+        assert_eq!(app.get_exposure(), 1.0);
+        assert_eq!(app.get_status(), "the other 2 frames had these already");
+    }
+
+    /// A middle click onto the open frame with the crop up leaves the
+    /// crop up and the frame's own crop, as a paste does; one with a
+    /// mask chosen whose masks the sync replaces with none goes back to
+    /// the global look, as a paste does.
+    #[test]
+    fn a_middle_click_onto_the_open_frame_under_the_crop_and_a_mask_does_as_a_paste() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        let crop = greycard_edit::geometry::Crop {
+            x: 0.1,
+            y: 0.1,
+            w: 0.8,
+            h: 0.8,
+        };
+        {
+            let mut st = state.borrow_mut();
+            let mut own = Edit::default();
+            own.geometry.crop = Some(crop);
+            own.adjustments = vec![mask(1, "Sky 1", Shape::Subject {})];
+            st.sidecars[0].record(own);
+        }
+        own_edit(&state, 1, -1.0, 0.0);
+        app.invoke_select(0);
+        // The crop up: Light goes, the crop stays as it was.
+        last_is(&state, |s| s == Section::Light);
+        app.set_crop_mode(true);
+        app.invoke_crop_toggled();
+        let check_crop = |what: &str| {
+            assert!(app.get_crop_mode(), "{what}: the crop still up");
+            assert_eq!(app.get_exposure(), -1.0, "{what}");
+            let st = state.borrow();
+            assert_eq!(st.sidecars[0].current.geometry.crop, Some(crop), "{what}");
+        };
+        app.invoke_frame_sync_asked(1);
+        crate::rows::land_pending(&state, &app, &worker);
+        check_crop("the sync");
+        app.invoke_undo();
+        assert_eq!(app.get_exposure(), 0.0);
+        copy_settings_of(&mut state.borrow_mut(), &app, 1);
+        app.invoke_paste_asked();
+        app.invoke_sync_applied();
+        check_crop("the paste");
+        app.set_crop_mode(false);
+        app.invoke_crop_toggled();
+
+        // The mask chosen, the masks replaced by the source's none.
+        app.invoke_undo();
+        last_is(&state, |s| s == Section::Light || s == Section::Adjustments);
+        app.invoke_target_changed(1);
+        assert_eq!(state.borrow().develop.target, Some(0));
+        let check_mask = |what: &str| {
+            let st = state.borrow();
+            assert_eq!(st.develop.target, None, "{what}: back to the global look");
+            assert!(st.sidecars[0].current.adjustments.is_empty(), "{what}");
+            assert_eq!(st.develop.edit.light.exposure, -1.0, "{what}");
+        };
+        app.invoke_frame_sync_asked(1);
+        crate::rows::land_pending(&state, &app, &worker);
+        check_mask("the sync");
+        app.invoke_undo();
+        app.invoke_target_changed(1);
+        assert_eq!(state.borrow().develop.target, Some(0));
+        app.invoke_paste_asked();
+        app.invoke_sync_applied();
+        check_mask("the paste");
+    }
+
+    /// In Cull drawn developed a middle click onto the open frame
+    /// leaves Cull for Develop, as a paste onto it does: the panel takes
+    /// the frame's new state.
+    #[test]
+    fn a_middle_click_onto_the_open_frame_in_developed_cull_leaves_it_as_a_paste_does() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        last_is(&state, |s| s == Section::Light);
+        own_edit(&state, 1, -1.0, 0.0);
+        app.invoke_select(0);
+        crate::panel::cull::enter_developed(&mut state.borrow_mut(), &app);
+        assert!(state.borrow().culling.developed.is_some());
+        app.invoke_frame_sync_asked(1);
+        crate::rows::land_pending(&state, &app, &worker);
+        assert!(
+            state.borrow().culling.developed.is_none(),
+            "the sync left Cull"
+        );
+        assert_eq!(app.get_exposure(), -1.0);
+
+        app.invoke_undo();
+        crate::panel::cull::enter_developed(&mut state.borrow_mut(), &app);
+        copy_settings_of(&mut state.borrow_mut(), &app, 1);
+        app.invoke_paste_asked();
+        app.invoke_sync_applied();
+        assert!(
+            state.borrow().culling.developed.is_none(),
+            "the paste left Cull"
+        );
+        assert_eq!(app.get_exposure(), -1.0);
+    }
+
+    /// A middle click on a cell of the grid syncs as one in the strip.
+    #[test]
+    fn a_middle_click_in_the_grid_syncs_as_in_the_strip() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::PointerEventButton;
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, worker) = state_for(&app, folder(6));
+        let (x, y) = strip_cell(&app, 1);
+        click(&app, x, y);
+        with_modifier(&app, Key::Control, || {
+            let (x, y) = strip_cell(&app, 3);
+            click(&app, x, y);
+        });
+        own_edit(&state, 0, -1.0, 0.0);
+        app.set_grid_open(true);
+        slint::platform::update_timers_and_animations();
+        let cell = ElementHandle::find_by_element_id(&app, "GridSheet::ct")
+            .next()
+            .expect("a cell on the sheet");
+        let (at, size) = (cell.absolute_position(), cell.size());
+        let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        crate::testing::click_with(&app, PointerEventButton::Middle, x, y);
+        crate::rows::land_pending(&state, &app, &worker);
+        let st = state.borrow();
+        assert_eq!(chosen_frames(&st), vec![1, 3]);
+        assert_eq!(st.current, Some(1));
+        assert_eq!(st.sidecars[3].current.light.exposure, -1.0);
+        assert_eq!(st.sidecars[1].current.light.exposure, -1.0);
+        assert_eq!(
+            st.sidecars[3].current_label.as_deref(),
+            Some("Sync from IMG_0000.CR3")
+        );
     }
 
     /// The window's hold for a paste onto 300 frames, timed: the frames
