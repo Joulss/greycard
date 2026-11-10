@@ -326,7 +326,7 @@ with the count and where they go. **Move** (or Enter) moves them;
 **Cancel** (or Esc) doesn't.
 
 - Each frame takes its `.gcd` and its XMP with it.
-- In a view of several folders (all roots, a root, or a folder with
+- In a view of several folders (all roots, or a root or folder with
   **With subfolders** on), each reject goes into the `rejects` folder
   of its own folder.
 - A frame on a drive that is offline is left alone.
@@ -355,7 +355,7 @@ and the folder itself once it is empty. It always asks first (see
 What it covers depends on the view:
 
 - **One folder:** that folder's `rejects` folder.
-- **All roots, a root, or a folder with With subfolders on:** every
+- **All roots, or a root or folder with With subfolders on:** every
   `rejects` folder that view lists frames in. The sheet says how many
   frames and folders, such as "Delete 30 frames from 3 rejects
   folders?".

@@ -340,11 +340,16 @@ fn a_root_is_named_from_its_menu() {
         state.borrow().views.library.roots.list(),
         std::slice::from_ref(&photos)
     );
-    // The next is a press on the row, which picks its root.
+    // The next is a press on the row, which picks its root: its own
+    // frames, With subfolders being off.
     crate::testing::click(&app, x, y);
     assert_eq!(
         state.borrow_mut().views.library.wanted.take(),
-        Some(View::Roots(Some(photos.clone())))
+        Some(View::Branch {
+            root: photos.clone(),
+            folder: photos.clone(),
+            deep: false,
+        })
     );
 
     // Rename..., from the menu.
@@ -702,4 +707,153 @@ fn the_import_button_stops_a_card_import_and_waits_for_a_catalog() {
     assert_eq!(*stops.borrow(), 1);
     assert_eq!(*asked.borrow(), 0);
     assert_eq!(crate::testing::count_labeled(&app, "Import..."), 0);
+}
+
+/// The folder tree's rows as the pane shows them: name, count, and
+/// whether marked open.
+fn tree_rows(app: &App) -> Vec<(String, i32, bool)> {
+    app.get_folder_tree()
+        .iter()
+        .map(|r| (r.name.to_string(), r.count, r.open))
+        .collect()
+}
+
+fn listed(state: &Rc<Shared>) -> Vec<String> {
+    state
+        .borrow()
+        .files
+        .iter()
+        .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// A root's row under ROOTS opens the root as its row in the folder
+/// tree does (discussion 59): with the switch off its own frames, the
+/// folder under it a tile; on, everything under it. The switch never
+/// moves for a click, flipping it over the root's view lists it again,
+/// back comes to the root as it was shown, All roots is every frame
+/// whatever the switch says, and a root with nothing of its own opens
+/// empty as the tree's folder does. The row's count is the root's
+/// total throughout, as a folded row's in the tree.
+#[test]
+fn a_roots_row_opens_the_root_as_the_switch_says() {
+    let dir = scratch("row-switch");
+    let root = dir.join("archive");
+    let day = root.join("day");
+    std::fs::create_dir_all(&day).unwrap();
+    frames(&root, &["r.tif"]);
+    frames(&day, &["d1.tif", "d2.tif"]);
+    let db = dir.join("index").join("library.sqlite");
+    greycard_library::Library::open(&db)
+        .unwrap()
+        .index_tree(&root, &mut |_| {})
+        .unwrap();
+    let app = window(0);
+    app.set_grid_open(true);
+    let (state, worker) = state_for(&app, Vec::new());
+    {
+        let mut st = state.borrow_mut();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.views.sort = crate::sort::Kept::by_name();
+        st.views.library.roots.add(&root).unwrap();
+        recount(&mut st);
+    }
+    let path = root.to_string_lossy().into_owned();
+    let pick = |p: &str| {
+        app.invoke_library_root_picked(p.into());
+        land_all(&state, &app, &worker);
+    };
+    let own = View::Branch {
+        root: root.clone(),
+        folder: root.clone(),
+        deep: false,
+    };
+
+    // The switch off (the default): the root's own frame, the row lit,
+    // the tree's root marked, the switch shown off, the day a tile.
+    assert!(!state.borrow().views.tree.subfolders);
+    pick(&path);
+    assert_eq!(state.borrow().views.view, own);
+    assert_eq!(listed(&state), ["r.tif"]);
+    let chip = app.get_library_roots().row_data(0).unwrap();
+    assert!(chip.on, "the root's row lit");
+    assert_eq!(chip.count, 3, "the root's total, whatever the switch");
+    assert!(!app.get_folder_tree_subfolders());
+    assert_eq!(
+        tree_rows(&app),
+        [("archive".into(), 1, true), ("day".into(), 2, false)]
+    );
+    let tiles: Vec<String> = app
+        .get_grid_tiles()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert_eq!(tiles, ["day"]);
+
+    // Flipped on over it: everything under the root, as its row would.
+    app.set_folder_tree_subfolders(true);
+    app.invoke_folder_tree_subfolders_changed();
+    land_all(&state, &app, &worker);
+    assert_eq!(state.borrow().views.view, View::Roots(Some(root.clone())));
+    assert_eq!(listed(&state), ["d1.tif", "d2.tif", "r.tif"]);
+    assert_eq!(app.get_grid_tiles().row_count(), 0, "no tiles with it on");
+    // The row clicked with it on: the same, and the switch stays on.
+    pick(&path);
+    assert_eq!(state.borrow().views.view, View::Roots(Some(root.clone())));
+    assert_eq!(listed(&state), ["d1.tif", "d2.tif", "r.tif"]);
+    assert!(state.borrow().views.tree.subfolders);
+    assert!(app.get_folder_tree_subfolders());
+    assert_eq!(app.get_library_roots().row_data(0).unwrap().count, 3);
+
+    // Off again: the root's own frame; a click leaves the switch off.
+    app.set_folder_tree_subfolders(false);
+    app.invoke_folder_tree_subfolders_changed();
+    land_all(&state, &app, &worker);
+    assert_eq!(state.borrow().views.view, own);
+    assert_eq!(listed(&state), ["r.tif"]);
+    pick(&path);
+    assert_eq!(state.borrow().views.view, own);
+    assert!(
+        !state.borrow().views.tree.subfolders,
+        "a click moves no switch"
+    );
+
+    // The day from the tree, then back: the root as it was shown.
+    let row = tree_rows(&app).iter().position(|r| r.0 == "day").unwrap();
+    app.invoke_folder_tree_picked(row as i32);
+    land_all(&state, &app, &worker);
+    assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+    app.invoke_visit_folder(true);
+    land_all(&state, &app, &worker);
+    assert_eq!(state.borrow().views.view, own);
+    assert_eq!(listed(&state), ["r.tif"]);
+
+    // All roots lists every frame with the switch off.
+    pick("");
+    assert_eq!(state.borrow().views.view, View::Roots(None));
+    assert_eq!(listed(&state), ["d1.tif", "d2.tif", "r.tif"]);
+
+    // A root with nothing of its own, the switch off: empty, as the
+    // tree's folder with nothing of its own opens, and says why.
+    std::fs::remove_file(root.join("r.tif")).unwrap();
+    state.borrow_mut().views.index_reader = None;
+    greycard_library::Library::open(&db)
+        .unwrap()
+        .index_folder(&root, &mut |_| {})
+        .unwrap();
+    {
+        let mut st = state.borrow_mut();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        recount(&mut st);
+    }
+    pick(&path);
+    assert_eq!(state.borrow().views.view, own);
+    assert!(listed(&state).is_empty());
+    assert!(
+        app.get_status().starts_with("nothing directly in archive"),
+        "{}",
+        app.get_status()
+    );
+    assert!(!app.get_folder_tree_subfolders());
+    crate::testing::remove_scratch(state, &dir);
 }

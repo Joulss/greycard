@@ -1121,10 +1121,6 @@ clears or a tester asks for it.
 - [ ] A luminance curve beside the channels', bending the tone and
       leaving the color; kin to the master curve on a norm
       (discussion 59, 2026-11-09)
-- [ ] A root's row and "With subfolders" agreeing: the row lists
-      everything under the root while the switch shows off and the
-      tree marks the root as if for its own frames; waits on which
-      way to settle it (discussion 59, 2026-11-09)
 - [ ] A mask's Show mask and Invert switches each beside their own
       word; side by side, "Invert" reads as the label of Show mask's
       switch (discussion 59, 2026-11-10)

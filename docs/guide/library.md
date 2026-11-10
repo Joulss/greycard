@@ -151,8 +151,10 @@ file again.
 The roots are in the left pane while the grid is up, under **ROOTS**:
 
 - **All roots** lists every frame in the library, with the total.
-- Below it is a row for each root with its count. Click a row to see
-  every frame under that root.
+- Below it is a row for each root, with the count of every frame
+  under it. Click a row to open the root as a click on it in the
+  folder tree does: its own frames with **With subfolders** off,
+  everything under it with the switch on.
 - **Export queue**, always last, shows the frames waiting in the
   export queue, with their count. See
   [The queue in the grid](export.md#the-queue-in-the-grid).
@@ -190,8 +192,8 @@ open in the grid and folded in the loupe.
   frame on screen stays open when it is still in the list. greycard
   remembers the setting.
 
-A folder with no frames of its own opens empty, and the status line
-suggests **With subfolders**.
+A folder or root with no frames of its own opens empty, and the
+status line suggests **With subfolders**.
 
 The left pane's lists, Folders, Collections, Presets, Snapshots, and
 History, share the pane's height. A list that has little to show
@@ -354,7 +356,7 @@ when you quit:
 
 - **A folder** is by name until you choose otherwise, which is the
   camera's numbering.
-- **All roots, a root, or a folder with its subfolders** is by
+- **All roots, and a root or folder with its subfolders,** are by
   capture time, so the frames of two cameras from one day read in the
   order they were taken, wherever their folders are. A smart
   collection opens as one of these and uses the same order.

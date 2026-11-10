@@ -28,6 +28,10 @@ design note behind it.
 
 ### Fixes
 
+- A root's row under ROOTS obeys With subfolders, as its row in the
+  tree does: the root's own frames with the switch off, everything
+  under it with the switch on (discussion 59,
+  [§625](https://github.com/jessolmstead/greycard/blob/master/docs/notes/625-a-roots-row-obeys-with-subfolders.md)).
 - The mouse's back and forward buttons come back to a folder, a root,
   or a collection on the frame you left it on, not the first
   (discussion 59,

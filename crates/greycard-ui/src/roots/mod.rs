@@ -671,6 +671,19 @@ impl Checks {
     }
 }
 
+/// The view a row under ROOTS opens, by the path it hands back: all
+/// the roots for the empty one, and a root as its own row in the
+/// folder tree opens it, the switch as it stands: its own frames, or
+/// with the switch everything under it. The pane never says one thing
+/// while the grid lists another.
+fn picked_view(st: &crate::State, path: &str) -> View {
+    if path.is_empty() {
+        return View::Roots(None);
+    }
+    let root = PathBuf::from(path);
+    crate::tree::view_for(&root, &root, st.views.tree.subfolders)
+}
+
 /// The header's callbacks: a root chosen, all of them, one added by
 /// the chooser or as the folder open, one taken out, one named.
 pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
@@ -705,11 +718,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let view = if path.is_empty() {
-                View::Roots(None)
-            } else {
-                View::Roots(Some(PathBuf::from(path.as_str())))
-            };
+            let view = picked_view(&state.borrow(), path.as_str());
             open_view(&state, &app, &worker, view);
         });
     }

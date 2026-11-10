@@ -636,3 +636,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§622. SQLite 3.54.1, for RUSTSEC-2026-0459](notes/622-sqlite-3-54-1-for-rustsec-2026-0459.md) (2026-11-09)
 - [§623. The window opens as it was closed](notes/623-the-window-opens-as-it-was-closed.md) (2026-11-09)
 - [§624. Alt+arrows go back and forward](notes/624-alt-arrows-go-back-and-forward.md) (2026-11-10)
+- [§625. A root's row obeys With subfolders](notes/625-a-roots-row-obeys-with-subfolders.md) (2026-11-10)
