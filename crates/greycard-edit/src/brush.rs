@@ -273,10 +273,27 @@ impl Raster {
         (!self.cut.is_empty()).then_some(&self.cut[..])
     }
 
+    /// Whether the raster shows `strokes` already, so `update` would
+    /// change nothing: the strokes painted, and after them only strokes
+    /// with no points yet. A caller sharing the raster asks this first,
+    /// so it neither copies it nor gives it a new identity for nothing.
+    pub fn is_at(&self, strokes: &[Stroke]) -> bool {
+        strokes.starts_with(&self.done)
+            && strokes[self.done.len()..]
+                .iter()
+                .all(|s| s.points.is_empty())
+    }
+
     /// Bring the raster to `strokes`: the points added since the last
     /// time are stamped; anything else is painted again from nothing.
     /// Whether anything changed.
     pub fn update(&mut self, strokes: &[Stroke]) -> bool {
+        // Nothing to do touches nothing: a stroke with no points yet
+        // would otherwise take the one under way into `base`, and a
+        // repaint of that one would then paint over its old self.
+        if self.is_at(strokes) {
+            return false;
+        }
         let n = self.done.len();
         // Only the stroke under way changed, other than by growing (a
         // stroke held straight, its end moved): the finished strokes
@@ -701,6 +718,93 @@ mod tests {
         assert!(step.update(&[a.clone(), line(Op::Add)]));
         let whole = Raster::of(&[a.clone(), line(Op::Add)], aspect);
         assert_eq!(step.cut(), None);
+        assert_eq!(step.data(), whole.data());
+    }
+
+    /// `is_at` says what `update` would: nothing to do for the strokes
+    /// as painted, with empty ones after them; something for a stroke
+    /// grown, replaced, erased over, undone, or retuned.
+    #[test]
+    fn is_at_is_what_update_concludes() {
+        let aspect = 0.75;
+        let a = Stroke {
+            points: vec![[0.1, 0.1], [0.3, 0.2]],
+            ..Stroke::new(Op::Add, 0.03, 0.3, 0.7)
+        };
+        let b = Stroke {
+            points: vec![[0.5, 0.2], [0.6, 0.3]],
+            ..Stroke::new(Op::Subtract, 0.05, 0.0, 0.5)
+        };
+        let painted = Raster::of(&[a.clone(), b.clone()], aspect);
+        let grown = Stroke {
+            points: vec![[0.5, 0.2], [0.6, 0.3], [0.7, 0.3]],
+            ..b.clone()
+        };
+        let moved = Stroke {
+            points: vec![[0.5, 0.2], [0.4, 0.4]],
+            ..b.clone()
+        };
+        let erase = Stroke {
+            points: vec![[0.2, 0.15]],
+            ..Stroke::new(Op::Erase, 0.04, 0.0, 1.0)
+        };
+        let wider = Stroke {
+            radius: 0.04,
+            ..a.clone()
+        };
+        let empty = Stroke::new(Op::Add, 0.05, 0.5, 1.0);
+        let unchanged: [Vec<Stroke>; 3] = [
+            vec![a.clone(), b.clone()],
+            vec![a.clone(), b.clone(), empty.clone()],
+            vec![a.clone(), b.clone(), empty.clone(), empty.clone()],
+        ];
+        let changed: [Vec<Stroke>; 7] = [
+            vec![a.clone(), grown],
+            vec![a.clone(), moved],
+            vec![a.clone(), b.clone(), erase],
+            vec![a.clone()],
+            vec![],
+            vec![wider, b.clone()],
+            vec![b.clone(), a.clone()],
+        ];
+        for strokes in &unchanged {
+            assert!(painted.is_at(strokes), "{}", strokes.len());
+            let mut r = painted.clone();
+            assert!(!r.update(strokes));
+            assert_eq!(r.version, painted.version);
+        }
+        for strokes in &changed {
+            assert!(!painted.is_at(strokes), "{}", strokes.len());
+            let mut r = painted.clone();
+            assert!(r.update(strokes));
+            assert!(r.version > painted.version);
+        }
+        // An empty raster is at no strokes, or at empty ones alone.
+        let fresh = Raster::new(aspect);
+        assert!(fresh.is_at(&[]));
+        assert!(fresh.is_at(std::slice::from_ref(&empty)));
+        assert!(!fresh.is_at(std::slice::from_ref(&a)));
+    }
+
+    /// A stroke begun with no points yet, then dropped, and the one
+    /// under way replaced: the finished strokes kept for that are
+    /// still those before it, so it is painted once, not over itself.
+    #[test]
+    fn an_empty_stroke_leaves_the_one_under_way_unfinished() {
+        let aspect = 0.75;
+        let a = Stroke {
+            points: vec![[0.1, 0.1], [0.3, 0.2]],
+            ..Stroke::new(Op::Add, 0.03, 0.3, 0.7)
+        };
+        let line = |end: Pos| Stroke {
+            points: vec![[0.2, 0.3], end],
+            ..Stroke::new(Op::Add, 0.05, 0.2, 0.6)
+        };
+        let mut step = Raster::of(&[a.clone(), line([0.6, 0.5])], aspect);
+        let empty = Stroke::new(Op::Add, 0.05, 0.5, 1.0);
+        assert!(!step.update(&[a.clone(), line([0.6, 0.5]), empty]));
+        assert!(step.update(&[a.clone(), line([0.4, 0.2])]));
+        let whole = Raster::of(&[a.clone(), line([0.4, 0.2])], aspect);
         assert_eq!(step.data(), whole.data());
     }
 }

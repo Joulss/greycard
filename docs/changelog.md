@@ -41,6 +41,9 @@ design note behind it.
 
 ### Fixes
 
+- A frame with a brushed mask no longer keeps the window drawing, and
+  the GPU busy, while nothing is happening (issue 122,
+  [§628](https://github.com/jessolmstead/greycard/blob/master/docs/notes/628-an-idle-brush-mask-keeps-the-window-drawing.md)).
 - A root's row under ROOTS obeys With subfolders, as its row in the
   tree does: the root's own frames with the switch off, everything
   under it with the switch on (discussion 59,

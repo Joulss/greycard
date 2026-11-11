@@ -7,6 +7,15 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] Tab bringing the panes back shows all three, a strip or a pane
+      put away before with them: keep which were showing when Tab hid
+      them and bring back those (discussion 59, 2026-11-10)
+- [ ] Edit in: a save over the handed file does not show while that
+      file is the open frame; leaving it and coming back shows it. The
+      watcher re-indexes and lists again (§499) but lets go of no
+      picture held under the old content, as a merge made again does
+      (`edited::rewritten`); read from the code, not run (issue 119,
+      2026-11-10)
 - [ ] The local contrast's GPU sweep fails one case in a thousand:
       seed 1, case 758, a 55x2547 Steps scene with texture -0.82,
       clarity -1, and structure 1, the GPU 1.3e-4 and the CPU 2.3e-4
@@ -1130,11 +1139,45 @@ clears or a tester asks for it.
       ARM (issue 105, 2026-11-09)
 - [ ] Author, copyright, and the IPTC fields written into exports
       and kept in the sidecar, GPS with them, the author and copyright
-      defaults set once in Settings (issue 106, 2026-11-09)
+      defaults set once in Settings (issue 106, 2026-11-09). The
+      fields asked for: title, headline, caption, copyright, usage
+      terms, copyright URL, creator, and the creator's address, email,
+      and web address
+- [ ] `.greycard` off the name of an export written beside its raw
+      (issue 116, 2026-11-10). Today the tag is also what keeps
+      `IMG_0001.jpg` from being paired with `IMG_0001.CR3` as the
+      camera's JPEG, and from writing over the camera's own under
+      Overwrite; it goes once an export is told from a camera's file
+      by its metadata, and not behind a switch before then
+- [ ] The strip's and the panes' show and hide buttons hidden until
+      the pointer nears them, as a preference (discussion 89,
+      2026-11-10)
+- [ ] The state of every section as the default for new edits: each
+      switch and option (the display curve among them), not the
+      sliders, set from the open frame; the lens setting (§613) is the
+      first of these (discussion 89, 2026-11-10)
 - [ ] A history step as the compare's Before: a row's context action
       sets it, the key swaps against it instead of the original, and
       leaving the frame clears it, as Lightroom's Copy History Step
       Settings to Before (issue 107, 2026-11-09)
+- [ ] Lossy WebP as an export format: the `image` crate's encoder is
+      lossless only, so lossy wants libwebp (BSD, a C build) or a
+      pure-Rust encoder found; lossless comes first (issue 121,
+      2026-11-10)
+- [ ] The develop summary under the picture taken out of the window:
+      its sizes and section values are shown elsewhere, its timings
+      go to the log (discussion 117, 2026-11-10)
+- [ ] White balance, Light, Color, and Detail as one Basic panel with
+      a subsection each, as Lightroom's; undecided, and it meets the
+      section-order items above (discussion 118, 2026-11-10)
+- [ ] As shot switched off giving back the custom white balance it
+      replaced, where today the sliders stay at the camera's
+      (discussion 59, 2026-11-10)
+- [ ] Dehaze on luminance alone, or a blend between that and the
+      color one, so the haze's blue shift is dialed in (discussion 59,
+      2026-11-10)
+- [ ] The canvas as any grey, a slider beside the five swatches, and
+      the width of F's mat a setting (discussion 59, 2026-11-10)
 
 ## Blocked
 

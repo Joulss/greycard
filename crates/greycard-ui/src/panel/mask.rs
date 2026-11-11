@@ -400,8 +400,13 @@ pub(crate) fn bake_locals(
                         })
                         .or_insert_with(|| Arc::new(Raster::new(aspect)));
                     // A copy elsewhere, the renderer's key or the
-                    // histogram's, keeps the old version; this one moves on.
-                    Arc::make_mut(raster).update(strokes);
+                    // histogram's, keeps the old version; this one moves
+                    // on. Only when the strokes moved: a copy made for
+                    // nothing is a new mask to every key, and an idle
+                    // frame would draw and read the scopes again forever.
+                    if !raster.is_at(strokes) {
+                        Arc::make_mut(raster).update(strokes);
+                    }
                     Some(RasterRef(raster.clone()))
                 })
                 .collect();
@@ -2496,6 +2501,127 @@ mod tests {
         edit.adjustments[0].mask.refine = 0.0;
         assert!(made(&edit, &other, 1.0).is_none());
         assert!(cache.is_empty());
+    }
+
+    /// A brush baked again with its strokes as they were, while the
+    /// last frame's locals are still held (the renderer's key, the
+    /// scopes'), is the same mask: not copied, so no key misses and an
+    /// idle window settles. A new point, or a new aspect, is a new one.
+    #[test]
+    fn a_brush_baked_again_unchanged_is_the_same_mask() {
+        let mut stroke =
+            greycard_edit::brush::Stroke::new(greycard_edit::brush::Op::Add, 0.1, 0.5, 1.0);
+        stroke.points = vec![[0.3, 0.3], [0.5, 0.35]];
+        let mut edit = Edit::default();
+        edit.adjustments.push(Adjustment {
+            id: 7,
+            mask: Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: Shape::Brush {
+                        strokes: vec![stroke],
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut rasters = HashMap::new();
+        let mut learned = HashMap::new();
+        let mut bake = |edit: &Edit, aspect: f32| {
+            bake_locals(edit, &mut rasters, &mut learned, aspect, None).0
+        };
+        let held = bake(&edit, 2.0 / 3.0);
+        let again = bake(&edit, 2.0 / 3.0);
+        assert_eq!(held, again, "the same mask the next frame");
+        let (a, b) = (
+            held[0].rasters[0].as_ref().unwrap(),
+            again[0].rasters[0].as_ref().unwrap(),
+        );
+        assert!(Arc::ptr_eq(&a.0, &b.0), "not copied");
+        // A stroke begun with no points yet leaves the raster as it was
+        // (the mask beside it is another, holding the stroke).
+        let Shape::Brush { strokes } = &mut edit.adjustments[0].mask.components[0].shape else {
+            unreachable!()
+        };
+        strokes.push(greycard_edit::brush::Stroke::default());
+        assert_eq!(
+            bake(&edit, 2.0 / 3.0)[0].rasters,
+            held[0].rasters,
+            "an empty stroke"
+        );
+        let Shape::Brush { strokes } = &mut edit.adjustments[0].mask.components[0].shape else {
+            unreachable!()
+        };
+        strokes[1].points.push([0.6, 0.5]);
+        let stroked = bake(&edit, 2.0 / 3.0);
+        assert_ne!(stroked, held, "a stroke");
+        assert_eq!(bake(&edit, 2.0 / 3.0), stroked, "kept after the stroke");
+        assert_ne!(bake(&edit, 0.75), stroked, "a new aspect");
+    }
+
+    /// The window's frame with a brush on the open frame, as the
+    /// rendering notifier runs it: bake, draw, analyze. Once the first
+    /// analysis lands, a frame with nothing changed draws nothing and
+    /// asks no scope read back, so nothing asks for the next frame.
+    /// Checked where there is a GPU.
+    #[test]
+    fn an_idle_frame_with_a_brush_settles() {
+        use crate::render::{Renderer, View};
+        use greycard_gpu::wgpu::PollType;
+        use greycard_viewport::scope::Scope;
+        let Some((device, queue)) = greycard_viewport::testing::device("idle brush") else {
+            return;
+        };
+        let mut stroke =
+            greycard_edit::brush::Stroke::new(greycard_edit::brush::Op::Add, 0.1, 0.5, 1.0);
+        stroke.points = vec![[0.3, 0.3], [0.5, 0.35]];
+        let mut edit = Edit::default();
+        edit.adjustments.push(Adjustment {
+            id: 3,
+            mask: Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: Shape::Brush {
+                        strokes: vec![stroke],
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let n = 64usize;
+        let image = greycard_core::image::WorkingImage {
+            width: n,
+            height: n,
+            data: vec![0.2; n * n * 3],
+        };
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&greycard_render::halves::Halves::from_image(&image, None));
+        let (mut rasters, mut learned) = (HashMap::new(), HashMap::new());
+        // One frame: whether it drew, and whether a read back is out.
+        let mut frame = |renderer: &mut Renderer| {
+            let mut view = View::blank();
+            view.center = (n as f32 / 2.0, n as f32 / 2.0);
+            view.plane = (n as f32, n as f32);
+            view.frame_size = (n as f32, n as f32);
+            view.locals = bake_locals(&edit, &mut rasters, &mut learned, 1.0, None).0;
+            let (_, drew) = renderer.render(n as u32, n as u32, &view);
+            let (_, in_flight) = renderer.analyze(&view, Scope::Rgb, None);
+            (drew, in_flight)
+        };
+        let mut settled = false;
+        for _ in 0..100 {
+            if !frame(&mut renderer).1 {
+                settled = true;
+                break;
+            }
+            let _ = device.poll(PollType::wait_indefinitely());
+        }
+        assert!(settled, "the first analysis lands");
+        for i in 0..5 {
+            assert_eq!(frame(&mut renderer), (false, false), "idle frame {i}");
+        }
     }
 
     /// Picking another mask keeps today's rule: the look on show is
