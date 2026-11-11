@@ -1773,8 +1773,8 @@ export component ThumbBadges inherits Rectangle {
     // canvas, denser where that is white.
     background: root.light-ground ? Theme.over-plate-dense : #00000099;
     badges := HorizontalLayout {
-        padding-left: root.glyph / 2;
-        padding-right: root.glyph / 2;
+        padding-left: root.glyph / 3;
+        padding-right: root.glyph / 3;
         spacing: root.glyph / 4.5;
         alignment: center;
         if root.flag > 0: Rectangle {
