@@ -23,6 +23,9 @@ design note behind it.
   maximized, and, except on Wayland, its place. A window closed on a
   monitor since unplugged opens on one that is there (issue 114,
   [§623](https://github.com/jessolmstead/greycard/blob/master/docs/notes/623-the-window-opens-as-it-was-closed.md)).
+- Language offers English explicitly, so a translated system can
+  switch back to the source wording
+  ([§637](https://github.com/jessolmstead/greycard/blob/master/docs/notes/637-english-in-the-language-picker.md)).
 
 ### Library
 

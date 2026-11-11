@@ -60,8 +60,8 @@ frames.
 ### Language
 
 The window's language: **System** (default) follows your system's, or
-pick one of the languages greycard carries, each shown in its own
-name. A language greycard has no translation of is shown in English.
+pick **English** or one of the translated languages, each shown in its
+own name. An unknown saved language falls back to the system's language.
 The change takes effect the next time greycard starts.
 
 ### One section open at a time

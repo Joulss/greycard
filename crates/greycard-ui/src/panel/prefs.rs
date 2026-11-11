@@ -162,7 +162,9 @@ pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
 /// with the setting.
 pub(crate) fn start_language(app: &App, setting: &str) {
     let chosen = crate::i18n::pick(setting);
-    let language = if chosen.is_empty() {
+    let language = if setting == "en" {
+        ""
+    } else if chosen.is_empty() {
         crate::i18n::system()
     } else {
         chosen
@@ -178,13 +180,16 @@ pub(crate) fn start_language(app: &App, setting: &str) {
     show_languages(app, setting);
 }
 
-/// The Language row's list, "System" in the window's language and then
-/// each catalog's language in its own name, at the place of the
-/// setting's catalog (`fr-CA` at French); a setting no catalog matches
-/// shows as System, which is what it falls to.
+/// The Language row's list: "System" in the window's language, English
+/// (the source language), then each catalog's language in its own name.
+/// A regional setting (`fr-CA`) shows its catalog's place; an unknown
+/// one shows System, which is what it falls to.
 pub(crate) fn show_languages(app: &App, setting: &str) {
     let languages = crate::i18n::languages();
-    let mut names = vec![app.global::<crate::LanguageWords>().get_system()];
+    let mut names = vec![
+        app.global::<crate::LanguageWords>().get_system(),
+        "English".into(),
+    ];
     names.extend(
         languages
             .iter()
@@ -192,25 +197,33 @@ pub(crate) fn show_languages(app: &App, setting: &str) {
     );
     app.set_languages(slint::ModelRc::new(slint::VecModel::from(names)));
     let chosen = crate::i18n::pick(setting);
-    let at = languages
-        .iter()
-        .position(|(tag, _)| !chosen.is_empty() && *tag == chosen)
-        .map_or(0, |i| i + 1);
+    let at = if setting == "en" {
+        1
+    } else {
+        languages
+            .iter()
+            .position(|(tag, _)| !chosen.is_empty() && *tag == chosen)
+            .map_or(0, |i| i + 2)
+    };
     app.set_language_index(i32::try_from(at).unwrap_or(0));
 }
 
 /// The setting for the Language row's choice at `index`: empty for
-/// System, else the catalog's tag.
+/// System, "en" for the source language, else the catalog's tag.
 pub(crate) fn language_chosen(index: i32) -> String {
-    usize::try_from(index)
-        .ok()
-        .and_then(|i| i.checked_sub(1))
-        .and_then(|i| {
-            crate::i18n::languages()
-                .get(i)
-                .map(|(tag, _)| tag.to_string())
-        })
-        .unwrap_or_default()
+    match index {
+        0 => String::new(),
+        1 => "en".into(),
+        i => usize::try_from(i)
+            .ok()
+            .and_then(|i| i.checked_sub(2))
+            .and_then(|i| {
+                crate::i18n::languages()
+                    .get(i)
+                    .map(|(tag, _)| tag.to_string())
+            })
+            .unwrap_or_default(),
+    }
 }
 
 /// The Start in row's words for its two choices, in its order.
@@ -1502,8 +1515,8 @@ mod tests {
         assert_eq!(app.global::<crate::Theme>().get_name(), "Charcoal");
     }
 
-    /// The window bundles French: selected, the row lists the same
-    /// languages and shows French at its place, and English selects
+    /// The window bundles French: selected, the row lists English as
+    /// the source and shows French at its place, then selects English
     /// again. (Translated text is proved by greycard-i18n-probe, on a
     /// catalog of its own.)
     #[test]
@@ -1513,18 +1526,19 @@ mod tests {
         slint::select_bundled_translation("fr").expect("French is bundled");
         show_languages(&app, "fr");
         let names: Vec<String> = app.get_languages().iter().map(|s| s.to_string()).collect();
-        assert_eq!(names.len(), crate::i18n::languages().len() + 1);
+        assert_eq!(names.len(), crate::i18n::languages().len() + 2);
+        assert_eq!(names[1], "English");
         assert!(names.contains(&"Français".to_string()));
-        assert_eq!(app.get_language_index(), 1);
+        assert_eq!(app.get_language_index(), 2);
         slint::select_bundled_translation("").expect("English is the source");
-        show_languages(&app, "");
-        assert_eq!(app.get_language_index(), 0);
+        start_language(&app, "en");
+        assert_eq!(app.get_language_index(), 1);
+        assert_eq!(crate::i18n::selected(), "");
     }
 
-    /// The Language row lists System and each catalog's language in its
-    /// own name; a choice is the tag the setting keeps, System empty, and
-    /// the row shows a kept tag at its place, one with no catalog as
-    /// System.
+    /// The Language row lists System, English and each catalog's
+    /// language in its own name; a choice is the tag the setting keeps,
+    /// System empty, and an unknown tag shows as System.
     #[test]
     fn the_language_row_lists_the_catalogs() {
         use slint::Model;
@@ -1533,18 +1547,21 @@ mod tests {
         app.invoke_settings_asked();
         assert!(crate::testing::count_labeled(&app, "Language") >= 1);
         let names: Vec<String> = app.get_languages().iter().map(|s| s.to_string()).collect();
-        assert_eq!(names[..2], ["System", "Français"]);
+        assert_eq!(names[..3], ["System", "English", "Français"]);
         assert_eq!(app.get_language_index(), 0);
         assert_eq!(language_chosen(0), "");
-        assert_eq!(language_chosen(1), "fr");
+        assert_eq!(language_chosen(1), "en");
+        assert_eq!(language_chosen(2), "fr");
         assert_eq!(language_chosen(-1), "");
         assert_eq!(language_chosen(99), "");
-        app.set_language_index(1);
+        app.set_language_index(2);
         app.invoke_language_changed();
         assert_eq!(language_chosen(app.get_language_index()), "fr");
         show_languages(&app, "fr");
-        assert_eq!(app.get_language_index(), 1);
+        assert_eq!(app.get_language_index(), 2);
         show_languages(&app, "fr-CA");
+        assert_eq!(app.get_language_index(), 2);
+        show_languages(&app, "en");
         assert_eq!(app.get_language_index(), 1);
         show_languages(&app, "xx");
         assert_eq!(app.get_language_index(), 0);

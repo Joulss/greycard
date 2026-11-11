@@ -648,3 +648,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§634. As shot off gives back the white it replaced](notes/634-as-shot-off-gives-back-the-white-it-replaced.md) (2026-11-11)
 - [§635. Edit in: a save over the file shows](notes/635-edit-in-a-save-over-the-file-shows.md) (2026-11-11)
 - [§636. White balance presets](notes/636-white-balance-presets.md) (2026-11-11)
+- [§637. English in the Language picker](notes/637-english-in-the-language-picker.md) (2026-11-11)
