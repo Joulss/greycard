@@ -462,12 +462,14 @@ export component Section inherits VerticalLayout {
             }
         }
     }
-    // The body folds down to its 1 px border, leaving a line under the header.
+    // The body folds down to a solid 1 px line under the header.
     fold-box := Rectangle {
+        width: 100%;
         clip: true;
-        background: Theme.raised;
+        property <bool> line-only: root.collapsed && self.height <= 1px;
+        background: self.line-only ? Theme.border : Theme.raised;
         border-color: Theme.border;
-        border-width: 1px;
+        border-width: self.line-only ? 0px : 1px;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
         animate full { duration: root.fold-time; easing: ease-out; }
         // For the sliders' focus walk alone: closed all the way, the
