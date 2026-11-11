@@ -232,9 +232,11 @@ balance on".
 - **Hover** over a row to see that state in the picture without
   changing anything.
 - **Ctrl+Z** undoes a step, **Ctrl+Shift+Z** or **Ctrl+Y** redoes it.
-  A rating, flag, or label you gave after the last step is undone
-  first, whichever frame it went on. Out of Cull the **Undo** and
-  **Redo** buttons step the edit alone.
+  A rating, flag, or label you gave this frame after the last step is
+  undone first, and so is one that hid a frame and moved you to this
+  one, as long as you have not left it since. Marks on other frames
+  are left for Cull and the library. Out of Cull
+  the **Undo** and **Redo** buttons step the edit alone.
 - **\\** (backslash) shows the frame as it was, its Original, under the
   edit's crop and at the same zoom, and the status line says
   "Original". Press it again, or press any other key or change

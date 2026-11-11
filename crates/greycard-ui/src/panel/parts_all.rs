@@ -1075,19 +1075,26 @@ mod tests {
 
     /// A frame's step from the offer stands where the offer was taken,
     /// not where its answer landed: a mark made while the answers were
-    /// out is later, and Ctrl+Z takes it back first.
+    /// out is later, and Ctrl+Z takes it back first. The mark is on the
+    /// frame the step lands on: Develop's undo reaches no other's.
     #[test]
     fn a_frame_s_step_stands_where_the_offer_was_taken() {
         let (app, state, _worker) = synced(4, 3);
         asking_on(&app, &state, 1);
         pick_second(&app, &state, 1);
         app.invoke_people_offer_used();
-        app.invoke_meta_key("4".into());
+        // A mark on frame 2 from the strip's selection, frame 1 open.
+        crate::panel::browser::set_meta(
+            &mut state.borrow_mut(),
+            &app,
+            &[2],
+            greycard_edit::meta::Change::Rating(4),
+        );
         answer(&app, &state, 2, PersonOn::Found(two(2)[1].person()));
         app.invoke_select(2);
         app.invoke_undo();
         let st = state.borrow();
-        assert_eq!(st.sidecars[1].meta.rating, 0, "the mark, done last");
+        assert_eq!(st.sidecars[2].meta.rating, 0, "the mark, done last");
         assert_eq!(person_on(&st, 2), Some(two(2)[1].person()), "the step kept");
     }
 }

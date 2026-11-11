@@ -642,3 +642,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§628. An idle brush mask keeps the window drawing](notes/628-an-idle-brush-mask-keeps-the-window-drawing.md) (2026-11-11)
 - [§629. The develop summary leaves the window](notes/629-the-develop-summary-leaves-the-window.md) (2026-11-11)
 - [§630. The Sync button's middle click sets](notes/630-the-sync-buttons-middle-click-sets.md) (2026-11-11)
+- [§631. Develop's undo stays on the open frame](notes/631-develops-undo-stays-on-the-open-frame.md) (2026-11-11)

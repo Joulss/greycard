@@ -164,9 +164,14 @@ They fill in once greycard has indexed the folder.
   in the compare view to choose it.
 - **Ctrl+Z** and **Ctrl+Shift+Z** undo and redo your rating, flag, and
   label changes from this session. They don't touch any edit. In
-  Develop and the library the same keys take back a rating, flag, or
-  label too when it was the last thing you did, and bring back a frame
-  the filter hid.
+  the library the same keys take back a rating, flag, or label too
+  when it was the last thing you did, and bring back a frame the
+  filter hid. In Develop they reach only the open frame's rating,
+  flag, and label changes, plus the one that hid a frame and moved
+  you here (in Develop, the library, or Cull), as long as you have not
+  moved since; undoing it brings that frame back. A change over
+  several frames is undone whole, or for the open frame alone when
+  another of them changed since.
 - **Enter**, **Esc** or **D**, or **Develop** at the CULLING
   section's foot, go to Develop on the frame you are on, on the tab
   you were on before Cull. **C** does too, and so does a click on one

@@ -612,6 +612,8 @@ pub(crate) fn carry(
     st.views.thumb_failed = thumb_failed;
     st.views.cells_by_file = crate::stacks::by_file(&cells, st.files.len());
     st.cells = cells;
+    // With the cells back: the frame is a path again.
+    crate::panel::browser::current_moved(st);
     st.views.queue_cell_ids = crate::panel::queue_view::cell_ids_made(st);
     renumbered
 }

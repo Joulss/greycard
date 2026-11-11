@@ -8,7 +8,8 @@
 //! and the panel's Title and Keywords fields made this session,
 //! newest first, and nothing else. Out of culling, Ctrl+Z steps
 //! these too when one was done after the frame's last edit
-//! ([`marks_first`]).
+//! ([`marks_first`]); in Develop only those on the open frame
+//! ([`History::reach`]).
 //!
 //! Each step names its frames by path, not by row or index: the list
 //! of files changes under it (a rejects move, a filter, a root added),
@@ -209,8 +210,28 @@ pub type Step = Vec<Moved>;
 /// ([`marks_first`]).
 #[derive(Debug, Default)]
 pub struct History {
-    undo: Vec<(Order, Step)>,
-    redo: Vec<(Order, Step)>,
+    undo: Vec<Entry>,
+    redo: Vec<Entry>,
+    /// The id the next step recorded takes.
+    next_id: u64,
+    /// The step last recorded, undone, or redone.
+    last: Option<u64>,
+    /// That step took the window off its frame (the filter hid it):
+    /// the next open lands where it carried the window
+    /// ([`Self::opened`]).
+    carrying: Option<u64>,
+    /// The step that carried the window off its frame, and the file it
+    /// landed on: while the window stays there, Develop's undo and redo
+    /// reach that step as the open frame's own ([`Self::reach`]).
+    carried: Option<(u64, PathBuf)>,
+}
+
+/// A step in the history: when it was last acted on, and which it is.
+#[derive(Debug)]
+struct Entry {
+    order: Order,
+    id: u64,
+    step: Step,
 }
 
 /// As many steps as a long culling pass takes and then some; the
@@ -224,17 +245,45 @@ impl History {
             return;
         }
         self.redo.clear();
-        self.undo.push((Order::next(), step));
+        let id = self.next_id;
+        self.next_id += 1;
+        self.undo.push(Entry {
+            order: Order::next(),
+            id,
+            step,
+        });
+        self.acted(id);
         if self.undo.len() > KEPT {
             self.undo.remove(0);
         }
     }
 
+    /// A step just acted on: the one a carry would be by.
+    fn acted(&mut self, id: u64) {
+        self.last = Some(id);
+        self.carrying = None;
+    }
+
     /// The step to take back, with each frame going to its `before`;
     /// it moves to the redo side.
     pub fn undo(&mut self) -> Option<Step> {
-        let (_, step) = self.undo.pop()?;
-        self.redo.push((Order::next(), step.clone()));
+        self.undo_at(self.undo.len().checked_sub(1)?)
+    }
+
+    /// The undo side's step `at` (0 the oldest) taken back, the steps
+    /// after it left where they are: Develop's undo of the open frame's
+    /// mark past marks on other frames ([`Self::reach`]).
+    pub fn undo_at(&mut self, at: usize) -> Option<Step> {
+        if at >= self.undo.len() {
+            return None;
+        }
+        let Entry { id, step, .. } = self.undo.remove(at);
+        self.redo.push(Entry {
+            order: Order::next(),
+            id,
+            step: step.clone(),
+        });
+        self.acted(id);
         Some(step)
     }
 
@@ -242,8 +291,22 @@ impl History {
     /// given as an undo is: `before` the state it leaves, `after` the
     /// state it lands on.
     pub fn redo(&mut self) -> Option<Step> {
-        let (_, step) = self.redo.pop()?;
-        self.undo.push((Order::next(), step.clone()));
+        self.redo_at(self.redo.len().checked_sub(1)?)
+    }
+
+    /// The redo side's step `at` (0 the first undone of those left)
+    /// made again, as [`Self::undo_at`].
+    pub fn redo_at(&mut self, at: usize) -> Option<Step> {
+        if at >= self.redo.len() {
+            return None;
+        }
+        let Entry { id, step, .. } = self.redo.remove(at);
+        self.undo.push(Entry {
+            order: Order::next(),
+            id,
+            step: step.clone(),
+        });
+        self.acted(id);
         Some(step.into_iter().map(Moved::reversed).collect())
     }
 
@@ -255,13 +318,150 @@ impl History {
     /// When the step an undo would take back was last done (made, or
     /// redone); None when there is none.
     pub fn undo_order(&self) -> Option<Order> {
-        self.undo.last().map(|(o, _)| *o)
+        self.undo.last().map(|e| e.order)
     }
 
     /// When the step a redo would make again was undone.
     pub fn redo_order(&self) -> Option<Order> {
-        self.redo.last().map(|(o, _)| *o)
+        self.redo.last().map(|e| e.order)
     }
+
+    /// The step on the undo (`back`) or redo side at `at`, with when it
+    /// was last acted on.
+    pub fn at(&self, back: bool, at: usize) -> Option<(Order, &Step)> {
+        self.side(back).get(at).map(|e| (e.order, &e.step))
+    }
+
+    /// The undo side (`back`) or the redo side.
+    fn side(&self, back: bool) -> &Vec<Entry> {
+        if back { &self.undo } else { &self.redo }
+    }
+
+    /// The step Develop may take on the undo (`back`) or redo side,
+    /// with `file` open: the latest that moved `file`, or that carried
+    /// the window off its frame onto `file` while the window has stayed
+    /// there. Steps on other frames after it are passed over and stay
+    /// as they are, in their order.
+    ///
+    /// Whole, unless a later step on the same side names one of its
+    /// frames: then that frame's share must wait for the later step,
+    /// and only `file`'s share is taken (for a carried step, the
+    /// shares no later step names). Decided by the history, not by
+    /// what the frames carry now: a frame put back to the same value by
+    /// later steps is still theirs to undo first.
+    pub fn reach(&self, back: bool, file: &Path) -> Option<Reach> {
+        let side = self.side(back);
+        let carried = self
+            .carried
+            .as_ref()
+            .and_then(|(id, to)| (to == file).then_some(*id));
+        for at in (0..side.len()).rev() {
+            let entry = &side[at];
+            let names = entry.step.iter().any(|m| m.path == file);
+            if !names && Some(entry.id) != carried {
+                continue;
+            }
+            let later = &side[at + 1..];
+            let free: Vec<PathBuf> = entry
+                .step
+                .iter()
+                .map(|m| &m.path)
+                .filter(|p| !later.iter().any(|l| l.step.iter().any(|m| &m.path == *p)))
+                .cloned()
+                .collect();
+            if free.len() == entry.step.len() {
+                return Some(Reach { at, part: None });
+            }
+            if names {
+                // No later step names `file`, or it would be found first.
+                return Some(Reach {
+                    at,
+                    part: Some(vec![file.to_path_buf()]),
+                });
+            }
+            if !free.is_empty() {
+                return Some(Reach {
+                    at,
+                    part: Some(free),
+                });
+            }
+        }
+        None
+    }
+
+    /// Take the step [`Self::reach`] found: undone (`back`) or redone,
+    /// whole, or its share for `part`'s frames alone. A share is a step
+    /// of its own on the other side; the rest stays where the step was,
+    /// for Cull to take back in its turn. So each frame's steps stay in
+    /// the order they were done, on both sides.
+    pub fn take(&mut self, back: bool, reach: &Reach) -> Option<Step> {
+        let Some(part) = &reach.part else {
+            return if back {
+                self.undo_at(reach.at)
+            } else {
+                self.redo_at(reach.at)
+            };
+        };
+        let side = if back { &mut self.undo } else { &mut self.redo };
+        let entry = side.get_mut(reach.at)?;
+        let (taken, rest): (Step, Step) = std::mem::take(&mut entry.step)
+            .into_iter()
+            .partition(|m| part.contains(&m.path));
+        entry.step = rest;
+        if entry.step.is_empty() {
+            side.remove(reach.at);
+        }
+        if taken.is_empty() {
+            return None;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let other = if back { &mut self.redo } else { &mut self.undo };
+        other.push(Entry {
+            order: Order::next(),
+            id,
+            step: taken.clone(),
+        });
+        self.acted(id);
+        Some(if back {
+            taken
+        } else {
+            taken.into_iter().map(Moved::reversed).collect()
+        })
+    }
+
+    /// The step just acted on took the window off its frame: the next
+    /// frame the window shows is where it carried it. Relies on `last`
+    /// being that step: called right after it is recorded or stepped.
+    pub fn carry(&mut self) {
+        self.carrying = self.last;
+    }
+
+    /// The window's frame changed, `file` its file now (None for no
+    /// frame): where a carry lands, or a move away from where one
+    /// landed, which ends it.
+    pub fn opened(&mut self, file: Option<&Path>) {
+        if let Some(id) = self.carrying.take()
+            && let Some(file) = file
+        {
+            self.carried = Some((id, file.to_path_buf()));
+        } else if self
+            .carried
+            .as_ref()
+            .is_some_and(|(_, to)| Some(to.as_path()) != file)
+        {
+            self.carried = None;
+        }
+    }
+}
+
+/// Where Develop's undo or redo of a mark goes ([`History::reach`]):
+/// the step at `at` on its side, whole, or with `part` only those
+/// frames' share of it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reach {
+    pub at: usize,
+    pub part: Option<Vec<PathBuf>>,
 }
 
 /// Whether an undo or a redo outside culling steps the session's
@@ -497,6 +697,221 @@ mod tests {
         assert!(!marks_first(None, None));
         // An edit from before the session is older than any mark.
         assert!(marks_first(Some(mark), Some(before)));
+    }
+
+    /// Develop's reach: the latest step on the file, past steps on
+    /// others, which stay in their order; and a carried step from the
+    /// file it landed on until a move away.
+    #[test]
+    fn a_frame_reaches_its_own_steps_and_the_one_that_carried_it() {
+        let mut h = History::default();
+        let (none, three) = (tags(0, Flag::None), tags(3, Flag::None));
+        h.record(vec![moved("a", &none, &three)]);
+        h.record(vec![moved("b", &none, &three)]);
+        h.record(vec![moved("c", &none, &three)]);
+        let whole = |at| Some(Reach { at, part: None });
+        assert_eq!(h.reach(true, Path::new("a")), whole(0));
+        assert_eq!(h.reach(true, Path::new("d")), None);
+        let a = h.undo_at(0).unwrap();
+        assert_eq!(a[0].path, Path::new("a"));
+        assert_eq!(h.reach(false, Path::new("a")), whole(0));
+        // The others, as they were.
+        assert_eq!(h.undo().unwrap()[0].path, Path::new("c"));
+        assert_eq!(h.undo().unwrap()[0].path, Path::new("b"));
+        assert_eq!(h.redo().unwrap()[0].path, Path::new("b"));
+
+        // "c", redone, carried the window onto "d".
+        assert_eq!(h.redo().unwrap()[0].path, Path::new("c"));
+        h.carry();
+        let d = Some(Path::new("d"));
+        h.opened(d);
+        assert_eq!(h.reach(true, Path::new("d")), h.reach(true, Path::new("c")));
+        h.opened(d);
+        assert!(h.reach(true, Path::new("d")).is_some(), "still there");
+        h.opened(Some(Path::new("e")));
+        h.opened(d);
+        assert_eq!(h.reach(true, Path::new("d")), None, "left");
+        // No frame at all ends it too.
+        h.carry();
+        h.opened(d);
+        h.opened(None);
+        h.opened(d);
+        assert_eq!(h.reach(true, Path::new("d")), None, "no frame");
+    }
+
+    /// A step over two frames, one of them named by a later step even
+    /// back at the same value: blocked, so only the open frame's share
+    /// goes, and the rest stays where it was. Each frame's steps keep
+    /// their order, so undoing and redoing everything after lands each
+    /// frame where it should.
+    #[test]
+    fn a_blocked_step_gives_the_open_frame_s_share_alone() {
+        let mut h = History::default();
+        let (none, five) = (tags(0, Flag::None), tags(5, Flag::None));
+        h.record(vec![moved("a", &none, &five), moved("b", &none, &five)]);
+        h.record(vec![moved("b", &five, &none)]);
+        h.record(vec![moved("b", &none, &five)]);
+        let reach = h.reach(true, Path::new("a")).unwrap();
+        assert_eq!(
+            reach,
+            Reach {
+                at: 0,
+                part: Some(vec!["a".into()])
+            }
+        );
+        let taken = h.take(true, &reach).unwrap();
+        assert_eq!(taken, vec![moved("a", &none, &five)]);
+        assert_eq!(h.reach(true, Path::new("a")), None, "not stuck on it");
+        // Everything undone: b's three in order, newest first.
+        let order: Vec<Step> = std::iter::from_fn(|| h.undo()).collect();
+        assert_eq!(
+            order,
+            vec![
+                vec![moved("b", &none, &five)],
+                vec![moved("b", &five, &none)],
+                vec![moved("b", &none, &five)],
+            ]
+        );
+        // And redone: b's, then a's share last, as it was undone first.
+        let redone: Vec<PathBuf> = std::iter::from_fn(|| h.redo())
+            .map(|s| s[0].path.clone())
+            .collect();
+        assert_eq!(redone, ["b", "b", "b", "a"].map(PathBuf::from));
+    }
+
+    /// The frames of the randomized walk.
+    const WALKED: [&str; 3] = ["a", "b", "c"];
+
+    fn walked(p: &Path) -> usize {
+        WALKED.iter().position(|q| Path::new(q) == p).unwrap()
+    }
+
+    /// A step put on the ratings `now`, each frame checked to be as
+    /// the step expects, as an exact landing.
+    fn put(now: &mut [u8; 3], step: &Step, log: &str) {
+        for m in step {
+            let i = walked(&m.path);
+            assert_eq!(now[i], m.after.rating, "landing: {log}");
+            now[i] = m.before.rating;
+        }
+    }
+
+    /// Each frame's steps, read up the undo side and down the redo
+    /// side, form one chain from its start (0) through `now`, and the
+    /// undo side's ticks rise.
+    fn chained(h: &History, now: &[u8; 3], log: &str) {
+        let ticks: Vec<u64> = h.undo.iter().map(|e| e.order.tick()).collect();
+        assert!(ticks.windows(2).all(|w| w[0] < w[1]), "ticks: {log}");
+        for (i, p) in WALKED.iter().enumerate() {
+            let named = |e: &&Entry| e.step.iter().any(|m| m.path == Path::new(p));
+            let mut v = 0;
+            let chain = h.undo.iter().filter(named).map(|e| (e, false));
+            let chain = chain.chain(h.redo.iter().rev().filter(named).map(|e| (e, true)));
+            let mut at_now = false;
+            for (e, redo) in chain {
+                if redo && !at_now {
+                    assert_eq!(v, now[i], "{p} now: {log}");
+                    at_now = true;
+                }
+                let m = e.step.iter().find(|m| m.path == Path::new(p)).unwrap();
+                assert_eq!(m.before.rating, v, "{p} chain: {log}");
+                v = m.after.rating;
+            }
+            if !at_now {
+                assert_eq!(v, now[i], "{p} now: {log}");
+            }
+        }
+    }
+
+    /// A run of `ops` random acts from `seed`: marks over random sets
+    /// of three frames, Develop's undo and redo through `reach` and
+    /// `take` from a random frame, Cull's, carries, and opens.
+    fn random_walk(seed: u64, ops: usize) -> (History, [u8; 3], String) {
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut n = |k: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x % k
+        };
+        let (mut h, mut now, mut log) = (History::default(), [0u8; 3], String::new());
+        for _ in 0..ops {
+            match n(8) {
+                0 | 1 => {
+                    let (set, v) = (1 + n(7), n(6) as u8);
+                    let step: Step = (0..3)
+                        .filter(|&i| set & (1 << i) != 0 && now[i] != v)
+                        .map(|i| moved(WALKED[i], &tags(now[i], Flag::None), &tags(v, Flag::None)))
+                        .collect();
+                    for m in &step {
+                        now[walked(&m.path)] = v;
+                    }
+                    h.record(step);
+                    log += &format!("mark {set}={v}; ");
+                }
+                2 | 3 => {
+                    let (back, f) = (n(2) == 0, n(3) as usize);
+                    let file = Path::new(WALKED[f]);
+                    log += &format!("develop {} on {f}; ", if back { "undo" } else { "redo" });
+                    if let Some(reach) = h.reach(back, file) {
+                        let carried = h.carried.as_ref().is_some_and(|(_, to)| to == file);
+                        let step = h.take(back, &reach).expect("a take where reach found");
+                        assert!(carried || step.iter().any(|m| m.path == file), "{log}");
+                        put(&mut now, &step, &log);
+                    }
+                }
+                4 => {
+                    log += "cull undo; ";
+                    if let Some(step) = h.undo() {
+                        put(&mut now, &step, &log);
+                    }
+                }
+                5 => {
+                    log += "cull redo; ";
+                    if let Some(step) = h.redo() {
+                        put(&mut now, &step, &log);
+                    }
+                }
+                6 => {
+                    let f = n(3) as usize;
+                    log += &format!("carry to {f}; ");
+                    h.carry();
+                    h.opened(Some(Path::new(WALKED[f])));
+                }
+                _ => {
+                    let f = n(4) as usize;
+                    log += &format!("open {f}; ");
+                    h.opened(WALKED.get(f).map(Path::new));
+                }
+            }
+            chained(&h, &now, &log);
+        }
+        (h, now, log)
+    }
+
+    /// Develop's takes out of order and in shares keep the history
+    /// sound under random walks: every frame's chain unbroken, every
+    /// landing exact, undo-all back at the start and redo-all at what
+    /// a plain redo-all of the same walk reaches, twice over.
+    #[test]
+    fn random_walks_keep_every_frame_s_chain() {
+        for seed in 0..400 {
+            let (mut first, mut top, log) = random_walk(seed, 60);
+            while let Some(step) = first.redo() {
+                put(&mut top, &step, &log);
+            }
+            let (mut h, mut now, _) = random_walk(seed, 60);
+            for _ in 0..2 {
+                while let Some(step) = h.undo() {
+                    put(&mut now, &step, &log);
+                }
+                assert_eq!(now, [0, 0, 0], "undo-all: {log}");
+                while let Some(step) = h.redo() {
+                    put(&mut now, &step, &log);
+                }
+                assert_eq!(now, top, "redo-all: {log}");
+            }
+        }
     }
 
     /// A step is stamped each time it is acted on: undone, then

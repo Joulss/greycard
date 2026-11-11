@@ -7,6 +7,35 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] A sidecar written again drops what the build does not know: no
+      map keeps unknown keys, a value `meta::loose` cannot read is
+      written back as its default, and only the edit's version gates
+      an older build, so two versions on one synced folder strip each
+      other's sidecar-level fields. A minimum-reader field on the
+      sidecar and an extra map written back (review, 2026-11-11)
+- [ ] A single frame's save is last writer wins: `save_file` writes
+      without asking whether the file is still the one read, where the
+      archive path compares and joins. Check first whether a watcher
+      reloads a held frame (review, 2026-11-11)
+- [ ] The join knows a reconciled state by its English label
+      (`RECONCILED`, matched by prefix and hashed into the state's
+      id), so a reworded or translated label changes the merge across
+      machines: a kind on the step instead (review, 2026-11-11)
+- [ ] `Stage::commutes_with_turn` is a negated `matches!`, so a new
+      stage commutes by default: an exhaustive match. And the resume
+      cache's kept picture is paired with its input by the caller's
+      convention alone (review, 2026-11-11)
+- [ ] Packages ship no third-party notices: LICENSE and the README
+      only, beside ONNX Runtime, Dawn, DXC, and several hundred
+      crates; cargo-about and cargo-deny (review, 2026-11-11)
+- [ ] The 31 model URLs name `resolve/main`: the hash pin keeps them
+      safe, but a re-upload breaks every shipped version; pin each to
+      its commit (review, 2026-11-11)
+- [ ] CI and release hygiene: `contents: write` given to the whole
+      release workflow, clippy and test in CI without `--locked`, no
+      concurrency group, no checksums beside the release's files, and
+      split symbols kept for each release so a stripped build's
+      backtrace can be named (review, 2026-11-11)
 - [ ] Tab bringing the panes back shows all three, a strip or a pane
       put away before with them: keep which were showing when Tab hid
       them and bring back those (discussion 59, 2026-11-10)

@@ -1973,6 +1973,100 @@ fn a_held_undo_in_the_queue_view_is_dropped() {
     assert_eq!(rating, 3, "the mark not undone");
 }
 
+/// A held undo in Develop, as the key: the mark on the frame left
+/// behind is passed over, and the pick's own step is undone when its
+/// read lands, the mark kept; a redo the same way back.
+#[test]
+fn a_held_undo_in_develop_passes_over_another_frame_s_mark() {
+    let (dir, files, writer, app, state, worker) = many_under_a_root("rows-undo-held-other", 3);
+    let mut s = Sidecar::default();
+    let mut e = s.current.clone();
+    e.light.exposure = 0.5;
+    s.record(e);
+    s.save(&files[1]).unwrap();
+    open_and_land(&state, &app, &worker, 0);
+    assert!(crate::panel::browser::meta_on_selection(
+        &state,
+        &app,
+        &worker,
+        meta::Change::Rating(3)
+    ));
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+    app.invoke_undo();
+    assert_eq!(state.borrow().views.loads.whats().last().unwrap(), "undo");
+    crate::rows::land_pending(&state, &app, &worker);
+    {
+        let st = state.borrow();
+        assert_eq!(st.current, Some(1), "never off the frame");
+        assert_eq!(st.sidecars[1].position(), 0, "f01's own step undone");
+        assert_eq!(st.sidecars[0].meta.rating, 3, "f00's mark passed over");
+    }
+    app.invoke_undo();
+    assert_eq!(state.borrow().sidecars[0].meta.rating, 3, "and again");
+    app.invoke_redo();
+    assert_eq!(state.borrow().sidecars[1].position(), 1);
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// The tester's case with a list merge between the X and the Ctrl+Z:
+/// none, one that renumbers every cell (a new file before them), and
+/// one over the same list. The window stays on the frame it landed
+/// on, so the reject is still that frame's to undo, and the undo goes
+/// back to the rejected frame.
+#[test]
+fn a_carry_outlives_a_merge_that_keeps_the_frame() {
+    use greycard_edit::meta::Flag;
+    for merge in ["none", "renumbering", "same"] {
+        let (dir, files, writer, app, state, worker) =
+            many_under_a_root(&format!("rows-carry-merge-{merge}"), 3);
+        open_and_land(&state, &app, &worker, 0);
+        app.invoke_filter_flag_toggled(2, true);
+        assert!(crate::panel::browser::meta_on_selection(
+            &state,
+            &app,
+            &worker,
+            meta::Change::Flag(Flag::Reject)
+        ));
+        crate::rows::land_pending(&state, &app, &worker);
+        let on = |state: &Rc<Shared>| {
+            let st = state.borrow();
+            st.current.and_then(|c| st.path_at(c)).cloned()
+        };
+        assert_eq!(on(&state).as_ref(), Some(&files[1]), "{merge}: landed");
+        match merge {
+            "renumbering" => {
+                let extra = files[0].with_file_name("e00.tif");
+                std::fs::copy(&files[0], &extra).unwrap();
+                let mut next = vec![extra];
+                next.extend(files.iter().cloned());
+                super::merge_read(&state, &app, &worker, next, None);
+                assert_eq!(state.borrow().files.len(), 4);
+            }
+            "same" => {
+                let same = state.borrow().files.clone();
+                super::merge_read(&state, &app, &worker, same, None);
+            }
+            _ => {}
+        }
+        assert_eq!(on(&state).as_ref(), Some(&files[1]), "{merge}: kept");
+        app.invoke_undo();
+        crate::rows::land_pending(&state, &app, &worker);
+        {
+            let st = state.borrow();
+            let f0 = st.file_by_path(&files[0]).unwrap();
+            assert_eq!(st.sidecars[f0].meta.flag, Flag::None, "{merge}: undone");
+        }
+        assert_eq!(on(&state).as_ref(), Some(&files[0]), "{merge}: back on it");
+        state.borrow_mut().views.index_reader = None;
+        drop(state);
+        drop(writer);
+        crate::testing::remove_dir_retry(&dir);
+    }
+}
+
 /// A burst of passes reported while a read is out: one read is out
 /// at a time, the burst asks for one more after it, and that one is
 /// merged once.

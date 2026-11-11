@@ -436,27 +436,53 @@ fn same_develop(a: &Edit, b: &Edit) -> bool {
         && a.detail_wants() == b.detail_wants()
 }
 
-/// Whether an undo (`back`) or a redo out of culling steps the
-/// session's marks rather than the current frame's edit: whichever was
-/// done last ([`tags::marks_first`]). With no frame current, the marks
-/// whenever there is one to step.
+/// The mark an undo (`back`) or a redo out of culling would step, as
+/// where it is (`None` the latest on its side), and when it was last
+/// acted on. In the library, or with no frame open, the session's
+/// latest, on whichever frame. In Develop only the open frame's
+/// ([`tags::History::reach`]): its file's latest, or the one that
+/// carried the window off its frame onto it; the marks on other
+/// frames are passed over. A mark over several frames goes whole,
+/// unless a later mark passed over names one of them; then only the
+/// open frame's share goes, and the rest waits for Cull.
+///
+/// [`tags::History::reach`]: crate::tags::History::reach
+fn mark_to_step(
+    st: &State,
+    app: &App,
+    back: bool,
+) -> Option<(Option<crate::tags::Reach>, greycard_edit::Order)> {
+    let open = st.current.and_then(|c| st.path_at(c));
+    let Some(file) = open.filter(|_| !app.get_grid_open()) else {
+        let order = if back {
+            st.culling.tags.undo_order()
+        } else {
+            st.culling.tags.redo_order()
+        }?;
+        return Some((None, order));
+    };
+    let reach = st.culling.tags.reach(back, file)?;
+    let (order, _) = st.culling.tags.at(back, reach.at)?;
+    Some((Some(reach), order))
+}
+
+/// The mark an undo (`back`) or a redo out of culling steps rather
+/// than the current frame's edit, when the mark was done last
+/// ([`tags::marks_first`]); with no frame current, whenever there is
+/// one to step. Which mark: [`mark_to_step`].
 ///
 /// [`tags::marks_first`]: crate::tags::marks_first
-pub(crate) fn marks_first(st: &State, back: bool) -> bool {
+pub(crate) fn marks_first(st: &State, app: &App, back: bool) -> Option<Option<crate::tags::Reach>> {
     let line = st.current.and_then(|c| st.line(c));
-    let (mark, edit) = if back {
-        (
-            st.culling.tags.undo_order(),
-            line.filter(|l| !l.history.is_empty())
-                .map(|l| l.current_order),
-        )
+    let mark = mark_to_step(st, app, back);
+    let edit = if back {
+        line.filter(|l| !l.history.is_empty())
+            .map(|l| l.current_order)
     } else {
-        (
-            st.culling.tags.redo_order(),
-            line.and_then(|l| l.redo.last()).map(|s| s.order),
-        )
+        line.and_then(|l| l.redo.last()).map(|s| s.order)
     };
-    crate::tags::marks_first(mark, edit)
+    let order = mark.as_ref().map(|(_, o)| *o);
+    crate::tags::marks_first(order, edit).then(|| mark.and_then(|(at, _)| at))
 }
 
 /// An undo (`back`) or redo out of culling, in its turn: the panel
@@ -471,8 +497,8 @@ fn step_last(
     if st.current.is_some() {
         record_panel(st, app);
     }
-    if marks_first(st, back) {
-        return crate::panel::browser::step_tags(st, app, back);
+    if let Some(at) = marks_first(st, app, back) {
+        return crate::panel::browser::step_tags_at(st, app, back, at);
     }
     step_edit(st, app, worker, back);
     (None, None)
@@ -591,8 +617,9 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 record_panel(&mut st, &app);
             }
             // Out of culling a mark is undone too when it was the
-            // last thing done (§117's marks, across frames, beside the
-            // frame's own line), the frame it went on brought back if
+            // last thing done (§117's marks beside the frame's own
+            // line; in Develop the open frame's, `mark_to_step`), the
+            // frame it went on brought back if
             // the filter hid it. Queued as culling's undo is, behind a
             // key still waiting on its read, and decided when its turn
             // comes. Behind a pick's open too, once there are marks to
@@ -601,7 +628,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             // frame's own. An edit's undo with no mark in the way is as
             // it always was, at once.
             if mixed
-                && (marks_first(&st, back)
+                && (marks_first(&st, &app, back).is_some()
                     || st.views.loads.marks_waiting()
                     || (st.culling.tags.any() && st.views.loads.open_waiting()))
             {
@@ -1092,7 +1119,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
         app.invoke_select(0);
         app.invoke_meta_key("4".into());
-        assert!(marks_first(&state.borrow(), true));
+        assert!(marks_first(&state.borrow(), &app, true).is_some());
         state.borrow_mut().views.view = crate::roots::View::Queue;
         app.invoke_undo();
         assert_eq!(state.borrow().sidecars[0].meta.rating, 4);
@@ -1313,6 +1340,422 @@ mod tests {
             assert_eq!(undone, clicked, "crop {crop}");
             assert!(!undone.0, "the tool down");
         }
+    }
+
+    /// The ratings of every file.
+    fn ratings(state: &Rc<Shared>) -> Vec<u8> {
+        state
+            .borrow()
+            .sidecars
+            .iter()
+            .map(|s| s.meta.rating)
+            .collect()
+    }
+
+    /// In Develop undo and redo reach only the open frame's marks: a
+    /// mark on another frame is passed over and stays, the open
+    /// frame's edits and marks interleave by when they were done, and
+    /// the window never leaves the frame. Cull's walk after keeps the
+    /// passed-over marks, in their order.
+    #[test]
+    fn undo_in_develop_reaches_only_the_open_frame_s_marks() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        app.invoke_meta_key("3".into());
+        app.invoke_select(1);
+        app.set_exposure(0.5);
+        save(&app, &state);
+        app.invoke_meta_key("4".into());
+        app.invoke_select(2);
+        app.invoke_meta_key("5".into());
+        app.invoke_select(1);
+        let position = |state: &Rc<Shared>| state.borrow().sidecars[1].position();
+
+        app.invoke_undo();
+        assert_eq!(
+            ratings(&state),
+            [3, 0, 5],
+            "the open frame's mark, past 2's"
+        );
+        assert_eq!(position(&state), 1);
+        app.invoke_undo();
+        assert_eq!(position(&state), 0, "then its edit");
+        assert_eq!(app.get_exposure(), 0.0);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [3, 0, 5], "never frame 0's");
+        assert_eq!(state.borrow().current, Some(1), "never off the frame");
+
+        app.invoke_redo();
+        assert_eq!(position(&state), 1, "the edit, undone last");
+        assert_eq!(ratings(&state), [3, 0, 5]);
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [3, 4, 5], "then the mark");
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [3, 4, 5], "nothing of another frame's");
+        assert_eq!(state.borrow().current, Some(1));
+
+        // Cull walks every frame's marks, the redone one first, then
+        // those passed over in the order they were made.
+        app.invoke_cull_toggled();
+        assert!(crate::panel::cull::cull_mode(&state.borrow()));
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [3, 0, 5]);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [3, 0, 0]);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 0, 0]);
+        app.invoke_redo();
+        app.invoke_redo();
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [3, 4, 5]);
+    }
+
+    /// The tester's case with a mark made before it on another frame:
+    /// the reject that took the window off its frame is undone from
+    /// the frame the window went to, and the window goes back; the
+    /// older mark is not reached. The landed frame's own steps go
+    /// first when they were done after the reject.
+    #[test]
+    fn the_mark_that_moved_the_window_is_undone_and_no_older_one() {
+        use greycard_edit::meta::Flag;
+        let flag = |state: &Rc<Shared>| state.borrow().sidecars[0].meta.flag;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(2);
+        app.invoke_meta_key("2".into());
+        app.invoke_select(0);
+        app.invoke_filter_flag_toggled(2, true);
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().current, Some(1));
+
+        // A mark and an edit on the frame landed on, after the reject.
+        app.invoke_meta_key("4".into());
+        app.set_exposure(0.5);
+        save(&app, &state);
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[1].position(), 0, "the edit");
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 0, 2], "its mark");
+        app.invoke_undo();
+        assert_eq!(flag(&state), Flag::None, "then the reject");
+        assert_eq!(state.borrow().current, Some(0), "back on its frame");
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 0, 2], "frame 2's not reached");
+        assert_eq!(state.borrow().current, Some(0));
+
+        // Moved away from where the reject landed, and back: the reject
+        // is frame 0's alone again.
+        app.invoke_redo();
+        assert_eq!(flag(&state), Flag::Reject);
+        assert_eq!(state.borrow().current, Some(1));
+        // Rows: frame 0 hidden, so row 1 is frame 2 and row 0 frame 1.
+        app.invoke_select(1);
+        assert_eq!(state.borrow().current, Some(2));
+        app.invoke_select(0);
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_undo();
+        assert_eq!(flag(&state), Flag::Reject, "not reached once left");
+        assert_eq!(state.borrow().current, Some(1));
+    }
+
+    /// A mark that hides the open frame on its undo carries the window
+    /// off it as a key does, and the redo, from where it landed,
+    /// brings the frame back.
+    #[test]
+    fn a_redo_follows_an_undo_that_moved_the_window() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(1);
+        app.invoke_meta_key("p".into());
+        app.invoke_select(0);
+        app.invoke_meta_key("p".into());
+        // The picks alone shown.
+        app.invoke_filter_flag_toggled(1, false);
+        assert_eq!(state.borrow().views.shown, vec![0, 1]);
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::None);
+        assert_eq!(state.borrow().current, Some(1), "carried off");
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::Pick);
+        assert_eq!(state.borrow().current, Some(0), "back on it");
+        // And the undo again, from there.
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::None);
+        assert_eq!(state.borrow().sidecars[1].meta.flag, Flag::Pick);
+    }
+
+    /// Every mark undone in Cull, then every one redone: `n` presses
+    /// each, the ratings after each walk.
+    fn cull_walk(app: &App, state: &Rc<Shared>, n: usize) -> (Vec<u8>, Vec<u8>) {
+        if !crate::panel::cull::cull_mode(&state.borrow()) {
+            app.invoke_cull_toggled();
+        }
+        for _ in 0..n {
+            app.invoke_undo();
+        }
+        let undone = ratings(state);
+        for _ in 0..n {
+            app.invoke_redo();
+        }
+        (undone, ratings(state))
+    }
+
+    /// A mark over a selection in Develop counts as the open frame's,
+    /// as it covers it, and goes whole. Once a later mark passed over
+    /// names another frame of it, only the open frame's share goes; the
+    /// next Ctrl+Z moves on to the frame's older mark, and Cull takes
+    /// back the rest in order, every frame ending right both ways.
+    #[test]
+    fn a_mark_over_a_selection_goes_whole_or_the_open_frame_s_share() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(1);
+        app.invoke_meta_key("1".into());
+        app.invoke_select(0);
+        app.invoke_step(1, true);
+        assert_eq!(
+            crate::panel::browser::chosen_frames(&state.borrow()),
+            [0, 1]
+        );
+        app.invoke_meta_key("3".into());
+        assert_eq!(ratings(&state), [3, 3, 0]);
+        app.invoke_select(2);
+        app.invoke_select(1);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 1, 0], "both frames");
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [3, 3, 0], "both again");
+
+        app.invoke_select(0);
+        app.invoke_meta_key("5".into());
+        app.invoke_select(1);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [5, 1, 0], "frame 1's share");
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [5, 0, 0], "then its older mark");
+        app.invoke_redo();
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [5, 3, 0], "and back, in order");
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [5, 1, 0]);
+        assert_eq!(cull_walk(&app, &state, 6), (vec![0, 0, 0], vec![5, 3, 0]));
+    }
+
+    /// The review's case: a frame of a selection's mark put back to the
+    /// same value by later marks is still theirs to undo first. Develop
+    /// takes the open frame's share; Cull's undo of everything ends at
+    /// the session's start and its redo at the end, both ways.
+    #[test]
+    fn a_frame_back_at_the_same_value_still_blocks_the_selection_s_mark() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        app.invoke_step(1, true);
+        app.invoke_meta_key("5".into());
+        assert_eq!(ratings(&state), [5, 5, 0]);
+        app.invoke_select(1);
+        app.invoke_meta_key("0".into());
+        app.invoke_meta_key("5".into());
+        assert_eq!(ratings(&state), [5, 5, 0]);
+        app.invoke_select(0);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 5, 0], "frame 0's share alone");
+        assert_eq!(cull_walk(&app, &state, 5), (vec![0, 0, 0], vec![5, 5, 0]));
+        assert_eq!(cull_walk(&app, &state, 5), (vec![0, 0, 0], vec![5, 5, 0]));
+    }
+
+    /// Redo the same way: a selection's mark undone whole, then a mark
+    /// on the other frame undone after it, is redone from the open frame
+    /// for its share alone, and Cull's walks end right.
+    #[test]
+    fn a_blocked_redo_makes_again_the_open_frame_s_share() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(1);
+        app.invoke_meta_key("2".into());
+        app.invoke_select(0);
+        app.invoke_step(1, true);
+        app.invoke_meta_key("5".into());
+        app.invoke_select(0);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 2], "whole");
+        app.invoke_select(1);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 0]);
+        app.invoke_select(0);
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [5, 0], "frame 0's share");
+        app.invoke_redo();
+        assert_eq!(ratings(&state), [5, 0], "nothing more of frame 0's");
+        assert_eq!(cull_walk(&app, &state, 4), (vec![0, 0], vec![5, 5]));
+    }
+
+    /// The window left where a carry landed by Cull's own step to a
+    /// frame (not a click), and come back: the carry is over, and the
+    /// reject is not reached from there.
+    #[test]
+    fn a_carry_ends_when_cull_steps_off_the_frame() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        app.invoke_filter_flag_toggled(2, true);
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_cull_toggled();
+        crate::panel::cull::cull_select(&mut state.borrow_mut(), &app, 2);
+        crate::panel::cull::cull_select(&mut state.borrow_mut(), &app, 1);
+        app.invoke_cull_toggled();
+        assert!(!crate::panel::cull::cull_mode(&state.borrow()));
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::Reject);
+    }
+
+    /// A reject over a selection that hid both frames carries the window
+    /// to the third. Undone whole there when nothing since names its
+    /// frames; with a later mark on one, the other's share alone, the
+    /// window back on it; with later marks on both, passed over. Cull's
+    /// walks end right after each.
+    #[test]
+    fn a_carried_selection_reject_goes_whole_in_a_share_or_not_at_all() {
+        use greycard_edit::meta::{Change, Flag};
+        let flags = |state: &Rc<Shared>| -> Vec<Flag> {
+            state
+                .borrow()
+                .sidecars
+                .iter()
+                .map(|s| s.meta.flag)
+                .collect()
+        };
+        let (none, reject) = (Flag::None, Flag::Reject);
+        for later in [&[][..], &[1], &[0, 1]] {
+            let app = crate::testing::window(3);
+            let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+            app.invoke_select(0);
+            app.invoke_step(1, true);
+            app.invoke_filter_flag_toggled(2, true);
+            app.invoke_meta_key("x".into());
+            assert_eq!(state.borrow().current, Some(2));
+            for &f in later {
+                crate::panel::browser::set_meta(
+                    &mut state.borrow_mut(),
+                    &app,
+                    &[f],
+                    Change::Rating(4),
+                );
+            }
+            assert_eq!(state.borrow().current, Some(2));
+            app.invoke_undo();
+            let (want, on) = match later.len() {
+                0 => (vec![none, none, none], Some(0)),
+                1 => (vec![none, reject, none], Some(0)),
+                _ => (vec![reject, reject, none], Some(2)),
+            };
+            assert_eq!(flags(&state), want, "{later:?}");
+            assert_eq!(state.borrow().current, on, "{later:?}");
+            let top = ratings(&state);
+            assert_eq!(cull_walk(&app, &state, 6).0, [0, 0, 0], "{later:?}");
+            assert_eq!(ratings(&state), top, "{later:?}");
+            assert_eq!(flags(&state), [reject, reject, none], "{later:?}");
+        }
+    }
+
+    /// A reject in the library's grid that hid its frame carries the
+    /// window the same way: Develop opened next on the frame it landed
+    /// on undoes it.
+    #[test]
+    fn a_reject_in_the_grid_that_moved_the_window_is_undone_in_develop() {
+        use greycard_edit::meta::Flag;
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        app.invoke_select(0);
+        app.set_grid_open(true);
+        app.invoke_filter_flag_toggled(2, true);
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().current, Some(1));
+        app.set_grid_open(false);
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].meta.flag, Flag::None);
+        assert_eq!(state.borrow().current, Some(0));
+    }
+
+    /// A reject in Cull that hid its frame and moved the window on is
+    /// the landed frame's in Develop too: leaving Cull there, Ctrl+Z
+    /// brings the frame back. Moved on to another frame first, it does
+    /// not.
+    #[test]
+    fn a_reject_in_cull_that_moved_the_window_is_undone_in_develop() {
+        use greycard_edit::meta::Flag;
+        for moved_on in [false, true] {
+            let app = crate::testing::window(3);
+            let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+            app.invoke_select(0);
+            app.invoke_filter_flag_toggled(2, true);
+            app.invoke_cull_toggled();
+            app.invoke_meta_key("x".into());
+            assert_eq!(state.borrow().current, Some(1), "{moved_on}");
+            if moved_on {
+                // Rows: frame 0 hidden, so row 1 is frame 2.
+                app.invoke_select(1);
+                assert_eq!(state.borrow().current, Some(2));
+            }
+            app.invoke_cull_toggled();
+            assert!(!crate::panel::cull::cull_mode(&state.borrow()));
+            app.invoke_undo();
+            let st = state.borrow();
+            if moved_on {
+                assert_eq!(st.sidecars[0].meta.flag, Flag::Reject, "not reached");
+                assert_eq!(st.current, Some(2));
+            } else {
+                assert_eq!(st.sidecars[0].meta.flag, Flag::None, "brought back");
+                assert_eq!(st.current, Some(0));
+            }
+        }
+    }
+
+    /// A version is its file's: a mark is the file's, so from a
+    /// version's cell undo reaches the mark made on the file's own,
+    /// and not another file's.
+    #[test]
+    fn a_version_reaches_its_file_s_marks() {
+        let app = crate::testing::window(2);
+        let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[0].new_version(None, Some("Warm")).unwrap();
+            crate::versions::settle(&mut st, &app, &worker);
+            assert_eq!(st.cells.len(), 3);
+            assert_eq!(st.file_of(1), 0, "cell 1 the version");
+        }
+        app.invoke_select(2);
+        app.invoke_meta_key("2".into());
+        app.invoke_select(0);
+        app.invoke_meta_key("3".into());
+        app.invoke_select(2);
+        app.invoke_select(1);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 2], "the file's mark");
+        assert_eq!(state.borrow().current, Some(1));
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 2], "not the other file's");
+    }
+
+    /// The library's grid reaches a mark on any frame, as before.
+    #[test]
+    fn the_library_reaches_a_mark_on_another_frame() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.set_grid_open(true);
+        app.invoke_select(0);
+        app.invoke_meta_key("3".into());
+        app.invoke_select(1);
+        app.invoke_undo();
+        assert_eq!(ratings(&state), [0, 0]);
+        assert_eq!(state.borrow().current, Some(0), "gone to it");
     }
 
     #[test]

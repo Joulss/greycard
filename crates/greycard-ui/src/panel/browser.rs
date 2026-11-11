@@ -733,6 +733,13 @@ fn tags_shown(
         return None;
     }
     let next = rebuild_browser(st, app);
+    if next.is_some() {
+        // The step took the window off its frame: where it lands, the
+        // step is that frame's to undo too, in Develop. `carry` takes
+        // the step last acted on, which is this one: the callers
+        // record or step it just before.
+        st.culling.tags.carry();
+    }
     if next.is_none()
         && st.culling.cull.is_some()
         && let Some(c) = st.current
@@ -1964,6 +1971,7 @@ pub(crate) fn open_loaded(
     // The frame the list is left on, for the history's back and forward.
     let left = crate::panel::visited::frame_of(&st);
     st.current = None;
+    current_moved(&mut st);
     crate::panel::look_preview::end(&st, app);
     st.views.picked.clear();
     // The requests for the old list's sidecars are dropped with it.
@@ -2300,6 +2308,15 @@ pub(crate) fn time_select(
     });
 }
 
+/// The window's frame has changed (or gone): where a mark that hid
+/// its frame carried the window, or a move away from there, which ends
+/// Develop's reach of that mark ([`tags::History::opened`]). Called
+/// wherever the current frame is set.
+pub(crate) fn current_moved(st: &mut State) {
+    let file = st.current.and_then(|c| st.path_at(c)).cloned();
+    st.culling.tags.opened(file.as_deref());
+}
+
 /// Open the frame on browser row `row`: decode and develop it on the
 /// worker, or in culling show its JPEG. It becomes the current frame;
 /// the set becomes that frame alone, or with `extend` (Shift and an
@@ -2363,6 +2380,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
     let path = st.path_of(i).clone();
     st.views.pick_pending = Some(path.clone());
     st.current = Some(i);
+    current_moved(st);
     st.develop.generation += 1;
     if st.culling.cull.is_none() {
         let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
@@ -2502,6 +2520,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.develop.edit = edit;
         st.views.panel_stand_in = Some(file.clone());
         st.current = Some(i);
+        current_moved(st);
         crate::panel::edit::show_white(st, &st.develop.edit, app);
         st.develop.generation += 1;
         app.set_selected(row);
@@ -2605,6 +2624,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // develop says which way up it stands (`crop::start_landed`).
     st.develop.crop_start_due = app.get_crop_mode();
     st.current = Some(i);
+    current_moved(st);
     crate::panel::edit::show_white(st, &st.develop.edit, app);
     st.develop.generation += 1;
     // The key's moment, until the frame that shows this
@@ -3064,10 +3084,22 @@ fn step_to(state: &Rc<Shared>, app: &App, worker: &Worker, row: i32, moves: bool
 /// when there was nothing to step, or nothing to move to. With it the
 /// word, for the status line where there is no word over the picture.
 pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> (Option<usize>, Option<String>) {
-    let step = if back {
-        st.culling.tags.undo()
-    } else {
-        st.culling.tags.redo()
+    step_tags_at(st, app, back, None)
+}
+
+/// [`step_tags`] on the step `at` (`None` the latest on its side):
+/// Develop's, past marks on other frames, whole or the open frame's
+/// share.
+pub(crate) fn step_tags_at(
+    st: &mut State,
+    app: &App,
+    back: bool,
+    at: Option<tags::Reach>,
+) -> (Option<usize>, Option<String>) {
+    let step = match (back, at) {
+        (true, None) => st.culling.tags.undo(),
+        (false, None) => st.culling.tags.redo(),
+        (_, Some(at)) => st.culling.tags.take(back, &at),
     };
     let Some(step) = step else {
         return (None, None);

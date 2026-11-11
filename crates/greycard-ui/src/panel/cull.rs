@@ -702,6 +702,7 @@ pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
     // and a part-migrated Original crop would be measured first.
     migrate_frame(st, cell);
     st.current = Some(cell);
+    crate::panel::browser::current_moved(st);
     crate::panel::viewport::settle_source_size(st);
     app.set_selected(row as i32);
     crate::panel::browser::show_file_name(st, app, Some(st.path_of(cell)));
