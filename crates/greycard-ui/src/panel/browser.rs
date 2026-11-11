@@ -2618,6 +2618,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     panel_frame(st, Some(i));
     // Its own white is not known until its decode reads it.
     st.develop.as_shot_white = None;
+    crate::panel::color::forget_before_as_shot(st);
     show_edit(st, &edit, app, st.develop.target);
     st.develop.edit = edit.clone();
     // Opened with the crop in hand: the starting aspect once its

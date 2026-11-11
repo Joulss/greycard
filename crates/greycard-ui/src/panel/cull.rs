@@ -324,6 +324,9 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     let Some(mut cull) = st.culling.cull.take() else {
         return;
     };
+    // The panel shows the line's state, which may have moved in Cull:
+    // As shot's switch has nothing to give back.
+    crate::panel::color::forget_before_as_shot(st);
     set_loupe_cull(st, false);
     // A pick whose sidecar was on its way is left with the mode: the
     // frame stays current, and the open that would have followed
@@ -7223,6 +7226,33 @@ mod tests {
         press(&app, "c");
         assert_eq!(seen(&app, &state), Seen::Develop);
         assert_eq!(app.get_status(), "nothing to cull: open a folder");
+    }
+
+    /// A preset applied in Cull moves the edit, so the white As shot's
+    /// switch replaced before Cull is not given back after it.
+    #[test]
+    fn a_preset_in_cull_forgets_what_as_shot_replaced() {
+        use greycard_edit::preset::{Entry, Preset, Section};
+        let (app, state, _worker) = modes_window();
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        state.borrow_mut().develop.presets = vec![Entry {
+            path: PathBuf::new(),
+            preset: Preset::from_edit("Bright", &edit, &[Section::Light]),
+        }];
+        click_labeled(&app, "Cull mode");
+        assert_eq!(seen(&app, &state), Seen::CullCamera);
+        {
+            let mut st = state.borrow_mut();
+            let key = st.current.and_then(|c| st.key_of(c)).expect("a frame");
+            st.develop.before_as_shot = Some((key, (4000.0, 0.01)));
+        }
+        app.invoke_preset_applied(0);
+        assert_eq!(seen(&app, &state), Seen::Develop);
+        assert!(state.borrow().develop.before_as_shot.is_none());
+        app.set_as_shot(false);
+        app.invoke_as_shot_toggled();
+        assert_ne!((app.get_temperature(), app.get_tint()), (4000.0, 0.01));
     }
 
     /// An edit made in Cull drawn developed (a preset clicked) leaves to

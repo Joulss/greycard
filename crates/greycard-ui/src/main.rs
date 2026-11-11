@@ -958,6 +958,7 @@ impl State {
                 drawn_planes: None,
                 picture_asked: None,
                 as_shot_white: None,
+                before_as_shot: None,
                 white_cache: None,
                 shown_white: None,
                 debounce: slint::Timer::default(),

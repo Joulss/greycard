@@ -122,7 +122,7 @@ neutral.
 
 | Control | What it does |
 |---|---|
-| **As shot** | On by default: the camera's own white balance. Turn it back on to return to it. |
+| **As shot** | On by default: the camera's own white balance. Turn it on to return to it, and off again to get back the white you had. |
 | **Temperature** | 2000 to 12000 K. Higher makes the picture warmer. |
 | **Tint** | −0.05 to +0.05. Positive makes it more magenta, negative more green. |
 | **Auto** | Reads the white balance from the picture. |
@@ -138,7 +138,10 @@ Under **As shot**, **Temperature** and **Tint** show the camera's own
 white. Move either and **As shot** turns off by itself, with the
 slider where you left it; it is one step in the history, as any
 slider's move is. Turn **As shot** back on to go back to the camera's
-white. After a move, a double-click puts one slider back to the
+white. Turn it off again and the white you had before comes back,
+while the frame stays open; with none to give back (the frame opened
+at **As shot**, or the edit changed some other way since), the sliders
+stay at the camera's. After a move, a double-click puts one slider back to the
 camera's value and leaves the other where you set it; **As shot**
 stays off. Under **As shot** a double-click changes nothing.
 

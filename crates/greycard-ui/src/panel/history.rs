@@ -372,6 +372,10 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
     let Some(c) = st.current else {
         return;
     };
+    // The panel's white is the state's now, not one As shot's switch
+    // replaced: an undo of the switch shows the custom white again,
+    // and a redo of it gives back nothing.
+    crate::panel::color::forget_before_as_shot(st);
     if save && crate::panel::edit::writable(st, c) {
         crate::panel::edit::save_sidecar(st, c);
     }

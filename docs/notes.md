@@ -645,3 +645,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§631. Develop's undo stays on the open frame](notes/631-develops-undo-stays-on-the-open-frame.md) (2026-11-11)
 - [§632. Lossless WebP export](notes/632-lossless-webp-export.md) (2026-11-11)
 - [§633. Tab brings back what it hid](notes/633-tab-brings-back-what-it-hid.md) (2026-11-11)
+- [§634. As shot off gives back the white it replaced](notes/634-as-shot-off-gives-back-the-white-it-replaced.md) (2026-11-11)

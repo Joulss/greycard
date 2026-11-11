@@ -1219,6 +1219,13 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
+            // A custom white on the panel: As shot's switch, if it went
+            // off, has given back what it had; a slider, Auto, or the
+            // dropper chose a new one. Either way nothing is left to
+            // give back.
+            if !app.get_as_shot() {
+                crate::panel::color::forget_before_as_shot(&mut st);
+            }
             // A develop control reached in culling is the way out of
             // it: the frame develops, with that control as set.
             if st.culling.cull.is_some() {

@@ -4480,6 +4480,238 @@ pub(crate) mod tests {
         assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
     }
 
+    /// A daylight raw open at As shot, its develop landed: the camera's
+    /// white as the sliders show it.
+    fn a_raw_up(app: &App, state: &Rc<Shared>) -> (f32, f32) {
+        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        let frame = daylight_frame();
+        let profile = profile_from_frame(&frame).unwrap();
+        let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        let camera = (shot.temp_tint.cct as f32, shot.temp_tint.duv as f32);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.base_white = Some(WhiteBase::from(&shot, 1.0));
+            st.develop.frame = Some((Arc::new(frame), Box::new(profile)));
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            st.develop.as_shot_white = Some(camera);
+        }
+        app.set_raw_input(true);
+        app.set_as_shot(true);
+        app.set_temperature(camera.0);
+        app.set_tint(camera.1);
+        camera
+    }
+
+    fn settle() {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+            crate::panel::edit::SAVE_MS + 100,
+        ));
+    }
+
+    /// As shot's switch flipped, as a click does it.
+    fn switch_as_shot(app: &App, on: bool) {
+        app.set_as_shot(on);
+        app.invoke_as_shot_toggled();
+        settle();
+    }
+
+    /// A slider moved, as the section's `changed` does it.
+    fn move_white(app: &App, temperature: f32, tint: f32) {
+        app.set_as_shot(false);
+        app.set_temperature(temperature);
+        app.set_tint(tint);
+        app.invoke_develop_changed();
+        settle();
+    }
+
+    fn sliders(app: &App) -> (bool, f32, f32) {
+        (app.get_as_shot(), app.get_temperature(), app.get_tint())
+    }
+
+    /// Discussion 59: As shot switched off gives back the custom white
+    /// its switch replaced, one step each way; with none replaced (the
+    /// frame opened at As shot) the sliders stay at the camera's.
+    #[test]
+    fn as_shot_off_gives_back_the_white_it_replaced() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let camera = a_raw_up(&app, &state);
+        settle();
+        let steps = || state.borrow().sidecars[0].history.len();
+        let wb = || state.borrow().develop.edit.white_balance.clone();
+        let custom = |t: f32, d: f32| WhiteBalance::Custom {
+            temperature: t as f64,
+            tint: d as f64,
+        };
+
+        // Opened at As shot: nothing to give back.
+        let at = steps();
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), (false, camera.0, camera.1));
+        assert_eq!(wb(), custom(camera.0, camera.1));
+        assert_eq!(steps(), at + 1);
+
+        // A custom white, As shot on and off: the custom white again.
+        move_white(&app, 4000.0, 0.01);
+        let at = steps();
+        switch_as_shot(&app, true);
+        assert_eq!(sliders(&app), (true, camera.0, camera.1));
+        assert_eq!(wb(), WhiteBalance::AsShot);
+        assert_eq!(steps(), at + 1, "on is one step");
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), (false, 4000.0, 0.01));
+        assert_eq!(wb(), custom(4000.0, 0.01));
+        assert_eq!(steps(), at + 2, "off is one step");
+        assert!(state.borrow().develop.before_as_shot.is_none());
+        // Given back once: on and off again remembers it anew.
+        switch_as_shot(&app, true);
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), (false, 4000.0, 0.01));
+    }
+
+    /// Undo and redo across As shot's switch end on states that
+    /// existed: the undo of "on" shows the custom white and forgets it,
+    /// so the redo's As shot gives back nothing; the undo of the "off"
+    /// that gave it back shows As shot, and an undo past that the
+    /// custom white.
+    #[test]
+    fn as_shot_s_memory_and_the_history_agree() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let camera = a_raw_up(&app, &state);
+        settle();
+        move_white(&app, 4000.0, 0.01);
+        let custom = (false, 4000.0, 0.01);
+        let shot = (true, camera.0, camera.1);
+
+        // On, off (given back), undo, undo, redo, redo.
+        switch_as_shot(&app, true);
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), custom);
+        app.invoke_undo();
+        assert_eq!(sliders(&app), shot);
+        app.invoke_undo();
+        assert_eq!(sliders(&app), custom);
+        app.invoke_redo();
+        assert_eq!(sliders(&app), shot);
+        app.invoke_redo();
+        assert_eq!(sliders(&app), custom);
+
+        // On, undo: the custom white, nothing remembered; redo: As
+        // shot, and off then leaves the camera's.
+        switch_as_shot(&app, true);
+        app.invoke_undo();
+        assert_eq!(sliders(&app), custom);
+        assert!(state.borrow().develop.before_as_shot.is_none());
+        app.invoke_redo();
+        assert_eq!(sliders(&app), shot);
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), (false, camera.0, camera.1));
+
+        // Undo that off, then on again from a custom white undone to:
+        // remembered once, given back once.
+        app.invoke_undo();
+        app.invoke_undo();
+        assert_eq!(sliders(&app), custom);
+        switch_as_shot(&app, true);
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), custom);
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::Custom {
+                temperature: 4000.0,
+                tint: 0.01_f32 as f64,
+            }
+        );
+    }
+
+    /// A new white chosen under As shot (a slider, Auto, the Neutral
+    /// dropper) turns it off and forgets the white it replaced; so
+    /// does another frame opened.
+    #[test]
+    fn a_new_white_or_another_frame_forgets_what_as_shot_replaced() {
+        let app = window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        let camera = a_raw_up(&app, &state);
+        settle();
+        let remembered = || state.borrow().develop.before_as_shot.is_some();
+
+        // A slider.
+        move_white(&app, 4000.0, 0.01);
+        switch_as_shot(&app, true);
+        assert!(remembered());
+        move_white(&app, 7000.0, 0.01);
+        assert!(!remembered());
+        assert_eq!(sliders(&app), (false, 7000.0, 0.01));
+
+        // Auto.
+        switch_as_shot(&app, true);
+        assert!(remembered());
+        let grid: Vec<[f32; 3]> = (0..2000)
+            .map(|i| {
+                let level = 0.05 + 0.5 * i as f32 / 2000.0;
+                [1.25 * level, level, 0.7 * level]
+            })
+            .collect();
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid, 40)));
+        app.invoke_wb_auto();
+        settle();
+        assert!(!app.get_as_shot());
+        assert!(!remembered());
+        assert_ne!(app.get_temperature(), 7000.0);
+
+        // The Neutral dropper.
+        move_white(&app, 4000.0, 0.01);
+        switch_as_shot(&app, true);
+        assert!(remembered());
+        assert_eq!(
+            white_from_neutral(state.borrow_mut(), &app, [0.3, 0.3, 0.2]),
+            Ok(())
+        );
+        settle();
+        assert!(!app.get_as_shot());
+        assert!(!remembered());
+        assert_ne!(sliders(&app), (false, 4000.0, 0.01));
+
+        // Another frame.
+        move_white(&app, 4000.0, 0.01);
+        switch_as_shot(&app, true);
+        assert!(remembered());
+        app.invoke_select(1);
+        assert!(!remembered());
+        // Back on the first, nothing to give back.
+        app.invoke_select(0);
+        state.borrow_mut().develop.as_shot_white = Some(camera);
+        assert!(app.get_as_shot());
+        switch_as_shot(&app, false);
+        assert_ne!(sliders(&app), (false, 4000.0, 0.01));
+    }
+
+    /// A picture's As shot is the offset of none, and its switch gives
+    /// back the offset it replaced as a raw's gives back a light.
+    #[test]
+    fn a_pictures_as_shot_off_gives_back_its_offset() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, picture_and_raw());
+        a_picture_up(&app, &state);
+        settle();
+        move_white(&app, 20.0, 0.005);
+        switch_as_shot(&app, true);
+        assert_eq!(sliders(&app), (true, 0.0, 0.0));
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::AsShot
+        );
+        switch_as_shot(&app, false);
+        assert_eq!(sliders(&app), (false, 20.0, 0.005));
+        assert_eq!(
+            state.borrow().develop.edit.white_balance,
+            WhiteBalance::offset_of(20.0, 0.005_f32 as f64)
+        );
+    }
+
     /// The Light section's Auto sets the light sliders from the picture
     /// through the history, as one step under its name: an undo takes
     /// them back, and a second press changes nothing. Before the

@@ -659,23 +659,50 @@ pub(crate) fn picture_own(st: &State) -> Option<greycard_core::TempTint> {
         .map(|(own, _)| own)
 }
 
+/// As shot's switch, the panel already showing where it went: on, the
+/// sliders' custom white remembered for the open frame and the camera's
+/// put on them; off, the remembered white given back, if it is this
+/// frame's. A raw's camera white is a kelvin and Duv, a picture's the
+/// offset of none; the rule is one.
+fn as_shot_switched(st: &mut State, app: &App) {
+    let key = st.current.and_then(|c| st.key_of(c));
+    if app.get_as_shot() {
+        st.develop.before_as_shot = key.map(|k| (k, (app.get_temperature(), app.get_tint())));
+        if let Some((temperature, tint)) = st.develop.as_shot_white {
+            app.set_temperature(temperature);
+            app.set_tint(tint);
+        }
+    } else if let Some((owner, (temperature, tint))) = st.develop.before_as_shot.take()
+        && key.as_ref() == Some(&owner)
+    {
+        app.set_temperature(temperature);
+        app.set_tint(tint);
+    }
+}
+
+/// The white As shot replaced, forgotten: the white was set some other
+/// way (a slider, Auto, the Neutral dropper, an undo or redo, a reset, a
+/// preset, a paste or a sync), so switching As shot off has nothing to
+/// give back. Another frame opened forgets it too.
+pub(crate) fn forget_before_as_shot(st: &mut State) {
+    st.develop.before_as_shot = None;
+}
+
 pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
-    // As shot switched on the panel: on, the sliders show the
-    // camera's white again; either way the picture develops as a
-    // slider's move does. Moving a slider turns it off on the panel's
-    // side, in the same change, so the move is one step.
+    // As shot switched on the panel: on, the custom white it replaces
+    // is remembered and the sliders show the camera's white again; off,
+    // the remembered white comes back, or with none the sliders stay
+    // at the camera's. Either way the picture develops as a slider's
+    // move does, one step. Moving a slider turns it off on the panel's
+    // side, in the same change, so the move is one step, and gives
+    // nothing back (`forget_before_as_shot`).
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_as_shot_toggled(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if app.get_as_shot()
-                && let Some((temperature, tint)) = state.borrow().develop.as_shot_white
-            {
-                app.set_temperature(temperature);
-                app.set_tint(tint);
-            }
+            as_shot_switched(&mut state.borrow_mut(), &app);
             app.invoke_develop_changed();
         });
     }

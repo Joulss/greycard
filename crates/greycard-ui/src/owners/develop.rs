@@ -71,6 +71,11 @@ pub(crate) struct Develop {
     /// decode read it: what the white balance sliders show under As
     /// shot. None until the decode lands, and for a picture.
     pub(crate) as_shot_white: Option<(f32, f32)>,
+    /// The custom white balance As shot's switch replaced, and whose
+    /// frame: what switching it off gives back. Window state only,
+    /// never the edit's; dropped when the white is set any other way
+    /// (`panel::color::forget_before_as_shot`).
+    pub(crate) before_as_shot: Option<(crate::versions::Key, (f32, f32))>,
     /// The last preview matrix, keyed by what it was computed for.
     pub(crate) white_cache: Option<(WhiteKey, Matrix3)>,
     /// What the picture on screen's masks made their white balances

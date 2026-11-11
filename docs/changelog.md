@@ -41,6 +41,9 @@ design note behind it.
 
 ### Develop
 
+- Switching As shot off gives back the white balance it replaced,
+  where it used to leave the camera's on the sliders (discussion 59,
+  [§634](https://github.com/jessolmstead/greycard/blob/master/docs/notes/634-as-shot-off-gives-back-the-white-it-replaced.md)).
 - Ctrl+Z takes back a rating, flag, or label in Develop and the
   library when it was the last thing you did, and brings back a frame
   the filter hid; Ctrl+Shift+Z makes it again. In Develop it reaches

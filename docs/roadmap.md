@@ -1191,9 +1191,6 @@ clears or a tester asks for it.
 - [ ] White balance, Light, Color, and Detail as one Basic panel with
       a subsection each, as Lightroom's; undecided, and it meets the
       section-order items above (discussion 118, 2026-11-10)
-- [ ] As shot switched off giving back the custom white balance it
-      replaced, where today the sliders stay at the camera's
-      (discussion 59, 2026-11-10)
 - [ ] Dehaze on luminance alone, or a blend between that and the
       color one, so the haze's blue shift is dialed in (discussion 59,
       2026-11-10)
