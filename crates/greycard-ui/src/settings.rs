@@ -277,10 +277,11 @@ pub struct Settings {
     /// leniently.
     #[serde(deserialize_with = "scroll_bar_size_leniently")]
     pub scroll_bar_size: String,
-    /// The window's language: a catalog's tag ("fr"), or empty for the
-    /// system's. Written as it is chosen, and in force from the next
-    /// start. Read leniently: anything but a string is the system's; a
-    /// tag with no catalog is kept as written and reads as English.
+    /// The window's language: a catalog's tag ("fr"), "en" for source
+    /// English, or empty for the system's. Written as it is chosen, and
+    /// in force from the next start. Read leniently: anything but a
+    /// string is the system's; an unknown tag is kept as written and
+    /// falls back to the system's language.
     #[serde(deserialize_with = "string_leniently")]
     pub language: String,
 }

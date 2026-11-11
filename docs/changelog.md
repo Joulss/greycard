@@ -3,6 +3,14 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.12.0
+
+### The window
+
+- Language offers English explicitly, so a translated system can
+  switch back to the source wording
+  ([§634](https://github.com/jessolmstead/greycard/blob/master/docs/notes/634-english-in-the-language-picker.md)).
+
 ## 0.11.0, 2026-11-09
 
 Handheld HDR and focus stacks, the demosaic on the GPU, the window
