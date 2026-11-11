@@ -2,7 +2,7 @@
 // was shot at, the undo and redo buttons, and the scopes.
 
 import { Theme } from "../theme.slint";
-import { NameTip, PanelButton, Segmented, ClipMark } from "../controls.slint";
+import { NameTip, PanelButton, Segmented, ClipMark, Section } from "../controls.slint";
 import { ScopeMark } from "../structs.slint";
 
 export component PanelHead inherits VerticalLayout {
@@ -177,12 +177,10 @@ export component PanelHead inherits VerticalLayout {
     }
     // The scopes read the develop; in culling
     // there is none, and they are not shown.
-    if !root.culling: Rectangle {
-        background: Theme.raised;
-        border-color: Theme.border;
-        border-width: 1px;
+    if !root.culling: Section {
+        title: @tr("ANALYSIS");
+        icon: @image-url("../icons/chart-no-axes-combined.svg");
         VerticalLayout {
-            padding: Theme.space-2;
             spacing: 2px;
             scope-box := Rectangle {
                 // A waveform wants height to hold its trace apart; the
