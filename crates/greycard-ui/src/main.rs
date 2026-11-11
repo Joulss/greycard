@@ -33,6 +33,7 @@ mod lightbox;
 mod name_tips;
 mod owners;
 mod panel;
+mod panes;
 mod placeholder;
 mod preparing;
 mod report;
@@ -1136,6 +1137,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<Shared>, worker: Rc<Worker>
     panel::stacks::install(app, &state, &worker);
     panel::sort::install(app, &state, &worker);
     lightbox::install(app, &state, &worker);
+    app.on_tab_panes(panes::tab);
     tree::install(app, &state, &worker);
     report::install(app, &state);
     update::install(app, &state);

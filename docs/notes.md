@@ -644,3 +644,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§630. The Sync button's middle click sets](notes/630-the-sync-buttons-middle-click-sets.md) (2026-11-11)
 - [§631. Develop's undo stays on the open frame](notes/631-develops-undo-stays-on-the-open-frame.md) (2026-11-11)
 - [§632. Lossless WebP export](notes/632-lossless-webp-export.md) (2026-11-11)
+- [§633. Tab brings back what it hid](notes/633-tab-brings-back-what-it-hid.md) (2026-11-11)

@@ -266,6 +266,20 @@ export struct CompareTile {
     label: int,
 }
 
+/// The two side panes and the strip, a flag each: which are put away,
+/// or which Tab put away and will bring back (`panes.rs`).
+export struct Panes {
+    left: bool,
+    right: bool,
+    strip: bool,
+}
+
+/// What Tab leaves: the panes put away, and what it will bring back.
+export struct TabPanes {
+    hidden: Panes,
+    kept: Panes,
+}
+
 /// One chip of the browser's filter: what it asks, how many frames
 /// would be left if it were the only thing that changed, whether it
 /// is on, and which flag or color it stands for. Rust owns what the

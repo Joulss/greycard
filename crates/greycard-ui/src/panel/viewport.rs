@@ -4040,18 +4040,117 @@ pub(crate) mod tests {
         );
 
         // One put away on its own: Tab puts the rest away with it,
-        // and brings all three back.
-        crate::testing::press(&app, slint::platform::Key::F7);
-        assert_eq!(hidden(&app), (true, false, false), "F7 the left pane");
+        // and brings back only those it put away.
+        use slint::platform::Key;
+        for (key, alone) in [
+            (Key::F7, (true, false, false)),
+            (Key::F8, (false, true, false)),
+            (Key::F6, (false, false, true)),
+        ] {
+            crate::testing::press(&app, key);
+            assert_eq!(hidden(&app), alone, "{key:?} alone");
+            crate::testing::press(&app, tab);
+            assert_eq!(hidden(&app), (true, true, true));
+            crate::testing::press(&app, tab);
+            assert_eq!(hidden(&app), alone, "{key:?}'s pane stays away");
+            crate::testing::press(&app, key);
+        }
+        assert_eq!(hidden(&app), (false, false, false));
+
+        // The tester's: the strip put away by its button, Tab twice.
+        app.set_strip_hidden(true);
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, true), "the strip stays away");
+        app.set_strip_hidden(false);
+
+        // All three put away by hand: Tab brings all three back.
+        for key in [Key::F6, Key::F7, Key::F8] {
+            crate::testing::press(&app, key);
+        }
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, false), "never a dead key");
+
+        // Put away by Tab, then by hand the right panel shown and put
+        // away again: Tab leaves it away and brings back the rest.
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, Key::F8);
+        crate::testing::press(&app, Key::F8);
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, true, false), "the hand since");
+        crate::testing::press(&app, Key::F8);
+
+        // Put away by Tab, one shown by hand: Tab puts it away with
+        // the rest, and brings back all three.
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, Key::F8);
+        assert_eq!(hidden(&app), (true, false, true));
         crate::testing::press(&app, tab);
         assert_eq!(hidden(&app), (true, true, true));
         crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, false), "all Tab put away");
+
+        // A glance at the strip between two Tabs: all three back.
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, Key::F6);
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, false), "a glance at the strip");
+
+        // Tab in the loupe, the grid's Tab bringing the left pane out,
+        // a frame opened, Tab twice: all three back, nothing having
+        // been put away by hand.
+        crate::testing::press(&app, tab);
+        app.set_grid_open(true);
+        crate::testing::press(&app, tab);
+        app.set_grid_open(false);
+        assert_eq!(hidden(&app), (false, true, true));
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, false), "the grid's left pane");
+
+        // The strip's arrow, a hand like F6: shown and put away again
+        // while Tab has all three away, it stays away.
+        crate::testing::press(&app, tab);
+        let arrow_click = |app: &App| {
+            let (at, arrow) = crate::testing::labeled(app, "Filmstrip");
+            crate::testing::click(app, at.x + arrow.width / 2.0, at.y + arrow.height / 2.0);
+        };
+        arrow_click(&app);
+        assert_eq!(hidden(&app), (true, true, false), "the arrow shows it");
+        arrow_click(&app);
+        assert_eq!(hidden(&app), (true, true, true));
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, true), "the arrow's hand kept");
+        crate::testing::press(&app, Key::F6);
+
+        // Grid and loupe: the strip away, Tab in the loupe, the grid's
+        // Tab twice (the left pane out and away again, the hand's last
+        // word), then Tab in the loupe: the panel back, the strip and
+        // the left pane away.
+        crate::testing::press(&app, Key::F6);
+        crate::testing::press(&app, tab);
+        app.set_grid_open(true);
+        crate::testing::press(&app, tab);
+        crate::testing::press(&app, tab);
+        app.set_grid_open(false);
+        assert_eq!(hidden(&app), (true, true, true));
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (true, false, true), "the grid's Tab a hand");
+        crate::testing::press(&app, Key::F7);
+        // Without the grid's Tab, the loupe's memory holds across.
+        crate::testing::press(&app, tab);
+        app.set_grid_open(true);
+        app.set_grid_open(false);
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, true), "kept across the grid");
+        crate::testing::press(&app, Key::F6);
         assert_eq!(hidden(&app), (false, false, false));
 
         // A sheet has the keys: Tab under it is not this one.
         app.set_export_open(true);
         crate::testing::press(&app, tab);
-        crate::testing::press(&app, slint::platform::Key::F8);
+        crate::testing::press(&app, Key::F8);
         assert_eq!(hidden(&app), (false, false, false), "not under a sheet");
         app.set_export_open(false);
 
@@ -4059,7 +4158,7 @@ pub(crate) mod tests {
         // left pane's alone, and F6 nobody's.
         app.set_grid_open(true);
         crate::testing::press(&app, tab);
-        crate::testing::press(&app, slint::platform::Key::F6);
+        crate::testing::press(&app, Key::F6);
         assert_eq!(
             hidden(&app),
             (true, false, false),

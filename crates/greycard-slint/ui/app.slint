@@ -12,7 +12,7 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -550,6 +550,8 @@ export component App inherits Window {
     in-out property <bool> lightbox-left-was;
     in-out property <bool> lightbox-right-was;
     in-out property <bool> lightbox-strip-was;
+    /// What Tab had kept before the lightbox, put back with the panes.
+    property <Panes> lightbox-tab-was;
     /// The sheet's scroll when the loupe was taken, -1px for none.
     property <length> lightbox-scroll: -1px;
     /// A tile's side for `lightbox-across` tiles across a sheet this
@@ -569,6 +571,7 @@ export component App inherits Window {
         root.lightbox-left-was = root.left-hidden;
         root.lightbox-right-was = root.right-hidden;
         root.lightbox-strip-was = root.strip-hidden;
+        root.lightbox-tab-was = root.tab-kept;
         root.left-hidden = true;
         root.right-hidden = true;
         root.strip-hidden = true;
@@ -587,6 +590,7 @@ export component App inherits Window {
         root.left-hidden = root.lightbox-left-was;
         root.right-hidden = root.lightbox-right-was;
         root.strip-hidden = root.lightbox-strip-was;
+        root.tab-kept = root.lightbox-tab-was;
         root.grid-open = true;
         root.lightbox-changed();
     }
@@ -2757,6 +2761,19 @@ export component App inherits Window {
     pure function all-hidden() -> bool {
         return root.left-hidden && root.right-hidden && root.strip-hidden;
     }
+    /// What Tab put away and will bring back. Rust holds the rule
+    /// (`panes.rs`).
+    property <Panes> tab-kept;
+    pure callback tab-panes(Panes, Panes) -> TabPanes;
+    /// A pane shown or put away by hand leaves what Tab will bring
+    /// back, so the next Tab never undoes the hand.
+    function panes-by-hand(left: bool, right: bool, strip: bool) {
+        root.tab-kept = {
+            left: root.tab-kept.left && !left,
+            right: root.tab-kept.right && !right,
+            strip: root.tab-kept.strip && !strip,
+        };
+    }
     /// Public so the Rust side asks the same question before it puts
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
@@ -3047,6 +3064,7 @@ export component App inherits Window {
             // grid leaves showing.
             if ((chord == "Tab" || chord == "F7") && root.grid-open && !root.sheet-open()) {
                 root.left-hidden = !root.left-hidden;
+                root.panes-by-hand(true, false, false);
                 return accept;
             }
             // Tab as Lightroom has it. Nothing else here binds it, and
@@ -3054,11 +3072,15 @@ export component App inherits Window {
             // filter or a name never reaches this. Over the grid it is
             // the pane's alone (above).
             if (chord == "Tab" && !root.sheet-open() && !root.grid-open) {
-                // Any one showing: all away. All away: all back.
-                let hide = !root.all-hidden();
-                root.left-hidden = hide;
-                root.right-hidden = hide;
-                root.strip-hidden = hide;
+                // Any one showing: all away, those showing kept. All
+                // away: the kept back, or all three with none kept.
+                let step = root.tab-panes(
+                    { left: root.left-hidden, right: root.right-hidden, strip: root.strip-hidden },
+                    root.tab-kept);
+                root.left-hidden = step.hidden.left;
+                root.right-hidden = step.hidden.right;
+                root.strip-hidden = step.hidden.strip;
+                root.tab-kept = step.kept;
                 return accept;
             }
             // One at a time, as Lightroom has F7 and F8 for its side
@@ -3068,6 +3090,7 @@ export component App inherits Window {
                 if (chord == "F6") { root.strip-hidden = !root.strip-hidden; }
                 if (chord == "F7") { root.left-hidden = !root.left-hidden; }
                 if (chord == "F8") { root.right-hidden = !root.right-hidden; }
+                root.panes-by-hand(chord == "F7", chord == "F8", chord == "F6");
                 return accept;
             }
             // F11 for full screen and back, in every view: outside a
@@ -4574,7 +4597,7 @@ export component App inherits Window {
         // View menu
         words: root.right-hidden ? @tr("Show panel") : @tr("Hide panel");
         icon: root.right-hidden ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-right.svg");
-        clicked => { root.right-hidden = !root.right-hidden; keys.focus(); }
+        clicked => { root.right-hidden = !root.right-hidden; root.panes-by-hand(false, true, false); keys.focus(); }
     }
     // The strip's arrow the same way along the foot, off a
     // full-height crop's bottom handles.
@@ -4613,7 +4636,7 @@ export component App inherits Window {
         // View menu: the filmstrip
         words: root.strip-hidden ? @tr("Show filmstrip") : @tr("Hide filmstrip");
         icon: root.strip-hidden ? @image-url("icons/chevron-up.svg") : @image-url("icons/chevron-down.svg");
-        clicked => { root.strip-hidden = !root.strip-hidden; keys.focus(); }
+        clicked => { root.strip-hidden = !root.strip-hidden; root.panes-by-hand(false, false, true); keys.focus(); }
     }
 
     // A view's load in the loupe: over the viewport's bottom, above
@@ -5411,7 +5434,7 @@ export component App inherits Window {
         label: @tr("Left panel");
         words: root.left-hidden ? @tr("Show panel") : @tr("Hide panel");
         icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");
-        clicked => { root.left-hidden = !root.left-hidden; keys.focus(); }
+        clicked => { root.left-hidden = !root.left-hidden; root.panes-by-hand(true, false, false); keys.focus(); }
     }
 
     // Under every sheet, over everything else: a wheel or a touchpad's

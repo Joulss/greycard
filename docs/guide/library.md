@@ -88,9 +88,11 @@ Drag the left pane's right edge or the right panel's left edge to
 set its width, and the filmstrip's top edge to set the size of its
 pictures; double-click an edge to put it back. The sizes are kept
 between sessions. **F7** puts the left pane away, **F6** the
-filmstrip, and **F8** the right panel. **Tab** hides all of them, or over the grid, the left
-pane alone. **F11** takes the window full screen and back, in any
-view; on a Mac the window's green button does.
+filmstrip, and **F8** the right panel. **Tab** hides all of them
+and brings back the ones it hid, or all three when it hid none; over
+the grid it is the left pane alone. **F11** takes the window full
+screen and back, in any view; on a Mac the window's green button
+does.
 
 ### Thumbnails show the edit
 

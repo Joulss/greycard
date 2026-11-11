@@ -57,6 +57,9 @@ design note behind it.
 
 ### Fixes
 
+- Tab brings back the panes and the filmstrip it put away, and leaves
+  away one you had hidden yourself (discussion 59,
+  [§633](https://github.com/jessolmstead/greycard/blob/master/docs/notes/633-tab-brings-back-what-it-hid.md)).
 - A middle click on the Sync button sets and never shifts, so a second
   click changes nothing, and it no longer changes the choice the paste
   sheet remembers

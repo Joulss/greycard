@@ -1252,6 +1252,48 @@ mod tests {
         );
     }
 
+    /// What Tab put away rides through the lightbox with the panes: the
+    /// strip put away by hand stays away after it, whatever Tab did
+    /// inside it, in its grid or its loupe.
+    #[test]
+    fn tab_after_the_lightbox_brings_back_what_it_put_away() {
+        let (app, _state) = lightbox_window(6);
+        let hidden = |app: &App| {
+            (
+                app.get_left_hidden(),
+                app.get_right_hidden(),
+                app.get_strip_hidden(),
+            )
+        };
+        press(&app, Key::F6);
+        press(&app, Key::Tab);
+        assert_eq!(hidden(&app), (true, true, true));
+        press(&app, "l");
+        assert!(app.get_lightbox());
+        // The grid's Tab, the left pane out and back.
+        press(&app, Key::Tab);
+        press(&app, Key::Tab);
+        // Its loupe: Tab brings back what it put away less the left
+        // pane, put away by hand since; and away again.
+        press(&app, Key::Return);
+        assert!(app.get_lightbox_loupe());
+        press(&app, Key::Tab);
+        assert_eq!(hidden(&app), (true, false, true));
+        press(&app, Key::Tab);
+        press(&app, Key::Return);
+        assert!(!app.get_lightbox_loupe());
+        press(&app, Key::Escape);
+        assert!(!app.get_lightbox());
+        assert_eq!(hidden(&app), (true, true, true), "as before the lightbox");
+        app.set_grid_open(false);
+        press(&app, Key::Tab);
+        assert_eq!(
+            hidden(&app),
+            (false, false, true),
+            "as before the lightbox: the strip stays away"
+        );
+    }
+
     /// The count a session leaves is what the next one opens with, and
     /// a file's number outside the range is held to it.
     #[test]

@@ -34,9 +34,6 @@ the reasoning lives in `docs/notes.md`.
       workflow, no checksums beside the release's files, and split
       symbols kept for each release so a stripped build's backtrace
       can be named (review, 2026-11-11)
-- [ ] Tab bringing the panes back shows all three, a strip or a pane
-      put away before with them: keep which were showing when Tab hid
-      them and bring back those (discussion 59, 2026-11-10)
 - [ ] Edit in: a save over the handed file does not show while that
       file is the open frame; leaving it and coming back shows it. The
       watcher re-indexes and lists again (§499) but lets go of no
