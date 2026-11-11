@@ -478,11 +478,36 @@ mod tests {
         );
         // Names from another version fall back.
         let odd = Sheet {
-            format: "WebP".into(),
+            format: "HEIF".into(),
             metadata: "Some".into(),
             ..Sheet::default()
         };
         assert_eq!(odd.settings(), export::Settings::default());
+    }
+
+    /// A WebP preset keeps its format by name, as a PNG one does, and
+    /// its quality, which a lossless format has none of, makes no edit.
+    #[test]
+    fn a_webp_preset_round_trips() {
+        let preset = ExportPreset {
+            name: "Web lossless".into(),
+            sheet: Sheet {
+                format: export::Format::WebP.name().into(),
+                ..web()
+            },
+        };
+        let json = serde_json::to_string(&preset).unwrap();
+        assert!(json.contains(r#""export_format":"WebP""#), "{json}");
+        let back: ExportPreset = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, preset);
+        assert_eq!(back.sheet.settings().format, export::Format::WebP);
+        assert!(
+            Sheet {
+                quality: 60.0,
+                ..back.sheet.clone()
+            }
+            .same(&back.sheet)
+        );
     }
 
     #[test]

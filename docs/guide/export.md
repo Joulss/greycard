@@ -1,6 +1,6 @@
 # Exporting
 
-An export writes a frame as a JPEG, PNG or TIFF under its edit. This
+An export writes a frame as a JPEG, PNG, TIFF, or WebP under its edit. This
 chapter covers the Export sheet, export presets, exporting several
 frames, the export queue and exporting from the command line.
 
@@ -32,7 +32,7 @@ clear in hand.
 
 | Row | Choices | Default | What it does |
 |---|---|---|---|
-| **Format** | **JPEG**, **PNG**, **TIFF 16-bit** | JPEG | JPEG for sharing. PNG is lossless. TIFF 16-bit keeps the most tonal detail, for printing or further work in another editor. |
+| **Format** | **JPEG**, **PNG**, **TIFF 16-bit**, **WebP** | JPEG | JPEG for sharing. PNG is lossless. TIFF 16-bit keeps the most tonal detail, for printing or further work in another editor. WebP is lossless too, and smaller than a PNG; it takes no side longer than 16383 px. |
 | **Quality** | 50 to 100 | 92 | JPEG only. Higher is a larger file with fewer artifacts. |
 | **Long edge** | **Full**, **4096**, **2048**, **1024**, **Custom** | Full | The size of the picture's longer side, in pixels. An export is never made larger than the picture. |
 | **Pixels** | a number | 1600 | Shown with **Custom**. The sheet shows the size that comes out, such as 1600 × 1067. |
@@ -366,7 +366,7 @@ where they go.
 
 | Path or flag | What it does |
 |---|---|
-| `FILE` last | Writes one frame to `FILE`. Its extension (`.jpg`, `.png`, `.tif`) sets the format; another extension, or one of the frames, is refused. |
+| `FILE` last | Writes one frame to `FILE`. Its extension (`.jpg`, `.png`, `.tif`, `.webp`) sets the format; another extension, or one of the frames, is refused. |
 | `FOLDER/` last | Writes into a folder: one that exists, or a path ending in `/`. Each frame keeps its own name. |
 | Several frames | Writes each into the folder. A folder among them needs `--all`. |
 | `--also 2,5,7` | With a folder: adds more frames from the opened folder, counted from 0 in the folder's order. |

@@ -31,6 +31,14 @@ design note behind it.
   Settings, Keys (discussion 59,
   [§624](https://github.com/jessolmstead/greycard/blob/master/docs/notes/624-alt-arrows-go-back-and-forward.md)).
 
+### Export
+
+- WebP joins JPEG, PNG, and TIFF as an export format: lossless, 8
+  bits, with the color profile and metadata the others carry, and
+  smaller than a PNG. A side longer than 16383 px is refused
+  (issue 121,
+  [§632](https://github.com/jessolmstead/greycard/blob/master/docs/notes/632-lossless-webp-export.md)).
+
 ### Develop
 
 - Ctrl+Z takes back a rating, flag, or label in Develop and the

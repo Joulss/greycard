@@ -32,6 +32,11 @@ fontique = "0.11"
 ab_glyph = "0.2"
 # A character's script, for the font fallback. Already in the tree.
 unicode-script = "0.5"
+# The WebP export: lossless only, pure Rust, and already in the tree
+# under the image crate and resvg. Named straight because the image
+# crate's encoder takes no XMP; its `webp` feature, the decoder too,
+# stays off, so no WebP is read as a picture.
+image-webp = "0.2"
 
 [features]
 # The test helpers the editor's own tests share with these (a camera
@@ -44,3 +49,5 @@ testing = ["greycard-core/testing"]
 [dev-dependencies]
 # The scratch folder's removal the tests share.
 greycard-core = { path = "../greycard-core", features = ["testing"] }
+# The WebP export read back: its pixels, profile, EXIF, and XMP.
+image = { workspace = true, features = ["webp"] }

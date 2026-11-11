@@ -601,7 +601,7 @@ fn run_on(plan: Plan, lent: Lent) -> Finished {
 fn check_file_target(target: &Path, files: &[PathBuf]) -> Result<()> {
     anyhow::ensure!(
         export::Format::from_path(target).is_some(),
-        "{} names no format an export writes: end it in .jpg, .png or .tif, or give a folder (one that is there, or a path ending in a separator)",
+        "{} names no format an export writes: end it in .jpg, .png, .tif, or .webp, or give a folder (one that is there, or a path ending in a separator)",
         target.display()
     );
     let same = |f: &PathBuf| match (f.canonicalize(), target.canonicalize()) {
@@ -1115,6 +1115,37 @@ mod tests {
         // the export is not noted in it, as the window did not note it.
         let kept = Sidecar::load(&source).unwrap().unwrap();
         assert!(kept.current_exports.is_empty());
+    }
+
+    /// `.webp` names the WebP export, as `.png` names the PNG; into a
+    /// folder, a sheet set to WebP names its files `.webp`.
+    #[test]
+    fn a_webp_path_writes_a_webp() {
+        let scratch = Scratch::new("webp");
+        let source = scratch.0.join("frame.dng");
+        dng(&source, 96, 64);
+        let remembered = Shared::default();
+        let out = scratch.0.join("out.WEBP");
+        let req = Request {
+            no_sidecars: true,
+            ..to(&[&source], &out)
+        };
+        let planned = plan(&req, &remembered, None, None).unwrap();
+        assert_eq!(planned.settings.format, export::Format::WebP);
+        assert!(run(planned, lent()).succeeded());
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP");
+        let sheet = export::Settings {
+            format: export::Format::WebP,
+            ..export::Settings::default()
+        };
+        let into = scratch.0.join("set");
+        let settings = batch_settings(&into, sheet.clone());
+        assert_eq!(settings.format, export::Format::WebP);
+        assert_eq!(
+            batch_settings(&scratch.0.join("a.png"), sheet).format,
+            export::Format::Png
+        );
     }
 
     /// Under the sidecar's own edit the export is noted in the

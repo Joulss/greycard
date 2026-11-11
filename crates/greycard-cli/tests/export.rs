@@ -357,3 +357,68 @@ fn an_export_preset_with_a_border_writes_a_file_larger_by_the_band() {
     let lit = picture.get_pixel(12 + 110, 52).0;
     assert!(lit.iter().any(|c| *c > 60), "{lit:?}");
 }
+
+/// A WebP's canvas, from its VP8X chunk: an export with a profile or
+/// metadata has one.
+fn webp_canvas(bytes: &[u8]) -> (u32, u32) {
+    assert!(bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP");
+    assert_eq!(&bytes[12..16], b"VP8X");
+    let side = |at: usize| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], 0]) + 1;
+    (side(24), side(27))
+}
+
+#[test]
+fn a_webp_is_written_by_its_extension_and_by_a_preset() {
+    let home = Scratch(
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("greycard-headless-webp-{}", std::process::id())),
+    );
+    greycard_core::testing::remove_dir_retry(&home.0);
+    std::fs::create_dir_all(home.0.join("config").join("greycard")).unwrap();
+    let source = home.0.join("frame.dng");
+    dng(&source, 240, 160);
+    let out = home.0.join("out.webp");
+    let ran = export(
+        &home.0,
+        &[
+            source.as_os_str(),
+            "--no-sidecars".as_ref(),
+            "--long-edge".as_ref(),
+            "120".as_ref(),
+            out.as_os_str(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{said}");
+    assert_eq!(webp_canvas(&std::fs::read(&out).unwrap()), (120, 80));
+    // Into a folder, a preset's format names the file.
+    let settings = r#"{
+        "export_presets": [{
+            "name": "Lossless",
+            "export_format": "WebP",
+            "export_size": "Custom",
+            "export_custom": "96"
+        }]
+    }"#;
+    std::fs::write(
+        home.0.join("config").join("greycard").join("settings.json"),
+        settings,
+    )
+    .unwrap();
+    let set = home.0.join("set");
+    std::fs::create_dir_all(&set).unwrap();
+    let ran = export(
+        &home.0,
+        &[
+            source.as_os_str(),
+            "--no-sidecars".as_ref(),
+            "--export-preset".as_ref(),
+            "Lossless".as_ref(),
+            set.as_os_str(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{said}");
+    let file = set.join("frame.webp");
+    assert_eq!(webp_canvas(&std::fs::read(&file).unwrap()), (96, 64));
+}

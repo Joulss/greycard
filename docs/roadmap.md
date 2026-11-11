@@ -1191,7 +1191,7 @@ clears or a tester asks for it.
       Settings to Before (issue 107, 2026-11-09)
 - [ ] Lossy WebP as an export format: the `image` crate's encoder is
       lossless only, so lossy wants libwebp (BSD, a C build) or a
-      pure-Rust encoder found; lossless comes first (issue 121,
+      pure-Rust encoder found; lossless is in (§632; issue 121,
       2026-11-10)
 - [ ] White balance, Light, Color, and Detail as one Basic panel with
       a subsection each, as Lightroom's; undecided, and it meets the

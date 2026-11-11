@@ -334,7 +334,7 @@ export component ExportSheet inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-2;
                             Text { text: @tr("Format"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit")]; current <=> root.export-format; }
+                            Segmented { options: ["JPEG", "PNG", "TIFF 16-bit", "WebP"]; labels: ["JPEG", "PNG", @tr("TIFF 16-bit"), "WebP"]; current <=> root.export-format; }
                         }
                         EditSlider {
                             label: @tr("Quality");

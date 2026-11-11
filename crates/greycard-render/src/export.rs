@@ -29,10 +29,13 @@ pub enum Format {
     Png,
     /// 16-bit, lossless.
     Tiff,
+    /// 8-bit, lossless; WebP's lossy mode is libwebp's, a C library,
+    /// and not here.
+    WebP,
 }
 
 impl Format {
-    pub const ALL: [Format; 3] = [Format::Jpeg, Format::Png, Format::Tiff];
+    pub const ALL: [Format; 4] = [Format::Jpeg, Format::Png, Format::Tiff, Format::WebP];
 
     /// The name the panel shows.
     pub fn name(self) -> &'static str {
@@ -40,6 +43,7 @@ impl Format {
             Format::Jpeg => "JPEG",
             Format::Png => "PNG",
             Format::Tiff => "TIFF 16-bit",
+            Format::WebP => "WebP",
         }
     }
 
@@ -52,6 +56,7 @@ impl Format {
             Format::Jpeg => "jpg",
             Format::Png => "png",
             Format::Tiff => "tif",
+            Format::WebP => "webp",
         }
     }
 
@@ -62,6 +67,7 @@ impl Format {
             "jpg" | "jpeg" => Some(Format::Jpeg),
             "png" => Some(Format::Png),
             "tif" | "tiff" => Some(Format::Tiff),
+            "webp" => Some(Format::WebP),
             _ => None,
         }
     }
@@ -73,6 +79,7 @@ impl Format {
             Format::Jpeg => &["*.jpg", "*.jpeg"],
             Format::Png => &["*.png"],
             Format::Tiff => &["*.tif", "*.tiff"],
+            Format::WebP => &["*.webp"],
         }
     }
 }
@@ -724,7 +731,7 @@ pub fn render_framed(
             &m,
             |v| (settings.space.recode(v) * 65535.0).round() as u16,
         )),
-        Format::Jpeg | Format::Png => Pixels::Eight(finish::finish_reaching(
+        Format::Jpeg | Format::Png | Format::WebP => Pixels::Eight(finish::finish_reaching(
             image,
             reach,
             sampled,
@@ -1055,16 +1062,43 @@ pub fn write(
             exif::write_rgb16_tiff(&mut cursor, w, h, p, icc.as_deref(), provenance.as_ref())
                 .context("writing the TIFF")?;
         }
+        // image-webp straight, not through the image crate, whose
+        // encoder takes no XMP: here the packet goes in as a chunk of
+        // its own, with the profile and the EXIF.
+        (Pixels::Eight(p), Format::WebP) => {
+            use image_webp::{ColorType, EncodingError, WebPEncoder};
+            // libwebp, which most readers are, takes no side over
+            // 16383 px; image-webp writes 16384. Refused as image-webp
+            // refuses a larger one, in its own words.
+            if w > WEBP_MAX_SIDE || h > WEBP_MAX_SIDE {
+                return Err(EncodingError::InvalidDimensions.into());
+            }
+            let mut enc = WebPEncoder::new(&mut bytes);
+            if let Some(icc) = icc {
+                enc.set_icc_profile(icc);
+            }
+            if let Some(exif) = payload {
+                enc.set_exif_metadata(exif);
+            }
+            if let Some(p) = &provenance {
+                enc.set_xmp_metadata(exif::xmp(p, None).into_bytes());
+            }
+            enc.encode(p, w, h, ColorType::Rgb8)?;
+        }
         _ => bail!("the pixels' depth is not the format's"),
     }
     if let Some(p) = &provenance
-        && settings.format != Format::Tiff
+        && matches!(settings.format, Format::Jpeg | Format::Png)
     {
         bytes = exif::with_xmp(bytes, p);
     }
     std::fs::write(path, &bytes).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
+
+/// The longest side a WebP export may have: libwebp's
+/// `WEBP_MAX_DIMENSION`.
+pub const WEBP_MAX_SIDE: u32 = 16383;
 
 /// The `Software` tag on what the editor writes.
 const SOFTWARE: &str = concat!("greycard ", env!("CARGO_PKG_VERSION"));
@@ -2080,6 +2114,122 @@ mod tests {
             };
             assert!(profile, "{what}");
         }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A WebP is lossless: every 8-bit value comes back as written,
+    /// beside the space's profile, the camera's EXIF, and the export's
+    /// XMP, whatever the space.
+    #[test]
+    fn a_webp_reads_back_exact_with_its_profile_and_metadata() {
+        let (w, h) = (37u32, 23u32);
+        let pixels: Vec<u8> = (0..w * h * 3)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let rendered = Rendered {
+            width: w,
+            height: h,
+            pixels: Pixels::Eight(pixels.clone()),
+        };
+        let metadata = RawMetadata {
+            exif: Default::default(),
+            model: "EOS R6m2".into(),
+            make: "Canon".into(),
+            lens: None,
+            unique_image_id: None,
+            rating: None,
+        };
+        let origin = Origin {
+            source_name: Some("IMG_0001.CR3".into()),
+            edit: None,
+        };
+        let dir = scratch("webp");
+        let carries = |bytes: &[u8], what: &[u8]| bytes.windows(what.len()).any(|w| w == what);
+        for space in Space::ALL {
+            let settings = Settings {
+                format: Format::WebP,
+                space,
+                ..Settings::default()
+            };
+            let path = dir.join(format!("{}.webp", space.name()));
+            write(&rendered, &settings, &path, Some(&metadata), &origin).unwrap();
+            let mut decoder = image::ImageReader::open(&path)
+                .unwrap()
+                .into_decoder()
+                .unwrap();
+            let icc = image::ImageDecoder::icc_profile(&mut decoder).unwrap();
+            assert_eq!(icc, Some(space.icc().unwrap()), "{}", space.name());
+            let exif = image::ImageDecoder::exif_metadata(&mut decoder)
+                .unwrap()
+                .expect("EXIF");
+            assert!(carries(&exif, b"EOS R6m2") && carries(&exif, SOFTWARE.as_bytes()));
+            let xmp = image::ImageDecoder::xmp_metadata(&mut decoder)
+                .unwrap()
+                .expect("XMP");
+            assert!(carries(&xmp, settings.describe().as_bytes()));
+            let back = image::open(&path).unwrap().into_rgb8();
+            assert_eq!(back.dimensions(), (w, h));
+            assert!(back.into_raw() == pixels, "{}", space.name());
+        }
+        // Without a source, nothing but the profile; without the
+        // profile, nothing at all.
+        let bare = Settings {
+            format: Format::WebP,
+            embed_profile: false,
+            ..Settings::default()
+        };
+        let path = dir.join("bare.webp");
+        write(&rendered, &bare, &path, None, &origin).unwrap();
+        let mut decoder = image::ImageReader::open(&path)
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        assert_eq!(
+            image::ImageDecoder::icc_profile(&mut decoder).unwrap(),
+            None
+        );
+        assert_eq!(
+            image::ImageDecoder::exif_metadata(&mut decoder).unwrap(),
+            None
+        );
+        assert_eq!(
+            image::ImageDecoder::xmp_metadata(&mut decoder).unwrap(),
+            None
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A side longer than WebP can hold is refused in the encoder's
+    /// words, and no file is left; the longest one that fits is written.
+    #[test]
+    fn a_webp_too_long_a_side_is_refused_and_writes_nothing() {
+        let dir = scratch("webp-limit");
+        let settings = Settings {
+            format: Format::WebP,
+            ..Settings::default()
+        };
+        let line = |w: u32, h: u32| Rendered {
+            width: w,
+            height: h,
+            pixels: Pixels::Eight(vec![128; (w * h * 3) as usize]),
+        };
+        for (w, h) in [(WEBP_MAX_SIDE + 1, 1), (1, WEBP_MAX_SIDE + 1)] {
+            let path = dir.join(format!("{w}x{h}.webp"));
+            let err = write(&line(w, h), &settings, &path, None, &Origin::default()).unwrap_err();
+            assert_eq!(format!("{err:#}"), "Invalid dimensions");
+            assert!(!path.exists());
+        }
+        let path = dir.join("fits.webp");
+        write(
+            &line(WEBP_MAX_SIDE, 1),
+            &settings,
+            &path,
+            None,
+            &Origin::default(),
+        )
+        .unwrap();
+        let back = image::open(&path).unwrap();
+        assert_eq!((back.width(), back.height()), (WEBP_MAX_SIDE, 1));
         crate::testing::remove_dir_retry(&dir);
     }
 
