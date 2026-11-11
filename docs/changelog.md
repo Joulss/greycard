@@ -3,6 +3,14 @@
 What's new in each version, newest first. Each item links to the
 design note behind it.
 
+## 0.12.0
+
+### The window
+
+- A French catalog brings photographic terms to the window, with
+  consistent wording for controls throughout the editor
+  ([§633](https://github.com/jessolmstead/greycard/blob/master/docs/notes/633-french-translation.md)).
+
 ## 0.11.0, 2026-11-09
 
 Handheld HDR and focus stacks, the demosaic on the GPU, the window
