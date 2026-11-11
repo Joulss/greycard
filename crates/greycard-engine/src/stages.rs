@@ -543,9 +543,30 @@ impl Stage {
     /// defringe symmetric in exact arithmetic, but a turn changes the
     /// order of their sums, so in floats neither is. A reduce drops
     /// the pixels past the last whole block, which a turn moves from
-    /// the right and the bottom to other edges.
+    /// the right and the bottom to other edges. Every stage is named,
+    /// so a new one is decided here and not taken to commute.
     pub fn commutes_with_turn(&self) -> bool {
-        !matches!(self, Stage::Lens(_) | Stage::Defringe(_) | Stage::Reduce(_))
+        match self {
+            Stage::Lens(_) | Stage::Defringe(_) | Stage::Reduce(_) => false,
+            Stage::Prepare(_)
+            | Stage::Ca(_)
+            | Stage::CaFit(_)
+            | Stage::CaApply(_)
+            | Stage::Demosaic(..)
+            | Stage::Bin(_)
+            | Stage::Learned(_)
+            | Stage::Denoise(_)
+            | Stage::Warp(_)
+            | Stage::IntoWorking { .. }
+            | Stage::Blend { .. }
+            | Stage::White { .. }
+            | Stage::Orient(_)
+            | Stage::Retouch(..)
+            | Stage::LocalContrast(_)
+            | Stage::Dehaze(_)
+            | Stage::Sharpen(..)
+            | Stage::Finish(_) => true,
+        }
     }
 
     /// The stage's name, for the log and for a skip.

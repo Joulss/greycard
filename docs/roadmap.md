@@ -21,21 +21,19 @@ the reasoning lives in `docs/notes.md`.
       (`RECONCILED`, matched by prefix and hashed into the state's
       id), so a reworded or translated label changes the merge across
       machines: a kind on the step instead (review, 2026-11-11)
-- [ ] `Stage::commutes_with_turn` is a negated `matches!`, so a new
-      stage commutes by default: an exhaustive match. And the resume
-      cache's kept picture is paired with its input by the caller's
-      convention alone (review, 2026-11-11)
+- [ ] The resume cache's kept picture is paired with its input by the
+      caller's convention alone: two burst frames with synced edits
+      have equal steps (review, 2026-11-11)
 - [ ] Packages ship no third-party notices: LICENSE and the README
       only, beside ONNX Runtime, Dawn, DXC, and several hundred
       crates; cargo-about and cargo-deny (review, 2026-11-11)
 - [ ] The 31 model URLs name `resolve/main`: the hash pin keeps them
       safe, but a re-upload breaks every shipped version; pin each to
       its commit (review, 2026-11-11)
-- [ ] CI and release hygiene: `contents: write` given to the whole
-      release workflow, clippy and test in CI without `--locked`, no
-      concurrency group, no checksums beside the release's files, and
-      split symbols kept for each release so a stripped build's
-      backtrace can be named (review, 2026-11-11)
+- [ ] Release hygiene: `contents: write` given to the whole release
+      workflow, no checksums beside the release's files, and split
+      symbols kept for each release so a stripped build's backtrace
+      can be named (review, 2026-11-11)
 - [ ] Tab bringing the panes back shows all three, a strip or a pane
       put away before with them: keep which were showing when Tab hid
       them and bring back those (discussion 59, 2026-11-10)

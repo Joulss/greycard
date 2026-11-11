@@ -30,6 +30,13 @@ on:
   schedule:
     - cron: '17 5 * * 1'
 
+# One run a branch or pull request: a newer push to a pull request
+# stops the run of the older one. A branch's own runs, the weekly
+# audit, and a release's call are never stopped, only kept apart.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -106,7 +113,7 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: ONNX Runtime library
         # The runtime greycard-ai loads at first use, made from pyke's
@@ -132,7 +139,7 @@ jobs:
           GREYCARD_REQUIRE_ORT: '1'
           GREYCARD_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
           WGPU_BACKEND: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
-        run: cargo test
+        run: cargo test --locked
 
   # The fuzz targets in fuzz/ still build against the crates they
   # read: a workspace of their own, which nothing above compiles, run
