@@ -357,14 +357,15 @@ Sync copies the open frame's edit onto the other selected frames.
 
 A **middle click** on the Sync button at the top of the develop panel
 syncs straight away, without the sheet, on the sections your last sync
-or paste took (every section but Masks before there was one).
+or paste took (every section but Masks before there was one). It
+always sets, never shifts (see [Set or shift](#set-or-shift)), so a
+second click changes nothing.
 
 A **middle click** on a frame in the filmstrip or the grid does the
 same from that frame, open or not: its edit goes onto the other
 selected frames, the open one included. A frame outside the selection
 goes onto the whole selection. The same frame stays open and the same
-frames stay selected. It always sets, never shifts (see
-[Set or shift](#set-or-shift)), so a second click changes nothing.
+frames stay selected.
 
 Every section starts checked except **Masks**, because masks are drawn
 around one picture's subject. The sheet lists what a preset's does: a
@@ -415,8 +416,8 @@ has moved nowhere, so with either of Temperature and Tint on Shift
 every frame's white balance stays as it is. If the open frame isn't a
 raw, or its raw doesn't record its white balance, Temperature and Tint
 are set instead, and the sheet says so. The choices are greyed while
-their section is unchecked, and greycard remembers them. A paste has
-no shift: it sets.
+their section is unchecked, and greycard remembers them. A paste and
+a middle click have no shift: they set.
 
 ### Copy and paste settings
 

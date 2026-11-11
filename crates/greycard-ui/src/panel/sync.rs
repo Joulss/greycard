@@ -746,8 +746,7 @@ impl Drop for Waiting {
 
 /// The checks a sync from frame `from` without the sheet takes: the
 /// last sync's or paste's over `from`'s masks, the sheet's defaults
-/// before there was one, as [`sync_ready`] readies the Sync button's
-/// middle click.
+/// before there was one.
 fn last_checks(st: &State, app: &App, from: usize) -> carry::Checks {
     let masks = carry::masks_of(&edit_shown(st, app, from));
     let mut checks = match &st.sheets.sync_last {
@@ -760,25 +759,24 @@ fn last_checks(st: &State, app: &App, from: usize) -> carry::Checks {
     checks
 }
 
-/// A middle click on frame `from` in the strip or the grid: the Sync
-/// button's middle click with that frame the source, open or not, onto
-/// [`frame_sync_targets`], on the last choice over its masks once its
-/// sidecar is in. The selection and the frame on screen stay. The
-/// guards are the button's: the queue's view, a tool in hand, no
-/// targets.
+/// A middle click's sync from frame `from`, without the sheet: a
+/// frame's in the strip or the grid, open or not, or the Sync button's
+/// from the open frame. Onto [`frame_sync_targets`], on the last
+/// choice over `from`'s masks once its sidecar is in. The selection
+/// and the frame on screen stay. The guards are the sheet's: the
+/// queue's view, a tool in hand, no targets.
 ///
-/// Unlike the button's, it always sets: the sheet's shifts are left
-/// out, so a second click on the same frame changes nothing, where a
-/// shift would move every target again. A click while the last one
-/// still waits on its reads is dropped.
-fn sync_from_frame(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, from: usize) {
+/// It always sets: the sheet's shifts are left out, so a second click
+/// changes nothing, where a shift would move every target again. A
+/// click while the last one still waits on its reads is dropped.
+fn sync_quick(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, from: usize) {
     let st = state.borrow();
     if crate::panel::queue_view::refused(&st, "a sync") {
         return;
     }
     let waiting = st.sheets.frame_sync_waiting.clone();
     if waiting.get() {
-        tracing::info!("sync from a clicked frame dropped: the last one is still waiting");
+        tracing::info!("a middle click's sync dropped: the last one is still waiting");
         return;
     }
     if tool_in_hand(app) {
@@ -795,7 +793,7 @@ fn sync_from_frame(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, from: usi
         .filter_map(|c| st.key_of(c))
         .collect();
     drop(st);
-    tracing::info!("sync from a clicked frame without the sheet, on the last choice");
+    tracing::info!("sync without the sheet, on the last choice, set");
     waiting.set(true);
     let held = Waiting(waiting);
     run_sync(
@@ -809,8 +807,8 @@ fn sync_from_frame(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, from: usi
     );
 }
 
-/// The frames a sync from frame `from`, clicked in the strip or the
-/// grid, goes onto: the selection less `from`, the frame on screen
+/// The frames a middle click's sync from frame `from` (clicked in the
+/// strip or the grid, or the open frame for the Sync button) goes onto: the selection less `from`, the frame on screen
 /// among them when `from` is another.
 pub(crate) fn frame_sync_targets(st: &State, from: usize) -> Vec<usize> {
     chosen_frames(st)
@@ -849,9 +847,9 @@ fn run_sync(
             let choice = match choice {
                 Some(choice) => choice,
                 None => {
-                    let mut st = state.borrow_mut();
+                    let st = state.borrow();
                     if !crate::rows::is_loaded(&st, from) {
-                        tracing::info!("sync from a clicked frame: its sidecar is not in");
+                        tracing::info!("sync without the sheet: its source's sidecar is not in");
                         crate::rows::say_offline_for(
                             &st,
                             app,
@@ -860,14 +858,13 @@ fn run_sync(
                         );
                         return;
                     }
-                    let checks = last_checks(&st, app, from);
-                    let choice = checks.choice();
+                    // The last choice is read, never written: only the
+                    // sheet's apply and a paste remember one.
+                    let choice = last_checks(&st, app, from).choice();
                     if choice.is_empty() {
                         app.set_status(tr!("choose what goes across").into());
                         return;
                     }
-                    // As the sheet's apply leaves it.
-                    st.sheets.sync_last = Some(checks);
                     choice
                 }
             };
@@ -1953,12 +1950,11 @@ fn lay_paste(
     synced
 }
 
-/// The sync sheet's ask, ready to apply: the frame and the targets it
-/// names, the source as it stands, and the checks: the sheet's
-/// defaults, or with `last` the choice the last sync or paste took
-/// (the defaults before there was one). False, with words on the
-/// status line where there are any, when there is nothing to sync.
-fn sync_ready(st: &mut State, app: &App, last: bool) -> bool {
+/// The sync sheet's ask, ready to open: the frame and the targets it
+/// names, the source as it stands, and the sheet's default checks.
+/// False, with words on the status line where there are any, when
+/// there is nothing to sync.
+fn sync_ready(st: &mut State, app: &App) -> bool {
     if crate::panel::queue_view::refused(st, "a sync") {
         return false;
     }
@@ -1984,10 +1980,7 @@ fn sync_ready(st: &mut State, app: &App, last: bool) -> bool {
     };
     st.sheets.sync_source = Some((shown.clone(), shot));
     let masks = carry::masks_of(&shown);
-    st.sheets.sync_checks = match &st.sheets.sync_last {
-        Some(kept) if last => kept.with_masks(masks),
-        _ => carry::Checks::new(masks, Section::syncs_by_default),
-    };
+    st.sheets.sync_checks = carry::Checks::new(masks, Section::syncs_by_default);
     if curveless(st.path_at(c).map(PathBuf::as_path)) {
         st.sheets
             .sync_checks
@@ -2087,7 +2080,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 return;
             };
             let mut st = state.borrow_mut();
-            if !sync_ready(&mut st, &app, false) {
+            if !sync_ready(&mut st, &app) {
                 return;
             }
             show_sync_checks(&mut st, &app);
@@ -2095,19 +2088,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             app.set_sync_open(true);
         });
     }
-    // A middle click on the panel's Sync button: the sheet's sync
-    // without the sheet, on the choice the last sync or paste took.
+    // A middle click on the panel's Sync button: the open frame's
+    // sync without the sheet, on the choice the last sync or paste
+    // took, set as a frame's middle click is.
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_sync_quick_asked(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            if !sync_ready(&mut state.borrow_mut(), &app, true) {
-                return;
+            let current = state.borrow().current;
+            if let Some(from) = current {
+                sync_quick(&state, &app, &worker, from);
             }
-            tracing::info!("sync without the sheet, on the last choice");
-            app.invoke_sync_applied();
         });
     }
     // A shift chosen or set back.
@@ -2270,7 +2263,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 .ok()
                 .and_then(|r| state.borrow().views.shown.get(r).copied());
             if let Some(from) = from {
-                sync_from_frame(&state, &app, &worker, from);
+                sync_quick(&state, &app, &worker, from);
             }
         });
     }
@@ -5939,6 +5932,47 @@ mod tests {
         drop(st);
         assert_eq!(app.get_exposure(), 1.0);
         assert_eq!(app.get_status(), "the other 2 frames had these already");
+    }
+
+    /// The Sync button's middle click sets as a frame's does, whatever
+    /// shift the sheet was left on: twice over, the target is the open
+    /// frame's value, one step, and the remembered choice and shift
+    /// are as they were. The sheet's own apply still shifts.
+    #[test]
+    fn the_buttons_middle_click_sets_and_the_sheet_still_shifts() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        last_is(&state, |s| s == Section::Light);
+        app.set_sync_shift_exposure(true);
+        own_edit(&state, 2, 0.5, 0.0);
+        app.invoke_select(0);
+        state.borrow_mut().views.picked = vec![0, 2];
+        app.set_exposure(1.0);
+        app.invoke_view_changed();
+        let last = state.borrow().sheets.sync_last.clone();
+        for _ in 0..2 {
+            app.invoke_sync_quick_asked();
+            crate::rows::land_pending(&state, &app, &worker);
+        }
+        {
+            let st = state.borrow();
+            assert_eq!(
+                st.sidecars[2].current.light.exposure, 1.0,
+                "set, not shifted"
+            );
+            assert_eq!(st.sidecars[2].history.len(), 2, "its own and one sync");
+            assert_eq!(st.sheets.sync_last, last, "the last choice unchanged");
+        }
+        assert!(app.get_sync_shift_exposure(), "the shift unchanged");
+        assert_eq!(app.get_status(), "the other 1 frame had these already");
+
+        // The sheet, Light shifted: the target moves by the open
+        // frame's +1 EV from its own value.
+        app.invoke_sync_open_asked();
+        choose(&app, |s| s == Section::Light);
+        app.invoke_sync_applied();
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(state.borrow().sidecars[2].current.light.exposure, 2.0);
     }
 
     /// A middle click onto the open frame with the crop up leaves the

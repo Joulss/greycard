@@ -46,6 +46,10 @@ design note behind it.
 
 ### Fixes
 
+- A middle click on the Sync button sets and never shifts, so a second
+  click changes nothing, and it no longer changes the choice the paste
+  sheet remembers
+  ([§630](https://github.com/jessolmstead/greycard/blob/master/docs/notes/630-the-sync-buttons-middle-click-sets.md)).
 - A frame with a brushed mask no longer keeps the window drawing, and
   the GPU busy, while nothing is happening (issue 122,
   [§628](https://github.com/jessolmstead/greycard/blob/master/docs/notes/628-an-idle-brush-mask-keeps-the-window-drawing.md)).
