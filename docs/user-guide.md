@@ -12,8 +12,9 @@ expect, please [report it](#reporting-a-problem).
 
 - **A GPU, for any speed.** Vulkan on Linux and Windows, Metal on a
   Mac. Without one, greycard still opens: it draws the window in
-  software, develops on the CPU, and says so in the status line. That
-  is slow (a 24 MP frame takes about 14 s on a 2012 quad-core). On a
+  software, develops on the CPU, and says so in the status line at the
+  start and once more after the first develop, and in the log. That is slow (a 24 MP frame takes
+  about 14 s on a 2012 quad-core). On a
   processor that old the AI features (the learned masks, the eraser,
   and the learned denoiser) also need a runtime greycard offers to
   download, and they are slower again

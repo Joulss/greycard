@@ -106,10 +106,11 @@ pub(crate) struct Develop {
     /// The viewport's adapter as the log names it, for a report; none
     /// until the rendering setup has run.
     pub(crate) gpu: Option<String>,
-    /// Where the window draws on a software adapter and the engine's
-    /// ops run on the CPU, the words every develop's line carries after
-    /// its time to say so (`adapter::Lines`).
-    pub(crate) software_tail: Option<String>,
+    /// Where the window draws on a software adapter, the start's line
+    /// saying so (`adapter::Lines::shown`), left for the run's first
+    /// develop to land on the status line once, since that develop's
+    /// "developing..." covers it at once.
+    pub(crate) start_note: Option<String>,
     /// The last scope bins: the histogram, the backdrop of the curve
     /// editor, and after it whatever `scope` asked for.
     pub(crate) bins: Option<Vec<u32>>,
@@ -342,8 +343,8 @@ pub(crate) struct Develop {
     pub(crate) preset_group_asked: Option<crate::panel::preset_list::GroupAsked>,
     /// A preset click's own words ("Muted Slide onto 3 frames"),
     /// waiting for the current frame's develop (its generation) to
-    /// land: the develop's own line would otherwise stand alone,
-    /// since it is set again once that develop is on screen.
+    /// land: its "developing..." would otherwise take them away, and
+    /// the landing puts them back.
     pub(crate) status_after_develop: Option<(u64, String)>,
     /// The hint the tool in hand put on the status line, which
     /// putting the tool down takes off while the line still says it.

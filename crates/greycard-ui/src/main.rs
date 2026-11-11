@@ -969,7 +969,7 @@ impl State {
                 zoom_back: None,
                 renderer: None,
                 gpu: None,
-                software_tail: None,
+                start_note: None,
                 bins: None,
                 scope: scope::Scope::default(),
                 curve_drag: None,

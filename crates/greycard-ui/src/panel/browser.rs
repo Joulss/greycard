@@ -3327,8 +3327,8 @@ fn meta_on(
         app.invoke_select(row as i32);
     }
     // Said after the selection moved on, so the open's own word does
-    // not cover it; and an open that asked for a develop carries it
-    // ahead of the develop's line when that lands.
+    // not cover it; and an open that asked for a develop has it put
+    // back when that lands, over its "developing...".
     if let Some(said) = said {
         let mut st = state.borrow_mut();
         if st.develop.generation != generation && st.culling.cull.is_none() {

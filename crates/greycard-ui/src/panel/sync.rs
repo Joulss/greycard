@@ -1465,10 +1465,9 @@ pub(crate) fn apply_preset_to(
         leave_cull(st, app, worker, None);
         app.set_status(said.into());
     } else {
-        // The develop sets its own "developing..." now and, once it
-        // lands, its own "WxH, developed in ...". Left here for that
-        // generation, `said` is the line the develop's own words are
-        // appended to (`Outcome::Developed` in `deliver.rs`), so it is
+        // The develop sets its own "developing..." now. Left here for
+        // that generation, `said` is the line the develop's landing
+        // puts back (`Outcome::Developed` in `deliver.rs`), so it is
         // not lost the moment the develop finishes.
         let before = st.develop.generation;
         take_current_with(st, app, worker, !current_written);
@@ -3559,17 +3558,13 @@ mod tests {
                 planes: None,
                 white: crate::worker::WhiteBase::IDENTITY,
                 seconds: 0.1,
-                detail: None,
                 sharpen: None,
-                dehaze: None,
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
                 fills: crate::worker::FillReport::default(),
             },
         );
-        let status = app.get_status();
-        assert!(status.starts_with(&format!("{said}; ")), "{status}");
-        assert!(status.ends_with("60x40, developed in 0.10 s"), "{status}");
+        assert_eq!(app.get_status(), said);
         assert!(
             state.borrow().develop.status_after_develop.is_none(),
             "taken"
@@ -3668,8 +3663,7 @@ mod tests {
 
     /// A preset click over a set whose current frame needs a real
     /// develop leaves its own words for that develop to carry: the
-    /// develop's own "WxH, developed in ..." does not stand alone the
-    /// moment it lands, the two status lines racing.
+    /// develop's "developing..." does not take them away for good.
     #[test]
     fn a_multi_frame_presets_words_ride_the_develop_that_lands() {
         let app = window(2);
@@ -3721,19 +3715,14 @@ mod tests {
                 planes: None,
                 white: crate::worker::WhiteBase::IDENTITY,
                 seconds: 0.42,
-                detail: None,
                 sharpen: None,
-                dehaze: None,
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
                 fills: crate::worker::FillReport::default(),
             },
         );
-        // The set's own words first, so they are not the ones a long
-        // develop line clips.
-        let status = app.get_status();
-        assert!(status.starts_with("Portra 400 onto 2 frames; "), "{status}");
-        assert!(status.ends_with("100x80, developed in 0.42 s"), "{status}");
+        // The set's words alone: the develop's own are the log's.
+        assert_eq!(app.get_status(), "Portra 400 onto 2 frames");
         assert!(
             state.borrow().develop.status_after_develop.is_none(),
             "taken"

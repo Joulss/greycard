@@ -640,3 +640,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§626. A middle click on a frame syncs from it](notes/626-a-middle-click-on-a-frame-syncs-from-it.md) (2026-11-10)
 - [§627. Undo takes back a mark out of Cull](notes/627-undo-takes-back-a-mark-out-of-cull.md) (2026-11-10)
 - [§628. An idle brush mask keeps the window drawing](notes/628-an-idle-brush-mask-keeps-the-window-drawing.md) (2026-11-11)
+- [§629. The develop summary leaves the window](notes/629-the-develop-summary-leaves-the-window.md) (2026-11-11)

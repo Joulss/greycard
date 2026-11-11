@@ -533,7 +533,7 @@ mod tests {
         );
     }
 
-    /// [`land`], with the develop's own word on its fills.
+    /// [`land`], with the develop's report on its fills.
     fn land_with(app: &App, state: &Rc<Shared>, fills: crate::worker::FillReport) {
         let generation = state.borrow().develop.generation;
         crate::panel::deliver::deliver(
@@ -553,9 +553,7 @@ mod tests {
                 planes: None,
                 white: crate::worker::WhiteBase::IDENTITY,
                 seconds: 0.1,
-                detail: None,
                 sharpen: None,
-                dehaze: None,
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
                 fills,

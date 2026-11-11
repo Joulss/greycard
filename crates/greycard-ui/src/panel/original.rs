@@ -368,7 +368,7 @@ mod tests {
             crate::panel::edit::show_edit(&st, &edit, &app, None);
             st.develop.edit = edit.clone();
         }
-        app.set_status("6000x4000, developed in 0.50 s".into());
+        app.set_status("Portra 400 onto 2 frames".into());
         (app, state, worker, edit)
     }
 
@@ -406,9 +406,7 @@ mod tests {
                 planes: None,
                 white,
                 seconds: 0.1,
-                detail: None,
                 sharpen: None,
-                dehaze: None,
                 sources: Vec::new(),
                 learned: crate::worker::LearnedReport::Off,
                 fills: crate::worker::FillReport {
@@ -454,7 +452,11 @@ mod tests {
         // Until its picture is up the edit's is drawn as it was.
         assert_eq!(drawn(&state, &app).light.exposure, 1.0);
         deliver(&app, asked);
-        assert_eq!(app.get_status(), word(), "the develop's line took over");
+        assert_eq!(
+            app.get_status(),
+            word(),
+            "the Original's word, once its develop lands"
+        );
         assert!(
             state.borrow().develop.pending.is_some(),
             "its picture goes up"
@@ -469,7 +471,7 @@ mod tests {
         press(&app, "\\");
         assert!(!app.get_original_on());
         assert!(!state.borrow().develop.original.on);
-        assert_eq!(app.get_status(), "6000x4000, developed in 0.50 s");
+        assert_eq!(app.get_status(), "Portra 400 onto 2 frames");
         assert_eq!(drawn(&state, &app).light.exposure, 1.0);
 
         // Any other key turns it back too.

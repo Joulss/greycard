@@ -1164,9 +1164,6 @@ clears or a tester asks for it.
       lossless only, so lossy wants libwebp (BSD, a C build) or a
       pure-Rust encoder found; lossless comes first (issue 121,
       2026-11-10)
-- [ ] The develop summary under the picture taken out of the window:
-      its sizes and section values are shown elsewhere, its timings
-      go to the log (discussion 117, 2026-11-10)
 - [ ] White balance, Light, Color, and Detail as one Basic panel with
       a subsection each, as Lightroom's; undecided, and it meets the
       section-order items above (discussion 118, 2026-11-10)

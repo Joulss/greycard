@@ -1429,9 +1429,10 @@ export component Viewport inherits Rectangle {
         }
     }
     // Status, bottom left, on a soft plate; a bar runs while
-    // a develop is on its way.
+    // a develop is on its way. Nothing to say, no plate.
     plate := Rectangle {
-        visible: !root.plate-hidden;
+        visible: !root.plate-hidden
+            && (status-text.text != "" || root.busy || root.filling || root.sync-note != "");
         x: Theme.space-3;
         y: parent.height - self.height - Theme.space-3;
         width: status-text.width + 2 * Theme.space-3 + (root.busy || root.filling ? 72px : 0)

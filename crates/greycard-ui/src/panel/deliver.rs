@@ -25,7 +25,7 @@ use crate::panel::startup::remember_last_file;
 use crate::panel::viewport::picking_hint;
 use crate::sheet::{self, ExportPreset, Sheet};
 use crate::worker::{
-    DetailRan, Developed, Job, LearnedReport, LensReport, Outcome, SourceKind, WhiteBase, Worker,
+    Developed, Job, LearnedReport, LensReport, Outcome, SourceKind, WhiteBase, Worker,
 };
 use crate::{
     App, STATE, Shared, State, WORKER, chooser, export, export_name, finish, grid, queue, settings,
@@ -84,7 +84,15 @@ pub(crate) fn show_making(app: &App, st: &mut State, making: crate::thumbpool::M
     if !now.is_empty() && ours.as_deref() != Some(now.as_str()) {
         return;
     }
-    let line = making_line(making);
+    // Never over the picture in Develop, whose line is clear after a
+    // develop: over the grid, culling, and the lightbox only. Its own
+    // word left there from the grid is taken off.
+    let develop_view = !app.get_grid_open() && !app.get_cull_mode() && !app.get_lightbox();
+    let line = if develop_view {
+        String::new()
+    } else {
+        making_line(making)
+    };
     app.set_status(line.as_str().into());
     st.views.making_said = (!line.is_empty()).then_some(line);
 }
@@ -639,9 +647,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             planes,
             white,
             seconds,
-            detail,
             sharpen,
-            dehaze,
             sources,
             learned,
             fills,
@@ -664,23 +670,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if !original {
                 crate::edited::landed(&st, turn);
             }
-            let detailed = match detail {
-                Some((s, ran)) => {
-                    let how = match ran {
-                        // The develop's line in the status: how the local contrast ran
-                        DetailRan::Cpu(secs) => tr!("in {secs} s", secs = format!("{secs:.2}")),
-                        DetailRan::Gpu => tr!("on the GPU"),
-                        DetailRan::Kept => tr!("kept"),
-                    };
-                    tr!(
-                        ", local contrast at {texture} and {clarity} px {how}",
-                        texture = s.texture_radius,
-                        clarity = s.clarity_radius,
-                        how = how
-                    )
-                }
-                None => String::new(),
-            };
             // Sources the engine chose go into the edit, and into the
             // sidecar's states in place: they finish a step, they are
             // not one.
@@ -698,26 +687,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if st.develop.zoom == 0.0 || st.develop.source_size != (image.width(), image.height()) {
                 st.develop.image_size = (0, 0);
             }
-            let dehazed = match dehaze {
-                Some(d) => tr!(
-                    ", dehazed {amount} to a mean transmission of {mean}",
-                    amount = format!("{:+.0}", d.amount * 100.0),
-                    mean = format!("{:.2}", d.transmission_mean)
-                ),
-                None => String::new(),
-            };
-            let sharpened = match sharpen.filter(|_| !original) {
-                Some(s) => {
-                    app.set_sharpen_measured_radius(s.radius);
-                    app.set_sharpen_measured_threshold(s.threshold);
-                    tr!(
-                        ", sharpened at radius {radius} over {share}% of it",
-                        radius = format!("{:.2}", s.radius),
-                        share = format!("{:.0}", s.blend_mean * 100.0)
-                    )
-                }
-                None => String::new(),
-            };
+            // The sharpen's measure, for its section. The develop's own
+            // facts (size, time, radii, coverage) go to the log only.
+            if let Some(s) = sharpen.filter(|_| !original) {
+                app.set_sharpen_measured_radius(s.radius);
+                app.set_sharpen_measured_threshold(s.threshold);
+            }
+            // What the edit went without: the only words a develop's
+            // landing has of its own for the status line.
+            let mut without: Vec<String> = Vec::new();
             // The learned denoiser or a fill failed where the AI
             // features are off until the CPU-only runtime is fetched
             // (their models are not even asked for there): the runtime
@@ -748,22 +726,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 };
                 crate::panel::assets::runtime_first(&mut st, app, next);
             }
-            let learned_note = match learned {
-                LearnedReport::Off | LearnedReport::Kept => String::new(),
-                LearnedReport::Ran {
-                    version,
-                    provider,
-                    seconds,
-                } => tr!(
-                    ", learned denoiser {version} on {provider} in {seconds} s",
-                    version = version,
-                    provider = provider,
-                    seconds = format!("{seconds:.1}")
-                ),
-                LearnedReport::Cached { seconds } => tr!(
-                    ", learned denoiser from the cache in {seconds} s",
-                    seconds = format!("{seconds:.1}")
-                ),
+            match learned {
+                LearnedReport::Off
+                | LearnedReport::Kept
+                | LearnedReport::Ran { .. }
+                | LearnedReport::Cached { .. } => {}
                 LearnedReport::Missing(model) => {
                     if st.sheets.fetch.is_none()
                         && !st.sheets.fetching
@@ -771,33 +738,26 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     {
                         offer_model(&mut st, app, model, false);
                     }
-                    tr!(", the engine's denoise until the model is fetched")
+                    without.push(tr!("the engine's denoise until the model is fetched"));
                 }
                 LearnedReport::Failed(message) => {
                     tracing::warn!("learned denoiser failed: {message}; the engine's denoise");
-                    tr!(
-                        ", the engine's denoise: the learned one failed ({message})",
+                    without.push(tr!(
+                        "the engine's denoise: the learned one failed ({message})",
                         message = message
-                    )
+                    ));
                 }
-                LearnedReport::Unavailable(why) => tr!(", no denoise: {why}", why = why),
-            };
-            // The fills: made, or left as they were and why. A missing
-            // model is offered, as the denoiser's is.
-            let mut fill_note = String::new();
-            if !fills.made.is_empty() {
-                fill_note.push_str(&tr!(
-                    ", {names} filled by the model in {seconds} s",
-                    names = listed(&fills.made),
-                    seconds = format!("{:.1}", fills.seconds)
-                ));
+                LearnedReport::Unavailable(why) => {
+                    without.push(tr!("no denoise: {why}", why = why));
+                }
             }
+            // The fills left as they were, and why. A missing model is
+            // offered, as the denoiser's is.
             if !fills.missing.is_empty() {
                 let names: Vec<String> = fills.missing.iter().map(|(n, _)| n.clone()).collect();
-                fill_note.push_str(&tr!(
-                    ", {names} left as it was until the fill model is fetched"
-                        | ", {names} left as they were until the fill model is fetched"
-                            % names.len(),
+                without.push(tr!(
+                    "{names} left as it was until the fill model is fetched"
+                        | "{names} left as they were until the fill model is fetched" % names.len(),
                     names = listed(&names)
                 ));
                 // The first model waited on that can be had here: the
@@ -824,58 +784,53 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
             }
             for name in &fills.no_gpu {
-                fill_note.push_str(&tr!(
-                    ", {name} left as it was: the remove needs a GPU",
+                without.push(tr!(
+                    "{name} left as it was: the remove needs a GPU",
                     name = name
                 ));
             }
             for (name, why) in &fills.failed {
                 tracing::warn!("fill {name} failed: {why}");
-                fill_note.push_str(&tr!(
-                    ", {name} left as it was: the fill model failed ({why})",
+                without.push(tr!(
+                    "{name} left as it was: the fill model failed ({why})",
                     name = name,
                     why = why
                 ));
             }
             // A preset or a sync's own words ("Muted Slide onto 3
             // frames"), left here for the develop this generation is,
-            // so the develop's line does not stand alone as the only
-            // word on what changed. `take_if` leaves a stash whose
-            // generation does not match in place rather than clearing
-            // it, but that never misfires: generations only rise, so
-            // a stash an earlier develop's landing did not want is
-            // for a generation this one will never equal either, and
-            // `take_current` clears it outright once a newer develop
-            // is asked for, before it can sit and wait for one.
-            let prefix = st
+            // so its "developing..." does not take them away for good.
+            // `take_if` leaves a stash whose generation does not match
+            // in place rather than clearing it, but that never
+            // misfires: generations only rise, so a stash an earlier
+            // develop's landing did not want is for a generation this
+            // one will never equal either, and `take_current` clears
+            // it outright once a newer develop is asked for, before it
+            // can sit and wait for one.
+            let said = st
                 .develop
                 .status_after_develop
                 .take_if(|(g, _)| *g == generation)
-                .map(|(_, s)| format!("{s}; "))
-                .unwrap_or_default();
+                .map(|(_, s)| s);
             // A dropper in hand keeps its hint: the defringe's arms
             // itself by asking for a develop, and the instructions
             // must not be what that develop takes away.
             let picking = app.get_picking();
             if picking.is_empty() {
-                // With no GPU, why the time is what it is: the start's
-                // own line saying so is gone by now.
-                let on_cpu = st.develop.software_tail.as_deref().unwrap_or_default();
-                // The set's own words first: the develop's line runs
-                // long with a note or two of its own, and the set's
-                // is the one a snapshot's width must not clip.
-                let developed = tr!(
-                    "{width}x{height}, developed in {seconds} s",
-                    width = image.width(),
-                    height = image.height(),
-                    seconds = format!("{seconds:.2}")
-                );
-                app.set_status(
-                    format!(
-                        "{prefix}{developed}{on_cpu}{detailed}{dehazed}{sharpened}{learned_note}{fill_note}"
-                    )
-                    .into(),
-                );
+                // The set's own words first, then the start's note
+                // that the window draws in software (the run's first
+                // landing only), then what the edit went without;
+                // none of these, an empty line. The develop's size,
+                // time, and values are the log's (the worker's
+                // "developed WxH: ..." line).
+                let start = if original {
+                    None
+                } else {
+                    st.develop.start_note.take()
+                };
+                let without = (!without.is_empty()).then(|| without.join(", "));
+                let status: Vec<String> = said.into_iter().chain(start).chain(without).collect();
+                app.set_status(status.join("; ").into());
             } else {
                 show_hint(app, &mut st, &picking_hint(picking.as_str()));
             }
@@ -2606,6 +2561,7 @@ mod tests {
         let mut st = State::empty(Vec::new(), &app);
         use crate::thumbpool::Making;
         app.set_status("".into());
+        app.set_grid_open(true);
         show_making(&app, &mut st, Making::Uncounted);
         assert_eq!(app.get_status(), "making pictures...");
         show_making(&app, &mut st, Making::Left(12));
@@ -2620,6 +2576,85 @@ mod tests {
         assert_eq!(app.get_status(), "saved the filter as Dusk");
         show_making(&app, &mut st, Making::Over);
         assert_eq!(app.get_status(), "saved the filter as Dusk");
+    }
+
+    /// What the edit went without is still said once a develop lands:
+    /// the engine's denoise standing in for a model not fetched, and a
+    /// fill left as it was without a GPU, joined.
+    #[test]
+    fn what_the_edit_went_without_reaches_the_status_line() {
+        use crate::testing::{folder, land_develop, state_for, window};
+        use crate::worker::FillReport;
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        // Declined: the sheet that offers the model stays down.
+        state
+            .borrow_mut()
+            .sheets
+            .declined
+            .push(greycard_ai::DENOISE_BALANCED.id);
+        let status = land_develop(
+            &app,
+            &state,
+            LearnedReport::Missing(&greycard_ai::DENOISE_BALANCED),
+            FillReport {
+                no_gpu: vec!["Fill 2".into()],
+                ..FillReport::default()
+            },
+        );
+        assert_eq!(
+            status,
+            "the engine's denoise until the model is fetched, \
+             Fill 2 left as it was: the remove needs a GPU"
+        );
+        // Nothing to say on the next: an empty line.
+        let status = land_develop(&app, &state, LearnedReport::Off, FillReport::default());
+        assert_eq!(status, "");
+    }
+
+    /// An action's own words left for the develop come first, and what
+    /// the edit went without after them.
+    #[test]
+    fn an_actions_words_and_a_warning_are_joined() {
+        use crate::testing::{folder, land_develop, state_for, window};
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.status_after_develop =
+                Some((st.develop.generation, "Portra 400 onto 2 frames".into()));
+        }
+        let status = land_develop(
+            &app,
+            &state,
+            LearnedReport::Unavailable("no version for it"),
+            crate::worker::FillReport::default(),
+        );
+        assert_eq!(
+            status,
+            "Portra 400 onto 2 frames; no denoise: no version for it"
+        );
+    }
+
+    /// In Develop the making stays off the picture's empty line, and
+    /// its own word left from the grid comes off.
+    #[test]
+    fn the_making_is_not_said_over_the_picture_in_develop() {
+        let app = crate::testing::window(0);
+        let mut st = State::empty(Vec::new(), &app);
+        use crate::thumbpool::Making;
+        app.set_status("".into());
+        app.set_grid_open(true);
+        show_making(&app, &mut st, Making::Left(12));
+        assert_eq!(app.get_status(), "making 12 pictures...");
+        app.set_grid_open(false);
+        show_making(&app, &mut st, Making::Left(11));
+        assert_eq!(app.get_status(), "");
+        show_making(&app, &mut st, Making::Left(10));
+        assert_eq!(app.get_status(), "");
+        app.set_grid_open(true);
+        show_making(&app, &mut st, Making::Left(9));
+        assert_eq!(app.get_status(), "making 9 pictures...");
     }
 
     /// The fill model's word on the status line: the patch alone when

@@ -169,6 +169,39 @@ pub(crate) fn state_with(
     state
 }
 
+/// The current generation's develop landed, a 60x40 picture with
+/// `learned` and `fills` its reports, and the status line it leaves.
+pub(crate) fn land_develop(
+    app: &App,
+    state: &Shared,
+    learned: crate::worker::LearnedReport,
+    fills: crate::worker::FillReport,
+) -> String {
+    let generation = state.borrow().develop.generation;
+    crate::panel::deliver::deliver(
+        app,
+        crate::worker::Outcome::Developed {
+            generation,
+            turn: 0,
+            kind: crate::finish::Source::SCENE,
+            image: crate::worker::Developed::Halves(std::sync::Arc::new(crate::worker::Halves {
+                width: 60,
+                height: 40,
+                pixels: Vec::new(),
+            })),
+            guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+            planes: None,
+            white: crate::worker::WhiteBase::IDENTITY,
+            seconds: 13.7,
+            sharpen: None,
+            sources: Vec::new(),
+            learned,
+            fills,
+        },
+    );
+    app.get_status().to_string()
+}
+
 /// A file-less state and a no-op worker: enough to drive the retouch
 /// callbacks without a picture open.
 pub(crate) fn retouch_state(app: &App) -> (Rc<Shared>, Rc<Worker>) {

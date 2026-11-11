@@ -737,8 +737,9 @@ fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, done: Done) {
         Lands::Over { old } => {
             let mut st = state.borrow_mut();
             let reopened = swapped(&mut st, app, worker, &made, old);
-            // The reopen's develop says its own line, and in culling
-            // the loupe's: this one goes before it.
+            // The reopen's develop covers the line with its
+            // "developing...", and in culling the loupe's: this one is
+            // put back once it lands.
             if reopened {
                 st.develop.status_after_develop = Some((st.develop.generation, said.clone()));
             } else if let Some(c) = st.current
@@ -1889,13 +1890,9 @@ mod tests {
         assert!(r.state.borrow().develop.generation > generation);
         r.opened();
         assert!(r.app.get_merge_again_shown());
-        let status = r.app.get_status();
-        assert!(
-            status.starts_with("merged 3 frames into IMG_0-HDR.dng; ")
-                && status.contains("developed in")
-                && !status.contains("denoise"),
-            "{status}"
-        );
+        // The merge's words, put back by the develop that landed, and
+        // no word of a denoise the recipe left off.
+        assert_eq!(r.app.get_status(), "merged 3 frames into IMG_0-HDR.dng");
         assert_eq!(r.app.get_merge_again_tier(), "balanced", "the recipe's");
         assert_eq!(
             Sidecar::load(&r.out)

@@ -91,16 +91,13 @@ pub(crate) enum Drawing {
 }
 
 /// What the status line says at the start where the window draws in
-/// software, and what every develop's line carries after its time.
+/// software.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Lines {
     /// The start's line in English, for the log.
     pub(crate) start: String,
     /// The start's line in the window's language.
     pub(crate) shown: String,
-    /// The words every develop's line carries after its time, in the
-    /// window's language.
-    pub(crate) tail: String,
 }
 
 impl Drawing {
@@ -132,7 +129,6 @@ impl Drawing {
                      developing on the CPU, which is slow",
                     api = tr_api()
                 ),
-                tail: tr!(" on the CPU, no usable GPU"),
             }
         } else {
             Lines {
@@ -143,7 +139,6 @@ impl Drawing {
                     "drawing in software on {name} and developing on the CPU, which is slow",
                     name = name
                 ),
-                tail: tr!(" on the CPU, drawing in software"),
             }
         })
     }
@@ -256,16 +251,16 @@ pub(crate) fn scrub(command: &mut std::process::Command) -> &mut std::process::C
 }
 
 /// Once the window's device is made: the lines where it draws in
-/// software, kept for the develop's line and said in the status line,
-/// and in the log with the adapter's own line, `gpu`.
+/// software, said in the status line and again once the run's first
+/// develop lands, and in the log with the adapter's own line, `gpu`.
 pub(crate) fn show(app: &App, st: &mut State, lines: Option<Lines>, gpu: &str) {
-    st.develop.software_tail = lines.as_ref().map(|l| l.tail.clone());
     if let Some(lines) = lines {
         tracing::warn!(
             "{} (engine ops on the CPU, the window on {gpu})",
             lines.start
         );
-        app.set_status(lines.shown.into());
+        app.set_status(lines.shown.as_str().into());
+        st.develop.start_note = Some(lines.shown);
     }
 }
 
@@ -304,7 +299,6 @@ mod tests {
                 .starts_with("no GPU greycard can draw on through "),
             "{lines:?}"
         );
-        assert_eq!(lines.tail, " on the CPU, no usable GPU");
     }
 
     /// A GPU there, and the window given a software adapter all the
@@ -319,7 +313,6 @@ mod tests {
             "drawing in software on llvmpipe and developing on the CPU, which is slow"
         );
         assert!(!lines.start.contains("no GPU"), "{lines:?}");
-        assert!(!lines.tail.contains("GPU"), "{lines:?}");
     }
 
     #[test]
@@ -412,39 +405,21 @@ mod tests {
         assert!(asked_in(env(&[SLINT_WGPU_CPU, OURS, WGPU_ADAPTER_NAME])));
     }
 
-    /// A develop landed, its line as the status line shows it.
+    /// A develop landed with nothing to report, the status line it
+    /// leaves.
     fn develop_line(app: &App, state: &crate::Shared) -> String {
-        let generation = state.borrow().develop.generation;
-        crate::panel::deliver::deliver(
+        crate::testing::land_develop(
             app,
-            crate::worker::Outcome::Developed {
-                generation,
-                turn: 0,
-                kind: crate::finish::Source::SCENE,
-                image: crate::worker::Developed::Halves(std::sync::Arc::new(
-                    crate::worker::Halves {
-                        width: 60,
-                        height: 40,
-                        pixels: Vec::new(),
-                    },
-                )),
-                guide: std::sync::Arc::new(crate::finish::Guide::NONE),
-                planes: None,
-                white: crate::worker::WhiteBase::IDENTITY,
-                seconds: 13.7,
-                detail: None,
-                sharpen: None,
-                dehaze: None,
-                sources: Vec::new(),
-                learned: crate::worker::LearnedReport::Off,
-                fills: crate::worker::FillReport::default(),
-            },
-        );
-        app.get_status().to_string()
+            state,
+            crate::worker::LearnedReport::Off,
+            crate::worker::FillReport::default(),
+        )
     }
 
-    /// In software the status line says so at the start, and every
-    /// develop's line after says where the time went.
+    /// In software the status line says so at the start, and again
+    /// once the run's first develop lands, the "developing..." of the
+    /// first file to open having covered it; after that a develop's
+    /// landing says nothing of its own, its time the log's.
     #[test]
     fn the_status_line_says_where_the_window_draws_in_software() {
         use crate::testing::{folder, state_for, window};
@@ -458,14 +433,15 @@ mod tests {
             lines.clone(),
             "llvmpipe (Vulkan, Cpu)",
         );
-        assert_eq!(app.get_status(), lines.unwrap().start);
-        assert_eq!(
-            develop_line(&app, &state),
-            "60x40, developed in 13.70 s on the CPU, no usable GPU"
-        );
+        let start = lines.unwrap().start;
+        assert_eq!(app.get_status(), start);
+        app.set_status("developing...".into());
+        assert_eq!(develop_line(&app, &state), start, "the first develop");
+        assert_eq!(develop_line(&app, &state), "", "the second");
     }
 
-    /// On a GPU nothing is said, and the develop's line is as it was.
+    /// On a GPU nothing is said, and a develop's landing leaves the
+    /// line empty.
     #[test]
     fn on_a_gpu_the_status_line_is_left_alone() {
         use crate::testing::{folder, state_for, window};
@@ -479,6 +455,6 @@ mod tests {
             "a GPU (Vulkan, DiscreteGpu)",
         );
         assert_eq!(app.get_status(), "as it was");
-        assert_eq!(develop_line(&app, &state), "60x40, developed in 13.70 s");
+        assert_eq!(develop_line(&app, &state), "");
     }
 }

@@ -419,11 +419,15 @@ pub enum Outcome {
         seconds: f64,
         /// What the local contrast did, when it ran, and where: on
         /// the CPU in so many seconds, on the GPU, or kept from the
-        /// last develop.
+        /// last develop. For the tests: the log says it otherwise.
+        #[cfg(test)]
         detail: Option<(LocalContrastStats, DetailRan)>,
-        /// What the sharpen did, when it ran.
+        /// What the sharpen did, when it ran: its measure, for the
+        /// sharpen section.
         sharpen: Option<SharpenStats>,
-        /// What the dehaze did, when it ran.
+        /// What the dehaze did, when it ran. For the tests, as
+        /// `detail` is.
+        #[cfg(test)]
         dehaze: Option<DehazeStats>,
         /// The patches that had no source and were given one here,
         /// each whole, as developed, with the source the engine chose.

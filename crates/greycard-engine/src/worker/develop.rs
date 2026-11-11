@@ -368,6 +368,7 @@ pub(super) fn develop_round(
         detail: detail_ran,
         dehazed: walked.dehaze.and(dehaze_ran),
         sharpened,
+        stats: (walked.detail, walked.dehaze, walked.sharpen),
         card_free,
         total: seconds,
     });
@@ -380,8 +381,10 @@ pub(super) fn develop_round(
         planes: h.planes.clone(),
         white: h.white(),
         seconds,
+        #[cfg(test)]
         detail: walked.detail.zip(detail_ran),
         sharpen: walked.sharpen,
+        #[cfg(test)]
         dehaze: walked.dehaze,
         sources: walked.sources,
         learned,
@@ -522,6 +525,12 @@ struct DevelopLog<'a> {
     detail: Option<DetailRan>,
     dehazed: Option<DehazeRan>,
     sharpened: Option<Sharpened>,
+    /// What the local contrast, the dehaze, and the sharpen measured.
+    stats: (
+        Option<LocalContrastStats>,
+        Option<DehazeStats>,
+        Option<SharpenStats>,
+    ),
     /// The card's free memory before the develop and after, bytes, when
     /// it ran on the device and the card says.
     card_free: Option<(u64, u64)>,
@@ -552,23 +561,37 @@ pub(super) fn learned_part(learned: &LearnedReport) -> Option<String> {
         LearnedReport::Kept => "denoiser kept".into(),
         LearnedReport::Missing(_) => "denoiser missing".into(),
         LearnedReport::Failed(_) => "denoiser failed".into(),
-        LearnedReport::Unavailable(_) => "no learned denoiser for this mosaic".into(),
+        LearnedReport::Unavailable(why) => format!("no learned denoiser: {why}"),
     })
 }
 
-/// The fills' parts of a develop's line: those made and their
-/// seconds, and those whose model is missing.
+/// The fills' parts of a develop's line: those made, by name, and
+/// their seconds, those whose model is missing, and those that wait
+/// on a GPU.
 pub(super) fn fill_parts(fills: &FillReport) -> Vec<String> {
     let mut parts = Vec::new();
     if !fills.made.is_empty() {
         parts.push(format!(
-            "{} fill(s) {:.2} s",
+            "{} fill(s) {:.2} s ({})",
             fills.made.len(),
-            fills.seconds
+            fills.seconds,
+            fills.made.join(", ")
         ));
     }
     if !fills.missing.is_empty() {
-        parts.push(format!("{} fill(s) missing", fills.missing.len()));
+        let names: Vec<&str> = fills.missing.iter().map(|(n, _)| n.as_str()).collect();
+        parts.push(format!(
+            "{} fill(s) missing ({})",
+            fills.missing.len(),
+            names.join(", ")
+        ));
+    }
+    if !fills.no_gpu.is_empty() {
+        parts.push(format!(
+            "{} fill(s) need a GPU ({})",
+            fills.no_gpu.len(),
+            fills.no_gpu.join(", ")
+        ));
     }
     if !fills.pending.is_empty() {
         parts.push(format!("{} fill(s) to make after", fills.pending.len()));
@@ -600,9 +623,11 @@ fn developed_line(log: &DevelopLog<'_>) -> String {
         detail,
         dehazed,
         sharpened,
+        stats,
         card_free,
         total,
     } = log;
+    let (contrast, dehaze, sharpen) = stats;
     let mut parts: Vec<String> = Vec::new();
     parts.push(
         match from {
@@ -622,19 +647,49 @@ fn developed_line(log: &DevelopLog<'_>) -> String {
         parts.push(format!("{name} {s:.2} s"));
     }
     parts.extend(fill_parts(fills));
+    // Each op after the base with what it measured, where known: the
+    // radii, the transmission, and the sharpen's radius and coverage.
+    let lc = contrast
+        .map(|s| {
+            format!(
+                "local contrast at {} and {} px",
+                s.texture_radius, s.clarity_radius
+            )
+        })
+        .unwrap_or_else(|| "local contrast".into());
     match detail {
-        Some(DetailRan::Gpu) => parts.push("local contrast on the GPU".into()),
-        Some(DetailRan::Cpu(s)) => parts.push(format!("local contrast {s:.2} s")),
+        Some(DetailRan::Gpu) => parts.push(format!("{lc} on the GPU")),
+        Some(DetailRan::Cpu(s)) => parts.push(format!("{lc} {s:.2} s")),
+        Some(DetailRan::Kept) if contrast.is_some() => parts.push(format!("{lc} kept")),
         Some(DetailRan::Kept) | None => {}
     }
+    let dh = dehaze
+        .map(|d| {
+            format!(
+                "dehaze {:+.0} to a mean transmission of {:.2}",
+                d.amount * 100.0,
+                d.transmission_mean
+            )
+        })
+        .unwrap_or_else(|| "dehaze".into());
     match dehazed {
-        Some(DehazeRan::Gpu) => parts.push("dehaze on the GPU".into()),
-        Some(DehazeRan::Cpu) => parts.push("dehaze".into()),
+        Some(DehazeRan::Gpu) => parts.push(format!("{dh} on the GPU")),
+        Some(DehazeRan::Cpu) => parts.push(dh),
+        Some(DehazeRan::Kept) if dehaze.is_some() => parts.push(format!("{dh} kept")),
         Some(DehazeRan::Kept) | None => {}
     }
+    let sh = sharpen
+        .map(|s| {
+            format!(
+                "sharpen at radius {:.2} over {:.0}%",
+                s.radius,
+                s.blend_mean * 100.0
+            )
+        })
+        .unwrap_or_else(|| "sharpen".into());
     match sharpened {
-        Some(Sharpened::Cpu) => parts.push("sharpen".into()),
-        Some(Sharpened::Gpu) => parts.push("sharpen on the GPU".into()),
+        Some(Sharpened::Cpu) => parts.push(sh),
+        Some(Sharpened::Gpu) => parts.push(format!("{sh} on the GPU")),
         None => {}
     }
     if let Some((before, after)) = card_free {
@@ -704,6 +759,7 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            stats: (None, None, None),
             card_free: None,
             total: 2.5,
         });
@@ -725,6 +781,7 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            stats: (None, None, None),
             card_free: None,
             total: 0.4,
         });
@@ -745,6 +802,7 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            stats: (None, None, None),
             card_free: Some((9 << 29, 3 << 30)),
             total: 0.4,
         });
@@ -772,6 +830,7 @@ mod tests {
             detail: None,
             dehazed: None,
             sharpened: Some(Sharpened::Gpu),
+            stats: (None, None, None),
             card_free: None,
             total: 0.9,
         });
@@ -792,12 +851,96 @@ mod tests {
             detail: Some(DetailRan::Cpu(0.5)),
             dehazed: Some(DehazeRan::Cpu),
             sharpened: Some(Sharpened::Cpu),
+            stats: (None, None, None),
             card_free: None,
             total: 0.75,
         });
         assert_eq!(
             line,
             "developed 300x200: base kept, local contrast 0.50 s, dehaze, sharpen, total 0.75 s"
+        );
+    }
+
+    /// What the window's status line once said after a develop is the
+    /// log's: the radii, the dehaze's transmission, the sharpen's
+    /// radius and coverage, why the learned denoiser stood down, and
+    /// each fill by name.
+    #[test]
+    fn the_develop_s_line_carries_what_the_ops_measured() {
+        let fills = FillReport {
+            made: vec!["Fill 1".into()],
+            seconds: 1.5,
+            no_gpu: vec!["Fill 2".into()],
+            ..FillReport::default()
+        };
+        let stats = (
+            Some(LocalContrastStats {
+                texture_radius: 3,
+                clarity_radius: 139,
+                structure_radius: 400,
+            }),
+            Some(DehazeStats {
+                airlight: [1.0; 3],
+                amount: 0.28,
+                strength: 0.0,
+                factor: 4,
+                transmission_mean: 0.95,
+                transmission_min: 0.5,
+            }),
+            Some(SharpenStats {
+                radius: 0.77,
+                threshold: 0.0,
+                blend_mean: 0.48,
+                clipped: 0.0,
+                iterations: 10,
+            }),
+        );
+        let line = developed_line(&DevelopLog {
+            width: 5568,
+            height: 3712,
+            from: BaseFrom::Kept,
+            ca: None,
+            learned: &LearnedReport::Unavailable("no version for it"),
+            fills: &fills,
+            stages: &Stages::new(),
+            detail: Some(DetailRan::Gpu),
+            dehazed: Some(DehazeRan::Kept),
+            sharpened: Some(Sharpened::Gpu),
+            stats,
+            card_free: None,
+            total: 1.18,
+        });
+        assert_eq!(
+            line,
+            "developed 5568x3712: base kept, no learned denoiser: no version for it, \
+             1 fill(s) 1.50 s (Fill 1), 1 fill(s) need a GPU (Fill 2), \
+             local contrast at 3 and 139 px on the GPU, \
+             dehaze +28 to a mean transmission of 0.95 kept, \
+             sharpen at radius 0.77 over 48% on the GPU, total 1.18 s"
+        );
+
+        // On the CPU: the local contrast with its seconds, the dehaze
+        // and the sharpen with no place named.
+        let line = developed_line(&DevelopLog {
+            width: 300,
+            height: 200,
+            from: BaseFrom::Kept,
+            ca: None,
+            learned: &LearnedReport::Off,
+            fills: &FillReport::default(),
+            stages: &Stages::new(),
+            detail: Some(DetailRan::Cpu(0.5)),
+            dehazed: Some(DehazeRan::Cpu),
+            sharpened: Some(Sharpened::Cpu),
+            stats,
+            card_free: None,
+            total: 0.75,
+        });
+        assert_eq!(
+            line,
+            "developed 300x200: base kept, local contrast at 3 and 139 px 0.50 s, \
+             dehaze +28 to a mean transmission of 0.95, \
+             sharpen at radius 0.77 over 48%, total 0.75 s"
         );
     }
 }

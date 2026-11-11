@@ -14,6 +14,11 @@ design note behind it.
 
 ### Window
 
+- The line over the foot of the picture no longer lists the frame's
+  size, the develop's time, and what each tool measured after every
+  develop; that is in the log. It still says what an edit went
+  without, such as a model not yet fetched (discussion 117,
+  [§629](https://github.com/jessolmstead/greycard/blob/master/docs/notes/629-the-develop-summary-leaves-the-window.md)).
 - The window opens as it was closed: its size, whether it was
   maximized, and, except on Wayland, its place. A window closed on a
   monitor since unplugged opens on one that is there (issue 114,

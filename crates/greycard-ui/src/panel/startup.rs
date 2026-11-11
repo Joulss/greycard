@@ -1058,7 +1058,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         // the ops' shaders there take minutes a frame
                         // where their CPU paths take seconds: the ops
                         // go to the CPU, and the status line says so
-                        // before the first develop's line takes over.
+                        // at the start and once the first develop lands.
                         let in_software = drawing.in_software(info.device_type);
                         // Before the worker has the device: from then
                         // on a resize can race its submits, which
