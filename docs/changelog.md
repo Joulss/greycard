@@ -14,6 +14,11 @@ design note behind it.
 
 ### Window
 
+- greycard speaks French: a French catalog brings photographic terms
+  to the window, with consistent wording for controls throughout the
+  editor. Settings, Interface, Language chooses it, or it follows the
+  system (issue 75,
+  [§641](https://github.com/jessolmstead/greycard/blob/master/docs/notes/641-french-translation.md)).
 - The line over the foot of the picture no longer lists the frame's
   size, the develop's time, and what each tool measured after every
   develop; that is in the log. It still says what an edit went

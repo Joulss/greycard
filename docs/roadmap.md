@@ -232,8 +232,9 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The Windows installer (§619) compiled and installed on CI: a
       run of windows-package.yml, before the tag
 - [ ] The Windows installer signed: waits on a signing service
-- [ ] The first translation, French (issue 75), on the §616 catalog;
-      the guide and the release notes stay English
+- [ ] The strings added since the French catalog was made (the white
+      balance presets and later) translated, and a check that says
+      which a catalog lacks
 - [ ] The learned denoiser and the removal on a card short of memory
       (issues 130 and 64)
 
