@@ -3614,8 +3614,8 @@ export component App inherits Window {
                 // lone Cull tab would be a mode switch posing as a bar.
                 // In its place, over a frame, a line saying why.
                 tabs := HorizontalLayout {
-                    padding-left: Theme.space-4;
-                    padding-right: Theme.space-4;
+                    padding-left: Theme.space-1;
+                    padding-right: Theme.space-1;
                     padding-top: root.frozen && root.selected < 0 ? 0 : Theme.space-2;
                     spacing: Theme.space-2;
                     if root.frozen && root.selected >= 0: Text {
@@ -3635,6 +3635,8 @@ export component App inherits Window {
                         accessible-role: button;
                         accessible-label: @tr("Cull mode");
                         accessible-checked: root.cull-mode;
+                        rounded: false;
+                        bordered: false;
                         accessible-action-default => {
                             keys.focus();
                             root.cull-asked();
@@ -3648,6 +3650,9 @@ export component App inherits Window {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         // The Loupe's mode buttons at the top of the develop panel
                         labels: [@tr("Develop"), @tr("Crop"), @tr("Masks"), @tr("Retouch")];
+                        rounded: false;
+                        padded: false;
+                        bordered: false;
                         current <=> root.panel-tab;
                         selected(t) => { root.tab-chosen(t); }
                     }
@@ -3658,8 +3663,8 @@ export component App inherits Window {
                 // under it, and the scroll counts from its foot, so
                 // the list's own height never moves what they show.
                 if root.shown-tab == "Masks": VerticalLayout {
-                    padding-left: Theme.space-4;
-                    padding-right: Theme.space-4;
+                    padding-left: Theme.space-1;
+                    padding-right: Theme.space-1;
                     padding-top: Theme.space-2;
                     padding-bottom: Theme.space-2;
                     AdjustmentsList {
@@ -3768,11 +3773,11 @@ export component App inherits Window {
                     min-height: root.shown-tab == "Masks" ? 0px : 50px;
                     panel-sections := VerticalLayout {
                         alignment: start;
-                        padding: Theme.space-4;
+                        padding: Theme.space-1;
                         // Clear of the scroll bar's band, however wide it is.
-                        padding-right: max(Theme.space-4, ScrollBars.band + 2px);
-                        padding-top: Theme.space-2;
-                        spacing: Theme.space-2;
+                        padding-right: max(Theme.space-1, ScrollBars.band + 2px);
+                        padding-top: Theme.space-1;
+                        spacing: Theme.space-1;
                         // Culling: what the mode is, the browser's
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
@@ -3846,8 +3851,6 @@ export component App inherits Window {
                         }
                         if root.shown-tab == "Masks" && root.target > 0: AdjustmentsSection {
                             one-of-panel: !root.grid-open;
-                            // The list's foot above is its line.
-                            line-above: false;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
@@ -4390,8 +4393,8 @@ export component App inherits Window {
                     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
                     HorizontalLayout {
                         padding: Theme.space-3;
-                        padding-left: Theme.space-4;
-                        padding-right: Theme.space-4;
+                        padding-left: Theme.space-2;
+                        padding-right: Theme.space-2;
                         spacing: Theme.space-2;
                         // A click fits; the chevron or a right-click
                         // offers the zooms, each about the view's
@@ -4748,7 +4751,7 @@ export component App inherits Window {
         // finds the way to the other from either. The Loupe comes back
         // in the mode it was left in, Cull or Develop.
         HorizontalLayout {
-            padding: Theme.space-4;
+            padding: Theme.space-1;
             padding-top: Theme.space-3;
             padding-bottom: 0;
             spacing: Theme.space-2;
@@ -4810,12 +4813,12 @@ export component App inherits Window {
                 // Stretched, so the lists take the room; all else
                 // here keeps its height (a stretch of none), and the
                 // room the lists leave goes to the foot below them.
-                padding: Theme.space-4;
+                padding: Theme.space-1;
                 // Clear of the scroll bar's band, however wide it is.
-                padding-right: max(Theme.space-4, ScrollBars.band + 2px);
-                padding-top: Theme.space-2;
+                padding-right: max(Theme.space-1, ScrollBars.band + 2px);
+                padding-top: Theme.space-1;
                 // The foot's own gap makes up the rest.
-                padding-bottom: Theme.space-4 - Theme.space-2;
+                padding-bottom: Theme.space-1;
                 spacing: Theme.space-2;
                 // The frame's, and so the loupe's alone: first, so
                 // it keeps the pane's top left corner whatever the
@@ -5237,7 +5240,7 @@ export component App inherits Window {
             }
         }
         VerticalLayout {
-            padding: Theme.space-4;
+            padding: Theme.space-1;
             padding-top: Theme.space-2;
             spacing: Theme.space-2;
             // A newer release, when the check found one: the
