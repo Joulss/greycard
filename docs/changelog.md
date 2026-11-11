@@ -67,6 +67,11 @@ design note behind it.
 
 ### Fixes
 
+- The flag, stars, color label, and edit, export, and collection marks
+  sit centered in their thumbnail badges. The stack icon lines up with
+  its count, and the marks have more room between them at small sizes
+  in the strip and grid
+  ([§638](https://github.com/jessolmstead/greycard/blob/master/docs/notes/638-thumbnail-marks-centered-in-their-badges.md)).
 - A save made in the other editor after Edit in shows in greycard a
   second or two later, in Develop, the filmstrip, and the grid, with
   your zoom, your tools, and your edit left as they were; before, it
