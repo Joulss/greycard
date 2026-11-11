@@ -373,8 +373,44 @@ pub(crate) fn another_picture(st: &mut State) {
 /// A placed part asked which person it is of on this picture: kept,
 /// and the picking armed when it is the chosen mask's on the Masks tab.
 pub(crate) fn asked(st: &mut State, app: &App, key: Key, ask: Ask) {
+    // The pick in hand for this part takes the fresh ask's people: the
+    // picture's may have moved under it (`picture_changed`).
+    if let Some(choosing) = st.develop.choosing.as_mut()
+        && choosing.id == key.0
+        && choosing.component == Some(key.1)
+    {
+        choosing.ask = ask.clone();
+        let words = ask.words();
+        st.develop.part_asks.insert(key, ask);
+        arm(st, app, words);
+        return;
+    }
     st.develop.part_asks.insert(key, ask);
     rearm(st, app);
+}
+
+/// The open frame's picture was read again from new bytes
+/// (`browser::reread_open`): the people found on the old pixels are
+/// not its own. A new part's pick in hand finds them again, the part
+/// still in hand, and picks again once they are found. A placed
+/// part's asks go, the pick of one with them: the worker makes the
+/// parts again on the new pixels and asks again where it is still
+/// unsure, which arms the pick again; one it is now sure of asks
+/// nothing.
+pub(crate) fn picture_changed(st: &mut State, app: &App) {
+    st.develop.part_asks.clear();
+    let Some(choosing) = st.develop.choosing.take() else {
+        return;
+    };
+    app.set_placing("".into());
+    if choosing.component.is_none() {
+        st.develop.part_pending = Some(Pending {
+            id: choosing.id,
+            part: choosing.part,
+            mode: choosing.mode,
+        });
+        ask_people(app, choosing.part);
+    }
 }
 
 /// The mask, by index, to choose for the picking when the Masks tab is
@@ -772,6 +808,107 @@ mod tests {
         );
         assert!(all_people(&mut st, &app));
         assert!(matches!(&shapes(&st)[0], Shape::Part { person: None, .. }));
+    }
+
+    /// `people` moved by `dx` across the picture: the same people found
+    /// again on a picture written over.
+    fn moved(people: &[Candidate], dx: f32) -> Vec<Candidate> {
+        people
+            .iter()
+            .cloned()
+            .map(|mut p| {
+                p.face[0] += dx;
+                p.face[2] += dx;
+                p.at[0] += dx;
+                p
+            })
+            .collect()
+    }
+
+    /// A fresh ask for the part whose pick is in hand takes its place:
+    /// its people are drawn and picked from, not the last ask's.
+    #[test]
+    fn a_fresh_ask_replaces_the_pick_in_hand() {
+        let (app, state, _worker) = masks();
+        with_a_part(&state);
+        let mut st = state.borrow_mut();
+        let ask = |people| Ask {
+            people,
+            guess: None,
+            why: Asking::Unsure,
+        };
+        asked(&mut st, &app, (1, 0), ask(two()));
+        assert!(st.develop.choosing.is_some());
+        let fresh = moved(&two(), 0.1);
+        asked(&mut st, &app, (1, 0), ask(fresh.clone()));
+        assert_eq!(app.get_placing(), PICKING);
+        let at: Vec<f32> = st
+            .develop
+            .choosing
+            .as_ref()
+            .unwrap()
+            .ask
+            .people
+            .iter()
+            .map(|p| p.at[0])
+            .collect();
+        assert_eq!(at, fresh.iter().map(|p| p.at[0]).collect::<Vec<_>>());
+        // The fresh ask's people are the ones picked from.
+        let (x, y) = over(&st, &app, &fresh[1]);
+        assert_eq!(pressed(&mut st, &app, x, y), Some(true));
+        assert!(matches!(
+            &shapes(&st)[0],
+            Shape::Part { person: Some(p), .. } if *p == fresh[1].person()
+        ));
+    }
+
+    /// The open picture read again from new bytes: a placed part's pick
+    /// in hand and its asks go, for the worker to ask again; a new
+    /// part's pick stays in hand, its people asked for again.
+    #[test]
+    fn a_picture_read_again_lets_go_of_its_people() {
+        let (app, state, _worker) = masks();
+        with_a_part(&state);
+        let mut st = state.borrow_mut();
+        asked(
+            &mut st,
+            &app,
+            (1, 0),
+            Ask {
+                people: two(),
+                guess: None,
+                why: Asking::Unsure,
+            },
+        );
+        assert!(st.develop.choosing.is_some());
+        picture_changed(&mut st, &app);
+        assert!(st.develop.choosing.is_none() && st.develop.part_asks.is_empty());
+        assert_eq!(app.get_placing(), "");
+        assert!(st.develop.part_pending.is_none());
+        // A new part waiting on a pick of two.
+        pending(&mut st, "Iris");
+        assert!(!people_found(&mut st, &app, None, Ok((two(), "CPU", 0.1))));
+        assert!(st.develop.choosing.is_some());
+        picture_changed(&mut st, &app);
+        assert!(st.develop.choosing.is_none());
+        assert_eq!(
+            st.develop.part_pending.as_ref().map(|p| p.part.label),
+            Some("Iris"),
+            "still in hand, its people asked for"
+        );
+        // Found again: the pick is armed on them.
+        let fresh = moved(&two(), 0.1);
+        assert!(!people_found(
+            &mut st,
+            &app,
+            None,
+            Ok((fresh.clone(), "CPU", 0.1))
+        ));
+        assert_eq!(app.get_placing(), PICKING);
+        assert_eq!(
+            st.develop.choosing.as_ref().unwrap().ask.people[0].at,
+            fresh[0].at
+        );
     }
 
     /// A placed part asking, as the worker says it, on `file`.

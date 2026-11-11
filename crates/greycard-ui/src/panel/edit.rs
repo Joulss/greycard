@@ -159,6 +159,14 @@ pub(crate) fn file_writable(st: &State, file: usize) -> bool {
         && st.from_row.get(file).is_none_or(|r| r.read)
 }
 
+/// The frame a develop sent now is for, the one current: what lets the
+/// worker fold it into an open of that frame still waiting
+/// (`worker::Job::Develop::of`).
+pub(crate) fn develop_of(st: &State) -> Option<crate::worker::DevelopOf> {
+    let c = st.current?;
+    Some((st.path_at(c)?.clone(), st.cells.get(c)?.version.clone()))
+}
+
 /// The open frame's quarter turns, for a job the worker develops:
 /// the turn is beside the edit on the sidecar, not in it, so every
 /// develop has to carry it.
@@ -291,6 +299,7 @@ fn send_move(st: &mut State, app: &App, which: Timed, low: bool) {
         edit: st.develop.edit.clone(),
         generation: st.develop.generation,
         turn: current_turn(st),
+        of: develop_of(st),
     };
     WORKER.with(|w| {
         if let Some(w) = &*w.borrow() {
@@ -553,6 +562,7 @@ pub(crate) fn develop_soon(
                 edit: edit_to_develop(&app, &st.develop.edit),
                 generation: st.develop.generation,
                 turn: current_turn(&st),
+                of: develop_of(&st),
             });
         },
     );
@@ -1265,6 +1275,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                         edit: edit_to_develop(&app, &st.develop.edit),
                         generation: st.develop.generation,
                         turn: current_turn(&st),
+                        of: develop_of(&st),
                     });
                 },
             );

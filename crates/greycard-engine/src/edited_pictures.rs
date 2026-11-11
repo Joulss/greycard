@@ -776,6 +776,14 @@ impl Edited {
     pub fn keep_later(&self, task: Task) {
         self.keeper.put(task);
     }
+
+    /// Whether the keeping thread has nothing running or waiting, so it
+    /// writes nothing more to the cache until it is given more. For a
+    /// test's stop (`Worker::stop_all`).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn keeping_idle(&self) -> bool {
+        self.keeper.idle()
+    }
 }
 
 /// What reading a frame's sidecar for its key found.
@@ -830,6 +838,8 @@ struct Keeper {
 struct KeeperState {
     waiting: Option<Task>,
     started: bool,
+    /// A task is running.
+    busy: bool,
     /// The keeper was dropped: the thread ends at its next look.
     closed: bool,
 }
@@ -846,6 +856,13 @@ impl Drop for Keeper {
 }
 
 impl Keeper {
+    /// Nothing running and nothing waiting.
+    #[cfg(any(test, feature = "testing"))]
+    fn idle(&self) -> bool {
+        let state = self.inner.0.lock().expect("keeper");
+        !state.busy && state.waiting.is_none()
+    }
+
     fn put(&self, task: Task) {
         let (lock, cv) = &*self.inner;
         let mut state = lock.lock().expect("keeper");
@@ -865,6 +882,7 @@ impl Keeper {
                                     return;
                                 }
                                 if let Some(task) = state.waiting.take() {
+                                    state.busy = true;
                                     break task;
                                 }
                                 state = cv.wait(state).expect("keeper");
@@ -879,6 +897,7 @@ impl Keeper {
                                 crate::worker::panic_message(payload.as_ref())
                             );
                         }
+                        lock.lock().expect("keeper").busy = false;
                     }
                 });
             if let Err(e) = spawned {

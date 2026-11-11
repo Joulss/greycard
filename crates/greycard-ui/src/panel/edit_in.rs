@@ -17,7 +17,9 @@
 //! since the folder may be a share that stops answering. A save is
 //! taken once its stamp has held across two looks, so a writer still
 //! at work is waited for; the file is hashed then, and its raw once,
-//! at its first look. A file is let go once it has been gone for a
+//! at its first look, as is the file as the export left it. A save
+//! lets go of what the window holds under the content before it, so
+//! the save shows. A file is let go once it has been gone for a
 //! while, or a while after its last save was taken, and every file is
 //! let go with the window.
 
@@ -79,6 +81,9 @@ pub(crate) struct EditIn {
 
 /// A file handed to the app.
 pub(crate) struct Watch {
+    /// The watch's own number, so a look that read the disk for one
+    /// never lands on another handed over under its name meanwhile.
+    id: u64,
     pub(crate) out: PathBuf,
     /// The file it was exported from, as the list names it, and the
     /// version, none for the file's own.
@@ -88,6 +93,13 @@ pub(crate) struct Watch {
     raw_hash: Option<String>,
     /// How many looks have tried to read the raw.
     raw_tries: u8,
+    /// The key the window's pictures of the file are kept under, its
+    /// content hash and its stamp (`worker::thumb_key`): the export's,
+    /// read at the first look while the file is still as written, then
+    /// each save's. What a save lets go of.
+    held: Option<(String, u64)>,
+    /// Whether the first look has tried for the export's key.
+    held_tried: bool,
     settle: how::Settle,
     /// How many looks in a row the file has been gone.
     gone: u32,
@@ -96,13 +108,15 @@ pub(crate) struct Watch {
 }
 
 /// A save of a watched file taken: the file, what it was exported
-/// from, and its hash and its raw's.
+/// from, its hash and its raw's, and the key the window's pictures of
+/// it were kept under before the save.
 pub(crate) struct Changed {
     pub(crate) out: PathBuf,
     pub(crate) source: PathBuf,
     pub(crate) version: Option<String>,
     pub(crate) raw_hash: Option<String>,
     pub(crate) edit_hash: Option<String>,
+    pub(crate) was: Option<(String, u64)>,
 }
 
 /// `path`'s content hash, none (and said) when it will not read.
@@ -112,53 +126,81 @@ fn hash(path: &Path) -> Option<String> {
         .ok()
 }
 
-/// One watched file as a look found it: the file, its source, its
-/// stamp (none when the file is gone, unknown when its folder does not
-/// answer, as on a share that dropped out), and the raw's hash when
-/// the look read it.
+/// What a file's pictures are kept under: its content hash and its
+/// stamp (`worker::thumb_key`).
+type ThumbKey = (String, u64);
+
+/// One watched file as a look found it: the watch, the file, its stamp
+/// (none when the file is gone, unknown when its folder does not
+/// answer, as on a share that dropped out), the raw's hash when the
+/// look read it, and the export's key when the look tried for it.
 type Seen = (
-    PathBuf,
+    u64,
     PathBuf,
     Option<Option<Stamp>>,
     Option<Option<String>>,
+    Option<Option<(String, u64)>>,
 );
+
+/// What a look asks of one watched file: the watch, the file, its
+/// source, whether to hash the raw, and the stamp the export left when
+/// the export's key is still to be read.
+type Asked = (u64, PathBuf, PathBuf, bool, Option<Option<Stamp>>);
+
+/// The key of `out` (`worker::thumb_key`) while it is still as the
+/// export left it, `handed`: none once the app has written it, which a
+/// stamp before and after the read tells.
+fn export_key(out: &Path, handed: Option<Stamp>) -> Option<(String, u64)> {
+    let handed = handed?;
+    if how::stamp_of(out) != Some(handed) {
+        return None;
+    }
+    let key = crate::worker::thumb_key(out)?;
+    (how::stamp_of(out) == Some(handed)).then_some(key)
+}
 
 /// One look at every watched file: the saves that have settled, each
 /// hashed, and the files gone too long or kept long enough let go. The
 /// disk is asked with the list let go, so a share that is slow to
 /// answer never holds the window's thread at the lock.
 pub(crate) fn look(watches: &Mutex<Vec<Watch>>) -> Vec<Changed> {
-    let asked: Vec<(PathBuf, PathBuf, bool)> = watches
+    let asked: Vec<Asked> = watches
         .lock()
         .expect("edit in watches")
         .iter()
         .map(|w| {
             let raw = w.raw_hash.is_none() && w.raw_tries < RAW_TRIES;
-            (w.out.clone(), w.source.clone(), raw)
+            let export = (!w.held_tried && w.taken.is_none()).then(|| w.settle.taken());
+            (w.id, w.out.clone(), w.source.clone(), raw, export)
         })
         .collect();
     let seen: Vec<Seen> = asked
         .into_iter()
-        .map(|(out, source, raw)| {
+        .map(|(id, out, source, raw, export)| {
             let raw = raw.then(|| hash(&source));
+            let export = export.map(|handed| export_key(&out, handed));
             let stamp = match how::stamp_of(&out) {
                 Some(stamp) => Some(Some(stamp)),
                 None => out.parent().is_none_or(|p| p.is_dir()).then_some(None),
             };
-            (out, source, stamp, raw)
+            (id, out, stamp, raw, export)
         })
         .collect();
     let mut taken = Vec::new();
     {
         let mut list = watches.lock().expect("edit in watches");
-        for (out, source, stamp, raw) in seen {
+        for (id, out, stamp, raw, export) in seen {
             // Let go, or handed over again, meanwhile.
-            let Some(w) = list.iter_mut().find(|w| w.out == out && w.source == source) else {
+            let Some(w) = list.iter_mut().find(|w| w.id == id) else {
                 continue;
             };
             if let Some(raw) = raw {
                 w.raw_tries += 1;
                 w.raw_hash = raw;
+            }
+            if let Some(export) = export {
+                w.held_tried = true;
+                w.held = w.held.take().or(export);
             }
             let Some(stamp) = stamp else {
                 continue;
@@ -166,7 +208,14 @@ pub(crate) fn look(watches: &Mutex<Vec<Watch>>) -> Vec<Changed> {
             w.gone = if stamp.is_none() { w.gone + 1 } else { 0 };
             if w.settle.look(stamp) {
                 w.taken = Some(Instant::now());
-                taken.push((out, w.source.clone(), w.version.clone(), w.raw_hash.clone()));
+                taken.push((
+                    id,
+                    out,
+                    w.source.clone(),
+                    w.version.clone(),
+                    w.raw_hash.clone(),
+                    w.held.clone(),
+                ));
             }
         }
         list.retain(|w| {
@@ -177,16 +226,33 @@ pub(crate) fn look(watches: &Mutex<Vec<Watch>>) -> Vec<Changed> {
             keep
         });
     }
-    taken
+    let taken: Vec<(u64, Changed, Option<ThumbKey>)> = taken
         .into_iter()
-        .map(|(out, source, version, raw_hash)| Changed {
-            edit_hash: hash(&out),
-            out,
-            source,
-            version,
-            raw_hash,
+        .map(|(id, out, source, version, raw_hash, was)| {
+            let key = crate::worker::thumb_key(&out);
+            if key.is_none() {
+                tracing::warn!("edit in: {}: not hashed", out.display());
+            }
+            let changed = Changed {
+                edit_hash: key.as_ref().map(|(h, _)| h.clone()),
+                out,
+                source,
+                version,
+                raw_hash,
+                was,
+            };
+            (id, changed, key)
         })
-        .collect()
+        .collect();
+    // Each save's key is what the next lets go of.
+    let mut list = watches.lock().expect("edit in watches");
+    for (id, _, key) in &taken {
+        if let Some(w) = list.iter_mut().find(|w| w.id == *id) {
+            w.held = key.clone();
+        }
+    }
+    drop(list);
+    taken.into_iter().map(|(_, c, _)| c).collect()
 }
 
 /// The name `path` is shown by: a desktop entry's own when it reads.
@@ -377,12 +443,16 @@ pub(crate) fn frame_done(st: &mut State, app: &App, set: &Arc<queue::Set>, done:
         // export for a save.
         let mut list = edit_in.watches.lock().expect("edit in watches");
         list.retain(|w| w.out != *path);
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         list.push(Watch {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             out: path.clone(),
             source,
             version,
             raw_hash: None,
             raw_tries: 0,
+            held: None,
+            held_tried: false,
             settle: how::Settle::from(how::stamp_of(path)),
             gone: 0,
             taken: None,
@@ -489,9 +559,13 @@ fn watch(app: &App, watches: std::sync::Weak<Mutex<Vec<Watch>>>) {
     }
 }
 
-/// A watched file written by the app: given to the indexer, stacked
-/// with its raw (after it in the raw's stack, or in a new stack of the
-/// two) and the stack opened, and the list read again so it shows.
+/// A watched file written by the app: given to the indexer, what the
+/// window held of it before the save let go and asked for again, the
+/// frame read again when it is the one open (`edited::file_rewritten`:
+/// the file is listed as soon as greycard writes it under a watched
+/// root, so even the app's first save is a rewrite), stacked with its
+/// raw (after it in the raw's stack, or in a new stack of the two) and
+/// the stack opened, and the list read again so it shows.
 pub(crate) fn changed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, c: Changed) {
     {
         let mut held = state.borrow_mut();
@@ -502,6 +576,19 @@ pub(crate) fn changed(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, c: Cha
             index.file(c.out.clone());
             st.work.edit_in.relist = true;
         }
+        crate::edited::file_rewritten(
+            st,
+            app,
+            worker,
+            &c.out,
+            c.was.as_ref(),
+            // A save before the first look leaves the export's key
+            // unread: a hash that moved misses what was kept under the
+            // old one, and one that did not (a change past the hashed
+            // head at the same length) is the old one.
+            c.edit_hash.as_deref(),
+            c.edit_hash.as_deref(),
+        );
         match (c.raw_hash, c.edit_hash) {
             (Some(raw_hash), Some(edit_hash)) => {
                 let with = Reference {
@@ -994,6 +1081,11 @@ mod tests {
     /// A root of a shoot of three frames, indexed, with the grid up
     /// over it by name, its stacks kept in the test's own folder.
     fn setup(what: &str) -> Setup {
+        setup_on(what, |_| Rc::new(Worker::new(|_| {})))
+    }
+
+    /// [`setup`] on the worker `worker` makes for the test's folder.
+    fn setup_on(what: &str, worker: impl FnOnce(&Path) -> Rc<Worker>) -> Setup {
         let dir = crate::testing::scratch_dir(&format!("edit-in-{what}"));
         let root = dir.join("photos");
         let shoot = root.join("shoot");
@@ -1012,7 +1104,8 @@ mod tests {
         app.window()
             .set_size(slint::LogicalSize::new(1400.0, 900.0));
         app.set_grid_open(true);
-        let (state, worker) = state_for(&app, Vec::new());
+        let worker = worker(&dir);
+        let state = crate::testing::state_with(&app, Vec::new(), worker.clone());
         {
             let mut st = state.borrow_mut();
             st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
@@ -1044,13 +1137,29 @@ mod tests {
             worker,
             ..
         } = s;
+        crate::WORKER.with(|w| *w.borrow_mut() = None);
+        crate::STATE.with(|s| *s.borrow_mut() = None);
+        // The pool's threads too, or one still making a picture writes
+        // into the folder after it is removed.
+        assert!(worker.stop_all(Duration::from_secs(60)), "the worker stops");
         drop(writer);
-        state.borrow_mut().views.index_reader = None;
         drop(app);
         drop(worker);
-        drop(state);
-        crate::testing::remove_dir_retry(&dir);
+        crate::testing::remove_scratch(state, &dir);
+        let left = crate::testing::left_in(&dir);
+        assert!(left.is_empty(), "nothing left behind: {left:?}");
     }
+
+    /// A picture written to `path` as the export or the app writes it:
+    /// a flat grey at `level` of sixteen bits.
+    fn write_level(path: &Path, level: u16) {
+        let (w, h) = (48, 32);
+        let data = vec![level; (w * h * 3) as usize];
+        greycard_library::fixture::write_frame_of(path, &R6, w, h, &data);
+    }
+
+    /// The level the export writes frame `i`'s file at, plus `i`: dark.
+    const EXPORTED: u16 = 6000;
 
     /// The grid's rows: each frame's name and its stack's mark, "[3]"
     /// on a closed stack's top and "[2/3]" on an open one's members.
@@ -1071,6 +1180,11 @@ mod tests {
     /// Frame `i` of the shoot opened, Edit in pressed on it, and its
     /// export said written to the file the set named: the file's path.
     fn edit_in(s: &Setup, i: usize) -> PathBuf {
+        edit_in_as(s, i, &|out| write_level(out, EXPORTED + i as u16))
+    }
+
+    /// [`edit_in`], the export written by `write`.
+    fn edit_in_as(s: &Setup, i: usize, write: &dyn Fn(&Path)) -> PathBuf {
         let c = {
             let st = s.state.borrow();
             st.own_cell(st.file_by_path(&s.files[i]).unwrap()).unwrap()
@@ -1084,7 +1198,7 @@ mod tests {
         set.cancel();
         let out = out_of(&s.files[i], None);
         // What the worker writes: the frame as a TIFF.
-        write_frame(&out, &R5, 40 + i as u16);
+        write(&out);
         crate::panel::deliver::deliver(
             &s.app,
             Outcome::SetFrameDone {
@@ -1113,10 +1227,15 @@ mod tests {
     /// and takes it at the next, the file indexed (by the test's
     /// writer, as the indexer would) in between, and the save brought
     /// to the window.
-    fn saved(s: &mut Setup, out: &Path, n: u16) {
+    fn saved(s: &mut Setup, out: &Path, level: u16) {
+        saved_as(s, out, &|out| write_level(out, level));
+    }
+
+    /// [`saved`], the save written by `write`.
+    fn saved_as(s: &mut Setup, out: &Path, write: &dyn Fn(&Path)) {
         let before = how::stamp_of(out);
         std::thread::sleep(Duration::from_millis(20));
-        write_frame(out, &R6, n);
+        write(out);
         assert_ne!(how::stamp_of(out), before, "the save is seen");
         let list = s.state.borrow().work.edit_in.watches.clone();
         assert!(look(&list).is_empty(), "seen once, not yet taken");
@@ -1203,5 +1322,674 @@ mod tests {
             ]
         );
         teardown(s);
+    }
+
+    /// [`setup`] on a worker that makes pictures for real, its
+    /// thumbnails kept in the test's folder, and says what it made to
+    /// the test, which takes it in as the window would.
+    struct Heard {
+        s: Setup,
+        heard: std::sync::mpsc::Receiver<Outcome>,
+        /// The mean of the open frame's last develop to land.
+        developed: std::cell::Cell<Option<f64>>,
+        /// The generation of the last open the worker said it made.
+        opened: std::cell::Cell<Option<u64>>,
+        /// A gate the worker stops at when it says it opened a file at
+        /// generation 0, until the test lets it go: the worker held
+        /// busy ([`Heard::hold`]).
+        gate: Arc<Mutex<Option<std::sync::mpsc::Receiver<()>>>>,
+    }
+
+    fn heard(what: &str) -> Heard {
+        let (tx, heard) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let gate: Arc<Mutex<Option<std::sync::mpsc::Receiver<()>>>> = Arc::default();
+        let held = gate.clone();
+        let s = setup_on(what, move |dir| {
+            let worker = Rc::new(Worker::new(move |o| {
+                if matches!(o, Outcome::Opened { generation: 0, .. }) {
+                    let wait = held.lock().unwrap().take();
+                    if let Some(go) = wait {
+                        let _ = go.recv();
+                    }
+                }
+                let _ = tx.lock().unwrap().send(o);
+            }));
+            worker.set_thumb_cache(Some(greycard_library::thumbs::Thumbs::at(
+                dir.join("thumbs"),
+                greycard_library::thumbs::DEFAULT_CAP,
+            )));
+            worker
+        });
+        s.state.borrow_mut().window.write_sidecars = true;
+        Heard {
+            s,
+            heard,
+            developed: std::cell::Cell::new(None),
+            opened: std::cell::Cell::new(None),
+            gate,
+        }
+    }
+
+    impl Heard {
+        /// The worker held in an open of `path` the window does not wait
+        /// on, until the sender returned is used or dropped.
+        fn hold(&self, path: &Path) -> std::sync::mpsc::Sender<()> {
+            let (go, wait) = std::sync::mpsc::channel();
+            *self.gate.lock().unwrap() = Some(wait);
+            self.s.worker.send(crate::worker::Job::Open {
+                path: path.to_path_buf(),
+                version: None,
+                edit: Edit::for_picture(),
+                generation: 0,
+                seed_blend: false,
+                turn: 0,
+                stance_known: false,
+                learned: Vec::new(),
+            });
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while self.gate.lock().unwrap().is_some() {
+                assert!(
+                    Instant::now() < deadline,
+                    "waiting for the worker to be held"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            go
+        }
+
+        /// A slider moved on the panel, its develop sent once it rests:
+        /// the generation it was sent at.
+        fn slide(&self, exposure: f32) -> u64 {
+            self.s.app.set_exposure(exposure);
+            self.s.app.invoke_develop_changed();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(
+                crate::panel::edit::DEBOUNCE_MS + 50,
+            ));
+            slint::platform::update_timers_and_animations();
+            self.s.state.borrow().develop.generation
+        }
+        fn cell_of(&self, path: &Path) -> usize {
+            let st = self.s.state.borrow();
+            st.own_cell(st.file_by_path(path).expect("listed"))
+                .expect("a cell of its own")
+        }
+
+        /// The mean of cell `c`'s thumbnail as the window holds it, none
+        /// while it holds none.
+        fn thumb(&self, c: usize) -> Option<f64> {
+            let st = self.s.state.borrow();
+            let (_, _, rgb) = st.views.thumb_base.get(c)?.as_ref()?;
+            Some(greycard_engine::testing::edited::mean(rgb))
+        }
+
+        /// What the worker says taken in until `until` holds, as the
+        /// window's event loop would take it.
+        fn pump(&self, until: &dyn Fn(&Heard) -> bool, what: &str) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !until(self) {
+                assert!(Instant::now() < deadline, "waiting for {what}");
+                self.take(Duration::from_millis(50));
+            }
+        }
+
+        /// Whatever the worker says for `wait`, taken in.
+        fn quiet(&self, wait: Duration) {
+            let deadline = Instant::now() + wait;
+            while Instant::now() < deadline {
+                self.take(Duration::from_millis(50));
+            }
+        }
+
+        /// One thing the worker says within `wait`, taken in: the
+        /// pictures, and a develop of the open frame, its mean noted.
+        fn take(&self, wait: Duration) {
+            let Ok(outcome) = self.heard.recv_timeout(wait) else {
+                return;
+            };
+            match &outcome {
+                Outcome::Developed {
+                    generation, image, ..
+                } => {
+                    if *generation == self.s.state.borrow().develop.generation {
+                        let crate::worker::Developed::Halves(h) = image else {
+                            panic!("a develop on the CPU");
+                        };
+                        let rgb: f64 = h
+                            .pixels
+                            .chunks(4)
+                            .map(|p| p[..3].iter().map(|v| f64::from(v.to_f32())).sum::<f64>())
+                            .sum();
+                        self.developed
+                            .set(Some(rgb / (h.pixels.len() / 4 * 3) as f64));
+                    }
+                }
+                Outcome::Thumbnail { .. }
+                | Outcome::NoThumbnail { .. }
+                | Outcome::Thumbnails(_)
+                | Outcome::EditedKept { .. } => {}
+                Outcome::Opened { generation, .. } => self.opened.set(Some(*generation)),
+                _ => return,
+            }
+            crate::panel::deliver::deliver(&self.s.app, outcome);
+        }
+
+        /// Cell `c`'s thumbnail asked for and taken in.
+        fn thumb_of(&self, c: usize) -> f64 {
+            {
+                let mut st = self.s.state.borrow_mut();
+                st.views.thumb_base[c] = None;
+                self.s.worker.send(crate::rows::thumb_job(&st, c));
+            }
+            self.pump(&|h| h.thumb(c).is_some(), "the thumbnail");
+            self.thumb(c).unwrap()
+        }
+
+        /// `path` opened in Develop, its sidecar read, and its develop
+        /// taken in: the develop's mean.
+        fn open(&self, path: &Path) -> f64 {
+            let c = self.cell_of(path);
+            {
+                let mut st = self.s.state.borrow_mut();
+                let f = st.file_by_path(path).unwrap();
+                assert!(crate::rows::load_file(&mut st, &self.s.app, f));
+                crate::panel::browser::open_frame(&mut st, &self.s.app, &self.s.worker, c);
+            }
+            self.developed.set(None);
+            self.pump(&|h| h.developed.get().is_some(), "the develop");
+            self.developed.get().unwrap()
+        }
+
+        /// The file Edit in wrote for frame `i` listed at once, as under
+        /// a watched root, before the app has saved it.
+        fn listed(&mut self, out: &Path) {
+            self.s.writer.index_file(out).unwrap();
+            crate::roots::refresh_view(&self.s.state, &self.s.app, &self.s.worker);
+            land_sent(&self.s.state, &self.s.app, &self.s.worker);
+        }
+    }
+
+    const BRIGHT: u16 = 50000;
+    const MIDDLE: u16 = 25000;
+
+    /// Edit in on frame 1, the file it wrote carrying an edit of
+    /// greycard's own and listed at once, as under a watched root, so
+    /// even the app's first save is over a file the window holds.
+    fn handed(what: &str) -> (Heard, PathBuf) {
+        handed_as(what, &|out| write_level(out, EXPORTED + 1))
+    }
+
+    /// [`handed`], the export written by `write`.
+    fn handed_as(what: &str, write: &dyn Fn(&Path)) -> (Heard, PathBuf) {
+        let mut h = heard(what);
+        let apps = h.s.dir.join("apps");
+        choose_app(&h.s.state, &h.s.app, &apps, "gimp");
+        let out = edit_in_as(&h.s, 1, write);
+        {
+            let mut sidecar = greycard_edit::Sidecar::default();
+            let mut edit = Edit::for_picture();
+            edit.light.exposure = 0.25;
+            sidecar.line = greycard_edit::Line::of(edit);
+            sidecar.save(&out).unwrap();
+        }
+        h.listed(&out);
+        (h, out)
+    }
+
+    /// The app's save over the file it was handed shows in the grid
+    /// without the user doing anything, the first save and a later one;
+    /// the thumbnail kept under the content the save replaced leaves
+    /// the cache, the export's read at the watch's first look.
+    #[test]
+    fn a_save_shows_in_the_grid() {
+        let (mut h, out) = handed("save-grid");
+        let tiff = h.cell_of(&out);
+        let dark = h.thumb_of(tiff);
+        let list = h.s.state.borrow().work.edit_in.watches.clone();
+        let held = || list.lock().unwrap()[0].held.clone();
+        assert!(look(&list).is_empty(), "the app has not saved");
+        let exported = crate::worker::thumb_key(&out).unwrap();
+        assert_eq!(held(), Some(exported.clone()), "the export's key");
+        let size = h.s.state.borrow().views.thumb_made[tiff];
+        let worker = h.s.worker.clone();
+        let cached = |(hash, stamp): &(String, u64)| {
+            let tag = greycard_library::thumbs::Tag {
+                recipe: crate::worker::THUMB_RECIPE,
+                stamp: *stamp,
+            };
+            worker
+                .thumb_cache()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .has(hash, size, tag)
+        };
+        assert!(cached(&exported));
+        saved(&mut h.s, &out, BRIGHT);
+        assert!(!cached(&exported), "the export's thumbnail let go");
+        assert_eq!(held(), crate::worker::thumb_key(&out), "the save's key");
+        let tiff = h.cell_of(&out);
+        h.pump(
+            &|h| h.thumb(tiff).is_some_and(|m| m > dark + 50.0),
+            "the first save's thumbnail",
+        );
+        let bright = h.thumb(tiff).unwrap();
+        // And a later one.
+        saved(&mut h.s, &out, MIDDLE);
+        let tiff = h.cell_of(&out);
+        h.pump(
+            &|h| {
+                h.thumb(tiff)
+                    .is_some_and(|m| m > dark + 20.0 && m < bright - 20.0)
+            },
+            "the second save's thumbnail",
+        );
+        drop(worker);
+        teardown(h.s);
+    }
+
+    /// The file open in Develop: a save is read again under the edit the
+    /// file carries, which stays; and a save that lands while a develop
+    /// of the file runs shows, never that develop after it.
+    #[test]
+    fn a_save_shows_on_the_open_frame() {
+        let (mut h, out) = handed("save-open");
+        h.s.app.set_grid_open(false);
+        let dark = h.open(&out);
+        saved(&mut h.s, &out, MIDDLE);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m > dark * 1.3),
+            "the open frame's develop of the first save",
+        );
+        let middle = h.developed.get().unwrap();
+        assert_eq!(h.s.state.borrow().develop.edit.light.exposure, 0.25);
+        saved(&mut h.s, &out, BRIGHT);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m > middle * 1.3),
+            "the open frame's develop of the save",
+        );
+        assert_eq!(h.s.state.borrow().develop.edit.light.exposure, 0.25);
+        let open_bright = h.developed.get().unwrap();
+
+        // A save landing while a develop of the file runs: the develop
+        // that shows after is the save's.
+        let c = h.cell_of(&out);
+        crate::panel::browser::open_frame(&mut h.s.state.borrow_mut(), &h.s.app, &h.s.worker, c);
+        h.developed.set(None);
+        saved(&mut h.s, &out, MIDDLE);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m < open_bright * 0.8),
+            "the develop of the save made while one ran",
+        );
+        h.quiet(Duration::from_secs(2));
+        assert!(
+            h.developed.get().unwrap() < open_bright * 0.8,
+            "no stale develop after the save's"
+        );
+        teardown(h.s);
+    }
+
+    /// The raw open in Develop and the file beside it in its stack: the
+    /// file's picture in the strip shows each save, and stepped onto it
+    /// shows the last.
+    #[test]
+    fn a_save_shows_beside_the_open_raw() {
+        let (mut h, out) = handed("save-beside");
+        h.s.app.set_grid_open(false);
+        let raw = h.s.files[1].clone();
+        h.open(&raw);
+        let tiff = h.cell_of(&out);
+        let dark = h.thumb_of(tiff);
+        let stepped = h.open(&out);
+        h.open(&raw);
+        saved(&mut h.s, &out, BRIGHT);
+        let tiff = h.cell_of(&out);
+        h.pump(
+            &|h| h.thumb(tiff).is_some_and(|m| m > dark + 50.0),
+            "the first save's thumbnail",
+        );
+        let bright = h.thumb(tiff).unwrap();
+        saved(&mut h.s, &out, MIDDLE);
+        let tiff = h.cell_of(&out);
+        h.pump(
+            &|h| {
+                h.thumb(tiff)
+                    .is_some_and(|m| m > dark + 20.0 && m < bright - 20.0)
+            },
+            "the second save's thumbnail",
+        );
+        let now = h.open(&out);
+        assert!(now > stepped * 1.3, "{now} against {stepped}");
+        teardown(h.s);
+    }
+
+    /// A save is not the user opening the frame: over the file open in
+    /// Develop it leaves the view where it is, the zoom and the center;
+    /// a slider mid-drag keeps its value, and is what the save develops
+    /// under; no history step is made and no sidecar written; and the
+    /// tool in hand, the mask chosen, the crop, and the guide stay.
+    #[test]
+    fn a_save_leaves_the_view_and_the_hand_alone() {
+        let (mut h, out) = handed("save-hand");
+        h.s.app.set_grid_open(false);
+        let dark = h.open(&out);
+        let c = h.cell_of(&out);
+        // Mid-drag: the slider moved, its develop asked, the save of
+        // the panel still waiting on its timer.
+        h.s.app.set_exposure(1.3);
+        h.s.app.invoke_develop_changed();
+        let sidecar = greycard_edit::Sidecar::path_for(&out);
+        let on_disk = std::fs::read(&sidecar).unwrap();
+        let (line, generation) = {
+            let mut st = h.s.state.borrow_mut();
+            assert_eq!(st.develop.edit.light.exposure, 1.3);
+            st.develop.zoom = 2.0;
+            st.develop.center = (13.0, 9.0);
+            st.develop.target = Some(0);
+            st.develop.placing = Some(crate::panel::mask::Placing {
+                kind: greycard_edit::mask::Shape::of_kind("Radial"),
+                mode: greycard_edit::mask::Mode::Add,
+                from: (0.0, 0.0),
+                index: 0,
+                component: None,
+                boxed: false,
+                held: false,
+            });
+            (st.line(c).cloned().unwrap(), st.develop.generation)
+        };
+        h.s.app.set_placing("Radial".into());
+        h.s.app.set_crop_mode(true);
+        h.s.app.set_guide_mode("level".into());
+        saved(&mut h.s, &out, BRIGHT);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m > dark * 1.3),
+            "the save's develop",
+        );
+        // The save stacked the file with its raw: the list renumbered.
+        let c = h.cell_of(&out);
+        let st = h.s.state.borrow();
+        assert!(st.develop.generation > generation, "read again");
+        assert_eq!(st.develop.zoom, 2.0, "the zoom kept");
+        assert_eq!(st.develop.center, (13.0, 9.0), "the center kept");
+        assert!(st.develop.held.is_none());
+        assert_eq!(h.s.app.get_exposure(), 1.3, "the slider under the hand");
+        assert_eq!(st.develop.edit.light.exposure, 1.3);
+        assert_eq!(st.line(c), Some(&line), "no history step");
+        assert_eq!(
+            std::fs::read(&sidecar).unwrap(),
+            on_disk,
+            "no sidecar write"
+        );
+        assert_eq!(st.develop.target, Some(0), "the mask chosen");
+        assert!(st.develop.placing.is_some(), "the tool in hand");
+        assert_eq!(h.s.app.get_placing(), "Radial");
+        assert!(h.s.app.get_crop_mode() && !st.develop.crop_start_due);
+        assert_eq!(h.s.app.get_guide_mode(), "level");
+        assert_eq!(st.current, Some(c));
+        drop(st);
+        teardown(h.s);
+    }
+
+    /// A pick of another frame waiting on its sidecar wins over a save
+    /// of the open file: the save reads nothing again, and the pick
+    /// lands on the frame picked.
+    #[test]
+    fn a_pick_waiting_wins_over_a_save() {
+        let (mut h, out) = handed("save-pick");
+        h.s.app.set_grid_open(false);
+        h.open(&out);
+        let other = h.s.files[0].clone();
+        // A pick's read out while the file is still the one current:
+        // the save must neither read it again nor let the pick go.
+        let generation = {
+            let mut st = h.s.state.borrow_mut();
+            st.views.pick_pending = Some(other.clone());
+            st.develop.generation
+        };
+        saved(&mut h.s, &out, BRIGHT);
+        {
+            let st = h.s.state.borrow();
+            assert_eq!(
+                st.views.pick_pending.as_ref(),
+                Some(&other),
+                "the pick stands"
+            );
+            assert_eq!(st.develop.generation, generation, "nothing read again");
+            assert_eq!(
+                st.current.and_then(|c| st.path_at(c).cloned()),
+                Some(out.clone())
+            );
+        }
+        h.s.state.borrow_mut().views.pick_pending = None;
+
+        // The pick pressed for real: the save lands under it, and the
+        // frame picked opens.
+        let c = h.cell_of(&other);
+        let row = crate::panel::browser::row_of(&h.s.state.borrow(), c).unwrap() as i32;
+        h.s.app.invoke_select(row);
+        let picked = h.s.state.borrow().views.pick_pending.clone();
+        saved(&mut h.s, &out, MIDDLE);
+        crate::rows::land_pending(&h.s.state, &h.s.app, &h.s.worker);
+        let st = h.s.state.borrow();
+        assert_eq!(
+            st.current.and_then(|c| st.path_at(c).cloned()),
+            Some(other),
+            "the pick, {picked:?} on its way"
+        );
+        drop(st);
+        teardown(h.s);
+    }
+
+    /// An uncompressed TIFF written to `path`, its top half `top` and
+    /// its bottom half `bottom`: the first 64 KB are the header and the
+    /// top, so the content hash, which reads the head and the length,
+    /// is the same whatever the bottom is.
+    fn write_halves(path: &Path, top: u8, bottom: u8) {
+        image::RgbImage::from_fn(256, 256, |_, y| {
+            image::Rgb([if y < 128 { top } else { bottom }; 3])
+        })
+        .save_with_format(path, image::ImageFormat::Tiff)
+        .unwrap();
+    }
+
+    /// A save that changes the file past the hashed head at the same
+    /// length keeps its hash: it shows all the same, the edit's
+    /// pictures kept under that hash let go, the save landing before
+    /// the watch's first look read the export's key.
+    #[test]
+    fn a_save_past_the_hashed_head_shows() {
+        let (mut h, out) = handed_as("save-head", &|out| write_halves(out, 80, 25));
+        let hash = greycard_library::hash_file(&out).unwrap();
+        let len = std::fs::metadata(&out).unwrap().len();
+        // The edit's pictures of it kept from its develop, as an open
+        // keeps them, and the frame left for another.
+        h.s.app.set_grid_open(false);
+        h.open(&out);
+        let key = {
+            let st = h.s.state.borrow();
+            h.s.worker.edited().key_of(&st.develop.edit)
+        };
+        h.pump(
+            &|h| h.s.worker.edited().all_kept(&hash, key),
+            "the edit's pictures",
+        );
+        h.open(&h.s.files[0].clone());
+        let tiff = h.cell_of(&out);
+        let before = h.thumb_of(tiff);
+        saved_as(&mut h.s, &out, &|out| write_halves(out, 80, 200));
+        assert_eq!(greycard_library::hash_file(&out).unwrap(), hash, "one hash");
+        assert_eq!(std::fs::metadata(&out).unwrap().len(), len);
+        let tiff = h.cell_of(&out);
+        h.pump(
+            &|h| h.thumb(tiff).is_some_and(|m| m > before + 30.0),
+            "the save's thumbnail",
+        );
+        teardown(h.s);
+    }
+
+    /// The Original on show when a save lands stays on, made again of
+    /// the new bytes; turned off after, the edit of the new bytes shows.
+    #[test]
+    fn a_save_keeps_the_original_on() {
+        let (mut h, out) = handed("save-original");
+        h.s.app.set_grid_open(false);
+        h.open(&out);
+        h.s.app.invoke_original_key();
+        assert!(h.s.app.get_original_on());
+        h.developed.set(None);
+        h.pump(&|h| h.developed.get().is_some(), "the Original");
+        let original = h.developed.get().unwrap();
+        saved(&mut h.s, &out, BRIGHT);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m > original * 1.3),
+            "the Original of the save",
+        );
+        {
+            let st = h.s.state.borrow();
+            assert!(st.develop.original.on && h.s.app.get_original_on());
+            assert_eq!(st.develop.original.asked, Some(st.develop.generation));
+        }
+        // The edit's pictures of the new bytes kept all the same, for the
+        // strip and the grid, from the open's develop of the edit.
+        let hash = greycard_library::hash_file(&out).unwrap();
+        let key = {
+            let st = h.s.state.borrow();
+            h.s.worker.edited().key_of(&st.develop.edit)
+        };
+        h.pump(
+            &|h| h.s.worker.edited().all_kept(&hash, key),
+            "the edit's pictures of the save",
+        );
+        assert!(h.s.app.get_original_on(), "still on");
+        // Off: the edit of the new bytes, not a picture of the old.
+        h.s.app.invoke_original_key();
+        assert!(!h.s.app.get_original_on());
+        h.developed.set(None);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m > original * 1.3),
+            "the edit of the save",
+        );
+        teardown(h.s);
+    }
+
+    /// A save that lands while the worker is busy, and a slider moved
+    /// before the worker has taken the reread: the slider's develop
+    /// does not drop the reread waiting for the worker. The file is
+    /// opened again under the slider's edit, at its generation, and the
+    /// picture that lands is of the new bytes.
+    #[test]
+    fn a_slider_moved_over_a_waiting_reread_keeps_it() {
+        let (mut h, out) = handed("save-slider");
+        h.s.app.set_grid_open(false);
+        let dark = h.open(&out);
+        // The worker held at another file's open, which the window does
+        // not wait on.
+        let busy = h.s.dir.join("busy.tif");
+        write_level(&busy, MIDDLE);
+        let go = h.hold(&busy);
+        saved(&mut h.s, &out, BRIGHT);
+        let reread = h.s.state.borrow().develop.generation;
+        let slider = h.slide(1.3);
+        drop(go);
+        assert!(slider > reread, "the slider's develop sent");
+        h.developed.set(None);
+        h.pump(
+            &|h| h.opened.get() == Some(slider) && h.developed.get().is_some(),
+            "the open under the slider's develop",
+        );
+        let landed = h.developed.get().unwrap();
+        assert!(
+            landed > dark * 1.3,
+            "the new bytes: {landed} against {dark}"
+        );
+        assert_eq!(h.s.state.borrow().develop.edit.light.exposure, 1.3);
+        teardown(h.s);
+    }
+
+    /// An open waiting for the worker takes no develop of another
+    /// frame: x1's open waits, x2 is picked while its sidecar is read,
+    /// and a slider moved on x2's panel sends a develop for x2. Nothing
+    /// of x1 lands on the panel while x2 is current.
+    #[test]
+    fn a_develop_of_another_frame_leaves_a_waiting_open_alone() {
+        let h = heard("pick-fold");
+        h.s.app.set_grid_open(false);
+        let files = h.s.files.clone();
+        h.open(&files[0]);
+        let busy = h.s.dir.join("busy.tif");
+        write_level(&busy, MIDDLE);
+        let go = h.hold(&busy);
+        let x1 = h.cell_of(&files[1]);
+        {
+            let mut st = h.s.state.borrow_mut();
+            let f = st.file_by_path(&files[1]).unwrap();
+            assert!(crate::rows::load_file(&mut st, &h.s.app, f));
+            crate::panel::browser::open_frame(&mut st, &h.s.app, &h.s.worker, x1);
+        }
+        let opening = h.s.state.borrow().develop.generation;
+        let x2 = h.cell_of(&files[2]);
+        let row = {
+            // x2's sidecar not yet read, as the window would hold it.
+            let mut st = h.s.state.borrow_mut();
+            let f = st.file_by_path(&files[2]).unwrap();
+            st.from_row[f].read = false;
+            crate::panel::browser::row_of(&st, x2).unwrap() as i32
+        };
+        h.s.app.invoke_select(row);
+        assert_eq!(
+            h.s.state.borrow().views.pick_pending.as_ref(),
+            Some(&files[2]),
+            "the pick waits on its sidecar"
+        );
+        let slider = h.slide(1.3);
+        assert!(slider > opening, "the slider's develop sent");
+        drop(go);
+        h.quiet(Duration::from_secs(2));
+        let st = h.s.state.borrow();
+        assert_eq!(st.current, Some(x2));
+        assert_ne!(h.opened.get(), Some(slider), "x1 opened as x2");
+        assert!(
+            st.develop.opened_sizes.iter().all(|(p, _)| p != &files[2]),
+            "x1's size under x2: {:?}",
+            st.develop.opened_sizes
+        );
+        drop(st);
+        teardown(h.s);
+    }
+
+    /// The frames the arrow keys reach are sent again with the reread,
+    /// so the worker takes a neighbors' change after it, as after any
+    /// open, rather than refusing it as an older open's.
+    #[test]
+    fn a_save_keeps_the_prefetch_going() {
+        let (mut h, out) = handed("save-prefetch");
+        h.s.app.set_grid_open(false);
+        h.open(&out);
+        let dark = h.developed.get().unwrap();
+        saved(&mut h.s, &out, BRIGHT);
+        h.pump(
+            &|h| h.developed.get().is_some_and(|m| m > dark * 1.3),
+            "the save's develop",
+        );
+        let c = h.cell_of(&out);
+        let st = h.s.state.borrow();
+        let sent = st
+            .develop
+            .neighbors_sent
+            .as_ref()
+            .expect("sent")
+            .generation();
+        assert_eq!(sent, st.develop.generation);
+        assert!(!crate::panel::browser::neighbors_of(&st, c).is_empty());
+        assert!(h.s.worker.neighbors_again(
+            sent,
+            &out,
+            st.develop.walk.heading(),
+            crate::panel::browser::neighbors_of(&st, c),
+            "a test",
+        ));
+        drop(st);
+        teardown(h.s);
     }
 }

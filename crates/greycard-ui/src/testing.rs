@@ -362,6 +362,30 @@ pub(crate) fn remove_scratch(state: Rc<Shared>, dir: &std::path::Path) {
     remove_dir_retry(dir);
 }
 
+/// What is under `dir` a moment after it was removed, the folder itself
+/// first if it is there: what a thread still at work wrote after the
+/// removal, which on Windows is a removal that fails.
+pub(crate) fn left_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let mut left = Vec::new();
+    let mut walk = vec![dir.to_path_buf()];
+    while let Some(d) = walk.pop() {
+        if !d.exists() {
+            continue;
+        }
+        left.push(d.clone());
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk.push(p);
+            } else {
+                left.push(p);
+            }
+        }
+    }
+    left
+}
+
 /// The pointer at the middle of the element a screen reader knows as
 /// `label`, resting there past the hold; its place in the window.
 pub(crate) fn rest_on(app: &App, label: &str) -> (f32, f32) {

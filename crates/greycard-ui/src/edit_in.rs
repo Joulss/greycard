@@ -193,6 +193,11 @@ impl Settle {
         Settle { taken, seen: None }
     }
 
+    /// The stamp last taken, or the file's as it was handed over.
+    pub fn taken(&self) -> Option<Stamp> {
+        self.taken
+    }
+
     /// The file's stamp now, none while it is not there: true when a
     /// new one has held since the last look, and is taken.
     pub fn look(&mut self, now: Option<Stamp>) -> bool {

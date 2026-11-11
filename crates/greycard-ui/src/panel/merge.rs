@@ -30,7 +30,6 @@ use crate::tr;
 use greycard_edit::{Edit, Learned, Line, Placement, Sidecar};
 use greycard_edit_io::on_disk::Fresh;
 use greycard_engine::merge::{self, Options, Step, focus, pano};
-use greycard_library::Rehash;
 use greycard_library::collections::Reference;
 use slint::ComponentHandle;
 
@@ -778,14 +777,10 @@ fn land(state: &Rc<Shared>, app: &App, worker: &Rc<Worker>, done: Done) {
     app.set_status(said.into());
 }
 
-/// A merge made again, renamed over its file: what the window kept of
-/// the old file's picture let go, and nothing of its edit. Its
-/// thumbnails and previews in the cache, under the old file's hash and
-/// time, are taken out, and the pictures of its edit under that hash,
-/// each of its cells asking for its picture again; its stack's
-/// reference takes the new hash; the indexer is given it; and when it
-/// is open it is opened again, its edit and its sidecar as they were.
-/// Whether it was.
+/// A merge made again, renamed over its file: the indexer is given it,
+/// and what the window kept of the old file's picture let go
+/// ([`crate::edited::file_rewritten`]), nothing of its edit. True when
+/// it was open and its picture is read again.
 fn swapped(
     st: &mut State,
     app: &App,
@@ -794,47 +789,20 @@ fn swapped(
     old: Option<(String, u64)>,
 ) -> bool {
     let path = &made.out;
-    if let Some((hash, stamp)) = &old {
-        let cache = worker.thumb_cache();
-        if let Some(cache) = cache.lock().expect("thumbnail cache").as_mut() {
-            cache.remove(hash, *stamp);
-        }
-    }
-    let file = st.file_by_path(path);
-    if let (Some(f), Some((hash, _))) = (file, &old) {
-        crate::edited::rewritten(st, f, hash);
-    }
-    if let (Some((old, _)), Some(new)) = (&old, &made.hash)
-        && old != new
-    {
-        let hint = file
-            .and_then(|f| crate::stacks::hint_of_file(st, f))
-            .unwrap_or_else(|| crate::stacks::hint_of_path(st, path));
-        let rehashed = [Rehash {
-            path: PathBuf::from(hint),
-            old: old.clone(),
-            new: new.clone(),
-        }];
-        if st.views.stacks.heal(crate::stacks::Found {
-            moved: &[],
-            folders: &[],
-            rehashed: &rehashed,
-        }) {
-            crate::panel::stacks::settle(st, app, worker);
-        }
-    }
     if let Some(index) = &st.views.index {
         index.file(path.clone());
         st.work.merge_relist = true;
     }
-    if let Some(c) = st.current
-        && st.culling.cull.is_none()
-        && st.path_at(c) == Some(path)
-    {
-        crate::panel::browser::open_frame(st, app, worker, c);
-        return true;
-    }
-    false
+    // An old file that would not hash had nothing kept under a hash.
+    crate::edited::file_rewritten(
+        st,
+        app,
+        worker,
+        path,
+        old.as_ref(),
+        None,
+        made.hash.as_deref(),
+    )
 }
 
 /// The merged files' edits held in memory, each given to its file's
@@ -1756,11 +1724,15 @@ mod tests {
         fn done(self) {
             crate::WORKER.with(|w| *w.borrow_mut() = None);
             crate::STATE.with(|s| *s.borrow_mut() = None);
-            self.worker.stop();
+            // The pool's threads too, or one still making a picture
+            // writes into the folder after it is removed.
+            assert!(self.worker.stop_all(std::time::Duration::from_secs(60)));
             drop(self.writer);
             drop(self.app);
             drop(self.worker);
             crate::testing::remove_scratch(self.state, &self.dir);
+            let left = crate::testing::left_in(&self.dir);
+            assert!(left.is_empty(), "nothing left behind: {left:?}");
         }
     }
 

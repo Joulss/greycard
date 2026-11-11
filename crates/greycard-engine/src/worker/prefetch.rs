@@ -1365,6 +1365,7 @@ mod tests {
             edit: Edit::default(),
             generation: 9,
             turn: 0,
+            of: None,
         });
         assert_eq!(
             ahead(&q, true, &n, &facts(), None),

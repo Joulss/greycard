@@ -98,6 +98,10 @@ use greycard_edit::{Edit, Noise};
 use crate::ai::{Ai, Key, NoDenoiser, NoFill};
 use crate::version_key::Key as Frame;
 
+/// The frame a develop is for: its file, and its version, none for the
+/// file's own, as an open of it names them.
+pub type DevelopOf = (PathBuf, Option<std::sync::Arc<str>>);
+
 pub enum Job {
     Open {
         path: PathBuf,
@@ -130,6 +134,11 @@ pub enum Job {
         edit: Edit,
         generation: u64,
         turn: u8,
+        /// The frame it is for, its file and version, as the window had
+        /// it current when it sent it: one sent while an open of that
+        /// frame still waits becomes that open (`handle::into_slot`).
+        /// None for one the worker makes itself.
+        of: Option<DevelopOf>,
     },
     /// Another edit of the open frame developed beside its own, as a
     /// before and after shows it: answered as a develop of
@@ -139,6 +148,8 @@ pub enum Job {
         edit: Edit,
         generation: u64,
         turn: u8,
+        /// As a develop's.
+        of: Option<DevelopOf>,
     },
     /// The next fill of the open frame's develop `generation`, which
     /// landed with fills still to make: queued by the worker itself,
@@ -633,6 +644,17 @@ pub enum Outcome {
     Making(crate::thumbpool::Making),
 }
 
+impl Queue {
+    /// `generation`, an open's as the window sent it, as the worker has
+    /// it now: the develop's it was folded into, if it was.
+    fn folded_to(&self, generation: u64) -> u64 {
+        match self.folded {
+            Some((from, to)) if from == generation => to,
+            _ => generation,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Queue {
     /// A lens database fetched since the worker read its own, for it
@@ -698,6 +720,11 @@ struct Queue {
     /// landed, as the worker has it: what neighbors sent again for the
     /// frame open (`Worker::neighbors_again`) are for.
     landed: Option<(u64, PathBuf)>,
+    /// A develop folded into a waiting open (`handle::into_slot`): the
+    /// generation the window sent the open at, and the one it lands at
+    /// now. Until the next open, neighbors the window sends under the
+    /// first are taken as under the second.
+    folded: Option<(u64, u64)>,
     /// Files whose edit changed without an open of them, with the edit
     /// now when the window has it: their shelved bases that no open
     /// would take are let go (`Worker::edit_changed`).

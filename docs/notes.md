@@ -646,3 +646,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§632. Lossless WebP export](notes/632-lossless-webp-export.md) (2026-11-11)
 - [§633. Tab brings back what it hid](notes/633-tab-brings-back-what-it-hid.md) (2026-11-11)
 - [§634. As shot off gives back the white it replaced](notes/634-as-shot-off-gives-back-the-white-it-replaced.md) (2026-11-11)
+- [§635. Edit in: a save over the file shows](notes/635-edit-in-a-save-over-the-file-shows.md) (2026-11-11)

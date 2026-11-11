@@ -241,12 +241,12 @@ pub(crate) fn changed(st: &mut crate::State, c: usize) {
 }
 
 /// File `file` was written again in place under the window (a merge
-/// made again): the pictures of each of its lines kept under its old
-/// content `hash` are taken out, since a file of the same head and
-/// length would take them for its own, and each cell holds its edit as
-/// before, its key read again, and asks for its picture again. The
-/// loupe's copies go whatever they show, the camera's too, since the
-/// file under them is another.
+/// made again, an app's save): the pictures of each of its lines kept
+/// under its old content `hash` are taken out, since a file of the
+/// same head and length would take them for its own, and each cell
+/// holds its edit as before, its key read again, and asks for its
+/// picture again. The loupe's copies go whatever they show, the
+/// camera's too, since the file under them is another.
 pub(crate) fn rewritten(st: &mut crate::State, file: usize, hash: &str) {
     let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
         return;
@@ -274,6 +274,60 @@ pub(crate) fn rewritten(st: &mut crate::State, file: usize, hash: &str) {
             .note(frame, held_edited(st, *c), iso_of(st, *c), None);
         kept(st, &worker, frame);
     }
+}
+
+/// The file at `path` written again in place under the window, by a
+/// merge made again or by another editor's save over a file Edit in
+/// handed it: what the window kept of its old content let go, nothing
+/// of its edit. Its thumbnails and previews in the cache under `old`,
+/// its hash and stamp before, are taken out; the pictures of its edit
+/// under that hash too, or under `unknown` when `old` is not known,
+/// each of its cells asking for its picture again ([`rewritten`]); its
+/// stack's reference takes `new`, its hash now; and when it is the
+/// frame open, its picture is read again and nothing else of an open
+/// done ([`crate::panel::browser::reread_open`]). True when it was read
+/// again.
+pub(crate) fn file_rewritten(
+    st: &mut crate::State,
+    app: &crate::App,
+    worker: &crate::worker::Worker,
+    path: &std::path::Path,
+    old: Option<&(String, u64)>,
+    unknown: Option<&str>,
+    new: Option<&str>,
+) -> bool {
+    if let Some((hash, stamp)) = old {
+        let cache = worker.thumb_cache();
+        if let Some(cache) = cache.lock().expect("thumbnail cache").as_mut() {
+            cache.remove(hash, *stamp);
+        }
+    }
+    let file = st.file_by_path(path);
+    if let (Some(f), Some(hash)) = (file, old.map(|(h, _)| h.as_str()).or(unknown)) {
+        rewritten(st, f, hash);
+    }
+    if let (Some((old, _)), Some(new)) = (old, new)
+        && old != new
+    {
+        let hint = file
+            .and_then(|f| crate::stacks::hint_of_file(st, f))
+            .unwrap_or_else(|| crate::stacks::hint_of_path(st, path));
+        let rehashed = [greycard_library::Rehash {
+            path: std::path::PathBuf::from(hint),
+            old: old.clone(),
+            new: new.to_string(),
+        }];
+        if st.views.stacks.heal(crate::stacks::Found {
+            moved: &[],
+            folders: &[],
+            rehashed: &rehashed,
+        }) {
+            crate::panel::stacks::settle(st, app, worker);
+        }
+    }
+    st.current
+        .is_some_and(|c| st.path_at(c).map(std::path::PathBuf::as_path) == Some(path))
+        && crate::panel::browser::reread_open(st, app, worker)
 }
 
 /// Every edit cell `c`'s file holds, its own and its versions', and its
@@ -636,6 +690,7 @@ mod tests {
                 edit: bright.clone(),
                 generation: 2,
                 turn: 1,
+                of: None,
             });
             assert!(matches!(rig.next(), Heard::Developed));
             rig.save(&bright, 1);
@@ -656,6 +711,7 @@ mod tests {
                 edit: mirrored.clone(),
                 generation: 5,
                 turn: 1,
+                of: None,
             });
             assert!(matches!(rig.next(), Heard::Developed));
             rig.save(&mirrored, 1);
@@ -676,6 +732,7 @@ mod tests {
                 edit: textured.clone(),
                 generation: 3,
                 turn: 1,
+                of: None,
             });
             rig.kept();
             assert!(rig.thumb().2 > camera + 20.0);

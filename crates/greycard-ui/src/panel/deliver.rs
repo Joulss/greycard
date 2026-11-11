@@ -637,6 +637,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.set_as_shot(false);
                 app.set_temperature(t);
             }
+            // A file read again under the Original on show: its
+            // Original of the new bytes in place of the edit's develop.
+            crate::panel::original::reread_opened(&mut st, app, generation);
         }
         Outcome::Developed {
             generation,
@@ -1455,6 +1458,7 @@ fn develop_for(st: &mut State, app: &App, arrived: impl Fn(&greycard_ai::Model) 
                     edit: st.develop.edit.clone(),
                     generation: st.develop.generation,
                     turn,
+                    of: crate::panel::edit::develop_of(st),
                 });
             }
         });

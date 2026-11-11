@@ -254,6 +254,7 @@ fn a_panic_in_a_job_is_the_failure_that_job_was_waited_on_for() {
         edit: Edit::default(),
         generation: 7,
         turn: 0,
+        of: None,
     };
     // The panics here are on purpose; the hook has nothing to say
     // about them. The hook is the process's, and the other tests
@@ -4392,6 +4393,7 @@ fn a_loss_after_the_develop_develops_it_again_on_the_cpu() {
             edit,
             generation,
             turn,
+            ..
         }) = redo
         else {
             panic!("the develop asked again");
@@ -5579,6 +5581,7 @@ fn the_worker_makes_a_develops_fills_after_it_and_a_new_develop_takes_them_over(
         edit: edit.clone(),
         generation: 2,
         turn: 0,
+        of: None,
     });
     go_tx.send(()).unwrap();
     let said: Vec<String> = (0..7).map(|_| next()).collect();
@@ -5820,6 +5823,7 @@ fn the_worker_gives_the_card_back_when_its_fills_are_done() {
         edit: three_fills().1,
         generation: 2,
         turn: 0,
+        of: None,
     });
     while !next().starts_with("developed 2") {}
     assert_eq!(worker.gave_back_by_test(), 1);
@@ -6137,6 +6141,7 @@ fn a_big_fill_the_card_is_short_of_lets_the_small_ones_by() {
         edit: edit.clone(),
         generation: 2,
         turn: 0,
+        of: None,
     };
     let (said, gave) = fills_said_then(
         "short-big",

@@ -278,6 +278,23 @@ impl Worker {
         self.stop_within(LEAVING)
     }
 
+    /// [`Worker::stop`], then the thumbnails' pool and the keeping of
+    /// the edit's pictures waited on too, up to `limit`, so nothing of
+    /// any of them writes to the cache after: what a test does before
+    /// it removes its folder. Whether all of them ended.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn stop_all(&self, limit: std::time::Duration) -> bool {
+        let asked = std::time::Instant::now();
+        let stopped = self.stop_within(limit);
+        while self.pool().is_some_and(|p| !p.ended()) || !self.edited.keeping_idle() {
+            if asked.elapsed() >= limit {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        stopped
+    }
+
     /// [`Worker::stop`], waiting `limit` rather than [`LEAVING`].
     pub(super) fn stop_within(&self, limit: std::time::Duration) -> bool {
         self.close();
@@ -530,6 +547,31 @@ impl Worker {
                 });
             }
             job => {
+                let opening = match &q.develop {
+                    Some(Job::Open { generation, .. }) => Some(*generation),
+                    _ => None,
+                };
+                let (job, folded) = into_slot(q.develop.take(), job);
+                match (&job, opening) {
+                    // The open lands at the develop's generation now:
+                    // its neighbors are retagged to it, and the window,
+                    // which knows them by the open's, is answered as
+                    // under the new one (`Worker::neighbors_again`).
+                    (Job::Open { generation, .. }, Some(old)) if folded => {
+                        let from = q
+                            .folded
+                            .filter(|&(_, to)| to == old)
+                            .map_or(old, |(from, _)| from);
+                        q.folded = Some((from, *generation));
+                        if let Some(n) = q.neighbors.as_mut()
+                            && n.generation == old
+                        {
+                            n.generation = *generation;
+                        }
+                    }
+                    (Job::Open { .. }, _) => q.folded = None,
+                    _ => {}
+                }
                 // The frame being opened is the open frame from here:
                 // the pool must not develop it for its pictures while
                 // the open is on its way.
@@ -562,9 +604,12 @@ impl Worker {
     /// an earlier open still waiting are let go.
     pub fn neighbors(&self, generation: u64, heading: Heading, neighbors: Vec<Neighbor>) {
         let (lock, cv) = &*self.queue;
-        lock.lock().expect("worker queue").neighbors = Some(super::prefetch::Neighbors::new(
+        let mut q = lock.lock().expect("worker queue");
+        let generation = q.folded_to(generation);
+        q.neighbors = Some(super::prefetch::Neighbors::new(
             generation, heading, neighbors,
         ));
+        drop(q);
         cv.notify_one();
     }
 
@@ -587,6 +632,7 @@ impl Worker {
     ) -> bool {
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("worker queue");
+        let generation = q.folded_to(generation);
         let ours = match &q.neighbors {
             Some(waiting) => waiting.generation == generation,
             None => q
@@ -859,6 +905,69 @@ impl Worker {
     }
 }
 
+/// What the worker's one develop slot holds once `job` is sent over
+/// `waiting`, what it held, and whether the two were folded: `job`, in
+/// its place, but for a develop (its own or the Original's aside) for
+/// the very frame, file and version, of an open still waiting there.
+/// That develop becomes the open under its edit, generation, and turn:
+/// dropped, the open's file would never be read (a frame chosen, or its
+/// file written again under the window), the develop would run on the
+/// base before it, and the open's `Opened` would never come. A develop
+/// for another frame, or for none (the worker's own), takes the slot as
+/// it is: the window moved on without an open (a pick still reading its
+/// sidecar, an offline frame), and the open is not the frame it shows.
+/// An aside's edit is the Original's, which the window's generation
+/// says the develop that lands is (`original::landing`).
+pub(super) fn into_slot(waiting: Option<Job>, job: Job) -> (Job, bool) {
+    let folds = match (&waiting, &job) {
+        (
+            Some(Job::Open { path, version, .. }),
+            Job::Develop { of: Some(of), .. } | Job::DevelopAside { of: Some(of), .. },
+        ) => of.0 == *path && of.1 == *version,
+        _ => false,
+    };
+    if !folds {
+        return (job, false);
+    }
+    match (waiting, job) {
+        (
+            Some(Job::Open {
+                path,
+                version,
+                seed_blend,
+                stance_known,
+                learned,
+                ..
+            }),
+            Job::Develop {
+                edit,
+                generation,
+                turn,
+                ..
+            }
+            | Job::DevelopAside {
+                edit,
+                generation,
+                turn,
+                ..
+            },
+        ) => (
+            Job::Open {
+                path,
+                version,
+                edit,
+                generation,
+                seed_blend,
+                turn,
+                stance_known,
+                learned,
+            },
+            true,
+        ),
+        (_, job) => (job, false),
+    }
+}
+
 /// The frames on the strip first, in file order, then the rest
 /// outward from the middle of that range: what a scroll asks for
 /// next is whichever end it is heading towards.
@@ -1064,5 +1173,161 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
 impl Drop for Worker {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod slot {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn open(path: &str, generation: u64) -> Job {
+        Job::Open {
+            path: PathBuf::from(path),
+            version: None,
+            edit: Edit::default(),
+            generation,
+            seed_blend: true,
+            turn: 0,
+            stance_known: true,
+            learned: Vec::new(),
+        }
+    }
+
+    fn bright() -> Edit {
+        let mut edit = Edit::default();
+        edit.light.exposure = 1.3;
+        edit
+    }
+
+    fn of(path: &str) -> Option<DevelopOf> {
+        Some((PathBuf::from(path), None))
+    }
+
+    /// A develop for the frame of an open still waiting becomes that
+    /// open under the develop's edit, generation, and turn, the open's
+    /// own the rest; an aside likewise. A develop for another frame, or
+    /// for another version of the file, or for none, takes the slot as
+    /// it is, as it does with no open waiting or a develop waiting; so
+    /// does an open of another file over a waiting open.
+    #[test]
+    fn a_develop_for_a_waiting_open_s_frame_is_that_open() {
+        for develop in [
+            Job::Develop {
+                edit: bright(),
+                generation: 5,
+                turn: 1,
+                of: of("/a.tif"),
+            },
+            Job::DevelopAside {
+                edit: bright(),
+                generation: 5,
+                turn: 1,
+                of: of("/a.tif"),
+            },
+        ] {
+            let (
+                Job::Open {
+                    path,
+                    edit,
+                    generation,
+                    seed_blend,
+                    turn,
+                    stance_known,
+                    ..
+                },
+                true,
+            ) = into_slot(Some(open("/a.tif", 4)), develop)
+            else {
+                panic!("still the open");
+            };
+            assert_eq!(path, PathBuf::from("/a.tif"));
+            assert_eq!(edit.light.exposure, 1.3);
+            assert_eq!((generation, turn), (5, 1));
+            assert!(seed_blend && stance_known);
+        }
+        let develop = |of| Job::Develop {
+            edit: bright(),
+            generation: 6,
+            turn: 0,
+            of,
+        };
+        for other in [
+            of("/b.tif"),
+            Some((PathBuf::from("/a.tif"), Some("v1".into()))),
+            None,
+        ] {
+            assert!(matches!(
+                into_slot(Some(open("/a.tif", 4)), develop(other)),
+                (Job::Develop { generation: 6, .. }, false)
+            ));
+        }
+        assert!(matches!(
+            into_slot(None, develop(of("/a.tif"))),
+            (Job::Develop { generation: 6, .. }, false)
+        ));
+        assert!(matches!(
+            into_slot(Some(develop(None)), develop(of("/a.tif"))),
+            (Job::Develop { generation: 6, .. }, false)
+        ));
+        let (
+            Job::Open {
+                path, generation, ..
+            },
+            false,
+        ) = into_slot(Some(open("/a.tif", 4)), open("/b.tif", 7))
+        else {
+            panic!("the newer open");
+        };
+        assert_eq!((path, generation), (PathBuf::from("/b.tif"), 7));
+    }
+
+    /// A fold leaves the prefetch going: the neighbors the window sent
+    /// with the open, under its generation, are the folded open's, and
+    /// sent again under the open's generation they are taken as such.
+    #[test]
+    fn a_fold_keeps_the_open_s_neighbors() {
+        let heading = Heading::steady(Side::Next);
+        let worker = Worker::new(|_| {});
+        // Stopped: what is sent waits in the queue, as behind a busy
+        // worker, for the test to read.
+        worker.stop();
+        worker.send(open("/a.tif", 4));
+        worker.neighbors(4, heading, Vec::new());
+        worker.send(Job::Develop {
+            edit: bright(),
+            generation: 5,
+            turn: 0,
+            of: of("/a.tif"),
+        });
+        {
+            let q = worker.queue.0.lock().unwrap();
+            assert!(matches!(q.develop, Some(Job::Open { generation: 5, .. })));
+            assert_eq!(q.neighbors.as_ref().map(|n| n.generation), Some(5));
+            assert_eq!(q.folded, Some((4, 5)));
+        }
+        // Sent again by the window under the open's generation.
+        worker.neighbors(4, heading, Vec::new());
+        assert_eq!(
+            worker
+                .queue
+                .0
+                .lock()
+                .unwrap()
+                .neighbors
+                .as_ref()
+                .map(|n| n.generation),
+            Some(5)
+        );
+        assert!(worker.neighbors_again(
+            4,
+            std::path::Path::new("/a.tif"),
+            heading,
+            Vec::new(),
+            "a test"
+        ));
+        // Another open: the fold is over.
+        worker.send(open("/b.tif", 6));
+        assert_eq!(worker.queue.0.lock().unwrap().folded, None);
     }
 }

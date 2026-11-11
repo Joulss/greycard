@@ -323,7 +323,10 @@ that is taken. greycard then opens it in the app.
 
 When the app saves the file, greycard indexes it and shows it beside
 the raw as a frame of its own, in the raw's stack if it has one or in
-a new stack of the two, opened. Each export adds a line to the
+a new stack of the two, opened. Each later save shows too, a second
+or two after the app has finished writing it, in the strip, the
+grid, and Develop when the file is open there, under any edit you
+gave it in greycard. Each export adds a line to the
 frame's **HISTORY**, as any export does.
 
 The app must save over that same file for the edit to come back and

@@ -537,6 +537,20 @@ impl Pending {
 struct Shared {
     pending: Mutex<Pending>,
     cv: Condvar,
+    /// How many of the threads are still running, finished work or not.
+    alive: std::sync::atomic::AtomicUsize,
+}
+
+/// One running thread of the pool, counted out as it ends, by a panic
+/// too.
+struct Alive(Arc<Shared>);
+
+impl Drop for Alive {
+    fn drop(&mut self) {
+        self.0
+            .alive
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// The pool: `threads` threads, started with the first thumbnail
@@ -578,6 +592,7 @@ impl Pool {
                     ..Pending::default()
                 }),
                 cv: Condvar::new(),
+                alive: std::sync::atomic::AtomicUsize::new(0),
             }),
             threads,
             lookup,
@@ -650,9 +665,14 @@ impl Pool {
                     }
                     _ => deliver(outcome),
                 };
+                self.shared
+                    .alive
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let alive = Alive(self.shared.clone());
                 let spawned = std::thread::Builder::new()
                     .name(format!("greycard thumbnails {n}"))
                     .spawn(move || {
+                        let _alive = alive;
                         serve(
                             &shared,
                             lookup.as_deref(),
@@ -876,6 +896,17 @@ impl Pool {
             .unwrap_or_else(|e| e.into_inner())
             .stopping = true;
         self.shared.cv.notify_all();
+    }
+}
+
+impl Pool {
+    /// Whether every thread has ended, so nothing of the pool's writes
+    /// to the cache any more: false until [`Pool::stop`], and while a
+    /// thread finishes the picture it had in hand. For a test's stop
+    /// (`Worker::stop_all`).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn ended(&self) -> bool {
+        self.lock().stopping && self.shared.alive.load(std::sync::atomic::Ordering::SeqCst) == 0
     }
 }
 

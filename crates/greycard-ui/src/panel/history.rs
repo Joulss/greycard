@@ -418,6 +418,7 @@ fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: b
             edit: edit_to_develop(app, &st.develop.edit),
             generation: st.develop.generation,
             turn: current_turn(st),
+            of: crate::panel::edit::develop_of(st),
         });
     }
 }

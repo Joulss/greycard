@@ -34,12 +34,13 @@ the reasoning lives in `docs/notes.md`.
       workflow, no checksums beside the release's files, and split
       symbols kept for each release so a stripped build's backtrace
       can be named (review, 2026-11-11)
-- [ ] Edit in: a save over the handed file does not show while that
-      file is the open frame; leaving it and coming back shows it. The
-      watcher re-indexes and lists again (§499) but lets go of no
-      picture held under the old content, as a merge made again does
-      (`edited::rewritten`); read from the code, not run (issue 119,
-      2026-11-10)
+- [ ] An edit's pictures made from bytes since written over can be
+      kept: a save that changes a file only past its hashed 64 KB head
+      at the same length, landing while a keeping or a reduced develop
+      of the old bytes runs, leaves the old picture in the grid and
+      the strip until the edit changes. A "let go" count per path,
+      raised under the cache's lock and checked at the store, every
+      stat outside it (§635)
 - [ ] The local contrast's GPU sweep fails one case in a thousand:
       seed 1, case 758, a 55x2547 Steps scene with texture -0.82,
       clarity -1, and structure 1, the GPU 1.3e-4 and the CPU 2.3e-4

@@ -1082,6 +1082,7 @@ pub(super) fn run(
                 edit,
                 generation,
                 turn: wanted,
+                ..
             } => {
                 if let Some(f) = &input {
                     turn = wanted % 4;
@@ -1117,6 +1118,7 @@ pub(super) fn run(
                 edit,
                 generation,
                 turn: wanted,
+                ..
             } => {
                 if let Some(f) = &input {
                     ai.clear_shorts();
@@ -1572,6 +1574,7 @@ pub(super) fn lose_gpu(
         edit: s.edit,
         generation: s.generation,
         turn: s.turn,
+        of: None,
     });
     tracing::warn!(
         "the GPU device was lost; the engine's ops on the CPU from now on{}",

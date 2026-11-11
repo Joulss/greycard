@@ -43,6 +43,9 @@ pub(crate) struct Original {
     edited: Option<Shown>,
     /// The status line it covers.
     status: Option<SharedString>,
+    /// The open of the file read again while it was on show, by its
+    /// generation (`rewritten`).
+    reread: Option<u64>,
 }
 
 /// A picture that has been up on the GPU, with what it went up with:
@@ -204,6 +207,7 @@ pub(crate) fn key(st: &mut State, app: &App, worker: &Worker) {
             edit: edit_to_develop(app, &edit),
             generation,
             turn,
+            of: crate::panel::edit::develop_of(st),
         });
     }
     app.window().request_redraw();
@@ -221,6 +225,7 @@ pub(crate) fn off(st: &mut State, app: &App, follows: bool) {
     }
     o.on = false;
     o.asked = None;
+    o.reread = None;
     let edited = o.edited.take();
     if let Some(status) = o.status.take()
         && app.get_status() == word().as_str()
@@ -241,6 +246,7 @@ pub(crate) fn off(st: &mut State, app: &App, follows: bool) {
                     edit,
                     generation,
                     turn,
+                    of: crate::panel::edit::develop_of(st),
                 });
             }
         });
@@ -262,6 +268,53 @@ pub(crate) fn forget(st: &mut State) -> Option<Edit> {
 pub(crate) fn drop_picture(st: &mut State) {
     st.develop.original.picture = None;
     st.develop.original.of = None;
+}
+
+/// The open frame's file is read again at `generation`
+/// (`browser::reread_open`): both pictures kept are of the old bytes
+/// and go, the edit's the Original stands over too, so turning it off
+/// develops the edit of the new bytes rather than putting the old one
+/// up. On show, it stays on: once the file is open again
+/// ([`reread_opened`]) its Original of the new bytes is asked for.
+pub(crate) fn rewritten(st: &mut State, generation: u64) {
+    let o = &mut st.develop.original;
+    o.picture = None;
+    o.edited = None;
+    o.reread = o.on.then_some(generation);
+}
+
+/// The worker has opened the file read again at `generation` while the
+/// Original was on show: its Original of the new bytes is developed
+/// aside, at a generation of its own, in place of the edit's develop of
+/// that open, which nothing waits for.
+pub(crate) fn reread_opened(st: &mut State, app: &App, generation: u64) {
+    let o = &mut st.develop.original;
+    if !o.on || o.reread != Some(generation) {
+        return;
+    }
+    o.reread = None;
+    let Some(edit) = o.edit.clone() else {
+        return;
+    };
+    // The worker develops the edit of the open all the same, and the
+    // aside leaves that develop as it is: the edit's pictures of the
+    // new bytes are kept from it, as a develop landing keeps them, or
+    // the strip would show the camera's until the Original is off.
+    crate::edited::landed(st, current_turn(st));
+    st.develop.generation += 1;
+    let generation = st.develop.generation;
+    st.develop.original.asked = Some(generation);
+    let turn = current_turn(st);
+    WORKER.with(|w| {
+        if let Some(w) = &*w.borrow() {
+            w.send(Job::DevelopAside {
+                edit: edit_to_develop(app, &edit),
+                generation,
+                turn,
+                of: crate::panel::edit::develop_of(st),
+            });
+        }
+    });
 }
 
 /// A develop of `generation` is delivered: whether it is the

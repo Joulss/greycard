@@ -874,6 +874,7 @@ pub(crate) fn turn_frames(
             edit: edit_to_develop(app, &st.develop.edit),
             generation: st.develop.generation,
             turn: current_turn(st),
+            of: crate::panel::edit::develop_of(st),
         });
     }
     app.window().request_redraw();
@@ -2695,6 +2696,68 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
     }
 }
 
+/// The open frame's file was written again under it, unasked (another
+/// editor's save, a merge made again): its picture read again from the
+/// new bytes and developed under the panel's edit as it stands, a
+/// slider mid-drag included, and nothing else of an open done. No save
+/// and so no history step or sidecar write, no slider set, no tool or
+/// mask target put down, the view where it is (a picture of the same
+/// size keeps its zoom and its center). A develop of the old bytes
+/// still out is given up by the new generation. The worker starts the
+/// masks' models afresh at any open, so the learned rasters stay drawn
+/// until it makes them again on the new pixels, as for the same frame
+/// opened again (`mask::learned_anew`); the people a Part's pick shows
+/// are found again (`parts::picture_changed`). The Original on show
+/// stays on, made again of the new bytes (`original::rewritten`). The
+/// frames the arrow keys reach are sent again under the new open, as
+/// an open sends them, so the prefetch goes on. Not in culling, whose
+/// caches the caller lets go, nor while a pick waits on a sidecar: that
+/// open wins, and reads the file as it is now. Whether it was read
+/// again.
+pub(crate) fn reread_open(st: &mut State, app: &App, worker: &Worker) -> bool {
+    let Some(i) = st.current else {
+        return false;
+    };
+    if st.culling.cull.is_some()
+        || st.views.pick_pending.is_some()
+        || st.views.panel_stand_in.is_some()
+        || !crate::rows::is_loaded(st, i)
+    {
+        return false;
+    }
+    let edit = crate::panel::edit::edit_to_develop(app, &st.develop.edit);
+    st.develop.generation += 1;
+    crate::panel::original::rewritten(st, st.develop.generation);
+    crate::panel::parts::picture_changed(st, app);
+    app.set_busy(true);
+    let version = st.cells[i].version.clone();
+    crate::panel::mask::learned_anew(st, version.clone());
+    let learned = crate::panel::mask::asks_at_open(st, &edit);
+    tracing::info!(
+        "{}: written again under the window; read again",
+        file_name(st.path_of(i))
+    );
+    worker.send(Job::Open {
+        path: st.path_of(i).clone(),
+        version,
+        edit,
+        generation: st.develop.generation,
+        seed_blend: false,
+        turn: crate::panel::edit::current_turn(st),
+        stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
+        learned,
+    });
+    // Those sent with the last open are let go by the worker once this
+    // one is out; a step of the walk it is not.
+    worker.neighbors(
+        st.develop.generation,
+        st.develop.walk.heading(),
+        neighbors_of(st, i),
+    );
+    st.develop.neighbors_sent = Some(NeighborsSent::of(st, i, st.develop.generation));
+    true
+}
+
 /// The frames around cell `i` in the order their bases are to be made
 /// ([`beside`], deeper the way the strip is walked), as an open of each
 /// would be sent: each under the edit and the turn its sidecar gives.
@@ -2776,6 +2839,12 @@ pub(crate) struct NeighborsSent {
 }
 
 impl NeighborsSent {
+    /// The open they were sent with, for a test.
+    #[cfg(test)]
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     /// The neighbors of cell `c` as they are now, sent with the open at
     /// `generation`.
     pub(crate) fn of(st: &State, c: usize, generation: u64) -> Self {

@@ -60,6 +60,14 @@ design note behind it.
 
 ### Fixes
 
+- A save made in the other editor after Edit in shows in greycard a
+  second or two later, in Develop, the filmstrip, and the grid, with
+  your zoom, your tools, and your edit left as they were; before, it
+  showed only after leaving the frame and coming back (issue 119,
+  [§635](https://github.com/jessolmstead/greycard/blob/master/docs/notes/635-edit-in-a-save-over-the-file-shows.md)).
+- A slider moved just after a frame is opened no longer leaves the
+  frame before it on screen
+  ([§635](https://github.com/jessolmstead/greycard/blob/master/docs/notes/635-edit-in-a-save-over-the-file-shows.md)).
 - Tab brings back the panes and the filmstrip it put away, and leaves
   away one you had hidden yourself (discussion 59,
   [§633](https://github.com/jessolmstead/greycard/blob/master/docs/notes/633-tab-brings-back-what-it-hid.md)).
