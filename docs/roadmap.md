@@ -1030,6 +1030,9 @@ clears or a tester asks for it.
 - [ ] Idea: AI highlight recovery
 - [ ] Maybe: MCP
 - [ ] Maybe: Depth mapping for blur
+- [ ] Bloom: a soft glow around the highlights
+- [ ] Halation: the red glow film gives a bright edge, as an effect
+      of its own beside the grain
 
 #### User Requests
 
