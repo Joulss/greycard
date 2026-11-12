@@ -37,8 +37,8 @@ component Chip inherits Rectangle {
     opacity: root.nowhere ? 0.45 : 1;
     animate background { duration: Theme.quick; }
     HorizontalLayout {
-        padding-left: root.tight ? Theme.space-1 : Theme.space-2;
-        padding-right: root.tight ? Theme.space-1 : Theme.space-2;
+        padding-left: root.tight ? Theme.space-2 : Theme.space-3;
+        padding-right: root.tight ? Theme.space-2 : Theme.space-3;
         spacing: root.tight ? 3px : Theme.space-1;
         alignment: center;
         if root.has-dot: Rectangle {
@@ -282,9 +282,8 @@ export component FilterBar inherits Rectangle {
     init => { if (root.wanted && root.takes-focus) { root.grab(); } }
     VerticalLayout {
         spacing: Theme.space-2;
-        // The panel's, a group to a row with its name over it: at
-        // the panel's width the header's row runs off the side, and a caption
-        // beside each row would take the width three chips need.
+        // The panel's chip groups: Stars keeps its mode on the caption
+        // row; each chip row scrolls sideways when it runs past the panel.
         if root.stacked: VerticalLayout {
             spacing: Theme.space-1;
             HorizontalLayout {
@@ -306,54 +305,116 @@ export component FilterBar inherits Rectangle {
                     clicked(ctrl) => { root.exact-toggled(); }
                 }
             }
-            HorizontalLayout {
-                spacing: 3px;
-                alignment: start;
-                for chip[i] in root.stars: Chip {
-                    text: chip.text;
-                    count: chip.count;
-                    on: chip.on;
-                    tight: true;
-                    clicked(ctrl) => { root.star-picked(i); }
+            Rectangle {
+                height: Theme.control-height - 4px;
+                clip: true;
+                stars-flick := Flickable {
+                    content-width: max(self.width, stars-row.preferred-width);
+                    content-height: self.height;
+                    TouchArea {
+                        width: max(stars-flick.width, stars-row.preferred-width);
+                        height: stars-flick.height;
+                        scroll-event(e) => {
+                            if (stars-row.preferred-width <= stars-flick.width) { return reject; }
+                            stars-flick.content-x = max(stars-flick.width - stars-row.preferred-width,
+                                min(0px, stars-flick.content-x + (e.delta-x != 0px ? e.delta-x : e.delta-y)));
+                            return accept;
+                        }
+                    }
+                    stars-row := HorizontalLayout {
+                        spacing: 3px;
+                        alignment: start;
+                        for chip[i] in root.stars: Chip {
+                            text: chip.text;
+                            count: chip.count;
+                            on: chip.on;
+                            tight: true;
+                            clicked(ctrl) => { root.star-picked(i); }
+                        }
+                    }
                 }
             }
-            Text {
-                // Filter bar: the flag row
-                text: @tr("Flag");
-                color: Theme.text-secondary;
-                font-size: Theme.font-xs;
-                vertical-alignment: center;
-            }
-            HorizontalLayout {
-                spacing: 3px;
-                alignment: start;
-                for chip[i] in root.flags: Chip {
-                    text: chip.text;
-                    count: chip.count;
-                    on: chip.on;
-                    out: chip.out;
-                    tight: true;
-                    clicked(ctrl) => { root.flag-toggled(i, ctrl); }
+            Rectangle {
+                height: Theme.control-height - 4px;
+                clip: true;
+                flag-flick := Flickable {
+                    content-width: max(self.width, flag-row.preferred-width);
+                    content-height: self.height;
+                    TouchArea {
+                        width: max(flag-flick.width, flag-row.preferred-width);
+                        height: flag-flick.height;
+                        scroll-event(e) => {
+                            if (flag-row.preferred-width <= flag-flick.width) { return reject; }
+                            flag-flick.content-x = max(flag-flick.width - flag-row.preferred-width,
+                                min(0px, flag-flick.content-x + (e.delta-x != 0px ? e.delta-x : e.delta-y)));
+                            return accept;
+                        }
+                    }
+                    flag-row := HorizontalLayout {
+                        spacing: Theme.space-1;
+                        alignment: start;
+                        Text {
+                            // Filter bar: the flag row
+                            text: @tr("Flag");
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        HorizontalLayout {
+                            spacing: 3px;
+                            alignment: start;
+                            for chip[i] in root.flags: Chip {
+                                text: chip.text;
+                                count: chip.count;
+                                on: chip.on;
+                                out: chip.out;
+                                tight: true;
+                                clicked(ctrl) => { root.flag-toggled(i, ctrl); }
+                            }
+                        }
+                    }
                 }
             }
-            Text {
-                // Filter bar: the label row
-                text: @tr("Label");
-                color: Theme.text-secondary;
-                font-size: Theme.font-xs;
-                vertical-alignment: center;
-            }
-            HorizontalLayout {
-                spacing: 3px;
-                alignment: start;
-                for chip[i] in root.labels: LabelChip {
-                    text: chip.text;
-                    count: chip.count;
-                    on: chip.on;
-                    out: chip.out;
-                    tight: true;
-                    label-code: chip.code;
-                    clicked(ctrl) => { root.label-toggled(i, ctrl); }
+            Rectangle {
+                height: Theme.control-height - 4px;
+                clip: true;
+                label-flick := Flickable {
+                    content-width: max(self.width, label-row.preferred-width);
+                    content-height: self.height;
+                    TouchArea {
+                        width: max(label-flick.width, label-row.preferred-width);
+                        height: label-flick.height;
+                        scroll-event(e) => {
+                            if (label-row.preferred-width <= label-flick.width) { return reject; }
+                            label-flick.content-x = max(label-flick.width - label-row.preferred-width,
+                                min(0px, label-flick.content-x + (e.delta-x != 0px ? e.delta-x : e.delta-y)));
+                            return accept;
+                        }
+                    }
+                    label-row := HorizontalLayout {
+                        spacing: Theme.space-1;
+                        alignment: start;
+                        Text {
+                            // Filter bar: the label row
+                            text: @tr("Label");
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        HorizontalLayout {
+                            spacing: 1px;
+                            alignment: start;
+                            for chip[i] in root.labels: LabelChip {
+                                text: chip.text;
+                                count: chip.count;
+                                on: chip.on;
+                                out: chip.out;
+                                tight: true;
+                                label-code: chip.code;
+                                clicked(ctrl) => { root.label-toggled(i, ctrl); }
+                            }
+                        }
+                    }
                 }
             }
             // A facet to a row here, each scrolled on its own: a
@@ -438,11 +499,8 @@ export component FilterBar inherits Rectangle {
                 // Save..., Clear and the Sort button all fit with it.
                 max-width: root.stacked ? 100000px : 360px;
                 min-width: root.stacked ? 0px : 136px;
-                // In the header, the row's height is spelled out
-                // there (grid.slint): the field is held to a
-                // control's height rather than the style's taller
-                // one, so the facets under it stay inside the header.
-                height: root.stacked ? self.preferred-height : Theme.control-height;
+                // Match Clear and Sort in both the panel and the header.
+                height: Theme.control-height;
                 horizontal-stretch: 1;
                 edited(t) => { root.text-edited(t); }
                 accepted(t) => { root.released(); }
