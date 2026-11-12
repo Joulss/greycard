@@ -1145,6 +1145,9 @@ clears or a tester asks for it.
       for each, and chroma as a range rather than a floor, as ART's
       parametric mask; today it is a Luminance and a Color shape under
       Intersect (discussion 59, 2026-10-30)
+- [ ] A mask's opacity: one slider, 0 to 100%, that scales the whole
+      of its adjustments and leaves their balance alone, as Nik Color
+      Efex's filter opacity (issue 141, 2026-11-12)
 - [ ] A pivot for Contrast, so it turns about a chosen grey rather
       than the middle (issue 56, 2026-10-30)
 - [ ] A preset dragged onto a group's header or into its rows moves it
