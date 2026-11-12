@@ -253,6 +253,7 @@ pub enum Part {
     LightExposure,
     LightContrast,
     LightHighlights,
+    LightMidtones,
     LightShadows,
     LightWhites,
     LightBlacks,
@@ -328,6 +329,7 @@ impl Part {
         Part::LightExposure,
         Part::LightContrast,
         Part::LightHighlights,
+        Part::LightMidtones,
         Part::LightShadows,
         Part::LightWhites,
         Part::LightBlacks,
@@ -378,8 +380,8 @@ impl Part {
     pub fn section(self) -> Section {
         use Part::*;
         match self {
-            LightExposure | LightContrast | LightHighlights | LightShadows | LightWhites
-            | LightBlacks => Section::Light,
+            LightExposure | LightContrast | LightHighlights | LightMidtones | LightShadows
+            | LightWhites | LightBlacks => Section::Light,
             ColorVibrance | ColorSaturation => Section::Color,
             CurvesParametric | CurvesRgb | CurvesRed | CurvesGreen | CurvesBlue
             | CurvesRedGreen | CurvesBlueYellow => Section::Curves,
@@ -411,6 +413,7 @@ impl Part {
             LightExposure => "light.exposure",
             LightContrast => "light.contrast",
             LightHighlights => "light.highlights",
+            LightMidtones => "light.midtones",
             LightShadows => "light.shadows",
             LightWhites => "light.whites",
             LightBlacks => "light.blacks",
@@ -465,6 +468,7 @@ impl Part {
             LightExposure => "Exposure",
             LightContrast => "Contrast",
             LightHighlights => "Highlights",
+            LightMidtones => "Midtones",
             LightShadows => "Shadows",
             LightWhites => "Whites",
             LightBlacks => "Blacks",
@@ -552,6 +556,7 @@ impl Part {
             }
             LightContrast => o.light.tone.contrast = f.light.tone.contrast,
             LightHighlights => o.light.tone.highlights = f.light.tone.highlights,
+            LightMidtones => o.light.tone.midtones = f.light.tone.midtones,
             LightShadows => o.light.tone.shadows = f.light.tone.shadows,
             LightWhites => o.light.tone.whites = f.light.tone.whites,
             LightBlacks => o.light.tone.blacks = f.light.tone.blacks,
@@ -2084,6 +2089,7 @@ mod tests {
         e.light.exposure = 1.25;
         e.light.tone.contrast = 1.3;
         e.light.tone.highlights = -0.8;
+        e.light.tone.midtones = 0.4;
         e.light.tone.shadows = 0.6;
         e.light.tone.whites = 0.2;
         e.light.tone.blacks = -0.1;
@@ -2209,6 +2215,42 @@ mod tests {
         assert_eq!(out.detail, from.detail);
         assert_eq!(out.light.tone.whites, 0.2);
         assert_eq!(out.light.exposure, onto.light.exposure);
+    }
+
+    /// Midtones goes with the whole of Light, a preset's or a sync's,
+    /// and alone as its own part, through the file and back.
+    #[test]
+    fn midtones_goes_with_light_and_alone() {
+        let from = busy();
+        let mut onto = Edit::default();
+        onto.light.tone.midtones = -1.0;
+        let whole = Preset::from_edit("Light", &from, &[Section::Light]);
+        let whole = Preset::from_json(&whole.to_json()).unwrap();
+        assert_eq!(whole.applied(&onto).light, from.light);
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                parts: vec![Part::LightMidtones],
+                ..Choice::default()
+            },
+        );
+        let json = p.to_json();
+        assert!(json.contains("\"light.midtones\""), "{json}");
+        let p = Preset::from_json(&json).unwrap();
+        let out = p.applied(&onto);
+        let mut want = onto.clone();
+        want.light.tone.midtones = 0.4;
+        assert_eq!(out, want);
+        assert_eq!(Part::LightMidtones.title(), "Midtones");
+        assert_eq!(Part::LightMidtones.section(), Section::Light);
+        // A section chosen whole compares it: a frame whose midtones
+        // differs has not had the preset laid.
+        let laid = whole.applied(&onto);
+        assert!(whole.is_applied(&laid));
+        let mut moved = laid.clone();
+        moved.light.tone.midtones = 0.0;
+        assert!(!whole.is_applied(&moved));
     }
 
     #[test]

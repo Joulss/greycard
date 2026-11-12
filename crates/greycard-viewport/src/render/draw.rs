@@ -129,6 +129,9 @@ struct Params {
     /// In x the taps a side the shader averages over a pixel
     /// (`minify::taps`).
     minify: [f32; 4],
+    /// In x the midtones (`Tone::midtones`): stops of shift by the
+    /// guide plane's region, as the highlights and shadows are.
+    tone: [f32; 4],
 }
 
 /// What of the picture and its overlays (the clipping paint, the
@@ -402,6 +405,7 @@ impl Renderer {
                 0.0,
                 0.0,
             ],
+            tone: [v.light.tone.midtones, 0.0, 0.0, 0.0],
         };
         // Each draw has its own uniform buffer, since two draws share a
         // submission.

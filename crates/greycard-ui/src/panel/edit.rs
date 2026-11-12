@@ -478,6 +478,7 @@ pub(crate) fn read_look(app: &App) -> Look {
     };
     light.tone.contrast = app.get_contrast();
     light.tone.highlights = app.get_highlights();
+    light.tone.midtones = app.get_midtones();
     light.tone.shadows = app.get_shadows();
     light.tone.whites = app.get_whites();
     light.tone.blacks = app.get_blacks();
@@ -848,6 +849,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_exposure(look.light.exposure);
     app.set_contrast(look.light.tone.contrast);
     app.set_highlights(look.light.tone.highlights);
+    app.set_midtones(look.light.tone.midtones);
     app.set_shadows(look.light.tone.shadows);
     app.set_whites(look.light.tone.whites);
     app.set_blacks(look.light.tone.blacks);

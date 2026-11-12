@@ -719,6 +719,7 @@ pub fn finish_pixel_with(
         exposure += w * b.light.exposure;
         t.contrast += w * (b.light.tone.contrast - 1.0);
         t.highlights += w * b.light.tone.highlights;
+        t.midtones += w * b.light.tone.midtones;
         t.shadows += w * b.light.tone.shadows;
         t.whites += w * b.light.tone.whites;
         t.blacks += w * b.light.tone.blacks;
@@ -1429,6 +1430,56 @@ fn highlights_weight(g: f32, span: [f32; 2]) -> f32 {
         * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.0, HIGHLIGHTS_EASE.1, u))
 }
 
+/// How much of the midtones slider the middle of the frame takes: a
+/// slider of ±2 moves it a stop either way.
+pub const MIDTONES_PEAK: f32 = 0.5;
+/// How far under the middle the midtones bell reaches, in stops: from
+/// the foot of the span, where it is full, to nothing two stops down,
+/// so what shadows owns three and a half stops under grey is its own.
+pub const MIDTONES_BELOW: f32 = 2.0;
+/// The least it reaches over the middle, in stops: up to the frame's
+/// top, where it is nothing, on a frame whose span is at least this;
+/// on a narrower one, a little past the top. With [`MIDTONES_BELOW`]
+/// it sets the bell's steepest slope at the slider's limit,
+/// `1.5 * 2 * MIDTONES_PEAK / 2` or 0.75, so on its own it never turns
+/// the curve back.
+pub const MIDTONES_ABOVE: f32 = 2.0;
+/// What the midtones that reaches [`midtones_weight`] is held to, once
+/// a picture's and its masks' are summed: the slider's own limit, where
+/// the bell's slope is the 0.75 above. Unheld, a mask at the limit over
+/// a picture at it would double that and fold the curve.
+pub const MIDTONES_LIMIT: f32 = 2.0;
+
+/// How much of the midtones slider a region takes, by where it sits
+/// in the frame's span ([`highlights_span`]): a bell, full at the
+/// span's foot (the frame's median where the span is its own, the
+/// middle of the frame), falling by a smoothstep to nothing
+/// [`MIDTONES_BELOW`] under it and to nothing at the frame's top
+/// over it (the span's width, at least [`MIDTONES_ABOVE`]). Placed by
+/// the frame's range as highlights is, so it finds the middle of a
+/// low-key frame and of a high-key one alike; the ends stay where they
+/// are, black at black and the frame's top at its top. Where the
+/// highlights ramp is strongest, three quarters up the span, it is a
+/// sixth of its peak; at the foot, where it is full, highlights takes
+/// a fifth of its own.
+///
+/// Not exposure, which moves every tone alike; not contrast, a power
+/// about mid grey that moves the two ends apart and holds the middle;
+/// and not the curve's Lights and Darks, which act per pixel on the
+/// encoded picture at fixed places on the output and so flatten or
+/// steepen the texture they move. This moves the middle and holds the
+/// ends, by region, so a region keeps its texture.
+#[inline]
+fn midtones_weight(g: f32, span: [f32; 2]) -> f32 {
+    let d = g - span[0];
+    let reach = if d < 0.0 {
+        MIDTONES_BELOW
+    } else {
+        span[1].max(MIDTONES_ABOVE)
+    };
+    MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, d.abs() / reach))
+}
+
 /// Scene white, in stops over mid grey: where a channel at the
 /// sensor's clip lands after the white balance and the matrix, on the
 /// cameras measured (§19). Display white, where the shoulder reaches
@@ -1549,11 +1600,12 @@ fn white_point(c: [f32; 3], whites: f32, pivot: f32, white_stops: f32) -> [f32; 
 /// highlights ramp is placed by the frame's range (§250), and comes
 /// after it, on the pixel's own luminance.
 ///
-/// Shadows first, then highlights on the region where shadows put
-/// it: each on its own never turns the curve back, and one after the
-/// other neither can the two, wherever the frame's range has put the
-/// highlights ramp (§250). Added side by side, as §98 had them, that
-/// held only while the two ramps were fixed.
+/// Shadows first, then midtones on the region where shadows put it,
+/// then highlights on where midtones put it: each on its own never
+/// turns the curve back, and one after the other neither can the
+/// three, wherever the frame's range has put the highlights ramp and
+/// the midtones bell (§250). Added side by side, as §98 had them, that
+/// held only while the ramps were fixed.
 #[inline]
 #[cfg(test)]
 fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>, span: [f32; 2]) -> [f32; 3] {
@@ -1577,6 +1629,12 @@ fn shape_at(
         (y.max(1e-6) / MID_GREY).log2()
     });
     let lifted = g + t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g));
+    // The middle on the frame's own span, as the whites' pivot is.
+    let lifted = if t.midtones == 0.0 {
+        lifted
+    } else {
+        lifted + t.midtones.clamp(-MIDTONES_LIMIT, MIDTONES_LIMIT) * midtones_weight(lifted, span)
+    };
     // A frame with headroom: the negative travel pulls its kept range
     // under display white first, the ramp then on its span as pulled.
     // The whites keeps its pivot on the span as the frame has it.
@@ -2441,6 +2499,7 @@ mod tests {
         set.light.tone = Tone {
             contrast: 1.4,
             highlights: -1.0,
+            midtones: 0.6,
             shadows: 0.8,
             whites: 0.5,
             blacks: -0.1,
@@ -2888,11 +2947,12 @@ mod tests {
     fn every_corner_of_the_tone_controls_is_monotonic() {
         // §19's guard: no combination of the sliders at their limits
         // turns the curve back on itself, so a brighter scene value is
-        // never a darker pixel. Each shift has a peak slope of 0.86
-        // at its limit and where the two overlap, the stop under mid
-        // grey, they add to 0.86 at worst; the white point is a power
-        // over 0.41 at its limit; the black point is linear and the
-        // shoulder rises. So it holds on all sixteen corners, read
+        // never a darker pixel. Each shift has a peak slope under one
+        // at its limit (shadows 0.86, midtones 0.75, highlights 0.875)
+        // and each reads where the one before put the region; the
+        // white point is a power over 0.41 at its limit; the black
+        // point is linear and the shoulder rises. So it holds on all
+        // thirty-two corners, read
         // from the pixel's own luminance, which is the fallback path
         // and the one that can fold at all: read from the guide, a
         // shift is one constant across a region. At the default's
@@ -2905,7 +2965,7 @@ mod tests {
         for (source, curve, corner) in [Source::SCENE, Source::raw(make, model)]
             .into_iter()
             .flat_map(|s| DisplayCurve::ALL.map(|c| (s, c)))
-            .flat_map(|(s, c)| (0..16u32).map(move |k| (s, c, k)))
+            .flat_map(|(s, c)| (0..32u32).map(move |k| (s, c, k)))
         {
             let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
             let tone = Tone {
@@ -2913,6 +2973,7 @@ mod tests {
                 shadows: 2.0 * sign(1),
                 whites: 2.0 * sign(2),
                 blacks: 0.3 * sign(3),
+                midtones: 2.0 * sign(4),
                 ..Tone::default()
             };
             let light = Light {
@@ -2960,17 +3021,20 @@ mod tests {
         // either way, hold too. Read from the pixel's own luminance,
         // the path that can fold. At the default's display white and at
         // the GFX 100S II's, nearer grey, where the whites' pole is.
+        // Midtones between shadows and highlights, on the same span,
+        // at both its limits on every corner of the other three.
         let (make, model) = crate::testing::GFX;
         let gfx = White::at(greycard_edit::baseline::for_make_model(make, model)).stops;
         for (white, corner) in [DISPLAY_WHITE_STOPS, gfx]
             .into_iter()
-            .flat_map(|w| (0..8u32).map(move |k| (w, k)))
+            .flat_map(|w| (0..16u32).map(move |k| (w, k)))
         {
             let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
             let tone = Tone {
                 highlights: 2.0 * sign(0),
                 shadows: 2.0 * sign(1),
                 whites: 2.0 * sign(2),
+                midtones: 2.0 * sign(3),
                 ..Tone::default()
             };
             for width in [HIGHLIGHTS_SPAN.0, 2.0, 2.8, HIGHLIGHTS_SPAN.1] {
@@ -2989,6 +3053,190 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The region shifts' map in stops, on the pixel's own luminance:
+    /// what `shape` makes of a grey `stops` over mid grey, in stops,
+    /// with the white and black points left out.
+    fn shifted(tone: &Tone, span: [f32; 2], stops: f32) -> f32 {
+        let t = Tone {
+            whites: 0.0,
+            blacks: 0.0,
+            ..*tone
+        };
+        (shape(grey_at(stops), &t, None, span)[1] / MID_GREY).log2()
+    }
+
+    /// Midtones moves the middle of the frame and holds its ends: at
+    /// zero it is nothing, to the bit; it is full at the foot of the
+    /// span, the frame's median, half a stop a stop of slider; nothing
+    /// two stops under that or at the frame's top and past it; and it
+    /// finds the middle of a low-key frame, a typical one, and a
+    /// high-key one alike, by the frame's range.
+    #[test]
+    fn midtones_moves_the_middle_and_holds_the_ends() {
+        let none = Tone::default();
+        // Zero is the identity bit for bit, alone and beside the rest.
+        let busy = Tone {
+            contrast: 1.2,
+            highlights: -1.0,
+            shadows: 0.7,
+            whites: -0.5,
+            blacks: -0.05,
+            ..none
+        };
+        let zero = Tone {
+            midtones: 0.0,
+            ..busy
+        };
+        for i in 0..=1200 {
+            let stops = -8.0 + i as f32 * 0.01;
+            let c = [0.6, 0.4, 0.2].map(|v| v * 2f32.powf(stops));
+            assert_eq!(
+                shape(c, &zero, None, typical()).map(f32::to_bits),
+                shape(c, &busy, None, typical()).map(f32::to_bits)
+            );
+        }
+        // The frames' ranges in scene stops, at no exposure: a low-key
+        // interior five and a half stops from its median to its lamps,
+        // a typical frame at the default develop, and a high-key frame
+        // whose whole range sits within a stop over grey.
+        for (name, range, exposure) in [
+            ("low-key", [-4.67, 0.97], 0.0),
+            ("typical", FRAME_TYPICAL, BASELINE_EXPOSURE),
+            ("high-key", [0.4, 1.2], 0.0),
+        ] {
+            let span = highlights_span(range, exposure, 1.0);
+            let [foot, width] = span;
+            let median = range[0] + exposure;
+            let top = range[1] + exposure;
+            for m in [-2.0, -1.0, 1.0, 2.0] {
+                let t = Tone {
+                    midtones: m,
+                    ..none
+                };
+                let moved = |stops: f32| shifted(&t, span, stops) - stops;
+                // Full at the foot: half a stop a stop of slider.
+                assert!(
+                    (moved(foot) - m * MIDTONES_PEAK).abs() < 1e-4,
+                    "{name} {m}: {}",
+                    moved(foot)
+                );
+                // Nothing two stops under it, nor deeper; black is black.
+                for under in [MIDTONES_BELOW, 3.0, 6.0] {
+                    assert!(moved(foot - under).abs() < 1e-5, "{name} {m} {under}");
+                }
+                assert_eq!(shape([0.0; 3], &t, None, span), [0.0; 3]);
+                // Nothing over the reach: the frame's top where its span
+                // is at least the least reach.
+                let reach = width.max(MIDTONES_ABOVE);
+                for over in [reach, reach + 1.0, 8.0] {
+                    assert!(moved(foot + over).abs() < 1e-5, "{name} {m} {over}");
+                }
+                // The middle moves more than anything else.
+                for k in 0..=80 {
+                    let s = foot - 4.0 + k as f32 * 0.1;
+                    assert!(moved(s).abs() <= moved(foot).abs() + 1e-5, "{name} {m} {s}");
+                }
+            }
+            // The foot is the frame's median where the span is its own.
+            if (HIGHLIGHTS_SPAN.0..=HIGHLIGHTS_SPAN.1).contains(&(top - median)) {
+                assert!((foot - median).abs() < 1e-5, "{name}");
+            }
+            let t = Tone {
+                midtones: 2.0,
+                ..none
+            };
+            let at = |s: f32| shifted(&t, span, s) - s;
+            eprintln!(
+                "{name}: foot {foot:.2}, width {width:.2}; at +2 the median {:.3}, grey {:.3}, \
+                 a stop under the foot {:.3}, a stop over {:.3}, the top {:.3}",
+                at(median),
+                at(0.0),
+                at(foot - 1.0),
+                at(foot + 1.0),
+                at(top)
+            );
+        }
+        // The typical frame by the numbers: a stop at its middle at the
+        // slider's limit, three quarters of one at mid grey, a sixth of
+        // the peak where the highlights peak, half a stop a stop under.
+        let t = Tone {
+            midtones: 2.0,
+            ..none
+        };
+        let at = |s: f32| shifted(&t, typical(), s) - s;
+        assert!((at(-0.9) - 1.0).abs() < 1e-4, "{}", at(-0.9));
+        assert!((at(0.0) - 0.757).abs() < 2e-3, "{}", at(0.0));
+        assert!((at(-1.9) - 0.5).abs() < 1e-4, "{}", at(-1.9));
+        assert!((at(1.2) - 0.156).abs() < 2e-3, "{}", at(1.2));
+        assert!(at(1.9).abs() < 1e-5, "{}", at(1.9));
+        // A color keeps its channel ratios.
+        let c = shape([0.06, 0.04, 0.02], &t, None, typical());
+        assert!(
+            (c[0] / c[1] - 1.5).abs() < 1e-4 && (c[1] / c[2] - 2.0).abs() < 1e-4,
+            "{c:?}"
+        );
+        // A summed midtones past the slider's limit, a mask's over the
+        // picture's, is held there.
+        let past = Tone {
+            midtones: 3.5,
+            ..none
+        };
+        assert_eq!(
+            shape(grey_at(-0.9), &past, None, typical()),
+            shape(grey_at(-0.9), &t, None, typical())
+        );
+    }
+
+    /// The least slope of the three region shifts' map over every
+    /// corner of shadows, midtones, and highlights at their limits and
+    /// every span the frame's range can give: what the monotonic
+    /// sweeps hold is positive with this margin.
+    #[test]
+    fn the_region_shifts_keep_a_margin_on_every_corner() {
+        let mut least = (f32::MAX, Tone::default(), [0.0; 2], 0.0);
+        let mut least_without = f32::MAX;
+        for corner in 0..8u32 {
+            let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
+            for with in [true, false] {
+                let tone = Tone {
+                    highlights: 2.0 * sign(0),
+                    shadows: 2.0 * sign(1),
+                    midtones: if with { 2.0 * sign(2) } else { 0.0 },
+                    ..Tone::default()
+                };
+                for width in [HIGHLIGHTS_SPAN.0, 2.0, 2.8, HIGHLIGHTS_SPAN.1] {
+                    for k in 0..=48 {
+                        let span = [-6.0 + k as f32 * 0.25, width];
+                        let step = 0.005;
+                        let mut last = shifted(&tone, span, -9.0);
+                        for i in 1..=3200 {
+                            let s = -9.0 + i as f32 * step;
+                            let v = shifted(&tone, span, s);
+                            let slope = (v - last) / step;
+                            if with && slope < least.0 {
+                                least = (slope, tone, span, s);
+                            }
+                            if !with {
+                                least_without = least_without.min(slope);
+                            }
+                            last = v;
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "least slope with midtones {:.4} ({:?} at {:?}, {:.2} stops); without {least_without:.4}",
+            least.0, least.1, least.2, least.3
+        );
+        // Each step's own least: shadows 0.14, midtones 0.25,
+        // highlights 0.125; the product is the floor, and the sweep
+        // finds 0.0052 against 0.020 without midtones, all three at +2
+        // on the least span, where each is falling at once.
+        assert!(least.0 > 0.14 * 0.25 * 0.125, "{least:?}");
+        assert!(least_without > 0.14 * 0.125, "{least_without}");
     }
 
     #[test]
@@ -3136,7 +3384,7 @@ mod tests {
     #[test]
     fn the_pull_never_turns_the_curve_back() {
         // Shape on the pixel's own luminance, the path that can fold,
-        // at the corners of shadows and whites and along the negative
+        // at the corners of shadows, whites, and midtones and along the negative
         // travel, on merges from half a stop to six over white, with
         // their medians from deep under grey to over it, at three
         // contrasts.
@@ -3147,7 +3395,7 @@ mod tests {
                     let range = [median, top];
                     let span = highlights_span(range, 0.0, contrast);
                     let kept = Kept::of(range, 0.0, contrast, headroom, DISPLAY_WHITE_STOPS);
-                    for corner in 0..4u32 {
+                    for corner in 0..8u32 {
                         let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
                         for h in [-2.0, -1.3, -0.6] {
                             let tone = Tone {
@@ -3155,6 +3403,7 @@ mod tests {
                                 highlights: h,
                                 shadows: 2.0 * sign(0),
                                 whites: 2.0 * sign(1),
+                                midtones: 2.0 * sign(2),
                                 ..Tone::default()
                             };
                             let mut last = -1.0;

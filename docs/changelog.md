@@ -54,6 +54,11 @@ design note behind it.
 
 ### Develop
 
+- Midtones, a slider in Light between Highlights and Shadows (and in
+  a mask's Light): it lifts or sinks the middle of the frame's own
+  range by up to a stop and leaves the blacks and the brightest
+  tones where they are
+  ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md)).
 - A camera profile from a DCP file now applies its look table, which
   is where Adobe's Camera Standard, Natural, Vivid, and the rest carry
   their color: they differ from each other, and greens no longer come
@@ -85,6 +90,10 @@ design note behind it.
 
 ### Fixes
 
+- In culling, setting Structure, Sharpen, or another control back to
+  its default on a frame other than the one last opened now takes;
+  the frame had kept its own value
+  ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md)).
 - Texture and Clarity no longer switch off the sharpening's noise
   protection. On a high-ISO frame Texture +50 had the whole picture
   sharpened, grain and all; the sharpening now decides what is flat

@@ -541,6 +541,19 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
                         }
                     }
                 }
+                // A key `before` has and `touched` does not is a field
+                // set back to what its type leaves out of the file (a
+                // slider to zero, an option to none, a choice to its
+                // default), so `onto` takes that too by leaving it
+                // out. Removed whole: every such field outside the
+                // arrays is one value (a number, a switch, an option,
+                // a choice), not a section of its own fields that
+                // `onto` might hold apart from `before`. A key absent
+                // from both is `onto`'s own and stays.
+                let onto = onto.as_object_mut().expect("checked");
+                for key in b.keys().filter(|k| !t.contains_key(*k)) {
+                    onto.remove(key);
+                }
             }
             _ => {
                 if before != touched {
@@ -831,6 +844,74 @@ mod tests {
         assert_eq!(merged, want);
         // Nothing moved: the frame's edit as it was.
         assert_eq!(overlay_changes(&before, &before, &frame).unwrap(), frame);
+    }
+
+    /// A field left out of the file at its default and set back to it
+    /// in culling (a double-click, a step to zero) goes over the frame's
+    /// own value, as any other change does; a field neither side
+    /// writes is the frame's own and stays.
+    #[test]
+    fn a_reset_to_what_the_file_leaves_out_goes_over_the_frame() {
+        let mut frame = Edit::default();
+        frame.light.tone.midtones = 0.8;
+        frame.detail.structure = 0.4;
+        frame.detail.sharpen = -0.3;
+        frame.noise.learned_chroma_strength = 0.5;
+        frame.lens.chosen = crate::lens::LensChoice::Database("Frame's lens".into());
+        frame.tint.enabled = false;
+        let mut before = Edit::default();
+        before.light.tone.midtones = 0.5;
+        before.detail.structure = 0.6;
+        before.detail.sharpen = 0.2;
+        before.noise.learned_chroma_strength = 0.7;
+        before.lens.chosen = crate::lens::LensChoice::Database("Panel's lens".into());
+        before.tint.enabled = false;
+        for (what, reset) in [
+            (
+                "midtones",
+                (|e: &mut Edit| e.light.tone.midtones = 0.0) as fn(&mut Edit),
+            ),
+            ("structure", |e| e.detail.structure = 0.0),
+            ("sharpen", |e| e.detail.sharpen = 0.0),
+            ("chroma", |e| e.noise.learned_chroma_strength = 1.0),
+            ("lens", |e| {
+                e.lens.chosen = crate::lens::LensChoice::FromFile
+            }),
+            ("tint", |e| e.tint.enabled = true),
+        ] {
+            let mut touched = before.clone();
+            reset(&mut touched);
+            let merged = overlay_changes(&before, &touched, &frame).unwrap();
+            let mut want = frame.clone();
+            reset(&mut want);
+            assert_eq!(merged, want, "{what}");
+        }
+        // Absent from both: the panel's edit never set them, a shadows
+        // step moves only the shadows, and the frame keeps its own.
+        let plain = Edit::default();
+        let mut touched = plain.clone();
+        touched.light.tone.shadows = 0.3;
+        let merged = overlay_changes(&plain, &touched, &frame).unwrap();
+        let mut want = frame.clone();
+        want.light.tone.shadows = 0.3;
+        assert_eq!(merged, want);
+        // A white balance's offset taken off, As shot kept.
+        let before = Edit {
+            white_balance: WhiteBalance::Offset {
+                mired: 10.0,
+                tint: 0.0,
+            },
+            ..Edit::default()
+        };
+        let frame = Edit {
+            white_balance: WhiteBalance::Offset {
+                mired: -20.0,
+                tint: 0.01,
+            },
+            ..Edit::default()
+        };
+        let merged = overlay_changes(&before, &Edit::default(), &frame).unwrap();
+        assert_eq!(merged.white_balance, WhiteBalance::AsShot);
     }
 
     #[test]

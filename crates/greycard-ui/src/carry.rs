@@ -412,10 +412,11 @@ const _MARK_SECTIONS: [&str; 19] = [
 ];
 
 /// The parts' titles, each once.
-const _MARK_PARTS: [&str; 41] = [
+const _MARK_PARTS: [&str; 42] = [
     crate::marked::tr!("Exposure"),
     crate::marked::tr!("Contrast"),
     crate::marked::tr!("Highlights"),
+    crate::marked::tr!("Midtones"),
     crate::marked::tr!("Shadows"),
     crate::marked::tr!("Whites"),
     crate::marked::tr!("Blacks"),

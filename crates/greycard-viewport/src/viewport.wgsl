@@ -189,6 +189,10 @@ struct Params {
     // pixel below 1:1 (`minify::taps`); one, the single tap at the
     // pixel's center, at 1:1 and above.
     minify: vec4<f32>,
+    // In x the midtones, stops of shift by the guide plane's
+    // luminance as the highlights and shadows are; `finish.rs` says
+    // where it acts.
+    tone: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -230,6 +234,8 @@ struct Local {
     mix_sat1: vec4<f32>,
     mix_lum0: vec4<f32>,
     mix_lum1: vec4<f32>,
+    // Its own midtones, in x.
+    tone: vec4<f32>,
 };
 
 // A mask's shape, as `mask.rs` has it: kind 0 is linear (a: from,
@@ -260,6 +266,7 @@ struct Look {
     exposure: f32,
     contrast: f32,
     highlights: f32,
+    midtones: f32,
     shadows: f32,
     whites: f32,
     blacks: f32,
@@ -412,6 +419,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
     look.contrast = p.contrast;
     look.highlights = p.highlights;
+    look.midtones = p.tone.x;
     look.shadows = p.shadows;
     look.whites = p.whites;
     look.blacks = p.blacks;
@@ -504,6 +512,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         look.exposure = look.exposure + w * l.exposure;
         look.contrast = look.contrast + w * (l.contrast - 1.0);
         look.highlights = look.highlights + w * l.highlights;
+        look.midtones = look.midtones + w * l.tone.x;
         look.shadows = look.shadows + w * l.shadows;
         look.whites = look.whites + w * l.whites;
         look.blacks = look.blacks + w * l.blacks;
@@ -1060,6 +1069,13 @@ const HIGHLIGHTS_RISE: vec2<f32> = vec2<f32>(-0.3, 0.75);
 const HIGHLIGHTS_EASE: vec2<f32> = vec2<f32>(0.75, 1.2);
 const HIGHLIGHTS_EASE_DEPTH: f32 = 0.5;
 const HIGHLIGHTS_PEAK: f32 = 0.42;
+// Where midtones acts, by the frame's own range, as `finish.rs` has
+// it: its peak, how far under the span's foot it reaches, the least it
+// reaches over it, and what the summed slider is held to.
+const MIDTONES_PEAK: f32 = 0.5;
+const MIDTONES_BELOW: f32 = 2.0;
+const MIDTONES_ABOVE: f32 = 2.0;
+const MIDTONES_LIMIT: f32 = 2.0;
 
 // The foot of the highlights ramp's span and the span, in stops over
 // mid grey as `shape` reads a region, as `highlights_span` in
@@ -1079,6 +1095,14 @@ fn highlights_weight(g: f32, span: vec2<f32>) -> f32 {
     let u = (g - span.x) / span.y;
     return HIGHLIGHTS_PEAK * smoothstep(HIGHLIGHTS_RISE.x, HIGHLIGHTS_RISE.y, u)
         * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.x, HIGHLIGHTS_EASE.y, u));
+}
+// The midtones' share by where a region sits in the span, as
+// `midtones_weight` in `finish.rs`: a bell full at the span's foot,
+// nothing `MIDTONES_BELOW` under it and nothing at the frame's top.
+fn midtones_weight(g: f32, span: vec2<f32>) -> f32 {
+    let d = g - span.x;
+    let reach = select(max(span.y, MIDTONES_ABOVE), MIDTONES_BELOW, d < 0.0);
+    return MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, abs(d) / reach));
 }
 // A merge's kept range as the highlights' negative travel pulls it,
 // as `Kept` in `finish.rs`: the frame's median and top at the
@@ -1152,14 +1176,19 @@ fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
 // off; then the shifts, a gain from the region's luminance (`g`, the
 // guide plane's, already at this pixel's exposure and contrast) so the
 // texture inside a region keeps its contrast and its hue holds;
-// shadows first and highlights on where shadows put the region, so
-// the two never turn the curve back; then the white point, pivoted at
+// shadows first, midtones on where shadows put the region, and
+// highlights on where midtones put it, so the three never turn the
+// curve back; then the white point, pivoted at
 // the foot of the frame's span; then the
 // black point with scene white held.
 fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>, kept: vec4<f32>) -> vec3<f32> {
     let c = MID_GREY * pow(max(x, vec3<f32>(0.0)) / MID_GREY, vec3<f32>(look.contrast));
     let l = select(log2(max(dot(LUMA, c), 1e-6) / MID_GREY), g, has_guide);
-    let lifted = l + look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l));
+    var lifted = l + look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l));
+    // The middle on the frame's own span, as the whites' pivot is.
+    if (look.midtones != 0.0) {
+        lifted = lifted + clamp(look.midtones, -MIDTONES_LIMIT, MIDTONES_LIMIT) * midtones_weight(lifted, span);
+    }
     // A merge's kept range pulled under display white first, the ramp
     // then on its span as pulled; the whites' pivot stays on `span`.
     var read = lifted;

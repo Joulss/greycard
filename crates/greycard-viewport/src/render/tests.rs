@@ -71,6 +71,20 @@ fn the_shaders_shift_fade_at_black_is_the_cpus() {
     }
 }
 
+/// The shader's midtones bell is the render crate's exactly.
+#[test]
+fn the_shaders_midtones_bell_is_the_cpus() {
+    use greycard_render::finish::{MIDTONES_ABOVE, MIDTONES_BELOW, MIDTONES_LIMIT, MIDTONES_PEAK};
+    for (name, value) in [
+        ("MIDTONES_PEAK", MIDTONES_PEAK),
+        ("MIDTONES_BELOW", MIDTONES_BELOW),
+        ("MIDTONES_ABOVE", MIDTONES_ABOVE),
+        ("MIDTONES_LIMIT", MIDTONES_LIMIT),
+    ] {
+        assert_eq!(shader_literal(name), value, "the shader's {name}");
+    }
+}
+
 /// A local with `shapes` joined in order and nothing to its look.
 fn local_of(shapes: Vec<(Shape, Mode)>) -> Local {
     Local {
@@ -1480,6 +1494,145 @@ fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
     }
 }
 
+/// Midtones on the GPU is the CPU's: along its travel, at three
+/// exposures and two contrasts, beside the shadows and the highlights
+/// it sits between, the guide plane read, and in a mask that adds its
+/// own over the picture's, past the slider's limit where the sum is
+/// held.
+#[test]
+fn midtones_on_the_gpu_is_the_cpus() {
+    use greycard_render::finish::{finish_with, guide_plane};
+    let Some((device, queue)) = device("the midtones check") else {
+        return;
+    };
+    let image = parity_frame();
+    let (w, h) = (image.width, image.height);
+    let seen = WorkingImage {
+        width: w,
+        height: h,
+        data: image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect(),
+    };
+    let mut guide = guide_plane(&seen);
+    for v in &mut guide.data {
+        *v = half::f16::from_f32(*v).to_f32();
+    }
+    let source = Source::SCENE;
+    let mut renderer = Renderer::new(&device, &queue);
+    renderer.upload(&Halves::from_image(&image, None));
+    renderer.set_guide(&guide);
+    let to_out = greycard_render::export::Space::Srgb.matrix();
+    let iw = w as f32;
+    let plain = {
+        let view = View {
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            source,
+            ..View::with_look(&greycard_edit::Edit::default())
+        };
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        renderer.read_back(&target).expect("read back")
+    };
+    let mut cases = Vec::new();
+    for exposure in [-1.0f32, 0.0, 1.0] {
+        for contrast in [1.0f32, 1.3] {
+            for midtones in [-2.0f32, -0.6, 1.0, 2.0] {
+                cases.push((exposure, contrast, midtones, 0.0, 0.0, None));
+            }
+        }
+    }
+    cases.push((0.3, 1.0, 1.5, 1.0, -1.0, None));
+    cases.push((0.0, 1.0, -1.5, -1.0, 1.5, None));
+    // A mask over the right half adding its own past the limit.
+    cases.push((0.0, 1.0, 1.5, 0.0, 0.0, Some(1.5f32)));
+    cases.push((0.0, 1.0, -0.5, 0.0, 0.0, Some(-2.0f32)));
+    for (exposure, contrast, midtones, shadows, highlights, local) in cases {
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = exposure;
+        edit.light.tone.contrast = contrast;
+        edit.light.tone.midtones = midtones;
+        edit.light.tone.shadows = shadows;
+        edit.light.tone.highlights = highlights;
+        if let Some(m) = local {
+            let mut look = Look::default();
+            look.light.tone.midtones = m;
+            edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                mask: Mask {
+                    components: vec![Component {
+                        shape: Shape::Linear {
+                            from: [0.45, 0.0],
+                            to: [0.55, 0.0],
+                        },
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                look,
+                ..Default::default()
+            });
+        }
+        let shift = greycard_render::testing::white_shift();
+        let locals: Vec<Local> = edit
+            .adjustments
+            .iter()
+            .map(|a| Local::of(a, vec![None; a.mask.components.len()], Some(&shift)))
+            .collect();
+        let global = Baked::global(&edit, source);
+        let view = View {
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            source,
+            locals: locals.clone(),
+            ..View::with_look(&edit)
+        };
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        let shown = renderer.read_back(&target).expect("read back");
+        let cpu = finish_with(
+            &seen,
+            None,
+            &global,
+            &locals,
+            |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+            |_, _| (0.0, None),
+            Some((&guide, iw)),
+            None,
+            None,
+            &to_out,
+            |v: f32| v,
+        );
+        let mut worst = (0.0f32, 0, 0);
+        let mut moved = 0usize;
+        for y in 0..h {
+            for x in 0..w {
+                let gpu = shown.get_pixel(x as u32, y as u32);
+                if gpu != plain.get_pixel(x as u32, y as u32) {
+                    moved += 1;
+                }
+                for k in 0..3 {
+                    let d = (cpu[(y * w + x) * 3 + k] - f32::from(gpu[k]) / 255.0).abs();
+                    if d > worst.0 {
+                        worst = (d, x, y);
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "exposure {exposure}, contrast {contrast}, midtones {midtones}, shadows {shadows}, highlights {highlights}, mask {local:?}: {worst:?}"
+        );
+        assert!(moved > 0, "the case moves the picture");
+        assert!(
+            worst.0 < 1.5 / 255.0,
+            "exposure {exposure}, contrast {contrast}, midtones {midtones}, mask {local:?}: {worst:?}"
+        );
+    }
+}
+
 /// A merge's pull on its kept range on the GPU is the CPU's: the
 /// highlights along its negative travel and past it, at three
 /// exposures, the guide plane read, on a frame whose top is over
@@ -2151,8 +2304,8 @@ fn random_look(rng: &mut Rng, p: f32, skip: u32) -> Look {
     use greycard_edit::grading::Wheel;
     let has = |name: &str| skip & part(name) == 0;
     let mut look = Look::default();
-    // Light: exposure ±5, contrast 0.5 to 2, highlights, shadows
-    // and whites ±2, blacks ±0.3; the section's switch.
+    // Light: exposure ±5, contrast 0.5 to 2, highlights, midtones,
+    // shadows, and whites ±2, blacks ±0.3; the section's switch.
     let mut light = Light {
         enabled: !rng.chance(0.15),
         exposure: rng.slider(p, -5.0, 5.0, 0.0),
@@ -2160,6 +2313,7 @@ fn random_look(rng: &mut Rng, p: f32, skip: u32) -> Look {
     };
     light.tone.contrast = rng.slider(p, 0.5, 2.0, 1.0);
     light.tone.highlights = rng.slider(p, -2.0, 2.0, 0.0);
+    light.tone.midtones = rng.slider(p, -2.0, 2.0, 0.0);
     light.tone.shadows = rng.slider(p, -2.0, 2.0, 0.0);
     light.tone.whites = rng.slider(p, -2.0, 2.0, 0.0);
     light.tone.blacks = rng.slider(p, -0.3, 0.3, 0.0);

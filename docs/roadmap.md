@@ -11,6 +11,9 @@ the reasoning lives in `docs/notes.md`.
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing
       Dehaze-only edits (§643); waits on a measurement
+- [ ] A mask's Shadows and Highlights summed with the picture's are
+      not held to the slider's limit (Midtones' sum is, §644): a mask
+      at +2 over a picture at +2 can fold the tones
 - [ ] `roots/kept_up.rs` falls back to a default sidecar marked as
       read when a newly listed path is missing from the `read` map:
       the same hole §640 closed in `rows::bring`, by another door;
@@ -1158,9 +1161,6 @@ clears or a tester asks for it.
 - [ ] Drawn shapes as masks: a polygon and a curved path with a
       feathered edge, inverted and combined like the rest
       (discussion 59, 2026-11-01)
-- [ ] A Midtones slider in Light between Highlights and Shadows, so
-      the middle lifts without the curve (discussion 59, 2026-11-01);
-      weighed before and left out as unneeded, not settled
 - [ ] The develop's base kept on disk, so a frame left and opened
       again on a small card is quick without its neighbors' bases
       held in memory (discussion 59, 2026-11-04)

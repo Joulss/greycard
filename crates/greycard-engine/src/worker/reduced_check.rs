@@ -146,6 +146,7 @@ fn drawn(seed: u64, k: u64, looks: &[String]) -> Edit {
         });
         a.look.light.exposure = r.signed(-1.5, 1.5);
         a.look.light.tone.shadows = r.signed(-1.0, 1.0);
+        a.look.light.tone.midtones = r.signed(-1.0, 1.0);
         edit.adjustments.push(a);
     }
     if r.chance(0.5) {

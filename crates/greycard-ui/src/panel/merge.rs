@@ -1749,9 +1749,12 @@ mod tests {
         r.open(&r.out);
         assert!(r.app.get_merge_again_shown());
         // On the panel, below the learned tier's sliders.
+        // In the panel's own terms: each lookup scrolls it its own way.
         let (at, _) = crate::testing::labeled(&r.app, row);
+        let at = at.y - r.app.get_panel_scroll();
         let (blend, _) = crate::testing::labeled(&r.app, greycard_edit::LEARNED_CHROMA);
-        assert!(at.y > blend.y, "{at:?} under {blend:?}");
+        let blend = blend.y - r.app.get_panel_scroll();
+        assert!(at > blend, "{at} under {blend}");
 
         r.open(&r.old);
         assert!(!r.app.get_merge_again_shown());

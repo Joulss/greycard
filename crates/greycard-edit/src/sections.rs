@@ -170,6 +170,16 @@ pub struct Tone {
     /// over display white under it (`Kept` in `finish.rs`). The
     /// slider runs ±2.
     pub highlights: f32,
+    /// Stops of shift in the middle of the frame, placed by the
+    /// frame's own range: a bell full at the foot of the highlights
+    /// span (the frame's median where the span is its own), nothing
+    /// two stops under it and nothing at the frame's top
+    /// (`midtones_weight` in `finish.rs`). By region, as highlights
+    /// is, and ±2, where the middle moves a stop. Left out of a
+    /// sidecar at zero, so every sidecar and key written before it is
+    /// unchanged and an older build reads a newer file.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub midtones: f32,
     /// Stops of shift under mid grey, full three and a half stops
     /// below it, none at it. By region too, and ±2.
     pub shadows: f32,
@@ -198,6 +208,7 @@ impl Default for Tone {
         Self {
             contrast: 1.0,
             highlights: 0.0,
+            midtones: 0.0,
             shadows: 0.0,
             whites: 0.0,
             blacks: 0.0,
@@ -707,6 +718,48 @@ impl Demosaic {
 #[cfg(test)]
 mod tests {
     use super::WhiteBalance;
+
+    /// Midtones came in with no new version: at zero it is not
+    /// written, so a tone serializes as it did before it, byte for
+    /// byte, and an edit from before it reads with it at zero and
+    /// writes back the same; set, it is written and read back.
+    #[test]
+    fn midtones_at_zero_is_not_written_and_the_tone_is_as_before() {
+        let tone = super::Tone {
+            contrast: 1.2,
+            highlights: -0.5,
+            shadows: 0.25,
+            ..super::Tone::default()
+        };
+        assert_eq!(
+            serde_json::to_string(&tone).unwrap(),
+            r#"{"contrast":1.2,"highlights":-0.5,"shadows":0.25,"whites":0.0,"blacks":0.0}"#
+        );
+        let old = r#"{"version": 8, "light": {"exposure": 0.5, "tone": {"contrast": 1.2, "highlights": -0.5}}}"#;
+        let e = crate::Edit::from_json(old).unwrap();
+        assert_eq!(e.light.tone.midtones, 0.0);
+        let json = e.to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(value["light"]["tone"].get("midtones").is_none(), "{json}");
+        assert_eq!(crate::Edit::from_json(&json).unwrap().to_json(), json);
+        assert_eq!(
+            e.develop_key_with(&[], None),
+            crate::Edit::from_json(&json)
+                .unwrap()
+                .develop_key_with(&[], None)
+        );
+
+        let mut set = e.clone();
+        set.light.tone.midtones = 0.75;
+        let json = set.to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["light"]["tone"]["midtones"].as_f64(), Some(0.75));
+        assert_eq!(crate::Edit::from_json(&json).unwrap(), set);
+        assert_eq!(
+            serde_json::to_string(&set.light.tone).unwrap(),
+            r#"{"contrast":1.2,"highlights":-0.5,"midtones":0.75,"shadows":0.0,"whites":0.0,"blacks":0.0}"#
+        );
+    }
 
     /// As shot and a light are written as they always were; an offset
     /// rides beside As shot; a mode this build does not know is As

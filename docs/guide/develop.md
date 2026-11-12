@@ -228,17 +228,28 @@ always brings its look table.
 | **Exposure** | −5 to +5 EV | Brightens or darkens the whole picture. |
 | **Contrast** | 0.5 to 2 | 1 is neutral. Above 1 adds contrast, below 1 takes it away. |
 | **Highlights** | −2 to +2 EV | Darkens or brightens the bright areas. Pull it down to bring back a sky. |
+| **Midtones** | −2 to +2 EV | Lifts or sinks the middle of the picture and leaves its black and its brightest areas where they are. |
 | **Shadows** | −2 to +2 EV | Lifts or deepens the dark areas. |
 | **Whites** | −2 to +2 EV | Moves the white point: where the brightest tones reach white. |
 | **Blacks** | −30% to +30% | Moves the black point. |
 
 **Auto** sets Exposure, Highlights, Shadows, Whites, and Blacks from
-the picture's own histogram, as one step in the history. It never
+the picture's own histogram, as one step in the history. It leaves
+Contrast and Midtones as they are. It never
 clips more than the default develop does, and it keeps a night
 frame's lights under white. Press it again and nothing changes.
 
-**Highlights** and **Shadows** work on areas, not single pixels, so
-the texture inside a sky or a shadow keeps its contrast.
+**Highlights**, **Midtones**, and **Shadows** work on areas, not
+single pixels, so the texture inside a sky or a shadow keeps its
+contrast.
+
+**Midtones** finds the middle of the frame from the frame itself, as
+**Highlights** does: full at its middle tone, it fades to nothing two
+stops darker and at the frame's brightest areas. At ±2 the middle
+moves a stop. It is not **Exposure**, which moves every tone alike,
+nor **Contrast**, which moves the dark and the bright apart around mid
+grey; it is closer to the curve's **Lights** and **Darks**, but works
+on areas and follows the frame rather than fixed places on the curve.
 
 **Highlights** and **Whites** read how bright the frame itself is.
 **Highlights** reaches down into the upper mid-tones, as Lightroom's

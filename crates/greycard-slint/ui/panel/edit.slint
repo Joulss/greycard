@@ -8,6 +8,7 @@ export component LightSection inherits Section {
     in-out property <float> exposure;
     in-out property <float> contrast;
     in-out property <float> highlights;
+    in-out property <float> midtones;
     in-out property <float> shadows;
     in-out property <float> whites;
     in-out property <float> blacks;
@@ -66,6 +67,17 @@ export component LightSection inherits Section {
         steps: Steps.tone;
         value <=> root.highlights;
         text: (root.highlights >= 0 ? "+" : "") + round(root.highlights * 100) / 100 + " EV";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: @tr("Midtones");
+        minimum: -2;
+        maximum: 2;
+        default: 0;
+        step: 0.05;
+        steps: Steps.tone;
+        value <=> root.midtones;
+        text: (root.midtones >= 0 ? "+" : "") + round(root.midtones * 100) / 100 + " EV";
         changed(v) => { root.view-changed(); }
     }
     EditSlider {

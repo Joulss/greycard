@@ -678,6 +678,87 @@ mod tests {
         assert!(near(app.get_contrast(), 2f32.powf(0.02)));
     }
 
+    /// Midtones is one row of the Light section, between Highlights
+    /// and Shadows and read as they are; a step of it sets the edit's
+    /// midtones and records one history step named as its neighbors'
+    /// are; a double-click puts it back to zero, one more step.
+    #[test]
+    fn midtones_sits_between_highlights_and_shadows_and_is_one_step() {
+        use crate::testing;
+        use slint::platform::Key;
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        // The Light section in the first view.
+        app.set_collapsed_wb(true);
+        {
+            let (state, app_weak) = (state.clone(), app.as_weak());
+            app.on_view_changed(move || {
+                crate::panel::edit::schedule_save(&mut state.borrow_mut(), app_weak.clone());
+            });
+        }
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ));
+            slint::platform::update_timers_and_animations();
+        };
+        settle();
+        let sliders = slider_values(&app);
+        let row = |label: &str| {
+            let rows: Vec<_> = sliders.iter().filter(|s| s.0 == label).collect();
+            assert_eq!(rows.len(), 1, "{label}: {rows:?}");
+            rows[0].clone()
+        };
+        let (high, mid, shadows) = (row("Highlights"), row("Midtones"), row("Shadows"));
+        assert!(
+            high.2 < mid.2 && mid.2 < shadows.2,
+            "{high:?} {mid:?} {shadows:?}"
+        );
+        assert_eq!(mid.1, high.1, "read as its neighbor is at zero");
+
+        let states = || state.borrow().sidecars[0].states();
+        let current = || state.borrow().sidecars[0].current.clone();
+        let before = states();
+        let was = current();
+        focus_slider(&app, "Midtones");
+        testing::press(&app, Key::UpArrow);
+        assert!(near(app.get_midtones(), 0.05), "{}", app.get_midtones());
+        settle();
+        assert_eq!(states(), before + 1, "one history step");
+        let now = current();
+        assert!(near(now.look().light.tone.midtones, 0.05));
+        assert_eq!(now.look().light.tone.highlights, 0.0);
+        assert_eq!(now.look().light.tone.shadows, 0.0);
+        assert_eq!(
+            greycard_edit::history::describe(&was, &now, &[]),
+            "Midtones +0.05"
+        );
+        assert_eq!(row_value(&app, "Midtones"), "+0.05 EV");
+
+        // A double-click on it: back to zero, one more step.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_secs(2));
+        let (at, size) = testing::labeled(&app, "Midtones");
+        let (x, y) = (at.x + 8.0, at.y + size.height / 2.0);
+        testing::click(&app, x, y);
+        testing::click(&app, x, y);
+        assert_eq!(app.get_midtones(), 0.0);
+        settle();
+        assert_eq!(states(), before + 2);
+        assert_eq!(current().look().light.tone.midtones, 0.0);
+    }
+
+    /// A slider's value as a screen reader has it.
+    fn row_value(app: &App, label: &str) -> String {
+        slider_values(app)
+            .into_iter()
+            .find(|s| s.0 == label)
+            .map(|s| s.1)
+            .unwrap_or_default()
+    }
+
     /// The Develop tab's sliders by their labels, and each one's value
     /// as a screen reader has it, its top, and its height.
     fn slider_values(app: &App) -> Vec<(String, String, f32, f32)> {
@@ -688,6 +769,7 @@ mod tests {
             "Exposure",
             "Contrast",
             "Highlights",
+            "Midtones",
             "Shadows",
             "Whites",
             "Blacks",

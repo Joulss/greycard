@@ -484,6 +484,7 @@ fn light(b: &Look, a: &Look) -> String {
     for (name, was, is) in [
         ("Contrast", tx.contrast, ty.contrast),
         ("Highlights", tx.highlights, ty.highlights),
+        ("Midtones", tx.midtones, ty.midtones),
         ("Shadows", tx.shadows, ty.shadows),
         ("Whites", tx.whites, ty.whites),
         ("Blacks", tx.blacks, ty.blacks),
@@ -1029,6 +1030,17 @@ mod tests {
         e.bw.strength = 2.0;
         assert_eq!(describe(&base, &e, &[]), "Black and white strength 2.00x");
         assert_eq!(describe(&base, &base, &[]), "No change");
+    }
+
+    #[test]
+    fn midtones_is_named_with_its_value_like_its_neighbors() {
+        let base = Edit::default();
+        let mut e = base.clone();
+        e.light.tone.midtones = 0.5;
+        assert_eq!(describe(&base, &e, &[]), "Midtones +0.50");
+        let mut down = base.clone();
+        down.light.tone.midtones = -1.25;
+        assert_eq!(describe(&base, &down, &[]), "Midtones -1.25");
     }
 
     #[test]

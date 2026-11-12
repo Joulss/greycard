@@ -1291,6 +1291,10 @@ msgstr ""
 msgid "Contrast"
 msgstr ""
 
+#: crates/greycard-slint/ui/panel/edit.slint:73
+msgid "Midtones"
+msgstr ""
+
 #: crates/greycard-slint/ui/panel/edit.slint:83
 msgid "Whites"
 msgstr ""
