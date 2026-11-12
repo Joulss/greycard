@@ -217,10 +217,9 @@ the reasoning lives in `docs/notes.md`.
       turns it off for a snapshot) and draws in the window on Linux;
       each entry a callback the window already has, its chord shown
       from the keys table so the menus and the help sheet never
-      drift; the app menu with Quit comes with the backend. Open:
-      whether the drawn bar is kept on Linux and Windows or the
-      MenuBar made conditional on a property, which Slint may not
-      allow. The user's, for the laptop, 0.9.0
+      drift; the app menu with Quit comes with the backend. On all
+      three platforms, the drawn bar on Linux included. Offered by a
+      contributor, macOS first (discussion 89, 2026-11-12)
 - [ ] The UI scale changed live, without a restart: the scale-changed
       event dispatched on the open window, then every cached size
       checked (the window fit, the strip's row heights, the viewport
