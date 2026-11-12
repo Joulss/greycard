@@ -9,6 +9,9 @@ pub struct File {
     /// The name it keeps in the store. ONNX external data must keep
     /// the name the graph refers to.
     pub name: &'static str,
+    /// On Hugging Face, `resolve/<commit>/`, never a branch, so what a
+    /// release fetches cannot move under it. A new upload is a new
+    /// commit here and a new size and hash below.
     pub url: &'static str,
     pub bytes: u64,
     pub sha256: &'static str,
@@ -122,7 +125,7 @@ pub const SUBJECT: Model = Model {
     beside: None,
     files: &[File {
         name: "model_fp16.onnx",
-        url: "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model_fp16.onnx",
+        url: "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/de15b22ba131738a16dff04aab8bdf8dc32e3ac1/onnx/model_fp16.onnx",
         bytes: 114_538_221,
         sha256: "d39b897ceb16ae654c1731f3dba0cf9b368d9cae74b5a57459b455cc8bfec402",
     }],
@@ -177,7 +180,7 @@ pub const SUBJECT_WEBGPU: Model = Model {
     beside: None,
     files: &[File {
         name: "model_fp16_webgpu.onnx",
-        url: "https://huggingface.co/jessolmstead/BiRefNet_lite-ONNX-webgpu/resolve/main/model_fp16_webgpu.onnx",
+        url: "https://huggingface.co/jessolmstead/BiRefNet_lite-ONNX-webgpu/resolve/0333e93b8f3f76f89ae7c6942b0d53ac1ed21318/model_fp16_webgpu.onnx",
         bytes: 113_778_088,
         sha256: "0a019d6ba73c9cedc9a251f8c9390b196ff6399acd281a2872692861abbd78c2",
     }],
@@ -199,25 +202,25 @@ pub const SAM: Model = Model {
     files: &[
         File {
             name: "vision_encoder.onnx",
-            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/main/onnx/vision_encoder.onnx",
+            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/a7df49d8de14b9d2e4504d1687b0d568f905fd8d/onnx/vision_encoder.onnx",
             bytes: 467_440,
             sha256: "aacf1f7137bb6fffcf6bf166abcfabe28f57a76059254f3fb611c4a64a208119",
         },
         File {
             name: "vision_encoder.onnx_data",
-            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/main/onnx/vision_encoder.onnx_data",
+            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/a7df49d8de14b9d2e4504d1687b0d568f905fd8d/onnx/vision_encoder.onnx_data",
             bytes: 162_476_288,
             sha256: "260fd1f0a34e72a3dc79a739e563b4facc0ba75504818b433a1f808e66637456",
         },
         File {
             name: "prompt_encoder_mask_decoder.onnx",
-            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/main/onnx/prompt_encoder_mask_decoder.onnx",
+            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/a7df49d8de14b9d2e4504d1687b0d568f905fd8d/onnx/prompt_encoder_mask_decoder.onnx",
             bytes: 213_114,
             sha256: "079c59b261f723ff5c6a125e69b0170a957b21c58738c28d2b0394ecd0587d7f",
         },
         File {
             name: "prompt_encoder_mask_decoder.onnx_data",
-            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/main/onnx/prompt_encoder_mask_decoder.onnx_data",
+            url: "https://huggingface.co/onnx-community/sam2.1-hiera-small-ONNX/resolve/a7df49d8de14b9d2e4504d1687b0d568f905fd8d/onnx/prompt_encoder_mask_decoder.onnx_data",
             bytes: 20_958_208,
             sha256: "f9e59a584ab8ced21fa812c211bc01084204db1c9e92a5ef4fb3a49972b4e864",
         },
@@ -254,19 +257,19 @@ pub const SAM3: Model = Model {
     files: &[
         File {
             name: "sam3_image_encoder_fp16.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/main/sam3_image_encoder_fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/1e8b05a723c0dfa07b932c6748c75dd77b7cbaa3/sam3_image_encoder_fp16.onnx",
             bytes: 908_762_234,
             sha256: "dd4733a6882264d0ab00599acd6ece3dd700f9b61b7976369b956ce41d88c23d",
         },
         File {
             name: "sam3_decoder.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/main/sam3_decoder.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/1e8b05a723c0dfa07b932c6748c75dd77b7cbaa3/sam3_decoder.onnx",
             bytes: 129_854_990,
             sha256: "7c205232b0698d532731fd5fa206cdea694717de69c0d8e88997a14027425564",
         },
         File {
             name: "sam3_presets.bin",
-            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/main/sam3_presets.bin",
+            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/1e8b05a723c0dfa07b932c6748c75dd77b7cbaa3/sam3_presets.bin",
             bytes: 524_962,
             sha256: "a1c205ef7e4374a6a9072928339d957eb78f78efa01b5cf170fe0f6ff92d6917",
         },
@@ -321,7 +324,7 @@ pub const SKY: Model = Model {
     beside: None,
     files: &[File {
         name: "eomt-s-coco-640.onnx",
-        url: "https://huggingface.co/jessolmstead/greycard-sky/resolve/main/eomt-s-coco-640.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-sky/resolve/c30732066a8e738b971a458906af01ca02174728/eomt-s-coco-640.onnx",
         bytes: 96_025_182,
         sha256: "805ed0fb363784811a7f3979335c2c64a7d40f91ae943326f79a56ff477f372d",
     }],
@@ -353,7 +356,7 @@ pub const FILL: Model = Model {
     beside: None,
     files: &[File {
         name: "big-lama-dynamic-fp32.onnx",
-        url: "https://huggingface.co/jessolmstead/greycard-lama/resolve/main/big-lama-dynamic-fp32.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-lama/resolve/935b224346521b6202d45d482b82a04b30d9c92d/big-lama-dynamic-fp32.onnx",
         bytes: 209_024_270,
         sha256: "5f39f5e80b91596fd50f3227858c97912dabc0ffbd4796f21ca688529abb8771",
     }],
@@ -392,61 +395,61 @@ pub const REMOVE: Model = Model {
     files: &[
         File {
             name: "unet-1024.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/unet-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/unet-1024.onnx",
             bytes: 2_521_003,
             sha256: "d81aed3cc00059e60e7c476be8aa679a9c78e3872cc73848bdd01b02c4b5fdf2",
         },
         File {
             name: "unet-512.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/unet-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/unet-512.onnx",
             bytes: 2_520_999,
             sha256: "0cfff605ed573a5695ccee47b91fec586b03464f421c8ceb37834db2218e9796",
         },
         File {
             name: "unet.onnx_data",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/unet.onnx_data",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/unet.onnx_data",
             bytes: 5_134_931_840,
             sha256: "3c883667b7e45d131d0d45d1339e28d38dfa3c210a3258f2afb637e58cfe50a5",
         },
         File {
             name: "vae-encoder-512.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-encoder-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/vae-encoder-512.onnx",
             bytes: 68_427_415,
             sha256: "0d5368ce83a6a6a5cdcac5ffbb082f5102b9557441e7df8436949a0648290ca1",
         },
         File {
             name: "vae-encoder-1024.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-encoder-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/vae-encoder-1024.onnx",
             bytes: 68_427_415,
             sha256: "8175c93cb33d553325ce940be504a61adca76ec0fbe1ed41c8e5bc46402044e6",
         },
         File {
             name: "vae-decoder-512.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-decoder-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/vae-decoder-512.onnx",
             bytes: 99_084_062,
             sha256: "2acf1e075627ec41e68a243f048a5fd0bcee57548dc3b41eef4e5d101b2d8e6a",
         },
         File {
             name: "vae-decoder-1024.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/vae-decoder-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/vae-decoder-1024.onnx",
             bytes: 99_084_064,
             sha256: "25bcb399f90e732cac2fa8d28c15b61acf2872f095737c870df99160b34e1a7f",
         },
         File {
             name: "prompt_embeds.f16",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/prompt_embeds.f16",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/prompt_embeds.f16",
             bytes: 315_392,
             sha256: "739efee6b5c6deb2c4ecf3d1bf8908242e9e1a5b27ae8896d16fc904873b2eb0",
         },
         File {
             name: "text_embeds.f16",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/text_embeds.f16",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/text_embeds.f16",
             bytes: 2_560,
             sha256: "c2e5c4dff874db93dc53e5cc78d9c3fb3789f1342738729eb755c9fe5a2b82fa",
         },
         File {
             name: "time_ids.f16",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/main/time_ids.f16",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem/resolve/1d63598ef6ff2d1a08ffb0a7b8eb6aa5cd563896/time_ids.f16",
             bytes: 12,
             sha256: "4c84e226abda27b53afd64b62938667278fc0d8b0babc9bbb0c384b49cde554c",
         },
@@ -478,19 +481,19 @@ pub const REMOVE_FAST: Model = Model {
     files: &[
         File {
             name: "unet-lcm-1024.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/main/unet-lcm-1024.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/b3551ec94e811043db42dae7ee9fdb11a9e6dc49/unet-lcm-1024.onnx",
             bytes: 3_419_476,
             sha256: "0b5320148e08fc354f2b4e6b1f2f1927d8fb3c8bf2f522188db193d3ad90f4f2",
         },
         File {
             name: "unet-lcm-512.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/main/unet-lcm-512.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/b3551ec94e811043db42dae7ee9fdb11a9e6dc49/unet-lcm-512.onnx",
             bytes: 3_419_472,
             sha256: "c12747ce96160ec6ad0c89a941fc70452ad8784d563594183a18a5cb905bfc62",
         },
         File {
             name: "unet-lora.onnx_data",
-            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/main/unet-lora.onnx_data",
+            url: "https://huggingface.co/jessolmstead/greycard-rorem-fast/resolve/b3551ec94e811043db42dae7ee9fdb11a9e6dc49/unet-lora.onnx_data",
             bytes: 393_502_720,
             sha256: "2beaa20d700c59e191e51fd1d9a0698110a9354c6ec16b7c570ba96e7bff6d33",
         },
@@ -513,7 +516,7 @@ pub const RETIRED: &[Retired] = &[Retired {
     dir: "big-lama-carve-fp32",
     file: File {
         name: "lama_fp32.onnx",
-        url: "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
+        url: "https://huggingface.co/Carve/LaMa-ONNX/resolve/c3c0c9e468934d62e79c329e35d82dd09ff8c444/lama_fp32.onnx",
         bytes: 208_044_816,
         sha256: "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6",
     },
@@ -537,7 +540,7 @@ pub const DENOISE_FAST: Model = Model {
     beside: None,
     files: &[File {
         name: "denoise-v19.onnx",
-        url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v19.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/0b468a819b7eb3e40280b52d1475713bff3d373b/denoise-v19.onnx",
         bytes: 4_932_834,
         sha256: "319d024a39d3e31c95e99c91bb5c089691707cbf13f4f077c1c6e49d10235c49",
     }],
@@ -554,7 +557,7 @@ pub const DENOISE_BALANCED: Model = Model {
     beside: None,
     files: &[File {
         name: "denoise-v15.onnx",
-        url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v15.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/0b468a819b7eb3e40280b52d1475713bff3d373b/denoise-v15.onnx",
         bytes: 9_037_296,
         sha256: "f5845119e0b0ee63c57aad38129aed1c8925e60ec9b7838c6b7a0fa23a84a546",
     }],
@@ -571,7 +574,7 @@ pub const DENOISE_BEST: Model = Model {
     beside: None,
     files: &[File {
         name: "denoise-v20.onnx",
-        url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v20.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/0b468a819b7eb3e40280b52d1475713bff3d373b/denoise-v20.onnx",
         bytes: 20_297_204,
         sha256: "c20aed71a45b2a984570e09d8456c54ce8eff43a334b54c7ebb480c21518f9be",
     }],
@@ -587,7 +590,7 @@ const CORE_ML_FILES: &[(&str, File)] = &[
         DENOISE_FAST.id,
         File {
             name: "denoise-v19-fp16.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v19-fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/0b468a819b7eb3e40280b52d1475713bff3d373b/denoise-v19-fp16.onnx",
             bytes: 2_476_627,
             sha256: "a7b6df9f9e61cdb81c8a2413cf001e2d0a49f3c9c3645e97b28232f48b554b54",
         },
@@ -596,7 +599,7 @@ const CORE_ML_FILES: &[(&str, File)] = &[
         DENOISE_BALANCED.id,
         File {
             name: "denoise-v15-fp16.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v15-fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/0b468a819b7eb3e40280b52d1475713bff3d373b/denoise-v15-fp16.onnx",
             bytes: 4_528_894,
             sha256: "53b96629dd6185e6a02f9fcab97e569a73bc1056a198bd2cdc466b128f3e214c",
         },
@@ -605,7 +608,7 @@ const CORE_ML_FILES: &[(&str, File)] = &[
         DENOISE_BEST.id,
         File {
             name: "denoise-v20-fp16.onnx",
-            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v20-fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/0b468a819b7eb3e40280b52d1475713bff3d373b/denoise-v20-fp16.onnx",
             bytes: 10_158_848,
             sha256: "bf9f584ba6a30114dd9df74854cadf0125ce760e39251d30835312a4c81f4dd7",
         },
@@ -988,6 +991,38 @@ mod tests {
             assert_eq!(model(m.id), Some(m), "{} is not found by its id", m.id);
         }
         assert!(model("no-such-model").is_none());
+    }
+
+    /// Every file on Hugging Face is fetched from a commit, never a
+    /// branch: `resolve/<40 hex>/`, so a later upload cannot change
+    /// what a release fetches.
+    #[test]
+    fn every_hugging_face_url_names_a_commit() {
+        let files = MODELS
+            .iter()
+            .flat_map(|m| m.files.iter())
+            .chain(CORE_ML_FILES.iter().map(|(_, f)| f))
+            .chain(RETIRED.iter().map(|r| &r.file));
+        let mut n = 0;
+        for f in files {
+            let Some(rest) = f.url.strip_prefix("https://huggingface.co/") else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.splitn(5, '/').collect();
+            assert_eq!(parts.len(), 5, "{}", f.url);
+            assert_eq!(parts[2], "resolve", "{}", f.url);
+            let rev = parts[3];
+            assert!(
+                rev.len() == 40
+                    && rev
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "{} names {rev}, not a commit",
+                f.url
+            );
+            n += 1;
+        }
+        assert!(n > 0);
     }
 
     #[test]

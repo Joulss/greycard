@@ -90,6 +90,10 @@ design note behind it.
 
 ### Fixes
 
+- Each model is fetched from a fixed commit of its repository, so a
+  release always asks for the same file; the size and hash were
+  already checked
+  ([§647](https://github.com/jessolmstead/greycard/blob/master/docs/notes/647-model-urls-pinned-to-commits.md)).
 - The learned denoiser runs on a 4 GB card. The develop's own working
   memory had left it too little room; the develop now lets go first,
   and the denoiser works in smaller tiles when it must, slower and
