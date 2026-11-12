@@ -1203,12 +1203,13 @@ clears or a tester asks for it.
       a release leg on GitHub's ARM runner, ONNX Runtime's
       linux-aarch64 build in the registry, the AppImage tooling for
       ARM (issue 105, 2026-11-09)
-- [ ] Author, copyright, and the IPTC fields written into exports
-      and kept in the sidecar, GPS with them, the author and copyright
-      defaults set once in Settings (issue 106, 2026-11-09). The
-      fields asked for: title, headline, caption, copyright, usage
-      terms, copyright URL, creator, and the creator's address, email,
-      and web address
+- [ ] Author and copyright fields on the Settings sheet (the engine
+      half is §652: `settings.json` and `greycard export --author
+      --copyright`); wants their words and place. Then the IPTC
+      fields kept per frame in the sidecar and written into exports,
+      GPS with them (issue 106, 2026-11-09). The fields asked for:
+      title, headline, caption, copyright, usage terms, copyright
+      URL, creator, and the creator's address, email, and web address
 - [ ] `.greycard` off the name of an export written beside its raw
       (issue 116, 2026-11-10). Today the tag is also what keeps
       `IMG_0001.jpg` from being paired with `IMG_0001.CR3` as the

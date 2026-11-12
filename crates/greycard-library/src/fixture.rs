@@ -68,6 +68,7 @@ pub fn write_frame_of(path: &Path, frame: &Frame<'_>, w: u32, h: u32, data: &[u1
             source_name: None,
             output: None,
             edit: None,
+            rights: &greycard_core::exif::NO_RIGHTS,
         }),
     )
     .unwrap();

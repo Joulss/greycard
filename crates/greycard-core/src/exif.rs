@@ -18,6 +18,15 @@
 //! crate's TIFF encoder takes no tags of its own. The XMP goes into a
 //! JPEG or PNG the image crate has written by [`with_xmp`], since its
 //! encoders take none, and into the TIFF as tag 700.
+//!
+//! Who made the picture and who holds its rights are the user's to
+//! say ([`Rights`]): when said, `Artist` and `Copyright` carry them
+//! over whatever the camera wrote, and the XMP says the same as
+//! `dc:creator` and `dc:rights`. Unsaid, the camera's (when not blank)
+//! travel as the rest of its tags do, and the XMP says nothing of
+//! them. They are the one thing an export with no other metadata still
+//! carries ([`rights_payload`], [`rights_xmp`]): a statement the user
+//! made, not a detail of the exposure.
 
 use std::io::{Cursor, Seek, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,6 +60,160 @@ pub struct Provenance<'a> {
     /// The edit as its consumer serializes it, for the XMP; the engine
     /// takes no schema and passes it through untouched.
     pub edit: Option<&'a str>,
+    /// The user's author and copyright, over the camera's.
+    pub rights: &'a Rights,
+}
+
+/// Who made a picture and who holds its rights, as the user says
+/// them: each none when unsaid, and then the camera's tag, if any,
+/// stands. [`Rights::new`] reads typed text as [`statement`] does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rights {
+    /// EXIF `Artist`, XMP `dc:creator`. Several people go in as one
+    /// text split by `;`, as the Metadata Working Group has it: the
+    /// EXIF tag keeps the text, the XMP's sequence takes each name.
+    pub author: Option<String>,
+    /// EXIF `Copyright`, XMP `dc:rights` in its default language.
+    pub copyright: Option<String>,
+}
+
+/// No author and no copyright: a picture the user said nothing of,
+/// which carries the camera's own.
+pub static NO_RIGHTS: Rights = Rights {
+    author: None,
+    copyright: None,
+};
+
+impl Rights {
+    pub fn new(author: &str, copyright: &str) -> Self {
+        Self {
+            // A list of no names is no author.
+            author: statement(author).filter(|a| a.split(';').any(|n| !n.trim().is_empty())),
+            copyright: statement(copyright),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.author.is_none() && self.copyright.is_none()
+    }
+
+    /// The names `author` lists, for `dc:creator`'s sequence.
+    fn creators(&self) -> Vec<&str> {
+        self.author
+            .as_deref()
+            .map(|a| {
+                a.split(';')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// The most of a statement kept, in bytes: a notice is a line, and
+/// both tags, in the EXIF and the XMP, still leave a JPEG's 64 KB
+/// segments room.
+pub const STATEMENT_MAX: usize = 1024;
+
+/// Text the user gave for an author or a copyright, as it is written:
+/// control characters (a newline, a tab, a NUL that would end the EXIF
+/// string early) and the two XML has no place for (U+FFFE, U+FFFF) as
+/// spaces, trimmed, and cut on a character's boundary
+/// at [`STATEMENT_MAX`] bytes. None for nothing left. UTF-8 throughout:
+/// the XMP is, and the EXIF's ASCII tags carry the same bytes, which
+/// exiv2 and the image crate read back as written.
+pub fn statement(text: &str) -> Option<String> {
+    let spaced: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() || !xml_char(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let mut s = spaced.trim();
+    if s.len() > STATEMENT_MAX {
+        let mut end = STATEMENT_MAX;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s = s[..end].trim_end();
+    }
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// The Dublin Core namespace, `dc:creator`'s and `dc:rights`'.
+const DC: &str = "http://purl.org/dc/elements/1.1/";
+
+/// The `dc:` properties for `rights`, at the packet's indent; empty for
+/// none.
+fn dc_properties(rights: &Rights) -> String {
+    let mut p = String::new();
+    let creators = rights.creators();
+    if !creators.is_empty() {
+        p.push_str("   <dc:creator>\n    <rdf:Seq>\n");
+        for c in creators {
+            p.push_str(&format!("     <rdf:li>{}</rdf:li>\n", escape(c)));
+        }
+        p.push_str("    </rdf:Seq>\n   </dc:creator>\n");
+    }
+    if let Some(c) = &rights.copyright {
+        p.push_str("   <dc:rights>\n    <rdf:Alt>\n");
+        p.push_str(&format!(
+            "     <rdf:li xml:lang=\"x-default\">{}</rdf:li>\n",
+            escape(c)
+        ));
+        p.push_str("    </rdf:Alt>\n   </dc:rights>\n");
+    }
+    p
+}
+
+/// The XMP packet of an export that carries nothing else: the author
+/// and the copyright alone. None when neither is said.
+pub fn rights_xmp(rights: &Rights) -> Option<String> {
+    if rights.is_empty() {
+        return None;
+    }
+    let mut p = String::new();
+    p.push_str("<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n");
+    p.push_str("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n");
+    p.push_str(" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
+    p.push_str("  <rdf:Description rdf:about=\"\"\n");
+    p.push_str(&format!("    xmlns:dc=\"{DC}\">\n"));
+    p.push_str(&dc_properties(rights));
+    p.push_str("  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>");
+    Some(p)
+}
+
+/// The EXIF payload of an export that carries nothing else, laid out
+/// as [`payload`]'s: `Artist` and `Copyright` in the root directory and
+/// no other tag. None when neither is said.
+pub fn rights_payload(rights: &Rights) -> Result<Option<Vec<u8>>> {
+    if rights.is_empty() {
+        return Ok(None);
+    }
+    let mut buffer = Cursor::new(Vec::new());
+    {
+        let tiff = TiffWriter::new(&mut buffer).map_err(encode)?;
+        let mut root = DirectoryWriter::new();
+        put_rights(&mut root, rights);
+        tiff.build(root).map_err(encode)?;
+    }
+    Ok(Some(buffer.into_inner()))
+}
+
+/// The said author and copyright into the root directory, over
+/// whatever is there.
+fn put_rights(root: &mut DirectoryWriter, rights: &Rights) {
+    if let Some(a) = &rights.author {
+        root.add_tag(ExifTag::Artist, a.as_str());
+    }
+    if let Some(c) = &rights.copyright {
+        root.add_tag(ExifTag::Copyright, c.as_str());
+    }
 }
 
 /// The XMP namespace an export's own properties are in.
@@ -72,6 +235,9 @@ pub fn xmp(provenance: &Provenance<'_>, limit: Option<usize>) -> String {
         p.push_str(" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
         p.push_str("  <rdf:Description rdf:about=\"\"\n");
         p.push_str("    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n");
+        if !provenance.rights.is_empty() {
+            p.push_str(&format!("    xmlns:dc=\"{DC}\"\n"));
+        }
         p.push_str(&format!("    xmlns:greycard=\"{NAMESPACE}\">\n"));
         p.push_str(&format!(
             "   <xmp:CreatorTool>{}</xmp:CreatorTool>\n",
@@ -91,6 +257,7 @@ pub fn xmp(provenance: &Provenance<'_>, limit: Option<usize>) -> String {
                 &d[11..]
             ));
         }
+        p.push_str(&dc_properties(provenance.rights));
         if let Some(name) = provenance.source_name {
             p.push_str(&format!(
                 "   <greycard:Source>{}</greycard:Source>\n",
@@ -129,6 +296,9 @@ pub fn xmp(provenance: &Provenance<'_>, limit: Option<usize>) -> String {
 }
 
 /// XML's text escaping.
+/// A character XML 1.0 has no place for (a C0 control but the tab, the
+/// line feed, and the carriage return; U+FFFE; U+FFFF) is a space: one
+/// would make the whole packet ill-formed, and a reader drop all of it.
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -136,18 +306,32 @@ fn escape(s: &str) -> String {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
+            c if !xml_char(c) => out.push(' '),
             c => out.push(c),
         }
     }
     out
 }
 
+/// Whether XML 1.0's `Char` production takes `c`. A Rust `char` holds
+/// no surrogate, so what it leaves out is the C0 controls but tab, line
+/// feed, and carriage return, and U+FFFE and U+FFFF.
+fn xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{FFFD}' | '\u{10000}'..)
+}
+
 /// The picture with its XMP packet in: a JPEG's APP1 segment after
 /// the ones the encoder wrote, or a PNG's `iTXt` chunk after its
 /// header. Anything else comes back as it was.
 pub fn with_xmp(picture: Vec<u8>, provenance: &Provenance<'_>) -> Vec<u8> {
+    with_packet(picture, |limit| xmp(provenance, limit))
+}
+
+/// [`with_xmp`] of the packet `packet` makes, which is handed the most
+/// the container holds (a JPEG's segment) or none.
+pub fn with_packet(picture: Vec<u8>, packet: impl FnOnce(Option<usize>) -> String) -> Vec<u8> {
     if picture.starts_with(&[0xFF, 0xD8]) {
-        let packet = xmp(provenance, Some(JPEG_PACKET_LIMIT));
+        let packet = packet(Some(JPEG_PACKET_LIMIT));
         // Past the SOI, over every APPn segment.
         let mut at = 2;
         while at + 4 <= picture.len()
@@ -168,7 +352,7 @@ pub fn with_xmp(picture: Vec<u8>, provenance: &Provenance<'_>) -> Vec<u8> {
         out.extend(&picture[at..]);
         out
     } else if picture.starts_with(b"\x89PNG\r\n\x1a\n") && picture.len() >= 33 {
-        let packet = xmp(provenance, None);
+        let packet = packet(None);
         let mut data = b"XML:com.adobe.xmp\0\0\0\0\0".to_vec();
         data.extend(packet.as_bytes());
         let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
@@ -235,6 +419,35 @@ pub fn write_rgb16_tiff<W: Write + Seek>(
     icc: Option<&[u8]>,
     provenance: Option<&Provenance<'_>>,
 ) -> Result<()> {
+    let tags = match provenance {
+        Some(p) => Tags::Provenance(p),
+        None => Tags::Nothing,
+    };
+    write_rgb16_tiff_tagged(out, width, height, data, icc, tags)
+}
+
+/// What a file says beside its pixels and profile.
+#[derive(Debug, Clone, Copy)]
+pub enum Tags<'a> {
+    /// No EXIF, no XMP.
+    Nothing,
+    /// The source's tags and the export's own, with the user's rights
+    /// over them ([`payload`], [`xmp`]).
+    Provenance(&'a Provenance<'a>),
+    /// The user's author and copyright and nothing else
+    /// ([`rights_payload`], [`rights_xmp`]).
+    Rights(&'a Rights),
+}
+
+/// [`write_rgb16_tiff`] with the file's tags as [`Tags`] says.
+pub fn write_rgb16_tiff_tagged<W: Write + Seek>(
+    out: W,
+    width: u32,
+    height: u32,
+    data: &[u16],
+    icc: Option<&[u8]>,
+    tags: Tags<'_>,
+) -> Result<()> {
     const CHANNELS: usize = 3;
     let (w, h) = (width as usize, height as usize);
     if data.len() != w * h * CHANNELS {
@@ -275,11 +488,20 @@ pub fn write_rgb16_tiff<W: Write + Seek>(
         root.add_tag_undefined(ExifTag::IccProfile, icc.to_vec());
     }
 
-    if let Some(provenance) = provenance {
-        fill(&mut tiff, &mut root, &mut exif, provenance)?;
-        let exif_offset = exif.build(&mut tiff).map_err(encode)?;
-        root.add_tag(TiffCommonTag::ExifIFDPointer, exif_offset);
-        root.add_untyped_tag(XMP_TAG, Value::Byte(xmp(provenance, None).into_bytes()));
+    match tags {
+        Tags::Nothing => {}
+        Tags::Provenance(provenance) => {
+            fill(&mut tiff, &mut root, &mut exif, provenance)?;
+            let exif_offset = exif.build(&mut tiff).map_err(encode)?;
+            root.add_tag(TiffCommonTag::ExifIFDPointer, exif_offset);
+            root.add_untyped_tag(XMP_TAG, Value::Byte(xmp(provenance, None).into_bytes()));
+        }
+        Tags::Rights(rights) => {
+            put_rights(&mut root, rights);
+            if let Some(packet) = rights_xmp(rights) {
+                root.add_untyped_tag(XMP_TAG, Value::Byte(packet.into_bytes()));
+            }
+        }
     }
     tiff.build(root).map_err(encode)
 }
@@ -328,6 +550,8 @@ fn fill<W: Write + Seek>(
     {
         exif.remove_tag(ExifTag::OwnerName);
     }
+    // The user's word over the camera's.
+    put_rights(root, provenance.rights);
     if !metadata.make.trim().is_empty() {
         root.add_tag(ExifTag::Make, metadata.make.trim());
     }
@@ -572,6 +796,7 @@ mod tests {
             source_name: Some("IMG_0001.CR3"),
             output: None,
             edit: None,
+            rights: &NO_RIGHTS,
         })
         .unwrap();
         let (root, exif) = read(&bytes);
@@ -645,6 +870,7 @@ mod tests {
             source_name: None,
             output: None,
             edit: None,
+            rights: &NO_RIGHTS,
         })
         .unwrap();
         let (root, exif) = read(&bytes);
@@ -679,6 +905,7 @@ mod tests {
                 source_name: Some("a.dng"),
                 output: Some("TIFF 16-bit, Rec.2020"),
                 edit: Some("{\"version\": 2}"),
+                rights: &NO_RIGHTS,
             }),
         )
         .unwrap();
@@ -743,6 +970,7 @@ mod tests {
             source_name: Some("Tom & Jerry <1>.CR3"),
             output: Some("JPEG quality 88"),
             edit,
+            rights: &NO_RIGHTS,
         }
     }
 
@@ -891,6 +1119,7 @@ mod tests {
             source_name: None,
             output: None,
             edit: None,
+            rights: &NO_RIGHTS,
         })
         .unwrap();
         let (_, exif) = read(&bytes);
@@ -907,5 +1136,168 @@ mod tests {
         assert_eq!(with_capture_shifted(&m, 0), m);
         m.exif.create_date = None;
         assert_eq!(with_capture_shifted(&m, 60).exif.create_date, None);
+    }
+
+    /// Text given for a right: trimmed, its control characters spaces,
+    /// cut on a character at the cap, and nothing for blank.
+    #[test]
+    fn a_statement_is_read_as_written_text() {
+        assert_eq!(statement("  Jo Doe \n").as_deref(), Some("Jo Doe"));
+        assert_eq!(statement("a\tb\0c").as_deref(), Some("a b c"));
+        assert_eq!(
+            statement("© Jo\u{FFFE}Doe\u{FFFF}\u{1}").as_deref(),
+            Some("© Jo Doe")
+        );
+        assert_eq!(statement(""), None);
+        assert_eq!(statement(" \n\t "), None);
+        // Two-byte characters across the cap: cut before the one that
+        // would straddle it.
+        let long = "é".repeat(STATEMENT_MAX);
+        let cut = statement(&long).unwrap();
+        assert_eq!(cut.len(), STATEMENT_MAX);
+        assert!(cut.chars().all(|c| c == 'é'));
+        let odd = format!("x{long}");
+        assert_eq!(statement(&odd).unwrap().len(), STATEMENT_MAX - 1);
+        // A list of no names is no author; a notice is a notice.
+        assert_eq!(Rights::new(" ; ;", ";").author, None);
+        assert_eq!(Rights::new(" ; ;", ";").copyright.as_deref(), Some(";"));
+        assert!(Rights::new("", " ").is_empty());
+    }
+
+    /// Text with characters XML 1.0 has no place for, in the rights and
+    /// in the source's name, still makes a packet a strict reader parses,
+    /// each of them a space; ordinary text is escaped as it always was.
+    #[test]
+    fn a_packet_of_text_xml_refuses_still_parses() {
+        let m = metadata();
+        let odd = "Jo\u{FFFE}Doe\u{FFFF} & <co>\u{1}\u{1F}";
+        let r = Rights::new(odd, odd);
+        let p = Provenance {
+            source_name: Some("IMG\u{FFFF}\u{2}_0001.CR3"),
+            rights: &r,
+            ..provenance(&m, Some("{\"a\": \"\u{FFFE}\"}"))
+        };
+        for packet in [xmp(&p, None), rights_xmp(&r).unwrap()] {
+            let doc =
+                roxmltree::Document::parse(&packet).unwrap_or_else(|e| panic!("{e}: {packet}"));
+            let text: Vec<&str> = doc
+                .descendants()
+                .filter(|n| n.has_tag_name("li"))
+                .filter_map(|n| n.text())
+                .collect();
+            assert!(text.contains(&"Jo Doe  & <co>"), "{text:?}");
+        }
+        let packet = xmp(&p, None);
+        assert!(packet.contains("<greycard:Source>IMG  _0001.CR3</greycard:Source>"));
+        assert_eq!(escape("Tom & Jerry\té\n"), "Tom &amp; Jerry\té\n");
+    }
+
+    fn rights() -> Rights {
+        Rights::new(
+            "Zoë Ångström; Jo Doe",
+            "© 2026 Zoë Ångström & co <all rights>",
+        )
+    }
+
+    /// Said, the user's author and copyright replace the camera's in the
+    /// EXIF and are the XMP's `dc:creator` and `dc:rights`; unsaid, the
+    /// camera's stand and the packet is as it was.
+    #[test]
+    fn the_users_rights_go_over_the_cameras() {
+        let mut m = metadata();
+        m.exif.artist = Some("Camera Owner".into());
+        m.exif.copyright = Some("camera notice".into());
+        let r = rights();
+        let mine = Provenance {
+            rights: &r,
+            ..provenance(&m, None)
+        };
+        let (root, _) = read(&payload(&mine).unwrap());
+        assert_eq!(
+            text(&root, ExifTag::Artist).as_deref(),
+            Some("Zoë Ångström; Jo Doe")
+        );
+        assert_eq!(
+            text(&root, ExifTag::Copyright).as_deref(),
+            Some("© 2026 Zoë Ångström & co <all rights>")
+        );
+        let p = xmp(&mine, None);
+        assert!(p.contains(&format!("xmlns:dc=\"{DC}\"")), "{p}");
+        assert!(p.contains(
+            "<dc:creator>\n    <rdf:Seq>\n     <rdf:li>Zoë Ångström</rdf:li>\n     <rdf:li>Jo Doe</rdf:li>\n    </rdf:Seq>\n   </dc:creator>"
+        ));
+        assert!(p.contains(
+            "<rdf:li xml:lang=\"x-default\">© 2026 Zoë Ångström &amp; co &lt;all rights&gt;</rdf:li>"
+        ));
+
+        // The author alone: the camera's notice stands in the EXIF, and
+        // the XMP says only what the user did.
+        let author = Rights::new("Jo Doe", "");
+        let (root, _) = read(
+            &payload(&Provenance {
+                rights: &author,
+                ..provenance(&m, None)
+            })
+            .unwrap(),
+        );
+        assert_eq!(text(&root, ExifTag::Artist).as_deref(), Some("Jo Doe"));
+        assert_eq!(
+            text(&root, ExifTag::Copyright).as_deref(),
+            Some("camera notice")
+        );
+
+        // Nothing said: the camera's, and no `dc:` in the packet.
+        let theirs = provenance(&m, None);
+        let (root, _) = read(&payload(&theirs).unwrap());
+        assert_eq!(
+            text(&root, ExifTag::Artist).as_deref(),
+            Some("Camera Owner")
+        );
+        assert_eq!(
+            text(&root, ExifTag::Copyright).as_deref(),
+            Some("camera notice")
+        );
+        assert!(!xmp(&theirs, None).contains("dc"));
+    }
+
+    /// With nothing else to carry, the rights alone: the two tags in
+    /// the root, no EXIF directory, a packet of `dc:` alone; nothing
+    /// at all when none is said.
+    #[test]
+    fn the_rights_alone() {
+        let r = rights();
+        let bytes = rights_payload(&r).unwrap().expect("a payload");
+        let reader = GenericTiffReader::new_with_buffer(&bytes, 0, 0, None).unwrap();
+        let root = reader.root_ifd();
+        assert_eq!(
+            text(root, ExifTag::Artist).as_deref(),
+            Some("Zoë Ångström; Jo Doe")
+        );
+        assert!(root.get_entry(ExifTag::Copyright).is_some());
+        assert_eq!(root.entries().len(), 2, "{root:?}");
+        let p = rights_xmp(&r).unwrap();
+        assert!(p.contains("<rdf:li>Jo Doe</rdf:li>") && !p.contains("greycard"));
+        assert!(rights_payload(&NO_RIGHTS).unwrap().is_none());
+        assert!(rights_xmp(&NO_RIGHTS).is_none());
+
+        // A TIFF of them.
+        let mut file = Cursor::new(Vec::new());
+        write_rgb16_tiff_tagged(&mut file, 2, 2, &[0u16; 12], None, Tags::Rights(&r)).unwrap();
+        let bytes = file.into_inner();
+        let root = GenericTiffReader::new_with_buffer(&bytes, 0, 0, None)
+            .unwrap()
+            .root_ifd()
+            .clone();
+        assert_eq!(
+            text(&root, ExifTag::Copyright).as_deref(),
+            Some("© 2026 Zoë Ångström & co <all rights>")
+        );
+        assert!(root.get_entry(TiffCommonTag::ExifIFDPointer).is_none());
+        // The packet as tag 700 (the image crate sizes its buffers by
+        // the pixels and refuses a packet this long on a 2 by 2).
+        match &root.get_entry(XMP_TAG).expect("a packet").value {
+            Value::Byte(b) => assert_eq!(b, &rights_xmp(&r).unwrap().into_bytes()),
+            other => panic!("{other:?}"),
+        }
     }
 }

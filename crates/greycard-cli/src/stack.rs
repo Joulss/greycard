@@ -256,6 +256,7 @@ fn write_tiff(
         source_name,
         output: None,
         edit: None,
+        rights: &greycard_core::exif::NO_RIGHTS,
     };
     write_linear_tiff(&working, out_path, &provenance)
 }

@@ -147,6 +147,9 @@ impl Sheet {
             metadata: Metadata::from_name(&self.metadata).unwrap_or_default(),
             border: self.border(),
             watermark: self.watermark(),
+            // Not the sheet's: the settings', laid on by whoever runs
+            // the export.
+            rights: export::Rights::default(),
         }
     }
 

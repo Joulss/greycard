@@ -800,6 +800,7 @@ impl State {
                 xmp_sidecars: false,
                 placement: greycard_edit::Placement::Beside,
                 lens_on_new: true,
+                rights: Default::default(),
                 deletes_allowed: false,
                 settings_file: None,
                 batch: false,

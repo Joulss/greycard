@@ -69,6 +69,14 @@ pub(crate) struct ExportArgs {
     /// Write an `.xmp` with each sidecar, over the editor's setting
     #[arg(long)]
     xmp_sidecars: bool,
+    /// The author each file names, over the editor's setting and the
+    /// camera's
+    #[arg(long, value_name = "NAME")]
+    author: Option<String>,
+    /// The copyright notice each file carries, over the editor's
+    /// setting and the camera's
+    #[arg(long, value_name = "TEXT")]
+    copyright: Option<String>,
     /// Develop on the CPU alone, without the GPU the editor would use:
     /// the same pixels on every machine
     #[arg(long)]
@@ -101,6 +109,8 @@ impl ExportArgs {
             no_sidecars: self.no_sidecars,
             sidecar_folder: self.sidecar_folder,
             xmp_sidecars: self.xmp_sidecars,
+            author: self.author,
+            copyright: self.copyright,
         })
     }
 }
@@ -178,5 +188,22 @@ mod tests {
                 .request()
                 .is_err()
         );
+    }
+
+    /// `--author` and `--copyright` reach the request as given, a blank
+    /// one too; absent, none, and the settings' stand.
+    #[test]
+    fn the_author_and_copyright_flags_reach_the_request() {
+        let req = request(&["a.CR3", "out.jpg"]);
+        assert_eq!((req.author, req.copyright), (None, None));
+        let req = request(&[
+            "a.CR3",
+            "out.jpg",
+            "--author",
+            "Zoë Ångström",
+            "--copyright=",
+        ]);
+        assert_eq!(req.author.as_deref(), Some("Zoë Ångström"));
+        assert_eq!(req.copyright.as_deref(), Some(""));
     }
 }

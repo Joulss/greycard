@@ -53,8 +53,10 @@ clear in hand.
   edit that made the picture.
 - **No edit**: the camera's details, without your edit. Use it for a
   picture you hand on without your recipe.
-- **None**: nothing but the color profile. The camera, the time and
-  any location are left out.
+- **None**: nothing but the color profile, and your author and
+  copyright if you set them (see [From the command
+  line](#from-the-command-line)). The camera, the time and any
+  location are left out.
 
 ### Watermark
 
@@ -384,6 +386,24 @@ where they go.
 | `--no-sidecars` | Reads and writes no `.gcd`: each frame exports at its defaults, and nothing is recorded. |
 | `--sidecar-folder` | Writes the `.gcd` into the hidden `.greycard` folder for this run. |
 | `--xmp-sidecars` | Also writes an XMP beside the raw for this run. |
+| `--author NAME`, `--copyright TEXT` | The author and copyright notice written into each file for this run, over the settings' and the camera's. `--author ""` leaves the camera's for this run. |
+
+**Author and copyright.** Every export can name you and carry your
+notice: EXIF Artist and Copyright, and in the XMP `dc:creator` and
+`dc:rights`, in JPEG, PNG, TIFF, and WebP. There is no field for them
+in the window yet: set them once, for the window's exports and the
+command line's alike, by adding two lines to `settings.json` (in
+`~/.config/greycard/` on Linux):
+
+```
+"author": "Your Name",
+"copyright": "© 2026 Your Name"
+```
+
+or for one run with the two flags. Separate several authors with `;`.
+Yours replace what the camera wrote; with neither set, the camera's
+stay as they were. They are written under **Metadata: None** too, on
+their own: the camera, the time, and any location still stay behind.
 
 An export preset with a border writes the border; there is no flag of
 its own for it.

@@ -24,6 +24,8 @@ toml.workspace = true
 [dev-dependencies]
 # The layering test reads `cargo metadata`'s JSON.
 serde_json.workspace = true
+# The XMP packets parsed back, as a strict reader would.
+roxmltree.workspace = true
 
 [features]
 # Nikon High Efficiency (HE and HE*) raws, through rawler's JPEG XS

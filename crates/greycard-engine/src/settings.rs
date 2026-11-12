@@ -63,6 +63,22 @@ pub struct Shared {
     /// as it develops, not waited for the window to close; empty
     /// until then.
     pub last_file: String,
+    /// The author every export names, over the camera's (EXIF
+    /// `Artist`, XMP `dc:creator`); several split by `;`. Empty for
+    /// none, and then left out of the file, so a file from before it
+    /// writes back as it read. Set by hand in the file for now.
+    #[serde(
+        skip_serializing_if = "String::is_empty",
+        deserialize_with = "text_leniently"
+    )]
+    pub author: String,
+    /// The copyright notice every export carries, over the camera's
+    /// (EXIF `Copyright`, XMP `dc:rights`). As `author`.
+    #[serde(
+        skip_serializing_if = "String::is_empty",
+        deserialize_with = "text_leniently"
+    )]
+    pub copyright: String,
 }
 
 impl Default for Shared {
@@ -76,6 +92,35 @@ impl Default for Shared {
             jpegs_apart: false,
             lens_on_new: true,
             last_file: String::new(),
+            author: String::new(),
+            copyright: String::new(),
+        }
+    }
+}
+
+/// Text of a file edited by hand: anything but a string reads as
+/// none, and costs the rest nothing.
+fn text_leniently<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::Null => Ok(String::new()),
+        other => {
+            // The kind alone, and once a run: a value pasted in by
+            // mistake may be long, and the file is read more than once.
+            static SAID: std::sync::Once = std::sync::Once::new();
+            let kind = match other {
+                serde_json::Value::Bool(_) => "a switch",
+                serde_json::Value::Number(_) => "a number",
+                serde_json::Value::Array(_) => "a list",
+                _ => "an object",
+            };
+            SAID.call_once(|| {
+                tracing::warn!("settings: the author or copyright is {kind}, not text; none")
+            });
+            Ok(String::new())
         }
     }
 }
@@ -105,6 +150,12 @@ impl Shared {
         greycard_edit_io::on_disk::Fresh {
             lens: self.lens_on_new,
         }
+    }
+
+    /// The author and copyright every export carries, as the file
+    /// has them.
+    pub fn rights(&self) -> export::Rights {
+        export::Rights::new(&self.author, &self.copyright)
     }
 
     /// The export sheet to open with, and the preset it is: the last
@@ -227,6 +278,37 @@ mod tests {
             let read: Shared = serde_json::from_str(text).expect(text);
             assert!(read.jpegs_apart, "{text}");
             assert!(read.lens_on_new, "{text}");
+        }
+    }
+
+    /// The author and copyright: absent from a file that never had
+    /// them, which writes back byte for byte; read where set, a value
+    /// of the wrong kind costing the rest nothing; and made the export's
+    /// rights, blank as none.
+    #[test]
+    fn the_author_and_copyright_are_read_and_left_out_when_unset() {
+        let before = serde_json::to_string_pretty(&Shared::default()).unwrap();
+        assert!(!before.contains("author") && !before.contains("copyright"));
+        let read: Shared = serde_json::from_str(&before).unwrap();
+        assert_eq!(serde_json::to_string_pretty(&read).unwrap(), before);
+        assert!(read.rights().is_empty());
+
+        let read: Shared = serde_json::from_str(
+            r#"{"author": " Zoë Ångström ", "copyright": "© 2026 Zoë", "jpegs_apart": true}"#,
+        )
+        .unwrap();
+        assert_eq!(read.rights().author.as_deref(), Some("Zoë Ångström"));
+        assert_eq!(read.rights().copyright.as_deref(), Some("© 2026 Zoë"));
+        let again: Shared = serde_json::from_str(&serde_json::to_string(&read).unwrap()).unwrap();
+        assert_eq!(again, read, "round trip");
+
+        for text in [
+            r#"{"jpegs_apart": true, "author": 5, "copyright": null}"#,
+            r#"{"jpegs_apart": true, "author": ["a"], "copyright": "  "}"#,
+        ] {
+            let read: Shared = serde_json::from_str(text).expect(text);
+            assert!(read.jpegs_apart, "{text}");
+            assert!(read.rights().is_empty(), "{text}");
         }
     }
 

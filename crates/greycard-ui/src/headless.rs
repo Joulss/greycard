@@ -54,6 +54,10 @@ pub(crate) fn request(cli: &Cli, target: &Path) -> Request {
         no_sidecars: cli.no_sidecars,
         sidecar_folder: cli.sidecar_folder,
         xmp_sidecars: cli.xmp_sidecars,
+        // The settings' alone: the editor's `--export` takes no flag
+        // for them.
+        author: None,
+        copyright: None,
     }
 }
 
@@ -209,6 +213,8 @@ mod tests {
                 no_sidecars: true,
                 sidecar_folder: true,
                 xmp_sidecars: true,
+                author: None,
+                copyright: None,
             }
         );
         assert_eq!(

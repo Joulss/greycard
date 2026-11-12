@@ -10,7 +10,8 @@ use greycard_core::RgbSpace;
 use greycard_core::color::{CAT, WORKING_SPACE};
 use greycard_core::decode::RawMetadata;
 use greycard_core::develop::sharpen;
-use greycard_core::exif::{self, Provenance};
+pub use greycard_core::exif::Rights;
+use greycard_core::exif::{self, Provenance, Tags};
 use greycard_core::image::WorkingImage;
 use greycard_edit::brush::Raster;
 use std::path::Path;
@@ -400,7 +401,8 @@ pub enum Metadata {
     /// recipe.
     NoEdit,
     /// Nothing but the profile: no EXIF, no XMP. The camera, the time
-    /// and any location stay behind.
+    /// and any location stay behind. The user's author and copyright,
+    /// when said ([`Settings::rights`]), are still written, alone.
     None,
 }
 
@@ -442,6 +444,11 @@ pub struct Settings {
     /// A mark laid over the picture after its resize, and over the
     /// border when there is one.
     pub watermark: Option<Mark>,
+    /// The user's author and copyright, over the camera's; written
+    /// whatever `metadata` says, since they are the user's own word
+    /// and not a detail of the exposure. Not the sheet's: the
+    /// settings' or the command line's, laid on by the caller.
+    pub rights: Rights,
 }
 
 impl Default for Settings {
@@ -456,6 +463,7 @@ impl Default for Settings {
             metadata: Metadata::All,
             border: None,
             watermark: None,
+            rights: Rights::default(),
         }
     }
 }
@@ -998,7 +1006,8 @@ impl Settings {
 
 /// Write a rendered picture to `path` in the settings' format, with
 /// the source's EXIF carried over when `source` gives it, and the
-/// export's own account of itself in the XMP.
+/// export's own account of itself in the XMP; the settings' rights
+/// over the source's, or alone when there is nothing else to carry.
 pub fn write(
     rendered: &Rendered,
     settings: &Settings,
@@ -1030,10 +1039,24 @@ pub fn write(
         source_name: origin.source_name.as_deref(),
         output: Some(&output),
         edit,
+        rights: &settings.rights,
     });
-    let payload = match &provenance {
-        Some(p) => Some(exif::payload(p).context("the EXIF")?),
-        None => None,
+    // With no source's tags to carry (Metadata None, or a source
+    // without them), the user's rights alone, when said.
+    let tags = match &provenance {
+        Some(p) => Tags::Provenance(p),
+        None if !settings.rights.is_empty() => Tags::Rights(&settings.rights),
+        None => Tags::Nothing,
+    };
+    let payload = match tags {
+        Tags::Provenance(p) => Some(exif::payload(p).context("the EXIF")?),
+        Tags::Rights(r) => exif::rights_payload(r).context("the EXIF")?,
+        Tags::Nothing => None,
+    };
+    let packet = |limit: Option<usize>| match tags {
+        Tags::Provenance(p) => Some(exif::xmp(p, limit)),
+        Tags::Rights(r) => exif::rights_xmp(r),
+        Tags::Nothing => None,
     };
     // The image crate's encoders take no XMP: the JPEG and the PNG are
     // encoded to memory and get their packet before they are written.
@@ -1061,7 +1084,7 @@ pub fn write(
         }
         (Pixels::Sixteen(p), Format::Tiff) => {
             let mut cursor = std::io::Cursor::new(&mut bytes);
-            exif::write_rgb16_tiff(&mut cursor, w, h, p, icc.as_deref(), provenance.as_ref())
+            exif::write_rgb16_tiff_tagged(&mut cursor, w, h, p, icc.as_deref(), tags)
                 .context("writing the TIFF")?;
         }
         // image-webp straight, not through the image crate, whose
@@ -1082,17 +1105,15 @@ pub fn write(
             if let Some(exif) = payload {
                 enc.set_exif_metadata(exif);
             }
-            if let Some(p) = &provenance {
-                enc.set_xmp_metadata(exif::xmp(p, None).into_bytes());
+            if let Some(packet) = packet(None) {
+                enc.set_xmp_metadata(packet.into_bytes());
             }
             enc.encode(p, w, h, ColorType::Rgb8)?;
         }
         _ => bail!("the pixels' depth is not the format's"),
     }
-    if let Some(p) = &provenance
-        && matches!(settings.format, Format::Jpeg | Format::Png)
-    {
-        bytes = exif::with_xmp(bytes, p);
+    if !matches!(tags, Tags::Nothing) && matches!(settings.format, Format::Jpeg | Format::Png) {
+        bytes = exif::with_packet(bytes, |limit| packet(limit).unwrap_or_default());
     }
     std::fs::write(path, &bytes).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
@@ -2116,6 +2137,143 @@ mod tests {
             };
             assert!(profile, "{what}");
         }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The user's author and copyright, in every format and under every
+    /// policy, read back by our own picture reader as the EXIF's
+    /// `Artist` and `Copyright` and found in the XMP as `dc:creator` and
+    /// `dc:rights`: over the camera's own, and alone under None. With
+    /// none said, the camera's travel as before, and under None nothing.
+    #[test]
+    fn the_users_rights_are_in_every_format_under_every_policy() {
+        let (w, h) = (24usize, 16usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.2; w * h * 3],
+        };
+        let mut metadata = RawMetadata {
+            exif: Default::default(),
+            model: "EOS R6m2".into(),
+            make: "Canon".into(),
+            lens: None,
+            unique_image_id: None,
+            rating: None,
+        };
+        metadata.exif.artist = Some("Camera Owner".into());
+        metadata.exif.copyright = Some("camera notice".into());
+        let edit = greycard_edit::Edit::default();
+        let dir = scratch("rights");
+        let carries =
+            |bytes: &[u8], what: &str| bytes.windows(what.len()).any(|w| w == what.as_bytes());
+        let origin = Origin {
+            source_name: Some("IMG_0001.CR3".into()),
+            edit: Some(edit.to_json()),
+        };
+        let mine = Rights::new("Zoë Ångström", "© 2026 Zoë Ångström");
+        for (said, policy, format) in [false, true].into_iter().flat_map(|said| {
+            Metadata::ALL
+                .into_iter()
+                .flat_map(move |p| Format::ALL.map(|f| (said, p, f)))
+        }) {
+            let settings = Settings {
+                metadata: policy,
+                format,
+                rights: if said {
+                    mine.clone()
+                } else {
+                    Rights::default()
+                },
+                ..Settings::default()
+            };
+            let rendered = render(
+                &image,
+                &edit,
+                &greycard_edit::NoStores,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::SCENE,
+                None,
+                None,
+            );
+            let path = dir.join(format!("r-{said}-{}.{}", policy.name(), format.extension()));
+            write(&rendered, &settings, &path, Some(&metadata), &origin).unwrap();
+            let what = format!("{said} {} {}", policy.name(), format.name());
+            let back = greycard_core::picture::decode_picture_path(&path)
+                .unwrap_or_else(|e| panic!("{what}: {e}"));
+            let (artist, copyright) = (
+                back.metadata.exif.artist.as_deref(),
+                back.metadata.exif.copyright.as_deref(),
+            );
+            let bytes = std::fs::read(&path).unwrap();
+            let xmp = match format {
+                // The TIFF's packet lies in the file as it is.
+                Format::Tiff => bytes.clone(),
+                _ => {
+                    let mut decoder = image::ImageReader::open(&path)
+                        .unwrap()
+                        .into_decoder()
+                        .unwrap();
+                    image::ImageDecoder::xmp_metadata(&mut decoder)
+                        .unwrap()
+                        .unwrap_or_default()
+                }
+            };
+            let dc = carries(&xmp, "<rdf:li>Zoë Ångström</rdf:li>")
+                && carries(
+                    &xmp,
+                    "<rdf:li xml:lang=\"x-default\">© 2026 Zoë Ångström</rdf:li>",
+                );
+            match (said, policy) {
+                (true, _) => {
+                    assert_eq!(artist, Some("Zoë Ångström"), "{what}");
+                    assert_eq!(copyright, Some("© 2026 Zoë Ångström"), "{what}");
+                    assert!(dc, "{what}");
+                    assert!(!carries(&bytes, "Camera Owner"), "{what}");
+                }
+                (false, Metadata::None) => {
+                    assert_eq!((artist, copyright), (None, None), "{what}");
+                    assert!(!carries(&bytes, "Camera Owner") && !dc, "{what}");
+                }
+                (false, _) => {
+                    assert_eq!(artist, Some("Camera Owner"), "{what}");
+                    assert_eq!(copyright, Some("camera notice"), "{what}");
+                    assert!(!carries(&xmp, "dc:"), "{what}");
+                }
+            }
+            // None keeps the camera out whatever the rights.
+            if policy == Metadata::None {
+                assert!(!carries(&bytes, "EOS R6m2"), "{what}");
+                assert!(!carries(&bytes, "<greycard:Source>"), "{what}");
+            }
+            assert_eq!((back.image.width, back.image.height), (w, h), "{what}");
+        }
+        // With no source's tags at all, the rights alone.
+        let settings = Settings {
+            rights: mine.clone(),
+            ..Settings::default()
+        };
+        let rendered = render(
+            &image,
+            &edit,
+            &greycard_edit::NoStores,
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            None,
+            finish::Source::SCENE,
+            None,
+            None,
+        );
+        let path = dir.join("no-source.jpg");
+        write(&rendered, &settings, &path, None, &origin).unwrap();
+        let back = greycard_core::picture::decode_picture_path(&path).unwrap();
+        assert_eq!(back.metadata.exif.artist.as_deref(), Some("Zoë Ångström"));
         crate::testing::remove_dir_retry(&dir);
     }
 

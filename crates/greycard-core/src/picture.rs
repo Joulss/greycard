@@ -1146,6 +1146,7 @@ mod tests {
             source_name: None,
             output: None,
             edit: None,
+            rights: &crate::exif::NO_RIGHTS,
         })
         .unwrap()
     }

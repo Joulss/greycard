@@ -64,6 +64,33 @@ pub struct Request {
     pub sidecar_folder: bool,
     /// Write the `.xmp` with each sidecar, over the settings' choice.
     pub xmp_sidecars: bool,
+    /// The author each file names, over the settings' (and so over the
+    /// camera's); blank for none this run, the camera's standing.
+    pub author: Option<String>,
+    /// The copyright each file carries, as `author`.
+    pub copyright: Option<String>,
+}
+
+impl Request {
+    /// The author and copyright this run writes: each flag's over the
+    /// settings' own.
+    pub fn rights(&self, remembered: &Shared) -> export::Rights {
+        let kept = remembered.rights();
+        let given = export::Rights::new(
+            self.author.as_deref().unwrap_or_default(),
+            self.copyright.as_deref().unwrap_or_default(),
+        );
+        export::Rights {
+            author: match &self.author {
+                Some(_) => given.author,
+                None => kept.author,
+            },
+            copyright: match &self.copyright {
+                Some(_) => given.copyright,
+                None => kept.copyright,
+            },
+        }
+    }
 }
 
 /// What an export run writes: each frame under its edit, and the
@@ -220,7 +247,10 @@ pub fn plan(
     // still is as saved.
     let (sheet, chosen) =
         remembered.opening_sheet(req.export_preset.as_deref(), req.long_edge, req.on_exists)?;
-    let sheet_settings = sheet.settings();
+    let sheet_settings = export::Settings {
+        rights: req.rights(remembered),
+        ..sheet.settings()
+    };
     let preset_name = chosen
         .filter(|n| !sheet::reserved(n))
         .and_then(|n| sheet::find(&remembered.export_presets, &n))
@@ -1313,6 +1343,55 @@ mod tests {
         assert!(
             message.contains("frame.dng") && message.contains("Cool"),
             "{message}"
+        );
+    }
+
+    /// The author and copyright a run writes: the settings', each
+    /// flag's over its own, a blank flag none for the run, and with
+    /// `--all` as without.
+    #[test]
+    fn a_run_writes_the_settings_rights_with_the_flags_over_them() {
+        let scratch = Scratch::new("rights");
+        names(&scratch.0, 2);
+        let target = scratch.folder("out");
+        let remembered = Shared {
+            author: "Jo Doe".into(),
+            copyright: "© Jo Doe".into(),
+            ..Default::default()
+        };
+        let all = Request {
+            all: true,
+            no_sidecars: true,
+            ..to(&[&scratch.0], &target)
+        };
+        let planned = plan(&all, &remembered, None, None).unwrap();
+        assert_eq!(planned.frames.len(), 2);
+        assert_eq!(planned.settings.rights, remembered.rights());
+        assert_eq!(planned.settings.rights.author.as_deref(), Some("Jo Doe"));
+
+        let flagged = Request {
+            author: Some(" Zoë Ångström ".into()),
+            copyright: Some(String::new()),
+            ..all.clone()
+        };
+        let rights = plan(&flagged, &remembered, None, None)
+            .unwrap()
+            .settings
+            .rights;
+        assert_eq!(rights.author.as_deref(), Some("Zoë Ångström"));
+        assert_eq!(rights.copyright, None, "a blank flag is none this run");
+
+        let rights = plan(&flagged, &Shared::default(), None, None)
+            .unwrap()
+            .settings
+            .rights;
+        assert_eq!(rights.author.as_deref(), Some("Zoë Ångström"));
+        assert!(
+            plan(&all, &Shared::default(), None, None)
+                .unwrap()
+                .settings
+                .rights
+                .is_empty()
         );
     }
 

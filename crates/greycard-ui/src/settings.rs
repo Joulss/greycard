@@ -1147,6 +1147,8 @@ mod tests {
                 jpegs_apart: true,
                 lens_on_new: false,
                 last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
+                author: "Zoë Ångström".into(),
+                copyright: "© 2026 Zoë Ångström".into(),
             },
             scope: "Vector".into(),
             curve_mode: "Parametric".into(),

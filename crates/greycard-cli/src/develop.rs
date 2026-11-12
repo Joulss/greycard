@@ -1255,6 +1255,7 @@ fn run_develop(
         source_name: source_name.as_deref(),
         output: None,
         edit: None,
+        rights: &greycard_core::exif::NO_RIGHTS,
     };
     if let Some(path) = &targets.tiff {
         let (w, h) = (developed.image.width as u32, developed.image.height as u32);
@@ -1351,6 +1352,7 @@ fn run_develop_picture(
         source_name: source_name.as_deref(),
         output: None,
         edit: None,
+        rights: &greycard_core::exif::NO_RIGHTS,
     };
     if let Some(path) = &targets.tiff {
         let (w, h) = (p.image.width as u32, p.image.height as u32);

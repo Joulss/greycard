@@ -23,6 +23,10 @@ pub(crate) struct Window {
     /// `settings.lens_on_new`, as the Settings sheet's switch flips
     /// it. A sidecar already written keeps its own.
     pub(crate) lens_on_new: bool,
+    /// The author and copyright every export carries, over the
+    /// camera's: `settings.author` and `settings.copyright`, as read
+    /// at the start.
+    pub(crate) rights: greycard_render::export::Rights,
     /// Whether anything may be deleted from disk: only in a session
     /// someone is at. A snapshot, a screenshot, an export or a timing
     /// run never deletes, whatever it is asked, and a test's state
