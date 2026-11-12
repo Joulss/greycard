@@ -125,7 +125,7 @@ neutral.
 | **As shot** | On by default: the camera's own white balance. Turn it on to return to it, and off again to get back the white you had. |
 | **Temperature** | 2000 to 12000 K. Higher makes the picture warmer. |
 | **Tint** | −0.05 to +0.05. Positive makes it more magenta, negative more green. |
-| **Auto** | Reads the white balance from the picture. |
+| **Auto** | Reads the white balance from the picture. On a raw, its arrow opens the presets. |
 | **Neutral** | A dropper: click something in the picture that should be grey. |
 
 On a JPEG, PNG, or TIFF there is no camera white to name, so the two
@@ -148,6 +148,25 @@ stays off. Under **As shot** a double-click changes nothing.
 **Auto** reads the light from the edges in the picture, so a large
 sky or sea does not throw it off. It takes most of the warmth out of
 tungsten and candle light; to keep that warmth, set the white by hand.
+
+On a raw, the arrow at the right of **Auto** (or a right-click on it)
+opens the presets: **Daylight**, **Cloudy**, **Shade**, **Tungsten**,
+**Fluorescent**, and **Flash**. Each sets **Temperature** and
+**Tint** to that light and turns **As shot** off, one step in the
+history, as **Auto** is. They are the same light on every camera:
+
+| Preset | Temperature | Tint |
+|---|---|---|
+| Daylight | 5500 K | +0.003 |
+| Cloudy | 6500 K | +0.003 |
+| Shade | 7500 K | +0.003 |
+| Tungsten | 2850 K | 0 |
+| Fluorescent | 3800 K | +0.007 |
+| Flash | 5500 K | 0 |
+
+The section does not show which preset you chose; after it, the
+sliders are yours to move. A JPEG, PNG, or TIFF, and a mask's white
+balance, have no presets.
 
 Press Escape to put the **Neutral** dropper down.
 

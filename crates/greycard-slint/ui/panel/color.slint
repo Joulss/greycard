@@ -11,6 +11,14 @@ export component WhiteBalanceSection inherits Section {
     callback pick-started(string);
     // Temperature and tint read off the whole picture.
     callback wb-auto();
+    // A preset from Auto's menu, by its key: the sliders set to the
+    // light it names, As shot off, one step.
+    callback wb-preset(string);
+    in-out property <bool> presets-shown;
+    // The presets' menu about to open: the window's keys take the
+    // focus first, as Fit's menu does, so the click that closes it is
+    // no click, and a pick leaves the keys with them, not with Auto.
+    callback menu-opening();
     in-out property <float> temperature;
     in-out property <float> tint;
     in property <bool> raw-input;
@@ -129,9 +137,70 @@ export component WhiteBalanceSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
+        // Auto, and on a raw the presets in a menu off its chevron, as
+        // the footer's Fit carries its zooms: no row and no width taken
+        // from the sliders. A preset only sets the two sliders, so the
+        // section shows none as chosen. A picture has no camera white
+        // for a preset's light to be read against, and a mask's white
+        // is an offset: neither has the menu.
         if !root.local: PanelButton {
             text: @tr("Auto");
+            has-menu: !root.picture;
             clicked => { root.wb-auto(); }
+            menu(x, y) => {
+                root.menu-opening();
+                presets.show({ x: x, y: y });
+            }
+            // Raised from Rust, for a snapshot of the menu open.
+            property <bool> want: root.presets-shown;
+            changed want => {
+                if (self.want) {
+                    root.presets-shown = false;
+                    if (self.has-menu) {
+                        root.menu-opening();
+                        presets.show({ x: self.width - self.chevron-w, y: self.height });
+                    }
+                }
+            }
+            presets := ContextMenuArea {
+                width: 0px;
+                height: 0px;
+                enabled: false;
+                // The names are the Rust table's keys
+                // (`panel::color::WHITE_PRESETS`), in its order.
+                Menu {
+                    MenuItem {
+                        // White balance preset: sunlight
+                        title: @tr("Daylight");
+                        activated => { root.wb-preset("Daylight"); }
+                    }
+                    MenuItem {
+                        // White balance preset: an overcast sky
+                        title: @tr("Cloudy");
+                        activated => { root.wb-preset("Cloudy"); }
+                    }
+                    MenuItem {
+                        // White balance preset: in the shade on a sunny day
+                        title: @tr("Shade");
+                        activated => { root.wb-preset("Shade"); }
+                    }
+                    MenuItem {
+                        // White balance preset: incandescent light bulbs
+                        title: @tr("Tungsten");
+                        activated => { root.wb-preset("Tungsten"); }
+                    }
+                    MenuItem {
+                        // White balance preset: fluorescent tubes
+                        title: @tr("Fluorescent");
+                        activated => { root.wb-preset("Fluorescent"); }
+                    }
+                    MenuItem {
+                        // White balance preset: a camera's flash
+                        title: @tr("Flash");
+                        activated => { root.wb-preset("Flash"); }
+                    }
+                }
+            }
         }
         PanelButton {
             // White balance: the dropper's button, click something neutral

@@ -688,6 +688,33 @@ pub(crate) fn forget_before_as_shot(st: &mut State) {
     st.develop.before_as_shot = None;
 }
 
+/// The white balance presets on Auto's menu, in its order: the key the
+/// menu passes back (its English words; the menu shows them
+/// translated) and the light it names in the global sliders' own
+/// terms, kelvin and Duv, the scale As shot reads a camera's gains
+/// into. The daylights are the CIE D-series at those temperatures,
+/// which sit about 0.003 above the Planckian locus; Tungsten is CIE
+/// illuminant A (2856 K, on the locus); Fluorescent and Flash are
+/// Adobe's presets, whose tint of +21 is 0.007 at the DNG SDK's 3000
+/// tint units a unit of uv, and whose +10 on the daylights is the
+/// same 0.003 the D-series has.
+pub(crate) const WHITE_PRESETS: [(&str, f32, f32); 6] = [
+    ("Daylight", 5500.0, 0.003),
+    ("Cloudy", 6500.0, 0.003),
+    ("Shade", 7500.0, 0.003),
+    ("Tungsten", 2850.0, 0.0),
+    ("Fluorescent", 3800.0, 0.007),
+    ("Flash", 5500.0, 0.0),
+];
+
+/// A preset's temperature and tint, by its key.
+pub(crate) fn white_preset(key: &str) -> Option<(f32, f32)> {
+    WHITE_PRESETS
+        .iter()
+        .find(|(k, ..)| *k == key)
+        .map(|&(_, temperature, tint)| (temperature, tint))
+}
+
 pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
     // As shot switched on the panel: on, the custom white it replaces
     // is remembered and the sliders show the camera's white again; off,
@@ -703,6 +730,30 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, _worker: &Rc<Worker>) {
                 return;
             };
             as_shot_switched(&mut state.borrow_mut(), &app);
+            app.invoke_develop_changed();
+        });
+    }
+    // A preset from Auto's menu: the sliders at the light it names
+    // and As shot off, in one change, so it is one step, as Auto's is.
+    // A raw's only: a picture's sliders are an offset from its own
+    // white, which no preset's light is read against.
+    {
+        let app_weak = app.as_weak();
+        app.on_wb_preset(move |key| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if app.get_picture_open() {
+                return;
+            }
+            let Some((temperature, tint)) = white_preset(key.as_str()) else {
+                tracing::warn!("white balance: no preset {key:?}");
+                return;
+            };
+            app.set_as_shot(false);
+            app.set_temperature(temperature);
+            app.set_tint(tint);
+            app.invoke_stop_placing();
             app.invoke_develop_changed();
         });
     }

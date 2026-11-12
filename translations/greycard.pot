@@ -517,6 +517,36 @@ msgstr ""
 msgid "Auto"
 msgstr ""
 
+#. White balance preset: sunlight
+#: crates/greycard-slint/ui/panel/color.slint:174
+msgid "Daylight"
+msgstr ""
+
+#. White balance preset: an overcast sky
+#: crates/greycard-slint/ui/panel/color.slint:179
+msgid "Cloudy"
+msgstr ""
+
+#. White balance preset: in the shade on a sunny day
+#: crates/greycard-slint/ui/panel/color.slint:184
+msgid "Shade"
+msgstr ""
+
+#. White balance preset: incandescent light bulbs
+#: crates/greycard-slint/ui/panel/color.slint:189
+msgid "Tungsten"
+msgstr ""
+
+#. White balance preset: fluorescent tubes
+#: crates/greycard-slint/ui/panel/color.slint:194
+msgid "Fluorescent"
+msgstr ""
+
+#. White balance preset: a camera's flash
+#: crates/greycard-slint/ui/panel/color.slint:199
+msgid "Flash"
+msgstr ""
+
 #. White balance: the dropper's button, click something neutral
 #: crates/greycard-slint/ui/panel/color.slint:138
 msgid "Neutral"

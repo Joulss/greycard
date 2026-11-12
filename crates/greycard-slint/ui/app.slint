@@ -1512,6 +1512,10 @@ export component App inherits Window {
     callback pick-released();
     // The white balance read off the whole picture.
     callback wb-auto();
+    // A white balance preset by its key (`panel::color::WHITE_PRESETS`).
+    callback wb-preset(string);
+    // Raised for a snapshot: Auto's menu of presets, open.
+    in-out property <bool> wb-presets-shown: false;
     callback light-auto();
     // As shot switched on the panel (`panel::color`): on, the
     // sliders go back to the camera's white.
@@ -3987,6 +3991,11 @@ export component App inherits Window {
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
                             wb-auto => { root.wb-auto(); }
+                            // As Fit's menu: the keys before it opens,
+                            // and back to them after a pick.
+                            menu-opening => { keys.focus(); }
+                            wb-preset(p) => { root.wb-preset(p); root.menu-done(); }
+                            presets-shown <=> root.wb-presets-shown;
                             temperature <=> root.temperature;
                             tint <=> root.tint;
                             raw-input: root.raw-input;

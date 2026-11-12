@@ -41,6 +41,10 @@ design note behind it.
 
 ### Develop
 
+- White balance has presets: Daylight, Cloudy, Shade, Tungsten,
+  Fluorescent, and Flash, on the arrow beside Auto or a right-click on
+  it. Raw files only (issue 128,
+  [§636](https://github.com/jessolmstead/greycard/blob/master/docs/notes/636-white-balance-presets.md)).
 - Switching As shot off gives back the white balance it replaced,
   where it used to leave the camera's on the sliders (discussion 59,
   [§634](https://github.com/jessolmstead/greycard/blob/master/docs/notes/634-as-shot-off-gives-back-the-white-it-replaced.md)).

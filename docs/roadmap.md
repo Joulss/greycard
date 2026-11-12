@@ -233,7 +233,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A DCP's look table (issue 129)
 - [ ] The learned denoiser and the removal on a card short of memory
       (issues 130 and 64)
-- [ ] White balance presets (issue 128)
 
 ### Speed
 
@@ -1205,6 +1204,11 @@ clears or a tester asks for it.
       2026-11-10)
 - [ ] The canvas as any grey, a slider beside the five swatches, and
       the width of F's mat a setting (discussion 59, 2026-11-10)
+- [ ] The mask panel's People and Landscape menus hand the keys back
+      as Fit's and the white balance presets' do: the window's keys
+      focused before the menu opens, `menu-done` on a pick (§636)
+- [ ] White balance presets from the camera's own, where a maker
+      note carries them (Canon, Nikon), under the fixed six (§636)
 - [ ] Calibration as Lightroom's: a hue and a saturation for each of
       the camera's primaries and a shadow tint, before the develop's
       color work, beside the camera profile (issue 131, 2026-11-11)

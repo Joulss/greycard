@@ -1167,6 +1167,8 @@ pub(crate) enum Shown {
     Help,
     /// The Fit button's menu of zooms, open.
     Zoom,
+    /// The white balance's presets, open off Auto's chevron.
+    WhitePresets,
 }
 
 /// Which step of the RawTherapee profiles' offer and sheet a capture
@@ -1227,6 +1229,7 @@ impl Shown {
             "keys" => Ok(Self::Keys),
             "help" => Ok(Self::Help),
             "zoom" => Ok(Self::Zoom),
+            "wb-presets" => Ok(Self::WhitePresets),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
@@ -1234,7 +1237,7 @@ impl Shown {
                  time-shift, root-name, \
                  delete, archive, archive-rejects, parts, landscape, lightroom, \
                  lightroom-report, lightroom-written, rawtherapee-offer, rawtherapee, \
-                 rawtherapee-written, sort, keys, help, or zoom, not {name}"
+                 rawtherapee-written, sort, keys, help, zoom, or wb-presets, not {name}"
             )),
         }
     }
@@ -1455,6 +1458,10 @@ impl Shown {
             Self::Keys => app.set_keys_open(true),
             Self::Help => app.set_help_menu_shown(true),
             Self::Zoom => app.set_zoom_menu_shown(true),
+            Self::WhitePresets => {
+                app.set_panel_tab("Develop".into());
+                app.set_wb_presets_shown(true);
+            }
         }
         app.window().request_redraw();
     }
@@ -4625,6 +4632,197 @@ pub(crate) mod tests {
                 tint: 0.01_f32 as f64,
             }
         );
+    }
+
+    /// Issue 128: each preset sets both sliders to its light and As
+    /// shot off, one step; an undo goes back to the white before it.
+    #[test]
+    fn a_white_balance_preset_sets_the_sliders_in_one_step() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let camera = a_raw_up(&app, &state);
+        settle();
+        let steps = || state.borrow().sidecars[0].history.len();
+        let mut before = (true, camera.0, camera.1);
+        for (key, temperature, tint) in crate::panel::color::WHITE_PRESETS {
+            let at = steps();
+            app.invoke_wb_preset(key.into());
+            settle();
+            assert_eq!(sliders(&app), (false, temperature, tint), "{key}");
+            assert_eq!(
+                state.borrow().develop.edit.white_balance,
+                WhiteBalance::Custom {
+                    temperature: temperature as f64,
+                    tint: tint as f64,
+                },
+                "{key}"
+            );
+            assert_eq!(steps(), at + 1, "{key} is one step");
+            app.invoke_undo();
+            assert_eq!(sliders(&app), before, "{key} undone");
+            app.invoke_redo();
+            assert_eq!(sliders(&app), (false, temperature, tint), "{key} redone");
+            before = sliders(&app);
+        }
+        // The six, in the menu's order.
+        let keys: Vec<_> = crate::panel::color::WHITE_PRESETS
+            .iter()
+            .map(|p| p.0)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "Daylight",
+                "Cloudy",
+                "Shade",
+                "Tungsten",
+                "Fluorescent",
+                "Flash"
+            ]
+        );
+        // A key that is no preset changes nothing.
+        let at = steps();
+        app.invoke_wb_preset("Candle".into());
+        settle();
+        assert_eq!(sliders(&app), before);
+        assert_eq!(steps(), at);
+    }
+
+    /// Auto's chevron opens the presets on a raw, and a pick from the
+    /// keys sets the white as a call does. A picture has no menu.
+    #[test]
+    fn autos_menu_holds_the_presets_on_a_raw_alone() {
+        use slint::platform::Key;
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        a_raw_up(&app, &state);
+        settle();
+        let names = [
+            "Daylight",
+            "Cloudy",
+            "Shade",
+            "Tungsten",
+            "Fluorescent",
+            "Flash",
+        ];
+        let shown = |app: &App| {
+            names
+                .iter()
+                .map(|n| crate::testing::count_labeled(app, n))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(&app), [0; 6], "no menu yet");
+
+        // Asked open, as the chevron opens it: the six, once each;
+        // the third from the keys is Shade.
+        app.set_wb_presets_shown(true);
+        assert_eq!(shown(&app), [1; 6]);
+        for _ in 0..3 {
+            crate::testing::press(&app, Key::DownArrow);
+        }
+        crate::testing::press(&app, Key::Return);
+        slint::platform::update_timers_and_animations();
+        settle();
+        assert_eq!(shown(&app), [0; 6], "the menu is away");
+        assert_eq!(sliders(&app), (false, 7500.0, 0.003));
+
+        // A click on the chevron, just right of the section's Auto
+        // (the one on Neutral's row; the Light section has one too),
+        // opens it.
+        let (neutral, _) = crate::testing::labeled(&app, "Neutral");
+        let auto = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Auto")
+            .map(|e| (e.absolute_position(), e.size()))
+            .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
+            .expect("the section's Auto");
+        crate::testing::click(
+            &app,
+            auto.0.x + auto.1.width + 12.0,
+            auto.0.y + auto.1.height / 2.0,
+        );
+        assert_eq!(shown(&app), [1; 6], "the chevron opens it");
+        crate::testing::press(&app, Key::Escape);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(shown(&app), [0; 6]);
+
+        // A picture: no chevron, no menu, and a preset asked for
+        // anyway changes nothing.
+        app.set_picture_open(true);
+        app.set_wb_presets_shown(true);
+        assert_eq!(shown(&app), [0; 6]);
+        let was = sliders(&app);
+        app.invoke_wb_preset("Tungsten".into());
+        settle();
+        assert_eq!(sliders(&app), was);
+    }
+
+    /// The presets' menu keeps the keys as Fit's does: the click that
+    /// closes it, on the strip or on the picture with the dropper in
+    /// hand, is no click; and after a pick Return and Space are the
+    /// window's, not Auto's.
+    #[test]
+    fn the_presets_menu_hands_the_keys_back() {
+        use slint::platform::Key;
+        use std::cell::Cell;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        a_raw_up(&app, &state);
+        settle();
+        let autos = Rc::new(Cell::new(0));
+        let counted = autos.clone();
+        app.on_wb_auto(move || counted.set(counted.get() + 1));
+        let picks = Rc::new(Cell::new(0));
+        let counted = picks.clone();
+        app.on_pick_pressed(move |_, _| counted.set(counted.get() + 1));
+        let chevron = || {
+            let (neutral, _) = crate::testing::labeled(&app, "Neutral");
+            let auto =
+                i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Auto")
+                    .map(|e| (e.absolute_position(), e.size()))
+                    .find(|(at, _)| (at.y - neutral.y).abs() < 4.0)
+                    .expect("the section's Auto");
+            crate::testing::click(
+                &app,
+                auto.0.x + auto.1.width + 12.0,
+                auto.0.y + auto.1.height / 2.0,
+            );
+            // What every surface asks before taking a press: without
+            // it the closing click below would be a click.
+            assert!(app.get_menu_up(), "the menu took the keys' focus");
+        };
+
+        // Closed by a click on another frame: it stays on this one.
+        chevron();
+        let (x, y) = crate::testing::strip_cell(&app, 2);
+        crate::testing::click(&app, x, y);
+        assert!(!app.get_menu_up());
+        assert_eq!(state.borrow().current, Some(0));
+
+        // Closed by a click on the picture with the dropper in hand:
+        // no neutral read.
+        app.set_picking("White".into());
+        chevron();
+        crate::testing::click(&app, 600.0, 300.0);
+        assert!(!app.get_menu_up());
+        assert_eq!(picks.get(), 0, "the closing click picked nothing");
+        app.set_picking("".into());
+
+        // Daylight picked from the keys; then Return and Space press
+        // no Auto.
+        chevron();
+        crate::testing::press(&app, Key::DownArrow);
+        crate::testing::press(&app, Key::Return);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+        slint::platform::update_timers_and_animations();
+        settle();
+        assert_eq!(sliders(&app), (false, 5500.0, 0.003));
+        crate::testing::press(&app, Key::Return);
+        crate::testing::press(&app, " ");
+        assert_eq!(autos.get(), 0, "the keys are not Auto's");
+        assert_eq!(sliders(&app), (false, 5500.0, 0.003));
     }
 
     /// A new white chosen under As shot (a slider, Auto, the Neutral
