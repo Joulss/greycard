@@ -1,6 +1,9 @@
 //! The window as it was closed, kept for the next run: its normal
 //! size, whether it was maximized, and where it was on which monitor.
 //!
+//! Whether it was full screen is kept beside, over the normal size
+//! and the maximize, which stay the window's to go back to.
+//!
 //! One record a window, by name (only "main" today), so a second
 //! window on a second monitor gets its own. Kept in the settings
 //! file's window half, never in the half a headless run reads, and
@@ -58,6 +61,15 @@ pub struct Kept {
     pub maximized: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monitor: Option<KeptMonitor>,
+    /// Full screen, over the normal size and the maximize above. Left
+    /// out of the file when not, so a record from before reads as not,
+    /// and a build from before reads one with it as a record without.
+    #[serde(skip_serializing_if = "is_false")]
+    pub full_screen: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// The monitor a window was on, as winit reports it: enough to know it
@@ -191,6 +203,17 @@ pub(crate) struct Tracker {
     /// Whether the window was maximized, as last seen out of full
     /// screen.
     maximized: Option<bool>,
+    /// Whether the window was full screen, as last seen.
+    full: Option<bool>,
+    /// The window opens full screen as it was closed, asked once it is
+    /// shown: until an event finds it full screen, its readings go
+    /// here, not into this tracker. Once full screen takes they are
+    /// dropped, so the kept normal size and maximize stand, though X11
+    /// or Wayland report the window normal between the ask and its
+    /// taking. If it never takes (a compositor that refuses the ask),
+    /// the close keeps them as an ordinary run would, not full screen,
+    /// so a refused ask is not asked again each run with nothing kept.
+    awaiting: Option<Box<Tracker>>,
     /// The window is closing: what comes now is its withdrawal (on
     /// X11 an unmap and a reparent to the root at the frame's corner,
     /// which winit reports as a move), not the user's.
@@ -215,6 +238,14 @@ impl Tracker {
         if self.frozen || state.minimized || now.size.0 <= 0.0 || now.size.1 <= 0.0 {
             return;
         }
+        if let Some(held) = self.awaiting.as_mut() {
+            if !state.full {
+                held.observe(state, now);
+                return;
+            }
+            self.awaiting = None;
+        }
+        self.full = Some(state.full);
         if state.full || state.maximized {
             if let Some(pending) = self.pending.take() {
                 let same_size =
@@ -242,8 +273,13 @@ impl Tracker {
     /// geometry seen, else the kept one's, and the state. None when the
     /// run showed nothing, which leaves the kept one as it was.
     pub(crate) fn kept(&self, before: Option<&Kept>) -> Option<Kept> {
+        if let Some(held) = &self.awaiting {
+            let mut kept = held.kept(before).or_else(|| before.cloned())?;
+            kept.full_screen = false;
+            return Some(kept);
+        }
         let normal = self.pending.as_ref().or(self.normal.as_ref());
-        if normal.is_none() && self.maximized.is_none() {
+        if normal.is_none() && self.maximized.is_none() && self.full.is_none() {
             return None;
         }
         let mut kept = before.cloned().unwrap_or_default();
@@ -256,7 +292,19 @@ impl Tracker {
         if let Some(m) = self.maximized {
             kept.maximized = m;
         }
+        if let Some(f) = self.full {
+            kept.full_screen = f;
+        }
         Some(kept)
+    }
+
+    /// A tracker for a window that opens full screen (`full`): no
+    /// reading of its own until one finds it so.
+    pub(crate) fn awaiting(full: bool) -> Self {
+        Tracker {
+            awaiting: full.then(Box::default),
+            ..Tracker::default()
+        }
     }
 
     /// No reading is taken from now (`frozen`), or again.
@@ -270,9 +318,10 @@ thread_local! {
     static TRACKER: RefCell<Option<Tracker>> = const { RefCell::new(None) };
 }
 
-/// This run keeps the window: its events are followed from now.
-pub(crate) fn start() {
-    TRACKER.with(|t| *t.borrow_mut() = Some(Tracker::default()));
+/// This run keeps the window: its events are followed from now, and
+/// with `full`, once the window it opens as is full screen.
+pub(crate) fn start(full: bool) {
+    TRACKER.with(|t| *t.borrow_mut() = Some(Tracker::awaiting(full)));
 }
 
 /// The window was asked to close: no reading from now, unless the close
@@ -361,10 +410,15 @@ pub(crate) fn store(windows: &mut Windows) {
     let record = TRACKER.with(|t| t.borrow().as_ref().map(|t| t.kept(windows.get(MAIN))));
     if let Some(Some(record)) = record {
         tracing::debug!(
-            "window: kept {:.0}x{:.0}{}",
+            "window: kept {:.0}x{:.0}{}{}",
             record.width,
             record.height,
-            if record.maximized { ", maximized" } else { "" }
+            if record.maximized { ", maximized" } else { "" },
+            if record.full_screen {
+                ", full screen"
+            } else {
+                ""
+            }
         );
         windows.insert(MAIN.into(), record);
     }
@@ -408,6 +462,8 @@ pub(crate) struct Restored {
     /// fit's own place on Windows.
     pub(crate) at: Option<Place>,
     pub(crate) maximized: bool,
+    /// Full screen once shown, over the size and the maximize.
+    pub(crate) full_screen: bool,
     /// The log's line.
     pub(crate) line: String,
 }
@@ -437,7 +493,12 @@ pub(crate) fn restore(
         let per = (own / scale.on(own)) as f32;
         (kept.width * per, kept.height * per)
     };
-    let maximized = if kept.maximized { ", maximized" } else { "" };
+    let maximized = match (kept.maximized, kept.full_screen) {
+        (false, false) => "",
+        (true, false) => ", maximized",
+        (false, true) => ", full screen",
+        (true, true) => ", maximized, full screen",
+    };
     let said = format!("window: kept {:.0}x{:.0}", kept.width, kept.height);
     if wayland {
         // No monitor's scale is known before the window is, so 1.
@@ -448,6 +509,7 @@ pub(crate) fn restore(
             size,
             at: None,
             maximized: kept.maximized,
+            full_screen: kept.full_screen,
             line: format!("{said}{maximized}; the compositor places it"),
         });
     }
@@ -469,6 +531,7 @@ pub(crate) fn restore(
                                 size,
                                 at: Some(place),
                                 maximized: kept.maximized,
+                                full_screen: kept.full_screen,
                                 line: format!(
                                     "{said} at {},{} on {}{maximized}",
                                     place.physical.0,
@@ -497,6 +560,7 @@ pub(crate) fn restore(
         size,
         at: None,
         maximized: kept.maximized,
+        full_screen: kept.full_screen,
         line: format!("{said}{maximized}; {why}, placed as a new window"),
     })
 }
@@ -736,6 +800,257 @@ mod tests {
         assert_eq!(t.kept(None).unwrap(), kept);
     }
 
+    /// Closed full screen: kept so, over the normal size and the
+    /// maximize; left and closed, not, with both as they were.
+    #[test]
+    fn full_screen_is_kept_over_the_window_under_it() {
+        let s = screen("A", (0, 0), (1920, 1080), 1.0);
+        let mut t = Tracker::default();
+        t.observe(NORMAL, normal((1200.0, 800.0), [50.0, 40.0], &s));
+        t.observe(MAXIMIZED, normal((1920.0, 1032.0), [0.0, 0.0], &s));
+        t.observe(FULL, normal((1920.0, 1080.0), [0.0, 0.0], &s));
+        let kept = t.kept(None).unwrap();
+        assert!(kept.full_screen);
+        assert_eq!(
+            ((kept.width, kept.height), kept.maximized),
+            ((1200.0, 800.0), true)
+        );
+        // Out again, back to the maximize, and closed.
+        t.observe(MAXIMIZED, normal((1920.0, 1032.0), [0.0, 0.0], &s));
+        let left = t.kept(None).unwrap();
+        assert!(!left.full_screen);
+        assert_eq!(
+            ((left.width, left.height), left.maximized),
+            ((1200.0, 800.0), true)
+        );
+    }
+
+    /// Opened full screen as kept: the window it opens as, shown before
+    /// the full screen takes, is not read, so the kept size, place, and
+    /// maximize stand; full screen to the close keeps all of them and
+    /// the flag; leaving it reads the window again.
+    #[test]
+    fn a_run_opened_full_screen_keeps_the_window_under_it() {
+        let s = screen("A", (0, 0), (1920, 1080), 1.0);
+        let before = Kept {
+            full_screen: true,
+            ..kept_on(&s, (1200.0, 800.0), [50.0, 40.0], true)
+        };
+        let mut t = Tracker::awaiting(true);
+        // Shown at its fitted size, not yet maximized (X11), then asked.
+        t.observe(NORMAL, normal((1100.0, 700.0), [10.0, 10.0], &s));
+        // Closed now, before it took: as a refused ask is.
+        assert!(!t.kept(Some(&before)).unwrap().full_screen);
+        t.observe(FULL, normal((1920.0, 1080.0), [0.0, 0.0], &s));
+        assert_eq!(t.kept(Some(&before)).unwrap(), before);
+        // F11: back to the maximize under it, then sized normal.
+        t.observe(MAXIMIZED, normal((1920.0, 1032.0), [0.0, 0.0], &s));
+        let left = t.kept(Some(&before)).unwrap();
+        assert_eq!(
+            (left.full_screen, left.maximized, left.width),
+            (false, true, 1200.0)
+        );
+        t.observe(NORMAL, normal((1000.0, 600.0), [80.0, 60.0], &s));
+        let normal_now = t.kept(Some(&before)).unwrap();
+        assert_eq!(
+            (
+                normal_now.full_screen,
+                normal_now.maximized,
+                normal_now.width
+            ),
+            (false, false, 1000.0)
+        );
+        // Full screen came late, after a resize while awaiting: the
+        // resize was the opening window's, dropped with the rest.
+        let mut t = Tracker::awaiting(true);
+        t.observe(NORMAL, normal((1100.0, 700.0), [10.0, 10.0], &s));
+        t.observe(NORMAL, normal((900.0, 650.0), [20.0, 10.0], &s));
+        t.observe(FULL, normal((1920.0, 1080.0), [0.0, 0.0], &s));
+        assert_eq!(t.kept(Some(&before)).unwrap(), before);
+        // A tracker not awaiting reads the first event.
+        let mut t = Tracker::awaiting(false);
+        t.observe(NORMAL, normal((1100.0, 700.0), [10.0, 10.0], &s));
+        assert!(!t.kept(Some(&before)).unwrap().full_screen);
+    }
+
+    /// The ask refused (a compositor that keeps the window normal): the
+    /// close writes it not full screen, with the run's readings as an
+    /// ordinary run takes them, so the next run opens normal and the
+    /// user's sizes, moves, and maximize are kept again.
+    #[test]
+    fn a_refused_full_screen_is_not_asked_again() {
+        let s = screen("A", (0, 0), (1920, 1080), 1.0);
+        let before = Kept {
+            full_screen: true,
+            ..kept_on(&s, (1200.0, 800.0), [50.0, 40.0], false)
+        };
+        // Shown, never full screen, then resized and moved by the user.
+        let mut t = Tracker::awaiting(true);
+        t.observe(NORMAL, normal((1200.0, 800.0), [50.0, 40.0], &s));
+        t.observe(NORMAL, normal((1000.0, 700.0), [90.0, 60.0], &s));
+        let kept = t.kept(Some(&before)).unwrap();
+        assert!(!kept.full_screen);
+        assert_eq!(
+            ((kept.width, kept.height), kept.at),
+            ((1000.0, 700.0), Some([90.0, 60.0]))
+        );
+        // And maximized by the user: kept maximized, at the size under.
+        t.observe(MAXIMIZED, normal((1920.0, 1032.0), [0.0, 0.0], &s));
+        let kept = t.kept(Some(&before)).unwrap();
+        assert_eq!(
+            (kept.full_screen, kept.maximized, kept.width),
+            (false, true, 1000.0)
+        );
+        // Nothing read at all: the record as it was, not full screen.
+        let t = Tracker::awaiting(true);
+        assert_eq!(
+            t.kept(Some(&before)).unwrap(),
+            Kept {
+                full_screen: false,
+                ..before.clone()
+            }
+        );
+        // The next run, not awaiting, is an ordinary one.
+        let next = Tracker::awaiting(kept.full_screen);
+        assert!(next.awaiting.is_none());
+    }
+
+    /// A record kept full screen opens so wherever it opens: on its
+    /// monitor, with the monitor gone, and on Wayland.
+    #[test]
+    fn full_screen_is_restored_on_any_monitor() {
+        let gone = screen("DISPLAY2", (1920, 0), (3840, 2160), 1.5);
+        let laptop = screen("DISPLAY1", (0, 0), (1920, 1080), 1.0);
+        let kept = Kept {
+            full_screen: true,
+            ..kept_on(&gone, (1400.0, 900.0), [100.0, 80.0], false)
+        };
+        let on = |screens: &[Screen], wayland| {
+            let monitors: Vec<_> = screens.iter().map(|s| monitor(s, None)).collect();
+            restore(&kept, wayland, screens, &monitors, Scale::System, LEAST).unwrap()
+        };
+        let here = on(&[laptop.clone(), gone.clone()], false);
+        assert!(here.full_screen && here.at.is_some());
+        assert_eq!(
+            here.line,
+            "window: kept 1400x900 at 2070,120 on DISPLAY2, full screen"
+        );
+        let elsewhere = on(std::slice::from_ref(&laptop), false);
+        assert!(elsewhere.full_screen && elsewhere.at.is_none());
+        assert_eq!(
+            elsewhere.line,
+            "window: kept 1400x900, full screen; its monitor is gone or changed, \
+             placed as a new window"
+        );
+        let wayland = on(&[], true);
+        assert!(wayland.full_screen);
+        let both = Kept {
+            maximized: true,
+            ..kept.clone()
+        };
+        let r = restore(&both, true, &[], &[], Scale::System, LEAST).unwrap();
+        assert_eq!(
+            (r.maximized, r.full_screen, r.line.as_str()),
+            (
+                true,
+                true,
+                "window: kept 1400x900, maximized, full screen; the compositor places it"
+            )
+        );
+        // Not kept so: not restored so.
+        let plain = Kept {
+            full_screen: false,
+            ..kept
+        };
+        assert!(
+            !restore(&plain, true, &[], &[], Scale::System, LEAST)
+                .unwrap()
+                .full_screen
+        );
+    }
+
+    /// The flag in the file: absent reads as not, set is written, and
+    /// cleared is left out again, so a file that never had it reads
+    /// and writes as before. A build from before, whose record has no
+    /// such field, reads a record with it as one without.
+    #[test]
+    fn the_full_screen_flag_in_the_file() {
+        let old = r#"{"width": 1200, "height": 800, "maximized": true}"#;
+        let read: Kept = serde_json::from_str(old).unwrap();
+        assert!(!read.full_screen);
+        let text = serde_json::to_string(&read).unwrap();
+        assert!(!text.contains("full_screen"), "{text}");
+        let set = Kept {
+            full_screen: true,
+            ..read.clone()
+        };
+        let text = serde_json::to_string(&set).unwrap();
+        assert!(text.contains(r#""full_screen":true"#), "{text}");
+        assert_eq!(serde_json::from_str::<Kept>(&text).unwrap(), set);
+        let cleared = Kept {
+            full_screen: false,
+            ..set
+        };
+        assert!(
+            !serde_json::to_string(&cleared)
+                .unwrap()
+                .contains("full_screen")
+        );
+        assert_eq!(cleared, read);
+
+        // The record as the released build has it.
+        #[derive(Deserialize)]
+        #[serde(default)]
+        #[allow(dead_code)]
+        #[derive(Default)]
+        struct Released {
+            width: f32,
+            height: f32,
+            at: Option<[f32; 2]>,
+            maximized: bool,
+            monitor: Option<KeptMonitor>,
+        }
+        let released: BTreeMap<String, Released> = serde_json::from_str(&format!(
+            r#"{{"main": {}, "second": {{"width": 9}}}}"#,
+            serde_json::to_string(&Kept {
+                full_screen: true,
+                ..read.clone()
+            })
+            .unwrap()
+        ))
+        .unwrap();
+        assert_eq!(
+            (released["main"].width, released["main"].maximized),
+            (1200.0, true)
+        );
+
+        // Through the whole settings file: a window this build does not
+        // know keeps its record, full screen or not, and the main
+        // window's flag is written at the close and cleared by the next.
+        let file: crate::settings::Settings = serde_json::from_str(
+            r#"{"windows": {"main": {"width": 1200, "height": 800},
+                "second": {"width": 900, "height": 600, "full_screen": true}}}"#,
+        )
+        .unwrap();
+        assert!(!file.windows["main"].full_screen);
+        let mut windows = file.windows.clone();
+        let s = screen("A", (0, 0), (1920, 1080), 1.0);
+        start(false);
+        observe_as(FULL, normal((1920.0, 1080.0), [0.0, 0.0], &s));
+        store(&mut windows);
+        stop();
+        assert!(windows["main"].full_screen);
+        assert_eq!(windows["main"].width, 1200.0);
+        assert_eq!(windows["second"], file.windows["second"]);
+        assert!(windows["second"].full_screen);
+        start(true);
+        observe_as(FULL, normal((1920.0, 1080.0), [0.0, 0.0], &s));
+        observe_as(NORMAL, normal((1200.0, 800.0), [0.0, 0.0], &s));
+        store(&mut windows);
+        stop();
+        assert!(!windows["main"].full_screen);
+    }
+
     fn kept_on(s: &Screen, size: (f32, f32), at: [f32; 2], maximized: bool) -> Kept {
         Kept {
             width: size.0,
@@ -743,6 +1058,7 @@ mod tests {
             at: Some(at),
             maximized,
             monitor: Some(s.kept()),
+            full_screen: false,
         }
     }
 
@@ -967,7 +1283,7 @@ mod tests {
         assert_eq!(read.windows.keys().collect::<Vec<_>>(), ["main", "second"]);
         assert_eq!(read.windows["main"].at, None);
         let mut windows = read.windows.clone();
-        start();
+        start(false);
         let s = screen("A", (0, 0), (1920, 1080), 1.0);
         observe_as(MAXIMIZED, normal((1920.0, 1032.0), [0.0, 0.0], &s));
         store(&mut windows);

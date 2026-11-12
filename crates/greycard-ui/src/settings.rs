@@ -1267,6 +1267,7 @@ mod tests {
                         width: 3840,
                         height: 2160,
                     }),
+                    full_screen: true,
                 },
             )]
             .into(),

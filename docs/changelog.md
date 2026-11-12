@@ -14,6 +14,9 @@ design note behind it.
 
 ### Window
 
+- Quit in full screen and greycard starts in full screen; leaving it
+  returns to the window as it was before
+  ([§649](https://github.com/jessolmstead/greycard/blob/master/docs/notes/649-the-window-opens-full-screen-as-it-was-closed.md)).
 - A switch sits right beside its label, where it used to sit at the
   far edge of its row; White balance's As shot and Follow global keep
   the switch at the edge with the label beside it. Only the label and

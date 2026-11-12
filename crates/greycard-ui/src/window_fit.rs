@@ -94,8 +94,8 @@ pub(crate) type Slot = std::rc::Rc<std::cell::RefCell<Option<slint::Weak<App>>>>
 /// fitted size rather than shown at the preferred one and resized
 /// under the user's eyes. A window kept from the last run (`kept`)
 /// opens at its size, through the same fit, at its place and maximized
-/// as it was; with no window yet there is none maximized or full
-/// screen to leave alone.
+/// as it was, and full screen once it is shown; with no window yet
+/// there is none maximized or full screen to leave alone.
 ///
 /// It also holds the window's scale to the system's times the
 /// setting (`scale`), and sets a slider's way for each wheel event
@@ -108,6 +108,9 @@ pub(crate) struct Handler {
     memory: kept::Memory,
     /// A maximize asked again once the window is shown (X11).
     maximize_owed: bool,
+    /// Full screen asked once the window is shown, as the last run
+    /// closed it, and whether it opened maximized under it.
+    full_owed: Option<bool>,
 }
 
 /// The handler to give the backend, under this run's `scale` and with
@@ -121,6 +124,7 @@ pub(crate) fn handler(scale: Scale, memory: kept::Memory) -> (Handler, Slot) {
         follow: scale::Follow::new(scale),
         memory,
         maximize_owed: false,
+        full_owed: None,
     };
     (handler, slot)
 }
@@ -135,7 +139,7 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         if !std::mem::replace(&mut self.done, true) {
             let app = self.slot.borrow().as_ref().and_then(|w| w.upgrade());
             if let Some(app) = app {
-                let (size, maximized) = fit_window(
+                let (size, maximized, full) = fit_window(
                     &app,
                     event_loop,
                     self.follow.scale(),
@@ -153,8 +157,16 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
                     app.window().set_maximized(true);
                     self.maximize_owed = is_x11(event_loop);
                 }
+                // Full screen once shown, not in the attributes the
+                // window is made with: the platform then holds the
+                // window under it as the one to leave full screen to,
+                // as F11 does, and X11 passes over no ask to an
+                // unmapped window.
+                if full {
+                    self.full_owed = Some(shortcut || maximized);
+                }
                 if self.memory.on {
-                    kept::start();
+                    kept::start(full);
                 }
             }
         }
@@ -199,20 +211,33 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         if !(self.memory.on || self.maximize_owed) || !main(slint_window) {
             return slint::winit_030::EventResult::Propagate;
         }
-        // On X11 a maximize asked before the window is mapped goes to an
-        // unmapped window, which a window manager is free to pass over
-        // (Mutter does): asked again once the window is shown. Nothing
-        // is read meanwhile, so the gap is not taken for a normal window.
-        if self.maximize_owed {
-            if matches!(event, E::Resized(_) | E::Moved(_) | E::Focused(_))
-                && w.is_visible() == Some(true)
-            {
-                self.maximize_owed = false;
-                if !w.is_maximized() {
-                    tracing::info!("window: maximized again, now that it is shown");
-                    w.set_maximized(true);
-                }
+        let step = owed(
+            self.maximize_owed,
+            self.full_owed.is_some(),
+            matches!(event, E::Resized(_) | E::Moved(_) | E::Focused(_)),
+            w.is_visible(),
+            slint_window.is_visible(),
+        );
+        if matches!(step, Owed::Maximize | Owed::MaximizeThenFull) {
+            self.maximize_owed = false;
+            if !w.is_maximized() {
+                tracing::info!("window: maximized again, now that it is shown");
+                w.set_maximized(true);
             }
+        }
+        if let (Owed::Full | Owed::MaximizeThenFull, Some(maximized)) = (step, self.full_owed) {
+            self.full_owed = None;
+            // After this event: Slint's own handling of it, which runs
+            // next, sets its full screen to winit's, not yet so, and
+            // would take back an ask made here before it reached winit.
+            let app = self.slot.borrow().clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                if let Some(app) = app.and_then(|w| w.upgrade()) {
+                    full_screen::reopen(app.window(), maximized);
+                }
+            });
+        }
+        if step != Owed::Read {
             return slint::winit_030::EventResult::Propagate;
         }
         // The editor's window as it is sized and moved, for the close;
@@ -233,6 +258,55 @@ impl slint::winit_030::CustomApplicationHandler for Handler {
         kept::exiting();
         crate::panel::startup::exiting();
         slint::winit_030::EventResult::Propagate
+    }
+}
+
+/// What an event does with what the opening owes the window.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Owed {
+    /// Not yet shown: wait, and read nothing.
+    Wait,
+    /// Ask the maximize again, and read nothing.
+    Maximize,
+    /// Ask the maximize again, then full screen, and read nothing.
+    MaximizeThenFull,
+    /// Ask full screen, and read nothing.
+    Full,
+    /// Nothing owed: read the event for the close.
+    Read,
+}
+
+/// What an event does: on X11 a maximize asked before the window is
+/// mapped goes to an unmapped window, which a window manager is free
+/// to pass over (Mutter does), so it is asked again once the window is
+/// shown (`maximize`) and nothing is read meanwhile, so the gap is not
+/// taken for a normal window. Full screen as it was closed (`full`)
+/// is asked at the first event that finds the window shown, after the
+/// maximize under it: by Slint's word (`slint_visible`), since Wayland
+/// says nothing of a window's being visible (`visible` None). The
+/// tracker reads nothing of its own until the window is full screen
+/// (`kept::Tracker::awaiting`). `shows`: the event is one a shown
+/// window has (resized, moved, or focused).
+pub(crate) fn owed(
+    maximize: bool,
+    full: bool,
+    shows: bool,
+    visible: Option<bool>,
+    slint_visible: bool,
+) -> Owed {
+    let full_now = full && shows && slint_visible && visible != Some(false);
+    if maximize {
+        if !(shows && visible == Some(true)) {
+            Owed::Wait
+        } else if full_now {
+            Owed::MaximizeThenFull
+        } else {
+            Owed::Maximize
+        }
+    } else if full_now {
+        Owed::Full
+    } else {
+        Owed::Read
     }
 }
 
@@ -514,13 +588,13 @@ fn is_x11(event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop) -> 
 /// size only as it creates the window, when no size was set. The
 /// size it opens at, in logical pixels: fitted, or as asked
 /// (`scale::unfitted`); and whether the window kept (`kept`) was
-/// maximized.
+/// maximized, and full screen.
 fn fit_window(
     app: &App,
     event_loop: &slint::winit_030::winit::event_loop::ActiveEventLoop,
     scale: Scale,
     kept: Option<&kept::Kept>,
-) -> ((f32, f32), bool) {
+) -> ((f32, f32), bool, bool) {
     let layout = (app.get_asked_width(), app.get_asked_height());
     let wayland = is_wayland(event_loop);
     let handles: Vec<_> = event_loop.available_monitors().collect();
@@ -546,12 +620,13 @@ fn fit_window(
         tracing::info!("{}", r.line);
     }
     let from_kept = restored.is_some();
-    let (asked, plan, place, maximized) = match restored {
-        Some(r) => (r.size, r.plan, r.at, r.maximized),
+    let (asked, plan, place, maximized, full) = match restored {
+        Some(r) => (r.size, r.plan, r.at, r.maximized, r.full_screen),
         None => (
             layout,
             plan(wayland, layout, &monitors, scale, least),
             None,
+            false,
             false,
         ),
     };
@@ -584,7 +659,7 @@ fn fit_window(
         tracing::info!("{note}");
     }
     apply(app.window(), &opening);
-    (opening.planned, maximized)
+    (opening.planned, maximized, full)
 }
 
 /// What the window is opened as, set before it exists.
@@ -1176,6 +1251,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            full_screen: false,
         };
         let r = kept::restore(
             &record,
@@ -1215,6 +1291,36 @@ mod tests {
         let windows: kept::Windows = [("main".to_string(), record)].into();
         assert!(kept::Memory::of(false, &windows).kept.is_none());
         assert!(kept::Memory::of(true, &windows).kept.is_some());
+    }
+
+    /// What an event does with what the opening owes. A maximized start
+    /// on X11 waits for the window to show, asks the maximize again at
+    /// that event, reads neither, and then reads as any run: a plain
+    /// maximized start records as before. Full screen waits for the
+    /// window to show, by Slint's word on Wayland.
+    #[test]
+    fn what_an_event_does_with_what_is_owed() {
+        let some = Some(true);
+        // Nothing owed: every event read.
+        assert_eq!(owed(false, false, true, some, true), Owed::Read);
+        assert_eq!(owed(false, false, false, None, false), Owed::Read);
+        // X11, maximized: hidden or not a showing event, wait.
+        assert_eq!(owed(true, false, true, Some(false), true), Owed::Wait);
+        assert_eq!(owed(true, false, false, some, true), Owed::Wait);
+        assert_eq!(owed(true, false, true, some, true), Owed::Maximize);
+        // Then the next event, nothing owed, is read: recorded as a
+        // plain maximized run (`kept::tests`).
+        assert_eq!(owed(false, false, true, some, true), Owed::Read);
+        // Maximized and full screen: both at the showing event.
+        assert_eq!(owed(true, true, true, some, true), Owed::MaximizeThenFull);
+        // Shown by winit, not yet by Slint: the maximize, full later.
+        assert_eq!(owed(true, true, true, some, false), Owed::Maximize);
+        assert_eq!(owed(false, true, true, some, true), Owed::Full);
+        // Full screen alone: Wayland's None is shown when Slint says so.
+        assert_eq!(owed(false, true, true, None, true), Owed::Full);
+        assert_eq!(owed(false, true, true, None, false), Owed::Read);
+        assert_eq!(owed(false, true, true, Some(false), true), Owed::Read);
+        assert_eq!(owed(false, true, false, None, true), Owed::Read);
     }
 
     /// The fit's inputs in the running editor: the preferred size the

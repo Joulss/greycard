@@ -1242,8 +1242,6 @@ clears or a tester asks for it.
 - [ ] Calibration as Lightroom's: a hue and a saturation for each of
       the camera's primaries and a shadow tint, before the develop's
       color work, beside the camera profile (issue 131, 2026-11-11)
-- [ ] Full screen remembered with the window's size and place, so a
-      run left in full screen starts in it (issue 125, 2026-11-11)
 - [ ] The search field kept when the filter bar is off, by a setting
       of its own (issue 123, 2026-11-11)
 - [ ] Stars and labels set by the mouse, in the grid and the Cull tab

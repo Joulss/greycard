@@ -17,6 +17,10 @@
 //! window the restore maximized already is nothing. A window that
 //! left full screen by the platform's own (a window manager's key)
 //! forgets it, so a later entry by the platform is not taken for ours.
+//!
+//! A window closed full screen opens so (`kept`): as the window it was
+//! under, then full screen by this same way in once it is shown
+//! (`reopen`), keeping the maximize it opened with to put back.
 
 use std::cell::Cell;
 
@@ -64,15 +68,31 @@ fn toggle(window: &slint::Window) {
             if maximized { ", maximized" } else { "" }
         );
     } else {
-        let (size, maximized) = (window.size(), window.is_maximized());
-        BEFORE.with(|b| b.set(Some(maximized)));
-        window.set_fullscreen(true);
-        tracing::info!(
-            "window: full screen, from {}x{}{}",
-            size.width,
-            size.height,
-            if maximized { " maximized" } else { "" }
-        );
+        enter(window, window.is_maximized(), "");
+    }
+}
+
+/// Full screen, from a window maximized or not (`maximized`), kept to
+/// put back on leaving.
+fn enter(window: &slint::Window, maximized: bool, why: &str) {
+    let size = window.size();
+    BEFORE.with(|b| b.set(Some(maximized)));
+    window.set_fullscreen(true);
+    tracing::info!(
+        "window: full screen{why}, from {}x{}{}",
+        size.width,
+        size.height,
+        if maximized { " maximized" } else { "" }
+    );
+}
+
+/// Full screen again, as the last run closed it, once the window is
+/// shown: from the window it opened as, `maximized` as it was kept,
+/// though X11 may not have it maximized yet. Nothing when it is full
+/// screen already.
+pub(crate) fn reopen(window: &slint::Window, maximized: bool) {
+    if !window.is_fullscreen() {
+        enter(window, maximized, " as it was closed");
     }
 }
 
@@ -217,6 +237,29 @@ mod tests {
         press(&app, Key::F11);
         assert_eq!(app.get_right_hidden(), hidden, "F8 under the sheet");
         assert!(!full(&app), "F11 under the sheet");
+    }
+
+    /// Opened full screen as it was closed, over a maximized window:
+    /// F11 then leaves it, maximized again though the platform reports
+    /// it not, as F11's own way in does; over a normal one, normal.
+    #[test]
+    fn a_window_reopened_full_screen_leaves_as_it_was_under() {
+        let (app, _state, _worker) = develop_window();
+        super::reopen(app.window(), true);
+        assert!(full(&app));
+        // Asked twice (a second event before the first took): once.
+        super::reopen(app.window(), true);
+        app.window().set_maximized(false);
+        press(&app, Key::F11);
+        assert!(!full(&app));
+        assert!(app.window().is_maximized(), "maximized again");
+
+        app.window().set_maximized(false);
+        super::reopen(app.window(), false);
+        assert!(full(&app));
+        press(&app, Key::F11);
+        assert!(!full(&app));
+        assert!(!app.window().is_maximized());
     }
 
     /// Typing in a field, the field keeps F11 as it keeps F8, and

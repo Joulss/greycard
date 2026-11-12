@@ -2174,7 +2174,7 @@ mod tests {
         use crate::window_fit::kept;
         let other = r#"{"windows": {"second": {"width": 900, "height": 600}}}"#;
         let (app, state, _worker, _timer, choices, dir) = kept_window_over(Some(other));
-        kept::start();
+        kept::start(false);
         let screen = kept::Screen {
             name: "DP-1".into(),
             position: (0, 0),
