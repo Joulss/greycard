@@ -643,6 +643,10 @@ brackets and the panorama to shoot for testing are in
       "placing the frames" for the whole of it (§573)
 - [ ] A NoiseProfile on a focus stack's DNG, as the HDR merge writes
       one (§573)
+- [ ] A focus stack holds every frame at once, 40 bytes a pixel, so
+      16 GB refuses 21 frames of 24 megapixels where 30 to 100 is
+      ordinary: the frames read in passes, so the count stops
+      mattering (issue 134, 2026-11-12)
 - [ ] The focus stack's memory bound against available rather than
       physical memory, once a reader exists (§573)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
@@ -1246,13 +1250,25 @@ clears or a tester asks for it.
       color work, beside the camera profile (issue 131, 2026-11-11)
 - [ ] The search field kept when the filter bar is off, by a setting
       of its own (issue 123, 2026-11-11)
-- [ ] Stars and labels set by the mouse, in the grid and the Cull tab
-      (issue 123, 2026-11-11)
+- [ ] Stars, flag, and label set by the mouse on the picture's own
+      marks: five outline stars when none is set, a click to rate and
+      the same click to clear; in the grid too (issue 123, 2026-11-12)
 - [ ] A tooltip on a switch's label cut short, with the slider
       labels' (§642: three French labels are cut at the default panel
       width)
 - [ ] Slider labels at one width for the panel, the longest up to a
       cap, and a tooltip on a label cut short (issue 127, 2026-11-11)
+- [ ] Presets given more room on the left: a tab of its own or a
+      list dragged taller, judged after the left pane's rework (issue
+      133, 2026-11-12)
+- [ ] The profile folder read with its subfolders, as Adobe ships
+      them (issue 135, 2026-11-12)
+- [ ] A profile made for another camera chosen on purpose: the list
+      shows only the open file's camera's (issue 135; undecided)
+- [ ] A conventional sharpen after the tone work, beside the capture
+      sharpen: radius, amount, and threshold (issue 135; undecided)
+- [ ] A DCP's tone curve offered in place of ours (issue 135;
+      undecided: §639 applies the look table and leaves the curve)
 
 ## Blocked
 
