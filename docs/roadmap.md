@@ -7,6 +7,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] `roots/kept_up.rs` falls back to a default sidecar marked as
+      read when a newly listed path is missing from the `read` map:
+      the same hole §640 closed in `rows::bring`, by another door;
+      the cause not found (2026-11-11)
 - [ ] The GPU aberration tests allow a count of guard flips tuned to
       two vendors (3 and none): an RX 7700 XT on Windows gives 4 and
       1 and fails both. A share of the samples, set from that card's

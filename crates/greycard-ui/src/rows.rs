@@ -133,7 +133,8 @@ pub(crate) fn bring(
         .map(|(path, row)| match row {
             Some(row) => from_row(path, row, sidecars.is_some(), fresh),
             None => {
-                let held = from_disk(path, sidecars, fresh);
+                let mut held = from_disk(path, sidecars, fresh);
+                hold_unreadable(&mut held, path);
                 if let Some(read) = read {
                     read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -141,6 +142,28 @@ pub(crate) fn bring(
             }
         })
         .collect()
+}
+
+/// A frame whose `.gcd` was read from disk and would not read (a later
+/// build's, or one damaged) held as a frame standing in from its row
+/// is when its read fails (`take`): the default edit shown and nothing
+/// written over the file. Without this a frame the index has no row
+/// for was listed with the default edit as its own, and its next save
+/// wrote that over the file.
+fn hold_unreadable(held: &mut Held, path: &Path) {
+    if let Some(Trouble::Unreadable(e)) = &held.trouble {
+        held.from_row.read = false;
+        held.from_row.unread = Some(unreadable_words(path, e));
+    }
+}
+
+/// The status line's words for a sidecar that would not read.
+fn unreadable_words(path: &Path, e: &str) -> String {
+    tr!(
+        "{}'s sidecar could not be read ({e}); nothing is written over it",
+        file_name(path),
+        e = e
+    )
 }
 
 /// How many of `rows` have no row, which is how many sidecars
@@ -1459,11 +1482,12 @@ pub(crate) fn land_read(st: &mut State, app: &App, file: usize, sidecar: Sidecar
 
 /// `held` becomes file `file`'s: the sidecar, the seed, and the row no
 /// longer standing in. Badges follow the meta the read brought, on
-/// every cell of the file. A read that did not take is not taken over a
-/// frame standing in from its row — a `.gcd` that could not be read, or
-/// none found where the row says there is a develop — since the next
-/// save would write the default edit over the frame's own: the frame
-/// stands in still, the status line says why, and false. A read that
+/// every cell of the file. A read that did not take is not taken — a
+/// `.gcd` that could not be read, over any frame, or none found where
+/// the row of a frame standing in says there is a develop — since the
+/// next save would write the default edit over the frame's own: the
+/// frame is held (standing in, what it held kept), the status line
+/// says why, and false. A read that
 /// found other versions than the row listed moves the list at the next
 /// turn ([`crate::versions::settle_later`]): the caller may hold cell
 /// numbers.
@@ -1476,11 +1500,7 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
     } = held;
     let standing_in = st.from_row.get(file).is_some_and(|r| !r.read);
     let why = match &trouble {
-        Some(Trouble::Unreadable(e)) if standing_in => Some(tr!(
-            "{}'s sidecar could not be read ({e}); nothing is written over it",
-            file_name(&st.files[file]),
-            e = e
-        )),
+        Some(Trouble::Unreadable(e)) => Some(unreadable_words(&st.files[file], e)),
         Some(Trouble::Missing)
             if standing_in
                 && (st.from_row[file].edited
@@ -1501,6 +1521,9 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
     if let Some(why) = why {
         tracing::warn!("{why}");
         app.set_status(why.clone().into());
+        // A loaded frame read again (another writer's file) is held
+        // too, keeping what it held.
+        st.from_row[file].read = false;
         st.from_row[file].unread = Some(why);
         return false;
     }
@@ -1660,5 +1683,91 @@ pub(crate) fn roots_changed(
     }
     if again > 0 {
         tracing::info!("library: {again} picture(s) asked for again, their root back online");
+    }
+}
+
+#[cfg(test)]
+mod unreadable {
+    use super::*;
+    use crate::testing::{remove_dir_retry, scratch_dir, state_for, window};
+
+    /// The two `.gcd`s that will not read: an edit at a schema past
+    /// this build's, as a later build writes, and one damaged.
+    fn bodies() -> [(&'static str, String); 2] {
+        let newer = greycard_edit::VERSION + 1;
+        [
+            ("A.CR3", format!(r#"{{"current": {{"version": {newer}}}}}"#)),
+            ("B.CR3", "{ not json".to_string()),
+        ]
+    }
+
+    /// A frame the index has no row for, whose `.gcd` will not read:
+    /// held as a frame standing in from its row is, and never written
+    /// over, however its meta is set. Before, it was listed with the
+    /// default edit as its own, and the next save wrote that over the
+    /// file.
+    #[test]
+    fn a_sidecar_from_disk_that_will_not_read_is_never_written_over() {
+        let dir = scratch_dir("unreadable-from-disk");
+        for (name, body) in bodies() {
+            let raw = dir.join(name);
+            std::fs::write(&raw, b"raw").unwrap();
+            let gcd = greycard_edit::Sidecar::path_for(&raw);
+            std::fs::write(&gcd, &body).unwrap();
+
+            let held = bring(
+                std::slice::from_ref(&raw),
+                &[None],
+                Some(greycard_edit::Placement::Beside),
+                Default::default(),
+                None,
+            )
+            .remove(0);
+            assert!(!held.from_row.read, "{name}");
+            assert!(held.from_row.unread.is_some(), "{name}");
+
+            let app = window(1);
+            let (state, _worker) = state_for(&app, vec![raw.clone()]);
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.sidecars[0] = held.sidecar;
+            st.from_row[0] = held.from_row;
+            assert!(!crate::panel::edit::file_writable(&st, 0), "{name}");
+            st.sidecars[0].meta.rating = 3;
+            crate::panel::edit::write_file(&mut st, 0);
+            assert_eq!(std::fs::read_to_string(&gcd).unwrap(), body, "{name}");
+        }
+        remove_dir_retry(&dir);
+    }
+
+    /// A frame already loaded whose `.gcd` turned unreadable before a
+    /// read again (another writer's, as the Lightroom import's): the
+    /// read is not taken, the frame keeps what it held and is held,
+    /// and nothing is written over the file.
+    #[test]
+    fn a_loaded_frame_read_again_unreadable_is_held() {
+        let dir = scratch_dir("unreadable-reread");
+        for (name, body) in bodies() {
+            let raw = dir.join(name);
+            std::fs::write(&raw, b"raw").unwrap();
+            let gcd = greycard_edit::Sidecar::path_for(&raw);
+            let app = window(1);
+            let (state, _worker) = state_for(&app, vec![raw.clone()]);
+            let mut st = state.borrow_mut();
+            st.window.write_sidecars = true;
+            st.sidecars[0].meta.rating = 2;
+            crate::panel::edit::write_file(&mut st, 0);
+            assert!(gcd.exists(), "{name}");
+            std::fs::write(&gcd, &body).unwrap();
+
+            assert!(!reread_file(&mut st, &app, 0), "{name}");
+            assert_eq!(st.sidecars[0].meta.rating, 2, "{name}: what it held");
+            assert!(st.from_row[0].unread.is_some(), "{name}");
+            assert!(!crate::panel::edit::file_writable(&st, 0), "{name}");
+            st.sidecars[0].meta.rating = 5;
+            crate::panel::edit::write_file(&mut st, 0);
+            assert_eq!(std::fs::read_to_string(&gcd).unwrap(), body, "{name}");
+        }
+        remove_dir_retry(&dir);
     }
 }

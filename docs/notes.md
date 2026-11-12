@@ -651,3 +651,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§637. English in the Language picker](notes/637-english-in-the-language-picker.md) (2026-11-11)
 - [§638. Thumbnail marks centered in their badges](notes/638-thumbnail-marks-centered-in-their-badges.md) (2026-11-11)
 - [§639. A DCP's look table](notes/639-a-dcps-look-table.md) (2026-11-11)
+- [§640. A sidecar read from disk that will not read is held](notes/640-a-sidecar-that-will-not-read-is-held.md) (2026-11-11)

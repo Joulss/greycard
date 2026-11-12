@@ -499,9 +499,11 @@ A frame's versions live in the same `.gcd` (see
 greycard 0.7 writes its `.gcd` files in a newer form, which 0.6 and
 earlier can't read, and 0.8 in a newer one again, which 0.7 can't
 read. An older version leaves such a frame's edit alone rather than
-write over it: it shows the camera's picture with the pencil, and its
+write over it: it shows the camera's picture, and its
 log says why. Once a version has saved a frame, open it with that
-version or a later one.
+version or a later one. A damaged `.gcd` is left alone the same way;
+move it aside or delete it, then open the folder again, to start the
+frame over.
 
 ### A hidden folder instead
 

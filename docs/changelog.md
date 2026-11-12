@@ -75,6 +75,11 @@ design note behind it.
 
 ### Fixes
 
+- A frame whose `.gcd` greycard cannot read (written by a later
+  version, or damaged) is left alone even when its folder is not
+  indexed yet. Before, such a frame opened with a blank edit, and the
+  next rating or edit wrote that over the file
+  ([§640](https://github.com/jessolmstead/greycard/blob/master/docs/notes/640-a-sidecar-that-will-not-read-is-held.md)).
 - The flag, stars, color label, and edit, export, and collection marks
   sit centered in their thumbnail badges. The stack icon lines up with
   its count, and the marks have more room between them at small sizes

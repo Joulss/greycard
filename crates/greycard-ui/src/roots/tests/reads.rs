@@ -462,3 +462,118 @@ fn a_folder_opened_through_a_link_is_recorded_as_the_read_made_it() {
     drop(state);
     crate::testing::remove_dir_retry(&dir);
 }
+
+/// A folder the index does not know, two of whose `.gcd`s will not
+/// read: one a later build wrote (its edit's schema past this
+/// build's), one damaged. Each is listed and held as a frame standing
+/// in from its row is when its read fails: nothing the window does
+/// writes over it. A rating, an edit, a preset, and a sync over the
+/// three each land on the third alone. Before, each was listed with
+/// the default edit as its own, and the first save wrote that over
+/// the file.
+#[test]
+fn a_folder_s_sidecar_that_will_not_read_is_held_and_never_written_over() {
+    let dir = scratch("unreadable");
+    let files = frames(&dir, &["a.tif", "b.tif", "c.tif"]);
+    let gcd = |f: &PathBuf| Sidecar::path_for(f);
+    let newer = format!(
+        r#"{{"current": {{"version": {}}}}}"#,
+        greycard_edit::VERSION + 1
+    );
+    let damaged = "{ not json".to_string();
+    std::fs::write(gcd(&files[0]), &newer).unwrap();
+    std::fs::write(gcd(&files[1]), &damaged).unwrap();
+    assert!(matches!(
+        Sidecar::load(&files[0]),
+        Err(greycard_edit::Error::Newer(_))
+    ));
+    assert!(Sidecar::load(&files[1]).is_err());
+    let untouched = |what: &str| {
+        let on_disk = |f: &PathBuf| std::fs::read_to_string(gcd(f)).unwrap();
+        assert_eq!(on_disk(&files[0]), newer, "{what}");
+        assert_eq!(on_disk(&files[1]), damaged, "{what}");
+    };
+
+    let app = window(0);
+    let (state, worker) = state_for(&app, Vec::new());
+    state.borrow_mut().window.write_sidecars = true;
+    open_listing(
+        &state,
+        &app,
+        &worker,
+        Listing::Folder(dir.clone()),
+        Select::Row(2),
+    );
+    assert_eq!(land_all(&state, &app, &worker), 1);
+    {
+        let st = state.borrow();
+        assert_eq!(st.files, files, "every frame listed");
+        for f in [0, 1] {
+            assert!(!st.from_row[f].read, "{f} held");
+            assert!(st.from_row[f].unread.is_some(), "{f} held");
+            assert!(!crate::panel::edit::file_writable(&st, f), "{f}");
+        }
+        assert!(st.from_row[2].read);
+        assert!(crate::panel::edit::file_writable(&st, 2));
+    }
+
+    // A rating over the three.
+    crate::panel::browser::set_meta(
+        &mut state.borrow_mut(),
+        &app,
+        &[0, 1, 2],
+        meta::Change::Rating(4),
+    );
+    untouched("a rating");
+    assert_eq!(Sidecar::load(&files[2]).unwrap().unwrap().meta.rating, 4);
+    let status = app.get_status().to_string();
+    assert!(status.contains("could not be read"), "{status}");
+
+    // An edit: each held frame opened, its read tried again and held,
+    // and the panel's save refused.
+    for f in [0, 1] {
+        crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, f as i32, false);
+        crate::rows::land_pending(&state, &app, &worker);
+        let mut st = state.borrow_mut();
+        assert_eq!(st.current, Some(f));
+        assert!(!st.from_row[f].read, "{f} still held");
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 1.0;
+        crate::panel::edit::save_edit(&mut st, edit);
+    }
+    untouched("an edit");
+
+    // A preset onto the three, the third on screen.
+    crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 2, false);
+    crate::rows::land_pending(&state, &app, &worker);
+    state.borrow_mut().views.picked = vec![0, 1, 2];
+    let mut edit = greycard_edit::Edit::default();
+    edit.light.exposure = 0.4;
+    let preset =
+        greycard_edit::Preset::from_edit("Bright", &edit, &[greycard_edit::Section::Light]);
+    crate::panel::sync::apply_preset(
+        &mut state.borrow_mut(),
+        &app,
+        &worker,
+        &preset,
+        &[],
+        |_, _| None,
+    );
+    untouched("a preset");
+    let third = Sidecar::load(&files[2]).unwrap().unwrap();
+    assert_eq!(third.current.light.exposure, 0.4, "the third took it");
+
+    // A sync from the third onto the other two.
+    let synced = crate::panel::sync::sync_selection(
+        &mut state.borrow_mut(),
+        &app,
+        &[greycard_edit::Section::Light],
+        &[],
+        |_, _| None,
+    );
+    assert!(synced.moved.is_empty(), "{:?}", synced.moved);
+    untouched("a sync");
+
+    drop(state);
+    crate::testing::remove_dir_retry(&dir);
+}
