@@ -7,6 +7,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The GPU aberration tests allow a count of guard flips tuned to
+      two vendors (3 and none): an RX 7700 XT on Windows gives 4 and
+      1 and fails both. A share of the samples, set from that card's
+      printed figures (discussion 89, 2026-11-11)
 - [ ] A sidecar written again drops what the build does not know: no
       map keeps unknown keys, a value `meta::loose` cannot read is
       written back as its default, and only the edit's version gates
@@ -226,6 +230,10 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The Windows installer signed: waits on a signing service
 - [ ] The first translation, French (issue 75), on the §616 catalog;
       the guide and the release notes stay English
+- [ ] A DCP's look table (issue 129)
+- [ ] The learned denoiser and the removal on a card short of memory
+      (issues 130 and 64)
+- [ ] White balance presets (issue 128)
 
 ### Speed
 
@@ -1197,6 +1205,20 @@ clears or a tester asks for it.
       2026-11-10)
 - [ ] The canvas as any grey, a slider beside the five swatches, and
       the width of F's mat a setting (discussion 59, 2026-11-10)
+- [ ] Calibration as Lightroom's: a hue and a saturation for each of
+      the camera's primaries and a shadow tint, before the develop's
+      color work, beside the camera profile (issue 131, 2026-11-11)
+- [ ] Full screen remembered with the window's size and place, so a
+      run left in full screen starts in it (issue 125, 2026-11-11)
+- [ ] The search field kept when the filter bar is off, by a setting
+      of its own (issue 123, 2026-11-11)
+- [ ] Stars and labels set by the mouse, in the grid and the Cull tab
+      (issue 123, 2026-11-11)
+- [ ] Slider labels at one width for the panel, the longest up to a
+      cap, and a tooltip on a label cut short (issue 127, 2026-11-11)
+- [ ] A contributor's PR carries its note unnumbered and its changelog
+      line in the description, and edits neither index; written into
+      the contributing guide (discussion 124, 2026-11-11)
 
 ## Blocked
 
