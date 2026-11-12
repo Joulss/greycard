@@ -3945,10 +3945,14 @@ export component App inherits Window {
                             brush-flow <=> root.brush-flow;
                             brush-op <=> root.brush-op;
                             add-shape(a, b) => { root.add-shape(a, b); }
-                            add-part(a, b) => { root.add-part(a, b); }
+                            // As Fit's menu: the keys before People's or
+                            // Landscape's opens, and back to them after a
+                            // pick.
+                            menu-opening => { keys.focus(); }
+                            add-part(a, b) => { root.add-part(a, b); root.menu-done(); }
                             parts-menu-shown <=> root.parts-menu-shown;
                             find-landscape(a) => { root.find-landscape(a); }
-                            add-landscape(a) => { root.add-landscape(a); }
+                            add-landscape(a) => { root.add-landscape(a); root.menu-done(); }
                             landscape-offers <=> root.landscape-offers;
                             landscape-kinds <=> root.landscape-kinds;
                             landscape-menu-shown <=> root.landscape-menu-shown;

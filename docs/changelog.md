@@ -90,6 +90,10 @@ design note behind it.
 
 ### Fixes
 
+- After a pick from a mask's People or Landscape menu the keys work
+  at once: Space or Return had pressed the button again, and the
+  click that closed the menu had gone through to what was under it
+  ([§648](https://github.com/jessolmstead/greycard/blob/master/docs/notes/648-the-masks-menus-hand-the-keys-back.md)).
 - Each model is fetched from a fixed commit of its repository, so a
   release always asks for the same file; the size and hash were
   already checked

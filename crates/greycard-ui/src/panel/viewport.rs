@@ -4823,6 +4823,115 @@ pub(crate) mod tests {
         assert_eq!(sliders(&app), (false, 5500.0, 0.003));
     }
 
+    /// The masks panel's People and Landscape menus keep the keys as
+    /// Fit's does: the keys take the focus before either opens, and
+    /// after a pick, or Escape, Space is not the button's again and an
+    /// arrow steps the frame.
+    #[test]
+    fn the_masks_menus_hand_the_keys_back() {
+        use slint::platform::Key;
+        use std::cell::RefCell;
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1200.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                name: "Mask 1".into(),
+                ..Default::default()
+            });
+            st.develop.target = Some(0);
+        }
+        app.set_panel_tab("Masks".into());
+        app.set_target(1);
+        let steps = Rc::new(Cell::new(0));
+        let counted = steps.clone();
+        app.on_step(move |by, _| counted.set(counted.get() + by));
+        let parts = Rc::new(RefCell::new(Vec::<String>::new()));
+        let picked = parts.clone();
+        app.on_add_part(move |label, _| picked.borrow_mut().push(label.into()));
+        let finds = Rc::new(Cell::new(0));
+        let counted = finds.clone();
+        app.on_find_landscape(move |_| counted.set(counted.get() + 1));
+        let kinds = Rc::new(RefCell::new(Vec::<String>::new()));
+        let picked = kinds.clone();
+        app.on_add_landscape(move |kind| picked.borrow_mut().push(kind.into()));
+        let after_the_menu = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            slint::platform::update_timers_and_animations();
+            assert!(!app.get_menu_up(), "the menu is away");
+        };
+        let at = |label: &str| {
+            let (p, size) = crate::testing::labeled(&app, label);
+            (p.x + size.width / 2.0, p.y + size.height / 2.0)
+        };
+        let people = at("People");
+        let landscape = at("Landscape");
+        let people_up = || crate::testing::count_labeled(&app, "Whole person");
+
+        // People, from a click on its button: Whole person picked from
+        // the keys; then Space presses no People and Right steps.
+        click(&app, people.0, people.1);
+        assert_eq!(people_up(), 1, "the menu is up");
+        assert!(app.get_menu_up(), "the menu took the keys' focus");
+        crate::testing::press(&app, Key::DownArrow);
+        crate::testing::press(&app, Key::Return);
+        after_the_menu();
+        assert_eq!(*parts.borrow(), ["Whole person"]);
+        crate::testing::press(&app, " ");
+        assert_eq!(people_up(), 0, "Space is not People's");
+        crate::testing::press(&app, Key::RightArrow);
+        assert_eq!(steps.get(), 1, "Right is the window's");
+
+        // People put away with Escape: the same.
+        click(&app, people.0, people.1);
+        assert!(app.get_menu_up(), "the menu took the keys' focus");
+        crate::testing::press(&app, Key::Escape);
+        after_the_menu();
+        crate::testing::press(&app, " ");
+        assert_eq!(people_up(), 0, "Space is not People's");
+        crate::testing::press(&app, Key::RightArrow);
+        assert_eq!(steps.get(), 2, "Right is the window's");
+        assert_eq!(parts.borrow().len(), 1);
+
+        // Landscape: its button pressed, then the menu raised from
+        // Rust once the answer is in, as `landscape::found` does.
+        click(&app, landscape.0, landscape.1);
+        assert_eq!(finds.get(), 1);
+        let offers = |words: &[&str]| {
+            let words: Vec<slint::SharedString> = words.iter().map(|&w| w.into()).collect();
+            slint::ModelRc::new(slint::VecModel::from(words))
+        };
+        app.set_landscape_offers(offers(&["Foliage 33%", "Water 17%"]));
+        app.set_landscape_kinds(offers(&["Foliage", "Water"]));
+        app.set_landscape_menu_shown(true);
+        assert_eq!(crate::testing::count_labeled(&app, "Water 17%"), 1);
+        assert!(app.get_menu_up(), "the menu took the keys' focus");
+        crate::testing::press(&app, Key::DownArrow);
+        crate::testing::press(&app, Key::DownArrow);
+        crate::testing::press(&app, Key::Return);
+        after_the_menu();
+        assert_eq!(*kinds.borrow(), ["Water"]);
+        crate::testing::press(&app, " ");
+        crate::testing::press(&app, Key::Return);
+        assert_eq!(finds.get(), 1, "Space and Return are not Landscape's");
+        crate::testing::press(&app, Key::RightArrow);
+        assert_eq!(steps.get(), 3, "Right is the window's");
+
+        // Landscape put away with Escape: the same.
+        app.set_landscape_menu_shown(true);
+        assert_eq!(crate::testing::count_labeled(&app, "Water 17%"), 1);
+        assert!(app.get_menu_up(), "the menu took the keys' focus");
+        crate::testing::press(&app, Key::Escape);
+        after_the_menu();
+        assert_eq!(crate::testing::count_labeled(&app, "Water 17%"), 0);
+        crate::testing::press(&app, Key::RightArrow);
+        assert_eq!(steps.get(), 4, "Right is the window's");
+        assert_eq!(kinds.borrow().len(), 1);
+    }
+
     /// A new white chosen under As shot (a slider, Auto, the Neutral
     /// dropper) turns it off and forgets the white it replaced; so
     /// does another frame opened.

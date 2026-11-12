@@ -659,3 +659,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§645. A list read before the frame on screen moved does not list its old path](notes/645-a-moved-frames-old-path-leaves-the-list.md) (2026-11-12)
 - [§646. The denoiser and the removal on a small card](notes/646-the-denoiser-and-the-removal-on-a-small-card.md) (2026-11-12)
 - [§647. Model URLs pinned to commits](notes/647-model-urls-pinned-to-commits.md) (2026-11-12)
+- [§648. The masks' People and Landscape menus hand the keys back](notes/648-the-masks-menus-hand-the-keys-back.md) (2026-11-12)

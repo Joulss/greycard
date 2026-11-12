@@ -319,6 +319,11 @@ export component AdjustmentsSection inherits Section {
     in-out property <[string]> landscape-offers;
     in-out property <[string]> landscape-kinds;
     in-out property <bool> landscape-menu-shown;
+    // The People or Landscape menu about to open: the window's keys
+    // take the focus first, as Fit's menu does, so the click that
+    // closes it is no click, and a pick leaves the keys with them, not
+    // with the button.
+    callback menu-opening();
     // A person picked for a People shape that a paste or a sync took
     // to other frames as well: the offer's words ("Use this person on
     // all 8 pictures"), empty for none, and the mask its shape is in,
@@ -932,6 +937,7 @@ export component AdjustmentsSection inherits Section {
                             changed want => {
                                 if (self.want) {
                                     root.landscape-menu-shown = false;
+                                    root.menu-opening();
                                     landscape-menu.show({ x: 0, y: self.height });
                                 }
                             }
@@ -969,13 +975,17 @@ export component AdjustmentsSection inherits Section {
                             changed want => {
                                 if (self.want) {
                                     root.parts-menu-shown = false;
+                                    root.menu-opening();
                                     parts-menu.show({ x: 0, y: self.height });
                                 }
                             }
                             text: @tr("People");
                             icon: @image-url("../icons/users-round.svg");
                             primary: root.placing == "Part";
-                            clicked => { parts-menu.show({ x: 0, y: self.height }); }
+                            clicked => {
+                                root.menu-opening();
+                                parts-menu.show({ x: 0, y: self.height });
+                            }
                             parts-menu := ContextMenuArea {
                                 width: 0px;
                                 height: 0px;
