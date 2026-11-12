@@ -1518,9 +1518,11 @@ export component Segmented inherits Rectangle {
     /// Why each option cannot be chosen, by index: one with words is
     /// greyed, takes no click, and says them in place of its tip.
     in property <[string]> why-not;
+    in property <bool> equal-width: false;
     in property <bool> rounded: true;
-    in property <bool> padded: true;
     in property <bool> bordered: true;
+    in property <bool> padded: true;
+    in property <color> border-style: Theme.border;
     callback selected(string);
     height: Theme.control-height;
     border-radius: root.rounded ? Theme.radius-md : 0px;
