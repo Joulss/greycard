@@ -169,6 +169,16 @@ the reasoning lives in `docs/notes.md`.
       Structure, each band's gain eased back where that band is already
       strong, so a flat area gains depth and a busy one is not crunched
       (discussion 95; Nik's Dynamic Contrast is the reference)
+- [ ] Highlights' reach above its span's top: the pull eases back to
+      half its peak past the frame's 99th percentile (§250), so a
+      night frame's neon and lamps come down under half a stop at -2
+      and blow out once Exposure is raised, where Lightroom's -100
+      keeps their lettering. Whites is the slider that owns the very
+      top, so first whether Whites down does it without flattening
+      the frame; if so the guide should say which slider to reach
+      for. Wants the reporter's raw: whether the top is in the file
+      or clipped decides between tone work and reconstruction
+      (issue 132, 2026-11-11)
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a
