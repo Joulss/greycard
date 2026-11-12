@@ -1531,7 +1531,7 @@ export component Segmented inherits Rectangle {
     border-color: Theme.border;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {
-        padding: root.padded ? 2px : 0px;
+        padding: root.padded ? 3px : 0px;
         spacing: 2px;
         for option[i] in root.options: Rectangle {
             property <bool> on: option == root.current;
