@@ -153,15 +153,16 @@ pub(crate) fn merge(
             moved |= rows::apply_row(st, i, row);
         }
     }
-    let followed = follow_current(st, seen);
-    // The frame on screen gone and not followed anywhere is not in the
-    // list, whatever the index still says of it: the last file of a
-    // folder deleted leaves its row standing (§160's empty folder).
-    let gone = st
-        .current
-        .and_then(|c| st.path_at(c))
-        .filter(|p| !followed && seen.gone(p))
-        .cloned();
+    let was = st.current.and_then(|c| st.path_at(c)).cloned();
+    follow_current(st, seen);
+    // The frame on screen's file gone from where it was is not in the
+    // list there, whatever the index still says of it: the last file
+    // of a folder deleted leaves its row standing (§160's empty
+    // folder). Followed or not: a list read before the move still has
+    // the old path, which the follow has just taken out of the
+    // window's, so it would come in as a file new to the list with no
+    // sidecar read for it.
+    let gone = was.filter(|p| seen.gone(p));
     let mut listed = HashSet::new();
     let mut next: Vec<PathBuf> = next
         .into_iter()
@@ -209,9 +210,17 @@ pub(crate) fn merge(
                 });
             }
             None => {
+                // The read brings every file new to the list (`land`
+                // reads again when it does not). One it did not bring
+                // stands in, not read, so that nothing is written over
+                // its sidecar before a request reads it from disk.
+                debug_assert!(read.contains_key(path), "{} not read", path.display());
                 let held = read.remove(path).unwrap_or_else(|| Held {
                     sidecar: Sidecar::default(),
-                    from_row: rows::FromRow::read(),
+                    from_row: rows::FromRow {
+                        read: false,
+                        ..rows::FromRow::read()
+                    },
                     id: None,
                     trouble: None,
                 });

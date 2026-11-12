@@ -90,6 +90,11 @@ design note behind it.
 
 ### Fixes
 
+- A frame moved to another folder while it was open could be listed
+  a second time at its old place with a blank edit, and a rating
+  there would have written over a `.gcd` left behind. The old place
+  now leaves the list
+  ([§645](https://github.com/jessolmstead/greycard/blob/master/docs/notes/645-a-moved-frames-old-path-leaves-the-list.md)).
 - In culling, setting Structure, Sharpen, or another control back to
   its default on a frame other than the one last opened now takes;
   the frame had kept its own value

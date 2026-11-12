@@ -11,13 +11,17 @@ the reasoning lives in `docs/notes.md`.
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing
       Dehaze-only edits (§643); waits on a measurement
+- [ ] A save writes the whole sidecar from memory without looking
+      at the disk: a second writer on a loaded frame (another window
+      or machine on a shared folder, a sync tool, `greycard presets
+      apply`) is undone, silently, at our next change. §233's check
+      wants running on the local copy too: stat before the write,
+      and on a mismatch read and join instead (after `advance`)
+- [ ] A failed save (full disk, a rename refused) is only logged;
+      the old file is intact but the user is not told. Wants words
 - [ ] A mask's Shadows and Highlights summed with the picture's are
       not held to the slider's limit (Midtones' sum is, §644): a mask
       at +2 over a picture at +2 can fold the tones
-- [ ] `roots/kept_up.rs` falls back to a default sidecar marked as
-      read when a newly listed path is missing from the `read` map:
-      the same hole §640 closed in `rows::bring`, by another door;
-      the cause not found (2026-11-11)
 - [ ] The GPU aberration tests allow a count of guard flips tuned to
       two vendors (3 and none): an RX 7700 XT on Windows gives 4 and
       1 and fails both. A share of the samples, set from that card's

@@ -656,3 +656,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§642. A switch beside its label](notes/642-a-switch-beside-its-label.md) (2026-11-11)
 - [§643. The capture sharpen decides what is flat before Texture](notes/643-the-sharpen-reads-flat-before-texture.md) (2026-11-11)
 - [§644. Midtones](notes/644-midtones.md) (2026-11-11)
+- [§645. A list read before the frame on screen moved does not list its old path](notes/645-a-moved-frames-old-path-leaves-the-list.md) (2026-11-12)

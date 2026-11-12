@@ -147,6 +147,52 @@ fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
     crate::testing::remove_dir_retry(&dir);
 }
 
+/// A list read before the frame on screen moved, landing after the
+/// move: the frame is followed, and its old path, which the read still
+/// lists, does not come back as a frame of its own with a blank edit
+/// marked read, which a rating would write over the `.gcd` left there.
+#[test]
+fn a_list_read_before_the_frame_on_screen_moved_does_not_list_its_old_path() {
+    let dir = scratch("follow-race");
+    let (shoot, other) = (dir.join("shoot"), dir.join("other"));
+    std::fs::create_dir_all(&shoot).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let files = frames(&shoot, &["a.tif", "b.tif", "c.tif"]);
+    let db = dir.join("index").join("library.sqlite");
+    let mut writer = greycard_library::Library::open(&db).unwrap();
+    writer.index_tree(&dir, &mut |_| {}).unwrap();
+    let app = window(3);
+    let (state, worker) = state_for(&app, files.clone());
+    {
+        let mut st = state.borrow_mut();
+        st.views.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        crate::library::refresh_ids(&mut st);
+        st.sidecars[1].meta.rating = 5;
+        st.current = Some(1);
+        rebuild_browser(&mut st, &app);
+    }
+    // The read lists the folder, then the frame moves and a pass
+    // indexes the move before the read looks for the frame on screen.
+    let listed = crate::files::list_files(&shoot, false).unwrap();
+    assert_eq!(listed, files);
+    let moved = other.join("b.tif");
+    greycard_core::testing::rename_retry(&files[1], &moved);
+    writer.index_tree(&dir, &mut |_| {}).unwrap();
+    assert_eq!(merge_read(&state, &app, &worker, listed, Some(&db)), None);
+    {
+        let st = state.borrow();
+        let c = st.current.expect("still on screen");
+        assert_eq!(st.files[c], moved);
+        assert_eq!(st.sidecars[c].meta.rating, 5);
+        assert!(!st.files.contains(&files[1]), "{:?}", st.files);
+        assert_eq!(st.files.len(), 3);
+    }
+    state.borrow_mut().views.index_reader = None;
+    drop(state);
+    drop(writer);
+    crate::testing::remove_dir_retry(&dir);
+}
+
 /// The indexer's background: the launch pass over a root, and a
 /// change the watcher saw, each said when done — on a library of
 /// the test's own, beside which its roots would be kept.
