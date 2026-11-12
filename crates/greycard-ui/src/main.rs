@@ -10,7 +10,12 @@
 // greycard, the command line, stays a console binary. A terminal
 // that launches this still receives what it prints, on the handles
 // it passes down, but does not wait for it.
-#![cfg_attr(windows, windows_subsystem = "windows")]
+//
+// Not the tests' binary: the test harness prints to a console, and
+// under the GUI subsystem a failing test said nothing in a terminal
+// (rust-lang/rust#67159; issue 140). CI pipes the output, so it never
+// showed there.
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
 mod adapter;
 mod carry;
