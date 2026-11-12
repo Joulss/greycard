@@ -153,6 +153,12 @@ const MEAN_TOLERANCE: f64 = 1e-6;
 /// thousand terms, and a tile with little to vote on divides two
 /// small sums whose rounding is the terms' fusing.
 const VOTE_TOLERANCE: f32 = 1e-3;
+/// The share of a synthetic mosaic's samples that may take the other
+/// side of a guard (a step). A count tuned to the devices at hand
+/// failed the next one: none steps on NVIDIA or lavapipe, one of the
+/// one-pass mosaic's 128,000 on RADV, and four (3.1e-5) on an AMD
+/// card on Windows. The real frames' share is [`REAL_STEP_SHARE`].
+const STEP_SHARE: f64 = 1e-4;
 
 /// How far two mosaics are apart: the largest absolute and relative
 /// differences (relative to the reference's sample, floored at
@@ -268,9 +274,8 @@ fn check_votes(
 /// Run both paths and compare: the stats' decisions equal (corrected,
 /// the voting tiles, the fit's order), the largest fitted shifts
 /// within `1e-4` px, the votes within [`VOTE_TOLERANCE`], and the
-/// mosaics within [`TOLERANCE`] relative at every sample but for at
-/// most `steps_allowed` guard flips, with the mean under
-/// [`MEAN_TOLERANCE`].
+/// mosaics within [`TOLERANCE`] relative at all but [`STEP_SHARE`] of
+/// the samples (guard flips), with the mean under [`MEAN_TOLERANCE`].
 fn check(
     ctx: &Context,
     what: &str,
@@ -278,7 +283,6 @@ fn check(
     (width, height): (usize, usize),
     pattern: &CfaPattern,
     options: &CaOptions,
-    steps_allowed: usize,
 ) -> (CaStats, CaStats) {
     let (cpu, cpu_stats) =
         correct_ca(mosaic, width, height, pattern, options).expect("the reference runs");
@@ -311,10 +315,13 @@ fn check(
             gpu_stats.max_shift[c]
         );
     }
+    let share = a.steps as f64 / cpu.len() as f64;
     assert!(
-        a.steps <= steps_allowed,
-        "{what}: {} samples differ by more than {TOLERANCE:.0e} relative, over {steps_allowed}",
-        a.steps
+        share <= STEP_SHARE,
+        "{what}: {} of {} samples differ by more than {TOLERANCE:.0e} relative, over {:.2}%",
+        a.steps,
+        cpu.len(),
+        100.0 * STEP_SHARE
     );
     assert!(
         a.mean <= MEAN_TOLERANCE,
@@ -345,7 +352,6 @@ fn a_synthetic_mosaic_matches_the_reference() {
             (w, h),
             &pattern,
             &CaOptions::default(),
-            3,
         );
         assert!(cpu.corrected && cpu.max_shift[0] > 0.4, "{cpu:?}");
     }
@@ -373,7 +379,6 @@ fn the_other_patterns_and_options_match_the_reference() {
             (401, 321),
             pattern,
             &CaOptions::default(),
-            3,
         );
     }
     let pattern = CfaPattern::rggb();
@@ -382,23 +387,12 @@ fn the_other_patterns_and_options_match_the_reference() {
         iterations: 1,
         avoid_color_shift: true,
     };
-    // One sample of this mosaic takes the other side of a guard on
-    // RADV, which fuses differently; none does on NVIDIA or lavapipe.
-    let one_pass_steps = usize::from(ctx.device().adapter_info().name.contains("RADV"));
-    check(
-        &ctx,
-        "one pass",
-        &mosaic,
-        (400, 320),
-        &pattern,
-        &one,
-        one_pass_steps,
-    );
+    check(&ctx, "one pass", &mosaic, (400, 320), &pattern, &one);
     let bare = CaOptions {
         iterations: 2,
         avoid_color_shift: false,
     };
-    check(&ctx, "no guard", &mosaic, (400, 320), &pattern, &bare, 3);
+    check(&ctx, "no guard", &mosaic, (400, 320), &pattern, &bare);
 }
 
 /// A mosaic with nothing to correct, one too small for a fit, and a
@@ -418,7 +412,6 @@ fn the_degenerate_cases_match_the_reference() {
         (400, 320),
         &pattern,
         &CaOptions::default(),
-        3,
     );
     assert!(cpu.max_shift[0] < 0.15, "{cpu:?}");
     let small = texture(200, 300);
@@ -476,7 +469,6 @@ fn a_device_error_is_an_error_not_a_panic() {
         (300, 300),
         &pattern,
         &CaOptions::default(),
-        3,
     );
 
     let Some(ctx) = context_with(wgpu::Limits {
