@@ -1043,7 +1043,7 @@ pub(super) fn run(
                         swap_base(
                             &mut base,
                             shelf.get_or_insert_with(Shelf::user),
-                            (opened_file.take(), coming.as_ref()),
+                            (opened_file.take(), coming.as_ref().map(|k| (k, &opened))),
                             &edit,
                             turn,
                             gpu.as_ref(),
@@ -1717,7 +1717,7 @@ pub(super) fn drop_changed(
 pub(super) fn swap_base(
     base: &mut Option<FrameKept>,
     shelf: &mut Shelf,
-    (leaving, coming): (Option<FileKey>, Option<&FileKey>),
+    (leaving, coming): (Option<FileKey>, Option<(&FileKey, &Input)>),
     edit: &Edit,
     turn: u8,
     gpu: Option<&greycard_gpu::Context>,
@@ -1731,9 +1731,12 @@ pub(super) fn swap_base(
             shelf.put(file, b);
         }
     }
-    if let Some(file) = coming
-        && let Some(b) = shelf.take(file, edit, turn, gpu.is_some(), lenses)
+    if let Some((file, opened)) = coming
+        && let Some(mut b) = shelf.take(file, edit, turn, gpu.is_some(), lenses)
     {
+        // The shelf matched the file's path, stat, and decode: the
+        // frame opened is the one the base was made from, read again.
+        b.kept.adopt(&opened.walked());
         let line = format!("the base of {} from the shelf", file_label(&file.path));
         tracing::info!("{line}");
         prefetch::tap(&line);

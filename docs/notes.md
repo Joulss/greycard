@@ -664,3 +664,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§650. A fuzz target for the DCP reader](notes/650-a-fuzz-target-for-the-dcp-reader.md) (2026-11-12)
 - [§651. A check that the catalogs match the source](notes/651-a-check-that-the-catalogs-match-the-source.md) (2026-11-12)
 - [§652. An author and a copyright in every export](notes/652-an-author-and-a-copyright-in-every-export.md) (2026-11-12)
+- [§653. A kept point bound to its frame](notes/653-a-kept-point-bound-to-its-frame.md) (2026-11-12)

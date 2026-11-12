@@ -970,10 +970,11 @@ mod tests {
         let a_image = a.image.clone();
         shelf.put(file("a"), a);
         let mut held = Some(base(&edit, 0, 64, 48));
+        let opened = Input::Raw(raw(32, 24));
         swap_base(
             &mut held,
             &mut shelf,
-            (Some(file("b")), Some(&file("a"))),
+            (Some(file("b")), Some((&file("a"), &opened))),
             &edit,
             0,
             None,
@@ -987,7 +988,7 @@ mod tests {
         swap_base(
             &mut held,
             &mut shelf,
-            (Some(file("a")), Some(&file("a"))),
+            (Some(file("a")), Some((&file("a"), &opened))),
             &edit,
             0,
             None,

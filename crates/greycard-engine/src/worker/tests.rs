@@ -2841,17 +2841,20 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     );
     assert!(base.is_none());
     develop_turned(&Arc::new(aberrated_frame(64, 48)), &edit, 0, &mut base);
+    // The file read again, as an open reads it: another frame in
+    // memory, which the shelf's key vouches for.
+    let reread = Arc::new((*frame).clone());
     swap_base(
         &mut base,
         &mut shelf,
-        (None, Some(&key)),
+        (None, Some((&key, &Input::Raw(reread.clone())))),
         &edit,
         0,
         None,
         None,
     );
     assert!(base.as_ref().is_some_and(|b| b.from_shelf));
-    let again = develop_turned(&frame, &edit, 0, &mut base);
+    let again = develop_turned(&reread, &edit, 0, &mut base);
     let b = base.as_ref().expect("the base");
     assert!(Arc::ptr_eq(&b.image, &made), "kept, not made again");
     assert!(!b.from_shelf, "said once");
@@ -2876,7 +2879,7 @@ fn a_base_taken_back_from_the_shelf_is_developed_from_and_not_made_again() {
     swap_base(
         &mut base,
         &mut shelf,
-        (Some(key.clone()), Some(&key)),
+        (Some(key.clone()), Some((&key, &Input::Raw(frame.clone())))),
         &warmer,
         0,
         None,
@@ -2934,7 +2937,7 @@ fn a_base_taken_back_on_the_gpu_is_uploaded_again_and_develops_as_a_fresh_one() 
     swap_base(
         &mut base,
         &mut shelf,
-        (None, Some(&key)),
+        (None, Some((&key, &Input::Raw(frame.clone())))),
         &edit,
         0,
         gpu.as_ref(),
@@ -3038,7 +3041,7 @@ fn a_neighbor_prefetched_is_taken_back_by_its_open() {
     swap_base(
         &mut base,
         &mut shelf,
-        (None, Some(&key)),
+        (None, Some((&key, &input))),
         &edit,
         0,
         None,
@@ -6168,7 +6171,7 @@ fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
     swap_base(
         &mut base,
         &mut shelf,
-        (Some(b), Some(&a)),
+        (Some(b), Some((&a, &Input::Raw(frame.clone())))),
         &edit,
         0,
         None,

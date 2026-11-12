@@ -47,9 +47,6 @@ the reasoning lives in `docs/notes.md`.
       (`RECONCILED`, matched by prefix and hashed into the state's
       id), so a reworded or translated label changes the merge across
       machines: a kind on the step instead (review, 2026-11-11)
-- [ ] The resume cache's kept picture is paired with its input by the
-      caller's convention alone: two burst frames with synced edits
-      have equal steps (review, 2026-11-11)
 - [ ] Packages ship no third-party notices: LICENSE and the README
       only, beside ONNX Runtime, Dawn, DXC, and several hundred
       crates; cargo-about and cargo-deny (review, 2026-11-11)

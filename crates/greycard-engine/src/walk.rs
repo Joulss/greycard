@@ -569,6 +569,8 @@ struct Point {
 /// without touching the original's.
 #[derive(Clone, Default)]
 pub struct Kept {
+    /// The input every picture here was made from; none before a walk.
+    from: Option<MadeFrom>,
     points: Vec<Point>,
     /// The masks' bands, with the steps to the picture they were made
     /// from and what was asked of them.
@@ -586,6 +588,35 @@ pub struct Kept {
     /// The refined masks' picture, with the steps to the picture it
     /// was tapped from.
     mask_picture: Option<(Vec<Step>, Arc<greycard_render::refine::MaskPicture>)>,
+}
+
+/// An input as a [`Kept`] knows it: its own allocation, held weakly so
+/// no other input can take its address while the `Kept` lives. Two
+/// frames of a burst under one synced edit have equal steps, and are
+/// never taken for one another.
+#[derive(Clone)]
+enum MadeFrom {
+    Raw(std::sync::Weak<RawFrame>),
+    Picture(std::sync::Weak<WorkingImage>),
+}
+
+impl MadeFrom {
+    fn of(input: &Input) -> Self {
+        match input {
+            Input::Raw(frame) => MadeFrom::Raw(Arc::downgrade(frame)),
+            Input::Picture { image, .. } => MadeFrom::Picture(Arc::downgrade(image)),
+        }
+    }
+
+    fn is(&self, input: &Input) -> bool {
+        match (self, input) {
+            (MadeFrom::Raw(w), Input::Raw(frame)) => std::ptr::eq(w.as_ptr(), Arc::as_ptr(frame)),
+            (MadeFrom::Picture(w), Input::Picture { image, .. }) => {
+                std::ptr::eq(w.as_ptr(), Arc::as_ptr(image))
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -672,6 +703,30 @@ impl Kept {
     /// Nothing kept.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Bind what is kept to `input`: kept for another input, all of it
+    /// is let go first, so a walk never resumes from another frame's
+    /// pictures however equal the steps.
+    fn bind(&mut self, input: &Input) {
+        if self.from.as_ref().is_some_and(|f| f.is(input)) {
+            return;
+        }
+        if !self.points.is_empty() {
+            log::debug!("the kept points were another input's; let go");
+        }
+        *self = Self {
+            from: Some(MadeFrom::of(input)),
+            ..Self::default()
+        };
+    }
+
+    /// Take what is kept as made from `input`, as it is: for a caller
+    /// that knows `input` is the very frame these were made from,
+    /// decoded again (the shelf, by the file's path, its stat, and what
+    /// its decode said).
+    pub fn adopt(&mut self, input: &Input) {
+        self.from = Some(MadeFrom::of(input));
     }
 
     /// Whether anything is kept at `keep`.
@@ -1216,6 +1271,7 @@ fn walk_held(
     gpu: &mut Option<greycard_gpu::Context>,
     hold: &dyn Hold,
 ) -> Result<Walked, Stopped> {
+    kept.bind(input);
     let mut steps = steps.clone();
     let mut plan = plan.to_vec();
     if gpu.is_none() {
@@ -3038,6 +3094,104 @@ mod tests {
         );
         assert_eq!(export.from, Some(Keep::Developed));
         assert!(Arc::ptr_eq(&picture(&export), &picture(&viewport)));
+    }
+
+    /// Two frames of a burst under one synced edit have the same steps,
+    /// and what one kept never serves the other: the walk of B from A's
+    /// points is a walk of B from nothing, to the bit, and lets A's go.
+    /// The same frame read again resumes only once adopted.
+    #[test]
+    fn a_kept_point_never_serves_another_frame_of_the_same_steps() {
+        let a = Input::Raw(frame_of(160, 120, [1.0, 1.0]));
+        let b = Input::Raw(frame_of(160, 120, [1.004, 0.996]));
+        let e = edit();
+        let steps = |input: &Input| stages::stages(&e, &Purpose::Viewport, &input.facts(0), None);
+        assert!(same_picture(&steps(&a).steps, &steps(&b).steps));
+
+        let mut kept = Kept::new();
+        let first = walk_cpu(&e, &Purpose::Viewport, &a, 0, &mut kept);
+        let crossed = walk_cpu(&e, &Purpose::Viewport, &b, 0, &mut kept);
+        assert_eq!(crossed.from, None, "A's points are not B's");
+        let fresh = walk_cpu(&e, &Purpose::Viewport, &b, 0, &mut Kept::new());
+        assert!(picture(&crossed).data == picture(&fresh).data);
+        assert!(picture(&crossed).data != picture(&first).data);
+        // B's own points now, and B resumes from them.
+        let again = walk_cpu(&e, &Purpose::Viewport, &b, 0, &mut kept);
+        assert_eq!(again.from, Some(Keep::Developed));
+
+        // A read again is another frame in memory until adopted.
+        let Input::Raw(frame) = &a else {
+            unreachable!()
+        };
+        let mut kept = Kept::new();
+        walk_cpu(&e, &Purpose::Viewport, &a, 0, &mut kept);
+        let reread = Input::Raw(Arc::new((**frame).clone()));
+        let mut unadopted = kept.clone();
+        let walked = walk_cpu(&e, &Purpose::Viewport, &reread, 0, &mut unadopted);
+        assert_eq!(walked.from, None);
+        kept.adopt(&reread);
+        let walked = walk_cpu(&e, &Purpose::Viewport, &reread, 0, &mut kept);
+        assert_eq!(walked.from, Some(Keep::Developed));
+        assert!(picture(&walked).data == picture(&first).data);
+
+        // A picture's points are bound to its image in the same way.
+        let picture_of = |input: &Input| Input::Picture {
+            image: picture(&walk_cpu(
+                &e,
+                &Purpose::Viewport,
+                input,
+                0,
+                &mut Kept::new(),
+            )),
+            meta: Arc::new(Picture {
+                image: WorkingImage::new(0, 0),
+                make: String::new(),
+                model: String::new(),
+                shot: Default::default(),
+                metadata: Default::default(),
+                space: "sRGB".into(),
+                bits: 16,
+                white: greycard_core::illuminant::D65,
+            }),
+        };
+        let (pa, pb) = (picture_of(&a), picture_of(&b));
+        let plain = Edit::default();
+        let mut kept = Kept::new();
+        walk_cpu(&plain, &Purpose::Viewport, &pa, 0, &mut kept);
+        let crossed = walk_cpu(&plain, &Purpose::Viewport, &pb, 0, &mut kept);
+        assert_eq!(crossed.from, None);
+        let fresh = walk_cpu(&plain, &Purpose::Viewport, &pb, 0, &mut Kept::new());
+        assert!(picture(&crossed).data == picture(&fresh).data);
+    }
+
+    /// [`a_kept_point_never_serves_another_frame_of_the_same_steps`] on
+    /// a device: B's walk from A's points, some of them on the device,
+    /// is B's walk from nothing there.
+    #[test]
+    fn a_device_s_kept_point_never_serves_another_frame() {
+        let Some(mut gpu) = device() else {
+            return;
+        };
+        let a = Input::Raw(frame_of(160, 120, [1.0, 1.0]));
+        let b = Input::Raw(frame_of(160, 120, [1.004, 0.996]));
+        let mut e = edit();
+        e.lens.defringe = false;
+        let purpose = Purpose::Export(Box::default());
+        let go = |input: &Input, kept: &mut Kept, gpu: &mut Option<greycard_gpu::Context>| {
+            let steps = stages::stages(&e, &purpose, &input.facts(0), None);
+            let plan = plan(&steps, &purpose, gpu.is_some());
+            walk(&steps, &plan, input, kept, &mut NoModels, gpu, &NoHold).unwrap()
+        };
+        let mut kept = Kept::new();
+        go(&a, &mut kept, &mut gpu);
+        assert!(
+            go(&a, &mut kept.clone(), &mut gpu).from.is_some(),
+            "A resumes"
+        );
+        let crossed = go(&b, &mut kept, &mut gpu);
+        assert_eq!(crossed.from, None);
+        let fresh = go(&b, &mut Kept::new(), &mut gpu);
+        assert!(picture(&crossed).data == picture(&fresh).data);
     }
 
     /// A plan all on the CPU never starts from a point the device
