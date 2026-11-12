@@ -1293,17 +1293,35 @@ export component Toggle inherits Rectangle {
     callback toggled();
     height: Theme.control-height;
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
+    /// The switch at the row's right edge, the label up against it on
+    /// its left, rather than the switch beside the label at the left.
+    /// With no label the switch keeps the right edge either way.
+    in property <bool> switch-at-end: false;
+    // Where the parts landed, for the tests to read.
+    out property <length> label-x: lbl.x;
+    out property <length> label-width: lbl.width;
+    out property <length> switch-x: knob-track.x;
+    out property <length> target-x: ta.x;
+    out property <length> target-width: ta.width;
+    property <length> gap: root.label == "" ? 0 : Theme.space-2;
+    // The room the label has: the row less the switch and the gap, so
+    // a label too long for it is cut and the switch never leaves it.
+    property <length> room: max(0, root.width - knob-track.width - root.gap);
 
-    Text {
-        x: 0;
+    lbl := Text {
+        x: root.switch-at-end || root.label == "" ? max(0, knob-track.x - root.gap - self.width) : 0;
+        width: root.label == "" ? 0 : min(self.preferred-width, root.room);
+        visible: self.width > 0;
         text: root.label;
         color: root.enabled ? Theme.text : Theme.text-muted;
         font-size: Theme.font-sm;
         vertical-alignment: center;
+        overflow: elide;
         height: 100%;
     }
     knob-track := Rectangle {
-        x: root.width - self.width;
+        x: root.switch-at-end || root.label == "" ? max(0, root.width - self.width)
+            : min(lbl.width + root.gap, max(0, root.width - self.width));
         y: (root.height - self.height) / 2;
         width: 34px;
         height: 18px;
@@ -1324,7 +1342,12 @@ export component Toggle inherits Rectangle {
             animate x { duration: 120ms; easing: ease-out; }
         }
     }
+    // Over the click's target alone, as the TouchArea is: a click on
+    // the row's empty run falls through to what is behind, focus and
+    // all, rather than taking the keys for a switch it did not flip.
     fs := FocusScope {
+        x: ta.x;
+        width: ta.width;
         enabled: root.enabled;
         key-pressed(e) => {
             if (e.text == " " || e.text == Key.Return) {
@@ -1337,7 +1360,11 @@ export component Toggle inherits Rectangle {
             return ButtonKeys.pass(e) ? accept : reject;
         }
     }
+    // The click's target, and the pointer's: the label, the gap, and
+    // the switch, never the empty run of the row past them.
     ta := TouchArea {
+        x: min(lbl.x, knob-track.x);
+        width: knob-track.x + knob-track.width - self.x;
         enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {

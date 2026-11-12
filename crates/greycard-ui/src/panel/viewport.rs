@@ -4326,8 +4326,7 @@ pub(crate) mod tests {
 
         // As shot back on: the camera's white on the sliders and on
         // the picture.
-        let (at, size) = crate::testing::labeled(&app, "As shot");
-        crate::testing::click(&app, at.x + size.width - 12.0, at.y + size.height / 2.0);
+        crate::testing::click_switch(&app, "As shot");
         wait();
         assert!(app.get_as_shot());
         assert_eq!((app.get_temperature(), app.get_tint()), as_shot);
@@ -4391,8 +4390,7 @@ pub(crate) mod tests {
         drag_slider("Tint", as_shot.1, -0.05, 0.05, 40.0);
         assert!(!app.get_as_shot());
         assert_ne!(patch(&app), neutral);
-        let (at, size) = crate::testing::labeled(&app, "As shot");
-        crate::testing::click(&app, at.x + size.width - 12.0, at.y + size.height / 2.0);
+        crate::testing::click_switch(&app, "As shot");
         wait();
         assert!(app.get_as_shot());
         assert_eq!((app.get_temperature(), app.get_tint()), as_shot);

@@ -1649,8 +1649,7 @@ mod tests {
 
     /// The Portrait switch, clicked where it is drawn.
     fn click_portrait(app: &App) {
-        let (at, size) = crate::testing::labeled(app, "Portrait");
-        crate::testing::click(app, at.x + size.width - 12.0, at.y + size.height / 2.0);
+        crate::testing::click_switch(app, "Portrait");
     }
 
     /// A frame shot on end, 4000 by 6000 as it is developed: a named

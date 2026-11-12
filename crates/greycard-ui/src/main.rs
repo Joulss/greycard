@@ -49,6 +49,8 @@ mod strip;
 mod sync;
 #[cfg(test)]
 pub(crate) mod testing;
+#[cfg(test)]
+mod toggles;
 mod tree;
 mod update;
 mod versions;

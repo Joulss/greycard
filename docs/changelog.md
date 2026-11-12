@@ -14,6 +14,11 @@ design note behind it.
 
 ### Window
 
+- A switch sits right beside its label, where it used to sit at the
+  far edge of its row; White balance's As shot and Follow global keep
+  the switch at the edge with the label beside it. Only the label and
+  the switch flip it now, not the whole row
+  ([§642](https://github.com/jessolmstead/greycard/blob/master/docs/notes/642-a-switch-beside-its-label.md)).
 - greycard speaks French: a French catalog brings photographic terms
   to the window, with consistent wording for controls throughout the
   editor. Settings, Interface, Language chooses it, or it follows the

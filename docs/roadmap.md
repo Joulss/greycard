@@ -1240,6 +1240,9 @@ clears or a tester asks for it.
       of its own (issue 123, 2026-11-11)
 - [ ] Stars and labels set by the mouse, in the grid and the Cull tab
       (issue 123, 2026-11-11)
+- [ ] A tooltip on a switch's label cut short, with the slider
+      labels' (§642: three French labels are cut at the default panel
+      width)
 - [ ] Slider labels at one width for the panel, the longest up to a
       cap, and a tooltip on a label cut short (issue 127, 2026-11-11)
 

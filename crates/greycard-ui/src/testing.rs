@@ -47,16 +47,20 @@ thread_local! {
     static SHOWN: RefCell<Shown> = const { RefCell::new(Shown(Vec::new())) };
 }
 
-/// An App with a folder of eleven frames on it, shown and
-/// focused, on a backend that opens no window.
-pub(crate) fn window(count: usize) -> App {
-    // Once a thread, whether the tests run one at a time or all
-    // at once: the backend is a thread's own and setting it twice
-    // panics.
+/// The testing backend, on a thread that has none yet: once a
+/// thread, whether the tests run one at a time or all at once, since
+/// the backend is a thread's own and setting it twice panics.
+pub(crate) fn backend() {
     thread_local! {
         static BACKEND: () = i_slint_backend_testing::init_no_event_loop();
     }
     BACKEND.with(|()| ());
+}
+
+/// An App with a folder of eleven frames on it, shown and
+/// focused, on a backend that opens no window.
+pub(crate) fn window(count: usize) -> App {
+    backend();
     let app = App::new().expect("the window builds");
     // English, whatever the machine's locale, which Slint would pick
     // for its bundled catalogs on its own.
@@ -303,6 +307,64 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
         scroll_to(app.get_panel_scroll() - ((bottom - top) * 0.8).max(40.0));
     }
     panic!("nothing labeled {label:?}");
+}
+
+/// A rectangle of the window: its top left and its size, in logical
+/// pixels from the window's top left.
+pub(crate) type Bounds = (slint::LogicalPosition, slint::LogicalSize);
+
+/// The bounds of `element`.
+pub(crate) fn bounds_of(element: &i_slint_backend_testing::ElementHandle) -> Bounds {
+    (element.absolute_position(), element.size())
+}
+
+/// A `Toggle`'s parts: the whole row, its label, its switch, and the
+/// target a click flips it in.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ToggleParts {
+    pub(crate) row: Bounds,
+    pub(crate) label: Bounds,
+    pub(crate) switch: Bounds,
+    pub(crate) target: Bounds,
+}
+
+/// The parts of the `Toggle` under `root`.
+pub(crate) fn toggle_parts(root: &i_slint_backend_testing::ElementHandle) -> ToggleParts {
+    let part = |id: &str| {
+        root.query_descendants()
+            .match_id(id)
+            .find_first()
+            .map(|e| bounds_of(&e))
+            .unwrap_or_else(|| panic!("a Toggle has its {id}"))
+    };
+    ToggleParts {
+        row: bounds_of(root),
+        label: part("Toggle::lbl"),
+        switch: part("Toggle::knob-track"),
+        target: part("Toggle::ta"),
+    }
+}
+
+/// The parts of the `Toggle` labeled `label`, scrolled into the
+/// panel's view first as [`labeled`] scrolls.
+pub(crate) fn toggle(app: &App, label: &str) -> ToggleParts {
+    use i_slint_backend_testing::ElementHandle;
+    let (at, size) = labeled(app, label);
+    let (x, y) = (at.x + 1.0, at.y + size.height / 2.0);
+    let root = ElementHandle::find_by_element_id(app, "Toggle::root")
+        .find(|e| {
+            let (p, s) = bounds_of(e);
+            x >= p.x && x <= p.x + s.width && y >= p.y && y <= p.y + s.height
+        })
+        .unwrap_or_else(|| panic!("no Toggle under {label:?}"));
+    toggle_parts(&root)
+}
+
+/// A click at the middle of the switch of the `Toggle` labeled
+/// `label`.
+pub(crate) fn click_switch(app: &App, label: &str) {
+    let (at, size) = toggle(app, label).switch;
+    click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
 }
 
 /// The buttons a screen reader knows as `label`, top first: their top

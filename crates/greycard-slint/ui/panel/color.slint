@@ -64,12 +64,14 @@ export component WhiteBalanceSection inherits Section {
     collapsed <=> root.collapsed-wb;
     if !root.local: Toggle {
         label: @tr("As shot");
+        switch-at-end: true;
         checked <=> root.as-shot;
         toggled => { root.as-shot-toggled(); }
     }
     if root.local && !root.picture: Toggle {
         // White balance in a mask: take the picture's own
         label: @tr("Follow global");
+        switch-at-end: true;
         enabled: root.live;
         checked <=> root.relative;
         toggled => { root.relative-toggled(); }
