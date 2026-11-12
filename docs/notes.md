@@ -661,3 +661,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§647. Model URLs pinned to commits](notes/647-model-urls-pinned-to-commits.md) (2026-11-12)
 - [§648. The masks' People and Landscape menus hand the keys back](notes/648-the-masks-menus-hand-the-keys-back.md) (2026-11-12)
 - [§649. The window opens full screen as it was closed](notes/649-the-window-opens-full-screen-as-it-was-closed.md) (2026-11-12)
+- [§650. A fuzz target for the DCP reader](notes/650-a-fuzz-target-for-the-dcp-reader.md) (2026-11-12)

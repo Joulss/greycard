@@ -504,8 +504,6 @@ ask for first.
 - [ ] A switch on the Camera section for a DCP's look table, so an
       old edit can take it without choosing another profile and back;
       new words (§639)
-- [ ] A fuzz target for the DCP reader: none exists, and the look
-      table's offset and entries are now trusted by the develop (§639)
 - [ ] A DNG's own embedded hue map and look table on the embedded
       route, which reads the matrices only (§639)
 - [ ] An Adobe lens profile's off-center optic and its green-channel

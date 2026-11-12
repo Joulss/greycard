@@ -1,7 +1,10 @@
 //! Helpers every crate's tests share: a scratch folder's removal that
 //! Windows would also allow. Behind `cfg(test)` or the `testing`
 //! feature, which the other crates' dev-dependencies turn on, so it
-//! never reaches a release build.
+//! never reaches a release build. And what the DCP fuzz target asserts,
+//! which the core's tests run too.
+
+pub mod dcp;
 
 /// A test's folder removed, tried again for a while when the system
 /// refuses: on Windows a file a thread has just let go of can still be

@@ -15,7 +15,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
-greycard-core = { path = "../crates/greycard-core" }
+# `testing` for the checks the dcp target shares with the core's tests.
+greycard-core = { path = "../crates/greycard-core", features = ["testing"] }
 greycard-edit = { path = "../crates/greycard-edit" }
 greycard-edit-io = { path = "../crates/greycard-edit-io" }
 greycard-library = { path = "../crates/greycard-library" }
@@ -88,6 +89,13 @@ bench = false
 [[bin]]
 name = "dng_opcodes"
 path = "fuzz_targets/dng_opcodes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dcp"
+path = "fuzz_targets/dcp.rs"
 test = false
 doc = false
 bench = false

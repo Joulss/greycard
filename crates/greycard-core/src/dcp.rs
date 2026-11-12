@@ -453,16 +453,17 @@ impl Dcp {
                     .u32s(tag::PROFILE_LOOK_TABLE_ENCODING)?
                     .and_then(|v| v.first().copied())
                     .map_or(Encoding::Linear, Encoding::from_code);
-                // A look table with an entry that is not a number is
-                // dropped alone, not the profile with it: such a file
-                // read and rendered before the table was applied, and
-                // an edit naming it keeps its matrices and its map.
-                if data.iter().all(|v| v.is_finite()) {
+                // A look table with an entry that is not a number, or
+                // is past the cap, is dropped alone, not the profile
+                // with it: such a file read and rendered before the
+                // table was applied, and an edit naming it keeps its
+                // matrices and its map.
+                if data.iter().all(|v| usable_entry(*v)) {
                     Some(table(&dims, data, encoding)?)
                 } else {
                     log::warn!(
-                        "a look table carries an entry that is not a finite number; the profile \
-                         is read without it"
+                        "a look table carries an entry that is not a finite number within \
+                         {MAX_TABLE_ENTRY}; the profile is read without it"
                     );
                     None
                 }
@@ -615,7 +616,7 @@ impl Dcp {
             look: self
                 .look
                 .clone()
-                .filter(|l| l.data.iter().flatten().all(|v| v.is_finite()))
+                .filter(|l| l.data.iter().flatten().all(|v| usable_entry(*v)))
                 .map(Arc::new),
         })
     }
@@ -731,6 +732,20 @@ pub fn sane_offset(stops: f32) -> Option<f32> {
         .then(|| stops.clamp(-MAX_OFFSET_STOPS, MAX_OFFSET_STOPS))
 }
 
+/// The largest an entry of a table may be, either way: a hue shift in
+/// degrees, a saturation or a value scale. Adobe's are a few hundred
+/// degrees and scales under 5. A file's 1e30 is finite, but the
+/// interpolation between it and its neighbor overflows, and a value
+/// scale that large throws a pixel to infinity; under this cap the
+/// stage's arithmetic stays finite for any pixel the develop holds.
+pub const MAX_TABLE_ENTRY: f32 = 1.0e6;
+
+/// Whether a table entry is one the stage can use: a finite number no
+/// larger than [`MAX_TABLE_ENTRY`].
+fn usable_entry(v: f32) -> bool {
+    v.abs() <= MAX_TABLE_ENTRY
+}
+
 /// A lattice from its dimensions and its data.
 fn table(dims: &[u32], data: Vec<f32>, encoding: Encoding) -> Result<HueSatMap> {
     if dims.len() != 3 {
@@ -746,13 +761,14 @@ fn table(dims: &[u32], data: Vec<f32>, encoding: Encoding) -> Result<HueSatMap> 
         )));
     }
     // An entry that is not a number would make every pixel that reads
-    // it one; a hue map's refuses the file, and the develop falls back
-    // to the frame's own calibrations as for any profile that will not
-    // read. A look table's is caught before here and dropped alone.
-    if data.iter().any(|v| !v.is_finite()) {
-        return Err(Error::Profile(
-            "a table carries an entry that is not a finite number".into(),
-        ));
+    // it one, and so would one past the cap; a hue map's refuses the
+    // file, and the develop falls back to the frame's own calibrations
+    // as for any profile that will not read. A look table's is caught
+    // before here and dropped alone.
+    if !data.iter().all(|v| usable_entry(*v)) {
+        return Err(Error::Profile(format!(
+            "a table carries an entry that is not a finite number within {MAX_TABLE_ENTRY}"
+        )));
     }
     let map = HueSatMap {
         hue_divisions: dims[0] as usize,
@@ -1452,6 +1468,40 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert!(msg.contains("ColorMatrix1"), "{msg}");
+    }
+
+    /// Found by fuzzing: a look table entry of 1e30 is finite, but the
+    /// value scale threw a pixel to infinity and the HSV turn back made
+    /// it NaN. Past the cap, a look table is dropped alone and a map
+    /// refuses the file, as for an entry that is not a number.
+    #[test]
+    fn fuzz_a_table_entry_past_the_cap_is_not_read() {
+        let mut look = HueSatMap::identity(2, 2, 2);
+        look.data[1][2] = 1.0e30;
+        let mut dcp = test_dcp(Some(stepped_map()), None);
+        dcp.look = Some(look);
+        let back = Dcp::from_bytes(&dcp.to_bytes()).unwrap();
+        assert!(back.look.is_none(), "the look table is dropped");
+        assert_eq!(back.primary.hue_sat_map, Some(stepped_map()));
+        // And the engine's profile drops one built in hand.
+        assert!(dcp.profile().unwrap().look.is_none());
+
+        let mut map = stepped_map();
+        map.data[0][0] = -1.0e30;
+        let msg = Dcp::from_bytes(&test_dcp(Some(map), None).to_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("finite number within"), "{msg}");
+
+        // At the cap itself, both read, and the stage stays finite.
+        let mut look = HueSatMap::identity(2, 2, 2);
+        look.data[1] = [MAX_TABLE_ENTRY, MAX_TABLE_ENTRY, MAX_TABLE_ENTRY];
+        let mut map = stepped_map();
+        map.data[0] = [-MAX_TABLE_ENTRY, -MAX_TABLE_ENTRY, -MAX_TABLE_ENTRY];
+        let mut dcp = test_dcp(Some(map), None);
+        dcp.look = Some(look);
+        crate::testing::dcp::check(&dcp.to_bytes());
+        assert!(Dcp::from_bytes(&dcp.to_bytes()).unwrap().look.is_some());
     }
 
     #[test]

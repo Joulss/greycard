@@ -352,7 +352,8 @@ cargo run -p greycard-bench --release -- data/bench/kodak data/bench/mcm
 ```
 
 A change to a reader of outside files (the sidecar, a preset, the
-Lightroom and RawTherapee imports, XMP, or the filter language) can
+Lightroom and RawTherapee imports, XMP, the filter language, a DNG's
+opcodes, or a DCP camera profile) can
 be fuzzed before it goes out. The targets are in `fuzz/`, a workspace
 of their own on a nightly toolchain, and the CI runs them weekly;
 [fuzz/README.md](../fuzz/README.md) has how to run one and how to
