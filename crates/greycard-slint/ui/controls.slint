@@ -1517,13 +1517,12 @@ export component Segmented inherits Rectangle {
     in property <bool> rounded: true;
     in property <bool> bordered: true;
     in property <bool> padded: true;
-    in property <color> border-style: Theme.border;
     callback selected(string);
     height: Theme.control-height;
     border-radius: root.rounded ? Theme.radius-md : 0px;
     background: Theme.base;
     border-width: root.bordered ? 1px : 0px;
-    border-color: root.border-style;
+    border-color: Theme.border;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {
         padding: root.padded ? 3px : 0px;
