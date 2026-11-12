@@ -43,10 +43,16 @@ and what each item waits on.
 
 ## A pull request
 
-One commit carries the code, its notes section, its changelog lines
-for a tester (`docs/changelog.md`, under the version targeted),
-and its roadmap line taken off. The subject is short and imperative;
-the body says why.
+One commit carries the code and its notes section. The subject is
+short and imperative; the body says why.
+
+The note goes in as `docs/notes/<slug>.md`, with no number in its
+name or its title. The changelog lines for a tester go in the pull
+request's description. Leave `docs/notes.md`, `docs/changelog.md`,
+and `docs/roadmap.md` alone: every open pull request would edit the
+same lines of them, and two would pick the same next number. At the
+merge I number the note, add its index line, place the changelog
+lines under the version, and take the roadmap line off.
 
 ## License and origin
 

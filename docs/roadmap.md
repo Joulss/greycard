@@ -1220,9 +1220,6 @@ clears or a tester asks for it.
       (issue 123, 2026-11-11)
 - [ ] Slider labels at one width for the panel, the longest up to a
       cap, and a tooltip on a label cut short (issue 127, 2026-11-11)
-- [ ] A contributor's PR carries its note unnumbered and its changelog
-      line in the description, and edits neither index; written into
-      the contributing guide (discussion 124, 2026-11-11)
 
 ## Blocked
 
