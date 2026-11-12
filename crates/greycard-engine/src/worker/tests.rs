@@ -5869,10 +5869,8 @@ fn an_export_fails_its_item_on_a_card_short_of_a_fill() {
     )
     .err()
     .expect("refused");
-    assert!(
-        why.contains("GiB free") && why.ends_with("not written"),
-        "{why}"
-    );
+    // Said as the window says it; the reason is the log's.
+    assert_eq!(why, "Needs 6.3 GiB VRAM, 1.0 available. Use Patch.");
     // Two waits for the first fill, none for the two after it.
     assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 2);
     ai.free_memory_by_test = Some(16 << 30);
@@ -5996,6 +5994,511 @@ fn three_removes() -> Edit {
         p.remove = true;
     }
     edit
+}
+
+/// Removals marked Fast, on a card short of them now (one under the
+/// remove's need, say), are left as they were, as on any short card,
+/// and each leaves the need and the card's free memory for the
+/// window's word on it.
+#[test]
+fn a_fast_removal_on_a_short_card_fails_with_its_figures() {
+    const GIB: u64 = 1 << 30;
+    let (dir, paths) = dngs("fast-short", &["fast-short.dng"], 128, 96);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed { fills, .. } = o {
+            let failed: Vec<String> = fills.failed.iter().map(|(n, _)| n.clone()).collect();
+            tx.lock()
+                .unwrap()
+                .send((fills.pending.clone(), failed, fills.short.clone()))
+                .unwrap();
+        }
+    });
+    worker.models_by_test(greycard_ai::Store::at(dir.join("models")));
+    worker.fill_by_test(0.9);
+    worker.free_by_test(4 * GIB, 0, 0);
+    let mut edit = three_removes();
+    for p in &mut edit.retouch.patches {
+        p.set_fill_choice(greycard_edit::retouch::FillChoice::Fast);
+    }
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit,
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let wait = std::time::Duration::from_secs(60);
+    let (mut failed, mut short) = (Vec::new(), Vec::new());
+    while failed.len() < 3 {
+        let (pending, f, s) = rx.recv_timeout(wait).expect("a develop");
+        failed.extend(f);
+        short.extend(s);
+        if pending.is_empty() && !failed.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(failed.len(), 3, "{failed:?}");
+    let names: Vec<String> = short.iter().map(|(n, ..)| n.clone()).collect();
+    assert_eq!(names, failed);
+    let need = crate::ai::remove_needs(512, false);
+    assert!(
+        short.iter().all(|&(_, n, f)| (n, f) == (need, 4 * GIB)),
+        "{short:?}"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// On a card under the remove's need, a develop that moves a slider
+/// past the retouch starts from the kept patched picture (the removals
+/// are not asked again) and still says each one's need and the card;
+/// a removal made Patch says nothing more.
+#[test]
+fn a_develop_past_the_retouch_still_says_the_card() {
+    const GIB: u64 = 1 << 30;
+    let (input, mut edit, mut ai) = three_fills();
+    for p in &mut edit.retouch.patches {
+        p.set_fill_choice(greycard_edit::retouch::FillChoice::Best);
+    }
+    ai.card_by_test = Some(Some(4 * GIB));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let mut develop = |edit: &Edit, generation: u64| {
+        let (outcome, _) = develop_job(
+            &input, edit, 0, generation, &mut base, &mut ai, None, None, &mut None, &deliver,
+        );
+        let Outcome::Developed { fills, .. } = outcome else {
+            panic!("developed");
+        };
+        fills
+    };
+    let need = crate::ai::remove_needs(512, false);
+    let said = |names: &[&str]| -> Vec<(String, u64, u64)> {
+        names
+            .iter()
+            .map(|n| (n.to_string(), need, 4 * GIB))
+            .collect()
+    };
+    let first = develop(&edit, 1);
+    assert_eq!(first.failed.len(), 3, "refused for the card");
+    assert_eq!(first.short, said(&["Fill 1", "Fill 2", "Fill 3"]));
+    // A slider past the retouch: from the kept point, nothing asked.
+    edit.light.exposure = 0.5;
+    let moved = develop(&edit, 2);
+    assert!(moved.failed.is_empty(), "the retouch did not run again");
+    assert!(moved.pending.is_empty());
+    assert_eq!(moved.short, said(&["Fill 1", "Fill 2", "Fill 3"]));
+    // Fill 2 made Patch: made, and no more said of it.
+    edit.retouch.patches[1].set_fill_choice(greycard_edit::retouch::FillChoice::Patch);
+    let patched = develop(&edit, 3);
+    assert_eq!(patched.short, said(&["Fill 1", "Fill 3"]));
+    assert!(
+        patched.made.contains(&"Fill 2".to_string()),
+        "{:?}",
+        patched.made
+    );
+}
+
+/// A frame on a card under the remove's need, left for another and
+/// opened again, its patched picture taken back from the shelf: its
+/// first develop and a slider past the retouch after it still say the
+/// card, worked out afresh, though the retouch never runs again.
+#[test]
+fn a_frame_taken_back_from_the_shelf_still_says_the_card() {
+    use super::engine::swap_base;
+    use super::shelf::{Budget, Shelf};
+    const GIB: u64 = 1 << 30;
+    let frame = Arc::new(aberrated_frame(160, 120));
+    let other = Arc::new(aberrated_frame(96, 64));
+    let mut edit = three_removes();
+    edit.retouch.patches.truncate(1);
+    edit.retouch.patches[0].set_fill_choice(greycard_edit::retouch::FillChoice::Best);
+    let mut ai = Ai::for_test(greycard_ai::Store::at("no-store"), Vec::new());
+    ai.fill_by_test = Some(0.9);
+    ai.card_by_test = Some(Some(4 * GIB));
+    let deliver: Deliver = Arc::new(|_| {});
+    let mut base = None;
+    let develop =
+        |frame: &Arc<RawFrame>, edit: &Edit, base: &mut Option<FrameKept>, ai: &mut Ai| {
+            let (outcome, _) = develop_job(
+                &Input::Raw(frame.clone()),
+                edit,
+                0,
+                1,
+                base,
+                ai,
+                None,
+                None,
+                &mut None,
+                &deliver,
+            );
+            let Outcome::Developed { fills, .. } = outcome else {
+                panic!("developed");
+            };
+            fills
+        };
+    let said = vec![(
+        "Fill 1".to_string(),
+        crate::ai::remove_needs(512, false),
+        4 * GIB,
+    )];
+    ai.forget(Some("a.CR3".into()));
+    let first = develop(&frame, &edit, &mut base, &mut ai);
+    assert_eq!(first.failed.len(), 1);
+    assert_eq!(first.short, said);
+    // Away to B, and back to A from the shelf.
+    let (a, b) = (shelf_key("a.CR3", &frame), shelf_key("b.CR3", &other));
+    let mut shelf = Shelf::new(Budget::Bytes(1 << 30));
+    swap_base(
+        &mut base,
+        &mut shelf,
+        (Some(a.clone()), None),
+        &edit,
+        0,
+        None,
+        None,
+    );
+    ai.forget(Some("b.CR3".into()));
+    develop(&other, &Edit::default(), &mut base, &mut ai);
+    swap_base(
+        &mut base,
+        &mut shelf,
+        (Some(b), Some(&a)),
+        &edit,
+        0,
+        None,
+        None,
+    );
+    ai.forget(Some("a.CR3".into()));
+    let again = develop(&frame, &edit, &mut base, &mut ai);
+    assert!(again.failed.is_empty(), "served from the shelf");
+    assert_eq!(again.short, said);
+    let mut moved = edit.clone();
+    moved.light.exposure = 0.4;
+    let past = develop(&frame, &moved, &mut base, &mut ai);
+    assert!(past.failed.is_empty(), "the retouch did not run again");
+    assert_eq!(past.short, said);
+}
+
+/// The card's word follows the picture shown, worked out afresh: a
+/// removal made under one white balance, refused for the card under
+/// another, is said there; back under the first, its fill shown from
+/// memory, nothing is said. With the card freed, the fill asked again
+/// is not said beside its making; and a fill that fails for another
+/// reason is said as that failure, not hidden behind the card.
+#[test]
+fn the_cards_word_follows_the_fill_shown() {
+    const GIB: u64 = 1 << 30;
+    let (dir, paths) = dngs("word-follows", &["word-follows.dng"], 128, 96);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed {
+            generation, fills, ..
+        } = o
+        {
+            let failed: Vec<String> = fills.failed.iter().map(|(n, _)| n.clone()).collect();
+            tx.lock()
+                .unwrap()
+                .send((
+                    generation,
+                    fills.pending.clone(),
+                    failed,
+                    fills.made.clone(),
+                    fills.short.clone(),
+                ))
+                .unwrap();
+        }
+    });
+    worker.models_by_test(greycard_ai::Store::at(dir.join("models")));
+    worker.fill_by_test(0.9);
+    worker.free_by_test(16 * GIB, 0, 0);
+    let mut a = three_removes();
+    a.retouch.patches.truncate(1);
+    let white = |kelvin: f64| {
+        let mut e = a.clone();
+        e.white_balance = greycard_edit::WhiteBalance::Custom {
+            temperature: kelvin,
+            tint: 0.0,
+        };
+        e
+    };
+    let (b, c) = (white(3500.0), white(7000.0));
+    type Said = (
+        u64,
+        Vec<u64>,
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, u64, u64)>,
+    );
+    let wait = std::time::Duration::from_secs(60);
+    let until = |generation: u64, done: &dyn Fn(&Said) -> bool| -> Vec<Said> {
+        let mut all = Vec::new();
+        loop {
+            let s: Said = rx.recv_timeout(wait).expect("a develop");
+            if s.0 != generation {
+                continue;
+            }
+            let end = done(&s);
+            all.push(s);
+            if end {
+                return all;
+            }
+        }
+    };
+    let develop = |edit: &Edit, generation: u64| Job::Develop {
+        edit: edit.clone(),
+        generation,
+        turn: 0,
+        of: None,
+    };
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: a.clone(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let made = until(1, &|s| !s.3.is_empty());
+    assert!(made.iter().all(|s| s.4.is_empty()));
+    // Under B, the card short: refused and said.
+    worker.free_by_test(2 * GIB, 0, 0);
+    worker.send(develop(&b, 2));
+    let refused = until(2, &|s| !s.2.is_empty());
+    let need = crate::ai::remove_needs(512, false);
+    assert_eq!(
+        refused.last().unwrap().4,
+        [("Fill 1".to_string(), need, 2 * GIB)]
+    );
+    // Back under A: its fill from memory, on screen, and nothing said.
+    worker.send(develop(&a, 3));
+    let back = until(3, &|_| true);
+    assert!(back[0].2.is_empty() && back[0].1.is_empty(), "{back:?}");
+    assert!(back[0].4.is_empty(), "no old word: {back:?}");
+    // The card freed, under B again: asked again, made, never said.
+    worker.free_by_test(16 * GIB, 0, 0);
+    worker.send(develop(&b, 4));
+    let again = until(4, &|s| !s.3.is_empty());
+    assert!(again[0].1.contains(&1), "asked again: {again:?}");
+    assert!(again.iter().all(|s| s.4.is_empty()), "{again:?}");
+    // A model's failure is its own word.
+    worker.fill_by_test(-1.0);
+    worker.send(develop(&c, 5));
+    let failed = until(5, &|s| !s.2.is_empty());
+    let last = failed.last().unwrap();
+    assert_eq!(last.2, ["Fill 1"]);
+    assert!(last.4.is_empty(), "not hidden behind the card");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A removal the card is short of now, developed again with nothing
+/// changed, says the same need and free figure each time: the second
+/// develop's refusal is the first one's, kept, not a model's failure.
+#[test]
+fn a_short_removal_says_its_figures_on_every_develop() {
+    const GIB: u64 = 1 << 30;
+    let (dir, paths) = dngs("short-twice", &["short-twice.dng"], 128, 96);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    let worker = Worker::new(move |o| {
+        if let Outcome::Developed {
+            generation, fills, ..
+        } = o
+        {
+            tx.lock()
+                .unwrap()
+                .send((generation, fills.failed.len(), fills.short.clone()))
+                .unwrap();
+        }
+    });
+    worker.models_by_test(greycard_ai::Store::at(dir.join("models")));
+    worker.fill_by_test(0.9);
+    worker.free_by_test(2 * GIB, 0, 0);
+    let mut edit = three_removes();
+    edit.retouch.patches.truncate(1);
+    worker.send(Job::Open {
+        path: paths[0].clone(),
+        version: None,
+        edit: edit.clone(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let wait = std::time::Duration::from_secs(60);
+    let said = |generation: u64| loop {
+        let (g, failed, short) = rx.recv_timeout(wait).expect("a develop");
+        if g == generation && failed > 0 {
+            break short;
+        }
+    };
+    let first = said(1);
+    let need = crate::ai::remove_needs(512, false);
+    assert_eq!(first, [("Fill 1".to_string(), need, 2 * GIB)]);
+    // The patch's opacity, applied after its fill: the retouch runs
+    // again, its fill as it was.
+    edit.retouch.patches[0].opacity = 0.5;
+    worker.send(Job::Develop {
+        edit,
+        generation: 2,
+        turn: 0,
+        of: None,
+    });
+    assert_eq!(said(2), first, "the same sentence again");
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A set short of the card by what the engine's own working sets hold
+/// waits for nothing: each frame lets go of the sets its walk made
+/// again before any wait, and its removals are made.
+#[test]
+fn a_set_short_by_the_engines_own_sets_waits_for_nothing() {
+    const GIB: u64 = 1 << 30;
+    let (worker, dir, path, rx, go) = fill_worker_at("waits-none", 0.9, (128, 96));
+    worker.models_by_test(greycard_ai::Store::at(dir.join("models")));
+    worker.fill_by_test(0.9);
+    worker.free_by_test(2 * GIB, 0, 0);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    worker.fills_release_by_test(5 * GIB, calls.clone());
+    go.send(()).unwrap();
+    worker.send(Job::Open {
+        path: path.clone(),
+        version: None,
+        edit: Edit::default(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let wait = std::time::Duration::from_secs(60);
+    assert_eq!(rx.recv_timeout(wait).expect("the open"), "developed 1: []");
+    let set = Arc::new(crate::queue::Set::new(
+        3,
+        None,
+        greycard_render::export::Settings::default(),
+        greycard_render::export::OnExists::Overwrite,
+    ));
+    let frame = |i: u32| {
+        let mut edit = three_removes();
+        for p in &mut edit.retouch.patches {
+            p.seed = i + 1;
+        }
+        crate::queue::Frame {
+            source: path.clone(),
+            edit,
+            version: None,
+            turn: 0,
+            time_shift: 0,
+            seed_blend: false,
+            out: dir.join(format!("waits-none-{i}.jpg")),
+            moved_from: None,
+        }
+    };
+    worker.send(Job::ExportSet {
+        set: set.clone(),
+        frames: vec![frame(0), frame(1), frame(2)],
+    });
+    let started = Instant::now();
+    while set.tally().exported + set.tally().failed.len() < 3 {
+        assert!(started.elapsed() < wait, "the set ends");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(set.tally().exported, 3, "{:?}", set.tally().failed);
+    assert_eq!(worker.waits_by_test(), [0, 0, 0]);
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::Relaxed),
+        3,
+        "let go once a frame"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
+}
+
+/// A set short of the card waits once: its first frame waits its tries
+/// at its first removal, the walk's later asks not waiting, and fails;
+/// the set's later frames ask once and are left out at once,
+/// waiting for nothing.
+#[test]
+fn a_set_short_of_the_card_waits_once() {
+    const GIB: u64 = 1 << 30;
+    let (worker, dir, path, rx, go) = fill_worker_at("waits-once", 0.9, (128, 96));
+    worker.models_by_test(greycard_ai::Store::at(dir.join("models")));
+    worker.fill_by_test(0.9);
+    worker.free_by_test(GIB, 0, 0);
+    go.send(()).unwrap();
+    worker.send(Job::Open {
+        path: path.clone(),
+        version: None,
+        edit: Edit::default(),
+        generation: 1,
+        seed_blend: false,
+        turn: 0,
+        stance_known: false,
+        learned: Vec::new(),
+    });
+    let wait = std::time::Duration::from_secs(60);
+    assert_eq!(rx.recv_timeout(wait).expect("the open"), "developed 1: []");
+    let set = Arc::new(crate::queue::Set::new(
+        3,
+        None,
+        greycard_render::export::Settings::default(),
+        greycard_render::export::OnExists::Overwrite,
+    ));
+    // Each frame its own fills, none kept: another seed a frame.
+    let frame = |i: u32| {
+        let mut edit = three_removes();
+        for p in &mut edit.retouch.patches {
+            p.seed = i + 1;
+        }
+        crate::queue::Frame {
+            source: path.clone(),
+            edit,
+            version: None,
+            turn: 0,
+            time_shift: 0,
+            seed_blend: false,
+            out: dir.join(format!("waits-once-{i}.jpg")),
+            moved_from: None,
+        }
+    };
+    worker.send(Job::ExportSet {
+        set: set.clone(),
+        frames: vec![frame(0), frame(1), frame(2)],
+    });
+    let started = Instant::now();
+    while set.tally().exported + set.tally().failed.len() < 3 {
+        assert!(started.elapsed() < wait, "the set ends");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(set.tally().failed.len(), 3, "no frame's removals made");
+    let waits = worker.waits_by_test();
+    let first = waits[0];
+    // Nothing of the worker's to give back, so the frame is not tried
+    // again: the first pass's waits alone.
+    assert_eq!(
+        first,
+        crate::ai::PATIENT_TRIES as usize - 1,
+        "the first ask's waits"
+    );
+    assert_eq!(
+        waits,
+        [first, first, first],
+        "the later frames wait for nothing"
+    );
+    worker.stop();
+    crate::testing::remove_dir_retry(&dir);
 }
 
 /// A fill the card is short of at its run, once its own models are

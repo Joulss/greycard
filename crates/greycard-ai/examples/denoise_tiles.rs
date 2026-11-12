@@ -5,13 +5,43 @@
 //! `TILE_A` and `TILE_B` (1024 and 512 by default) and prints each
 //! run's time, the two answers' largest difference and PSNR in the
 //! samples' units (white at 1), and what the editor would choose here.
+//! Each run's peak on the card is the free figure before it less the
+//! least seen while it ran, read every 5 ms as the editor's guard reads
+//! the card; the first run's is the tile's own, ONNX Runtime's buffer
+//! cache serving the second's in part, so one tile a process
+//! (`denoise_tiles RAW best 384 384`) measures one tile.
 
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use greycard_ai::denoise::{Tiling, choose_tile};
 use greycard_ai::runtime::{self, Provider};
 use greycard_ai::{Denoiser, Store};
 use greycard_core::develop::{DevelopSettings, prepare};
+
+/// The least free figure on the card seen while `run` runs.
+fn least_while<T>(run: impl FnOnce() -> T) -> (T, Option<u64>) {
+    let free = || runtime::webgpu_free_memory().map(|(b, _)| b);
+    let least = Arc::new(AtomicU64::new(u64::MAX));
+    let stop = Arc::new(AtomicBool::new(false));
+    let sampler = {
+        let (least, stop) = (least.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                if let Some(b) = free() {
+                    least.fetch_min(b, Ordering::Relaxed);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        })
+    };
+    let out = run();
+    stop.store(true, Ordering::Relaxed);
+    let _ = sampler.join();
+    let l = least.load(Ordering::Relaxed);
+    (out, (l != u64::MAX).then_some(l))
+}
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
@@ -62,9 +92,11 @@ fn main() {
     let answers: Vec<Vec<f32>> = tiles
         .iter()
         .map(|&tile| {
+            let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+            let before = runtime::webgpu_free_memory().map(|(b, _)| b);
             let start = Instant::now();
-            let rgb = net
-                .run(
+            let (rgb, least) = least_while(|| {
+                net.run(
                     &prepared.samples,
                     prepared.width,
                     prepared.height,
@@ -75,8 +107,14 @@ fn main() {
                         ..Default::default()
                     },
                 )
-                .expect("the tier runs");
-            println!("tile {tile}: {:.1} s", start.elapsed().as_secs_f64());
+                .expect("the tier runs")
+            });
+            let peak = before.zip(least).map(|(b, l)| gib(b.saturating_sub(l)));
+            println!(
+                "tile {tile}: {:.1} s, the card's peak over the loaded tier {}",
+                start.elapsed().as_secs_f64(),
+                peak.map_or("not known".to_string(), |p| format!("{p:.2} GiB"))
+            );
             rgb
         })
         .collect();

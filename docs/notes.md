@@ -657,3 +657,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§643. The capture sharpen decides what is flat before Texture](notes/643-the-sharpen-reads-flat-before-texture.md) (2026-11-11)
 - [§644. Midtones](notes/644-midtones.md) (2026-11-11)
 - [§645. A list read before the frame on screen moved does not list its old path](notes/645-a-moved-frames-old-path-leaves-the-list.md) (2026-11-12)
+- [§646. The denoiser and the removal on a small card](notes/646-the-denoiser-and-the-removal-on-a-small-card.md) (2026-11-12)

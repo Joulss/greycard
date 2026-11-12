@@ -98,6 +98,48 @@ pub fn set_test_unified(on: Option<bool>) {
     TEST_UNIFIED.with(|t| t.set(on));
 }
 
+/// The bytes of the card the generative remove would run on, where it
+/// is a card of its own whose memory is known
+/// (`runtime::webgpu_memory`): none on unified memory, which keeps its
+/// own bounds (§421), without WebGPU, on a CPU adapter or one of no
+/// known type, or where the backend will not say; and none until the
+/// adapter has been asked for elsewhere (the models probe, a model's
+/// load), so the window's thread never waits on its probe: not known is
+/// not short. In a test, what it set with [`set_test_card`], else none,
+/// never the machine's own card.
+pub fn card_memory() -> Option<u64> {
+    #[cfg(any(test, feature = "testing"))]
+    return TEST_CARD.with(|t| t.get()).flatten();
+    #[allow(unreachable_code)]
+    if !on_webgpu() {
+        return None;
+    }
+    greycard_ai::runtime::webgpu_card_memory_if_probed()
+}
+
+/// [`card_memory`] for a thread that may wait on the adapter's probe
+/// (the worker's): asked, not only read once asked elsewhere, so the
+/// first removal of a launch, or of a headless export that never
+/// probes, is said for the card it is.
+fn card_memory_probed() -> Option<u64> {
+    if !on_webgpu() {
+        return None;
+    }
+    greycard_ai::runtime::webgpu_card_memory()
+}
+
+#[cfg(any(test, feature = "testing"))]
+thread_local! {
+    static TEST_CARD: std::cell::Cell<Option<Option<u64>>> = const { std::cell::Cell::new(None) };
+}
+
+/// [`card_memory`]'s answer on this thread, for a test; `None` is
+/// none.
+#[cfg(any(test, feature = "testing"))]
+pub fn set_test_card(card: Option<Option<u64>>) {
+    TEST_CARD.with(|t| t.set(card));
+}
+
 /// Whether the Subject original is on record as having failed on
 /// WebGPU, for the adapter and build this launch would use — asked,
 /// and cached, once: the first call opens a `wgpu::Instance` and
@@ -470,7 +512,7 @@ pub struct Ai {
     /// ([`Ai::still_refused`]) until something changes, so a fill the
     /// card stays short of does not bring a fill round, and a
     /// give-back, on every develop.
-    refused: HashMap<u64, (Patch, Window, u64, String)>,
+    refused: HashMap<u64, (Patch, Window, u64, u64, String)>,
     /// The preview of base develop `stamp`, and its luma.
     preview: Option<(u64, Rgb8, Vec<f32>)>,
     embedding: Option<(u64, Embedding)>,
@@ -560,10 +602,17 @@ pub struct Ai {
     /// Whether the remove's UNet is held open, as a test has it.
     #[cfg(any(test, feature = "testing"))]
     pub unet_held_by_test: Option<bool>,
+    /// The card's whole memory, as a test has it ([`Ai::card_whole`]).
+    #[cfg(any(test, feature = "testing"))]
+    pub card_by_test: Option<Option<u64>>,
     /// The last run refused for the card's memory since it was taken
     /// ([`Ai::take_short`]): an export asks again on it, and fails its
     /// item when it stays short.
     short: Option<String>,
+    /// The need and the free figure, bytes, of the last removal refused
+    /// for the card's memory, taken with the refusal: what the window
+    /// says of it ([`Ai::take_short_figures`]).
+    short_figures: Option<(u64, u64)>,
     /// A fill's model ran since the card was last given back
     /// ([`give_back_card`]).
     fills_ran: bool,
@@ -597,6 +646,9 @@ pub struct Ai {
     /// A patient walk met a short it gave up on: the rest of it does
     /// not wait again.
     hit_short: bool,
+    /// A patient walk was refused a run for the card's memory, no
+    /// fallback taking it ([`Ai::short_failed`]).
+    short_failed: bool,
     /// The tiling the learned denoiser last loaded ran at, by tier
     /// ([`Ai::denoiser_tiling`]).
     denoiser_tiling: Option<(&'static str, greycard_ai::denoise::Tiling)>,
@@ -1088,6 +1140,9 @@ pub enum NoFill {
     NoGpu,
     /// It could not run.
     Failed(String),
+    /// A removal on a card whose whole memory is under the remove's
+    /// need ([`FillNotHere::Card`]): the need and the card, bytes.
+    Card { need: u64, have: u64 },
     /// Its model was to run and the caller said not now: a develop
     /// shows its picture first and makes its fills after, one at a
     /// time.
@@ -1111,13 +1166,44 @@ pub enum Engine {
 }
 
 /// What a Fill's makers need, as this machine has it: LaMa, the
-/// remove, the four-step remove's own files, and WebGPU.
+/// remove, the four-step remove's own files, WebGPU, and the card's
+/// memory where it is a card of its own ([`card_memory`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FillHaves {
     pub fill: bool,
     pub remove: bool,
     pub fast: bool,
     pub webgpu: bool,
+    pub card: Option<u64>,
+}
+
+/// Why a remove can never make a Fill on this machine
+/// ([`FillHaves::why_not`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillNotHere {
+    /// No WebGPU, which both removes run on.
+    NoGpu,
+    /// The whole card is under the remove's smallest need: the need and
+    /// the card, bytes.
+    Card { need: u64, have: u64 },
+}
+
+impl FillNotHere {
+    /// In English, for the log and a test; the window says it in the
+    /// user's language.
+    pub fn words(self) -> String {
+        match self {
+            FillNotHere::NoGpu => "Needs a GPU with WebGPU".into(),
+            FillNotHere::Card { need, have } => {
+                let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+                format!(
+                    "Needs {:.1} GiB VRAM, {:.1} available. Use Patch.",
+                    gib(need),
+                    gib(have)
+                )
+            }
+        }
+    }
 }
 
 impl FillHaves {
@@ -1129,17 +1215,24 @@ impl FillHaves {
             remove: has(&REMOVE),
             fast: has(&REMOVE_FAST),
             webgpu: on_webgpu(),
+            card: card_memory(),
         }
     }
 
     /// Why `choice` can never make a Fill on this machine, or None:
-    /// both removes want WebGPU. A model not downloaded is not a
-    /// reason ([`FillHaves::missing`]): it can be fetched.
-    pub fn why_not(self, choice: FillChoice) -> Option<&'static str> {
+    /// both removes want WebGPU, and a card of its own at least the
+    /// remove's smallest need ([`remove_needs`] at 512), its whole
+    /// memory, read at start. A model not downloaded is not a reason
+    /// ([`FillHaves::missing`]): it can be fetched.
+    pub fn why_not(self, choice: FillChoice) -> Option<FillNotHere> {
+        let need = remove_needs(512, false);
         match choice {
             FillChoice::Patch => None,
-            _ if !self.webgpu => Some("Needs a GPU with WebGPU"),
-            _ => None,
+            _ if !self.webgpu => Some(FillNotHere::NoGpu),
+            _ => match self.card {
+                Some(have) if have < need => Some(FillNotHere::Card { need, have }),
+                _ => None,
+            },
         }
     }
 
@@ -1177,10 +1270,13 @@ impl FillHaves {
 
     /// The choice before one is made: Fast where the GPU shares the
     /// machine's memory and Fast can run, since the full remove is a
-    /// minute a fill there; Best otherwise.
+    /// minute a fill there; Patch where neither remove can ever run
+    /// (a card under the remove's need, or no WebGPU); Best otherwise.
     pub fn default_choice(self, unified: bool) -> FillChoice {
         if unified && self.runs(FillChoice::Fast) {
             FillChoice::Fast
+        } else if self.why_not(FillChoice::Best).is_some() {
+            FillChoice::Patch
         } else {
             FillChoice::Best
         }
@@ -1235,10 +1331,7 @@ impl NeverHere {
     pub fn words(&self) -> String {
         match self {
             NeverHere::Off(why) => why.clone(),
-            NeverHere::NoWebGpu => FillHaves::default()
-                .why_not(FillChoice::Best)
-                .unwrap_or_default()
-                .to_string(),
+            NeverHere::NoWebGpu => FillNotHere::NoGpu.words(),
             NeverHere::NoF16(card) => {
                 remove_f16_refusal(Some(&(false, card.clone()))).unwrap_or_default()
             }
@@ -1468,10 +1561,22 @@ const REMOVE_HELD_PEAK_1024: u64 = 99 * TENTH_GIB;
 /// best tier, the largest, held 3.86 GiB after a run at 1024 and 1.49
 /// at 512, of which its weights are 0.05, already on the card when it
 /// is loaded; measured on an RTX 5070 Ti under ONNX Runtime's WebGPU
-/// provider, a second run asking nothing more.
+/// provider, a second run asking nothing more. At 384 and 256 the
+/// card's least free figure fell 0.58 and 0.49 GiB below the loaded
+/// tier's (`denoise_tiles`, a 24 MP frame, one tile a process); a
+/// margin of 96 on every side is most of a small tile's run.
 const DENOISE_PEAK_1024: u64 = 39 * TENTH_GIB;
 const DENOISE_PEAK_512: u64 = 15 * TENTH_GIB;
+const DENOISE_PEAK_384: u64 = 6 * TENTH_GIB;
+const DENOISE_PEAK_256: u64 = 5 * TENTH_GIB;
 const DENOISE_WEIGHTS: u64 = TENTH_GIB / 2;
+
+/// The smaller tiles the learned denoiser falls to, in order, on a card
+/// short of its own tile, those under it: at 384 and 256 its answer was
+/// the one at 512 (bitwise, on one card, the 5070 Ti, a 24 MP frame),
+/// the network's reach inside the margin, at 1.15 and 1.5 times the
+/// time of 512; 512 against 1024 likewise (§431).
+pub const DENOISE_SMALLER_TILES: [usize; 3] = [512, 384, 256];
 
 /// A learned mask's model, for what it asks of the card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1639,7 +1744,11 @@ pub fn remove_needs(size: usize, held: bool) -> u64 {
 /// The card's free memory the learned denoiser's run at `tile` needs,
 /// loaded.
 pub fn denoise_needs(tile: usize) -> u64 {
-    let peak = if tile <= 512 {
+    let peak = if tile <= 256 {
+        DENOISE_PEAK_256
+    } else if tile <= 384 {
+        DENOISE_PEAK_384
+    } else if tile <= 512 {
         DENOISE_PEAK_512
     } else {
         // Past 1024 (`GREYCARD_DENOISE_TILE`), by the tile's area.
@@ -1667,6 +1776,19 @@ pub fn short_of(card: &str, free: u64, need: u64, what: &str) -> Option<String> 
             gib(need)
         )
     })
+}
+
+/// `bytes` in GiB for the log: to a tenth, or to a hundredth where a
+/// tenth would round away what is compared (a need of 1.95 GiB is not
+/// said as 1.9). The window's refusals keep the tenth ([`short_of`]).
+pub fn gib_said(bytes: u64) -> String {
+    let gib = bytes as f64 / (1u64 << 30) as f64;
+    let tenth = format!("{gib:.1}");
+    if (tenth.parse::<f64>().unwrap_or(gib) - gib).abs() < 0.005 {
+        tenth
+    } else {
+        format!("{gib:.2}")
+    }
 }
 
 /// [`short_of`] for a removal at `size`.
@@ -1744,11 +1866,10 @@ fn second_ask_said(
     }
 }
 
-/// What the log says of a removal's second ask of the card, after the
-/// first found it short (`why`) and the engine let go of `freed`: the
-/// free memory before and after, and whether it begins. Refused, this
-/// is the refusal's message.
-fn removal_second_ask(
+/// What the log says of a removal's or the learned denoiser's ask of
+/// the card once the engine let go of `freed`, the ask before it short
+/// (`why`): the free memory before and after, and whether it begins.
+fn release_said(
     what: &str,
     why: &str,
     freed: &[(&'static str, u64)],
@@ -1767,6 +1888,21 @@ fn removal_second_ask(
             "{why}; the engine let go of {freed}, {before:.1} GiB free before and {after:.1} after, short still"
         )
     }
+}
+
+/// What the log and a refusal call the learned denoiser at `tile`.
+fn what_at(tile: usize) -> String {
+    format!("the learned denoiser at a tile of {tile}")
+}
+
+/// Where the learned denoiser runs, as the card has the memory for it
+/// ([`Ai::denoise_room_for`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DenoiseOn {
+    /// Where it was loaded, at its own tiling.
+    Card,
+    /// On the card at this smaller tile.
+    Tile(usize),
 }
 
 /// A model's run refused for the card's memory ([`short_of`]): an
@@ -1788,6 +1924,19 @@ thread_local! {
     /// turn, the last read again; `None` leaves the card asked.
     static FREE_BY_TEST: std::cell::RefCell<Option<Vec<Option<u64>>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many patient waits on a short card this thread has slept, for
+    /// a test that counts them where each is no time at all.
+    static WAITS_BY_TEST: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many patient waits on a short card this thread has slept.
+#[cfg(test)]
+pub fn waits_by_test() -> usize {
+    WAITS_BY_TEST.with(|w| w.get())
 }
 
 /// Sets the card's free memory this thread's reads by [`card_free_now`]
@@ -2135,6 +2284,8 @@ impl Ai {
             freed_by_test: 0,
             #[cfg(any(test, feature = "testing"))]
             unet_held_by_test: None,
+            #[cfg(any(test, feature = "testing"))]
+            card_by_test: None,
             short: None,
             fills_ran: false,
             fill_short: false,
@@ -2146,6 +2297,8 @@ impl Ai {
             cpu_fallback: false,
             patience: None,
             hit_short: false,
+            short_failed: false,
+            short_figures: None,
             denoiser_tiling: None,
         }
     }
@@ -2242,6 +2395,7 @@ impl Ai {
         self.fills.clear();
         self.failed.clear();
         self.windows.clear();
+        self.refused.clear();
         self.preview = None;
         self.embedding = None;
         self.scene = None;
@@ -2418,6 +2572,7 @@ impl Ai {
                             .get(&(p.id, p.seed))
                             .is_some_and(|(kept, w, _, _, _)| same_fill(kept, p) && *w == window);
                     !in_memory
+                        && self.never_on_card(p, window).is_none()
                         && self.still_refused(p, window).is_none()
                         && !self.fill_kept(p, &region, image)
                         && self.failed_before(p, &region, image).is_none()
@@ -2436,7 +2591,7 @@ impl Ai {
         if self.patience.is_some() {
             return None;
         }
-        let (p, w, at, why) = self.refused.get(&patch.id)?;
+        let (p, w, at, _, why) = self.refused.get(&patch.id)?;
         let still = same_fill(p, patch)
             && *w == window
             && self.free_memory().is_some_and(|(free, _)| free <= *at);
@@ -2725,10 +2880,9 @@ impl Ai {
     }
 
     /// Whether the card has the memory free a removal of `window`
-    /// about to run needs ([`short_of_memory`], [`Ai::room`]). Short
-    /// after the card is given back, the engine lets go of what a
-    /// develop makes again ([`Ai::set_card_release`]) and the card is
-    /// asked once more. Refused still, the fill is left as the base has
+    /// about to run needs ([`short_of_memory`], [`Ai::room`]): the card
+    /// given back, the engine's working sets let go, and an export's
+    /// waits on the way. Refused, the fill is left as the base has
     /// it and is not remembered as failed, so it is asked for again;
     /// the worker is told ([`Ai::take_fill_short`]). A removal never
     /// falls to the CPU, which takes minutes a fill, nor to LaMa, which
@@ -2746,44 +2900,21 @@ impl Ai {
             .store
             .as_ref()
             .is_some_and(|s| greycard_ai::remove::unet_held_elsewhere(s, steps_for(patch), size));
-        let (short, hit_short) = (self.short.clone(), self.hit_short);
         let refuse = |ai: &mut Ai, why: String| {
             ai.fill_short = true;
+            ai.short_failed = true;
+            ai.short_figures = Some((need(ai), ai.free_memory().map_or(0, |(f, _)| f)));
             ai.short = Some(why.clone());
             let free = ai.free_memory().map_or(0, |(f, _)| f);
+            let needs = need(ai);
             ai.refused
-                .insert(patch.id, (patch.clone(), window, free, why.clone()));
+                .insert(patch.id, (patch.clone(), window, free, needs, why.clone()));
             NoFill::Failed(why)
         };
-        let Err(why) = self.room(&what, &need, keep_unet) else {
-            return Ok(());
-        };
-        // Nothing to let go, or an export canceled: refused as it is.
-        if self.card_release.is_none() || self.patience.as_ref().is_some_and(|p| (p.canceled)()) {
-            return Err(refuse(self, why));
+        match self.room(&what, &need, keep_unet, true) {
+            Ok(()) => Ok(()),
+            Err(why) => Err(refuse(self, why)),
         }
-        let before = self.free_memory().map(|(b, _)| b);
-        let freed = self.release_card();
-        if freed.is_empty() {
-            tracing::info!("{why}; nothing of the engine's to let go");
-            return Err(refuse(self, why));
-        }
-        // A second read not known fits, as `room` has it.
-        let after = self.free_memory();
-        let fits = after
-            .as_ref()
-            .is_none_or(|(free, card)| short_of(card, *free, need(self), &what).is_none());
-        let after = after.map(|(b, _)| b);
-        let said = removal_second_ask(&what, &why, &freed, before, after, fits);
-        tracing::info!("{said}");
-        if !fits {
-            return Err(refuse(self, said));
-        }
-        // Begun, the short is not the develop's or the export's to
-        // fail on.
-        self.short = short;
-        self.hit_short = hit_short;
-        Ok(())
     }
 
     /// Room on the card for a learned mask's model ([`mask_needs`],
@@ -2806,16 +2937,24 @@ impl Ai {
             return Ok(());
         }
         let (short, hit_short) = (self.short.clone(), self.hit_short);
-        let Err(why) = self.room("a learned mask", &move |_| mask_needs(model), false) else {
+        let Err(why) = self.room("a learned mask", &move |_| mask_needs(model), false, false)
+        else {
             self.leave_cpu();
             return Ok(());
         };
         self.mask_short = true;
         if !self.cpu_fallback || self.patience.as_ref().is_some_and(|p| (p.canceled)()) {
+            self.short_failed = true;
             return Err(why);
         }
         let before = self.free_memory().map(|(b, _)| b);
-        let freed = self.release_card();
+        // An export's masks go to the CPU as they always did: the
+        // engine's sets are let go for the denoiser and a removal alone.
+        let freed = if self.patience.is_some() {
+            Vec::new()
+        } else {
+            self.release_card()
+        };
         let after = self.free_memory().map(|(b, _)| b);
         // A second read not known fits, as `room` has it.
         let fits = after.is_none_or(|b| b >= mask_needs(model));
@@ -2944,36 +3083,143 @@ impl Ai {
         self.mask_cpu
     }
 
-    /// Whether the learned denoiser `model`, loaded, has the card's
-    /// memory to run ([`denoise_needs`], [`Ai::room`]). Its session
-    /// may be dropped on the way, when the card is given back: the
-    /// caller loads it again.
-    pub fn denoise_room_for(&mut self, model: &'static Model) -> Result<(), CardShort> {
+    /// Where the learned denoiser `model`, loaded, runs, as the card has
+    /// the memory for it ([`denoise_needs`], [`Ai::room`]): at its own
+    /// tile, or a smaller one. Its session may be dropped on the way,
+    /// when the card is given back: the caller loads it again. Where it
+    /// does not run on WebGPU it runs as it is.
+    pub fn denoise_room_for(&mut self, model: &'static Model) -> Result<DenoiseOn, CardShort> {
         let Some((_, d)) = self.denoiser.as_ref().filter(|(id, _)| *id == model.id) else {
-            return Ok(());
+            return Ok(DenoiseOn::Card);
         };
         if d.provider() != Provider::WebGpu {
-            return Ok(());
+            return Ok(DenoiseOn::Card);
         }
         let tile = d.tiling().tile;
+        self.denoise_room_at(tile)
+    }
+
+    /// [`Ai::denoise_room_for`] for a denoiser on the card at `tile`.
+    /// Short after its own give-back, the engine's working sets let go,
+    /// and an export's waits ([`Ai::room`]): the largest of
+    /// [`DENOISE_SMALLER_TILES`] under it the card has the room for.
+    /// Short at every tile, it is refused in the words it always had,
+    /// and the engine's own denoise stands in, or an export fails. The
+    /// log says what was chosen and why. Where the card's memory is not
+    /// known it runs as it is.
+    pub(crate) fn denoise_room_at(&mut self, tile: usize) -> Result<DenoiseOn, CardShort> {
         let what = format!("the learned denoiser at a tile of {tile}");
-        self.room(&what, &|_| denoise_needs(tile), false)
-            .map_err(CardShort)
+        let short = self.short.clone();
+        // A canceled export lets nothing go.
+        let release =
+            self.card_release.is_some() && !self.patience.as_ref().is_some_and(|p| (p.canceled)());
+        // Asked at its own tile without an export's waits: a smaller tile
+        // the card has the room for is no reason to wait.
+        let patience = self.patience.take();
+        let first = self.room(&what, &|_| denoise_needs(tile), false, release);
+        self.patience = patience;
+        let Err(mut why) = first else {
+            return Ok(DenoiseOn::Card);
+        };
+        // Past the whole card at its own tile, `room` gave nothing back
+        // and let nothing go: our own sessions and the engine's sets go
+        // before the smaller tiles are judged, as an export's ask at the
+        // smallest does.
+        let past_card = self
+            .card_size()
+            .is_some_and(|size| denoise_needs(tile) > size);
+        if past_card {
+            self.give_back_own(false);
+        }
+        if release && past_card {
+            let before = self.free_memory().map(|(b, _)| b);
+            let freed = self.release_card();
+            if !freed.is_empty() {
+                let after = self.free_memory().map(|(b, _)| b);
+                tracing::info!(
+                    "{}",
+                    release_said(&what, &why, &freed, before, after, false)
+                );
+            }
+        }
+        // The largest tile, its own or smaller, the card has the room for.
+        let fitting = |ai: &Ai, from: usize| {
+            let free = ai.free_memory().map(|(f, _)| f);
+            std::iter::once(tile)
+                .chain(DENOISE_SMALLER_TILES)
+                .filter(|&t| t <= from)
+                .find(|&t| free.is_none_or(|f| f >= denoise_needs(t)))
+        };
+        // The need as it is compared: the refusal's tenth can round it
+        // away.
+        let found = format!("{why} ({} GiB needed)", gib_said(denoise_needs(tile)));
+        let at = |t: usize| {
+            if t == tile {
+                DenoiseOn::Card
+            } else {
+                DenoiseOn::Tile(t)
+            }
+        };
+        let smaller = fitting(self, tile).filter(|&t| t < tile);
+        if let Some(t) = smaller {
+            tracing::info!(
+                "{found}: the learned denoiser runs at a tile of {t}, which needs {} GiB",
+                gib_said(denoise_needs(t))
+            );
+            // Handled, no refusal and no short met.
+            self.short = short;
+            return Ok(at(t));
+        }
+        // Short at every tile: an export waits its tries at the smallest,
+        // then runs at the largest it has the room for.
+        let least = DENOISE_SMALLER_TILES
+            .into_iter()
+            .filter(|&t| t < tile)
+            .min()
+            .unwrap_or(tile);
+        if self.patience.is_some() {
+            let what = format!("the learned denoiser at a tile of {least}");
+            if self
+                .room(&what, &|_| denoise_needs(least), false, false)
+                .is_ok()
+                && let Some(t) = fitting(self, tile)
+            {
+                tracing::info!("{found}: after the waits, it runs at a tile of {t}");
+                self.short = short;
+                return Ok(at(t));
+            }
+            // Said at its own tile, as it always was, the card as it is.
+            if let Some(w) = self
+                .free_memory()
+                .and_then(|(free, card)| short_of(&card, free, denoise_needs(tile), &what_at(tile)))
+            {
+                why = w;
+            }
+        }
+        tracing::info!("{found}, short at every smaller tile");
+        self.short = Some(why.clone());
+        self.short_failed = true;
+        Err(CardShort(why))
     }
 
     /// Whether `what`, about to run and asking `need` of the card, may
     /// begin. The need is found first, since it may wait for a UNet
     /// being opened ahead, and the free figure read after it. Short,
     /// the card is given back first
-    /// ([`Ai::give_back_own`]) and asked once more; then, in an export
-    /// or a merge ([`Patience`]), asked again its tries in all, its
-    /// wait apart, unless the export is canceled or a short was met
-    /// already in this walk. Where the free memory is not known it may.
+    /// ([`Ai::give_back_own`]) and asked once more; then, with
+    /// `release`, the engine lets go of what a develop makes again
+    /// ([`Ai::set_card_release`]) and it is asked again: our own memory
+    /// goes before we wait on another program's. Then, in an export or
+    /// a merge ([`Patience`]), asked again its tries in all, its wait
+    /// apart, unless the export is canceled or a short was met already
+    /// in this walk. Short past all of them, the walk has met it. Where
+    /// the free memory is not known it may.
     fn room(
         &mut self,
         what: &str,
         need: &dyn Fn(&Ai) -> u64,
         keep_unet: bool,
+        release: bool,
     ) -> Result<(), String> {
         let short = |ai: &Ai| -> Result<(), String> {
             let need = need(ai);
@@ -2988,27 +3234,53 @@ impl Ai {
         // Past the whole card nothing given back or waited for helps.
         let past_card = self.card_size().is_some_and(|size| need(self) > size);
         let patience = self.patience.clone();
-        if !past_card && !(patience.is_some() && self.hit_short) {
-            if self.give_back_own(keep_unet) {
-                match short(self) {
-                    Ok(()) => {
-                        tracing::info!("{what}: begun once the card was given back");
-                        return Ok(());
-                    }
+        let met = patience.is_some() && self.hit_short;
+        if !past_card && !met && self.give_back_own(keep_unet) {
+            match short(self) {
+                Ok(()) => {
+                    tracing::info!("{what}: begun once the card was given back");
+                    return Ok(());
+                }
+                Err(w) => why = w,
+            }
+        }
+        // Each frame of a set makes the sets again, so each lets go of
+        // them, met or not; a canceled export lets nothing go.
+        if release
+            && !past_card
+            && self.card_release.is_some()
+            && !patience.as_ref().is_some_and(|p| (p.canceled)())
+        {
+            let before = self.free_memory().map(|(b, _)| b);
+            let freed = self.release_card();
+            if freed.is_empty() {
+                tracing::info!("{why}; nothing of the engine's to let go");
+            } else {
+                let fits = short(self);
+                let after = self.free_memory().map(|(b, _)| b);
+                let said = release_said(what, &why, &freed, before, after, fits.is_ok());
+                tracing::info!("{said}");
+                match fits {
+                    Ok(()) => return Ok(()),
                     Err(w) => why = w,
                 }
             }
-            if let Some(p) = &patience {
-                for _ in 1..p.tries {
-                    if (p.canceled)() {
-                        break;
-                    }
-                    tracing::info!("{why}; asked again in {:?}", p.wait);
-                    std::thread::sleep(p.wait);
-                    match short(self) {
-                        Ok(()) => return Ok(()),
-                        Err(w) => why = w,
-                    }
+        }
+        if !past_card
+            && !met
+            && let Some(p) = &patience
+        {
+            for _ in 1..p.tries {
+                if (p.canceled)() {
+                    break;
+                }
+                tracing::info!("{why}; asked again in {:?}", p.wait);
+                #[cfg(test)]
+                WAITS_BY_TEST.with(|w| w.set(w.get() + 1));
+                std::thread::sleep(p.wait);
+                match short(self) {
+                    Ok(()) => return Ok(()),
+                    Err(w) => why = w,
                 }
             }
         }
@@ -3043,11 +3315,99 @@ impl Ai {
         held || unet
     }
 
-    /// The bytes of the card's own memory, where known; not in a test.
+    /// The card's whole memory, read on the worker's thread, which may
+    /// wait on the adapter's probe ([`card_memory_probed`]); in a test,
+    /// what it set, else none, never the machine's own card.
+    fn card_whole(&self) -> Option<u64> {
+        #[cfg(any(test, feature = "testing"))]
+        return self.card_by_test.flatten();
+        #[allow(unreachable_code)]
+        card_memory_probed()
+    }
+
+    /// The need and the card's whole memory where `patch`, a removal
+    /// the remove would make in `window`, is one the card can never
+    /// hold ([`FillHaves::why_not`]).
+    fn never_on_card(&self, patch: &Patch, window: Window) -> Option<(u64, u64)> {
+        if !patch.remove || greycard_ai::remove::factor_for(window.width, window.height).is_none() {
+            return None;
+        }
+        let haves = FillHaves {
+            webgpu: true,
+            card: self.card_whole(),
+            ..FillHaves::default()
+        };
+        match haves.why_not(patch.fill_choice()) {
+            Some(FillNotHere::Card { need, have }) => Some((need, have)),
+            _ => None,
+        }
+    }
+
+    /// What a develop says of `retouch`'s removals the card keeps from
+    /// being made, worked out afresh from now: by name, the need and the
+    /// card's memory. Only a Fill the picture shown left as it was
+    /// (`unmade`, none where no retouch made the picture) is said: with
+    /// the card's whole where it can never hold the remove
+    /// ([`Ai::never_on_card`]), or with the free figure of its refusal
+    /// while that refusal holds ([`Ai::still_refused`]'s rule) and it is
+    /// not still to be made this round (`pending`) unless this round's
+    /// own ask was the refusal (`failed`, by name). A fill held,
+    /// deleted, made Patch, or being made says nothing.
+    pub fn card_shorts(
+        &self,
+        retouch: &Retouch,
+        unmade: Option<&[u64]>,
+        pending: &[u64],
+        failed: &[String],
+    ) -> Vec<(String, u64, u64)> {
+        let Some(unmade) = unmade else {
+            return Vec::new();
+        };
+        retouch
+            .patches
+            .iter()
+            .filter(|p| p.method == greycard_edit::retouch::Method::Fill && p.remove)
+            .filter(|p| unmade.contains(&p.id))
+            .filter_map(|p| {
+                // Its window as last found, else one the remove takes.
+                let window = self
+                    .windows
+                    .get(&p.id)
+                    .filter(|(kept, ..)| same_fill(kept, p))
+                    .map_or(
+                        Window {
+                            x: 0,
+                            y: 0,
+                            width: 512,
+                            height: 512,
+                        },
+                        |(_, _, w, _)| *w,
+                    );
+                if let Some((need, have)) = self.never_on_card(p, window) {
+                    return Some((p.name(), need, have));
+                }
+                let (kept, _, at, need, _) = self.refused.get(&p.id)?;
+                if !same_fill(kept, p) {
+                    return None;
+                }
+                // Refused by this round's own ask: its figure is the one
+                // to say, whatever the card frees after it.
+                if failed.contains(&p.name()) {
+                    return Some((p.name(), *need, *at));
+                }
+                // Else while the refusal holds and it is not asked again.
+                let holds = self.free_memory().is_none_or(|(f, _)| f <= *at);
+                (holds && !pending.contains(&p.id)).then(|| (p.name(), *need, *at))
+            })
+            .collect()
+    }
+
+    /// The bytes of the card's own memory, where known; in a test, what
+    /// it set ([`Ai::card_by_test`]).
     fn card_size(&self) -> Option<u64> {
         #[cfg(any(test, feature = "testing"))]
         if self.free_memory_by_test.is_some() || self.fill_by_test.is_some() {
-            return None;
+            return self.card_by_test.flatten();
         }
         greycard_ai::runtime::webgpu_memory()
     }
@@ -3100,6 +3460,7 @@ impl Ai {
         self.mask_short = false;
         self.mask_cpu = false;
         self.short = None;
+        self.short_figures = None;
     }
 
     /// How an export or a merge waits on a card that is short, or none
@@ -3108,6 +3469,7 @@ impl Ai {
     pub fn set_patience(&mut self, patience: Option<Patience>) {
         self.patience = patience;
         self.hit_short = false;
+        self.short_failed = false;
         self.clear_shorts();
     }
 
@@ -3115,12 +3477,27 @@ impl Ai {
     /// again after the card is given back starts afresh.
     pub fn retry_patiently(&mut self) {
         self.hit_short = false;
+        self.short_failed = false;
         self.clear_shorts();
     }
 
     /// Whether a patient walk met a short it gave up on.
     pub fn hit_short(&self) -> bool {
         self.hit_short
+    }
+
+    /// Whether a patient walk was refused a run for the card's memory,
+    /// no fallback taking it: the frame is tried again on it, and its
+    /// set's later frames take a mask's CPU at once. A short a smaller
+    /// tile handled is met ([`Ai::hit_short`]), not this.
+    pub fn short_failed(&self) -> bool {
+        self.short_failed
+    }
+
+    /// The need and the free figure of the last removal refused for the
+    /// card's memory, taken.
+    pub fn take_short_figures(&mut self) -> Option<(u64, u64)> {
+        self.short_figures.take()
     }
 
     /// Every ONNX Runtime session this holds dropped: the remove's,
@@ -3180,6 +3557,8 @@ impl Ai {
             freed_by_test,
             #[cfg(any(test, feature = "testing"))]
                 unet_held_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                card_by_test: _,
             short: _,
             fills_ran: _,
             fill_short: _,
@@ -3191,6 +3570,8 @@ impl Ai {
             cpu_fallback: _,
             patience: _,
             hit_short: _,
+            short_failed: _,
+            short_figures: _,
         } = self;
         *subject = None;
         *sam = None;
@@ -3260,6 +3641,8 @@ impl Ai {
             freed_by_test,
             #[cfg(any(test, feature = "testing"))]
                 unet_held_by_test: _,
+            #[cfg(any(test, feature = "testing"))]
+                card_by_test: _,
             short: _,
             fills_ran: _,
             fill_short: _,
@@ -3271,6 +3654,8 @@ impl Ai {
             cpu_fallback: _,
             patience: _,
             hit_short: _,
+            short_failed: _,
+            short_figures: _,
         } = self;
         let held = subject.is_some()
             || sam.is_some()
@@ -3376,6 +3761,12 @@ impl Ai {
         if let Some(why) = self.failed_before(patch, region, image) {
             return Err(NoFill::Failed(why));
         }
+        // A card under the remove's need never holds it, as the panel
+        // greys it: refused at once, before its model is asked for (it is
+        // not offered) and with nothing given back or let go.
+        if let Some((need, have)) = self.never_on_card(patch, window) {
+            return Err(NoFill::Card { need, have });
+        }
         if !self.fills_by_test() {
             greycard_ai::runtime::status().map_err(|why| NoFill::Failed(why.to_string()))?;
         }
@@ -3388,6 +3779,12 @@ impl Ai {
         if self.held_to_card(patch, window, engine)
             && let Some(why) = self.still_refused(patch, window)
         {
+            // Its figures again, so the window says what it said the
+            // first time.
+            self.short_figures = self
+                .refused
+                .get(&patch.id)
+                .map(|(_, _, at, need, _)| (*need, *at));
             return Err(NoFill::Failed(why));
         }
         if !starting(engine) {
@@ -7139,7 +7536,9 @@ mod tests {
     /// Each choice runs where what it needs is here, and says why not
     /// otherwise; a patch drawn asks for the sticky choice and falls to
     /// the other remove, then to LaMa; the default is Fast only on
-    /// unified memory with its files here.
+    /// unified memory with its files here, and Patch where neither
+    /// remove can ever run: no WebGPU, or a card under the remove's
+    /// smallest need.
     #[test]
     fn the_fill_choices_run_where_their_models_are() {
         use FillChoice::{Best, Fast, Patch as Lama};
@@ -7148,6 +7547,7 @@ mod tests {
             remove: true,
             fast: true,
             webgpu: true,
+            card: Some(16 << 30),
         };
         for c in FillChoice::ALL {
             assert_eq!(all.why_not(c), None);
@@ -7172,8 +7572,9 @@ mod tests {
             webgpu: false,
             ..all
         };
-        assert_eq!(cpu.why_not(Best), Some("Needs a GPU with WebGPU"));
-        assert_eq!(cpu.why_not(Fast), Some("Needs a GPU with WebGPU"));
+        assert_eq!(cpu.why_not(Best), Some(FillNotHere::NoGpu));
+        assert_eq!(cpu.why_not(Fast), Some(FillNotHere::NoGpu));
+        assert_eq!(cpu.default_choice(false), Lama);
         assert_eq!(cpu.why_not(Lama), None);
         assert_eq!(cpu.drawn(Fast), Lama);
         let no_lama = FillHaves { fill: false, ..all };
@@ -7182,6 +7583,38 @@ mod tests {
         assert_eq!(all.default_choice(true), Fast);
         assert_eq!(all.default_choice(false), Best);
         assert_eq!(no_fast.default_choice(true), Best);
+        // A 4 GB card: both removes never here, said with the figures,
+        // and a Fill drawn is Patch's; its memory not known, as on
+        // unified memory, nothing is greyed.
+        let small = FillHaves {
+            card: Some(41 * (1 << 30) / 10),
+            ..all
+        };
+        let need = remove_needs(512, false);
+        for c in [Best, Fast] {
+            assert_eq!(
+                small.why_not(c),
+                Some(FillNotHere::Card {
+                    need,
+                    have: 41 * (1 << 30) / 10
+                })
+            );
+            assert_eq!(small.drawn(c), Lama);
+        }
+        assert_eq!(small.why_not(Lama), None);
+        assert_eq!(small.default_choice(false), Lama);
+        assert_eq!(
+            small.why_not(Best).unwrap().words(),
+            "Needs 6.3 GiB VRAM, 4.1 available. Use Patch."
+        );
+        let at_need = FillHaves {
+            card: Some(need),
+            ..all
+        };
+        assert_eq!(at_need.why_not(Best), None);
+        let unknown = FillHaves { card: None, ..all };
+        assert_eq!(unknown.why_not(Best), None);
+        assert_eq!(unknown.default_choice(false), Best);
     }
 
     /// What runs here: the remove's two models want WebGPU, 16-bit
@@ -7209,7 +7642,10 @@ mod tests {
         }
         assert_eq!(
             NeverHere::NoWebGpu.words(),
-            FillHaves::default().why_not(FillChoice::Best).unwrap()
+            FillHaves::default()
+                .why_not(FillChoice::Best)
+                .unwrap()
+                .words()
         );
         assert_eq!(
             NeverHere::OtherSubject(false).short(),
@@ -7288,6 +7724,7 @@ mod tests {
                 NoFill::Missing(m) => m.id,
                 NoFill::NoGpu => "no GPU",
                 NoFill::Failed(why) => panic!("{why}"),
+                NoFill::Card { .. } => panic!("engine_for asks no card"),
                 NoFill::Later => panic!("engine_for never defers"),
             })
         };
@@ -9815,12 +10252,18 @@ mod tests {
         );
     }
 
-    /// The learned denoiser's need follows its tile, past 1024 by the
-    /// tile's area; a learned mask's is one figure.
+    /// The learned denoiser's need follows its tile, measured at 256,
+    /// 384, 512, and 1024 and past 1024 by the tile's area; a learned
+    /// mask's is one figure.
     #[test]
     fn the_denoiser_and_the_masks_need_their_peaks_free() {
         const GIB: u64 = 1 << 30;
-        assert_eq!(denoise_needs(384), denoise_needs(512));
+        assert!(denoise_needs(256) < denoise_needs(384));
+        assert!(denoise_needs(384) < denoise_needs(512));
+        assert_eq!(denoise_needs(500), denoise_needs(512));
+        // The 4 GB card's 1.8 GiB: short at 512, room at 384.
+        assert!(short_of("c", 18 * GIB / 10, denoise_needs(512), "d").is_some());
+        assert!(short_of("c", 18 * GIB / 10, denoise_needs(384), "d").is_none());
         assert!(short_of("c", 2 * GIB, denoise_needs(512), "d").is_none());
         assert!(short_of("c", 4 * GIB, denoise_needs(1024), "d").is_some());
         assert!(short_of("c", 5 * GIB, denoise_needs(1024), "d").is_none());
@@ -10226,8 +10669,9 @@ mod tests {
     /// A removal short of the card after its own give-back has the
     /// engine let go of what a develop makes again and asks once more:
     /// with the room then, it begins and nothing is refused; short
-    /// still, it is refused, the message naming what went. With no
-    /// release, or nothing in it, the refusal is as before.
+    /// still, it is refused with the card as it is then, what went the
+    /// log's. With no release, or nothing in it, the refusal is as
+    /// before.
     #[test]
     fn the_engine_lets_go_for_a_removal_before_it_is_refused() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10262,8 +10706,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(
             why,
-            "the card has 5.9 GiB free, short of the 6.3 GiB a removal at 512 needs; another program may be using it; \
-             the engine let go of the sharpen's working set (0.2 GiB), 5.9 GiB free before and 6.1 after, short still"
+            "the card has 6.1 GiB free, short of the 6.3 GiB a removal at 512 needs; another program may be using it"
         );
         assert!(ai.take_fill_short());
         assert_eq!(ai.take_short().as_deref(), Some(why.as_str()));
@@ -10400,6 +10843,322 @@ mod tests {
             crate::worker::learned_failure(&e),
             crate::walk::NoLearned::Failed(_)
         ));
+    }
+
+    /// A test's Ai on a card with `free` free whose release lets go of
+    /// `bytes`, counting its calls.
+    fn denoiser_on_card(free: u64, bytes: u64) -> (Ai, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
+        ai.free_memory_by_test = Some(free);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        let mut left = Some(vec![("the sharpen's working set", bytes)]);
+        ai.set_card_release(Some(Box::new(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+            left.take().unwrap_or_default()
+        })));
+        (ai, calls)
+    }
+
+    /// The learned denoiser short of the card at its tile of 512, as on
+    /// issue 130's 4 GB card (1.8 GiB free, 1.95 needed), takes its
+    /// rungs in order: the engine lets go of what a develop makes again
+    /// and it runs at its tile; with nothing let go, or not enough, the
+    /// largest smaller tile the card has the room for; short at every
+    /// tile, it is refused in the words it always had, and the walk's
+    /// engine denoise stands in. A handled short leaves no refusal.
+    #[test]
+    fn the_denoisers_ladder_ends_in_the_engines_denoise() {
+        use std::sync::atomic::Ordering;
+        let free = 18 * GIB / 10;
+        // 0.5 let go: 2.3 free, room at 512.
+        let (mut ai, calls) = denoiser_on_card(free, GIB / 2);
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(ai.take_short().is_none());
+        assert!(!ai.short_failed());
+        // Nothing let go: 384 needs 1.05.
+        let (mut ai, _) = denoiser_on_card(free, 0);
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        assert!(ai.take_short().is_none());
+        assert!(!ai.short_failed());
+        // Not enough let go for 512: the smaller tile still.
+        let (mut ai, _) = denoiser_on_card(GIB, GIB / 10);
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        // Room at 256 alone.
+        let (mut ai, _) = denoiser_on_card(GIB, 0);
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(256));
+        // From 1024, 512 is the first smaller tile asked.
+        let (mut ai, _) = denoiser_on_card(2 * GIB, 0);
+        assert_eq!(ai.denoise_room_at(1024).unwrap(), DenoiseOn::Tile(512));
+        // Short at every tile: refused in the words the window has
+        // always shown, a failure for the set.
+        let (mut ai, _) = denoiser_on_card(GIB / 2, GIB / 10);
+        let short = ai.denoise_room_at(512).expect_err("refused");
+        assert_eq!(
+            short.0,
+            "the card has 0.6 GiB free, short of the 1.9 GiB the learned denoiser at a tile of 512 needs; another program may be using it"
+        );
+        assert_eq!(ai.take_short().as_deref(), Some(short.0.as_str()));
+        assert!(ai.short_failed());
+        // Refused, the walk takes the engine's own denoise in its place.
+        assert!(matches!(
+            crate::worker::learned_failure(&anyhow::Error::new(short)),
+            crate::walk::NoLearned::Short(_)
+        ));
+        // The card with the room, or its memory not known: no rung.
+        let (mut ai, calls) = denoiser_on_card(3 * GIB, GIB);
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        let mut unknown = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu]);
+        assert_eq!(unknown.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        // Its own sessions given back first: room then, nothing let go.
+        let (mut ai, calls) = denoiser_on_card(free, GIB);
+        ai.freed_by_test = GIB;
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        // Its own tile past the whole card: the engine lets go before the
+        // smaller tiles are judged (0.8 and 0.4 let go: room at 384).
+        let (mut ai, calls) = denoiser_on_card(8 * GIB / 10, 4 * GIB / 10);
+        ai.card_by_test = Some(Some(4 * GIB));
+        assert_eq!(ai.denoise_room_at(1024).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        // Its own sessions given back there too (0.4 of them).
+        let (mut ai, calls) = denoiser_on_card(8 * GIB / 10, 0);
+        ai.card_by_test = Some(Some(4 * GIB));
+        ai.freed_by_test = 4 * GIB / 10;
+        assert_eq!(ai.denoise_room_at(1024).unwrap(), DenoiseOn::Tile(384));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        // A canceled export lets nothing go.
+        let (mut ai, calls) = denoiser_on_card(GIB / 2, GIB);
+        ai.set_patience(Some(Patience {
+            tries: 1,
+            wait: std::time::Duration::ZERO,
+            canceled: Arc::new(|| true),
+        }));
+        assert!(ai.denoise_room_at(512).is_err());
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// A patient walk (an export) short of the denoiser's tile runs at a
+    /// smaller one at once, waiting for nothing; short at every tile, it
+    /// waits its tries once, at the smallest, and is refused.
+    #[test]
+    fn an_export_short_of_the_denoisers_tile_runs_at_a_smaller_one() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu]);
+        ai.free_memory_by_test = Some(18 * GIB / 10);
+        let looked = Arc::new(AtomicUsize::new(0));
+        let counted = looked.clone();
+        ai.set_patience(Some(Patience {
+            tries: 3,
+            wait: std::time::Duration::ZERO,
+            canceled: Arc::new(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+        }));
+        let waits = waits_by_test();
+        assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        // A smaller tile fits: no wait, nothing met.
+        assert_eq!(waits_by_test(), waits, "no wait");
+        assert_eq!(looked.load(Ordering::SeqCst), 0);
+        assert!(ai.take_short().is_none());
+        assert!(!ai.hit_short() && !ai.short_failed());
+        // Short at every tile: it waits its tries at the smallest, then
+        // is refused at its own, a failure met for the set.
+        ai.free_memory_by_test = Some(GIB / 2);
+        let short = ai.denoise_room_at(512).expect_err("refused");
+        assert_eq!(waits_by_test(), waits + 2);
+        assert!(short.0.contains("at a tile of 512"), "{short}");
+        assert!(ai.hit_short() && ai.short_failed());
+        // The next ask of the walk waits for nothing.
+        assert!(ai.denoise_room_at(512).is_err());
+        assert_eq!(waits_by_test(), waits + 2, "once a set");
+    }
+
+    /// A short's figures are said to a tenth in the log, or to a
+    /// hundredth where a tenth would round away what is compared.
+    #[test]
+    fn a_shorts_figures_are_what_is_compared() {
+        assert_eq!(gib_said(denoise_needs(512)), "1.95");
+        assert_eq!(gib_said(remove_needs(1024, false)), "7.1");
+        assert_eq!(gib_said(GIB), "1.0");
+        assert_eq!(gib_said(18 * GIB / 10), "1.8");
+    }
+
+    /// A removal refused for the card leaves its need and the card's
+    /// free memory for the window's word on it, taken once.
+    #[test]
+    fn a_refused_removal_leaves_its_figures() {
+        let image = WorkingImage::new(200, 100);
+        let patch = remove_patch(33);
+        let region = patch.region(image.width, image.height).unwrap();
+        let mut ai = on_card(2 * GIB, 0);
+        assert!(matches!(
+            ai.fill(&patch, &region, &image),
+            Err(NoFill::Failed(_))
+        ));
+        assert!(ai.short_failed());
+        assert_eq!(
+            ai.take_short_figures(),
+            Some((remove_needs(512, false), 2 * GIB))
+        );
+        assert_eq!(ai.take_short_figures(), None);
+    }
+
+    /// A set whose frames are short of the card by what the engine's
+    /// own working sets hold, as issue 130's 4 GB card, never waits:
+    /// each frame lets go of the sets its walk made again before any
+    /// wait, the learned denoiser runs at its own tile, and a removal
+    /// is made.
+    #[test]
+    fn a_set_short_by_the_engines_own_sets_never_waits() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let patience = || {
+            Some(Patience {
+                tries: PATIENT_TRIES,
+                wait: std::time::Duration::ZERO,
+                canceled: Arc::new(|| false),
+            })
+        };
+        let waits = waits_by_test();
+        let (mut ai, calls) = denoiser_on_card(18 * GIB / 10, 0);
+        let c = calls.clone();
+        ai.set_card_release(Some(Box::new(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+            vec![("the sharpen's working set", 12 * GIB / 10)]
+        })));
+        for _ in 0..3 {
+            ai.free_memory_by_test = Some(18 * GIB / 10);
+            ai.set_patience(patience());
+            assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Card);
+            assert!(!ai.hit_short() && !ai.short_failed());
+        }
+        // A card a smaller tile fits: no wait either.
+        ai.set_card_release(None);
+        for _ in 0..3 {
+            ai.free_memory_by_test = Some(18 * GIB / 10);
+            ai.set_patience(patience());
+            assert_eq!(ai.denoise_room_at(512).unwrap(), DenoiseOn::Tile(384));
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 3, "let go each frame");
+        let image = WorkingImage::new(200, 100);
+        let mut ai = on_card(2 * GIB, 0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        ai.set_card_release(Some(Box::new(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+            vec![("the sharpen's working set", 5 * GIB)]
+        })));
+        for i in 0..3 {
+            ai.free_memory_by_test = Some(2 * GIB);
+            ai.set_patience(patience());
+            let patch = remove_patch(50 + i);
+            let region = patch.region(image.width, image.height).unwrap();
+            ai.fill(&patch, &region, &image).expect("made");
+            assert!(!ai.hit_short() && !ai.short_failed());
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        assert_eq!(waits_by_test(), waits, "no waits");
+    }
+
+    /// A removal refused by this round's own ask is said with its
+    /// refusal's figure though the card freed a little since; one asked
+    /// in no round says it only while the refusal holds.
+    #[test]
+    fn a_refusal_just_met_is_said_whatever_the_card_frees_after() {
+        let image = WorkingImage::new(200, 100);
+        let patch = remove_patch(63);
+        let region = patch.region(image.width, image.height).unwrap();
+        let mut ai = on_card(2 * GIB, 0);
+        assert!(matches!(
+            ai.fill(&patch, &region, &image),
+            Err(NoFill::Failed(_))
+        ));
+        ai.free_memory_by_test = Some(2 * GIB + (10 << 20));
+        let retouch = retouch_of(&patch);
+        let ids = [patch.id];
+        let said = vec![(patch.name(), remove_needs(512, false), 2 * GIB)];
+        assert_eq!(
+            ai.card_shorts(&retouch, Some(&ids), &ids, &[patch.name()]),
+            said
+        );
+        assert!(ai.card_shorts(&retouch, Some(&ids), &[], &[]).is_empty());
+        ai.free_memory_by_test = Some(2 * GIB);
+        assert_eq!(ai.card_shorts(&retouch, Some(&ids), &[], &[]), said);
+        assert!(
+            ai.card_shorts(&retouch, Some(&ids), &ids, &[]).is_empty(),
+            "asked again"
+        );
+    }
+
+    /// An export's learned mask short of the card goes to the CPU as it
+    /// always did: the engine's sets are not let go for it.
+    #[test]
+    fn an_exports_mask_lets_nothing_go() {
+        use std::sync::atomic::Ordering;
+        let (mut ai, released, _) = mask_on_card(GIB, vec![("the sharpen's working set", 8 * GIB)]);
+        ai.set_patience(Some(Patience {
+            tries: 1,
+            wait: std::time::Duration::ZERO,
+            canceled: Arc::new(|| false),
+        }));
+        ai.set_cpu_fallback(true);
+        assert!(ai.mask_room(MaskModel::People).is_ok());
+        assert!(ai.masks_on_cpu());
+        assert_eq!(released.load(Ordering::Relaxed), 0);
+    }
+
+    /// A removal on a card under the remove's need is refused for the
+    /// card before its model is asked for: not downloaded, it is still
+    /// the card that is said, and nothing is offered.
+    #[test]
+    fn a_card_under_the_need_is_said_before_a_missing_model() {
+        let image = WorkingImage::new(200, 100);
+        let patch = remove_patch(62);
+        let region = patch.region(image.width, image.height).unwrap();
+        let mut ai = Ai::for_test(Store::at("no-store"), vec![Provider::WebGpu, Provider::Cpu]);
+        ai.card_by_test = Some(Some(4 * GIB));
+        assert!(matches!(
+            ai.fill(&patch, &region, &image),
+            Err(NoFill::Card { need, have }) if need == remove_needs(512, false) && have == 4 * GIB
+        ));
+    }
+
+    /// A removal on a card whose whole memory is under the remove's need
+    /// is refused at once with the need and the card, before any
+    /// give-back or release, and the worker is not told to give the
+    /// card back.
+    #[test]
+    fn a_removal_past_the_whole_card_is_refused_at_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let image = WorkingImage::new(200, 100);
+        let patch = remove_patch(61);
+        let region = patch.region(image.width, image.height).unwrap();
+        let mut ai = on_card(2 * GIB, GIB);
+        ai.card_by_test = Some(Some(4 * GIB));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        ai.set_card_release(Some(Box::new(move || {
+            c.fetch_add(1, Ordering::Relaxed);
+            Vec::new()
+        })));
+        assert!(matches!(
+            ai.fill(&patch, &region, &image),
+            Err(NoFill::Card { need, have }) if need == remove_needs(512, false) && have == 4 * GIB
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 0, "nothing let go");
+        assert!(!ai.take_fill_short(), "nothing given back");
+        assert!(!ai.short_failed());
+        // A card the remove fits: asked as ever.
+        ai.card_by_test = Some(Some(8 * GIB));
+        assert!(matches!(
+            ai.fill(&patch, &region, &image),
+            Err(NoFill::Failed(_))
+        ));
+        assert!(ai.take_fill_short());
     }
 
     /// No session is dropped to give the card back while a merge runs.

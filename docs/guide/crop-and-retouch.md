@@ -210,7 +210,17 @@ line says "preparing..." while it lasts, as it does whenever a model
 takes more than a moment to load. Choosing one whose model is not
 downloaded offers the download; choose it again once it is here. On a
 machine without a GPU the two removes are greyed, and the tooltip says
-why. The generative remove's models are 16-bit, so the GPU must run
+why. So they are on a graphics card with less memory than the remove
+needs, 6.3 GiB: the tooltip says "Needs 6.3 GiB VRAM, 4.0 available.
+Use Patch." with your card's figure, a new Fill is **Patch**, and a
+Fill already marked Fast or Best is left as it was. A card big enough
+but busy right now (another program holding its memory) leaves the
+fill as it was too, once greycard has let go of what it can, and the
+status line says the same sentence with the memory free. An export
+of the frame is not written on a card too small, and says the same; on
+a busy card it lets go and waits a little, and is written if the card
+frees up. The
+generative remove's models are 16-bit, so the GPU must run
 16-bit floats in its shaders: NVIDIA cards before the GTX 16 and RTX
 20 series (a GTX 1080, say) cannot, and a fill asked of them fails at
 once with the log saying so; **Patch** still works there. A Fill drawn

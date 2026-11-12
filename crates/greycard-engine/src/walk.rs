@@ -1149,6 +1149,10 @@ pub struct Walked {
     pub sharpen: Option<SharpenStats>,
     /// The patches with the sources the retouch chose for them.
     pub sources: Vec<Patch>,
+    /// The Fill patches the picture left as they were, by id, whether
+    /// this walk's retouch or the kept point's it started from made it;
+    /// none where no retouch made the picture.
+    pub unmade: Option<Vec<u64>>,
     /// What was left of the edit: a fill refused, by name.
     pub without: Vec<String>,
     /// The kept point the walk started from; none for the decode.
@@ -1471,6 +1475,7 @@ fn attempt(
         dehaze: ran.dehaze,
         sharpen: None,
         sources: ran.sources,
+        unmade: None,
         without: Vec::new(),
         from,
         begin,
@@ -1693,6 +1698,7 @@ fn attempt(
             }
         }
     }
+    walked.unmade = st.retouch.as_ref().map(|a| a.unmade.clone());
     walked.buf = st.buf;
     walked.meta = st.meta;
     walked.taps = st.taps;

@@ -90,6 +90,16 @@ design note behind it.
 
 ### Fixes
 
+- The learned denoiser runs on a 4 GB card. The develop's own working
+  memory had left it too little room; the develop now lets go first,
+  and the denoiser works in smaller tiles when it must, slower and
+  with the same result
+  ([§646](https://github.com/jessolmstead/greycard/blob/master/docs/notes/646-the-denoiser-and-the-removal-on-a-small-card.md)).
+- A card too small for the Fast and Best removals (under 6.3 GiB)
+  greys them and says so ("Needs 6.3 GiB VRAM, 4.0 available. Use
+  Patch."); a new Fill there is Patch. A card that is only busy says
+  the same on the status line in place of a long failure
+  ([§646](https://github.com/jessolmstead/greycard/blob/master/docs/notes/646-the-denoiser-and-the-removal-on-a-small-card.md)).
 - A frame moved to another folder while it was open could be listed
   a second time at its old place with a blank edit, and a rating
   there would have written over a `.gcd` left behind. The old place

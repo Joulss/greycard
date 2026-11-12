@@ -49,7 +49,7 @@ use self::{
     thumbs::{cached_thumbnail_noting, thumb_lookup},
 };
 
-pub(crate) use self::base::{learned_failure, network};
+pub(crate) use self::base::{learned_failure, network, run_tiling};
 #[cfg(any(test, feature = "testing"))]
 pub use self::prefetch::{behind_prefetch, claim};
 pub use self::thumbs::{THUMB_RECIPE, THUMB_WIDTH, count_thumb_cache};
@@ -95,7 +95,7 @@ use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Retouch;
 use greycard_edit::{Edit, Noise};
 
-use crate::ai::{Ai, Key, NoDenoiser, NoFill};
+use crate::ai::{Ai, DenoiseOn, Key, NoDenoiser, NoFill};
 use crate::version_key::Key as Frame;
 
 /// The frame a develop is for: its file, and its version, none for the
@@ -304,6 +304,10 @@ pub struct FillReport {
     pub engines: Vec<(u64, crate::ai::Engine)>,
     /// Patches left as they were, and why: the model could not run.
     pub failed: Vec<(String, String)>,
+    /// Of those, the removals refused for the card's memory: the name,
+    /// the need, and the card's free memory, bytes, for the window's
+    /// word on them; the reason in `failed` is the log's.
+    pub short: Vec<(String, u64, u64)>,
     /// Fill patches left as they were for now, by id: the picture is
     /// delivered first, and the worker makes these after it, one a
     /// develop of the same generation.
@@ -733,6 +737,10 @@ struct Queue {
     /// (`Ai::fill_by_test`): for a test of the rounds.
     #[cfg(test)]
     fill_by_test: Option<f32>,
+    /// The patient waits the worker had slept by the end of each export
+    /// frame, in order (`crate::ai::waits_by_test`).
+    #[cfg(test)]
+    waits_by_test: Vec<usize>,
     /// The shelf's budget, as a test has it, for a shelf made anew.
     #[cfg(test)]
     shelf_by_test: Option<shelf::Budget>,

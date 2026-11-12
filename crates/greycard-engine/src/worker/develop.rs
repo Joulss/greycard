@@ -326,7 +326,16 @@ pub(super) fn develop_round(
     }
     models.pending_after(&h.kept);
     round.ahead = models.ahead;
-    let fills = std::mem::take(&mut models.fills);
+    let mut fills = std::mem::take(&mut models.fills);
+    // What the card keeps from the picture shown, worked out afresh on
+    // every develop, one that started past the retouch too.
+    let failed: Vec<String> = fills.failed.iter().map(|(n, _)| n.clone()).collect();
+    fills.short = models.card_shorts(
+        &edit.retouch,
+        walked.unmade.as_deref(),
+        &fills.pending,
+        &failed,
+    );
     h.filling = !fills.pending.is_empty();
     let mut stages: Stages = walked
         .seconds

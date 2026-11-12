@@ -7130,6 +7130,12 @@ msgid ""
 "click or drag to repair; scroll for size; drag pins to move; Esc to finish"
 msgstr ""
 
+#. A card short of the generative remove: its need and the card's
+#. memory, whole or free now, in GiB to a tenth.
+#: crates/greycard-ui/src/panel/retouch.rs:28
+msgid "Needs {need} GiB VRAM, {have} available. Use Patch."
+msgstr ""
+
 #: crates/greycard-ui/src/panel/sort.rs:24 crates/greycard-ui/src/sort.rs:185
 msgid "Hand order"
 msgstr ""

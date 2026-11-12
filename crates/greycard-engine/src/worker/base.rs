@@ -314,6 +314,17 @@ impl<'a> WorkerModels<'a> {
 }
 
 impl WorkerModels<'_> {
+    /// What the card keeps from the picture shown ([`Ai::card_shorts`]).
+    pub(super) fn card_shorts(
+        &self,
+        retouch: &Retouch,
+        unmade: Option<&[u64]>,
+        pending: &[u64],
+        failed: &[String],
+    ) -> Vec<(String, u64, u64)> {
+        self.ai.card_shorts(retouch, unmade, pending, failed)
+    }
+
     /// The fills still to make after a walk that did not run the
     /// retouch but started past it: those its patched picture left
     /// unmade that could be made on the base, by patch id. A walk that
@@ -380,8 +391,7 @@ impl crate::walk::Models for WorkerModels<'_> {
         }
         if let (Some(c), Some(tiling)) = (cache, self.ai.denoiser_tiling(model)) {
             let start = Instant::now();
-            let key = greycard_ai::DenoiseCache::key(model, tiling, prepared);
-            if let Some(rgb) = c.read(key, prepared) {
+            if let Some(rgb) = cached(c, model, tiling, prepared) {
                 self.learned = LearnedReport::Cached {
                     seconds: start.elapsed().as_secs_f64(),
                 };
@@ -389,16 +399,20 @@ impl crate::walk::Models for WorkerModels<'_> {
             }
         }
         self.denoiser(model)?;
-        if let Err(short) = self.ai.denoise_room_for(model) {
-            if self.patient {
-                self.short = Some(format!("the learned denoiser: {short}"));
+        let on = match self.ai.denoise_room_for(model) {
+            Ok(on) => on,
+            Err(short) => {
+                if self.patient {
+                    self.short = Some(format!("the learned denoiser: {short}"));
+                }
+                return Err(NoLearned::Short(short.0));
             }
-            return Err(NoLearned::Short(short.0));
-        }
+        };
         // Loaded again when the card was given back on the way.
         let denoiser = self.denoiser(model)?;
-        let (rgb, report) =
-            network(frame, prepared, model, denoiser, cache).map_err(|e| learned_failure(&e))?;
+        let tiling = run_tiling(on, denoiser.tiling());
+        let (rgb, report) = network(frame, prepared, model, denoiser, cache, tiling)
+            .map_err(|e| learned_failure(&e))?;
         self.learned = report;
         Ok(rgb)
     }
@@ -475,6 +489,18 @@ impl crate::walk::Models for WorkerModels<'_> {
                 self.fills.no_gpu.push(patch.name());
                 None
             }
+            // Never on this card: said once, not asked again, and an
+            // export of it fails.
+            Err(NoFill::Card { need, have }) => {
+                let why = crate::ai::FillNotHere::Card { need, have }.words();
+                tracing::info!("fill {}: {why}", patch.name());
+                if self.patient {
+                    self.short = Some(format!("fill {}: {why}", patch.name()));
+                }
+                self.fills.short.push((patch.name(), need, have));
+                self.fills.failed.push((patch.name(), why));
+                None
+            }
             Err(NoFill::Failed(why)) => {
                 if let Some(short) = &short
                     && self.patient
@@ -486,6 +512,11 @@ impl crate::walk::Models for WorkerModels<'_> {
                 // models and asks for it again, once (`ask_fills_again`).
                 if short.is_some() && !self.patient {
                     self.fills.pending.push(patch.id);
+                }
+                // What the window says of a removal the card was short
+                // of, now or still: its need and the card's free memory.
+                if let Some((need, free)) = self.ai.take_short_figures() {
+                    self.fills.short.push((patch.name(), need, free));
                 }
                 self.fills.failed.push((patch.name(), why));
                 None
@@ -586,15 +617,54 @@ pub(crate) fn learned_failure(e: &anyhow::Error) -> NoLearned {
     }
 }
 
-/// The network's camera RGB of `prepared`: from the disk cache when
-/// it is there, else run and put there, once the card has the memory
-/// for it ([`crate::ai::denoise_room`]).
+/// The tiling the learned denoiser runs at, as the card has the room
+/// for it ([`DenoiseOn`]): its own, `held`, or the smaller tile where
+/// the card is short of its own.
+pub(crate) fn run_tiling(
+    on: DenoiseOn,
+    held: greycard_ai::denoise::Tiling,
+) -> greycard_ai::denoise::Tiling {
+    match on {
+        DenoiseOn::Tile(tile) => greycard_ai::denoise::Tiling { tile, ..held },
+        DenoiseOn::Card => held,
+    }
+}
+
+/// The learned denoiser's answer for `prepared` kept in `cache` at
+/// `tiling`, or at one of the smaller tiles a card short of it runs at
+/// ([`crate::ai::DENOISE_SMALLER_TILES`]): the same answer, kept under
+/// the tiling it ran at.
+pub(crate) fn cached(
+    cache: &greycard_ai::DenoiseCache,
+    model: &'static greycard_ai::Model,
+    tiling: greycard_ai::denoise::Tiling,
+    prepared: &Prepared,
+) -> Option<Vec<f32>> {
+    let smaller = crate::ai::DENOISE_SMALLER_TILES
+        .into_iter()
+        .filter(|&t| t < tiling.tile);
+    std::iter::once(tiling.tile)
+        .chain(smaller)
+        .find_map(|tile| {
+            let at = greycard_ai::denoise::Tiling { tile, ..tiling };
+            cache.read(
+                greycard_ai::DenoiseCache::key(model, at, prepared),
+                prepared,
+            )
+        })
+}
+
+/// The network's camera RGB of `prepared` at `tiling`: from the disk
+/// cache when it is there ([`cached`]), else run and put there under
+/// `tiling`, once the card has the memory for it
+/// ([`crate::ai::denoise_room`]).
 pub(crate) fn network(
     frame: &RawFrame,
     prepared: &Prepared,
     model: &'static greycard_ai::Model,
     denoiser: &mut greycard_ai::Denoiser,
     cache: Option<&greycard_ai::DenoiseCache>,
+    tiling: greycard_ai::denoise::Tiling,
 ) -> anyhow::Result<(Vec<f32>, LearnedReport)> {
     use anyhow::Context;
     bayer_only(frame)?;
@@ -605,10 +675,9 @@ pub(crate) fn network(
     let noise = prepared
         .noise_model()
         .context("the learned denoiser needs the frame's noise model")?;
-    let tiling = denoiser.tiling();
     let start = Instant::now();
     let key = cache.map(|c| (c, greycard_ai::DenoiseCache::key(model, tiling, prepared)));
-    let (rgb, report) = match key.and_then(|(c, k)| c.read(k, prepared)) {
+    let (rgb, report) = match cache.and_then(|c| cached(c, model, tiling, prepared)) {
         Some(rgb) => (
             rgb,
             LearnedReport::Cached {
@@ -693,5 +762,113 @@ impl FrameKept {
             turn,
             &mut crate::walk::NoModels,
         )
+    }
+}
+
+#[cfg(test)]
+mod learned_tests {
+    use greycard_ai::denoise::Tiling;
+    use greycard_core::develop::{DevelopSettings, prepare};
+    use greycard_core::raw::{
+        Calibration, CfaColor, CfaPattern, LevelPattern, Levels, Orientation, Samples, SensorLayout,
+    };
+
+    use super::*;
+
+    /// A flat RGGB frame of `side` square.
+    fn frame(side: usize) -> RawFrame {
+        let pattern = CfaPattern::rggb();
+        let mut samples = Vec::new();
+        for y in 0..side {
+            for x in 0..side {
+                samples.push(match pattern.color_at(y, x) {
+                    CfaColor::Red => 600u16,
+                    CfaColor::Green => 900,
+                    CfaColor::Blue => 350,
+                    CfaColor::Other(_) => unreachable!(),
+                });
+            }
+        }
+        RawFrame {
+            make: "Test".into(),
+            model: "Cam".into(),
+            other_names: Vec::new(),
+            width: side,
+            height: side,
+            channels: 1,
+            layout: SensorLayout::Cfa(pattern),
+            samples: Samples::U16(samples),
+            levels: Levels {
+                black: LevelPattern::uniform(100.0, 1),
+                white: LevelPattern::uniform(1100.0, 1),
+                black_deltas: None,
+            },
+            as_shot_coefficients: Some([2.0, 1.0, 4.0]),
+            calibrations: vec![Calibration {
+                illuminant: 21,
+                color_matrix: vec![
+                    1.7167, -0.3557, -0.2534, -0.6667, 1.6165, 0.0158, 0.0176, -0.0428, 0.9421,
+                ],
+                forward_matrix: None,
+            }],
+            crop: None,
+            orientation: Orientation::Normal,
+            shot: Default::default(),
+            dng: Default::default(),
+        }
+    }
+
+    fn at(tile: usize) -> Tiling {
+        Tiling {
+            tile,
+            ..Tiling::default()
+        }
+    }
+
+    /// The learned denoiser runs at its own tiling on a card with the
+    /// room, the smaller tile, its margin kept, where the card is short.
+    #[test]
+    fn the_denoiser_runs_at_the_tile_the_card_has_room_for() {
+        assert_eq!(run_tiling(DenoiseOn::Card, at(512)), at(512));
+        assert_eq!(run_tiling(DenoiseOn::Tile(384), at(512)), at(384));
+        assert_eq!(run_tiling(DenoiseOn::Tile(512), at(1024)).margin, 96);
+    }
+
+    /// An answer a short card kept at a smaller tile is read back for
+    /// the tier's own: 384 and 256 under 512, and 512 under 1024; never
+    /// one at a larger tile.
+    #[test]
+    fn the_answer_at_a_smaller_tile_is_read_back() {
+        let frame = frame(8);
+        let prepared = prepare(&frame, &DevelopSettings::default(), false).unwrap();
+        let model = &greycard_ai::registry::DENOISE_FAST;
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-learned-tiles-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        crate::testing::remove_dir_retry(&dir);
+        let cache = greycard_ai::DenoiseCache::at(dir.clone());
+        let rgb = vec![0.25f32; prepared.width * prepared.height * 3];
+        let put = |tile: usize| {
+            let key = greycard_ai::DenoiseCache::key(model, at(tile), &prepared);
+            cache.write(key, &frame, &prepared, &rgb).unwrap();
+        };
+        assert!(cached(&cache, model, at(512), &prepared).is_none());
+        put(256);
+        assert!(cached(&cache, model, at(512), &prepared).is_some());
+        assert!(cached(&cache, model, at(1024), &prepared).is_some());
+        assert!(cached(&cache, model, at(256), &prepared).is_some());
+        crate::testing::remove_dir_retry(&dir);
+        put(512);
+        assert!(cached(&cache, model, at(1024), &prepared).is_some());
+        assert!(
+            cached(&cache, model, at(384), &prepared).is_none(),
+            "never a larger tile"
+        );
+        crate::testing::remove_dir_retry(&dir);
+        put(1024);
+        assert!(cached(&cache, model, at(512), &prepared).is_none());
+        crate::testing::remove_dir_retry(&dir);
     }
 }

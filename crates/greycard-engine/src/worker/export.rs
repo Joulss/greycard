@@ -229,6 +229,12 @@ pub(super) fn walk_for_export(
     // A model the card stayed short of fails the item, rather than
     // write a picture without what the edit asks for.
     if let Some(why) = models.short.take() {
+        // A removal's said as the window says it; the reason is the
+        // log's.
+        if let Some(&(_, need, have)) = models.fills.short.first() {
+            tracing::info!("{why}; not written");
+            return Err(crate::ai::FillNotHere::Card { need, have }.words());
+        }
         return Err(format!("{why}; not written"));
     }
     if let Some(NoLearned::Short(why)) = &walked.meta.stood_in {

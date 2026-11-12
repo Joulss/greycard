@@ -141,6 +141,11 @@ pub(super) fn run(
     // Sets whose frames met a short the card did not recover from: their
     // later frames ask the card once, not three times.
     let mut short_sets = ShortSets::default();
+    // Sets whose frames were refused a run for the card, no fallback
+    // taking it, or tried again for one: their later frames take a
+    // mask's CPU at once and are not tried again. A short a smaller tile
+    // handled is neither: no wait was spent on it.
+    let mut failed_sets = ShortSets::default();
     // A develop's fills asked for again after a short, once.
     let mut asked_again = false;
     // A part's people were found and the part is not made yet: a
@@ -175,6 +180,11 @@ pub(super) fn run(
     // the worker has no device.
     #[cfg(test)]
     let mut fills_release_by_test: Option<FillsReleaseByTest> = None;
+    // A test's card's free memory as it set it: what each export frame
+    // starts from where a test's release lets go, its walk making the
+    // sets again.
+    #[cfg(test)]
+    let mut free_by_test_at: Option<u64> = None;
     loop {
         let mut device = None;
         let mut built = None;
@@ -205,6 +215,12 @@ pub(super) fn run(
                 if q.stopping {
                     return;
                 }
+                // The store first, so a test's other seams sent with it
+                // land on the models it makes.
+                #[cfg(test)]
+                if let Some(store) = q.models_by_test.take() {
+                    ai = Ai::for_test_on_disk(store);
+                }
                 #[cfg(test)]
                 if let Some(v) = q.fill_by_test.take() {
                     ai.fill_by_test = Some(v);
@@ -217,15 +233,12 @@ pub(super) fn run(
                     }
                 }
                 #[cfg(test)]
-                if let Some(store) = q.models_by_test.take() {
-                    ai = Ai::for_test_on_disk(store);
-                }
-                #[cfg(test)]
                 if let Some(budget) = q.shelf_by_test.take() {
                     shelf = Some(Shelf::new(budget));
                 }
                 #[cfg(test)]
                 if let Some((free, freed)) = q.free_by_test.take() {
+                    free_by_test_at = Some(free);
                     ai.free_memory_by_test = Some(free);
                     ai.freed_by_test = freed;
                     ai.set_providers_by_test(vec![
@@ -651,6 +664,8 @@ pub(super) fn run(
         // done after its last; a panic in it is that frame's failure.
         if let Job::ExportFrame { set, index, frame } = job {
             let mut panicked = false;
+            // The frame was tried again for a short.
+            let mut retried = false;
             // A short card is asked again a few seconds apart, the set's
             // cancel looked at between, once only after the set met one.
             let patience = crate::ai::Patience {
@@ -693,11 +708,23 @@ pub(super) fn run(
                         // A mask short of the card falls to the CPU only
                         // once the card was given back and the frame tried
                         // again, or in a set whose frame before met a short.
-                        let fall = tried_again || short_sets.contains(&set);
+                        let fall = tried_again || failed_sets.contains(&set);
                         ai.set_cpu_fallback(fall);
                         if let Some(o) = set_ai.as_mut() {
                             o.set_cpu_fallback(fall);
                         }
+                        // As the window's jobs: a removal, a mask, or the
+                        // learned denoiser short of the card has the engine
+                        // let go of what a develop makes again.
+                        let release = gpu.as_ref().map(card_release);
+                        #[cfg(test)]
+                        let release =
+                            release.or_else(|| fills_release_by_test.clone().map(|r| r.release()));
+                        #[cfg(test)]
+                        if fills_release_by_test.is_some() && free_by_test_at.is_some() {
+                            ai.free_memory_by_test = free_by_test_at;
+                        }
+                        ai.set_card_release(release);
                         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let note = resolved.note();
                             let Some(path) = resolved.path().map(std::path::Path::to_path_buf)
@@ -751,6 +778,7 @@ pub(super) fn run(
                                 let other = set_ai.get_or_insert_with(Ai::new);
                                 other.set_patience(Some(patience.clone()));
                                 other.set_cpu_fallback(fall);
+                                other.set_card_release(gpu.as_ref().map(card_release));
                                 ai.lend_parts(other);
                                 let written = export_other(
                                     &frame,
@@ -778,9 +806,14 @@ pub(super) fn run(
                                 Err(message) => crate::queue::Done::Failed { message },
                             }
                         }));
-                        let short = ai.hit_short() || set_ai.as_ref().is_some_and(Ai::hit_short);
+                        ai.set_card_release(None);
+                        if let Some(o) = set_ai.as_mut() {
+                            o.set_card_release(None);
+                        }
+                        let short =
+                            ai.short_failed() || set_ai.as_ref().is_some_and(Ai::short_failed);
                         if !tried_again
-                            && !short_sets.contains(&set)
+                            && !failed_sets.contains(&set)
                             && short
                             && matches!(held, Ok(crate::queue::Done::Failed { .. }))
                             && give_back(
@@ -791,6 +824,7 @@ pub(super) fn run(
                             )
                         {
                             tried_again = true;
+                            retried = true;
                             ai.retry_patiently();
                             if let Some(o) = set_ai.as_mut() {
                                 o.retry_patiently();
@@ -819,6 +853,8 @@ pub(super) fn run(
                 b.kept.forget_device();
             }
             let hit = ai.hit_short() || set_ai.as_ref().is_some_and(Ai::hit_short);
+            let failed =
+                retried || ai.short_failed() || set_ai.as_ref().is_some_and(Ai::short_failed);
             // A mask the frame made on the CPU, or refused: the card is
             // given back across the worker's models after it.
             let mask_short =
@@ -832,9 +868,18 @@ pub(super) fn run(
             if hit {
                 short_sets.insert(&set);
             }
+            if failed {
+                failed_sets.insert(&set);
+            }
             if finished {
                 short_sets.remove(&set);
+                failed_sets.remove(&set);
             }
+            #[cfg(test)]
+            lock.lock()
+                .expect("worker queue")
+                .waits_by_test
+                .push(crate::ai::waits_by_test());
             if panicked {
                 // The base in hand may be half made; the shelf's were
                 // finished before they were put there and no job
@@ -1015,6 +1060,14 @@ pub(super) fn run(
                         let mut round = Round::first();
                         ai.clear_shorts();
                         asked_again = false;
+                        // The learned denoiser short of the card may have
+                        // the engine let go of what the develop makes
+                        // again, as a removal may.
+                        let release = gpu.as_ref().map(card_release);
+                        #[cfg(test)]
+                        let release =
+                            release.or_else(|| fills_release_by_test.clone().map(|r| r.release()));
+                        ai.set_card_release(release);
                         let (mut outcome, _) = develop_round(
                             opened,
                             &edit,
@@ -1027,6 +1080,7 @@ pub(super) fn run(
                             &deliver,
                             &mut round,
                         );
+                        ai.set_card_release(None);
                         fills_due =
                             FillsDue::after(&mut outcome, &edit, turn, round, None, base.as_mut());
                         shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
@@ -1089,6 +1143,12 @@ pub(super) fn run(
                     let mut round = Round::first();
                     ai.clear_shorts();
                     asked_again = false;
+                    // As the open's (above).
+                    let release = gpu.as_ref().map(card_release);
+                    #[cfg(test)]
+                    let release =
+                        release.or_else(|| fills_release_by_test.clone().map(|r| r.release()));
+                    ai.set_card_release(release);
                     let (mut outcome, _) = develop_round(
                         f,
                         &edit,
@@ -1101,6 +1161,7 @@ pub(super) fn run(
                         &deliver,
                         &mut round,
                     );
+                    ai.set_card_release(None);
                     fills_due =
                         FillsDue::after(&mut outcome, &edit, turn, round, None, base.as_mut());
                     shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
@@ -1781,18 +1842,19 @@ fn open_frame_masks_done(ai: &mut Ai) {
     ai.set_on_cpu(None);
 }
 
-/// What the open frame's learned masks and removals may let go of the
-/// card when it is short of them ([`Ai::set_card_release`]): the
-/// context's kept working sets, the sharpen's and the local contrast's,
-/// which the next develop makes again, as after an export of another
-/// size. The open frame's own points on the device and the picture on
-/// screen are not the context's and stay; the shelf and the prefetch
-/// hold nothing on the device ([`crate::walk::Kept::shelve`]). Called
-/// on the worker's thread inside a mask's job, with no develop
-/// running, or inside a fill job's walk at its retouch, between the
-/// ops' runs; it takes each op's lock on its set, which only a running
-/// op holds, never the queue's. A fill's walk makes the sets again
-/// past the retouch.
+/// What the open frame's learned masks, removals, and learned denoiser,
+/// and an export's, may let go of the card when it is short of them
+/// ([`Ai::set_card_release`]): the context's kept working sets, the
+/// sharpen's and the local contrast's, which the next develop makes
+/// again, as after an export of another size. The open frame's own
+/// points on the device and the picture on screen are not the
+/// context's and stay; the shelf and the prefetch hold nothing on the
+/// device ([`crate::walk::Kept::shelve`]). Called on the worker's
+/// thread inside a mask's job, with no develop running, or inside a
+/// walk (a develop's or an export's at its learned denoiser or its
+/// retouch), between the ops' runs; it takes each op's lock on its
+/// set, which only a running op holds, never the queue's. The walk
+/// makes the sets again past them.
 pub(super) fn card_release(ctx: &greycard_gpu::Context) -> crate::ai::CardRelease {
     let releaser = ctx.releaser();
     Box::new(move || {
@@ -1804,8 +1866,9 @@ pub(super) fn card_release(ctx: &greycard_gpu::Context) -> crate::ai::CardReleas
     })
 }
 
-/// What a test has the open frame's fills let go of the card where the
-/// worker has no device: `bytes` a release, each counted in `calls`.
+/// What a test has the open frame's develops, fills, and exports let go
+/// of the card where the worker has no device: `bytes` a release, each
+/// counted in `calls`.
 #[cfg(test)]
 #[derive(Clone)]
 pub(super) struct FillsReleaseByTest {

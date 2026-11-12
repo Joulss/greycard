@@ -162,6 +162,9 @@ fn probed(app: &App, here: Here, generation: u64) {
     st.sheets.models.probing = false;
     st.sheets.models.here = Some(here);
     show(&mut st, app);
+    // The card is known now: the Fill's choices greyed where it can
+    // never hold the remove.
+    crate::panel::retouch::show_patches(&st, &st.develop.edit, app);
     if st.current.is_some() {
         offer_once(&mut st, app);
     }

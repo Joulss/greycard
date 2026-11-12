@@ -820,6 +820,13 @@ impl Worker {
         cv.notify_one();
     }
 
+    /// The patient waits slept by the end of each export frame so far.
+    #[cfg(test)]
+    pub(super) fn waits_by_test(&self) -> Vec<usize> {
+        let (lock, _) = &*self.queue;
+        lock.lock().expect("worker queue").waits_by_test.clone()
+    }
+
     /// The open frame's fills made with no model, every value `v`.
     #[cfg(test)]
     pub(super) fn fill_by_test(&self, v: f32) {

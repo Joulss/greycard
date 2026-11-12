@@ -420,6 +420,13 @@ an Apple silicon Mac the model runs through Core ML, which is quicker
 than the graphics path it used before; the first run of each tier on
 a machine takes longer while Core ML prepares it.
 
+On a graphics card short of memory (a 4 GB card, say), greycard first
+lets go of what it can make again, then runs the model in smaller
+pieces: the same picture, a little slower. If even the smallest piece
+does not fit, the engine's own denoise stands in on screen and the
+status line says so; an export of that frame is not written, since it
+would not be the picture the edit asks for.
+
 **Luma** and **Chroma** mix the denoised picture with the original,
 the brightness and the color on their own. **Luma** below 100% leaves
 a little grain; when you first open a raw it is set from its ISO, 35%

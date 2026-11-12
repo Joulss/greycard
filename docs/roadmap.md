@@ -19,6 +19,10 @@ the reasoning lives in `docs/notes.md`.
       and on a mismatch read and join instead (after `advance`)
 - [ ] A failed save (full disk, a rename refused) is only logged;
       the old file is intact but the user is not told. Wants words
+- [ ] An export leaves the window's device-kept points on the card
+      (the sharpen guide's among them, §643) while its denoiser or
+      removal asks for room; on a short card the release could drop
+      them too, at the cost of the window's next develop (§646)
 - [ ] A mask's Shadows and Highlights summed with the picture's are
       not held to the slider's limit (Midtones' sum is, §644): a mask
       at +2 over a picture at +2 can fold the tones
@@ -256,8 +260,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The strings added since the French catalog was made (the white
       balance presets and later) translated, and a check that says
       which a catalog lacks
-- [ ] The learned denoiser and the removal on a card short of memory
-      (issues 130 and 64)
 
 ### Speed
 

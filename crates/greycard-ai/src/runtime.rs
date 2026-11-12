@@ -700,6 +700,40 @@ pub fn webgpu_free_memory_if_probed() -> Option<(u64, &'static str)> {
     None
 }
 
+/// [`webgpu_card_memory`] only once the adapter has been asked for by
+/// something else: `None` while it has not, so the window's thread
+/// blocks on nothing.
+pub fn webgpu_card_memory_if_probed() -> Option<u64> {
+    #[cfg(webgpu_ep)]
+    {
+        ADAPTER.get()?;
+        return webgpu_card_memory();
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+/// [`webgpu_memory`] of a card of its own (a discrete or virtual GPU,
+/// not a Mac's): `None` on unified memory, a CPU adapter, or one of no
+/// known type. Blocks on the adapter's probe the first time.
+pub fn webgpu_card_memory() -> Option<u64> {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        return None;
+    }
+    #[cfg(webgpu_ep)]
+    {
+        let a = webgpu_adapter()?;
+        return match a.device_type {
+            wgpu::DeviceType::DiscreteGpu | wgpu::DeviceType::VirtualGpu => {
+                a.memory.map(|(bytes, _)| bytes)
+            }
+            _ => None,
+        };
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
 #[cfg(webgpu_ep)]
 fn webgpu_adapter() -> Option<&'static Adapter> {
     ADAPTER

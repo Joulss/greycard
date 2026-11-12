@@ -765,10 +765,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 ));
                 // The first model waited on that can be had here: the
                 // generative remove, or its four steps, not on a
-                // machine without WebGPU.
+                // machine without WebGPU or a card under its need.
+                let removes = crate::ai::FillHaves::of(st.develop.store.as_ref())
+                    .why_not(greycard_edit::retouch::FillChoice::Best)
+                    .is_none();
                 let model = fills.missing.iter().map(|(_, m)| *m).find(|m| {
                     (m.id != greycard_ai::REMOVE.id && m.id != greycard_ai::REMOVE_FAST.id)
-                        || crate::ai::on_webgpu()
+                        || removes
                 });
                 if let Some(model) = model
                     && st.sheets.fetch.is_none()
@@ -794,12 +797,21 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             for (name, why) in &fills.failed {
                 tracing::warn!("fill {name} failed: {why}");
+                // A removal the card was short of is said once, below.
+                if fills.short.iter().any(|(n, ..)| n == name) {
+                    continue;
+                }
                 without.push(tr!(
                     "{name} left as it was: the fill model failed ({why})",
                     name = name,
                     why = why
                 ));
             }
+            // A sentence of its own, first on the line (below).
+            let card_short = fills
+                .short
+                .first()
+                .map(|&(_, need, free)| crate::panel::retouch::card_short(need, free));
             // A preset or a sync's own words ("Muted Slide onto 3
             // frames"), left here for the develop this generation is,
             // so its "developing..." does not take them away for good.
@@ -833,7 +845,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 };
                 let without = (!without.is_empty()).then(|| without.join(", "));
                 let status: Vec<String> = said.into_iter().chain(start).chain(without).collect();
-                app.set_status(status.join("; ").into());
+                let status = status.join("; ");
+                let status = match card_short {
+                    Some(c) if status.is_empty() => c,
+                    Some(c) => format!("{c} {status}"),
+                    None => status,
+                };
+                app.set_status(status.into());
             } else {
                 show_hint(app, &mut st, &picking_hint(picking.as_str()));
             }
@@ -2614,6 +2632,65 @@ mod tests {
         // Nothing to say on the next: an empty line.
         let status = land_develop(&app, &state, LearnedReport::Off, FillReport::default());
         assert_eq!(status, "");
+    }
+
+    /// A removal waiting on its model, on a card under the remove's
+    /// need, is not offered the download: the card could never run it.
+    #[test]
+    fn a_card_under_the_need_is_not_offered_the_remove() {
+        use crate::testing::{folder, land_develop, state_for, window};
+        use crate::worker::FillReport;
+        crate::ai::set_test_webgpu(Some(true));
+        crate::ai::set_test_card(Some(Some(4 << 30)));
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        land_develop(
+            &app,
+            &state,
+            LearnedReport::Off,
+            FillReport {
+                missing: vec![("Fill 1".into(), &greycard_ai::REMOVE)],
+                ..FillReport::default()
+            },
+        );
+        assert_eq!(state.borrow().sheets.fetch, None);
+        assert!(!app.get_fetch_open());
+        crate::ai::set_test_card(None);
+        crate::ai::set_test_webgpu(None);
+    }
+
+    /// Removals the card was short of right now are said once, with the
+    /// need and what was free, in place of the model's failure; another
+    /// failure is still said as one.
+    #[test]
+    fn a_card_short_of_a_fill_now_is_said_once_with_its_figures() {
+        use crate::testing::{folder, land_develop, state_for, window};
+        use crate::worker::FillReport;
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        let gib = 1u64 << 30;
+        let status = land_develop(
+            &app,
+            &state,
+            LearnedReport::Off,
+            FillReport {
+                failed: vec![
+                    ("Fill 1".into(), "the card is short".into()),
+                    ("Fill 2".into(), "the card is short".into()),
+                    ("Fill 3".into(), "bad input".into()),
+                ],
+                short: vec![
+                    ("Fill 1".into(), 63 * gib / 10, 21 * gib / 10),
+                    ("Fill 2".into(), 63 * gib / 10, 21 * gib / 10),
+                ],
+                ..FillReport::default()
+            },
+        );
+        assert_eq!(
+            status,
+            "Needs 6.3 GiB VRAM, 2.1 available. Use Patch. \
+             Fill 3 left as it was: the fill model failed (bad input)"
+        );
     }
 
     /// An action's own words left for the develop come first, and what

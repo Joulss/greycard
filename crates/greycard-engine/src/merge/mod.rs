@@ -1544,11 +1544,13 @@ impl Models for DenoiseModels {
         prepared: &greycard_core::develop::Prepared,
     ) -> std::result::Result<Vec<f32>, crate::walk::NoLearned> {
         self.ai.denoiser(model).map_err(|e| no_learned(e, model))?;
-        self.ai
+        let on = self
+            .ai
             .denoise_room_for(model)
             .map_err(|short| crate::walk::NoLearned::Short(short.0))?;
         let denoiser = self.ai.denoiser(model).map_err(|e| no_learned(e, model))?;
-        let (rgb, report) = crate::worker::network(frame, prepared, model, denoiser, None)
+        let tiling = crate::worker::run_tiling(on, denoiser.tiling());
+        let (rgb, report) = crate::worker::network(frame, prepared, model, denoiser, None, tiling)
             .map_err(|e| crate::worker::learned_failure(&e))?;
         log::info!("merge: the learned denoiser: {report:?}");
         Ok(rgb)

@@ -5,7 +5,7 @@ use greycard_edit::Edit;
 use greycard_edit::retouch::{FillChoice, Method as RetouchMethod, Patch};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::ai::FillHaves;
+use crate::ai::{FillHaves, FillNotHere};
 use crate::panel::assets::offer_model;
 use crate::panel::edit::develop_soon;
 use crate::panel::viewport::{ViewMap, source_known, source_to_view, view_to_source};
@@ -15,6 +15,28 @@ use crate::{App, Shared, State, outline};
 /// What the status line says while a repair tool is in hand.
 pub(crate) fn retouch_hint() -> String {
     tr!("click or drag to repair; scroll for size; drag pins to move; Esc to finish")
+}
+
+/// What the window says of a card short of the remove: `need` and the
+/// card's memory, `have` (its whole, where it can never run, or what is
+/// free now, where a fill failed for it), bytes, to a tenth of a GiB.
+pub(crate) fn card_short(need: u64, have: u64) -> String {
+    let gib = |b: u64| format!("{:.1}", b as f64 / (1u64 << 30) as f64);
+    // A card short of the generative remove: its need and the card's
+    // memory, whole or free now, in GiB to a tenth.
+    tr!(
+        "Needs {need} GiB VRAM, {have} available. Use Patch.",
+        need = gib(need),
+        have = gib(have)
+    )
+}
+
+/// Why a Fill choice can never run here, as the panel greys it.
+fn not_here(why: FillNotHere) -> String {
+    match why {
+        FillNotHere::Card { need, have } => card_short(need, have),
+        FillNotHere::NoGpu => why.words(),
+    }
 }
 
 /// A patch's shape in the picture's units: the rings of its edge and
@@ -188,7 +210,7 @@ fn show_fill(st: &State, chosen: Option<&Patch>, app: &App) {
     app.set_fill_choice(current.name().into());
     let why: Vec<slint::SharedString> = FillChoice::ALL
         .iter()
-        .map(|&c| haves.why_not(c).unwrap_or("").into())
+        .map(|&c| haves.why_not(c).map_or_else(String::new, not_here).into())
         .collect();
     app.set_fill_why_not(ModelRc::new(VecModel::from(why)));
 }
@@ -756,7 +778,9 @@ mod tests {
     /// off unified memory; a choice made changes the chosen Fill (its
     /// name says Fast) and is what the next one drawn is made by; an
     /// option whose files are not here is greyed with the reason and
-    /// takes no click; on unified memory the default is Fast.
+    /// takes no click; a card under the remove's need greys both removes
+    /// with its figures and makes Patch the default; on unified memory
+    /// the default is Fast.
     #[test]
     fn the_fill_choice_changes_the_patch_and_sticks_for_the_next() {
         use greycard_edit::retouch::FillChoice;
@@ -871,6 +895,31 @@ mod tests {
         draw(&app, 70.0);
         assert_eq!(patch(3).fill_choice(), FillChoice::Patch);
         crate::ai::set_test_webgpu(Some(true));
+
+        // A 4 GB card: greyed as without WebGPU, with the need and the
+        // card; a click on Best takes nothing, and a Fill drawn is
+        // Patch's though Best was the last taken.
+        crate::ai::set_test_card(Some(Some(4 << 30)));
+        app.invoke_patch_changed(-1);
+        let small = "Needs 6.3 GiB VRAM, 4.0 available. Use Patch.";
+        assert_eq!(why(&app), ["", small, small]);
+        assert_eq!(app.get_fill_choice(), "Patch");
+        app.invoke_fill_chosen("Best".into());
+        assert_eq!(app.get_fill_choice(), "Patch");
+        assert_eq!(state.borrow().develop.fill_choice, Some(FillChoice::Best));
+        draw(&app, 90.0);
+        assert_eq!(patch(4).fill_choice(), FillChoice::Patch);
+        // With nothing chosen yet, the default is Patch.
+        let app3 = window(1);
+        let (state3, _worker3) = retouch_state(&app3);
+        state3.borrow_mut().develop.store = Some(store.clone());
+        let haves = crate::ai::FillHaves::of(Some(&store));
+        assert_eq!(
+            super::sticky_fill(&state3.borrow(), haves),
+            FillChoice::Patch
+        );
+        drop(state3);
+        crate::ai::set_test_card(None);
 
         // On unified memory, before any choice, Fast where it can run.
         lay(&greycard_ai::REMOVE_FAST);
