@@ -1284,7 +1284,7 @@ mod tests {
             ..Default::default()
         };
         let mut sharpened = image.clone();
-        let (_, _, delta) = sharpen::sharpen_with_delta(&mut sharpened, &options, None, CLIP);
+        let (_, _, delta) = sharpen::sharpen_with_delta(&mut sharpened, None, &options, None, CLIP);
         let planes = DetailPlanes::sharpen_only(160, 120, CLIP, sharpen_delta(&delta));
         let masked = |amount: f32| {
             let mut e = greycard_edit::Edit::default();

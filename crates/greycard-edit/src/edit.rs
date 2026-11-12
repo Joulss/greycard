@@ -340,6 +340,15 @@ impl Edit {
         wants
     }
 
+    /// Whether the capture sharpen reads what is flat from a guide, the
+    /// picture before the Detail section's local contrast: where
+    /// Texture, Clarity, or Structure runs and a sharpen follows, the
+    /// picture's own or a mask's.
+    pub fn sharpen_reads_guide(&self) -> bool {
+        self.detail.options().is_some()
+            && (self.sharpen.options().is_some() || self.detail_wants().sharpen)
+    }
+
     /// Whether the range masks read a picture of their own, the one
     /// from before the Detail section: some mask has a Luminance or
     /// Color shape and the section does something. Switched off or on,

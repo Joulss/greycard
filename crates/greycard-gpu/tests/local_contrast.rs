@@ -628,11 +628,11 @@ fn each_output_has_a_threshold_of_its_own() {
             .expect("the GPU local contrast runs");
         let out = ctx.viewport_texture(after.width(), after.height());
         let gpu = ctx
-            .sharpen(&after, &sharpen, None, NO_CLIP, &out)
+            .sharpen(&after, None, &sharpen, None, NO_CLIP, &out)
             .expect("the GPU sharpen runs on the op's output");
         let mut cpu = image.clone();
         local_contrast(&mut cpu, &options, NO_CLIP);
-        let (reference, _) = sharpen_with_mask(&mut cpu, &sharpen, None, NO_CLIP);
+        let (reference, _) = sharpen_with_mask(&mut cpu, None, &sharpen, None, NO_CLIP);
         println!(
             "{options:?}: threshold gpu {} cpu {}",
             gpu.threshold, reference.threshold

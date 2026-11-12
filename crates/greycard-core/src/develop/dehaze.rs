@@ -193,6 +193,30 @@ pub fn dehaze_with_map(
     (stats, map.expect("the map was asked for"))
 }
 
+/// [`dehaze`], and the same transmission put on `also`, a picture of
+/// `image`'s size: the model is fitted on `image` alone, so `image`
+/// comes out as [`dehaze`] makes it, to the bit. For the capture
+/// sharpen's guide, which is dehazed as the picture is.
+pub fn dehaze_also(
+    image: &mut WorkingImage,
+    also: &mut WorkingImage,
+    options: &DehazeOptions,
+) -> DehazeStats {
+    debug_assert_eq!(
+        (also.width, also.height),
+        (image.width, image.height),
+        "a second picture of another size"
+    );
+    if options.amount.clamp(-1.0, 1.0) * FULL_STRENGTH == 0.0 {
+        return identity_stats(options);
+    }
+    let Some(model) = Reduced::new(image).model(options) else {
+        return identity_stats(options);
+    };
+    apply(also, &model, false);
+    apply(image, &model, false).0
+}
+
 /// What a dehaze that does nothing reports: an amount whose strength
 /// is zero, or an empty picture.
 pub fn identity_stats(options: &DehazeOptions) -> DehazeStats {

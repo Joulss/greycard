@@ -226,6 +226,37 @@ pub struct Taps {
     /// The picture the range masks read, from before the Detail
     /// section, put with the planes at the walk's end.
     pub sample: Option<Arc<WorkingImage>>,
+    /// The picture the sharpen reads what is flat from
+    /// ([`Tap::SharpenGuide`]), until the sharpen has read it.
+    pub sharpen_guide: Option<SharpenGuide>,
+}
+
+/// The sharpen's guide where it stands: the picture tapped, or one
+/// the device dehazed.
+#[derive(Clone)]
+pub enum SharpenGuide {
+    Working(Arc<WorkingImage>),
+    Device(Arc<greycard_gpu::Image>),
+}
+
+impl SharpenGuide {
+    /// The guide in memory, for a sharpen on the CPU. One the device
+    /// made is only ever read by the device: a point kept past it
+    /// serves no walk that sharpens on the CPU ([`allowed`]), and a
+    /// run that fails goes again from before the tap. Should one reach
+    /// the CPU all the same, the sharpen reads its own input, as it
+    /// did before the guide.
+    fn working(guide: &Option<SharpenGuide>) -> Option<&WorkingImage> {
+        match guide {
+            Some(SharpenGuide::Working(g)) => Some(g),
+            Some(SharpenGuide::Device(_)) => {
+                debug_assert!(false, "the device's sharpen guide on the CPU");
+                log::warn!("the sharpen's guide is on the device; the sharpen reads its input");
+                None
+            }
+            None => None,
+        }
+    }
 }
 
 impl Taps {
@@ -941,7 +972,8 @@ impl Kept {
     }
 
     /// The bytes of the pictures kept in memory, each counted once
-    /// however many points share it, and the refined masks' picture.
+    /// however many points share it, the sharpen's guide a point holds
+    /// in memory among them, and the refined masks' picture.
     pub fn bytes(&self) -> u64 {
         let mut seen: Vec<*const WorkingImage> = Vec::new();
         let mut total = 0u64;
@@ -960,6 +992,10 @@ impl Kept {
                 }
                 KeptBuf::Working(image) => count(image),
                 KeptBuf::Device(_) => {}
+            }
+            // Dehazed, the guide is a picture of its own.
+            if let Some(SharpenGuide::Working(guide)) = &p.taps.sharpen_guide {
+                count(guide);
             }
         }
         total + self.mask_picture().map_or(0, |p| p.bytes())
@@ -1490,6 +1526,9 @@ fn attempt(
                     }
                     Tap::Masks(how) => st.taps.masks = Some((*how, image.clone())),
                     Tap::Sample => st.taps.sample = Some(image.clone()),
+                    Tap::SharpenGuide => {
+                        st.taps.sharpen_guide = Some(SharpenGuide::Working(image.clone()));
+                    }
                     Tap::MaskPicture => {
                         let to = &steps.steps[..i];
                         match &kept.mask_picture {
@@ -2007,7 +2046,23 @@ fn cpu_op(
         }
         Stage::Dehaze(options) => {
             let mut image = owned(working(&mut st.buf));
-            walked.dehaze = Some(dehaze::dehaze(&mut image, options));
+            // The sharpen's guide is dehazed as the picture is, so the
+            // dehaze moves what the sharpen calls flat as it did before
+            // the guide.
+            walked.dehaze = Some(match st.taps.sharpen_guide.take() {
+                Some(SharpenGuide::Working(guide)) => {
+                    let mut guide = owned(guide);
+                    let stats = dehaze::dehaze_also(&mut image, &mut guide, options);
+                    st.taps.sharpen_guide = Some(SharpenGuide::Working(Arc::new(guide)));
+                    stats
+                }
+                guide => {
+                    // One on the device cannot be dehazed here; the
+                    // sharpen then reads its input ([`SharpenGuide::working`]).
+                    st.taps.sharpen_guide = guide;
+                    dehaze::dehaze(&mut image, options)
+                }
+            });
             st.buf = Buf::Working(Arc::new(image));
         }
         Stage::Sharpen(options, Delta::Only) => {
@@ -2016,19 +2071,25 @@ fn cpu_op(
             let Buf::Working(image) = &st.buf else {
                 unreachable!("a stage on the working picture")
             };
-            let (_, _, delta) = sharpen_delta(image, options, st.meta.radius, st.meta.clip_level);
+            let guide = SharpenGuide::working(&st.taps.sharpen_guide);
+            let (_, _, delta) =
+                sharpen_delta(image, guide, options, st.meta.radius, st.meta.clip_level);
             st.taps.sharpen = Some(SharpenTap::of(image, options, false, &delta));
+            st.taps.sharpen_guide = None;
         }
         Stage::Sharpen(options, delta) => {
             let mut image = owned(working(&mut st.buf));
+            let guide = SharpenGuide::working(&st.taps.sharpen_guide);
+            let (radius, clip) = (st.meta.radius, st.meta.clip_level);
             let (stats, mask) = if delta.made() {
                 let (stats, mask, delta) =
-                    sharpen_with_delta(&mut image, options, st.meta.radius, st.meta.clip_level);
+                    sharpen_with_delta(&mut image, guide, options, radius, clip);
                 st.taps.sharpen = Some(SharpenTap::of(&image, options, true, &delta));
                 (stats, mask)
             } else {
-                sharpen_with_mask(&mut image, options, st.meta.radius, st.meta.clip_level)
+                sharpen_with_mask(&mut image, guide, options, radius, clip)
             };
+            st.taps.sharpen_guide = None;
             walked.sharpen = Some(stats);
             walked.sharpen_mask = Some(mask);
             st.buf = Buf::Working(Arc::new(image));
@@ -2188,6 +2249,10 @@ fn device_run(
         _ => None,
     };
     let sets = ctx.kept_sizes();
+    // The picture the run began at and its upload, while the sharpen's
+    // guide is that picture: the guide on the device without a second
+    // upload.
+    let mut began = None;
     let mut image = match &st.buf {
         Buf::Device(image) => image.clone(),
         Buf::Working(picture) => match &kept.uploaded {
@@ -2211,6 +2276,12 @@ fn device_run(
         },
         _ => unreachable!("a run on the device begins at a picture"),
     };
+    if let (Buf::Working(picture), Some(SharpenGuide::Working(guide))) =
+        (&st.buf, &st.taps.sharpen_guide)
+        && Arc::ptr_eq(picture, guide)
+    {
+        began = Some((picture.clone(), image.clone()));
+    }
     let texture = shader.then(|| ctx.viewport_texture(image.width(), image.height()));
     // Once the texture is written there is no picture to keep.
     let mut written = None;
@@ -2269,6 +2340,14 @@ fn device_run(
                         options.amount
                     )));
                 };
+                // The sharpen's guide dehazed as the picture is, by the
+                // picture's model.
+                if let Some(guide) = st.taps.sharpen_guide.take() {
+                    let guide = guide_on_device(&guide, ctx, &began, kept)?;
+                    let (dehazed, _) = ctx.dehaze(&guide, &model)?;
+                    st.taps.sharpen_guide = Some(SharpenGuide::Device(Arc::new(dehazed)));
+                    began = None;
+                }
                 match texture.as_ref().filter(|_| j == last) {
                     Some(out) => {
                         walked.dehaze = Some(ctx.dehaze_to_viewport(&image, &model, out)?);
@@ -2285,8 +2364,14 @@ fn device_run(
             }
             Step::Op(Stage::Sharpen(options, delta)) if texture.is_none() && download => {
                 let (radius, clip) = (st.meta.radius, st.meta.clip_level);
+                let guide = match st.taps.sharpen_guide.take() {
+                    Some(g) => Some(guide_on_device(&g, ctx, &began, kept)?),
+                    None => None,
+                };
+                began = None;
                 let (out, stats, d) = ctx.sharpen_to_image(
                     &image,
+                    guide.as_deref(),
                     options,
                     radius,
                     clip,
@@ -2315,9 +2400,15 @@ fn device_run(
                     None => ctx.viewport_texture(image.width(), image.height()),
                 };
                 let (radius, clip) = (st.meta.radius, st.meta.clip_level);
+                let guide = match st.taps.sharpen_guide.take() {
+                    Some(g) => Some(guide_on_device(&g, ctx, &began, kept)?),
+                    None => None,
+                };
+                began = None;
                 if delta.made() {
                     let (stats, d) = ctx.sharpen_with_delta(
                         &image,
+                        guide.as_deref(),
                         options,
                         radius,
                         clip,
@@ -2336,7 +2427,8 @@ fn device_run(
                         walked.sharpen = Some(stats);
                     }
                 } else {
-                    walked.sharpen = Some(ctx.sharpen(&image, options, radius, clip, &out)?);
+                    walked.sharpen =
+                        Some(ctx.sharpen(&image, guide.as_deref(), options, radius, clip, &out)?);
                 }
                 places.push(Place::Gpu);
                 written = Some(out);
@@ -2394,6 +2486,30 @@ fn device_run(
         (None, None) => Buf::Device(image),
     };
     Ok(())
+}
+
+/// The sharpen's guide on the device: the device's own; the run's
+/// upload, or the one kept, when the guide is the picture it was made
+/// from; or uploaded now.
+fn guide_on_device(
+    guide: &SharpenGuide,
+    ctx: &greycard_gpu::Context,
+    began: &Option<(Arc<WorkingImage>, Arc<greycard_gpu::Image>)>,
+    kept: &Kept,
+) -> greycard_gpu::Result<Arc<greycard_gpu::Image>> {
+    let picture = match guide {
+        SharpenGuide::Device(image) => return Ok(image.clone()),
+        SharpenGuide::Working(picture) => picture,
+    };
+    let held = [began.as_ref(), kept.uploaded.as_ref()];
+    match held
+        .into_iter()
+        .flatten()
+        .find(|(from, _)| Arc::ptr_eq(from, picture))
+    {
+        Some((_, image)) => Ok(image.clone()),
+        None => Ok(Arc::new(ctx.upload(picture)?)),
+    }
 }
 
 /// The working picture out of `buf`.
@@ -2747,10 +2863,18 @@ mod tests {
         let d = core_develop::finish(prepared, rgb, dual, denoised, &settings).unwrap();
         let mut want = d.image;
         defringe(&mut want, &edit.lens.defringe().unwrap());
+        // The sharpen's guide: the picture before the local contrast,
+        // dehazed with the picture.
+        let mut guide = want.clone();
         local_contrast(&mut want, &edit.detail.options().unwrap(), d.clip_level);
-        dehaze::dehaze(&mut want, &edit.detail.dehaze_options().unwrap());
+        dehaze::dehaze_also(
+            &mut want,
+            &mut guide,
+            &edit.detail.dehaze_options().unwrap(),
+        );
         let (_, mask) = sharpen_with_mask(
             &mut want,
+            Some(&guide),
             &edit.sharpen.options().unwrap(),
             radius,
             d.clip_level,
@@ -2765,6 +2889,91 @@ mod tests {
         assert!(walked.ca.is_some_and(|c| c.corrected), "the CA corrected");
         assert_eq!(walked.from, None);
         assert!(walked.places.iter().all(|p| *p == Place::Cpu));
+    }
+
+    /// With Texture, Clarity, and Structure at zero there is no guide:
+    /// the dehazed picture's own sharpen, as before the guide, to the
+    /// bit. And a sharpen moved after a walk with the guide reads the
+    /// guide kept with the picture before the sharpen, so the picture
+    /// it makes is a walk from nothing's.
+    #[test]
+    fn detail_at_zero_sharpens_as_before_and_a_kept_guide_serves() {
+        let raw = frame_of(640, 480, [1.0, 1.0]);
+        let mut edit = edit();
+        edit.detail.texture = 0.0;
+        edit.detail.clarity = 0.0;
+        let input = Input::Raw(raw.clone());
+        let walked = walk_cpu(&edit, &Purpose::Viewport, &input, 0, &mut Kept::new());
+        let settings = DevelopSettings {
+            orientation: Some(raw.orientation),
+            ..edit.settings(&greycard_edit_io::Stores::user())
+        };
+        let prepared = prepare_with(&raw, &settings, false, None).unwrap();
+        let radius = prepared.sharpen_radius;
+        let (rgb, dual, denoised) = demosaic_prepared(&prepared, &settings).unwrap();
+        let d = core_develop::finish(prepared, rgb, dual, denoised, &settings).unwrap();
+        let mut want = d.image;
+        defringe(&mut want, &edit.lens.defringe().unwrap());
+        dehaze::dehaze(&mut want, &edit.detail.dehaze_options().unwrap());
+        let (_, mask) = sharpen_with_mask(
+            &mut want,
+            None,
+            &edit.sharpen.options().unwrap(),
+            radius,
+            d.clip_level,
+        );
+        assert!(picture(&walked).data == want.data, "the unguided sharpen");
+        assert_eq!(walked.sharpen_mask.as_deref(), Some(&mask[..]));
+
+        // Texture on, then the sharpen moved: from the kept point.
+        edit.detail.texture = 0.8;
+        let mut kept = Kept::new();
+        walk_cpu(&edit, &Purpose::Viewport, &input, 0, &mut kept);
+        edit.sharpen.iterations = 7;
+        let resumed = walk_cpu(&edit, &Purpose::Viewport, &input, 0, &mut kept);
+        assert_eq!(resumed.from, Some(Keep::PreSharpen));
+        let fresh = walk_cpu(&edit, &Purpose::Viewport, &input, 0, &mut Kept::new());
+        assert!(picture(&resumed).data == picture(&fresh).data);
+        assert_eq!(resumed.sharpen, fresh.sharpen);
+        assert!(resumed.taps.sharpen_guide.is_none(), "read and let go");
+    }
+
+    /// The dehazed guide a point holds is a picture of its own, and
+    /// the kept bytes count it, once.
+    #[test]
+    fn the_kept_bytes_count_a_dehazed_guide() {
+        let mut kept = Kept::new();
+        walk_cpu(
+            &edit(),
+            &Purpose::Viewport,
+            &Input::Raw(frame()),
+            0,
+            &mut kept,
+        );
+        let point = kept
+            .points
+            .iter()
+            .find(|p| p.keep == Keep::PreSharpen)
+            .expect("the point before the sharpen");
+        let Some(SharpenGuide::Working(guide)) = &point.taps.sharpen_guide else {
+            panic!("the guide is kept with the point");
+        };
+        let size = |i: &WorkingImage| (i.data.len() * std::mem::size_of::<f32>()) as u64;
+        let mut pictures: Vec<&Arc<WorkingImage>> = Vec::new();
+        for p in &kept.points {
+            if let KeptBuf::Working(image) = &p.buf
+                && !pictures.iter().any(|q| Arc::ptr_eq(q, image))
+            {
+                pictures.push(image);
+            }
+        }
+        assert!(
+            !pictures.iter().any(|q| Arc::ptr_eq(q, guide)),
+            "dehazed, the guide is no point's picture"
+        );
+        let held: u64 = pictures.iter().map(|p| size(p)).sum();
+        let masks = kept.mask_picture().map_or(0, |p| p.bytes());
+        assert_eq!(kept.bytes(), held + size(guide) + masks);
     }
 
     /// A walk after another starts from the last point they share: a

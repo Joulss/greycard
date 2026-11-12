@@ -837,9 +837,11 @@ fn correct_and_sharpen(
     clip_level: f32,
 ) -> Result<Option<sharpen::SharpenStats>> {
     correct_lens(image, identity, orientation, lens, db)?;
-    // Before the sharpen, as the worker has it: the sharpen's blend
-    // mask reads the picture's local contrast, and should read it
-    // with the detail put in.
+    // Before the sharpen, as the worker has it. The sharpen reads what
+    // is flat from the picture before it (its guide, dehazed with the
+    // picture), so that the grain the local contrast lifts is not
+    // taken for detail.
+    let mut guide = (detail.is_some() && sharpening.is_some()).then(|| image.clone());
     if let Some(options) = detail {
         let start = std::time::Instant::now();
         let stats = local_contrast(image, &options, clip_level);
@@ -859,13 +861,19 @@ fn correct_and_sharpen(
     // threshold is measured on the picture it gets.
     if let Some(options) = dehazing {
         let start = std::time::Instant::now();
-        let d = match dehaze_map {
-            Some(path) => {
+        let d = match (dehaze_map, guide.as_mut()) {
+            (Some(path), guide) => {
+                // The guide dehazed by the model fitted on the picture
+                // before the dehaze, the picture's own.
+                if let Some(g) = guide {
+                    dehaze::dehaze_also(&mut image.clone(), g, &options);
+                }
                 let (d, map) = dehaze::dehaze_with_map(image, &options);
                 write_transmission(&map, image.width, image.height, path)?;
                 d
             }
-            None => dehaze::dehaze(image, &options),
+            (None, Some(g)) => dehaze::dehaze_also(image, g, &options),
+            (None, None) => dehaze::dehaze(image, &options),
         };
         tracing::info!(
             "dehazed {:+.0} (strength {:.2}) in {:.2} s: airlight R {:.3} G {:.3} B {:.3}, map at 1/{}, transmission mean {:.2} least {:.2}",
@@ -880,7 +888,9 @@ fn correct_and_sharpen(
             d.transmission_min,
         );
     }
-    Ok(sharpening.map(|options| sharpen::sharpen(image, &options, measured_radius, clip_level)))
+    Ok(sharpening.map(|options| {
+        sharpen::sharpen_with_mask(image, guide.as_ref(), &options, measured_radius, clip_level).0
+    }))
 }
 
 /// The dehaze's transmission as an 8-bit grey PNG: 0 to 1 onto

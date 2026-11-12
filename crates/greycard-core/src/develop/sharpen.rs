@@ -20,7 +20,15 @@
 //! negative, but the working image is after the camera matrix, where
 //! the noise at black goes below zero, and there Richardson–Lucy and
 //! the division by the old luminance both blew single pixels up into
-//! full-brightness colored dots.
+//! full-brightness colored dots. And what is flat (the L* that the
+//! automatic threshold and the blend mask read) can be read off a
+//! guide, the picture before the Detail section's Texture, Clarity,
+//! and Structure, while the deconvolution runs on the picture after
+//! them: RawTherapee's capture sharpening runs on the demosaiced raw,
+//! before any local contrast, so the grain those lift never reaches
+//! its threshold; ours runs after them, and without the guide Texture
+//! lifted the flattest patch's grain until the threshold fell to zero
+//! and the grain was sharpened as detail.
 //!
 //! The pieces marked as shared (`LUMA`, `BLACK_PEDESTAL`,
 //! `FLOOR_PEDESTAL`, `stop_floor`, `l_star`, `contrast`,
@@ -238,19 +246,24 @@ pub fn sharpen(
     measured: Option<f32>,
     clip_level: f32,
 ) -> SharpenStats {
-    sharpen_with_mask(image, options, measured, clip_level).0
+    sharpen_with_mask(image, None, options, measured, clip_level).0
 }
 
 /// [`sharpen`], and the blend mask it worked under: one plane, a
 /// value in 0 to 1 a pixel, how far the sharpen went in there; zero
 /// where the picture was flat or clipped. For showing where it acts.
+///
+/// `guide`, a picture of `image`'s size, is what the sharpen reads
+/// what is flat from, in place of `image` (see [`deconvolved`]); the
+/// deconvolution and the clip mask stay `image`'s.
 pub fn sharpen_with_mask(
     image: &mut WorkingImage,
+    guide: Option<&WorkingImage>,
     options: &SharpenOptions,
     measured: Option<f32>,
     clip_level: f32,
 ) -> (SharpenStats, Vec<f32>) {
-    let d = deconvolved(image, options, measured, clip_level);
+    let d = deconvolved(image, guide, options, measured, clip_level);
     scale(image, &d.luminance, &d.sharpened);
     (d.stats, d.blend)
 }
@@ -260,11 +273,12 @@ pub fn sharpen_with_mask(
 /// pixel once more or takes off it.
 pub fn sharpen_with_delta(
     image: &mut WorkingImage,
+    guide: Option<&WorkingImage>,
     options: &SharpenOptions,
     measured: Option<f32>,
     clip_level: f32,
 ) -> (SharpenStats, Vec<f32>, Vec<f32>) {
-    let d = deconvolved(image, options, measured, clip_level);
+    let d = deconvolved(image, guide, options, measured, clip_level);
     scale(image, &d.luminance, &d.sharpened);
     let deltas = d.deltas();
     (d.stats, d.blend, deltas)
@@ -274,11 +288,12 @@ pub fn sharpen_with_delta(
 /// it was: what the sharpen would have done.
 pub fn sharpen_delta(
     image: &WorkingImage,
+    guide: Option<&WorkingImage>,
     options: &SharpenOptions,
     measured: Option<f32>,
     clip_level: f32,
 ) -> (SharpenStats, Vec<f32>, Vec<f32>) {
-    let d = deconvolved(image, options, measured, clip_level);
+    let d = deconvolved(image, guide, options, measured, clip_level);
     let deltas = d.deltas();
     (d.stats, d.blend, deltas)
 }
@@ -322,6 +337,7 @@ impl Deconvolved {
 
 fn deconvolved(
     image: &WorkingImage,
+    guide: Option<&WorkingImage>,
     options: &SharpenOptions,
     measured: Option<f32>,
     clip_level: f32,
@@ -335,21 +351,31 @@ fn deconvolved(
     let n = w * h;
 
     // Luminance on its pedestal, which is what the deconvolution works
-    // on; the L* of the luminance itself, which is what the blend
-    // reads; and the clip mask.
+    // on; the L* of the luminance itself, which is what the threshold
+    // and the blend read; and the clip mask. The L* is the guide's
+    // when there is one: what is flat is decided there, the rest here.
+    if let Some(g) = guide {
+        assert_eq!(
+            (g.width, g.height),
+            (w, h),
+            "a guide of another size than the picture"
+        );
+    }
     let k = BLACK_PEDESTAL;
     let mut luminance = vec![0f32; n];
     let mut lstar = vec![0f32; n];
     let mut clip = vec![1f32; n];
+    let reads = guide.unwrap_or(image);
     luminance
         .par_iter_mut()
         .zip(lstar.par_iter_mut())
         .zip(clip.par_iter_mut())
         .zip(image.data.par_chunks(3))
-        .for_each(|(((y, l), c), px)| {
+        .zip(reads.data.par_chunks(3))
+        .for_each(|((((y, l), c), px), at)| {
             let raw = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
             *y = raw.max(0.0) + k;
-            *l = l_star(raw);
+            *l = l_star(LUMA[0] * at[0] + LUMA[1] * at[1] + LUMA[2] * at[2]);
             if px[0] >= clip_level || px[1] >= clip_level || px[2] >= clip_level {
                 *c = 0.0;
             }
@@ -953,7 +979,7 @@ mod tests {
             contrast: Threshold::Fixed(0.02),
             stop_early: true,
         };
-        let (stats, mask) = sharpen_with_mask(&mut image, &options, None, 10.0);
+        let (stats, mask) = sharpen_with_mask(&mut image, None, &options, None, 10.0);
         assert_eq!(mask.len(), w * h);
         assert!((mean(&mask) - stats.blend_mean).abs() < 1e-6);
         // Up at the edge, nothing on the flat far from it, and
@@ -1118,12 +1144,12 @@ mod tests {
             ..Default::default()
         };
         let mut sharpened = before.clone();
-        let (stats, mask, delta) = sharpen_with_delta(&mut sharpened, &options, None, 10.0);
+        let (stats, mask, delta) = sharpen_with_delta(&mut sharpened, None, &options, None, 10.0);
         let mut plain = before.clone();
-        let (stats_plain, mask_plain) = sharpen_with_mask(&mut plain, &options, None, 10.0);
+        let (stats_plain, mask_plain) = sharpen_with_mask(&mut plain, None, &options, None, 10.0);
         assert_eq!((stats, &mask), (stats_plain, &mask_plain));
         assert_eq!(sharpened, plain, "the same sharpen");
-        let (_, _, again) = sharpen_delta(&before, &options, None, 10.0);
+        let (_, _, again) = sharpen_delta(&before, None, &options, None, 10.0);
         assert_eq!(again, delta);
         assert!(
             delta.iter().any(|d| d.abs() > 0.05),
@@ -1352,6 +1378,99 @@ mod tests {
         let stats = sharpen(&mut image, &SharpenOptions::default(), None, 10.0);
         assert!(stats.threshold > 0.0, "{stats:?}");
         assert!(stats.blend_mean < 0.05, "{stats:?}");
+    }
+
+    /// A noisy flat field, the grain of a high ISO, with a block of
+    /// bars blurred as a lens blurs them: the flattest patch for the
+    /// threshold, and detail for the sharpen.
+    fn noisy_with_detail(w: usize, h: usize) -> WorkingImage {
+        let mut seed = 0x1234_5678_u32;
+        let mut rand = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed as f32 / u32::MAX as f32) - 0.5
+        };
+        let mut lum = vec![0f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let bars = x < w / 3 && ((x / 4) + (y / 6)) % 2 == 0;
+                lum[y * w + x] = if bars { 0.45 } else { 0.18 };
+            }
+        }
+        super::super::dual::gaussian_blur(&mut lum, w, h, 1.0);
+        let mut image = WorkingImage::new(w, h);
+        for (px, l) in image.data.chunks_mut(3).zip(&lum) {
+            let v = l + 0.012 * rand();
+            px.copy_from_slice(&[v * 1.1, v, v * 0.9]);
+        }
+        image
+    }
+
+    /// Texture lifts the flattest patch's grain, which moved the
+    /// automatic threshold (to zero, at a high ISO: everything
+    /// sharpened) and the blend with it. Read off the picture before
+    /// it, neither moves with Texture, and the bars are still
+    /// sharpened where they were.
+    #[test]
+    fn texture_does_not_move_what_the_sharpen_calls_flat() {
+        use super::super::local_contrast::{LocalContrastOptions, local_contrast};
+        let (w, h) = (320, 240);
+        let before = noisy_with_detail(w, h);
+        let options = SharpenOptions::default();
+        let (base, base_mask) = sharpen_with_mask(&mut before.clone(), None, &options, None, 10.0);
+        assert!(base.threshold > 0.0, "a flat patch to read: {base:?}");
+        assert!(base.blend_mean < 0.6, "the flat left alone: {base:?}");
+        let mut moved = false;
+        for texture in [0.5f32, 1.0, -1.0] {
+            let mut textured = before.clone();
+            let lc = LocalContrastOptions {
+                texture,
+                ..Default::default()
+            };
+            local_contrast(&mut textured, &lc, 10.0);
+            let unguided = sharpen_with_mask(&mut textured.clone(), None, &options, None, 10.0).0;
+            moved |= unguided.threshold != base.threshold;
+            let (guided, mask) =
+                sharpen_with_mask(&mut textured, Some(&before), &options, None, 10.0);
+            assert_eq!(guided.threshold, base.threshold, "Texture {texture}");
+            assert_eq!(guided.blend_mean, base.blend_mean, "Texture {texture}");
+            assert_eq!(mask, base_mask, "Texture {texture}");
+            // The bars are sharpened, the flat is not.
+            let at = |x: usize, y: usize| mask[y * w + x];
+            assert!(at(w / 6, h / 2) > 0.5, "the bars, Texture {texture}");
+            assert!(at(3 * w / 4, h / 2) < 0.1, "the flat, Texture {texture}");
+        }
+        assert!(moved, "the picture after Texture moves the threshold");
+        // A fixed threshold is the slider's and stays it; the blend
+        // reads the guide.
+        let fixed = SharpenOptions {
+            contrast: Threshold::Fixed(0.3),
+            ..options
+        };
+        let mut textured = before.clone();
+        let lc = LocalContrastOptions {
+            texture: 1.0,
+            ..Default::default()
+        };
+        local_contrast(&mut textured, &lc, 10.0);
+        let (plain, plain_mask) = sharpen_with_mask(&mut before.clone(), None, &fixed, None, 10.0);
+        let (guided, mask) = sharpen_with_mask(&mut textured, Some(&before), &fixed, None, 10.0);
+        assert_eq!((guided.threshold, plain.threshold), (0.3, 0.3));
+        assert_eq!(mask, plain_mask);
+    }
+
+    /// A guide that is the picture is no guide: the same sharpen, to
+    /// the bit, mask, delta, and stats.
+    #[test]
+    fn the_picture_as_its_own_guide_is_the_unguided_sharpen() {
+        let before = noisy_with_detail(200, 150);
+        let options = SharpenOptions::default();
+        let (mut a, mut b) = (before.clone(), before.clone());
+        let plain = sharpen_with_delta(&mut a, None, &options, Some(0.8), 10.0);
+        let guided = sharpen_with_delta(&mut b, Some(&before), &options, Some(0.8), 10.0);
+        assert_eq!(plain, guided);
+        assert_eq!(a, b);
     }
 
     #[test]

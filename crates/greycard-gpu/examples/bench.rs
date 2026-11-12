@@ -77,7 +77,7 @@ fn main() -> anyhow::Result<()> {
     for run in 0..runs {
         cpu = image.clone();
         let t = Instant::now();
-        let (stats, _mask) = sharpen_with_mask(&mut cpu, &options, measured, clip);
+        let (stats, _mask) = sharpen_with_mask(&mut cpu, None, &options, measured, clip);
         println!("cpu run {run}: {:.3} s", t.elapsed().as_secs_f64());
         cpu_stats = Some(stats);
     }
@@ -96,7 +96,7 @@ fn main() -> anyhow::Result<()> {
     let mut gpu_stats = None;
     for run in 0..runs {
         let t = Instant::now();
-        let stats = ctx.sharpen(&uploaded, &options, measured, clip, &out)?;
+        let stats = ctx.sharpen(&uploaded, None, &options, measured, clip, &out)?;
         println!(
             "gpu run {run}: {:.3} s, {} submissions{}",
             t.elapsed().as_secs_f64(),
@@ -123,11 +123,11 @@ fn main() -> anyhow::Result<()> {
         Batching::Every(1),
     ] {
         ctx.set_sharpen_batching(batching);
-        ctx.sharpen(&uploaded, &options, measured, clip, &out)?;
+        ctx.sharpen(&uploaded, None, &options, measured, clip, &out)?;
         let mut times = Vec::new();
         for _ in 0..runs.max(1) {
             let t = Instant::now();
-            ctx.sharpen(&uploaded, &options, measured, clip, &out)?;
+            ctx.sharpen(&uploaded, None, &options, measured, clip, &out)?;
             times.push(t.elapsed().as_secs_f64());
         }
         times.sort_by(f64::total_cmp);
@@ -196,7 +196,14 @@ fn main() -> anyhow::Result<()> {
                 // And the sharpen on the op's output, as a Detail move
                 // costs in the editor.
                 let t = Instant::now();
-                ctx.sharpen(&after, &SharpenOptions::default(), measured, clip, &out)?;
+                ctx.sharpen(
+                    &after,
+                    None,
+                    &SharpenOptions::default(),
+                    measured,
+                    clip,
+                    &out,
+                )?;
                 ctx.device()
                     .poll(greycard_gpu::wgpu::PollType::wait_indefinitely())?;
                 println!(

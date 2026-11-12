@@ -10,7 +10,10 @@
 //! by the result. What the reference decides on the CPU between its
 //! stages (which tile is flattest, and the threshold from it) is
 //! decided on the CPU here too, from small read backs, with the
-//! reference's own functions.
+//! reference's own functions. With a guide, the picture before the
+//! Detail section's local contrast, `guide_lstar` writes the guide's
+//! L* over the picture's, so the threshold and the blend read what is
+//! flat from it, as the reference's do.
 //!
 //! The picture's planes are R32Float textures rather than storage
 //! buffers: a 45 MP plane is 180 MB, over the 128 MB a storage buffer
@@ -194,6 +197,7 @@ pub(crate) struct Pipelines {
     tiles_layout: wgpu::BindGroupLayout,
     apply_layout: wgpu::BindGroupLayout,
     prepare: wgpu::ComputePipeline,
+    guide_lstar: wgpu::ComputePipeline,
     row_sum: wgpu::ComputePipeline,
     tile_index: wgpu::ComputePipeline,
     dilate: wgpu::ComputePipeline,
@@ -306,6 +310,7 @@ impl Pipelines {
         };
         Self {
             prepare: pipeline(device, &planes, &planes_pl, "prepare"),
+            guide_lstar: pipeline(device, &planes, &planes_pl, "guide_lstar"),
             row_sum: pipeline(device, &planes, &planes_pl, "row_sum"),
             tile_index: pipeline(device, &planes, &planes_pl, "tile_index"),
             dilate: pipeline(device, &planes, &planes_pl, "dilate"),
@@ -549,10 +554,13 @@ impl Context {
     /// picture already on the GPU, the result into `out`, a texture
     /// from [`Context::viewport_texture`] of the picture's size, the
     /// blend mask in its alpha. The stats come back as the reference
-    /// gives them; the picture and its mask stay on the GPU.
+    /// gives them; the picture and its mask stay on the GPU. `guide`,
+    /// a picture of the same size, is what the sharpen reads what is
+    /// flat from, as the reference's.
     pub fn sharpen(
         &self,
         image: &Image,
+        guide: Option<&Image>,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
@@ -570,6 +578,7 @@ impl Context {
         self.scoped("sharpening", || {
             self.sharpen_into(
                 image,
+                guide,
                 options,
                 measured,
                 clip_level,
@@ -584,9 +593,13 @@ impl Context {
     /// [`greycard_core::develop::sharpen::sharpen_with_delta`] makes
     /// it. Without `apply` the texture is the picture as it was, its
     /// alpha zero, and the delta what the sharpen would have done.
+    // The picture, its guide, the reference's three, the output, and
+    // whether to sharpen.
+    #[allow(clippy::too_many_arguments)]
     pub fn sharpen_with_delta(
         &self,
         image: &Image,
+        guide: Option<&Image>,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
@@ -606,6 +619,7 @@ impl Context {
         let stats = self.scoped("sharpening", || {
             self.sharpen_into(
                 image,
+                guide,
                 options,
                 measured,
                 clip_level,
@@ -678,8 +692,32 @@ impl Context {
         measured: Option<f32>,
         clip_level: f32,
     ) -> Result<(SharpenStats, Vec<f32>)> {
-        self.sharpen_image_into(image, options, measured, clip_level, true, false)
+        self.sharpen_image_into(image, None, options, measured, clip_level, true, false)
             .map(|(stats, mask, _)| (stats, mask))
+    }
+
+    /// [`Context::sharpen_image_with_delta`] reading what is flat from
+    /// `guide`, as the reference's
+    /// [`greycard_core::develop::sharpen::sharpen_with_delta`] with a
+    /// guide. For the tests.
+    pub fn sharpen_image_guided(
+        &self,
+        image: &mut WorkingImage,
+        guide: &WorkingImage,
+        options: &SharpenOptions,
+        measured: Option<f32>,
+        clip_level: f32,
+        apply: bool,
+    ) -> Result<(SharpenStats, Vec<f32>, Vec<f32>)> {
+        self.sharpen_image_into(
+            image,
+            Some(guide),
+            options,
+            measured,
+            clip_level,
+            apply,
+            true,
+        )
     }
 
     /// [`Context::sharpen_image`] with the delta read back too, the
@@ -694,7 +732,7 @@ impl Context {
         clip_level: f32,
         apply: bool,
     ) -> Result<(SharpenStats, Vec<f32>, Vec<f32>)> {
-        self.sharpen_image_into(image, options, measured, clip_level, apply, true)
+        self.sharpen_image_into(image, None, options, measured, clip_level, apply, true)
     }
 
     /// [`Context::sharpen`] in full floats: the result a new [`Image`]
@@ -704,9 +742,12 @@ impl Context {
     /// what the sharpen would have done; the delta is read back only
     /// `with_delta`. The blend mask is not kept: only the viewport
     /// paints it.
+    // The picture, its guide, the reference's three, and the two asks.
+    #[allow(clippy::too_many_arguments)]
     pub fn sharpen_to_image(
         &self,
         image: &Image,
+        guide: Option<&Image>,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
@@ -719,11 +760,20 @@ impl Context {
             delta: delta.as_ref(),
         };
         let (rgb, stats) = if apply {
-            let (rgb, _, stats) = self.sharpen_full(image, options, measured, clip_level, also)?;
+            let (rgb, _, stats) =
+                self.sharpen_full(image, guide, options, measured, clip_level, also)?;
             (Some(rgb), stats)
         } else {
             let stats = self.scoped("sharpening", || {
-                self.sharpen_into(image, options, measured, clip_level, Output::Nothing, also)
+                self.sharpen_into(
+                    image,
+                    guide,
+                    options,
+                    measured,
+                    clip_level,
+                    Output::Nothing,
+                    also,
+                )
             })?;
             (None, stats)
         };
@@ -748,6 +798,7 @@ impl Context {
     fn sharpen_full(
         &self,
         image: &Image,
+        guide: Option<&Image>,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
@@ -777,6 +828,7 @@ impl Context {
             let mask = make("sharpen mask", wgpu::TextureFormat::R32Float);
             let stats = self.sharpen_into(
                 image,
+                guide,
                 options,
                 measured,
                 clip_level,
@@ -790,9 +842,12 @@ impl Context {
         })
     }
 
+    // The picture, its guide, the reference's three, and the two asks.
+    #[allow(clippy::too_many_arguments)]
     fn sharpen_image_into(
         &self,
         image: &mut WorkingImage,
+        guide: Option<&WorkingImage>,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
@@ -800,10 +855,12 @@ impl Context {
         with_delta: bool,
     ) -> Result<(SharpenStats, Vec<f32>, Vec<f32>)> {
         let uploaded = self.upload(image)?;
+        let guide = guide.map(|g| self.upload(g)).transpose()?;
         let (w, h) = (uploaded.width, uploaded.height);
         let delta = with_delta.then(|| self.delta_texture(w, h));
         let (rgb, mask, stats) = self.sharpen_full(
             &uploaded,
+            guide.as_ref(),
             options,
             measured,
             clip_level,
@@ -827,9 +884,12 @@ impl Context {
         Ok((stats, bytemuck::cast_slice(&mask).to_vec(), delta))
     }
 
+    // The picture, its guide, the reference's three, and the outputs.
+    #[allow(clippy::too_many_arguments)]
     fn sharpen_into(
         &self,
         image: &Image,
+        guide: Option<&Image>,
         options: &SharpenOptions,
         measured: Option<f32>,
         clip_level: f32,
@@ -838,6 +898,14 @@ impl Context {
     ) -> Result<SharpenStats> {
         let p = &self.sharpen;
         let (w, h) = (image.width, image.height);
+        if let Some(g) = guide
+            && (g.width, g.height) != (w, h)
+        {
+            return Err(Error::Unsupported(format!(
+                "a {}x{} guide for a {w}x{h} picture",
+                g.width, g.height
+            )));
+        }
         let n = f64::from(w) * f64::from(h);
         let radius = match options.radius {
             Radius::Auto => measured.unwrap_or(reference::DEFAULT_RADIUS),
@@ -948,17 +1016,60 @@ impl Context {
                 &[uniforms.push(&self.queue, &Params { offset: 0, ..base })],
             );
             pass.dispatch_workgroups(h, 1, 1);
+            // The guide's L* over the picture's: the threshold and the
+            // blend read what is flat from it.
+            if let Some(guide) = guide {
+                let guide_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("sharpen guide"),
+                    layout: &p.planes_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniforms.binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&view(&guide.texture)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(&view(&work.lum)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&view(&work.lstar)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&view(&work.blend)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::TextureView(&view(&work.tmp)),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: work.partials.as_entire_binding(),
+                        },
+                    ],
+                });
+                pass.set_pipeline(&p.guide_lstar);
+                pass.set_bind_group(0, &guide_group, &[uniforms.push(&self.queue, &base)]);
+                pass.dispatch_workgroups(groups(w, 16), groups(h, 16), 1);
+            }
         }
         self.queue.submit(Some(encoder.finish()));
 
-        // The contrast threshold: fixed, remembered, or searched for.
+        // The contrast threshold: fixed, remembered, or searched for;
+        // remembered with the picture it was read from.
+        let decides = guide.unwrap_or(image);
         let threshold = match options.contrast {
             Threshold::Fixed(t) => t.max(0.0),
-            Threshold::Auto => match image.threshold.get() {
+            Threshold::Auto => match decides.threshold.get() {
                 Some(t) => *t,
                 None => {
                     let t = self.auto_threshold(work, &planes_group, &uniforms, &base)?;
-                    let _ = image.threshold.set(t);
+                    let _ = decides.threshold.set(t);
                     t
                 }
             },

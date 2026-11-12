@@ -50,6 +50,14 @@ use crate::mask::{LandscapeGroup, Shape};
 /// 5: a DNG's own warps and bad-pixel lists, 2026-11-01.
 pub const DEVELOP_RECIPE: u32 = 5;
 
+/// The capture sharpen's guide, by version: taken into the key of an
+/// edit whose sharpen reads one ([`Edit::sharpen_reads_guide`]), so
+/// the pictures kept of such an edit are made again when it changes,
+/// and those of every other edit are kept. 1: what is flat is read off
+/// the picture before Texture, Clarity, and Structure, 2026-11-12; an
+/// edit with all three at zero makes the picture it made, to the bit.
+pub const SHARPEN_GUIDE: &str = "sharpen-guide-1";
+
 /// The learned masks' stages, by version: raise one when its raster
 /// comes to be another from the same shape. greycard-ui's mask cache
 /// keys its rasters by these, and the develop key of an edit with such
@@ -163,6 +171,11 @@ impl Edit {
             hasher.update(&(stage.len() as u64).to_le_bytes());
             hasher.update(stage.as_bytes());
         }
+        if self.sharpen_reads_guide() {
+            hasher.update(b"sharpen guide\0");
+            hasher.update(&(SHARPEN_GUIDE.len() as u64).to_le_bytes());
+            hasher.update(SHARPEN_GUIDE.as_bytes());
+        }
         for Read { name, contents } in read {
             hasher.update(&(name.len() as u64).to_le_bytes());
             hasher.update(name.as_bytes());
@@ -222,6 +235,26 @@ mod tests {
         assert_ne!(key(&edit, None), refined);
         edit.adjustments[0].mask.refine = 0.0;
         assert_eq!(key(&edit, None), plain);
+    }
+
+    /// The sharpen's guide is in the key of an edit whose sharpen reads
+    /// one, and of no other: Detail's Dehaze alone, or Texture with no
+    /// sharpen to guide, keeps the key it had.
+    #[test]
+    fn the_sharpen_guide_is_keyed_only_where_the_sharpen_reads_one() {
+        let mut edit = Edit::default();
+        edit.detail.dehaze = 0.3;
+        assert!(!edit.sharpen_reads_guide());
+        edit.detail.texture = 0.5;
+        assert!(edit.sharpen_reads_guide());
+        edit.detail.texture = 0.0;
+        edit.detail.clarity = -0.2;
+        assert!(edit.sharpen_reads_guide());
+        edit.detail.enabled = false;
+        assert!(!edit.sharpen_reads_guide(), "the section off");
+        edit.detail.enabled = true;
+        edit.sharpen.enabled = false;
+        assert!(!edit.sharpen_reads_guide(), "nothing to guide");
     }
 
     #[test]

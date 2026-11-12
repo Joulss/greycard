@@ -554,7 +554,9 @@ already been sharpened once.
 - **Auto threshold** keeps flat areas, like sky and skin, from being
   sharpened. Turn it off to set **Threshold** (0 to 200%) yourself:
   higher leaves more alone, and past about 100% only strong edges
-  sharpen.
+  sharpen. Either way, what is flat is judged on the picture before
+  Texture, Clarity, and Structure, so the grain they lift is not
+  sharpened as detail.
 - **Show mask** paints in red where the sharpening acts.
 
 ## Vignette

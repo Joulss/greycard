@@ -160,12 +160,35 @@ fn check(
     clip_level: f32,
     tolerance: f32,
 ) -> (SharpenStats, SharpenStats) {
+    check_guided(
+        ctx, what, image, None, options, measured, clip_level, tolerance,
+    )
+}
+
+/// [`check`], the sharpen reading what is flat from `guide` when
+/// there is one, on both paths.
+// The picture, its guide, the op's inputs, and the tolerance.
+#[allow(clippy::too_many_arguments)]
+fn check_guided(
+    ctx: &Context,
+    what: &str,
+    image: &WorkingImage,
+    guide: Option<&WorkingImage>,
+    options: &SharpenOptions,
+    measured: Option<f32>,
+    clip_level: f32,
+    tolerance: f32,
+) -> (SharpenStats, SharpenStats) {
     let mut cpu = image.clone();
-    let (cpu_stats, cpu_mask) = sharpen_with_mask(&mut cpu, options, measured, clip_level);
+    let (cpu_stats, cpu_mask) = sharpen_with_mask(&mut cpu, guide, options, measured, clip_level);
     let mut gpu = image.clone();
-    let (gpu_stats, gpu_mask) = ctx
-        .sharpen_image(&mut gpu, options, measured, clip_level)
-        .expect("the GPU sharpen runs");
+    let (gpu_stats, gpu_mask) = match guide {
+        Some(g) => ctx
+            .sharpen_image_guided(&mut gpu, g, options, measured, clip_level, true)
+            .map(|(stats, mask, _)| (stats, mask)),
+        None => ctx.sharpen_image(&mut gpu, options, measured, clip_level),
+    }
+    .expect("the GPU sharpen runs");
     let picture = if options.stop_early {
         apart(&cpu.data, &gpu.data)
     } else {
@@ -185,7 +208,7 @@ fn check(
     if mask.max > tolerance {
         check_steep_mask(
             what,
-            (image, options, measured, clip_level),
+            (image, guide, options, measured, clip_level),
             cpu_stats.threshold,
             (&cpu_mask, &gpu_mask),
             tolerance,
@@ -249,7 +272,13 @@ const STEEP_SHARE: f64 = 0.01;
 /// radius, and the clip level the sharpen was given.
 fn check_steep_mask(
     what: &str,
-    (image, options, measured, clip_level): (&WorkingImage, &SharpenOptions, Option<f32>, f32),
+    (image, guide, options, measured, clip_level): (
+        &WorkingImage,
+        Option<&WorkingImage>,
+        &SharpenOptions,
+        Option<f32>,
+        f32,
+    ),
     threshold: f32,
     (cpu, gpu): (&[f32], &[f32]),
     tolerance: f32,
@@ -264,7 +293,7 @@ fn check_steep_mask(
             contrast: Threshold::Fixed(t),
             ..*options
         };
-        sharpen_with_mask(&mut image.clone(), &moved, measured, clip_level).1
+        sharpen_with_mask(&mut image.clone(), guide, &moved, measured, clip_level).1
     };
     // Under twice the rounding the threshold would move by more than
     // half of itself, which is no longer its rounding; it stops there.
@@ -310,6 +339,81 @@ fn check_steep_mask(
 }
 
 const TOLERANCE: f32 = 1e-4;
+
+/// The sharpen reading what is flat from a guide is the reference's,
+/// at an automatic threshold and a fixed one, in the viewport's form
+/// and the export's; and the threshold is the guide's own.
+#[test]
+fn a_guided_sharpen_matches_the_reference() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    // The picture with its grain lifted, as Texture lifts it, and the
+    // picture before as the guide: a noisy flat field the automatic
+    // threshold reads, and detail.
+    let guide = drawn_picture(Scene::Busy, 7, 431, 317);
+    let mut image = guide.clone();
+    let mut rng = Rng::new(11, 0);
+    for v in &mut image.data {
+        *v *= 1.0 + 0.05 * (rng.unit() - 0.5);
+    }
+    for contrast in [Threshold::Auto, Threshold::Fixed(0.3)] {
+        let options = SharpenOptions {
+            contrast,
+            ..Default::default()
+        };
+        let (cpu, gpu) = check_guided(
+            &ctx,
+            "guided",
+            &image,
+            Some(&guide),
+            &options,
+            Some(0.8),
+            2.0,
+            TOLERANCE,
+        );
+        // What is flat is the guide's, on both paths.
+        let (plain, _) = sharpen_with_mask(&mut guide.clone(), None, &options, Some(0.8), 2.0);
+        assert_eq!(cpu.threshold, plain.threshold);
+        assert_eq!(gpu.threshold, plain.threshold);
+        // And not the picture's: a guide ignored would fail here.
+        if contrast == Threshold::Auto {
+            let (own, _) = sharpen_with_mask(&mut image.clone(), None, &options, Some(0.8), 2.0);
+            assert_ne!(
+                own.threshold, plain.threshold,
+                "the grain moves the picture's own"
+            );
+        }
+    }
+    // The export's path, in full floats with the delta: the guide on
+    // the device as the picture is.
+    let options = SharpenOptions::default();
+    let mut cpu = image.clone();
+    let (cpu_stats, _, cpu_delta) =
+        reference::sharpen_with_delta(&mut cpu, Some(&guide), &options, Some(0.8), 2.0);
+    let (uploaded, guided) = (ctx.upload(&image).unwrap(), ctx.upload(&guide).unwrap());
+    let (out, stats, delta) = ctx
+        .sharpen_to_image(
+            &uploaded,
+            Some(&guided),
+            &options,
+            Some(0.8),
+            2.0,
+            true,
+            true,
+        )
+        .expect("the GPU sharpen runs");
+    let gpu = ctx.download(&out.expect("sharpened")).unwrap();
+    assert!(apart(&cpu.data, &gpu.data).relative <= TOLERANCE);
+    assert!(apart(&cpu_delta, &delta.expect("the delta")).max <= TOLERANCE);
+    assert_eq!(cpu_stats.threshold, stats.threshold);
+    // A guide of another size is refused, not read past its edge.
+    let small = ctx.upload(&WorkingImage::new(40, 30)).unwrap();
+    assert!(
+        ctx.sharpen_to_image(&uploaded, Some(&small), &options, None, 2.0, true, false)
+            .is_err()
+    );
+}
 
 /// A synthetic picture, tiles partly off its edge, a fixed radius and
 /// threshold, and a clipped patch the mask must leave alone.
@@ -395,9 +499,9 @@ fn the_delta_matches_the_reference_sharpened_or_not() {
     for apply in [true, false] {
         let mut cpu = image.clone();
         let (cpu_stats, _, cpu_delta) = if apply {
-            reference::sharpen_with_delta(&mut cpu, &options, None, 2.0)
+            reference::sharpen_with_delta(&mut cpu, None, &options, None, 2.0)
         } else {
-            reference::sharpen_delta(&cpu, &options, None, 2.0)
+            reference::sharpen_delta(&cpu, None, &options, None, 2.0)
         };
         let mut gpu = image.clone();
         let (gpu_stats, _, gpu_delta) = ctx
@@ -444,12 +548,12 @@ fn the_full_float_picture_is_the_reference_s() {
     for (apply, with_delta) in [(true, false), (true, true), (false, true)] {
         let mut cpu = image.clone();
         let (cpu_stats, _, cpu_delta) = if apply {
-            reference::sharpen_with_delta(&mut cpu, &options, Some(0.8), 2.0)
+            reference::sharpen_with_delta(&mut cpu, None, &options, Some(0.8), 2.0)
         } else {
-            reference::sharpen_delta(&cpu, &options, Some(0.8), 2.0)
+            reference::sharpen_delta(&cpu, None, &options, Some(0.8), 2.0)
         };
         let (out, stats, delta) = ctx
-            .sharpen_to_image(&uploaded, &options, Some(0.8), 2.0, apply, with_delta)
+            .sharpen_to_image(&uploaded, None, &options, Some(0.8), 2.0, apply, with_delta)
             .expect("the GPU sharpen runs");
         assert_eq!(out.is_some(), apply, "a new picture only when sharpened");
         let gpu = match &out {
@@ -699,13 +803,13 @@ fn a_device_error_is_an_error_not_a_panic() {
         ..Default::default()
     };
     let err = ctx
-        .sharpen(&uploaded, &options, None, 2.0, &wrong)
+        .sharpen(&uploaded, None, &options, None, 2.0, &wrong)
         .expect_err("a texture without storage usage is refused");
     println!("caught: {err}");
     assert!(matches!(err, greycard_gpu::Error::Gpu { .. }), "{err}");
     // And the same op on a proper texture still runs.
     let right = ctx.viewport_texture(96, 64);
-    ctx.sharpen(&uploaded, &options, None, 2.0, &right)
+    ctx.sharpen(&uploaded, None, &options, None, 2.0, &right)
         .expect("the context works after a caught error");
 }
 
@@ -950,6 +1054,9 @@ struct Drawn {
     options: SharpenOptions,
     measured: Option<f32>,
     clip_level: f32,
+    /// The guide's scene and seed, a picture of the same size, when
+    /// the sharpen reads what is flat from one.
+    guide: Option<(Scene, u64)>,
 }
 
 /// A side for the sweep: mostly modest, sometimes tiny, sometimes on
@@ -1028,6 +1135,14 @@ fn draw(r: &mut Rng) -> Drawn {
         3 | 4 => 8.0,
         _ => r.range(0.98, 8.0),
     };
+    // Drawn last, so the cases drawn before the guide came are drawn
+    // as they were.
+    let guide = r.chance(0.4).then(|| {
+        (
+            r.pick(&[Scene::Textured, Scene::Noise, Scene::Busy, Scene::Dark]),
+            r.next(),
+        )
+    });
     Drawn {
         width,
         height,
@@ -1041,6 +1156,7 @@ fn draw(r: &mut Rng) -> Drawn {
         },
         measured,
         clip_level,
+        guide,
     }
 }
 
@@ -1058,10 +1174,14 @@ fn the_gpu_sharpen_is_the_reference_over_random_settings() {
     let device = ctx.device().adapter_info().name;
     Sweep::from_env(30).run("sharpen", &device, draw, |what, d| {
         let image = drawn_picture(d.scene, d.scene_seed, d.width, d.height);
-        check(
+        let guide = d
+            .guide
+            .map(|(scene, seed)| drawn_picture(scene, seed, d.width, d.height));
+        check_guided(
             &ctx,
             what,
             &image,
+            guide.as_ref(),
             &d.options,
             d.measured,
             d.clip_level,
@@ -1147,11 +1267,25 @@ fn a_lost_device_is_an_error_not_a_panic() {
     let image = textured(96, 64, 1.0);
     let uploaded = ctx.upload(&image).expect("uploads");
     let out = ctx.viewport_texture(96, 64);
-    ctx.sharpen(&uploaded, &SharpenOptions::default(), Some(1.0), 2.0, &out)
-        .expect("sharpens before the loss");
+    ctx.sharpen(
+        &uploaded,
+        None,
+        &SharpenOptions::default(),
+        Some(1.0),
+        2.0,
+        &out,
+    )
+    .expect("sharpens before the loss");
     ctx.device().destroy();
     let err = ctx
-        .sharpen(&uploaded, &SharpenOptions::default(), Some(1.0), 2.0, &out)
+        .sharpen(
+            &uploaded,
+            None,
+            &SharpenOptions::default(),
+            Some(1.0),
+            2.0,
+            &out,
+        )
         .expect_err("a lost device fails the op");
     println!("after the loss: {err}");
     assert!(matches!(err, greycard_gpu::Error::Lost(_)), "{err}");

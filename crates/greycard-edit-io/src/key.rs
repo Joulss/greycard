@@ -9,7 +9,8 @@ use std::time::SystemTime;
 
 use greycard_edit::camera::{EXTENSION, ProfileChoice};
 use greycard_edit::key::{
-    DEVELOP_RECIPE, LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, Read, SKY_PIPELINE,
+    DEVELOP_RECIPE, LANDSCAPE_PIPELINE, PART_PIPELINE, PERSON_EDGE, Read, SHARPEN_GUIDE,
+    SKY_PIPELINE,
 };
 use greycard_edit::look::LutChoice;
 use greycard_edit::{Edit, LensChoice};
@@ -104,8 +105,8 @@ fn contents(path: &Path) -> Option<[u8; 32]> {
 }
 
 /// What every develop key made now is made under, beside each edit's
-/// own: [`DEVELOP_RECIPE`], the learned masks' stages, the lens
-/// database's name as the caller gives
+/// own: [`DEVELOP_RECIPE`], the learned masks' stages, the sharpen's
+/// guide ([`SHARPEN_GUIDE`]), the lens database's name as the caller gives
 /// it, and the look and profile directories as they stand (each file's
 /// name, length and modification time; not their contents, which only
 /// the files an edit names are read for). A store of keys made under
@@ -161,7 +162,7 @@ pub fn keys_made_under_in(
     let files = hasher.finalize();
     format!(
         "recipe {DEVELOP_RECIPE}; masks {SKY_PIPELINE} {LANDSCAPE_PIPELINE} {PART_PIPELINE} \
-         {PERSON_EDGE}; lenses {lenses:?}; files {}",
+         {PERSON_EDGE}; {SHARPEN_GUIDE}; lenses {lenses:?}; files {}",
         &files.to_hex()[..16]
     )
 }

@@ -687,6 +687,12 @@ pub enum Tap {
     /// section, for a finish on the CPU; the viewport's develop hands
     /// on the patched picture it keeps.
     Sample,
+    /// The picture the capture sharpen reads what is flat from: the
+    /// one before the Detail section's local contrast, dehazed with
+    /// the picture after it. Only where the local contrast runs and a
+    /// sharpen follows; without it the sharpen reads its own input,
+    /// which is that picture.
+    SharpenGuide,
 }
 
 /// Where a walk leaves what it has for the next to start from.
@@ -1112,6 +1118,13 @@ pub fn stages(
             beside: !reduced,
         });
     }
+    // Texture, Clarity, and Structure lift the grain of the flattest
+    // patch the sharpen's automatic threshold reads, and the contrast
+    // its blend mask reads: the sharpen decides what is flat from the
+    // picture before them.
+    if edit.sharpen_reads_guide() && !reduced && *purpose != Purpose::ModelsSee {
+        s.tap(Tap::SharpenGuide);
+    }
     s.op_if(global.map(Stage::LocalContrast));
     s.op_if(edit.detail.dehaze_options().map(Stage::Dehaze));
     if *purpose == Purpose::ModelsSee {
@@ -1456,6 +1469,7 @@ mod tests {
                 Step::Tap(Tap::Masks(m)) => format!("masks {m:?}"),
                 Step::Tap(Tap::MaskPicture) => "mask picture".into(),
                 Step::Tap(Tap::Sample) => "sample".into(),
+                Step::Tap(Tap::SharpenGuide) => "sharpen guide".into(),
                 Step::Keep(k) => format!("keep {k:?}"),
             })
             .collect()
@@ -1463,6 +1477,45 @@ mod tests {
 
     fn export() -> Purpose {
         Purpose::Export(Box::default())
+    }
+
+    /// The sharpen's guide is tapped just before the local contrast,
+    /// where Texture, Clarity, or Structure runs and a sharpen
+    /// follows; an edit with all three at zero has the list it had.
+    #[test]
+    fn the_sharpen_guide_is_tapped_before_the_local_contrast() {
+        let guide = |e: &Edit, p: &Purpose| {
+            let steps = stages(e, p, &raw(0), None).steps;
+            let tap = steps
+                .iter()
+                .position(|s| matches!(s, Step::Tap(Tap::SharpenGuide)));
+            if let Some(i) = tap {
+                assert!(matches!(steps[i + 1], Step::Op(Stage::LocalContrast(_))));
+            }
+            tap.is_some()
+        };
+        let mut edit = Edit::default();
+        edit.detail.dehaze = 0.5;
+        assert!(edit.sharpen.options().is_some(), "the sharpen is on");
+        for p in [Purpose::Viewport, export(), Purpose::Reduced] {
+            assert!(!guide(&edit, &p), "Detail at zero: {p:?}");
+        }
+        for set in [
+            |e: &mut Edit| e.detail.texture = 0.5,
+            |e: &mut Edit| e.detail.clarity = -0.3,
+            |e: &mut Edit| e.detail.structure = 0.2,
+        ] {
+            let mut e = edit.clone();
+            set(&mut e);
+            assert!(guide(&e, &Purpose::Viewport));
+            assert!(guide(&e, &export()));
+            // Neither the reduced develop nor the models' picture
+            // sharpens.
+            assert!(!guide(&e, &Purpose::Reduced));
+            assert!(!guide(&e, &Purpose::ModelsSee));
+            e.sharpen.enabled = false;
+            assert!(!guide(&e, &Purpose::Viewport), "nothing to guide");
+        }
     }
 
     /// The range masks' picture from before Detail is tapped for a
@@ -1654,6 +1707,7 @@ mod tests {
             "retouch",
             "guide",
             "keep Patched",
+            "sharpen guide",
             "local contrast",
             "dehaze",
             "keep PreSharpen",

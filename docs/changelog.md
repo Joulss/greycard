@@ -85,6 +85,13 @@ design note behind it.
 
 ### Fixes
 
+- Texture and Clarity no longer switch off the sharpening's noise
+  protection. On a high-ISO frame Texture +50 had the whole picture
+  sharpened, grain and all; the sharpening now decides what is flat
+  from the picture before Texture, Clarity, and Structure. An edit
+  using any of the three renders with less sharpened grain; others
+  are unchanged
+  ([§643](https://github.com/jessolmstead/greycard/blob/master/docs/notes/643-the-sharpen-reads-flat-before-texture.md)).
 - A frame whose `.gcd` greycard cannot read (written by a later
   version, or damaged) is left alone even when its folder is not
   indexed yet. Before, such a frame opened with a blank edit, and the

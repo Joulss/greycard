@@ -654,3 +654,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§640. A sidecar read from disk that will not read is held](notes/640-a-sidecar-that-will-not-read-is-held.md) (2026-11-11)
 - [§641. French translation of the window](notes/641-french-translation.md) (2026-11-11)
 - [§642. A switch beside its label](notes/642-a-switch-beside-its-label.md) (2026-11-11)
+- [§643. The capture sharpen decides what is flat before Texture](notes/643-the-sharpen-reads-flat-before-texture.md) (2026-11-11)

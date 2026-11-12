@@ -373,7 +373,7 @@ fn the_viewport_halves_round_to_nearest() {
 
     // The sharpen, its blend mask in the alpha.
     let options = SharpenOptions::default();
-    ctx.sharpen(&uploaded, &options, Some(1.0), 2.0, &out)
+    ctx.sharpen(&uploaded, None, &options, Some(1.0), 2.0, &out)
         .expect("sharpens");
     let texture = read(&out);
     let mut gpu = image.clone();
@@ -381,7 +381,7 @@ fn the_viewport_halves_round_to_nearest() {
         .sharpen_image(&mut gpu, &options, Some(1.0), 2.0)
         .expect("sharpens");
     let mut cpu = image.clone();
-    let (_, cpu_mask) = sharpen_with_mask(&mut cpu, &options, Some(1.0), 2.0);
+    let (_, cpu_mask) = sharpen_with_mask(&mut cpu, None, &options, Some(1.0), 2.0);
     results.push((
         "sharpen",
         measure(
@@ -395,7 +395,7 @@ fn the_viewport_halves_round_to_nearest() {
     ));
 
     // The sharpen's delta alone: the picture as it was.
-    ctx.sharpen_with_delta(&uploaded, &options, Some(1.0), 2.0, &out, false)
+    ctx.sharpen_with_delta(&uploaded, None, &options, Some(1.0), 2.0, &out, false)
         .expect("runs");
     let texture = read(&out);
     results.push((
@@ -489,8 +489,15 @@ fn the_viewport_ops_at_24_mp() {
         ctx.read_viewport_rows(&out, 0, 1).expect("reads");
     };
     let sharpen = median(&mut || {
-        ctx.sharpen(&uploaded, &SharpenOptions::default(), Some(1.0), 2.0, &out)
-            .expect("sharpens");
+        ctx.sharpen(
+            &uploaded,
+            None,
+            &SharpenOptions::default(),
+            Some(1.0),
+            2.0,
+            &out,
+        )
+        .expect("sharpens");
         sync(&ctx);
     });
     let lc = LocalContrastOptions {

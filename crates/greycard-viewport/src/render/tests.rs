@@ -3130,7 +3130,7 @@ fn a_masks_sharpen_on_both_sides() {
         contrast: Threshold::Fixed(0.0),
         ..Default::default()
     };
-    let (_, _, delta) = sharpen_with_delta(&mut image, &options, None, 1.0);
+    let (_, _, delta) = sharpen_with_delta(&mut image, None, &options, None, 1.0);
     let delta = greycard_render::detail::sharpen_delta(&delta);
     let (w, h) = (image.width, image.height);
     let alone = Arc::new(greycard_render::detail::DetailPlanes::sharpen_only(

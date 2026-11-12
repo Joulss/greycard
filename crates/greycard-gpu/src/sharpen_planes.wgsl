@@ -122,6 +122,19 @@ fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(blend, at, vec4<f32>(clip, 0.0, 0.0, 0.0));
 }
 
+// L* of the guide's luminance over the picture's, `rgb` bound to the
+// guide: what the threshold and the blend read is then the guide's.
+@compute @workgroup_size(16, 16, 1)
+fn guide_lstar(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= p.size.x || gid.y >= p.size.y {
+        return;
+    }
+    let at = vec2<i32>(gid.xy);
+    let px = textureLoad(rgb, at, 0).rgb;
+    let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
+    textureStore(lstar, at, vec4<f32>(l_star(y), 0.0, 0.0, 0.0));
+}
+
 var<workgroup> scratch: array<f32, 256>;
 
 // The sum of one row of `blend`, a workgroup a row.
