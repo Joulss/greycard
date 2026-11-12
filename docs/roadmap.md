@@ -469,6 +469,10 @@ ask for first.
       draw back to the panel's 0.01. §239's fade at black (a shift reads
       light under 2e-6 as black) may be that floor; try the 0.01 draw
       over the seed sweep
+- [ ] The camera match reads Olympus and OM System's Picture Mode
+      from an ORF's maker note, with Gradation and the Art Filters
+      as its scene-adaptive settings; five OM-1 frames, one a mode,
+      offered (issue 139, 2026-11-12)
 - [ ] Camera match follow-ups (§181): the error held out over every
       frame (§240) deciding whether a new fit of the same body from
       another folder replaces the table there, where today more frames
