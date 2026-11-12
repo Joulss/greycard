@@ -141,6 +141,24 @@ jobs:
           WGPU_BACKEND: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: cargo test --locked
 
+  # The translators' catalogs: the template against the source and each
+  # language's placeholders, in seconds with no build. A catalog behind
+  # the source is reported, not failed. A job of its own, so a slip in
+  # a translation hides no leg's tests; Linux alone, since the files are
+  # the same everywhere.
+  translations:
+    if: github.event_name != 'schedule'
+    name: translation catalogs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: The check's own cases
+        run: python3 scripts/translations-check.py --self-test
+
+      - name: The catalogs against the source
+        run: python3 scripts/translations-check.py
+
   # The fuzz targets in fuzz/ still build against the crates they
   # read: a workspace of their own, which nothing above compiles, run
   # by fuzz.yml only on Sundays. A check on stable, which needs no

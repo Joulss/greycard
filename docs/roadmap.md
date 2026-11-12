@@ -23,6 +23,9 @@ the reasoning lives in `docs/notes.md`.
       (the sharpen guide's among them, §643) while its denoiser or
       removal asks for room; on a short card the release could drop
       them too, at the cost of the window's next develop (§646)
+- [ ] Two window defaults nothing marks for translation, "Global"
+      and "From the file" in `app.slint`, which Rust overwrites
+      later (§651): mark them or drop the defaults
 - [ ] A mask's Shadows and Highlights summed with the picture's are
       not held to the slider's limit (Midtones' sum is, §644): a mask
       at +2 over a picture at +2 can fold the tones
@@ -257,9 +260,9 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The Windows installer (§619) compiled and installed on CI: a
       run of windows-package.yml, before the tag
 - [ ] The Windows installer signed: waits on a signing service
-- [ ] The strings added since the French catalog was made (the white
-      balance presets and later) translated, and a check that says
-      which a catalog lacks
+- [ ] The strings added since the French catalog was made
+      translated: 20 as of §651 (`scripts/translations-check.py
+      --list` names them)
 
 ### Speed
 

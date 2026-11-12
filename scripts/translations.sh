@@ -42,6 +42,21 @@ slint-tr-extractor --no-default-translation-context -d greycard \
 # through its modules.
 xtr --package-name greycard -o "$work/lib.pot" crates/greycard-ui/src/lib.rs
 xtr --package-name greycard -o "$work/bin.pot" crates/greycard-ui/src/main.rs
+# xtr resolves a module declared in a non-mod.rs file (archive.rs's
+# `mod rejects`) beside its parent, not under it, so the file it should
+# read is never read: each file with a tr! that neither walk reached is
+# read as a root of its own.
+: > "$work/more.pot"
+for rs in $(grep -rl --include='*.rs' 'tr!' crates/greycard-ui/src | LC_ALL=C sort); do
+    grep -q "[ ]$rs:" "$work/lib.pot" "$work/bin.pot" && continue
+    xtr --package-name greycard -o "$work/one.pot" "$rs"
+    [ -s "$work/one.pot" ] || continue
+    if [ -s "$work/more.pot" ]; then
+        msgcat --use-first -o "$work/more.pot" "$work/more.pot" "$work/one.pot"
+    else
+        cp "$work/one.pot" "$work/more.pot"
+    fi
+done
 
 # One template: our header, then every string once, in the order of
 # the files they are in.
@@ -62,7 +77,8 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 POT
 msgcat --use-first --sort-by-file -o "$work/strings.pot" \
-    "$work/slint.pot" "$work/lib.pot" "$work/bin.pot"
+    "$work/slint.pot" "$work/lib.pot" "$work/bin.pot" \
+    $( [ -s "$work/more.pot" ] && echo "$work/more.pot" )
 msgcat --use-first -o translations/greycard.pot "$work/header.pot" "$work/strings.pot"
 
 # Each language: new strings added untranslated, gone ones kept as
@@ -73,3 +89,6 @@ for po in translations/*/LC_MESSAGES/greycard.po; do
     msgmerge --quiet --update --backup=none "$po" translations/greycard.pot
     echo "$po: $(msgfmt --statistics -o /dev/null "$po" 2>&1)"
 done
+
+# The template against the source, and every language's placeholders.
+python3 scripts/translations-check.py

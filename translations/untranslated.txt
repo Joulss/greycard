@@ -1,0 +1,24 @@
+# Strings that scripts/translations-check.py would report as words the
+# window shows unmarked, and which are not: data, keys, or text for a
+# developer. Its report, never a failure, reads this.
+#
+# A line in double quotes is a string let through wherever it is. A
+# bare name is a Rust function or setter (`set_aside`), or a Slint
+# property (`demosaic-stored`), whose strings are never shown.
+# The Slint scan's own list, crates/greycard-slint/ui/untranslated.txt,
+# is read too.
+
+# Ours, not the window's: a file set aside (logged), the program's
+# Wayland id, and Slint's rendering hook (its errors are logged).
+set_aside
+set_xdg_app_id
+set_rendering_notifier
+
+# Keys the Slint side compares, set to their defaults.
+demosaic-stored
+camera-profile
+
+# The --sheet capture's sample text, English by design (§616).
+"Download the Subject model?"
+"312 MB from the model registry.\nLicense: Apache-2.0.\nKept in the models folder."
+"Sample text: this sheet was opened for a snapshot."

@@ -37,6 +37,15 @@ To update a catalog after the window's wording changed, run
 `scripts/translations.sh` (see [building.md](building.md)) or ask in
 the pull request: new strings arrive empty and changed ones fuzzy.
 
+To see how far a catalog is behind, run
+`scripts/translations-check.py --list` (Python 3, nothing to
+install). It lists each language's missing, empty, fuzzy, and
+obsolete entries, and fails on a translation whose placeholders
+differ from the English's. It also checks the template against the
+source, and lists words the window may show that nothing marks for
+translation; `translations/untranslated.txt` holds the ones that are
+data or keys. CI runs it without `--list`.
+
 ## Where a string shows
 
 Each entry names the file it comes from (`#:`), and many carry a

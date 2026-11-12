@@ -371,6 +371,11 @@ cargo install slint-tr-extractor xtr
 scripts/translations.sh
 ```
 
+`scripts/translations-check.py` needs neither: it reads the source and
+the catalogs and fails on a string marked in the source with no entry
+in the template, an entry marked nowhere, or a translation whose
+placeholders differ from the English's.
+
 [translating.md](translating.md) is the translators' side.
 
 ## When it goes wrong
