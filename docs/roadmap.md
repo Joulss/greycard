@@ -7,6 +7,15 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] Texture switches off the capture sharpen's noise protection:
+      the sharpen reads its contrast threshold from the flattest patch
+      after Texture has put grain in it, the threshold falls to zero,
+      and the whole picture is sharpened. An ISO 3200 frame goes from
+      14% sharpened to 100% at Texture +50, its sky's noise 3.2 times
+      the base; Texture -100 moves the threshold the other way and
+      the sharpen works against the smoothing. The threshold wants
+      reading before Texture. Measured 2026-11-11 on one X-Trans
+      frame; sheets in target/captures-2026-11-12/texture
 - [ ] `roots/kept_up.rs` falls back to a default sidecar marked as
       read when a newly listed path is missing from the `read` map:
       the same hole §640 closed in `rows::bring`, by another door;
