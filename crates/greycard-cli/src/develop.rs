@@ -348,6 +348,9 @@ pub(crate) fn run(args: DevelopArgs) -> Result<()> {
     let settings = DevelopSettings {
         white_point,
         profile: chosen_profile(&camera_profile)?,
+        profile_look: true,
+        // Settled per file once it is decoded, as the demosaic is.
+        look_baseline: 0.0,
         // Settled per file once its mosaic is known
         // (`demosaic_for`).
         demosaic: demosaic.unwrap_or_default(),
@@ -1041,6 +1044,13 @@ fn run_develop(
         .with_context(|| format!("decoding {}", file.display()))?;
     let settings = &DevelopSettings {
         demosaic: demosaic_for(&frame.layout, demosaic_asked)?,
+        // A DCP's look table is read where the editor's default
+        // develop of this body reads it.
+        look_baseline: greycard_edit::Edit::default().look_baseline(
+            &frame.make,
+            &frame.model,
+            greycard_edit::baseline::headroom(&frame),
+        ),
         ..settings.clone()
     };
     let mut developed = match ai_denoise {

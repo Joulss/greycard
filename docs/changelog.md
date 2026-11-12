@@ -44,6 +44,14 @@ design note behind it.
 
 ### Develop
 
+- A camera profile from a DCP file now applies its look table, which
+  is where Adobe's Camera Standard, Natural, Vivid, and the rest carry
+  their color: they differ from each other, and greens no longer come
+  out olive. The profile's tone curve is still not applied. An edit
+  already made keeps its colors until you choose another profile and
+  then its own again, or lay a preset or a sync with a camera profile
+  on it (issue 129,
+  [§639](https://github.com/jessolmstead/greycard/blob/master/docs/notes/639-a-dcps-look-table.md)).
 - White balance has presets: Daylight, Cloudy, Shade, Tungsten,
   Fluorescent, and Flash, on the arrow beside Auto or a right-click on
   it. Raw files only (issue 128,

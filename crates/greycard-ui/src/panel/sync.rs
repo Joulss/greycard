@@ -3427,6 +3427,7 @@ mod tests {
         let edit = Edit {
             camera: greycard_edit::Camera {
                 profile: ProfileChoice::Named("r5".into()),
+                ..Default::default()
             },
             light: greycard_edit::Light {
                 exposure: 0.4,
@@ -3482,6 +3483,7 @@ mod tests {
         let edit = Edit {
             camera: greycard_edit::Camera {
                 profile: ProfileChoice::Named("r5".into()),
+                ..Default::default()
             },
             white_balance: WhiteBalance::Custom {
                 temperature: 3200.0,

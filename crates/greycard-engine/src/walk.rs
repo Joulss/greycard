@@ -1027,8 +1027,15 @@ fn turnless(steps: &[Step]) -> Vec<Step> {
         .iter()
         .filter(|s| !matches!(s, Step::Op(Stage::Orient(_))))
         .map(|s| match s {
-            Step::Op(Stage::IntoWorking { profile, .. }) => Step::Op(Stage::IntoWorking {
+            Step::Op(Stage::IntoWorking {
+                profile,
+                profile_look,
+                look_baseline,
+                ..
+            }) => Step::Op(Stage::IntoWorking {
                 profile: profile.clone(),
+                profile_look: *profile_look,
+                look_baseline: *look_baseline,
                 orientation: Orientation::Normal,
             }),
             s => s.clone(),

@@ -205,6 +205,22 @@ Where to get profiles:
 
 If you choose a profile made for another camera, a warning says so.
 
+From a DCP file, greycard applies the profile's color: its matrices,
+its color map, and its look table, which is where Adobe's Camera
+Standard, Vivid, Portrait, and the other Camera profiles differ from
+each other. (**Embedded** uses the raw file's own matrices only: a
+DNG's color map and look table, when it carries them, are not
+applied.) It does not apply a profile's tone curve: brightness and
+contrast stay with **Light** and the display curve, so a Camera
+profile brings a picture closer to the camera's own in color, not in
+contrast.
+
+A picture you developed with a DCP before greycard applied look tables
+keeps its colors. To give it the look table, choose another profile
+and then that one again, or lay a preset, a paste, or a sync with a
+camera profile on it: anything that puts a DCP on a picture that way
+always brings its look table.
+
 ## Light
 
 | Slider | Range | What it does |

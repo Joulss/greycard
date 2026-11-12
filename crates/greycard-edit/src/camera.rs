@@ -11,6 +11,18 @@
 //!
 //! A name that resolves to nothing is a warning in the log and the
 //! file's own calibrations. A missing profile never fails a develop.
+//!
+//! A DCP's look table goes on with its map ([`Camera::look_table`]).
+//! An edit written before the table was applied says nothing about it
+//! and reads as off, so its picture does not move and it writes back
+//! byte for byte, with no new schema version (as a mask's local white
+//! and its Detail came in). Every door that lays a Camera section
+//! naming a DCP on a frame turns the table on ([`Camera::take`]): a
+//! preset, a paste, a sync, or an import's preset, whatever the frame
+//! had and whatever the source says; so does choosing a different
+//! profile ([`Camera::choose`]). The only DCP edit without its table is
+//! an old one nothing has laid a Camera section on; an undo or a
+//! snapshot restores the edit whole, switch and all.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -77,13 +89,71 @@ impl<'de> Deserialize<'de> for ProfileChoice {
 
 /// The CAMERA section of an edit: what the sensor's color is taken
 /// through, before everything else.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default)]
 pub struct Camera {
     pub profile: ProfileChoice,
+    /// Whether a DCP's look table goes on with its map: off when the
+    /// sidecar says nothing, which is every edit made before the table
+    /// was applied (the module's doc).
+    pub look_table: bool,
+}
+
+/// The switch is written only when it is on and a DCP is named, so an
+/// edit from before the table writes the bytes it always wrote, and its
+/// develop key, its thumbnail, and its masks' bases stay as they were.
+impl Serialize for Camera {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let written = self.look_table && !self.profile.is_embedded();
+        let mut st = s.serialize_struct("Camera", 1 + usize::from(written))?;
+        st.serialize_field("profile", &self.profile)?;
+        if written {
+            st.serialize_field("look_table", &true)?;
+        } else {
+            st.skip_field("look_table")?;
+        }
+        st.end()
+    }
 }
 
 impl Camera {
+    /// Choose a profile on the panel. Choosing the one already chosen
+    /// changes nothing, so an old edit keeps its picture; any other
+    /// choice is [`Camera::take`].
+    pub fn choose(&mut self, profile: ProfileChoice) {
+        if profile != self.profile {
+            self.take(&Camera {
+                profile,
+                look_table: false,
+            });
+        }
+    }
+
+    /// Lay `from` over this one: a preset, a paste, a sync. A DCP comes
+    /// with its look table on, whatever this one had and whatever
+    /// `from` says; the file's own profile has no table, and its switch
+    /// is off.
+    pub fn take(&mut self, from: &Camera) {
+        self.profile = from.profile.clone();
+        self.look_table = !self.profile.is_embedded();
+    }
+
+    /// Whether a look table goes on: the switch, and a DCP to carry one.
+    /// A hand-edited sidecar can set the switch on the file's own
+    /// profile; that is no table.
+    pub fn applies_look_table(&self) -> bool {
+        self.look_table && !self.profile.is_embedded()
+    }
+
+    /// Whether laying `from` over this one would leave it as it is: how
+    /// a preset reads as applied.
+    pub fn has(&self, from: &Camera) -> bool {
+        let mut laid = self.clone();
+        laid.take(from);
+        laid == *self
+    }
+
     /// The engine's profile for this choice: the DCP `loader` reads
     /// and keeps, or `None` for the file's own. A profile that will not
     /// read warns once and comes back `None`, which is the file's own
@@ -234,6 +304,86 @@ pub fn warning(profiles: &[Entry], camera: Body, chosen: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An edit from before the table, one that names a DCP or not,
+    /// reads with the table off and writes back byte for byte; a new
+    /// DCP edit writes the switch.
+    #[test]
+    fn an_edit_from_before_the_table_writes_back_byte_for_byte() {
+        for old in [r#"{"profile":"Body Natural"}"#, r#"{"profile":"embedded"}"#] {
+            let c: Camera = serde_json::from_str(old).unwrap();
+            assert!(!c.look_table);
+            assert_eq!(serde_json::to_string(&c).unwrap(), old);
+        }
+        let old =
+            r#"{"version": 8, "camera": {"profile": "Body Natural"}, "light": {"exposure": 0.5}}"#;
+        let e = crate::Edit::from_json(old).unwrap();
+        assert!(!e.camera.look_table);
+        assert!(!e.settings(&crate::NoStores).profile_look);
+        let json = e.to_json();
+        assert!(!json.contains("look_table"), "{json}");
+        let mut again = crate::Edit::from_json(&json).unwrap();
+        assert_eq!(again.to_json(), json);
+
+        again
+            .camera
+            .choose(ProfileChoice::Named("Body Vivid".into()));
+        let json = serde_json::to_string(&again.camera).unwrap();
+        assert_eq!(json, r#"{"profile":"Body Vivid","look_table":true}"#);
+        assert_eq!(serde_json::from_str::<Camera>(&json).unwrap(), again.camera);
+        assert!(
+            crate::Edit::from_json(&again.to_json())
+                .unwrap()
+                .camera
+                .look_table
+        );
+    }
+
+    /// A hand-edited switch on the file's own profile is no table:
+    /// the develop does not apply one, and the engine and a mask's base
+    /// ask the same question.
+    #[test]
+    fn a_switch_on_the_files_own_profile_is_no_table() {
+        let e = crate::Edit::from_json(
+            r#"{"version": 8, "camera": {"profile": "embedded", "look_table": true}}"#,
+        )
+        .unwrap();
+        assert!(e.camera.look_table);
+        assert!(!e.camera.applies_look_table());
+        assert!(!e.settings(&crate::NoStores).profile_look);
+        let mut named = e.camera.clone();
+        named.profile = ProfileChoice::Named("Natural".into());
+        assert!(named.applies_look_table());
+    }
+
+    /// A brand-new edit is on the file's own profile, which has no
+    /// table.
+    #[test]
+    fn a_new_edit_has_no_table_to_apply() {
+        let e = crate::Edit::default();
+        assert!(e.camera.profile.is_embedded());
+        assert!(!e.camera.look_table);
+    }
+
+    /// Choosing another profile turns the table on; choosing the same
+    /// one again leaves an old edit's picture as it was; the file's own
+    /// profile turns it off.
+    #[test]
+    fn choosing_another_profile_turns_the_look_table_on() {
+        let natural = ProfileChoice::Named("Natural".into());
+        let mut c = Camera {
+            profile: natural.clone(),
+            look_table: false,
+        };
+        c.choose(natural.clone());
+        assert!(!c.look_table);
+        c.choose(ProfileChoice::Named("Vivid".into()));
+        assert!(c.look_table);
+        c.choose(ProfileChoice::Embedded);
+        assert!(!c.look_table);
+        c.choose(natural);
+        assert!(c.look_table);
+    }
 
     /// What the panel says under the profile list: nothing for the
     /// file's own colors or a profile that fits, a line for one the

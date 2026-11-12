@@ -740,8 +740,10 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     // Global, as the black and white is: the curve under every look.
     edit.display_curve = greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
         .unwrap_or_default();
-    edit.camera.profile =
-        greycard_edit::camera::ProfileChoice::from_name(app.get_camera_profile().as_str());
+    edit.camera
+        .choose(greycard_edit::camera::ProfileChoice::from_name(
+            app.get_camera_profile().as_str(),
+        ));
     edit.look_lut.lut = greycard_edit::look::LutChoice::from_name(app.get_look_name().as_str());
     edit.look_lut.strength = app.get_look_strength().clamp(0.0, 1.0);
     edit.retouch.enabled = app.get_retouch_enabled();

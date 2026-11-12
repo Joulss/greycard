@@ -152,6 +152,9 @@ pub enum InputKind {
         /// A merge of ours: its noise is no one frame's, so the
         /// denoisers stand down on it.
         merged: bool,
+        /// The stops a merge of ours stored its samples under its
+        /// reference frame (`baseline::headroom`); 0 for any other raw.
+        headroom: f32,
         /// A merge whose lens was corrected in the merge (a
         /// panorama): it is in no one frame's geometry, and the lens
         /// profile stands down on it.
@@ -175,6 +178,15 @@ pub struct Identity {
 }
 
 impl Facts {
+    /// A merge's headroom in stops (`baseline::headroom`); 0 for any
+    /// other input.
+    pub fn headroom(&self) -> f32 {
+        match self.input {
+            InputKind::Raw { headroom, .. } => headroom,
+            _ => 0.0,
+        }
+    }
+
     /// A raw's facts at `turn`.
     pub fn raw(frame: &RawFrame, turn: u8) -> Self {
         let crop = frame.effective_crop();
@@ -193,6 +205,7 @@ impl Facts {
                     })
                 }),
                 merged: frame.dng.merged.is_some(),
+                headroom: greycard_edit::baseline::headroom(frame),
                 lens_corrected: frame.dng.merged.as_ref().is_some_and(|m| m.lens_corrected),
             },
             identity: Identity {
@@ -357,6 +370,8 @@ impl PartialEq for PrepareOptions {
         let DevelopSettings {
             white_point,
             profile,
+            profile_look,
+            look_baseline,
             demosaic,
             highlights,
             segments,
@@ -370,6 +385,8 @@ impl PartialEq for PrepareOptions {
         // A camera profile is read once and kept, so the same file is
         // the same pointer; a hundred kilobytes is not compared.
         same_profile(profile, &b.profile)
+            && *profile_look == b.profile_look
+            && *look_baseline == b.look_baseline
             && *white_point == b.white_point
             && *demosaic == b.demosaic
             && *highlights == b.highlights
@@ -427,9 +444,14 @@ pub enum Stage {
     /// camera's geometry before any turn, crop, or lens profile.
     Warp(Box<WarpOptions>),
     /// Camera RGB into the working space: the matrix, the camera
-    /// profile's map, the orientation. Each of a pair.
+    /// profile's map and look table, the orientation. Each of a pair.
     IntoWorking {
         profile: Option<ProfileRef>,
+        /// Whether the profile's look table goes on after its map.
+        profile_look: bool,
+        /// The baseline it is read at
+        /// ([`DevelopSettings::look_baseline`]).
+        look_baseline: f32,
         orientation: Orientation,
     },
     /// The learned pair blended by strength: the luminance's, then
@@ -878,7 +900,16 @@ pub fn stages(
         1
     };
     let mut s = Steps::default();
-    let settings = edit.settings(&greycard_edit_io::Stores::user());
+    let mut settings = edit.settings(&greycard_edit_io::Stores::user());
+    // Only where a look table may go on, so the list of an edit with
+    // none (and its base, which keeps no baseline then) is as it was.
+    if edit.camera.applies_look_table() {
+        settings.look_baseline = edit.look_baseline(
+            &facts.identity.make,
+            &facts.identity.model,
+            facts.headroom(),
+        );
+    }
     match &facts.input {
         InputKind::Raw {
             pattern,
@@ -963,6 +994,8 @@ pub fn stages(
             s.op_if(warp.clone().map(Stage::Warp));
             s.op(Stage::IntoWorking {
                 profile: settings.profile.clone().map(ProfileRef),
+                profile_look: settings.profile_look,
+                look_baseline: settings.look_baseline,
                 orientation: facts.orientation().expect("a raw's orientation"),
             });
             if learned.is_some() {
@@ -1303,6 +1336,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged: false,
+                headroom: 0.0,
                 lens_corrected: false,
             },
             identity: identity(),
@@ -1318,6 +1352,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged: false,
+                headroom: 0.0,
                 lens_corrected: false,
             },
             ..raw(0)
@@ -1356,6 +1391,53 @@ mod tests {
             ..Patch::default()
         });
         edit
+    }
+
+    /// A DCP's look table is read where the render's baseline puts the
+    /// picture: the body's, an older edit's own where it keeps one, and
+    /// a merge's headroom on top, as `Edit::look_baseline` (which the
+    /// command line uses too) has it.
+    #[test]
+    fn the_look_table_is_read_at_the_baseline_and_a_merges_headroom() {
+        let read_at = |edit: &Edit, facts: &Facts| {
+            stages(edit, &Purpose::Viewport, facts, None)
+                .ops()
+                .find_map(|o| match o {
+                    Stage::IntoWorking { look_baseline, .. } => Some(*look_baseline),
+                    _ => None,
+                })
+                .expect("a raw goes into the working space")
+        };
+        let body = greycard_edit::baseline::for_make_model("Canon", "EOS R5");
+        // No table, nothing read: the list is the one it was.
+        assert_eq!(read_at(&Edit::default(), &raw(0)), 0.0);
+        // Nor with a hand-set switch on the file's own profile.
+        let mut own = Edit::default();
+        own.camera.look_table = true;
+        assert_eq!(read_at(&own, &raw(0)), 0.0);
+        let mut edit = Edit::default();
+        edit.camera
+            .choose(greycard_edit::camera::ProfileChoice::Named(
+                "Natural".into(),
+            ));
+        assert_eq!(read_at(&edit, &raw(0)), body);
+        let merge = Facts {
+            input: InputKind::Raw {
+                pattern: Some(CfaPattern::rggb()),
+                crop: (6000, 4000),
+                tag: Orientation::Normal,
+                warp: None,
+                merged: true,
+                headroom: 2.0,
+                lens_corrected: false,
+            },
+            ..raw(0)
+        };
+        assert_eq!(read_at(&edit, &merge), body + 2.0);
+        assert_eq!(edit.look_baseline("Canon", "EOS R5", 2.0), body + 2.0);
+        let mut old = edit.clone();
+        old.light.baseline = Some(0.3);
+        assert_eq!(read_at(&old, &merge), 2.3);
     }
 
     fn names(s: &Steps) -> Vec<String> {
@@ -2173,6 +2255,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged,
+                headroom: 0.0,
                 lens_corrected: false,
             },
             ..raw(0)

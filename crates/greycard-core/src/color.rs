@@ -12,7 +12,7 @@ use rawcolor::{
     Mat3, RgbSpace, TempTint, Vec3, WhiteBalance,
 };
 
-use crate::dcp::{EmbedPolicy, HueSatMap, HueSatMaps};
+use crate::dcp::{EmbedPolicy, HueSatMap, HueSatMaps, LookTable};
 use crate::error::{Error, Result};
 use crate::raw::{Calibration, RawFrame};
 
@@ -83,8 +83,9 @@ pub fn profile_from_calibrations(calibrations: &[Calibration]) -> Result<CameraP
 /// `rawcolor::CameraProfile` is a published crate of its own and knows
 /// nothing of DNG's profile tables, so the map hangs here, beside it,
 /// rather than on it; everything else about the camera's color is still
-/// rawcolor's. The look table and the tone curve a DCP may carry are
-/// not here at all: they are a look, and stay on [`crate::dcp::Dcp`].
+/// rawcolor's. The look table rides along too, for the develop to apply
+/// after the map; the tone curve a DCP may carry is not here at all: it
+/// is a look, and stays on [`crate::dcp::Dcp`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Profile {
     pub camera: CameraProfile,
@@ -103,6 +104,10 @@ pub struct Profile {
     /// The hue/saturation/value map per illuminant, when a DCP brought
     /// one.
     pub maps: Option<Arc<HueSatMaps>>,
+    /// The look table, when a DCP brought one: one table, whatever the
+    /// illuminant. Applied after the map unless the develop says not
+    /// to ([`crate::develop::DevelopSettings::profile_look`]).
+    pub look: Option<Arc<LookTable>>,
 }
 
 impl Profile {
@@ -121,6 +126,7 @@ impl Profile {
             embed_policy: EmbedPolicy::default(),
             baseline_exposure_offset: None,
             maps: None,
+            look: None,
         }
     }
 

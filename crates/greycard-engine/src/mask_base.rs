@@ -144,6 +144,12 @@ pub fn base_edit(edit: &Edit, size: Size) -> Edit {
         lens: edit.lens.clone(),
         ..Edit::default()
     };
+    // Where a DCP's look table is read follows the baseline an older
+    // edit keeps (`Edit::look_baseline`). Carried only where a table is
+    // on, so no base made before the table moves.
+    if base.camera.applies_look_table() {
+        base.light.baseline = edit.light.baseline;
+    }
     if size == Size::Reduced {
         base.geometry = edit.geometry.clone();
         base.detail = edit.detail;
@@ -165,6 +171,7 @@ mod tests {
                 tag: Orientation::Normal,
                 warp: None,
                 merged: false,
+                headroom: 0.0,
                 lens_corrected: false,
             },
             identity: Identity {
@@ -227,6 +234,36 @@ mod tests {
             }
         }
         out
+    }
+
+    /// The base reads a DCP's look table where the shown picture does,
+    /// an older edit's own baseline included; with no table on, the
+    /// base is the one it always was.
+    #[test]
+    fn the_base_reads_the_look_table_where_the_picture_does() {
+        use greycard_edit::camera::{Camera, ProfileChoice};
+        let mut edit = Edit::default();
+        edit.light.baseline = Some(0.3);
+        edit.camera = Camera {
+            profile: ProfileChoice::Named("Natural".into()),
+            look_table: false,
+        };
+        let off = base_edit(&edit, Size::Full);
+        assert_eq!(off.light, Edit::default().light);
+        // A hand-set switch on the file's own profile is no table.
+        let mut own = edit.clone();
+        own.camera = Camera {
+            profile: ProfileChoice::Embedded,
+            look_table: true,
+        };
+        assert_eq!(base_edit(&own, Size::Full).light, Edit::default().light);
+        edit.camera.look_table = true;
+        let on = base_edit(&edit, Size::Full);
+        assert_eq!(on.light.baseline, Some(0.3));
+        assert_eq!(
+            on.look_baseline("Canon", "EOS R5", 0.0),
+            edit.look_baseline("Canon", "EOS R5", 0.0)
+        );
     }
 
     /// The trimmed edit makes the base the whole edit makes, op for op,

@@ -434,6 +434,7 @@ impl Edit {
             // viewport and the export cannot disagree about it. The
             // loader reads the file once and keeps it (see [`camera`]).
             profile: self.camera.profile(loader),
+            profile_look: self.camera.applies_look_table(),
             demosaic: self.demosaic.method(),
             denoise: self.noise.profiled_runs().then(|| DenoiseOptions {
                 strength: Strength::Fixed(self.noise.strength),
@@ -441,6 +442,20 @@ impl Edit {
             }),
             ..Default::default()
         }
+    }
+
+    /// Where a DCP's look table is read, in stops over the develop
+    /// ([`DevelopSettings::look_baseline`]): what this edit's default
+    /// develop brightens a frame from this make and model by, the
+    /// baseline it was made against else the body's
+    /// ([`crate::baseline`]), and a merge's `headroom` on top
+    /// ([`crate::baseline::headroom`]), as the render's own baseline
+    /// has it.
+    pub fn look_baseline(&self, make: &str, model: &str, headroom: f32) -> f32 {
+        self.light
+            .baseline
+            .unwrap_or_else(|| crate::baseline::for_make_model(make, model))
+            + headroom
     }
 
     /// This edit for a frame turned `quarters` quarter turns

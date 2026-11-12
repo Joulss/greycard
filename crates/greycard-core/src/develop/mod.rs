@@ -59,6 +59,16 @@ pub struct DevelopSettings {
     /// calibrations: a DCP's matrix pair, its forward matrices and its
     /// hue/saturation/value map. `None` is the file's.
     pub profile: Option<Arc<color::Profile>>,
+    /// Whether the profile's look table is applied after its map. On
+    /// by default; an edit made before the table was applied turns it
+    /// off to keep its picture.
+    pub profile_look: bool,
+    /// The stops the consumer's default develop brightens the picture
+    /// by, its `BaselineExposure`: the look table is read that much and
+    /// the profile's `BaselineExposureOffset` above the develop, where
+    /// a default develop in DNG's pipeline would read it. Only where
+    /// the table is read; the picture's brightness stays the consumer's.
+    pub look_baseline: f32,
     pub demosaic: DemosaicMethod,
     pub highlights: HighlightMode,
     /// How [`HighlightMode::Segments`] forms and judges its segments.
@@ -93,6 +103,8 @@ impl Default for DevelopSettings {
         Self {
             white_point: WhitePoint::AsShot,
             profile: None,
+            profile_look: true,
+            look_baseline: 0.0,
             demosaic: DemosaicMethod::default(),
             highlights: HighlightMode::default(),
             segments: segments::SegmentOptions::default(),
@@ -717,6 +729,18 @@ pub fn finish(
         && !map.is_identity()
     {
         profile::MapStage::new(map)?.apply(&mut image);
+    }
+    // Then its look table, where DNG puts it: after the map and before
+    // the tone curve, which is the consumer's. DNG reads it after the
+    // exposure, the file's BaselineExposure plus the profile's offset;
+    // the consumer's baseline stands for the first.
+    if settings.profile_look
+        && let Some(profile) = &settings.profile
+        && let Some(look) = &profile.look
+        && !look.is_identity()
+    {
+        let stops = settings.look_baseline + profile.baseline_exposure_offset.unwrap_or(0.0);
+        profile::MapStage::look((**look).clone(), stops)?.apply(&mut image);
     }
     let image = orient(image, prepared.orientation);
     let clip_level = prepared.ceiling * CLIP_FRACTION;
@@ -2323,6 +2347,157 @@ pub(crate) mod tests {
         let profiled = develop(&frame, &dcp_settings(Some(map))).unwrap();
         for (a, b) in plain.image.data.iter().zip(&profiled.image.data) {
             assert!((a * 0.5 - b).abs() < 1e-5, "{a} became {b}");
+        }
+    }
+
+    /// A DCP's look table goes on after its map, and the develop's
+    /// switch takes it off again: an edit made before the table was
+    /// applied keeps its picture.
+    #[test]
+    fn a_look_table_goes_on_unless_the_develop_says_not() {
+        let frame = flat_frame();
+        let plain = develop(&frame, &DevelopSettings::default()).unwrap();
+        let mut dcp = crate::dcp::tests::test_dcp(None, None);
+        let mut look = crate::dcp::HueSatMap::identity(6, 3, 1);
+        for e in &mut look.data {
+            e[2] = 0.5;
+        }
+        dcp.look = Some(look);
+        let mut settings = DevelopSettings {
+            profile: Some(Arc::new(dcp.profile().unwrap())),
+            ..Default::default()
+        };
+        let looked = develop(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&looked.image.data) {
+            assert!((a * 0.5 - b).abs() < 1e-5, "{a} became {b}");
+        }
+        settings.profile_look = false;
+        let without = develop(&frame, &settings).unwrap();
+        for (a, b) in plain.image.data.iter().zip(&without.image.data) {
+            assert!((a - b).abs() < 1e-5, "{a} became {b}");
+        }
+    }
+
+    /// The look table is read at the consumer's baseline plus the
+    /// profile's offset: the test profile's -0.25 stops undone by a
+    /// baseline of 0.25 reads it where a profile with no offset and no
+    /// baseline does, and three stops down reads it elsewhere.
+    #[test]
+    fn a_look_table_is_read_at_the_baseline_and_the_offset() {
+        let frame = flat_frame();
+        // A linear table whose value scale climbs from 1 to 2 over the
+        // value axis, so where it is read shows.
+        let mut look = crate::dcp::HueSatMap::identity(6, 3, 5);
+        for (i, e) in look.data.iter_mut().enumerate() {
+            e[2] = 1.0 + (i / 18) as f32 / 4.0;
+        }
+        let with = |offset: Option<f32>, baseline: f32| {
+            let mut dcp = crate::dcp::tests::test_dcp(None, None);
+            dcp.baseline_exposure_offset = offset;
+            dcp.look = Some(look.clone());
+            let settings = DevelopSettings {
+                profile: Some(Arc::new(dcp.profile().unwrap())),
+                look_baseline: baseline,
+                ..Default::default()
+            };
+            develop(&frame, &settings).unwrap().image.data
+        };
+        let level = with(None, 0.0);
+        for (a, b) in level.iter().zip(&with(Some(-0.25), 0.25)) {
+            assert!((a - b).abs() < 1e-5, "{a} against {b}");
+        }
+        let down = with(Some(-0.25), -2.75);
+        assert!(
+            level.iter().zip(&down).any(|(a, b)| (a - b).abs() > 1e-3),
+            "three stops down read the table at the same place"
+        );
+    }
+
+    /// A profile's offset that is not a number, or is far past any
+    /// real one, cannot make the look table's scale infinite or zero:
+    /// the develop through it stays finite. A table with an entry that
+    /// is not a number is refused when the file is read.
+    #[test]
+    fn a_hostile_offset_or_table_cannot_poison_the_develop() {
+        let frame = flat_frame();
+        let mut look = crate::dcp::HueSatMap::identity(6, 3, 5);
+        for e in &mut look.data {
+            e[1] = 1.5;
+            e[2] = 0.8;
+        }
+        for offset in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            128.0,
+            -128.0,
+            1e30,
+        ] {
+            let mut dcp = crate::dcp::tests::test_dcp(None, None);
+            dcp.baseline_exposure_offset = Some(offset);
+            dcp.look = Some(look.clone());
+            // Through the file too, where the reader holds it.
+            let back = crate::dcp::Dcp::from_bytes(&dcp.to_bytes()).unwrap();
+            assert!(
+                back.baseline_exposure_offset
+                    .is_none_or(|o| o.abs() <= crate::dcp::MAX_OFFSET_STOPS),
+                "{offset} read as {:?}",
+                back.baseline_exposure_offset
+            );
+            for dcp in [dcp, back] {
+                let settings = DevelopSettings {
+                    profile: Some(Arc::new(dcp.profile().unwrap())),
+                    ..Default::default()
+                };
+                let out = develop(&frame, &settings).unwrap();
+                assert!(
+                    out.image.data.iter().all(|v| v.is_finite()),
+                    "an offset of {offset} made a pixel that is not a number"
+                );
+            }
+        }
+        // A look table with an entry that is not a number is dropped
+        // alone: the profile reads, its map with it, and develops
+        // finite. A hue map with one refuses the file.
+        let mut nan = look.clone();
+        nan.data[7][0] = f32::NAN;
+        let mut map = crate::dcp::HueSatMap::identity(6, 3, 1);
+        for e in &mut map.data {
+            e[2] = 0.5;
+        }
+        let mut dcp = crate::dcp::tests::test_dcp(Some(map), None);
+        dcp.look = Some(nan.clone());
+        let back = crate::dcp::Dcp::from_bytes(&dcp.to_bytes()).unwrap();
+        assert!(back.look.is_none());
+        assert!(back.primary.hue_sat_map.is_some());
+        for dcp in [dcp, back] {
+            let profile = dcp.profile().unwrap();
+            assert!(profile.look.is_none() && profile.maps.is_some());
+            let settings = DevelopSettings {
+                profile: Some(Arc::new(profile)),
+                ..Default::default()
+            };
+            let out = develop(&frame, &settings).unwrap();
+            assert!(out.image.data.iter().all(|v| v.is_finite()));
+        }
+        let dcp = crate::dcp::tests::test_dcp(Some(nan), None);
+        assert!(crate::dcp::Dcp::from_bytes(&dcp.to_bytes()).is_err());
+
+        // A consumer's baseline past any real one, or not a number,
+        // reads the table at a finite scale.
+        for baseline in [f32::NAN, f32::INFINITY, -f32::INFINITY, 1e30, -1e30] {
+            let mut dcp = crate::dcp::tests::test_dcp(None, None);
+            dcp.look = Some(look.clone());
+            let settings = DevelopSettings {
+                profile: Some(Arc::new(dcp.profile().unwrap())),
+                look_baseline: baseline,
+                ..Default::default()
+            };
+            let out = develop(&frame, &settings).unwrap();
+            assert!(
+                out.image.data.iter().all(|v| v.is_finite()),
+                "a baseline of {baseline} made a pixel that is not a number"
+            );
         }
     }
 

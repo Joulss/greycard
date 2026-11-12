@@ -185,7 +185,8 @@ impl Section {
             Section::Vignette => onto.vignette = from.vignette,
             Section::Grain => onto.grain = from.grain,
             Section::Demosaic => onto.demosaic = from.demosaic,
-            Section::Camera => onto.camera = from.camera.clone(),
+            // A DCP lands with its look table (`Camera::take`).
+            Section::Camera => onto.camera.take(&from.camera),
             Section::Adjustments => {
                 // The preset's masks in place of the picture's, with
                 // ids of their own.
@@ -234,7 +235,8 @@ impl Section {
             Section::Vignette => a.vignette == b.vignette,
             Section::Grain => a.grain == b.grain,
             Section::Demosaic => a.demosaic == b.demosaic,
-            Section::Camera => a.camera == b.camera,
+            // As `copy` would lay it (`Camera::take`).
+            Section::Camera => b.camera.has(&a.camera),
             Section::Adjustments => a.adjustments == b.adjustments,
         }
     }
@@ -1495,6 +1497,80 @@ pub const SUPERSEDED: [(&str, &str); 2] = [
 mod tests {
     use super::*;
     use crate::{Learned, WhiteBalance};
+
+    /// Every door that lays a Camera section naming a DCP on a frame
+    /// turns its look table on, whatever the frame had and whatever the
+    /// source says, so one preset over a batch lands one way; the
+    /// preset then reads as applied. An undo gives the frame its switch
+    /// back.
+    #[test]
+    fn a_dcp_through_any_door_comes_with_its_look_table() {
+        use crate::Line;
+        use crate::camera::{Camera, ProfileChoice};
+        let named = |name: &str, look_table| Camera {
+            profile: ProfileChoice::Named(name.into()),
+            look_table,
+        };
+        let edit_on = |camera: Camera| Edit {
+            camera,
+            ..Edit::default()
+        };
+        // An old preset (no switch in its file) onto a frame on the
+        // file's own profile, and onto an old frame on another DCP.
+        let old_preset = Preset::from_json(
+            r#"{"version": 8, "name": "Old", "sections": ["camera"],
+                "edit": {"version": 8, "camera": {"profile": "Natural"}}}"#,
+        )
+        .unwrap();
+        assert!(!old_preset.edit.camera.look_table);
+        for frame in [Edit::default(), edit_on(named("Vivid", false))] {
+            let after = old_preset.applied(&frame);
+            assert_eq!(after.camera, named("Natural", true));
+        }
+        // Onto an old frame on the same profile too, and from a
+        // source that has the table.
+        let old_frame = edit_on(named("Natural", false));
+        assert!(!old_preset.is_applied(&old_frame));
+        let after = old_preset.applied(&old_frame);
+        assert_eq!(after.camera, named("Natural", true));
+        assert!(old_preset.is_applied(&after));
+        let new_preset =
+            Preset::from_edit("New", &edit_on(named("Natural", true)), &[Section::Camera]);
+        assert_eq!(
+            new_preset.applied(&old_frame).camera,
+            named("Natural", true)
+        );
+        assert!(new_preset.is_applied(&after));
+        // The file's own profile has no table.
+        let own = Preset::from_edit("Own", &Edit::default(), &[Section::Camera]);
+        assert_eq!(own.applied(&old_frame).camera, Camera::default());
+        assert!(own.is_applied(&Edit::default()));
+
+        // A paste or a sync: the section copied from another frame's
+        // edit, an old one among them.
+        let mut onto = Edit::default();
+        let paste = Preset::from_choice("Paste", &old_frame, &Choice::whole(&[Section::Camera]));
+        paste.apply(&mut onto);
+        assert_eq!(onto.camera, named("Natural", true));
+        let mut onto = edit_on(named("Vivid", false));
+        Section::Camera.copy(&old_frame, &mut onto);
+        assert_eq!(onto.camera, named("Natural", true));
+
+        // An undo restores the switch as it was; a snapshot restores
+        // the edit whole too, through the same record.
+        let mut line = Line {
+            current: old_frame.clone(),
+            ..Line::default()
+        };
+        assert!(line.record(old_preset.applied(&edit_on(named("Vivid", false)))));
+        assert!(line.record(edit_on(named("Vivid", false))));
+        assert!(line.record(old_preset.applied(&line.current.clone())));
+        assert!(line.current.camera.look_table);
+        assert!(line.undo());
+        assert_eq!(line.current.camera, named("Vivid", false));
+        assert!(line.undo() && line.undo());
+        assert_eq!(line.current.camera, named("Natural", false));
+    }
 
     fn dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("greycard-preset-{tag}-{}", std::process::id()));

@@ -230,7 +230,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] The Windows installer signed: waits on a signing service
 - [ ] The first translation, French (issue 75), on the §616 catalog;
       the guide and the release notes stay English
-- [ ] A DCP's look table (issue 129)
 - [ ] The learned denoiser and the removal on a card short of memory
       (issues 130 and 64)
 
@@ -469,12 +468,18 @@ ask for first.
       one frame: a refined table is still one fit over a sample, so
       the replacement rule still counts frames
 - [ ] Profile making from a chart shot, after dcamprof (§78)
-- [ ] A DCP's look table applied with its matrix and hue map, as
-      RawTherapee and ART do, so Adobe's Camera Standard, Landscape,
-      and Portrait differ from each other (issue #49, 0.8.1; §122
-      applies the matrix and hue map only); the tone curve stays a
-      Look choice. After 0.9.0. Asked for again with a sunset whose
-      purples ART's DCP Vivid kept (discussion 59, 2026-11-10)
+- [ ] A DCP's look table read after the edit's Exposure, as DNG has
+      it: a 3D table in the viewport's shader and the export's finish,
+      under the masks' local exposure. Today it is read where the
+      default develop would be, so an edit 2 EV up reads it 6.8° of
+      hue off on saturated colors (§639)
+- [ ] A switch on the Camera section for a DCP's look table, so an
+      old edit can take it without choosing another profile and back;
+      new words (§639)
+- [ ] A fuzz target for the DCP reader: none exists, and the look
+      table's offset and entries are now trusted by the develop (§639)
+- [ ] A DNG's own embedded hue map and look table on the embedded
+      route, which reads the matrices only (§639)
 - [ ] An Adobe lens profile's off-center optic and its green-channel
       and tangential chromatic terms, unmapped in §497 (a center field
       in core's LensCorrection first)

@@ -10,11 +10,12 @@
 //! one flat IFD, the handful of types DNG uses, bounds checked.
 //!
 //! What this module does not do is decide how a profile is rendered.
-//! The matrices and the map are the camera's colorimetry and belong to
-//! the profile stage ([`crate::develop::profile`]); the look table and
-//! the tone curve are Adobe's rendering, so they are parsed, kept here,
-//! and applied by nothing. They are a look for a later line (notes
-//! §78).
+//! The matrices, the map, and the look table go to the profile stage
+//! ([`crate::develop::profile`]): an Adobe "Camera ..." profile carries
+//! its character in the look table, often with no map at all, so a
+//! profile without it is the bare matrix. The tone curve is Adobe's
+//! rendering of the whole picture, so it is parsed, kept here, and
+//! applied by nothing: the consumer's tone mapping is the curve.
 //!
 //! The map's interpolation, the illuminant weighting and the encoding
 //! follow the DNG 1.7.1.0 specification. RawTherapee's
@@ -297,9 +298,8 @@ pub struct HueSatMaps {
     pub secondary: Option<HueSatMap>,
 }
 
-/// The look table: the same lattice as a hue/sat map, and Adobe's
-/// rendering rather than the camera's colorimetry. Parsed, kept, and
-/// applied by nothing here.
+/// The look table: the same lattice as a hue/sat map, one for every
+/// illuminant, applied after the map (see [`crate::develop::profile`]).
 pub type LookTable = HueSatMap;
 
 /// One illuminant's worth of a DCP.
@@ -355,7 +355,7 @@ pub struct Dcp {
     /// `BaselineExposureOffset`, stops. Read and reported; nothing here
     /// applies it.
     pub baseline_exposure_offset: Option<f32>,
-    /// The look table, kept apart as a look.
+    /// The look table, which the profile stage applies after the map.
     pub look: Option<LookTable>,
     /// `ProfileToneCurve` as (input, output) pairs, kept apart as a look.
     pub tone_curve: Option<Vec<[f32; 2]>>,
@@ -453,7 +453,19 @@ impl Dcp {
                     .u32s(tag::PROFILE_LOOK_TABLE_ENCODING)?
                     .and_then(|v| v.first().copied())
                     .map_or(Encoding::Linear, Encoding::from_code);
-                Some(table(&dims, data, encoding)?)
+                // A look table with an entry that is not a number is
+                // dropped alone, not the profile with it: such a file
+                // read and rendered before the table was applied, and
+                // an edit naming it keeps its matrices and its map.
+                if data.iter().all(|v| v.is_finite()) {
+                    Some(table(&dims, data, encoding)?)
+                } else {
+                    log::warn!(
+                        "a look table carries an entry that is not a finite number; the profile \
+                         is read without it"
+                    );
+                    None
+                }
             }
             _ => None,
         };
@@ -482,7 +494,8 @@ impl Dcp {
             secondary,
             baseline_exposure_offset: ifd
                 .floats(tag::BASELINE_EXPOSURE_OFFSET)?
-                .and_then(|v| v.first().copied()),
+                .and_then(|v| v.first().copied())
+                .and_then(sane_offset),
             look,
             tone_curve,
         })
@@ -537,8 +550,8 @@ impl Dcp {
         })
     }
 
-    /// The engine's profile: the matrix pair, the forward matrices and
-    /// the map. The look table and the tone curve stay behind.
+    /// The engine's profile: the matrix pair, the forward matrices, the
+    /// map, and the look table. The tone curve stays behind.
     ///
     /// A calibration this build cannot use — an illuminant code it does
     /// not know, a matrix that does not invert — is dropped and the
@@ -597,8 +610,13 @@ impl Dcp {
             unique_camera_model: self.unique_camera_model.clone(),
             copyright: self.copyright.clone(),
             embed_policy: self.embed_policy,
-            baseline_exposure_offset: self.baseline_exposure_offset,
+            baseline_exposure_offset: self.baseline_exposure_offset.and_then(sane_offset),
             maps: maps.map(Arc::new),
+            look: self
+                .look
+                .clone()
+                .filter(|l| l.data.iter().flatten().all(|v| v.is_finite()))
+                .map(Arc::new),
         })
     }
 
@@ -698,6 +716,21 @@ fn flat(map: &HueSatMap) -> Vec<f32> {
     map.data.iter().flatten().copied().collect()
 }
 
+/// The most stops a profile's `BaselineExposureOffset` may ask for,
+/// either way. Adobe's are under a stop; the look table is read this
+/// far up or down, and a value past it is a broken or hostile file.
+pub const MAX_OFFSET_STOPS: f32 = 10.0;
+
+/// A `BaselineExposureOffset` the develop can use: one that is not a
+/// number is dropped, as if the tag were not there, and one past
+/// [`MAX_OFFSET_STOPS`] is held there, so the scale it becomes is
+/// finite and not zero.
+pub fn sane_offset(stops: f32) -> Option<f32> {
+    stops
+        .is_finite()
+        .then(|| stops.clamp(-MAX_OFFSET_STOPS, MAX_OFFSET_STOPS))
+}
+
 /// A lattice from its dimensions and its data.
 fn table(dims: &[u32], data: Vec<f32>, encoding: Encoding) -> Result<HueSatMap> {
     if dims.len() != 3 {
@@ -711,6 +744,15 @@ fn table(dims: &[u32], data: Vec<f32>, encoding: Encoding) -> Result<HueSatMap> 
             "a table of {} values is not a list of triples",
             data.len()
         )));
+    }
+    // An entry that is not a number would make every pixel that reads
+    // it one; a hue map's refuses the file, and the develop falls back
+    // to the frame's own calibrations as for any profile that will not
+    // read. A look table's is caught before here and dropped alone.
+    if data.iter().any(|v| !v.is_finite()) {
+        return Err(Error::Profile(
+            "a table carries an entry that is not a finite number".into(),
+        ));
     }
     let map = HueSatMap {
         hue_divisions: dims[0] as usize,
