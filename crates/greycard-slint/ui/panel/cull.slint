@@ -92,6 +92,7 @@ export component CullSection inherits Section {
             clicked => { root.focus-keys(); root.source-asked(true); }
         }
     }
+    Rectangle { height: Theme.space-1; }
     Text {
         text: root.developed ? @tr("1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · Enter develops")
             : @tr("1-5 stars · P pick · X reject · U unflag · 6-9 label · Space 1:1 · V compare · Enter develops");
@@ -99,6 +100,7 @@ export component CullSection inherits Section {
         color: Theme.text-secondary;
         wrap: word-wrap;
     }
+    Rectangle { height: Theme.space-1; }
     // The frame's own turn, for the shot the
     // camera's tag got wrong. Nothing develops.
     HorizontalLayout {
@@ -118,6 +120,7 @@ export component CullSection inherits Section {
             clicked => { root.frame-turned(1); }
         }
     }
+    Rectangle { height: Theme.space-1; }
     // The same filter the grid's header holds,
     // a group of chips to a row: the panel,
     // 280px at its narrowest, could not hold
@@ -167,6 +170,7 @@ export component CullSection inherits Section {
             selected(c) => { root.compare-changed(c == "2" ? 2 : c == "3" ? 3 : c == "4" ? 4 : 1); }
         }
     }
+    Rectangle { height: Theme.space-1; }
     // One press instead of two: the key and then the arrow. Off
     // until asked for, and the keys go back to the picture after
     // the press, as the filter's chips give them back.
@@ -175,6 +179,7 @@ export component CullSection inherits Section {
         checked <=> root.move-on;
         toggled => { root.move-on-changed(); root.focus-keys(); }
     }
+    Rectangle { height: Theme.space-1; }
     PanelButton {
         text: root.reject-count == 0 ? @tr("No rejects to move")
             : @tr("Move {n} reject..." | "Move {n} rejects..." % root.reject-count);
@@ -182,6 +187,7 @@ export component CullSection inherits Section {
         enabled: root.reject-count > 0;
         clicked => { root.rejects-asked(); }
     }
+    Rectangle { height: Theme.space-1; }
     // The way back, for a frame in a rejects folder: no sheet, since
     // nothing is written over and the frame can go out again.
     if root.back-count > 0: PanelButton {
@@ -198,6 +204,7 @@ export component CullSection inherits Section {
         icon: @image-url("../icons/trash-2.svg");
         clicked => { root.delete-asked("selection"); }
     }
+    Rectangle { height: Theme.space-1; }
     PanelButton {
         text: @tr("Delete rejects folder...");
         icon: @image-url("../icons/trash-2.svg");
@@ -211,6 +218,7 @@ export component CullSection inherits Section {
         icon: @image-url("../icons/folder-open.svg");
         clicked => { root.archive-rejects-asked(i); }
     }
+    Rectangle { height: Theme.space-2; }
     PanelButton {
         text: @tr("Develop");
         icon: @image-url("../icons/sliders-horizontal.svg");
