@@ -3635,8 +3635,7 @@ mod tests {
     fn the_shape_buttons_and_new_mask_each_appear_once() {
         use i_slint_backend_testing::ElementHandle;
         let app = window(1);
-        // A tall desktop window, though the whole section no longer
-        // fits in the visible part of the panel at once.
+        // A tall desktop window, with the whole MASK section in sight.
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 1000.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
@@ -3646,15 +3645,20 @@ mod tests {
         // a control already there, finding nothing (a quirk of the
         // testing backend's element cache, not of the layout).
         app.invoke_new_mask();
+        settle_layout(&app);
         let view = ElementHandle::find_by_element_id(&app, "App::panel-view")
             .next()
             .expect("the panel view");
-        let sections = ElementHandle::find_by_element_id(&app, "App::panel-sections")
+        let mask = ElementHandle::find_by_element_id(&app, "App::mask-section")
             .next()
-            .expect("the panel sections");
+            .expect("the MASK section");
         let (view_at, view_size) = (view.absolute_position(), view.size());
-        let end = (sections.size().height - view_size.height).max(0.0);
-        let step = (view_size.height * 0.8).max(40.0);
+        let (mask_at, mask_size) = (mask.absolute_position(), mask.size());
+        assert!(mask_at.y >= view_at.y, "MASK starts in the panel view");
+        assert!(
+            mask_at.y + mask_size.height <= view_at.y + view_size.height,
+            "the whole MASK section fits at 1000 px"
+        );
         for label in [
             "Linear",
             "Radial",
@@ -3666,44 +3670,18 @@ mod tests {
             "Luminance",
             "Color",
         ] {
-            // Slint's test backend only exposes controls in the view.
-            // Walk the whole panel and identify each button by its
-            // position in the scrolling content, not its screen y.
-            let mut positions = std::collections::BTreeSet::new();
-            let mut largest_visible_count = 0;
-            let mut offset = 0.0_f32;
-            loop {
-                app.set_panel_scroll(-offset);
-                app.window()
-                    .dispatch_event(slint::platform::WindowEvent::PointerMoved {
-                        position: slint::LogicalPosition::new(0.0, 0.0),
-                    });
-                let visible: Vec<_> = ElementHandle::find_by_accessible_label(&app, label)
+            assert_eq!(
+                ElementHandle::find_by_accessible_label(&app, label)
                     .filter(|e| {
                         let at = e.absolute_position();
-                        at.x >= view_at.x
-                            && at.x < view_at.x + view_size.width
-                            && at.y < view_at.y + view_size.height
-                            && at.y + e.size().height > view_at.y
+                        at.x >= mask_at.x
+                            && at.x < mask_at.x + mask_size.width
+                            && at.y >= mask_at.y
+                            && at.y + e.size().height <= mask_at.y + mask_size.height
                     })
-                    .collect();
-                largest_visible_count = largest_visible_count.max(visible.len());
-                for element in visible {
-                    let at = element.absolute_position();
-                    positions.insert((
-                        at.x.round() as i32,
-                        (at.y - app.get_panel_scroll()).round() as i32,
-                    ));
-                }
-                if offset >= end {
-                    break;
-                }
-                offset = (offset + step).min(end);
-            }
-            assert_eq!(
-                positions.len().max(largest_visible_count),
+                    .count(),
                 1,
-                "{label} should appear once in the panel"
+                "{label} should appear once in MASK"
             );
         }
         assert_eq!(count_labeled(&app, "New mask"), 1);
@@ -5009,10 +4987,9 @@ mod tests {
         use crate::render::{Renderer, View};
         use slint::platform::WindowEvent;
         let app = window(1);
-        // This test moves between two rows; keep both in the list's
-        // visible area, whose height now follows the taller panel head.
+        // Both rows should remain visible in a laptop-sized window.
         app.window()
-            .set_size(slint::LogicalSize::new(1500.0, 1100.0));
+            .set_size(slint::LogicalSize::new(1500.0, 800.0));
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();

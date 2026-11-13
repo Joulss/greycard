@@ -347,6 +347,8 @@ export component Section inherits VerticalLayout {
     in property <bool> shares: false;
     // The header stays above the body as it folds away.
     Rectangle {
+        background: head.has-hover ? Theme.hover : transparent;
+        animate background { duration: Theme.quick; }
         HorizontalLayout {
             spacing: Theme.space-3;
             padding-top: Theme.space-1;

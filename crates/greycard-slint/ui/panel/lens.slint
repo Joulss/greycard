@@ -95,7 +95,7 @@ export component LensSection inherits Section {
         }
     }
     Rectangle { height: Theme.space-2; }
-    if root.lens-database: VerticalLayout {
+    VerticalLayout {
         padding-top: Theme.space-2;
         padding-bottom: Theme.space-2;
         Text {
@@ -241,7 +241,7 @@ export component LensSection inherits Section {
     Text {
         text: @tr("Purple");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
-        font-size: Theme.font-md;
+        font-size: Theme.font-xs;
         font-weight: Theme.weight-semibold;
         vertical-alignment: center;
         horizontal-alignment: left;
@@ -291,7 +291,7 @@ export component LensSection inherits Section {
     Text {
         text: @tr("Green");
         color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
-        font-size: Theme.font-md;
+        font-size: Theme.font-xs;
         font-weight: Theme.weight-semibold;
         vertical-alignment: center;
         horizontal-alignment: left;

@@ -2487,10 +2487,6 @@ msgstr[1] "Synchroniser {n} photos avec celle-ci..."
 msgid "Sync"
 msgstr "Synchroniser"
 
-#: crates/greycard-slint/ui/panel/scopes.slint:181
-msgid "SCOPES"
-msgstr "SCOPES"
-
 #. Scopes: the button that reads the selected area only
 #: crates/greycard-slint/ui/panel/scopes.slint:306
 msgid "Selection"

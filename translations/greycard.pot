@@ -2515,10 +2515,6 @@ msgstr[1] ""
 msgid "Sync"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/scopes.slint:181
-msgid "SCOPES"
-msgstr ""
-
 #. Scopes: the button that reads the selected area only
 #: crates/greycard-slint/ui/panel/scopes.slint:306
 msgid "Selection"

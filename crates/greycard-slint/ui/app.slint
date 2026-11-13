@@ -3958,7 +3958,7 @@ export component App inherits Window {
                             keyword-focused => { root.keyword-focused(); }
                             focus-keys => { keys.focus(); }
                         }
-                        if root.shown-tab == "Masks" && root.target > 0: AdjustmentsSection {
+                        if root.shown-tab == "Masks" && root.target > 0: mask-section := AdjustmentsSection {
                             one-of-panel: !root.grid-open;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
