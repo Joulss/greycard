@@ -137,6 +137,11 @@ design note behind it.
 
 ### Fixes
 
+- A camera look fitted on a monochrome style is grey for every
+  color. Before, colors the shoot never showed kept their own color,
+  so lips could come out pale red. Fit the look again to get it
+  (issue 144,
+  [§665](https://github.com/jessolmstead/greycard/blob/master/docs/notes/665-a-monochrome-style-fits-as-a-grey.md)).
 - Tab stays inside an open sheet. Before, it walked out onto the
   panel behind, where the arrows then changed the edit under the
   sheet; and Escape now closes the import and Lightroom sheets from

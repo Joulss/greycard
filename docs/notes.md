@@ -676,3 +676,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§662. Profile subfolders, and Show all cameras](notes/662-profile-subfolders-and-show-all-cameras.md) (2026-11-12)
 - [§663. Output sharpen](notes/663-output-sharpen.md) (2026-11-13)
 - [§664. A sheet holds the focus](notes/664-a-sheet-holds-the-focus.md) (2026-11-13)
+- [§665. The camera match fits a monochrome style as a grey](notes/665-a-monochrome-style-fits-as-a-grey.md) (2026-11-13)
