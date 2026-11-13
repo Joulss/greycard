@@ -45,6 +45,7 @@ pub mod xmp;
 
 mod edit;
 mod frames;
+mod layout;
 mod line;
 mod loader;
 mod migration;

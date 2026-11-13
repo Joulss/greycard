@@ -137,6 +137,11 @@ design note behind it.
 
 ### Fixes
 
+- A sidecar with brush masks is about a quarter the size: a stroke's
+  points are written on one line, not a number a line. One tester's
+  went from 28 MB to 6.6 MB. A sidecar takes the new layout the next
+  time its frame is saved, and every version reads it
+  ([§667](https://github.com/jessolmstead/greycard/blob/master/docs/notes/667-a-sidecars-numbers-on-one-line.md)).
 - A crop opened at a ratio with the Crop button and closed with Done
   exports as it shows. Before, with the starting aspect on Last used,
   the screen showed the ratio and the export and the thumbnail were
