@@ -161,6 +161,12 @@ strip = true
 [profile.dev.package.greycard-match]
 opt-level = 3
 
+# The generated UI is the largest compile in the tree: line tables only
+# take 1.3 to 2 GB off rustc's peak and keep backtraces' line numbers.
+# A debugger shows no local variables inside the generated code.
+[profile.dev.package.greycard-slint]
+debug = "line-tables-only"
+
 # scripts/ort-dylib.sh runs its helper in the dev profile; unoptimized,
 # unpacking the Windows archive's 928 MB through LZMA2 and hashing the
 # download would take minutes rather than seconds.
