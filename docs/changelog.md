@@ -130,6 +130,10 @@ design note behind it.
   cameras switch under the list offers profiles made for other
   cameras, grouped by camera (issue 135,
   [§662](https://github.com/jessolmstead/greycard/blob/master/docs/notes/662-profile-subfolders-and-show-all-cameras.md)).
+- OUTPUT SHARPEN, a section after Sharpen: an unsharp mask on the
+  finished picture's brightness, after the tone work, with Amount,
+  Radius, and Threshold. Off until Amount is raised (issue 135,
+  [§663](https://github.com/jessolmstead/greycard/blob/master/docs/notes/663-output-sharpen.md)).
 
 ### Fixes
 

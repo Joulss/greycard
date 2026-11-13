@@ -151,6 +151,19 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
             _ => "Sharpen".to_string(),
         });
     }
+    if b.output_sharpen != a.output_sharpen {
+        let (x, y) = (&b.output_sharpen, &a.output_sharpen);
+        let rest_same = x.radius == y.radius && x.threshold == y.threshold;
+        out.push(
+            if x.enabled != y.enabled && x.amount == y.amount && rest_same {
+                switched("Output sharpen", y.enabled)
+            } else if x.amount != y.amount && x.enabled == y.enabled && rest_same {
+                format!("Output sharpen {:.0}%", y.amount * 100.0)
+            } else {
+                "Output sharpen".to_string()
+            },
+        );
+    }
     if b.geometry != a.geometry {
         out.push(geometry(b, a));
     }
@@ -868,6 +881,15 @@ mod tests {
         let mut e = base.clone();
         e.grain.enabled = !e.grain.enabled;
         assert!(describe(&base, &e, &[]).starts_with("Grain o"));
+        let mut e = base.clone();
+        e.output_sharpen.amount = 0.6;
+        assert_eq!(describe(&base, &e, &[]), "Output sharpen 60%");
+        let mut e = base.clone();
+        e.output_sharpen.enabled = false;
+        assert_eq!(describe(&base, &e, &[]), "Output sharpen off");
+        let mut e = base.clone();
+        e.output_sharpen.radius = 2.0;
+        assert_eq!(describe(&base, &e, &[]), "Output sharpen");
         let mut e = base.clone();
         e.mixer.saturation[0] = 0.3;
         assert_eq!(describe(&base, &e, &[]), "Color mixer");

@@ -585,6 +585,23 @@ already been sharpened once.
   sharpened as detail.
 - **Show mask** paints in red where the sharpening acts.
 
+## Output sharpen
+
+An unsharp mask on the finished picture, after the tone curve, the
+curves, and the look. It crisps edges as they will be seen, where
+**SHARPEN** above restores what the camera lost. It is off until
+**Amount** is above zero, and it sharpens brightness only, so colors
+do not fringe.
+
+| Slider | Range | What it does |
+|---|---|---|
+| **Amount** | 0 to 200% | How strongly edges are sharpened. |
+| **Radius** | 0.5 to 3 | The width of the edges it acts on, in pixels of the full-size picture. An export made smaller gets a radius made smaller with it. |
+| **Threshold** | 0 to 10% | Differences below it are mostly left alone, so smooth skin, sky, and noise stay smooth. Raise it if grain sharpens. |
+
+At the fit zoom you will see little of it, as with the grain; check
+it at 1:1.
+
 ## Vignette
 
 Darkens or lightens the edges of the picture as cropped.

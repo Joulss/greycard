@@ -1274,10 +1274,11 @@ clears or a tester asks for it.
       133, 2026-11-12)
 - [ ] Lens profiles (`.lcp`) read from the profile folder's
       subfolders too, as the camera profiles are since §662
-- [ ] An output sharpen after the tone work, beside the capture
-      sharpen: a section of its own, OUTPUT SHARPEN, with Amount,
-      Radius, and Threshold, off by default, after Detail; the whole
-      picture first (issue 135)
+- [ ] The output sharpen's Radius in output pixels, or a choice: it
+      scales with an export's size today, so a web-size export barely
+      sharpens (§663)
+- [ ] The clipping warning under focus peaking reads the picture
+      before the output sharpen (§663)
 - [ ] The output sharpen in a mask's look, after the picture's has
       landed (issue 135)
 - [ ] A DCP's tone curve in place of ours: a "Profile tone curve"

@@ -15,7 +15,8 @@ use greycard_edit::curve::{CurveLut, color_shift, lookup};
 use greycard_edit::mask::Sample;
 use greycard_edit::mixer::{BANDS, MEAN_RADIUS, confidence};
 use greycard_edit::{
-    BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, Tint, WhiteShift,
+    BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, OutputSharpen, Tint,
+    WhiteShift,
 };
 use rayon::prelude::*;
 
@@ -52,6 +53,10 @@ pub struct Baked {
     /// Detail is in the develop. Put on at the finish from the
     /// develop's bands (`crate::detail`).
     pub detail: [f32; 5],
+    /// Global only, as the black and white is: the unsharp mask on the
+    /// finished picture ([`crate::output_sharpen`]), between the look
+    /// table and the output transform. Off on every local's.
+    pub output_sharpen: OutputSharpen,
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -246,6 +251,7 @@ impl Baked {
             } else {
                 [0.0; 5]
             },
+            output_sharpen: OutputSharpen::default(),
         }
     }
 
@@ -260,6 +266,7 @@ impl Baked {
             mixer: edit.acting_mixer(),
             source,
             display_curve: edit.display_curve,
+            output_sharpen: edit.output_sharpen,
             ..Self::of(&edit.look())
         }
     }
@@ -693,6 +700,26 @@ pub fn finish_pixel_with(
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
+    let c = finish_pixel_display(px, global, locals, stops, reference, guide, detail, look);
+    finish_pixel_output(c, global, grain, to_out)
+}
+
+/// The first part of [`finish_pixel_with`]: everything up to the look
+/// table, the picture display-referred in the linear working space,
+/// where the output sharpen reads and writes it
+/// ([`crate::output_sharpen`]).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn finish_pixel_display(
+    px: [f32; 3],
+    global: &Baked,
+    locals: &[(&Baked, f32)],
+    stops: f32,
+    reference: Option<[f32; 2]>,
+    guide: Option<(f32, [f32; 2])>,
+    detail: Option<([f32; 5], &DetailMeta)>,
+    look: Option<&lut::Look>,
+) -> [f32; 3] {
     // The masks' Detail first, from the develop's bands at this pixel,
     // on the developed picture in the develop's white, as the develop
     // puts the global's on: the dehaze's airlight and its bound are of
@@ -810,6 +837,18 @@ pub fn finish_pixel_with(
     if let Some(look) = look {
         c = look.at(c);
     }
+    c
+}
+
+/// The rest of [`finish_pixel_with`]: the display-referred working
+/// space color `c` into the output space, encoded, the grain on it.
+#[inline]
+pub fn finish_pixel_output(
+    c: [f32; 3],
+    global: &Baked,
+    grain: Option<[f32; 3]>,
+    to_out: &[[f32; 3]; 3],
+) -> [f32; 3] {
     let mut s = [
         to_out[0][0] * c[0] + to_out[0][1] * c[1] + to_out[0][2] * c[2],
         to_out[1][0] * c[0] + to_out[1][1] * c[1] + to_out[1][2] * c[2],
@@ -1913,6 +1952,46 @@ pub fn finish_reaching<T: Copy + Default + Send>(
     to_out: &[[f32; 3]; 3],
     quantize: impl Fn(f32) -> T + Sync,
 ) -> Vec<T> {
+    finish_in_bands(
+        SHARPEN_BAND,
+        image,
+        reach,
+        sampled,
+        global,
+        locals,
+        position,
+        frame,
+        guide,
+        detail,
+        look,
+        to_out,
+        quantize,
+    )
+}
+
+/// The rows of a band the output sharpen holds at the look table at a
+/// time: on a 45 MP frame, 8256 pixels wide, 25 MB of color, where
+/// the whole frame was a gigabyte; the band's reach above and below
+/// (nine rows at most) made twice, 7% more.
+const SHARPEN_BAND: usize = 256;
+
+/// [`finish_reaching`], the output sharpen held `band` rows at a time.
+#[allow(clippy::too_many_arguments)]
+fn finish_in_bands<'l, T: Copy + Default + Send>(
+    band: usize,
+    image: &WorkingImage,
+    reach: f32,
+    sampled: Option<&WorkingImage>,
+    global: &Baked,
+    locals: &'l [Local],
+    position: impl Fn(usize, usize) -> (f32, f32) + Sync,
+    frame: impl Fn(usize, usize) -> (f32, Option<[f32; 3]>) + Sync,
+    guide: Option<(&Guide, f32)>,
+    detail: Option<(&crate::detail::BandImages, &DetailMeta)>,
+    look: Option<&lut::Look>,
+    to_out: &[[f32; 3]; 3],
+    quantize: impl Fn(f32) -> T + Sync,
+) -> Vec<T> {
     // The mean the mixer and the black and white read a hue from,
     // only when one of them acts.
     let reference = (global.mixer.enabled
@@ -1948,50 +2027,114 @@ pub fn finish_reaching<T: Copy + Default + Send>(
                 "the finish",
             )
         });
-    let mut out = vec![T::default(); image.width * image.height * 3];
-    out.par_chunks_mut(image.width * 3)
-        .zip(image.data.par_chunks(image.width * 3))
-        .enumerate()
-        .for_each(|(y, (row_out, row_in))| {
-            let mut on: Vec<(&Baked, f32)> = Vec::with_capacity(locals.len());
-            for (x, (o, px)) in row_out
-                .as_chunks_mut::<3>()
-                .0
-                .iter_mut()
-                .zip(row_in.as_chunks::<3>().0)
-                .enumerate()
-            {
-                on.clear();
-                let mut g = None;
-                let i = y * image.width + x;
-                let ab = reference.as_ref().map(|r| r[i]);
-                if !locals.is_empty() || guide.is_some() {
-                    let (u, v) = position(x, y);
-                    let s = reads.then(|| {
-                        let px = source.map_or(*px, |s| s.pixel(x, y));
-                        let mean_ab = match &mean {
-                            Some(Some(m)) => Some(m[i]),
-                            Some(None) => ab,
-                            None => None,
-                        };
-                        sample(px, mean_ab, exposure)
-                    });
-                    for local in locals.iter().filter(|l| l.enabled) {
-                        // Scaled by its Opacity: a mask at half puts
-                        // its look on as its feather's half-way does.
-                        let w = local.weight_sampled(u, v, s) * local.opacity;
-                        if w > 0.0 {
-                            on.push((&local.baked, w));
-                        }
-                    }
-                    g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
+    // A pixel up to the look table, display-referred in the working
+    // space, and the grain to lay over it at the output.
+    let display_at = |x: usize,
+                      y: usize,
+                      px: &[f32; 3],
+                      on: &mut Vec<(&'l Baked, f32)>|
+     -> ([f32; 3], Option<[f32; 3]>) {
+        on.clear();
+        let mut g = None;
+        let i = y * image.width + x;
+        let ab = reference.as_ref().map(|r| r[i]);
+        if !locals.is_empty() || guide.is_some() {
+            let (u, v) = position(x, y);
+            let s = reads.then(|| {
+                let px = source.map_or(*px, |s| s.pixel(x, y));
+                let mean_ab = match &mean {
+                    Some(Some(m)) => Some(m[i]),
+                    Some(None) => ab,
+                    None => None,
+                };
+                sample(px, mean_ab, exposure)
+            });
+            for local in locals.iter().filter(|l| l.enabled) {
+                // Scaled by its Opacity: a mask at half puts its look on
+                // as its feather's half-way does.
+                let w = local.weight_sampled(u, v, s) * local.opacity;
+                if w > 0.0 {
+                    on.push((&local.baked, w));
                 }
-                let (stops, grain) = frame(x, y);
-                let bands = detail.map(|(d, meta)| (d.at(x, y), meta));
-                *o = finish_pixel_with(*px, global, &on, stops, grain, ab, g, bands, look, to_out)
-                    .map(&quantize);
             }
-        });
+            g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
+        }
+        let (stops, grain) = frame(x, y);
+        let bands = detail.map(|(d, meta)| (d.at(x, y), meta));
+        (
+            finish_pixel_display(*px, global, on, stops, ab, g, bands, look),
+            grain,
+        )
+    };
+    let w = image.width;
+    let mut out = vec![T::default(); w * image.height * 3];
+    match crate::output_sharpen::Params::of(&global.output_sharpen, reach) {
+        // One pass, each pixel to its output at once.
+        None => out
+            .par_chunks_mut(w * 3)
+            .zip(image.data.par_chunks(w * 3))
+            .enumerate()
+            .for_each(|(y, (row_out, row_in))| {
+                let mut on = Vec::with_capacity(locals.len());
+                for (x, (o, px)) in row_out
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(row_in.as_chunks::<3>().0)
+                    .enumerate()
+                {
+                    let (c, grain) = display_at(x, y, px, &mut on);
+                    *o = finish_pixel_output(c, global, grain, to_out).map(&quantize);
+                }
+            }),
+        // A band of rows at a time to the look table, with the rows its
+        // blur reads above and below, since the sharpen reads each
+        // pixel's neighbors there; then the band to the output, its
+        // grain drawn again. Only a band is ever held, and a band comes
+        // out as the same rows of the whole frame would.
+        Some(params) => {
+            let h = image.height;
+            let reach_rows = params.reach();
+            for y0 in (0..h).step_by(band.max(1)) {
+                let count = band.max(1).min(h - y0);
+                let lo = y0.saturating_sub(reach_rows);
+                let hi = (y0 + count + reach_rows).min(h);
+                let mut held = vec![[0.0f32; 3]; w * (hi - lo)];
+                held.par_chunks_mut(w)
+                    .zip(image.data[lo * w * 3..hi * w * 3].par_chunks(w * 3))
+                    .enumerate()
+                    .for_each(|(r, (row_held, row_in))| {
+                        let mut on = Vec::with_capacity(locals.len());
+                        for (x, (o, px)) in row_held
+                            .iter_mut()
+                            .zip(row_in.as_chunks::<3>().0)
+                            .enumerate()
+                        {
+                            *o = display_at(x, lo + r, px, &mut on).0;
+                        }
+                    });
+                let sharpened =
+                    crate::output_sharpen::sharpen_rows(&held, w, hi - lo, y0 - lo, count, &params);
+                drop(held);
+                out[y0 * w * 3..(y0 + count) * w * 3]
+                    .par_chunks_mut(w * 3)
+                    .zip(sharpened.par_chunks(w))
+                    .enumerate()
+                    .for_each(|(r, (row_out, row))| {
+                        for (x, (o, c)) in row_out
+                            .as_chunks_mut::<3>()
+                            .0
+                            .iter_mut()
+                            .zip(row)
+                            .enumerate()
+                        {
+                            let grain = frame(x, y0 + r).1;
+                            *o = finish_pixel_output(*c, global, grain, to_out).map(&quantize);
+                        }
+                    });
+            }
+        }
+    }
     out
 }
 
@@ -2035,6 +2178,96 @@ pub fn not_previewed(
 mod tests {
     use super::*;
     use greycard_edit::{Curves, Tone};
+
+    /// The output sharpen held in bands of rows is the whole frame's,
+    /// to the bit, across every seam: bands of seven rows over a frame
+    /// of 45, a mask's look and the grain on it, against one band of
+    /// the whole frame and against the frame finished to the look table
+    /// and sharpened whole.
+    #[test]
+    fn the_output_sharpen_in_bands_is_the_whole_frames() {
+        let (w, h) = (31, 45);
+        let mut image = WorkingImage::new(w, h);
+        for (i, v) in image.data.iter_mut().enumerate() {
+            *v = ((i * 2654435761) % 997) as f32 / 997.0 * 0.6 + 0.01;
+        }
+        let mut edit = Edit::default();
+        edit.output_sharpen.amount = 1.4;
+        edit.output_sharpen.radius = 2.3;
+        let mut look = Look::default();
+        look.light.exposure = -0.7;
+        let adjustment = greycard_edit::Adjustment {
+            id: 1,
+            mask: Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: greycard_edit::mask::Shape::Linear {
+                        from: [0.0, 0.3],
+                        to: [0.0, 0.8],
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            look,
+            ..Default::default()
+        };
+        let locals = vec![Local::of(&adjustment, vec![None], None)];
+        let global = Baked::global(&edit, Source::SCENE);
+        let to_out = crate::export::Space::Srgb.matrix();
+        let grain = Grain {
+            amount: 0.5,
+            ..Grain::default()
+        };
+        let run = |band: usize| {
+            finish_in_bands(
+                band,
+                &image,
+                1.0,
+                None,
+                &global,
+                &locals,
+                |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+                |x, y| {
+                    let (fx, fy) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+                    (0.0, Some(grain.at(fx, fy, w as f32 / h as f32)))
+                },
+                None,
+                None,
+                None,
+                &to_out,
+                |v: f32| v,
+            )
+        };
+        let whole = run(h);
+        assert_eq!(run(7), whole);
+        assert_eq!(run(1), whole);
+        // And the frame to the look table, sharpened whole.
+        let p = crate::output_sharpen::Params::of(&edit.output_sharpen, 1.0).unwrap();
+        let mut colors: Vec<[f32; 3]> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
+                let m = locals[0].weight_sampled(u, v, None);
+                let on: Vec<(&Baked, f32)> = if m > 0.0 {
+                    vec![(&locals[0].baked, m)]
+                } else {
+                    Vec::new()
+                };
+                finish_pixel_display(image.pixel(x, y), &global, &on, 0.0, None, None, None, None)
+            })
+            .collect();
+        crate::output_sharpen::sharpen(&mut colors, w, h, &p);
+        for (i, c) in colors.iter().enumerate() {
+            let (x, y) = (i % w, i / w);
+            let (fx, fy) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+            let g = Some(grain.at(fx, fy, w as f32 / h as f32));
+            assert_eq!(
+                finish_pixel_output(*c, &global, g, &to_out),
+                [whole[i * 3], whole[i * 3 + 1], whole[i * 3 + 2]],
+                "at {x},{y}"
+            );
+        }
+    }
 
     /// Auto (`greycard_edit::auto`) aims through the finish's numbers,
     /// copied there: they are these.
@@ -2209,6 +2442,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -2232,6 +2466,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         }
     }
 
@@ -2998,6 +3233,7 @@ mod tests {
                 display_curve: curve,
                 white: None,
                 detail: [0.0; 5],
+                output_sharpen: OutputSharpen::default(),
             };
             let mut last = -1.0;
             for i in 0..=1400 {
@@ -3666,6 +3902,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let g = guide.map(|g| (g.at(x as f32 + 0.5, y as f32 + 0.5), g.range));
         let px = image.pixel(x, y);
@@ -4695,6 +4932,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -4736,6 +4974,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let bare = Baked {
             tint: idle,
@@ -4819,6 +5058,7 @@ mod tests {
             display_curve: DisplayCurve::Channels,
             white: None,
             detail: [0.0; 5],
+            output_sharpen: OutputSharpen::default(),
         };
         let local = Baked {
             tint,

@@ -20,7 +20,7 @@ import { PresetsSection, PresetWords } from "panel/presets.slint";
 export { PresetWords }
 import { WhiteBalanceSection, ColorSection, MixerSection, BlackWhiteSection, GradingSection, TintSection } from "panel/color.slint";
 import { CurvesSection } from "panel/curve.slint";
-import { LightSection, NoiseSection, DetailSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
+import { LightSection, NoiseSection, DetailSection, OutputSharpenSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
 export { DetailWords, NoiseWords } from "panel/edit.slint";
 import { LensSection } from "panel/lens.slint";
 import { ProofSection, MonitorSection } from "panel/display.slint";
@@ -1218,6 +1218,7 @@ export component App inherits Window {
             root.collapsed-noise = true;
             root.collapsed-lens = true;
             root.collapsed-sharpen = true;
+            root.collapsed-output-sharpen = true;
             root.collapsed-vignette = true;
             root.collapsed-grain = true;
             root.collapsed-proof = true;
@@ -1244,6 +1245,7 @@ export component App inherits Window {
             root.collapsed-lens = true;
             root.collapsed-detail = true;
             root.collapsed-sharpen = true;
+            root.collapsed-output-sharpen = true;
             root.collapsed-vignette = true;
             root.collapsed-grain = true;
             root.collapsed-proof = true;
@@ -1298,6 +1300,7 @@ export component App inherits Window {
     in-out property <bool> lens-enabled: true;
     in-out property <bool> vignette-enabled: true;
     in-out property <bool> grain-enabled: true;
+    in-out property <bool> output-sharpen-enabled: true;
     in-out property <bool> retouch-enabled: true;
     // Which sections are folded away; kept between runs.
     in-out property <bool> collapsed-navigator: false;
@@ -1314,6 +1317,7 @@ export component App inherits Window {
     in-out property <bool> collapsed-noise: false;
     in-out property <bool> collapsed-lens: false;
     in-out property <bool> collapsed-detail: false;
+    in-out property <bool> collapsed-output-sharpen: false;
     in-out property <bool> collapsed-sharpen: false;
     in-out property <bool> collapsed-vignette: false;
     in-out property <bool> collapsed-grain: false;
@@ -1665,6 +1669,9 @@ export component App inherits Window {
     in-out property <float> grain-amount: 0;
     in-out property <float> grain-size: 0.5;
     in-out property <string> grain-kind: "Cubic";
+    in-out property <float> output-sharpen-amount: 0;
+    in-out property <float> output-sharpen-radius: 1;
+    in-out property <float> output-sharpen-threshold: 0.01;
     in-out property <float> vignette-amount: 0;
     in-out property <float> vignette-midpoint: 0.5;
     in-out property <float> vignette-feather: 0.5;
@@ -4371,6 +4378,17 @@ export component App inherits Window {
                             sharpen-measured-threshold: root.sharpen-measured-threshold;
                             view-changed => { root.view-changed(); }
                             develop-changed => { root.develop-changed(); }
+                        }
+                        // The unsharp mask on the finished picture,
+                        // after the tone work: the viewport's to draw.
+                        if root.shown-tab == "Develop": OutputSharpenSection {
+                            one-of-panel: !root.grid-open;
+                            output-sharpen-enabled <=> root.output-sharpen-enabled;
+                            collapsed-output-sharpen <=> root.collapsed-output-sharpen;
+                            output-sharpen-amount <=> root.output-sharpen-amount;
+                            output-sharpen-radius <=> root.output-sharpen-radius;
+                            output-sharpen-threshold <=> root.output-sharpen-threshold;
+                            view-changed => { root.view-changed(); }
                         }
                         if root.shown-tab == "Develop": VignetteSection {
                             one-of-panel: !root.grid-open;

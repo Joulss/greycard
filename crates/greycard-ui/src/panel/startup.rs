@@ -1576,6 +1576,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         display_curve,
                         vignette,
                         grain,
+                        output_sharpen,
                         ..
                     } = View::with_look(&edit);
                     let view = View {
@@ -1589,6 +1590,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         curves,
                         vignette,
                         grain,
+                        output_sharpen,
                         matrix: edit.geometry.matrix(),
                         persp: edit.geometry.perspective(sw, sh),
                         plane: edit.geometry.plane_size(sw, sh),

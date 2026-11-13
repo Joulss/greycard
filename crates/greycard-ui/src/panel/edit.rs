@@ -723,6 +723,12 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         kind: greycard_edit::grain::Kind::from_name(app.get_grain_kind().as_str())
             .unwrap_or_default(),
     };
+    edit.output_sharpen = greycard_edit::OutputSharpen {
+        enabled: app.get_output_sharpen_enabled(),
+        amount: app.get_output_sharpen_amount(),
+        radius: app.get_output_sharpen_radius(),
+        threshold: app.get_output_sharpen_threshold(),
+    };
     edit.detail = greycard_edit::Detail {
         enabled: app.get_detail_enabled(),
         texture: app.get_detail_texture(),
@@ -943,6 +949,10 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_grain_amount(edit.grain.amount);
     app.set_grain_size(edit.grain.size);
     app.set_grain_kind(edit.grain.kind.name().into());
+    app.set_output_sharpen_enabled(edit.output_sharpen.enabled);
+    app.set_output_sharpen_amount(edit.output_sharpen.amount);
+    app.set_output_sharpen_radius(edit.output_sharpen.radius);
+    app.set_output_sharpen_threshold(edit.output_sharpen.threshold);
     app.set_mixer_enabled(look.mixer.enabled);
     app.set_mixer_hues(band_model(&look.mixer.hue));
     app.set_mixer_saturations(band_model(&look.mixer.saturation));
@@ -1115,6 +1125,11 @@ pub(crate) const FOLDS: &[Fold] = &[
         "sharpen",
         App::get_collapsed_sharpen,
         App::set_collapsed_sharpen,
+    ),
+    (
+        "output-sharpen",
+        App::get_collapsed_output_sharpen,
+        App::set_collapsed_output_sharpen,
     ),
     (
         "vignette",

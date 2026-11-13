@@ -8,8 +8,8 @@ use greycard_core::develop::denoise::{DenoiseOptions, Strength};
 
 use crate::{
     BlackWhite, Camera, Color, Curves, Demosaic, Detail, DisplayCurve, Geometry, Grading, Lens,
-    Light, Loader, LocalWhite, LookLut, Mask, Mixer, Noise, Result, Sharpen, Tint, VERSION,
-    WhiteBalance, grain, mask, migrate, retouch, vignette,
+    Light, Loader, LocalWhite, LookLut, Mask, Mixer, Noise, OutputSharpen, Result, Sharpen, Tint,
+    VERSION, WhiteBalance, grain, mask, migrate, retouch, vignette,
 };
 
 /// A development, described.
@@ -36,6 +36,12 @@ pub struct Edit {
     /// developed picture after the retouch and before the sharpen.
     pub detail: Detail,
     pub sharpen: Sharpen,
+    /// The unsharp mask on the finished picture, after the tone curve,
+    /// the curves, and the look table. Left out of a sidecar at its
+    /// default, so every sidecar and develop key written before it is
+    /// unchanged.
+    #[serde(skip_serializing_if = "OutputSharpen::is_default")]
+    pub output_sharpen: OutputSharpen,
     /// The parametric and point curves on the encoded picture, after
     /// the tone curve.
     pub curves: Curves,
@@ -446,6 +452,7 @@ impl Default for Edit {
             noise: Noise::default(),
             detail: Detail::default(),
             sharpen: Sharpen::default(),
+            output_sharpen: OutputSharpen::default(),
             curves: Curves::default(),
             mixer: Mixer::default(),
             color: Color::default(),
@@ -595,9 +602,23 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
             }
         }
     }
-    let before: Value = serde_json::from_str(&before.to_json())?;
-    let touched: Value = serde_json::from_str(&touched.to_json())?;
-    let mut result: Value = serde_json::from_str(&onto.to_json())?;
+    // A section left out of the file whole at its default is written
+    // out in all three, so that one of its fields set back to the
+    // default is a leaf like any other and not the whole section of
+    // `onto` taken away with it.
+    let json = |e: &Edit| -> Result<Value> {
+        let mut v: Value = serde_json::from_str(&e.to_json())?;
+        if let Value::Object(m) = &mut v {
+            m.insert(
+                "output_sharpen".into(),
+                serde_json::to_value(e.output_sharpen)?,
+            );
+        }
+        Ok(v)
+    };
+    let before = json(before)?;
+    let touched = json(touched)?;
+    let mut result = json(onto)?;
     overlay(&before, &touched, &mut result);
     Edit::from_json(&serde_json::to_string(&result)?)
 }
@@ -944,7 +965,10 @@ mod tests {
         frame.noise.learned_chroma_strength = 0.5;
         frame.lens.chosen = crate::lens::LensChoice::Database("Frame's lens".into());
         frame.tint.enabled = false;
+        frame.output_sharpen.amount = 0.8;
+        frame.output_sharpen.radius = 2.0;
         let mut before = Edit::default();
+        before.output_sharpen.amount = 0.5;
         before.light.tone.midtones = 0.5;
         before.detail.structure = 0.6;
         before.detail.sharpen = 0.2;
@@ -963,6 +987,7 @@ mod tests {
                 e.lens.chosen = crate::lens::LensChoice::FromFile
             }),
             ("tint", |e| e.tint.enabled = true),
+            ("output sharpen", |e| e.output_sharpen.amount = 0.0),
         ] {
             let mut touched = before.clone();
             reset(&mut touched);
@@ -1117,6 +1142,13 @@ mod tests {
         assert!(json.contains("\"demosaic\": \"rcd\""), "{json}");
         assert!(json.contains("\"learned\": \"best\""), "{json}");
         assert_eq!(Edit::from_json(&json).unwrap(), edit);
+        // The output sharpen is left out at its default, and kept when set.
+        assert!(!json.contains("output_sharpen"), "{json}");
+        let mut sharpened = edit.clone();
+        sharpened.output_sharpen.amount = 0.6;
+        let json = sharpened.to_json();
+        assert!(json.contains("\"output_sharpen\""), "{json}");
+        assert_eq!(Edit::from_json(&json).unwrap(), sharpened);
         // An empty document is the default edit; unknown fields are ignored.
         assert_eq!(Edit::from_json("{}").unwrap(), Edit::default());
         let partial = r#"{"light": {"exposure": -1}, "future_field": 3}"#;
