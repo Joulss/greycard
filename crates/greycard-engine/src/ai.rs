@@ -2438,10 +2438,13 @@ impl Ai {
     /// Whether a test makes the fills with no model ([`Ai::fill_by_test`]).
     fn fills_by_test(&self) -> bool {
         #[cfg(any(test, feature = "testing"))]
-        if self.fill_by_test.is_some() {
-            return true;
+        {
+            self.fill_by_test.is_some()
         }
-        false
+        #[cfg(not(any(test, feature = "testing")))]
+        {
+            false
+        }
     }
 
     /// A UNet held for the queue goes now, the queue going on: a walk of
