@@ -671,3 +671,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§657. Read-only workflow tokens and SHA256SUMS](notes/657-read-only-workflow-tokens-and-sha256sums.md) (2026-11-12)
 - [§658. Author and Copyright in the window, and None means none](notes/658-author-and-copyright-in-the-window.md) (2026-11-12)
 - [§659. A mask's Opacity](notes/659-a-masks-opacity.md) (2026-11-12)
+- [§660. Third-party notices in every package](notes/660-third-party-notices-in-every-package.md) (2026-11-12)

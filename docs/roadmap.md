@@ -47,9 +47,13 @@ the reasoning lives in `docs/notes.md`.
       (`RECONCILED`, matched by prefix and hashed into the state's
       id), so a reworded or translated label changes the merge across
       machines: a kind on the step instead (review, 2026-11-11)
-- [ ] Packages ship no third-party notices: LICENSE and the README
-      only, beside ONNX Runtime, Dawn, DXC, and several hundred
-      crates; cargo-about and cargo-deny (review, 2026-11-11)
+- [ ] dxil.dll's own terms in the notices: ours is 1.8.2502.11,
+      signed by Windows and in no DXC release on GitHub, so likely the
+      Windows SDK's; the notices say whose it is and no more (§660)
+- [ ] cargo-about from a pinned prebuilt binary where one exists, in
+      place of a build from source behind a cache (§660)
+- [ ] cargo-deny over the tree: advisories and bans beside the
+      licenses cargo-about checks (review, 2026-11-11)
 - [ ] Split symbols kept for each release, so a stripped build's
       backtrace can be named (review, 2026-11-11; the read-only tokens
       and SHA256SUMS are §657)

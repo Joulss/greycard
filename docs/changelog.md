@@ -7,6 +7,10 @@ design note behind it.
 
 ### Packages
 
+- Every package carries THIRD-PARTY-NOTICES beside LICENSE: the
+  licenses and notices of the libraries, artwork, ported code, and
+  crates greycard is built from
+  ([§660](https://github.com/jessolmstead/greycard/blob/master/docs/notes/660-third-party-notices-in-every-package.md)).
 - Each release carries a SHA256SUMS file over its downloads: check
   them with `sha256sum -c SHA256SUMS --ignore-missing`, or
   `shasum -a 256 -c` on a Mac
