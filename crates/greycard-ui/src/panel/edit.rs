@@ -1416,6 +1416,85 @@ mod tests {
         assert!(app.get_collapsed_grain() && app.get_collapsed_metadata());
     }
 
+    /// One section open at a time over a fold two tabs share: LIGHT
+    /// opened on a mask folds Develop's SHARPEN, unmade there, so
+    /// Develop comes back with LIGHT alone open (issue 143); METADATA
+    /// opened on Cull folds LIGHT the same way.
+    #[test]
+    fn a_fold_two_tabs_share_folds_the_other_tabs_sections() {
+        use crate::testing::{click, labeled, settle};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        for (_, _, set) in FOLDS {
+            set(&app, true);
+        }
+        app.set_one_section(true);
+        settle(&app);
+        let header = |l: &str| {
+            let (at, size) = labeled(&app, l);
+            click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            for _ in 0..6 {
+                settle(&app);
+            }
+        };
+        let open = || -> Vec<&str> {
+            FOLDS
+                .iter()
+                .filter(|(_, get, _)| !get(&app))
+                .map(|(n, _, _)| *n)
+                .collect()
+        };
+        header("SHARPEN");
+        app.set_adjustment_names(
+            std::rc::Rc::new(slint::VecModel::from(vec![
+                slint::SharedString::from("Global"),
+                "Mask 1".into(),
+            ]))
+            .into(),
+        );
+        app.set_target(1);
+        app.set_panel_tab("Masks".into());
+        settle(&app);
+        header("LIGHT");
+        app.set_panel_tab("Develop".into());
+        settle(&app);
+        assert_eq!(open(), ["light"], "Develop shows one open");
+
+        app.set_panel_tab("Cull".into());
+        settle(&app);
+        app.set_collapsed_metadata(false);
+        settle(&app);
+        app.set_panel_tab("Develop".into());
+        settle(&app);
+        assert_eq!(open(), ["metadata"], "Develop shows one open");
+
+        // And back the other way: LIGHT opened on Develop folds the
+        // mask's MASK, METADATA opened on Develop Cull's CULLING.
+        app.set_panel_tab("Masks".into());
+        settle(&app);
+        app.set_collapsed_mask(false);
+        settle(&app);
+        app.set_panel_tab("Develop".into());
+        settle(&app);
+        header("LIGHT");
+        app.set_panel_tab("Masks".into());
+        settle(&app);
+        assert_eq!(open(), ["light"], "Masks shows one open");
+
+        app.set_panel_tab("Cull".into());
+        settle(&app);
+        app.set_collapsed_culling(false);
+        settle(&app);
+        app.set_panel_tab("Develop".into());
+        settle(&app);
+        app.set_collapsed_metadata(false);
+        settle(&app);
+        app.set_panel_tab("Cull".into());
+        settle(&app);
+        assert_eq!(open(), ["metadata"], "Cull shows one open");
+    }
+
     /// The sharpen's Threshold slider runs 0 to 200 percent in steps of
     /// one, RawTherapee's range, and shows a value at its top as such.
     #[test]

@@ -1200,6 +1200,54 @@ export component App inherits Window {
         root.new-mask();
     }
     property <bool> mask-name-wanted: false;
+    // One section open at a time is a tab's, over its folds, and a
+    // fold on two tabs opened on one leaves the other's sections
+    // unmade and open: so it folds them. Light through Detail and the
+    // white balance are Develop's and a mask's; METADATA Develop's and
+    // Cull's.
+    function alone-with-masks() {
+        if (root.shown-tab == "Masks") {
+            root.collapsed-look = true;
+            root.collapsed-camera = true;
+            root.collapsed-bw = true;
+            root.collapsed-noise = true;
+            root.collapsed-lens = true;
+            root.collapsed-sharpen = true;
+            root.collapsed-vignette = true;
+            root.collapsed-grain = true;
+            root.collapsed-proof = true;
+            root.collapsed-monitor = true;
+            root.collapsed-demosaic = true;
+            root.collapsed-metadata = true;
+        } else if (root.shown-tab == "Develop") {
+            root.collapsed-mask = true;
+        }
+    }
+    function alone-with-cull() {
+        if (root.shown-tab == "Cull") {
+            root.collapsed-look = true;
+            root.collapsed-wb = true;
+            root.collapsed-camera = true;
+            root.collapsed-light = true;
+            root.collapsed-color = true;
+            root.collapsed-curves = true;
+            root.collapsed-mixer = true;
+            root.collapsed-bw = true;
+            root.collapsed-grading = true;
+            root.collapsed-tint = true;
+            root.collapsed-noise = true;
+            root.collapsed-lens = true;
+            root.collapsed-detail = true;
+            root.collapsed-sharpen = true;
+            root.collapsed-vignette = true;
+            root.collapsed-grain = true;
+            root.collapsed-proof = true;
+            root.collapsed-monitor = true;
+            root.collapsed-demosaic = true;
+        } else if (root.shown-tab == "Develop") {
+            root.collapsed-culling = true;
+        }
+    }
     // Each tab starts at its top, however it was reached: the scroll is
     // one for all four, and Develop scrolled to its foot left a shorter
     // tab showing only the empty space below its sections.
@@ -3896,6 +3944,7 @@ export component App inherits Window {
                             keyword-pick <=> root.keyword-pick;
                             set-count: root.set-count;
                             collapsed-metadata <=> root.collapsed-metadata;
+                            opened-alone => { root.alone-with-cull(); }
                             title-edited(t) => { root.title-edited(t); }
                             keyword-typed(t) => { root.keyword-typed(t); }
                             keyword-added(t) => { root.keyword-added(t); }
@@ -3993,6 +4042,7 @@ export component App inherits Window {
                             one-of-panel: !root.grid-open;
                             as-shot <=> root.as-shot;
                             collapsed-wb <=> root.collapsed-wb;
+                            opened-alone => { root.alone-with-masks(); }
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
                             wb-auto => { root.wb-auto(); }
@@ -4027,6 +4077,7 @@ export component App inherits Window {
                             relative-toggled => { root.local-wb-relative-toggled(); }
                             local-reset => { root.local-wb-reset(); }
                             collapsed-wb <=> root.collapsed-wb;
+                            opened-alone => { root.alone-with-masks(); }
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
                             temperature <=> root.local-temperature;
@@ -4060,6 +4111,7 @@ export component App inherits Window {
                             display-curve <=> root.display-curve;
                             show-display-curve: root.target == 0 && root.raw-input;
                             collapsed-light <=> root.collapsed-light;
+                            opened-alone => { root.alone-with-masks(); }
                             target-name <=> root.target-name;
                             raw-input: root.raw-input;
                             auto-shown: root.target == 0;
@@ -4072,6 +4124,7 @@ export component App inherits Window {
                             saturation <=> root.saturation;
                             vibrance <=> root.vibrance;
                             collapsed-color <=> root.collapsed-color;
+                            opened-alone => { root.alone-with-masks(); }
                             target-name <=> root.target-name;
                             band-colors: root.band-colors;
                             dull: root.dull;
@@ -4088,6 +4141,7 @@ export component App inherits Window {
                             curve-channel <=> root.curve-channel;
                             curve-image: root.curve-image;
                             collapsed-curves <=> root.collapsed-curves;
+                            opened-alone => { root.alone-with-masks(); }
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
                             target-name <=> root.target-name;
@@ -4108,6 +4162,7 @@ export component App inherits Window {
                         if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): MixerSection {
                             one-of-panel: !root.grid-open;
                             collapsed-mixer <=> root.collapsed-mixer;
+                            opened-alone => { root.alone-with-masks(); }
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
                             target-name <=> root.target-name;
@@ -4146,6 +4201,7 @@ export component App inherits Window {
                         if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): GradingSection {
                             one-of-panel: !root.grid-open;
                             collapsed-grading <=> root.collapsed-grading;
+                            opened-alone => { root.alone-with-masks(); }
                             target-name <=> root.target-name;
                             grading-enabled <=> root.grading-enabled;
                             grade-range <=> root.grade-range;
@@ -4172,6 +4228,7 @@ export component App inherits Window {
                         if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): TintSection {
                             one-of-panel: !root.grid-open;
                             collapsed-tint <=> root.collapsed-tint;
+                            opened-alone => { root.alone-with-masks(); }
                             target-name <=> root.target-name;
                             tint-enabled <=> root.tint-enabled;
                             tint-hue <=> root.tint-hue;
@@ -4196,6 +4253,7 @@ export component App inherits Window {
                         if root.shown-tab == "Masks" && root.target > 0: DetailSection {
                             one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
+                            opened-alone => { root.alone-with-masks(); }
                             target-name <=> root.target-name;
                             detail-enabled <=> root.local-detail-enabled;
                             detail-texture <=> root.local-texture;
@@ -4271,6 +4329,7 @@ export component App inherits Window {
                         if root.shown-tab == "Develop": DetailSection {
                             one-of-panel: !root.grid-open;
                             collapsed-detail <=> root.collapsed-detail;
+                            opened-alone => { root.alone-with-masks(); }
                             detail-enabled <=> root.detail-enabled;
                             detail-texture <=> root.detail-texture;
                             detail-clarity <=> root.detail-clarity;
@@ -4420,6 +4479,7 @@ export component App inherits Window {
                             keyword-pick <=> root.keyword-pick;
                             set-count: root.set-count;
                             collapsed-metadata <=> root.collapsed-metadata;
+                            opened-alone => { root.alone-with-cull(); }
                             title-edited(t) => { root.title-edited(t); }
                             keyword-typed(t) => { root.keyword-typed(t); }
                             keyword-added(t) => { root.keyword-added(t); }

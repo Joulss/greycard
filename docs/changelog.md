@@ -98,6 +98,10 @@ design note behind it.
 
 ### Fixes
 
+- One section open at a time holds across the tabs: opening a mask's
+  Light, or Metadata while culling, no longer leaves a second section
+  open on Develop
+  ([§654](https://github.com/jessolmstead/greycard/blob/master/docs/notes/654-one-section-open-over-a-fold-two-tabs-share.md)).
 - After a pick from a mask's People or Landscape menu the keys work
   at once: Space or Return had pressed the button again, and the
   click that closed the menu had gone through to what was under it

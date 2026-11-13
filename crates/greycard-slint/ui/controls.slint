@@ -297,6 +297,9 @@ export component Section inherits VerticalLayout {
     // must not fold the panel behind it.
     in property <bool> one-of-panel: false;
     property <int> fold-number: 0;
+    // Opened under the rule: a section whose fold another tab shares
+    // folds that tab's sections here, which are not made to fold.
+    callback opened-alone();
     changed collapsed => {
         if (!root.collapsed && root.one-of-panel && Folds.one-open) {
             if (root.fold-number == 0) {
@@ -305,6 +308,7 @@ export component Section inherits VerticalLayout {
             }
             Folds.opener = root.fold-number;
             Folds.opened += 1;
+            root.opened-alone();
         }
     }
     property <int> fold-opened: Folds.opened;
