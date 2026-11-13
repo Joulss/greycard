@@ -999,6 +999,7 @@ impl State {
                 crop_start: Default::default(),
                 crop_last: "Free".into(),
                 crop_start_due: false,
+                crop_fit_due: None,
                 fill_choice: None,
                 target: None,
                 fresh_mask: None,

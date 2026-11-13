@@ -1325,7 +1325,7 @@ pub fn prompted(shape: &greycard_edit::mask::Shape) -> bool {
 /// The size of a develop of `full` once `geometry` has framed it, as
 /// `geometry::apply` cuts it.
 pub fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
-    if geometry.is_identity() {
+    if geometry.is_identity_on(full.0 as f32, full.1 as f32) {
         return full;
     }
     let frame = geometry.frame(full.0 as f32, full.1 as f32);

@@ -162,6 +162,11 @@ pub(crate) struct Develop {
     /// A frame opened with crop mode on: the starting aspect is laid
     /// on it once, when its develop lands and its shape is known.
     pub(crate) crop_start_due: bool,
+    /// A ratio taken with the Crop button before the frame's develop
+    /// said its size: its crop is fitted when that frame's develop
+    /// lands. The frame (its file and version) it was taken on, so a
+    /// develop of any other frame, reached however, fits nothing.
+    pub(crate) crop_fit_due: Option<crate::panel::crop::FrameId>,
     /// What a Fill drawn next asks to be made by, as last chosen
     /// (`settings.fill_choice`); None until one is, for the machine's
     /// default (`ai::FillHaves::default_choice`).

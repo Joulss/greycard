@@ -137,6 +137,12 @@ design note behind it.
 
 ### Fixes
 
+- A crop opened at a ratio with the Crop button and closed with Done
+  exports as it shows. Before, with the starting aspect on Last used,
+  the screen showed the ratio and the export and the thumbnail were
+  the whole frame, until the box was moved. Frames saved that way
+  need no redoing (issue 145,
+  [§666](https://github.com/jessolmstead/greycard/blob/master/docs/notes/666-a-ratio-over-no-crop-is-a-crop.md)).
 - A camera look fitted on a monochrome style is grey for every
   color. Before, colors the shoot never showed kept their own color,
   so lips could come out pale red. Fit the look again to get it

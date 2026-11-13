@@ -677,3 +677,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§663. Output sharpen](notes/663-output-sharpen.md) (2026-11-13)
 - [§664. A sheet holds the focus](notes/664-a-sheet-holds-the-focus.md) (2026-11-13)
 - [§665. The camera match fits a monochrome style as a grey](notes/665-a-monochrome-style-fits-as-a-grey.md) (2026-11-13)
+- [§666. A ratio over no crop is a crop](notes/666-a-ratio-over-no-crop-is-a-crop.md) (2026-11-13)
