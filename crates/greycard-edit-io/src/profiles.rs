@@ -569,6 +569,15 @@ mod tests {
         std::fs::write(path, dcp.to_bytes()).unwrap();
     }
 
+    /// Whether the volume under `dir` takes two spellings of a name
+    /// for one file.
+    fn folds_case(dir: &Path) -> bool {
+        std::fs::write(dir.join("case-probe"), "").unwrap();
+        let folds = dir.join("CASE-PROBE").exists();
+        std::fs::remove_file(dir.join("case-probe")).unwrap();
+        folds
+    }
+
     /// The cache is one static for the whole process, and these tests
     /// say what is in it, so they take their turn rather than run
     /// alongside each other.
@@ -954,7 +963,13 @@ mod tests {
         assert_eq!(names, ["folder.dcp/Real"]);
         // What is listed resolves, its extension's case and all, by
         // the way a develop reads a profile.
-        assert_eq!(path_in(Some(&dir), names[0]), Some(entries[0].path.clone()));
+        let found = path_in(Some(&dir), names[0]).unwrap();
+        if folds_case(&dir) {
+            // Either spelling is the one file there.
+            assert!(found.is_file());
+        } else {
+            assert_eq!(found, entries[0].path);
+        }
         use greycard_edit::Loader;
         let stores = crate::stores::Stores {
             profiles: Some(dir.clone()),
@@ -972,6 +987,12 @@ mod tests {
     #[test]
     fn another_case_resolves_as_the_listing_shows() {
         let dir = scratch("cases");
+        if folds_case(&dir) {
+            // Windows and macOS hold one spelling of a name, so there
+            // is no second case to tell apart.
+            greycard_core::testing::remove_dir_retry(&dir);
+            return;
+        }
         // One title, so the listing's order among them is the walk's.
         a_profile(&dir.join("A.DCP"), "A", "Cam", 4);
         a_profile(&dir.join("A.Dcp"), "A", "Cam", 8);
