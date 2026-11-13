@@ -1273,12 +1273,19 @@ clears or a tester asks for it.
       133, 2026-11-12)
 - [ ] The profile folder read with its subfolders, as Adobe ships
       them (issue 135, 2026-11-12)
-- [ ] A profile made for another camera chosen on purpose: the list
-      shows only the open file's camera's (issue 135; undecided)
-- [ ] A conventional sharpen after the tone work, beside the capture
-      sharpen: radius, amount, and threshold (issue 135; undecided)
-- [ ] A DCP's tone curve offered in place of ours (issue 135;
-      undecided: §639 applies the look table and leaves the curve)
+- [ ] A profile made for another camera chosen on purpose: a "Show
+      all cameras" switch at the foot of the profile list, off by
+      default, the profiles grouped under their cameras (issue 135)
+- [ ] An output sharpen after the tone work, beside the capture
+      sharpen: a section of its own, OUTPUT SHARPEN, with Amount,
+      Radius, and Threshold, off by default, after Detail; the whole
+      picture first (issue 135)
+- [ ] The output sharpen in a mask's look, after the picture's has
+      landed (issue 135)
+- [ ] A DCP's tone curve in place of ours: a "Profile tone curve"
+      switch beside a profile that carries one, off by default, taking
+      the place of the display curve for that picture; not stacked on
+      it (issue 135; §639 applies the look table and leaves the curve)
 
 ## Blocked
 
