@@ -184,11 +184,18 @@ so a phone's DNG opens a little darker than the phone's own picture.
 
 A DCP profile gives Adobe's rendering of your camera, or a profile
 made for your own copy of it. Put `.dcp` files in the folder the
-section names (`greycard/profiles` in your data directory). The list
-shows the profiles made for the open frame's camera, by the name inside
-each file. The same profile copied under two file names is listed once;
-two different profiles listed with one name show their file names in
-parentheses.
+section names (`greycard/profiles` in your data directory), loose or in
+folders of their own: Adobe's whole `CameraProfiles` folder can be
+copied or linked in as it is. The list shows the profiles made for the
+open frame's camera, by the name inside each file. The same profile
+copied under two file names is listed once; two different profiles
+listed with one name show their file names in parentheses.
+
+**Show all cameras**, under the list, lists every profile, grouped by
+the camera each was made for: the open frame's camera first, the
+others folded under their names. Open a group to choose a profile
+made for another camera. The switch only changes the list, and stays
+as you leave it.
 
 Where to get profiles:
 

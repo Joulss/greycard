@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 
-use greycard_edit::camera::{EXTENSION, ProfileChoice};
+use greycard_edit::camera::ProfileChoice;
 use greycard_edit::key::{
     DEVELOP_RECIPE, LANDSCAPE_PIPELINE, MIDTONES_SHAPE, PART_PIPELINE, PERSON_EDGE, Read,
     SHARPEN_GUIDE, SKY_PIPELINE,
@@ -58,8 +58,10 @@ fn files_read(edit: &Edit, looks: Option<&Path>, profiles: Option<&Path>) -> Vec
         // otherwise, so a change to either may change the picture.
         files.extend(crate::looks::tables_in(dir, name, edit.display_curve));
     }
-    if let (ProfileChoice::Named(name), Some(dir)) = (&edit.camera.profile, profiles) {
-        files.push(dir.join(format!("{name}.{EXTENSION}")));
+    if let (ProfileChoice::Named(name), Some(dir)) = (&edit.camera.profile, profiles)
+        && let Some(path) = crate::profiles::path_in(Some(dir), name)
+    {
+        files.push(path);
     }
     // An Adobe lens profile picked by hand, beside the camera
     // profiles: read by its file name, so only a plain name counts.

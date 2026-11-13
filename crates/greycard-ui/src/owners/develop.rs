@@ -305,6 +305,10 @@ pub(crate) struct Develop {
     /// The look list's groups the user has opened (true) or folded,
     /// by key (`greycard_edit::look::Listing::open`).
     pub(crate) look_groups_open: std::collections::BTreeMap<String, bool>,
+    /// The profile list's camera groups the user has opened (true) or
+    /// folded, by key, while every camera is shown
+    /// (`greycard_edit::camera::Listing::open`).
+    pub(crate) profile_groups_open: std::collections::BTreeMap<String, bool>,
     /// The look list's row under the pointer and the look previewed
     /// from it, drawn in place of `look` while it stands.
     pub(crate) look_hover: RefCell<panel::look_preview::Hover>,

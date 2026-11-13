@@ -1271,11 +1271,8 @@ clears or a tester asks for it.
 - [ ] Presets given more room on the left: a tab of its own or a
       list dragged taller, judged after the left pane's rework (issue
       133, 2026-11-12)
-- [ ] The profile folder read with its subfolders, as Adobe ships
-      them (issue 135, 2026-11-12)
-- [ ] A profile made for another camera chosen on purpose: a "Show
-      all cameras" switch at the foot of the profile list, off by
-      default, the profiles grouped under their cameras (issue 135)
+- [ ] Lens profiles (`.lcp`) read from the profile folder's
+      subfolders too, as the camera profiles are since §662
 - [ ] An output sharpen after the tone work, beside the capture
       sharpen: a section of its own, OUTPUT SHARPEN, with Amount,
       Radius, and Threshold, off by default, after Detail; the whole

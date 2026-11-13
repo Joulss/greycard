@@ -1046,6 +1046,7 @@ impl State {
                 look: None,
                 look_for: None,
                 look_groups_open: Default::default(),
+                profile_groups_open: Default::default(),
                 look_hover: Default::default(),
                 white_profile: None,
                 mask_handles: Rc::new(VecModel::default()),

@@ -125,6 +125,11 @@ design note behind it.
   [§659](https://github.com/jessolmstead/greycard/blob/master/docs/notes/659-a-masks-opacity.md)).
 - Color grading's middle wheel reads Midtones, as the Light slider
   does.
+- The camera profile folder is read with its subfolders, so Adobe's
+  CameraProfiles folder can be copied or linked in whole. A Show all
+  cameras switch under the list offers profiles made for other
+  cameras, grouped by camera (issue 135,
+  [§662](https://github.com/jessolmstead/greycard/blob/master/docs/notes/662-profile-subfolders-and-show-all-cameras.md)).
 
 ### Fixes
 

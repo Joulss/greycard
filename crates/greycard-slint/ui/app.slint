@@ -12,7 +12,7 @@ export { Theme, ScrollBars } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing, SliderKeys, ButtonKeys, Folds, ScrollPane, DragEdge } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber, SliderKeys, ButtonKeys } from "controls.slint";
-import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
+import { GridHead, GridPlace, StripPlace, StripSpan, LightroomRoot, ReportLine, Pt, ScopeMark, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, SortMenu, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, ProfileRow, MatchGroup, CarryRow, PresetRow, KeyRow, BindRow, ModelLine, KeywordChip, QueueRow, Panes, TabPanes } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1975,15 +1975,20 @@ export component App inherits Window {
         root.develop-changed();
     }
     // The camera profile: what the edit stores ("embedded" or a DCP's
-    // file name), the names and the labels of what the profile
+    // path under the profile directory), the rows of what the
     // directory holds, a word on the directory, and a warning when the
     // chosen profile was made for another camera.
     in-out property <string> camera-profile: "embedded";
-    in property <[string]> camera-profile-names;
-    in property <[string]> camera-profile-labels;
+    in property <[ProfileRow]> camera-profile-rows;
     in property <string> camera-profile-note;
     in property <string> camera-profile-warning;
+    in property <bool> camera-profiles-any;
+    // Every camera's profiles listed: a view of the list, kept in the
+    // settings file.
+    in-out property <bool> camera-profiles-all;
     callback camera-profile-picked();
+    callback camera-profile-group-toggled(string);
+    callback camera-profiles-all-changed();
     // Asked for when the section is opened, so a profile dropped into
     // the directory while the editor is running is listed without
     // reopening the file.
@@ -4104,11 +4109,14 @@ export component App inherits Window {
                             raw-input: root.raw-input;
                             source-note: root.source-note;
                             camera-profile <=> root.camera-profile;
-                            camera-profile-names: root.camera-profile-names;
-                            camera-profile-labels: root.camera-profile-labels;
+                            camera-profile-rows: root.camera-profile-rows;
                             camera-profile-note: root.camera-profile-note;
                             camera-profile-warning: root.camera-profile-warning;
+                            camera-profiles-any: root.camera-profiles-any;
+                            camera-profiles-all <=> root.camera-profiles-all;
                             camera-profile-picked => { root.camera-profile-picked(); }
+                            camera-profile-group-toggled(key) => { root.camera-profile-group-toggled(key); }
+                            camera-profiles-all-changed => { root.camera-profiles-all-changed(); }
                         }
                         if root.shown-tab == "Develop" || (root.shown-tab == "Masks" && root.target > 0): LightSection {
                             one-of-panel: !root.grid-open;

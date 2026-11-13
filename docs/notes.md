@@ -673,3 +673,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§659. A mask's Opacity](notes/659-a-masks-opacity.md) (2026-11-12)
 - [§660. Third-party notices in every package](notes/660-third-party-notices-in-every-package.md) (2026-11-12)
 - [§661. Midtones, lower and narrower](notes/661-midtones-lower-and-narrower.md) (2026-11-12)
+- [§662. Profile subfolders, and Show all cameras](notes/662-profile-subfolders-and-show-all-cameras.md) (2026-11-12)
