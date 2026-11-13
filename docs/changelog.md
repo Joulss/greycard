@@ -63,10 +63,11 @@ design note behind it.
 ### Export
 
 - An author and a copyright notice written into every export (EXIF
-  and XMP), set for now by two lines in `settings.json` or by
-  `greycard export --author --copyright`; the window's fields come
-  later. They are written under Metadata None too, alone
-  ([§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md)).
+  and XMP): two fields under Settings, Editing, or
+  `greycard export --author --copyright`. Metadata None writes
+  neither (issue 106,
+  [§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md),
+  [§658](https://github.com/jessolmstead/greycard/blob/master/docs/notes/658-author-and-copyright-in-the-window.md)).
 - WebP joins JPEG, PNG, and TIFF as an export format: lossless, 8
   bits, with the color profile and metadata the others carry, and
   smaller than a PNG. A side longer than 16383 px is refused

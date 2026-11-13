@@ -202,6 +202,11 @@ export component App inherits Window {
     in property <[string]> edit-in-list: [];
     callback edit-in-add();
     callback edit-in-remove(int);
+    /// The Settings sheet's Author and Copyright, as typed; Rust takes
+    /// them on `rights-changed` and ignores a pair that did not change.
+    in-out property <string> settings-author: "";
+    in-out property <string> settings-copyright: "";
+    callback rights-changed();
     /// Whether a Control+click is a right-click: a Mac's.
     in property <bool> ctrl-click-menu: false;
     /// The name of the frame right-clicked, whose settings the menu's
@@ -2556,6 +2561,7 @@ export component App inherits Window {
             root.network-poll-changed();
             root.grid-cell-typed-changed();
             root.ui-scale-changed();
+            root.rights-changed();
         }
         // A row listening for a chord had the keys: the window's again.
         if (!root.settings-open && !root.sheet-open()) { keys.focus(); }
@@ -5950,6 +5956,9 @@ export component App inherits Window {
         edit-in-list: root.edit-in-list;
         edit-in-add => { root.edit-in-add(); }
         edit-in-remove(i) => { root.edit-in-remove(i); }
+        author <=> root.settings-author;
+        copyright <=> root.settings-copyright;
+        rights-changed => { root.rights-changed(); }
         ui-scale <=> root.ui-scale;
         ui-scale-percent: root.ui-scale-percent;
         ui-scale-started: root.ui-scale-started;

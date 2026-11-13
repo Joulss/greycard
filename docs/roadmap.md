@@ -244,6 +244,10 @@ the reasoning lives in `docs/notes.md`.
       blank room under a short one, double-click back to automatic;
       same weights, one rule in the layout. Pick it up if the live
       gaps turn out too rare (2026-11-08)
+- [ ] The Settings sheet does not hold the focus: Tab walks out of
+      it onto the panel behind, and the arrows then move a slider and
+      change the edit under the sheet. Letters do not leak. Likely
+      every sheet; hold the Tab walk inside the open one (§658)
 - [ ] The window's size and place are written at a close or a quit
       only, so an editor ended by a signal, a force quit, or a logout
       opens as it was the time before (§623). Low priority
@@ -1210,13 +1214,15 @@ clears or a tester asks for it.
       a release leg on GitHub's ARM runner, ONNX Runtime's
       linux-aarch64 build in the registry, the AppImage tooling for
       ARM (issue 105, 2026-11-09)
-- [ ] Author and copyright fields on the Settings sheet (the engine
-      half is §652: `settings.json` and `greycard export --author
-      --copyright`); wants their words and place. Then the IPTC
-      fields kept per frame in the sidecar and written into exports,
-      GPS with them (issue 106, 2026-11-09). The fields asked for:
-      title, headline, caption, copyright, usage terms, copyright
-      URL, creator, and the creator's address, email, and web address
+- [ ] The IPTC fields kept per frame in the sidecar and written into
+      exports, GPS with them (issue 106, 2026-11-09; the author and
+      the copyright for every export are §652 and §658). The fields
+      asked for: title, headline, caption, copyright, usage terms,
+      copyright URL, creator, and the creator's address, email, and
+      web address
+- [ ] "Edit in" another program reads the export sheet's Metadata
+      choice: today it takes the sheet's defaults, so its TIFF carries
+      everything under None too (§658)
 - [ ] `.greycard` off the name of an export written beside its raw
       (issue 116, 2026-11-10). Today the tag is also what keeps
       `IMG_0001.jpg` from being paired with `IMG_0001.CR3` as the

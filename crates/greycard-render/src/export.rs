@@ -400,9 +400,9 @@ pub enum Metadata {
     /// All of that but the edit: a picture to hand on without the
     /// recipe.
     NoEdit,
-    /// Nothing but the profile: no EXIF, no XMP. The camera, the time
-    /// and any location stay behind. The user's author and copyright,
-    /// when said ([`Settings::rights`]), are still written, alone.
+    /// Nothing but the profile: no EXIF, no XMP. The camera, the time,
+    /// any location, and the user's own author and copyright
+    /// ([`Settings::rights`]) stay behind.
     None,
 }
 
@@ -445,9 +445,9 @@ pub struct Settings {
     /// border when there is one.
     pub watermark: Option<Mark>,
     /// The user's author and copyright, over the camera's; written
-    /// whatever `metadata` says, since they are the user's own word
-    /// and not a detail of the exposure. Not the sheet's: the
-    /// settings' or the command line's, laid on by the caller.
+    /// under every `metadata` but [`Metadata::None`], which writes
+    /// nothing. Not the sheet's: the settings' or the command line's,
+    /// laid on by the caller.
     pub rights: Rights,
 }
 
@@ -1008,6 +1008,7 @@ impl Settings {
 /// the source's EXIF carried over when `source` gives it, and the
 /// export's own account of itself in the XMP; the settings' rights
 /// over the source's, or alone when there is nothing else to carry.
+/// Under [`Metadata::None`], neither.
 pub fn write(
     rendered: &Rendered,
     settings: &Settings,
@@ -1041,11 +1042,13 @@ pub fn write(
         edit,
         rights: &settings.rights,
     });
-    // With no source's tags to carry (Metadata None, or a source
-    // without them), the user's rights alone, when said.
+    // With no source's tags to carry, the user's rights alone, when
+    // said; under Metadata None nothing, theirs included.
     let tags = match &provenance {
         Some(p) => Tags::Provenance(p),
-        None if !settings.rights.is_empty() => Tags::Rights(&settings.rights),
+        None if settings.metadata != Metadata::None && !settings.rights.is_empty() => {
+            Tags::Rights(&settings.rights)
+        }
         None => Tags::Nothing,
     };
     let payload = match tags {
@@ -2143,8 +2146,8 @@ mod tests {
     /// The user's author and copyright, in every format and under every
     /// policy, read back by our own picture reader as the EXIF's
     /// `Artist` and `Copyright` and found in the XMP as `dc:creator` and
-    /// `dc:rights`: over the camera's own, and alone under None. With
-    /// none said, the camera's travel as before, and under None nothing.
+    /// `dc:rights`, over the camera's own. With none said, the camera's
+    /// travel as before. Under None nothing, said or not.
     #[test]
     fn the_users_rights_are_in_every_format_under_every_policy() {
         let (w, h) = (24usize, 16usize);
@@ -2229,15 +2232,16 @@ mod tests {
                     "<rdf:li xml:lang=\"x-default\">© 2026 Zoë Ångström</rdf:li>",
                 );
             match (said, policy) {
+                (_, Metadata::None) => {
+                    assert_eq!((artist, copyright), (None, None), "{what}");
+                    assert!(!carries(&bytes, "Camera Owner") && !dc, "{what}");
+                    assert!(!carries(&bytes, "Zoë Ångström"), "{what}");
+                }
                 (true, _) => {
                     assert_eq!(artist, Some("Zoë Ångström"), "{what}");
                     assert_eq!(copyright, Some("© 2026 Zoë Ångström"), "{what}");
                     assert!(dc, "{what}");
                     assert!(!carries(&bytes, "Camera Owner"), "{what}");
-                }
-                (false, Metadata::None) => {
-                    assert_eq!((artist, copyright), (None, None), "{what}");
-                    assert!(!carries(&bytes, "Camera Owner") && !dc, "{what}");
                 }
                 (false, _) => {
                     assert_eq!(artist, Some("Camera Owner"), "{what}");
@@ -2274,7 +2278,119 @@ mod tests {
         write(&rendered, &settings, &path, None, &origin).unwrap();
         let back = greycard_core::picture::decode_picture_path(&path).unwrap();
         assert_eq!(back.metadata.exif.artist.as_deref(), Some("Zoë Ångström"));
+        // And under None, with no source either, nothing.
+        let settings = Settings {
+            metadata: Metadata::None,
+            ..settings
+        };
+        let path = dir.join("no-source-none.jpg");
+        write(&rendered, &settings, &path, None, &origin).unwrap();
+        let back = greycard_core::picture::decode_picture_path(&path).unwrap();
+        assert_eq!(back.metadata.exif.artist, None);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An export under Metadata None in `format`, with the user's
+    /// author and copyright said and a camera that names its own, from
+    /// a source and from none: the file carries neither, no EXIF and
+    /// no XMP at all.
+    fn none_carries_no_rights(format: Format) {
+        let (w, h) = (24usize, 16usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.2; w * h * 3],
+        };
+        let mut metadata = RawMetadata {
+            exif: Default::default(),
+            model: "EOS R6m2".into(),
+            make: "Canon".into(),
+            lens: None,
+            unique_image_id: None,
+            rating: None,
+        };
+        metadata.exif.artist = Some("Camera Owner".into());
+        metadata.exif.copyright = Some("camera notice".into());
+        let edit = greycard_edit::Edit::default();
+        let dir = scratch(&format!("none-rights-{}", format.extension()));
+        let settings = Settings {
+            metadata: Metadata::None,
+            format,
+            rights: Rights::new("Zoë Ångström", "© 2026 Zoë Ångström"),
+            ..Settings::default()
+        };
+        let rendered = render(
+            &image,
+            &edit,
+            &greycard_edit::NoStores,
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            None,
+            finish::Source::SCENE,
+            None,
+            None,
+        );
+        let carries =
+            |bytes: &[u8], what: &str| bytes.windows(what.len()).any(|w| w == what.as_bytes());
+        for (i, source) in [Some(&metadata), None].into_iter().enumerate() {
+            let path = dir.join(format!("none-{i}.{}", format.extension()));
+            write(&rendered, &settings, &path, source, &Origin::default()).unwrap();
+            let what = format!("{} from source {}", format.name(), source.is_some());
+            let bytes = std::fs::read(&path).unwrap();
+            for word in [
+                "Zoë Ångström",
+                "Camera Owner",
+                "camera notice",
+                "dc:creator",
+                "dc:rights",
+                "x:xmpmeta",
+            ] {
+                assert!(!carries(&bytes, word), "{what}: {word}");
+            }
+            let back = greycard_core::picture::decode_picture_path(&path)
+                .unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert_eq!(back.metadata.exif.artist, None, "{what}");
+            assert_eq!(back.metadata.exif.copyright, None, "{what}");
+            if format != Format::Tiff {
+                let mut decoder = image::ImageReader::open(&path)
+                    .unwrap()
+                    .into_decoder()
+                    .unwrap();
+                assert_eq!(
+                    image::ImageDecoder::exif_metadata(&mut decoder).unwrap(),
+                    None,
+                    "{what}"
+                );
+                assert_eq!(
+                    image::ImageDecoder::xmp_metadata(&mut decoder).unwrap(),
+                    None,
+                    "{what}"
+                );
+            }
+        }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_jpeg_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::Jpeg);
+    }
+
+    #[test]
+    fn a_png_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::Png);
+    }
+
+    #[test]
+    fn a_tiff_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::Tiff);
+    }
+
+    #[test]
+    fn a_webp_under_none_carries_no_author_or_copyright() {
+        none_carries_no_rights(Format::WebP);
     }
 
     /// A WebP is lossless: every 8-bit value comes back as written,

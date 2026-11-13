@@ -754,7 +754,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         st.window.xmp_sidecars = xmp_sidecars;
         st.window.placement = placement;
         st.window.lens_on_new = remembered.shared.lens_on_new;
-        st.window.rights = remembered.shared.rights();
+        st.window.author = remembered.shared.author.clone();
+        st.window.copyright = remembered.shared.copyright.clone();
+        // The fields as the file has them, so a close of the sheet
+        // before any opening takes nothing away.
+        app.set_settings_author(st.window.author.as_str().into());
+        app.set_settings_copyright(st.window.copyright.as_str().into());
         st.window.settings_file = settings_file;
         st.window.deletes_allowed = deletes_allowed;
         st.launch.scripted = scripted;
@@ -2453,7 +2458,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
             // As the Settings sheet's switch is flipped.
             lens_on_new: true,
             last_file: String::new(),
-            // No field shows them yet: the caller keeps the file's.
+            // Kept as the sheet's fields take them: the caller keeps
+            // the file's.
             author: String::new(),
             copyright: String::new(),
         },
