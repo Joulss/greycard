@@ -379,6 +379,124 @@ mod tests {
         assert!(width >= wants, "whole at 280: {width} {wants}");
     }
 
+    /// The culling panel's filter rows hold all their chips at the
+    /// default window in English, for a big card's counts: a row that
+    /// scrolls sideways is for French and a narrowed panel.
+    #[test]
+    fn the_culling_filter_rows_fit_at_the_default_width() {
+        use slint::Model;
+        let app = loupe();
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(4));
+        app.set_culling(true);
+        app.set_panel_tab("Cull".into());
+        crate::panel::cull::show_filter(&state.borrow(), &app);
+        // Most frames on a row's first chip, a few on the next.
+        let counted = |chips: slint::ModelRc<crate::FilterChip>| {
+            let chips: Vec<_> = (chips.iter().enumerate())
+                .map(|(i, c)| crate::FilterChip {
+                    count: [412, 36].get(i).copied().unwrap_or(8),
+                    ..c
+                })
+                .collect();
+            slint::ModelRc::new(slint::VecModel::from(chips))
+        };
+        app.set_filter_stars(counted(app.get_filter_stars()));
+        app.set_filter_flags(counted(app.get_filter_flags()));
+        app.set_filter_labels(counted(app.get_filter_labels()));
+        settle(&app);
+        settle(&app);
+        let wanted = [
+            ("stars", app.get_filter_stars().row_count()),
+            ("flag", app.get_filter_flags().row_count()),
+            ("label", app.get_filter_labels().row_count()),
+        ];
+        for (row, count) in wanted {
+            let view = ElementHandle::find_by_element_id(&app, &format!("FilterBar::{row}-flick"))
+                .next()
+                .map(|e| crate::testing::bounds_of(&e))
+                .expect("the row's view");
+            // A chip clipped out of the view whole is not found at all.
+            let chips = ElementHandle::find_by_element_id(&app, &format!("FilterBar::{row}-row"))
+                .next()
+                .expect("the row")
+                .query_descendants()
+                .match_inherits("Chip")
+                .find_all();
+            let right = (chips.iter())
+                .map(|c| c.absolute_position().x + c.size().width)
+                .fold(f32::MIN, f32::max);
+            let room = view.0.x + view.1.width;
+            assert_eq!(chips.len(), count, "{row}: a chip out of view");
+            assert!(
+                right <= room,
+                "{row}: the chips end at {right}, the panel at {room}"
+            );
+        }
+    }
+
+    /// The wheel over a chip row that runs past the panel scrolls the
+    /// row sideways to its end, and from there scrolls the panel.
+    #[test]
+    fn the_wheel_leaves_a_chip_row_at_its_end() {
+        use slint::Model;
+        let app = window(40);
+        sized(&app, W, 640.0);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(4));
+        app.set_culling(true);
+        app.set_panel_tab("Cull".into());
+        app.set_right_size(280.0);
+        crate::panel::cull::show_filter(&state.borrow(), &app);
+        // Counts wide enough that the row runs well past the panel.
+        let chips: Vec<_> = (app.get_filter_labels().iter())
+            .map(|c| crate::FilterChip { count: 888, ..c })
+            .collect();
+        app.set_filter_labels(slint::ModelRc::new(slint::VecModel::from(chips)));
+        settle(&app);
+        settle(&app);
+        let row_x = || {
+            ElementHandle::find_by_element_id(&app, "FilterBar::label-row")
+                .next()
+                .expect("the row")
+                .absolute_position()
+                .x
+        };
+        let (at, size) = ElementHandle::find_by_element_id(&app, "FilterBar::label-flick")
+            .next()
+            .map(|e| crate::testing::bounds_of(&e))
+            .expect("the row's view");
+        let middle = slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let wheel = || {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                    position: middle,
+                    delta_x: 0.0,
+                    delta_y: -20.0,
+                });
+            settle(&app);
+        };
+        // Sideways to the row's end, the panel still.
+        let mut x = row_x();
+        let mut turns = 0;
+        loop {
+            wheel();
+            let now = row_x();
+            if now == x {
+                break;
+            }
+            assert!(now < x, "the row moves sideways");
+            assert_eq!(app.get_panel_scroll(), 0.0, "the panel stays");
+            x = now;
+            turns += 1;
+            assert!(turns < 50, "the row reaches its end");
+        }
+        assert!(turns > 0, "the row scrolled at all");
+        // The turn that found the end went on to the panel.
+        assert!(
+            app.get_panel_scroll() < 0.0,
+            "at its end, the panel scrolls"
+        );
+    }
+
     /// The strip stays still about its selected frame as its edge is
     /// dragged, from the first move on: the frame is whole on screen at
     /// every step, and its left edge moves by no more than its own cell

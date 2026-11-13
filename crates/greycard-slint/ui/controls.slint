@@ -1522,20 +1522,23 @@ export component Segmented inherits Rectangle {
     /// Why each option cannot be chosen, by index: one with words is
     /// greyed, takes no click, and says them in place of its tip.
     in property <[string]> why-not;
+    in property <bool> rounded: true;
+    in property <bool> bordered: true;
+    in property <bool> padded: true;
     callback selected(string);
     height: Theme.control-height;
-    border-radius: Theme.radius-md;
+    border-radius: root.rounded ? Theme.radius-md : 0px;
     background: Theme.base;
-    border-width: 1px;
+    border-width: root.bordered ? 1px : 0px;
     border-color: Theme.border;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {
-        padding: 2px;
+        padding: root.padded ? 2px : 0px;
         spacing: 2px;
         for option[i] in root.options: Rectangle {
             property <bool> on: option == root.current;
             property <bool> usable: root.why-not[i] == "";
-            border-radius: Theme.radius-sm;
+            border-radius: root.rounded ? Theme.radius-sm : 0px;
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
             Text {

@@ -3742,6 +3742,9 @@ export component App inherits Window {
                         accessible-role: button;
                         accessible-label: @tr("Cull mode");
                         accessible-checked: root.cull-mode;
+                        rounded: false;
+                        padded: false;
+                        bordered: false;
                         accessible-action-default => {
                             keys.focus();
                             root.cull-asked();

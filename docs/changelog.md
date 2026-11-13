@@ -42,6 +42,12 @@ design note behind it.
 
 ### Library
 
+- The Cull panel's Stars, Flag, and Label filters take one row each,
+  with the caption beside the chips; a row too long for the panel
+  scrolls sideways under the wheel, and at its end the wheel scrolls
+  the panel again. The search field lines up with Clear and Sort.
+  Thanks to Joulss (PR 137,
+  [§655](https://github.com/jessolmstead/greycard/blob/master/docs/notes/655-the-cull-panels-filters-a-row-each.md)).
 - Alt+← and Alt+→ go back and forward through the folders visited in
   the grid, as the mouse's side buttons do, and can be rebound under
   Settings, Keys (discussion 59,

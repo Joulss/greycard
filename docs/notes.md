@@ -666,3 +666,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§652. An author and a copyright in every export](notes/652-an-author-and-a-copyright-in-every-export.md) (2026-11-12)
 - [§653. A kept point bound to its frame](notes/653-a-kept-point-bound-to-its-frame.md) (2026-11-12)
 - [§654. One section open over a fold two tabs share](notes/654-one-section-open-over-a-fold-two-tabs-share.md) (2026-11-12)
+- [§655. The Cull panel's filters, a row each](notes/655-the-cull-panels-filters-a-row-each.md) (2026-11-12)
