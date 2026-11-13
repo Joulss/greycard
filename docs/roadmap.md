@@ -254,6 +254,10 @@ the reasoning lives in `docs/notes.md`.
       today the model sheet over another outlives it (§664)
 - [ ] `sheet-open()` defined from `sheets-up`, one list in place of
       two; the every-sheet focus test made cheaper, 45 s today (§664)
+- [ ] A frame opened at the aspect chosen in the camera: Olympus
+      records it (ImageProcessing AspectRatio 0x1112 and AspectFrame
+      0x1113) and nothing reads it, so an ORF shot at 3:2 opens at
+      the sensor's 4:3. Waits on a 3:2 sample (issue 145, 2026-11-13)
 - [ ] The window's size and place are written at a close or a quit
       only, so an editor ended by a signal, a force quit, or a logout
       opens as it was the time before (§623). Low priority
