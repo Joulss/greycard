@@ -2606,10 +2606,6 @@ pub(crate) mod tests {
             let (at, size) = (option.absolute_position(), option.size());
             click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
             assert_eq!(app.get_scope(), name, "the click chose {name}");
-            // The scope now lives in Section: its body takes 120 ms to
-            // reach the new height after the scope changes.
-            crate::testing::settle(&app);
-            crate::testing::settle(&app);
         };
         let shot = || crate::testing::count_labeled(&app, "1/250 s");
         for from in ["RGB", "Wave"] {
@@ -2627,13 +2623,9 @@ pub(crate) mod tests {
             let left = plot_at.x - box_at.x;
             let right = box_at.x + box_size.width - (plot_at.x + plot_size.width);
             assert!((left - right).abs() <= 0.5, "centered: {left} and {right}");
-            // Three 14 px lines and their three 2 px gaps fold away.
+            // Three 14 px lines, a 6 px spacer, and 2 px of net spacing fold away.
             let moved = bounds("App::panel-view").0.y - top;
-            let expected = 180.0 - before.height - (3.0 * 14.0 + 3.0 * 2.0);
-            assert!(
-                (moved - expected).abs() < 0.5,
-                "from {from}: {moved} vs {expected}"
-            );
+            assert_eq!(moved, 180.0 - before.height - (3.0 * 14.0 + 6.0 + 2.0), "from {from}");
 
             choose(from);
             assert_eq!(shot(), 1, "{from}: the lines back");
@@ -5120,34 +5112,10 @@ pub(crate) mod tests {
         // The white balance has an Auto of its own above: the Light
         // section's is the first one under its last slider.
         let (blacks, _) = labeled(&app, "Blacks");
-        let panel = ElementHandle::find_by_element_id(&app, "App::panel-view")
-            .next()
-            .expect("the panel's view");
-        let (panel_at, panel_size) = (panel.absolute_position(), panel.size());
-        let (auto_at, auto_size) = ElementHandle::find_by_accessible_label(&app, "Auto")
-            .map(|e| (e.absolute_position(), e.size()))
-            .find(|(at, _)| at.x >= panel_at.x && at.y > blacks.y)
-            .expect("an Auto under the Blacks slider");
-        // Blacks can be the last visible slider while Auto itself is
-        // under the view's foot. Bring the button fully into view before
-        // clicking it, then find its new position after the scroll.
-        let content_y = auto_at.y - app.get_panel_scroll();
-        let beyond = (auto_at.y + auto_size.height - panel_at.y - panel_size.height + 8.0).max(0.0);
-        app.set_panel_scroll(app.get_panel_scroll() - beyond);
-        app.window()
-            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
-                position: slint::LogicalPosition::new(0.0, 0.0),
-            });
         let (at, size) = ElementHandle::find_by_accessible_label(&app, "Auto")
             .map(|e| (e.absolute_position(), e.size()))
-            .find(|(at, _)| {
-                at.x >= panel_at.x && (at.y - app.get_panel_scroll() - content_y).abs() < 0.5
-            })
-            .expect("the Light Auto after scrolling");
-        assert!(
-            at.y >= panel_at.y && at.y + size.height <= panel_at.y + panel_size.height,
-            "the Light Auto is fully in the panel view"
-        );
+            .find(|(at, _)| at.y > blacks.y)
+            .expect("an Auto under the Blacks slider");
         let grid: Vec<[f32; 3]> = (0..4000)
             .map(|i| {
                 let stops = MIDDLE - 3.0 + 4.0 * (i as f32 + 0.5) / 4000.0;

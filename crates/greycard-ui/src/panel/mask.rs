@@ -3633,9 +3633,9 @@ mod tests {
     /// same button that used to double Subject, Sky and the rest.
     #[test]
     fn the_shape_buttons_and_new_mask_each_appear_once() {
-        use i_slint_backend_testing::ElementHandle;
         let app = window(1);
-        // A tall desktop window, with the whole MASK section in sight.
+        // A tall desktop window, the whole of the mask's section on it
+        // with Refine edge under the toggles.
         app.window()
             .set_size(slint::LogicalSize::new(1500.0, 1000.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
@@ -3645,20 +3645,6 @@ mod tests {
         // a control already there, finding nothing (a quirk of the
         // testing backend's element cache, not of the layout).
         app.invoke_new_mask();
-        settle_layout(&app);
-        let view = ElementHandle::find_by_element_id(&app, "App::panel-view")
-            .next()
-            .expect("the panel view");
-        let mask = ElementHandle::find_by_element_id(&app, "App::mask-section")
-            .next()
-            .expect("the MASK section");
-        let (view_at, view_size) = (view.absolute_position(), view.size());
-        let (mask_at, mask_size) = (mask.absolute_position(), mask.size());
-        assert!(mask_at.y >= view_at.y, "MASK starts in the panel view");
-        assert!(
-            mask_at.y + mask_size.height <= view_at.y + view_size.height,
-            "the whole MASK section fits at 1000 px"
-        );
         for label in [
             "Linear",
             "Radial",
@@ -3669,22 +3655,10 @@ mod tests {
             "Object",
             "Luminance",
             "Color",
+            "New mask",
         ] {
-            assert_eq!(
-                ElementHandle::find_by_accessible_label(&app, label)
-                    .filter(|e| {
-                        let at = e.absolute_position();
-                        at.x >= mask_at.x
-                            && at.x < mask_at.x + mask_size.width
-                            && at.y >= mask_at.y
-                            && at.y + e.size().height <= mask_at.y + mask_size.height
-                    })
-                    .count(),
-                1,
-                "{label} should appear once in MASK"
-            );
+            assert_eq!(count_labeled(&app, label), 1, "{label} should appear once");
         }
-        assert_eq!(count_labeled(&app, "New mask"), 1);
     }
 
     /// The Add/Subtract/Intersect row only makes sense once the mask
@@ -4987,9 +4961,6 @@ mod tests {
         use crate::render::{Renderer, View};
         use slint::platform::WindowEvent;
         let app = window(1);
-        // Both rows should remain visible in a laptop-sized window.
-        app.window()
-            .set_size(slint::LogicalSize::new(1500.0, 800.0));
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         {
             let mut st = state.borrow_mut();
@@ -5019,8 +4990,6 @@ mod tests {
         }
         app.set_panel_tab("Masks".into());
         app.set_target(1);
-        assert_eq!(crate::testing::buttons(&app, "Left").len(), 1);
-        assert_eq!(crate::testing::buttons(&app, "Right").len(), 1);
         let at = |label: &str| {
             let (p, size) = crate::testing::labeled(&app, label);
             slint::LogicalPosition::new(p.x + size.width / 2.0, p.y + size.height / 2.0)

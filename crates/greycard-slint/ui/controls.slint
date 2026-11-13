@@ -347,12 +347,11 @@ export component Section inherits VerticalLayout {
     in property <bool> shares: false;
     // The header stays above the body as it folds away.
     Rectangle {
-        background: head.has-hover ? Theme.hover : transparent;
-        animate background { duration: Theme.quick; }
         HorizontalLayout {
             spacing: Theme.space-3;
-            padding-top: Theme.space-1;
+            padding-top: Theme.space-2;
             padding-bottom: Theme.space-2;
+            padding-right: Theme.space-1;
             Rectangle {
                 horizontal-stretch: 1;
                 HorizontalLayout {
@@ -384,7 +383,7 @@ export component Section inherits VerticalLayout {
                     }
                     Text {
                         text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
-                        color: Theme.text;
+                        color: head.has-hover ? Theme.accent-text : Theme.text;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         letter-spacing: 0.8px;
