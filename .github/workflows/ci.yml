@@ -30,6 +30,9 @@ on:
   schedule:
     - cron: '17 5 * * 1'
 
+permissions:
+  contents: read
+
 # One run a branch or pull request: a newer push to a pull request
 # stops the run of the older one. A branch's own runs, the weekly
 # audit, and a release's call are never stopped, only kept apart.

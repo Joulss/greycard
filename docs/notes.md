@@ -668,3 +668,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§654. One section open over a fold two tabs share](notes/654-one-section-open-over-a-fold-two-tabs-share.md) (2026-11-12)
 - [§655. The Cull panel's filters, a row each](notes/655-the-cull-panels-filters-a-row-each.md) (2026-11-12)
 - [§656. Olympus and OM System styles for the camera match](notes/656-olympus-and-om-system-styles.md) (2026-11-12)
+- [§657. Read-only workflow tokens and SHA256SUMS](notes/657-read-only-workflow-tokens-and-sha256sums.md) (2026-11-12)

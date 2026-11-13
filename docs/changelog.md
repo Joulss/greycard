@@ -5,6 +5,13 @@ design note behind it.
 
 ## 0.12.0
 
+### Packages
+
+- Each release carries a SHA256SUMS file over its downloads: check
+  them with `sha256sum -c SHA256SUMS --ignore-missing`, or
+  `shasum -a 256 -c` on a Mac
+  ([§657](https://github.com/jessolmstead/greycard/blob/master/docs/notes/657-read-only-workflow-tokens-and-sha256sums.md)).
+
 ### Windows
 
 - Windows has an installer, `greycard-<version>-x86_64-windows-setup.exe`
