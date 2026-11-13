@@ -3681,7 +3681,8 @@ mod tests {
                 let visible: Vec<_> = ElementHandle::find_by_accessible_label(&app, label)
                     .filter(|e| {
                         let at = e.absolute_position();
-                        at.x >= view_at.x && at.x < view_at.x + view_size.width
+                        at.x >= view_at.x
+                            && at.x < view_at.x + view_size.width
                             && at.y < view_at.y + view_size.height
                             && at.y + e.size().height > view_at.y
                     })
@@ -3689,14 +3690,21 @@ mod tests {
                 largest_visible_count = largest_visible_count.max(visible.len());
                 for element in visible {
                     let at = element.absolute_position();
-                    positions.insert((at.x.round() as i32,
-                        (at.y - app.get_panel_scroll()).round() as i32));
+                    positions.insert((
+                        at.x.round() as i32,
+                        (at.y - app.get_panel_scroll()).round() as i32,
+                    ));
                 }
-                if offset >= end { break; }
+                if offset >= end {
+                    break;
+                }
                 offset = (offset + step).min(end);
             }
-            assert_eq!(positions.len().max(largest_visible_count), 1,
-                "{label} should appear once in the panel");
+            assert_eq!(
+                positions.len().max(largest_visible_count),
+                1,
+                "{label} should appear once in the panel"
+            );
         }
         assert_eq!(count_labeled(&app, "New mask"), 1);
     }

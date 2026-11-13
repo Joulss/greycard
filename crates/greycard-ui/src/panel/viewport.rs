@@ -2630,7 +2630,10 @@ pub(crate) mod tests {
             // Three 14 px lines and their three 2 px gaps fold away.
             let moved = bounds("App::panel-view").0.y - top;
             let expected = 180.0 - before.height - (3.0 * 14.0 + 3.0 * 2.0);
-            assert!((moved - expected).abs() < 0.5, "from {from}: {moved} vs {expected}");
+            assert!(
+                (moved - expected).abs() < 0.5,
+                "from {from}: {moved} vs {expected}"
+            );
 
             choose(from);
             assert_eq!(shot(), 1, "{from}: the lines back");
@@ -5129,8 +5132,7 @@ pub(crate) mod tests {
         // under the view's foot. Bring the button fully into view before
         // clicking it, then find its new position after the scroll.
         let content_y = auto_at.y - app.get_panel_scroll();
-        let beyond = (auto_at.y + auto_size.height - panel_at.y - panel_size.height + 8.0)
-            .max(0.0);
+        let beyond = (auto_at.y + auto_size.height - panel_at.y - panel_size.height + 8.0).max(0.0);
         app.set_panel_scroll(app.get_panel_scroll() - beyond);
         app.window()
             .dispatch_event(slint::platform::WindowEvent::PointerMoved {
