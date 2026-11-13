@@ -347,15 +347,24 @@ pub(crate) fn chain(e: &dyn std::error::Error) -> String {
 /// where a package puts it and `target/<profile>/` holds it for a
 /// build; and for a test (`target/<profile>/deps`) or an example
 /// (`target/<profile>/examples`), in the profile directory above.
+/// Cargo 1.100 builds both in
+/// `target/<profile>/build/<package>/<hash>/out` instead, four below
+/// the profile directory.
 pub(crate) fn candidates(exe: &Path) -> Vec<PathBuf> {
     let Some(dir) = exe.parent() else {
         return Vec::new();
     };
+    let named = |d: &Path, name: &str| d.file_name().is_some_and(|n| n == name);
     let mut out = vec![dir.join(LIBRARY)];
-    if dir
-        .file_name()
-        .is_some_and(|n| n == "deps" || n == "examples")
+    if (named(dir, "deps") || named(dir, "examples"))
         && let Some(profile) = dir.parent()
+    {
+        out.push(profile.join(LIBRARY));
+    }
+    if named(dir, "out")
+        && let Some(build) = dir.ancestors().nth(3)
+        && named(build, "build")
+        && let Some(profile) = build.parent()
     {
         out.push(profile.join(LIBRARY));
     }
@@ -865,6 +874,19 @@ mod tests {
                 Path::new("/t/debug").join(LIBRARY)
             ]
         );
+        // Cargo 1.100's place for both.
+        assert_eq!(
+            candidates(Path::new("/t/debug/build/greycard-ai/0123/out/models-0123")),
+            [
+                Path::new("/t/debug/build/greycard-ai/0123/out").join(LIBRARY),
+                Path::new("/t/debug").join(LIBRARY)
+            ]
+        );
+        // A build script's own `out`, three below `build`, is not it.
+        assert_eq!(
+            candidates(Path::new("/t/debug/build/pkg-0123/out/tool")),
+            [Path::new("/t/debug/build/pkg-0123/out").join(LIBRARY)]
+        );
         let exe = Path::new("/t/debug/deps/models-0123");
         let above = Path::new("/t/debug").join(LIBRARY);
         assert_eq!(
@@ -879,13 +901,18 @@ mod tests {
     }
 
     /// The real directory layout a build leaves, on disk: the test's
-    /// own executable is in `target/<profile>/deps`, and the library,
-    /// when `scripts/ort-dylib.sh` has run, is in the profile
-    /// directory above it, which `candidates` names.
+    /// own executable is in `target/<profile>/deps`, or since cargo
+    /// 1.100 under `target/<profile>/build`, and the library, when
+    /// `scripts/ort-dylib.sh` has run, is in the profile directory,
+    /// which `candidates` names. The profile directory is the one
+    /// holding `build`, in either layout.
     #[test]
     fn this_test_binary_looks_in_its_own_profile_directory() {
         let exe = std::env::current_exe().unwrap();
-        let profile = exe.parent().and_then(Path::parent).unwrap();
+        let profile = exe
+            .ancestors()
+            .find(|d| d.join("build").is_dir())
+            .expect("a profile directory above the test");
         assert!(candidates(&exe).contains(&profile.join(LIBRARY)));
     }
 
