@@ -262,6 +262,11 @@ the reasoning lives in `docs/notes.md`.
       curves run before the look table, so at full Strength a grey
       look erases them; a stage after the table, or the look routed
       through the black and white section (§665)
+- [ ] A sidecar's history stored without repeating what did not
+      change: each of the 50 steps of each version is a whole edit
+      today, so a frame with brush masks and one virtual copy wrote
+      28 MB, 1,021 mask shapes of which 39 differ. Each mask once, or
+      steps as changes; a format change (pixls, 2026-11-13)
 - [ ] A frame opened at the aspect chosen in the camera: Olympus
       records it (ImageProcessing AspectRatio 0x1112 and AspectFrame
       0x1113) and nothing reads it, so an ORF shot at 3:2 opens at
