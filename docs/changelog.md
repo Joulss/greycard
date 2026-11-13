@@ -114,6 +114,10 @@ design note behind it.
   took; it sets, never shifts, so a second click changes nothing
   (issue 56,
   [§626](https://github.com/jessolmstead/greycard/blob/master/docs/notes/626-a-middle-click-on-a-frame-syncs-from-it.md)).
+- A mask has an Opacity, under Refine edge: one slider that pulls the
+  whole of its look back, its sliders left as they are. Half is half
+  of each slider (issue 141,
+  [§659](https://github.com/jessolmstead/greycard/blob/master/docs/notes/659-a-masks-opacity.md)).
 
 ### Fixes
 

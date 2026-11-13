@@ -104,6 +104,7 @@ fn local_of(shapes: Vec<(Shape, Mode)>) -> Local {
         enabled: true,
         rasters: Vec::new(),
         refined: None,
+        opacity: 1.0,
     }
 }
 
@@ -3265,6 +3266,98 @@ fn a_masks_detail_on_both_sides() {
     let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
     assert_eq!(off, bare);
     assert_eq!(off_gpu, bare_gpu);
+}
+
+/// A mask's Opacity on both sides: a look with every section moved,
+/// its Detail from the planes, over an inverted feathered linear
+/// shape, the shader the CPU's to two levels at every opacity; at none
+/// each side is the mask switched off, to the bit.
+#[test]
+fn a_masks_opacity_on_both_sides() {
+    let Some((device, queue)) = device("the masks' Opacity check") else {
+        return;
+    };
+    let image = parity_frame();
+    let planes = greycard_render::detail::DetailPlanes::make(
+        &image,
+        None,
+        1.0,
+        greycard_edit::DetailWants {
+            texture: true,
+            clarity: true,
+            haze: true,
+            structure: true,
+            sharpen: false,
+            sample: false,
+        },
+    )
+    .map(Arc::new)
+    .expect("planes");
+    let mut look = Look::default();
+    look.light.exposure = 0.7;
+    look.light.tone.contrast = 1.2;
+    look.light.tone.highlights = -0.4;
+    look.light.tone.shadows = 0.5;
+    look.white_balance = greycard_edit::LocalWhite::Relative {
+        mired: -30.0,
+        tint: 0.003,
+    };
+    look.curves.parametric.lights = 0.3;
+    look.mixer.enabled = true;
+    look.mixer.saturation[3] = 0.5;
+    look.color.enabled = true;
+    look.color.saturation = 0.3;
+    look.tint.hue = 40.0;
+    look.tint.amount = 0.3;
+    look.detail = greycard_edit::Detail {
+        enabled: true,
+        texture: 0.6,
+        clarity: 0.4,
+        structure: 0.0,
+        dehaze: 0.3,
+        sharpen: 0.0,
+    };
+    let mut edit = greycard_edit::Edit::default();
+    edit.adjustments.push(greycard_edit::Adjustment {
+        id: 1,
+        mask: Mask {
+            components: vec![Component {
+                shape: Shape::Linear {
+                    from: [0.3, 0.0],
+                    to: [0.7, 0.0],
+                },
+                ..Default::default()
+            }],
+            invert: true,
+            ..Default::default()
+        },
+        look,
+        ..Default::default()
+    });
+    let mut off = edit.clone();
+    off.adjustments[0].enabled = false;
+    let (off_cpu, off_gpu) = both_sides_with(&device, &queue, &image, &off, Some(&planes));
+    let mut last = 0.0f64;
+    for opacity in [0.0f32, 0.3, 0.6, 1.0] {
+        edit.adjustments[0].opacity = opacity;
+        let (cpu, gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
+        let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(2), "at {opacity}: {worst:?}");
+        let moved = gpu
+            .iter()
+            .zip(&off_gpu)
+            .map(|(a, b)| f64::from(a.abs_diff(*b)))
+            .sum::<f64>()
+            / gpu.len() as f64;
+        eprintln!("opacity {opacity}: worst {worst:?}, mean moved {moved:.3}");
+        if opacity == 0.0 {
+            assert_eq!(cpu, off_cpu, "none is off on the CPU");
+            assert_eq!(gpu, off_gpu, "none is off on the GPU");
+        } else {
+            assert!(moved > last, "at {opacity}: {moved} after {last}");
+        }
+        last = moved;
+    }
 }
 
 /// A mask's Sharpen on both sides: the sharpen's delta of the picture

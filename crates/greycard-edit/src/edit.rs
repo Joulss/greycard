@@ -161,6 +161,18 @@ pub struct Adjustment {
     pub enabled: bool,
     pub mask: Mask,
     pub look: Look,
+    /// Opacity, 0 to 1: how much of the look the mask puts on, the
+    /// mask's weight scaled by it after the invert, the feather, and
+    /// Refine edge, so half is the look at half strength over the same
+    /// region and the overlay is unchanged. Whole, the default, is
+    /// left out of the sidecar, so every sidecar written before it
+    /// reads and writes as it did. Read through [`Adjustment::strength`].
+    #[serde(skip_serializing_if = "is_whole")]
+    pub opacity: f32,
+}
+
+fn is_whole(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl Default for Adjustment {
@@ -171,6 +183,7 @@ impl Default for Adjustment {
             enabled: true,
             mask: Mask::default(),
             look: Look::default(),
+            opacity: 1.0,
         }
     }
 }
@@ -180,6 +193,17 @@ impl Default for Adjustment {
 pub const MAX_MASKS: usize = 16;
 
 impl Adjustment {
+    /// Its opacity as the finish reads it: held to 0 to 1, and whole
+    /// for a value that is not a number, as a file edited by hand may
+    /// hold.
+    pub fn strength(&self) -> f32 {
+        if self.opacity.is_nan() {
+            1.0
+        } else {
+            self.opacity.clamp(0.0, 1.0)
+        }
+    }
+
     /// The name a mask carries from New mask until its first shape
     /// lands: "Mask 3".
     pub fn placeholder_name(id: u64) -> String {
@@ -314,14 +338,13 @@ impl Edit {
         // picture's is `detail`, before the sharpen.
     }
 
-    /// The detail bands the masks ask for ([`DetailWants`]).
+    /// The detail bands the masks ask for ([`DetailWants`]). A mask at
+    /// no opacity asks for none, as one switched off does.
     pub fn detail_wants(&self) -> DetailWants {
         let mut wants = DetailWants::default();
-        for a in self
-            .adjustments
-            .iter()
-            .filter(|a| a.enabled && !a.mask.is_empty() && a.look.detail.enabled)
-        {
+        for a in self.adjustments.iter().filter(|a| {
+            a.enabled && a.strength() > 0.0 && !a.mask.is_empty() && a.look.detail.enabled
+        }) {
             let d = &a.look.detail;
             wants.texture |= d.texture != 0.0;
             wants.clarity |= d.clarity != 0.0;
@@ -591,6 +614,57 @@ mod tests {
         edit
     }
 
+    /// A mask's Opacity in the sidecar: whole is left out, so the file
+    /// and the develop key are what they were, and a sidecar from
+    /// before it reads whole; set, it is written, read back, and
+    /// another develop; and a value a hand put out of range reads held.
+    #[test]
+    fn a_masks_opacity_round_trips_absent_whole_and_set() {
+        let mut e = masked(Detail::default());
+        e.adjustments[0].look.light.exposure = 1.0;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        assert!(
+            json["adjustments"][0].get("opacity").is_none(),
+            "whole is left out: {json}"
+        );
+        let read = Edit::from_json(&json.to_string()).unwrap();
+        assert_eq!(read.adjustments[0].opacity, 1.0);
+        assert_eq!(read, e);
+        let before = e.develop_key_with(&[], None);
+        e.adjustments[0].opacity = 0.7;
+        let json: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        let written = json["adjustments"][0]["opacity"].as_f64();
+        assert!(written.is_some_and(|v| (v - 0.7).abs() < 1e-6), "{json}");
+        assert_eq!(Edit::from_json(&e.to_json()).unwrap(), e);
+        assert_ne!(e.develop_key_with(&[], None), before);
+        e.adjustments[0].opacity = 1.0;
+        assert_eq!(e.develop_key_with(&[], None), before);
+        for (stored, read) in [(1.5, 1.0), (-0.2, 0.0), (0.25, 0.25)] {
+            e.adjustments[0].opacity = stored;
+            assert_eq!(e.adjustments[0].strength(), read);
+        }
+        e.adjustments[0].opacity = f32::NAN;
+        assert_eq!(e.adjustments[0].strength(), 1.0);
+    }
+
+    /// A mask's Detail at no opacity asks for no bands, as one switched
+    /// off does, so the develop is the one it would be.
+    #[test]
+    fn a_mask_at_no_opacity_asks_for_no_detail() {
+        let mut e = masked(Detail {
+            enabled: true,
+            texture: 0.5,
+            ..Default::default()
+        });
+        assert!(e.detail_wants().texture);
+        e.adjustments[0].opacity = 0.0;
+        let mut off = e.clone();
+        off.adjustments[0].opacity = 1.0;
+        off.adjustments[0].enabled = false;
+        assert_eq!(e.detail_wants(), off.detail_wants());
+        assert!(!e.detail_wants().texture);
+    }
+
     /// A picture starts with the capture sharpen and the lens
     /// profile's three corrections off, everything else a raw's:
     /// the section and its profile switch stay on, so one correction
@@ -826,6 +900,7 @@ mod tests {
             enabled: true,
             mask: mask::Mask::default(),
             look: Look::default(),
+            opacity: 1.0,
         });
         // One slider moved: the shadows.
         let mut touched = before.clone();
@@ -979,6 +1054,7 @@ mod tests {
                     ..Default::default()
                 },
                 look,
+                opacity: 1.0,
             });
         }
         edit

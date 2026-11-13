@@ -1271,6 +1271,8 @@ export component App inherits Window {
     in-out property <bool> mask-invert: false;
     // The chosen mask's Refine edge, 0 to 1 (`Mask::refine`).
     in-out property <float> mask-refine: 0;
+    // The chosen mask's Opacity, 0 to 1 (`Adjustment::opacity`).
+    in-out property <float> mask-opacity: 1;
     in-out property <bool> has-feather: false;
     in-out property <float> mask-feather: 0.5;
     // The chosen shape's window when it is a luminance or a color
@@ -3961,7 +3963,7 @@ export component App inherits Window {
                             keyword-focused => { root.keyword-focused(); }
                             focus-keys => { keys.focus(); }
                         }
-                        if root.shown-tab == "Masks" && root.target > 0: AdjustmentsSection {
+                        if root.shown-tab == "Masks" && root.target > 0: mask-section := AdjustmentsSection {
                             one-of-panel: !root.grid-open;
                             // The list's foot above is its line.
                             line-above: false;
@@ -3969,6 +3971,7 @@ export component App inherits Window {
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
                             mask-refine <=> root.mask-refine;
+                            mask-opacity <=> root.mask-opacity;
                             has-feather <=> root.has-feather;
                             mask-feather <=> root.mask-feather;
                             lum-low <=> root.lum-low;

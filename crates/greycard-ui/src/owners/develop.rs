@@ -374,11 +374,12 @@ pub(crate) struct Develop {
     /// shows while a shape is placed, and the toggle comes back after,
     /// unless it was thrown meanwhile.
     pub(crate) show_mask_kept: Option<bool>,
-    /// The look as the panel last showed it, read back from the panel
+    /// The look as the panel last showed it, and the mask's Opacity,
+    /// which acts as a look slider does, read back from the panel
     /// where it is written (`show_edit`) and where it is changed
     /// (`mask::look_edited`), so the next change can tell a look slider
     /// from a shape control.
-    pub(crate) look_seen: RefCell<Option<greycard_edit::Look>>,
+    pub(crate) look_seen: RefCell<Option<(greycard_edit::Look, f32)>>,
     /// The detail planes the shown develop came with: a mask's Detail
     /// moved to ask for one it lacks develops again
     /// (`panel::mask::detail_asks`).

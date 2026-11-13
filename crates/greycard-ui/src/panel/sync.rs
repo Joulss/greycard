@@ -4448,6 +4448,7 @@ mod tests {
                     ..Default::default()
                 },
                 look: Default::default(),
+                opacity: 1.0,
             });
         crate::panel::deliver::deliver(&app, made(&files[0], 10));
         assert_eq!(baked(&state), (Some(10), false), "the source's own");
@@ -4512,6 +4513,7 @@ mod tests {
                     ..Default::default()
                 },
                 look: Default::default(),
+                opacity: 1.0,
             });
         }
         app.invoke_copy_asked();

@@ -897,10 +897,12 @@ pub fn reads_guide(edit: &greycard_edit::Edit) -> bool {
         t.highlights != 0.0 || t.midtones != 0.0 || t.shadows != 0.0 || t.whites != 0.0
     };
     set(&edit.look().light.effective().tone)
-        || edit
-            .adjustments
-            .iter()
-            .any(|a| a.enabled && !a.mask.is_empty() && set(&a.look.light.effective().tone))
+        || edit.adjustments.iter().any(|a| {
+            a.enabled
+                && a.strength() > 0.0
+                && !a.mask.is_empty()
+                && set(&a.look.light.effective().tone)
+        })
 }
 
 /// The image no larger than `long_edge` on its long side, in linear
@@ -1654,6 +1656,163 @@ mod tests {
             .expect("a profile");
         assert_eq!(icc, Space::DisplayP3.icc().unwrap());
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A mask with every section of a look moved, over a feathered
+    /// linear shape, the picture's planes and guide made from it: the
+    /// export, sixteen bits, at an opacity.
+    fn opacity_render(
+        image: &WorkingImage,
+        look: &greycard_edit::Look,
+        opacity: f32,
+        enabled: bool,
+    ) -> Vec<u16> {
+        use greycard_edit::mask::{Component, Mask, Shape};
+        let mut edit = greycard_edit::Edit::default();
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 1,
+            enabled,
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Linear {
+                        from: [0.2, 0.0],
+                        to: [0.6, 0.0],
+                    },
+                    ..Component::default()
+                }],
+                invert: true,
+                ..Default::default()
+            },
+            look: look.clone(),
+            opacity,
+            ..Default::default()
+        });
+        let (w, h) = (image.width, image.height);
+        let wants = greycard_edit::DetailWants {
+            texture: true,
+            clarity: true,
+            haze: true,
+            structure: true,
+            sharpen: false,
+            sample: false,
+        };
+        let planes = crate::detail::DetailPlanes::make(image, None, 1.0, wants).unwrap();
+        let bands = planes.to_image();
+        let guide = finish::guide_plane(image);
+        let shift = crate::testing::white_shift();
+        let settings = Settings {
+            format: Format::Tiff,
+            ..Settings::default()
+        };
+        let rendered = render(
+            image,
+            &edit,
+            &greycard_edit::NoStores,
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            Some(&guide),
+            finish::Source::SCENE,
+            Some(&shift),
+            Some((&bands, &planes.meta)),
+        );
+        let Pixels::Sixteen(p) = rendered.pixels else {
+            panic!("a TIFF is sixteen bits")
+        };
+        p
+    }
+
+    /// A colored ramp with some texture, for the opacity checks.
+    fn opacity_frame() -> WorkingImage {
+        let (w, h) = (96usize, 48usize);
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let v = 0.02 + 0.5 * x as f32 / w as f32;
+                let t = if (x / 3 + y / 3) % 2 == 0 { 1.1 } else { 0.9 };
+                let c = y as f32 / h as f32;
+                data.extend_from_slice(&[v * t * (0.6 + c), v * t, v * t * (1.4 - c)]);
+            }
+        }
+        WorkingImage {
+            width: w,
+            height: h,
+            data,
+        }
+    }
+
+    /// A mask's Opacity scales the weight its look goes on by, after
+    /// the invert and the feather: at none the export is the mask
+    /// switched off, to the bit, with every section of the look moved
+    /// (Light, white balance, curves and grading, mixer, color, tint,
+    /// Detail); at a share it is between, further from the picture
+    /// without it the more there is; and on exposure alone each pixel
+    /// moves one way as it rises.
+    #[test]
+    fn a_masks_opacity_scales_its_look() {
+        use greycard_edit::grading::Wheel;
+        let image = opacity_frame();
+        let mut look = greycard_edit::Look::default();
+        look.light.exposure = 0.8;
+        look.light.tone.contrast = 1.3;
+        look.light.tone.highlights = -0.5;
+        look.light.tone.midtones = 0.4;
+        look.light.tone.shadows = 0.6;
+        look.light.tone.whites = 0.3;
+        look.light.tone.blacks = -0.1;
+        look.white_balance = greycard_edit::LocalWhite::Relative {
+            mired: -40.0,
+            tint: 0.004,
+        };
+        look.curves.parametric.lights = 0.3;
+        look.grading.enabled = true;
+        look.grading.shadows = Wheel {
+            hue: 220.0,
+            saturation: 0.5,
+        };
+        look.mixer.enabled = true;
+        look.mixer.saturation[3] = 0.5;
+        look.mixer.luminance[0] = -0.4;
+        look.color.enabled = true;
+        look.color.saturation = 0.4;
+        look.color.vibrance = -0.3;
+        look.tint.hue = 40.0;
+        look.tint.amount = 0.3;
+        look.detail = greycard_edit::Detail {
+            enabled: true,
+            texture: 0.6,
+            clarity: 0.5,
+            structure: -0.4,
+            dehaze: 0.4,
+            sharpen: 0.0,
+        };
+        let off = opacity_render(&image, &look, 1.0, false);
+        assert_eq!(opacity_render(&image, &look, 0.0, true), off, "none is off");
+        let mean = |a: &[u16]| {
+            a.iter()
+                .zip(&off)
+                .map(|(a, b)| (f64::from(*a) - f64::from(*b)).abs())
+                .sum::<f64>()
+                / a.len() as f64
+        };
+        let shares: Vec<f64> = [0.25, 0.5, 0.75, 1.0]
+            .iter()
+            .map(|&o| mean(&opacity_render(&image, &look, o, true)))
+            .collect();
+        assert!(shares[0] > 0.0, "{shares:?}");
+        assert!(shares.windows(2).all(|p| p[0] < p[1]), "{shares:?}");
+        // Exposure alone: every channel of every pixel walks one way.
+        let mut lift = greycard_edit::Look::default();
+        lift.light.exposure = 1.0;
+        let steps: Vec<Vec<u16>> = [0.0, 0.3, 0.5, 0.8, 1.0]
+            .iter()
+            .map(|&o| opacity_render(&image, &lift, o, true))
+            .collect();
+        for p in steps.windows(2) {
+            assert!(p[0].iter().zip(&p[1]).all(|(a, b)| a <= b));
+        }
+        assert!(steps[0] != steps[2] && steps[2] != steps[4]);
     }
 
     /// With the Detail section on, a range mask reads the picture from

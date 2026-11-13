@@ -234,7 +234,8 @@ struct Local {
     mix_sat1: vec4<f32>,
     mix_lum0: vec4<f32>,
     mix_lum1: vec4<f32>,
-    // Its own midtones, in x.
+    // Its own midtones, in x; its Opacity, in y, which scales the
+    // weight its look goes on by and not the mask the overlay shows.
     tone: vec4<f32>,
 };
 
@@ -497,7 +498,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
         weights[k] = m;
-        let w = m * f32(l.enabled);
+        let w = m * f32(l.enabled) * l.tone.y;
         if (w <= 0.0) { continue; }
         if (any(l.detail != vec4<f32>(0.0))) {
             detail_k = detail_k + w * l.detail;
@@ -1453,7 +1454,7 @@ fn shade_full(c: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
     let f = v - f32(i);
     var shift = mix(curves[256u + i].xy, curves[257u + i].xy, f);
     for (var k = 0u; k < count; k = k + 1u) {
-        let w = weights[k] * f32(locals[k].enabled);
+        let w = weights[k] * f32(locals[k].enabled) * locals[k].tone.y;
         if (w <= 0.0 || locals[k].shaded < 0.5) { continue; }
         let base = k * 512u + 256u + i;
         shift = shift + w * mix(local_tables[base].xy, local_tables[base + 1u].xy, f);
@@ -1555,7 +1556,7 @@ fn decode(v: vec3<f32>) -> vec3<f32> {
 fn curve(e: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
     var x = e;
     for (var k = 0u; k < count; k = k + 1u) {
-        let w = weights[k] * f32(locals[k].enabled);
+        let w = weights[k] * f32(locals[k].enabled) * locals[k].tone.y;
         if (w <= 0.0) { continue; }
         let v = e * 255.0;
         let i = min(vec3<u32>(v), vec3<u32>(254u));

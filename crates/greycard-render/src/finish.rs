@@ -282,6 +282,11 @@ pub struct Local {
     pub baked: Baked,
     pub mask: Mask,
     pub enabled: bool,
+    /// Its Opacity (`Adjustment::strength`): the weight the finish
+    /// blends its look in by is the mask's value scaled by this, after
+    /// the invert, the feather, and Refine edge. The mask's own value
+    /// ([`Local::weight_sampled`]), which the overlay shows, is not.
+    pub opacity: f32,
     /// The mask's brushes, one entry per component, painted.
     pub rasters: Vec<Option<RasterRef>>,
     /// The mask refined, read in place of its shapes: made when its
@@ -312,6 +317,7 @@ impl Local {
             },
             mask: a.mask.clone(),
             enabled: a.enabled && !a.mask.is_empty(),
+            opacity: a.strength(),
             rasters,
             refined: None,
         }
@@ -1974,7 +1980,9 @@ pub fn finish_reaching<T: Copy + Default + Send>(
                         sample(px, mean_ab, exposure)
                     });
                     for local in locals.iter().filter(|l| l.enabled) {
-                        let w = local.weight_sampled(u, v, s);
+                        // Scaled by its Opacity: a mask at half puts
+                        // its look on as its feather's half-way does.
+                        let w = local.weight_sampled(u, v, s) * local.opacity;
                         if w > 0.0 {
                             on.push((&local.baked, w));
                         }
@@ -4962,6 +4970,7 @@ mod tests {
             enabled: true,
             rasters: vec![None],
             refined: None,
+            opacity: 1.0,
         };
         let m = crate::export::Space::Srgb.matrix();
         let global = plain_look();
@@ -5235,6 +5244,7 @@ mod tests {
             mask,
             enabled: true,
             refined: None,
+            opacity: 1.0,
         };
         let both = local(Mask {
             components: vec![
@@ -5348,6 +5358,7 @@ mod tests {
                 enabled: true,
                 rasters: vec![None],
                 refined: None,
+                opacity: 1.0,
             }
         };
         let render = |global: &Baked, locals: &[Local]| -> Vec<u8> {
