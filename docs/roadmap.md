@@ -50,9 +50,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] Packages ship no third-party notices: LICENSE and the README
       only, beside ONNX Runtime, Dawn, DXC, and several hundred
       crates; cargo-about and cargo-deny (review, 2026-11-11)
-- [ ] The 31 model URLs name `resolve/main`: the hash pin keeps them
-      safe, but a re-upload breaks every shipped version; pin each to
-      its commit (review, 2026-11-11)
 - [ ] Split symbols kept for each release, so a stripped build's
       backtrace can be named (review, 2026-11-11; the read-only tokens
       and SHA256SUMS are §657)
