@@ -1227,7 +1227,7 @@ mod tests {
         // Three wheels with three different points, each dragged, the
         // highlights last.
         drag_wheel(app, "Shadows wheel", 5.0);
-        drag_wheel(app, "Mid-tones wheel", 15.0);
+        drag_wheel(app, "Midtones wheel", 15.0);
         drag_wheel(app, "Highlights wheel", 25.0);
         let before = wheels(app);
         assert_eq!(app.get_grade_range(), 2);
@@ -1266,7 +1266,7 @@ mod tests {
         );
 
         // Enlarging the mid-tones chooses them too.
-        let (x, y) = center(app, "Enlarge Mid-tones");
+        let (x, y) = center(app, "Enlarge Midtones");
         click(app, x, y);
         // The section grows to the enlarged wheel over its 120ms
         // animation, which the mock clock only runs when told.
@@ -1298,7 +1298,7 @@ mod tests {
         assert_eq!(sliders(app), pressed[2]);
 
         // Shrinking it chooses it again.
-        let (x, y) = center(app, "Shrink Mid-tones");
+        let (x, y) = center(app, "Shrink Midtones");
         click(app, x, y);
         assert_eq!(app.get_grade_big(), -1);
         assert_eq!(app.get_grade_range(), 1);

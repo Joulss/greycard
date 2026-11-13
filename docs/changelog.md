@@ -123,6 +123,8 @@ design note behind it.
   whole of its look back, its sliders left as they are. Half is half
   of each slider (issue 141,
   [§659](https://github.com/jessolmstead/greycard/blob/master/docs/notes/659-a-masks-opacity.md)).
+- Color grading's middle wheel reads Midtones, as the Light slider
+  does.
 
 ### Fixes
 

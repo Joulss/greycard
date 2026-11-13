@@ -355,7 +355,7 @@ Turns the picture monochrome. Choosing a filter turns the section on.
 
 ## Color grading
 
-Three wheels: **Shadows**, **Mid-tones** and **Highlights**.
+Three wheels: **Shadows**, **Midtones** and **Highlights**.
 
 - Drag in a wheel to set its color. The angle is the hue, and the
   distance from the center is the strength. Hold **Shift** as you

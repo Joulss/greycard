@@ -439,7 +439,7 @@ const _MARK_PARTS: [&str; 42] = [
     // Sync sheet: the black and white filter's part
     crate::marked::tr!("Weights"),
     crate::marked::tr!("Strength"),
-    crate::marked::tr!("Mid-tones"),
+    crate::marked::tr!("Midtones"),
     crate::marked::tr!("Balance"),
     crate::marked::tr!("Profile"),
     crate::marked::tr!("Vignetting"),

@@ -644,7 +644,8 @@ msgid "Highlights"
 msgstr "Hautes lumières"
 
 #: crates/greycard-slint/ui/panel/color.slint:609
-msgid "Mid-tones"
+#, fuzzy
+msgid "Midtones"
 msgstr "Tons moyens"
 
 #: crates/greycard-slint/ui/panel/color.slint:609
@@ -1304,11 +1305,6 @@ msgstr "Exposition"
 #: crates/greycard-slint/ui/panel/edit.slint:50
 msgid "Contrast"
 msgstr "Contraste"
-
-#: crates/greycard-slint/ui/panel/edit.slint:73
-#, fuzzy
-msgid "Midtones"
-msgstr "Tons moyens"
 
 #: crates/greycard-slint/ui/panel/edit.slint:95
 msgid "Whites"
@@ -8976,6 +8972,9 @@ msgstr "Vérification..."
 #: crates/greycard-ui/src/update.rs:413
 msgid "the release page is open in the browser: {url}"
 msgstr "la page de la version s'est ouverte dans le navigateur : {url}"
+
+#~ msgid "Mid-tones"
+#~ msgstr "Tons moyens"
 
 #~ msgid " on the CPU, no usable GPU"
 #~ msgstr " sur le processeur, aucun GPU utilisable"

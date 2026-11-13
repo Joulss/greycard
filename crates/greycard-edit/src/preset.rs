@@ -492,7 +492,7 @@ impl Part {
             BlackWhiteWeights => "Weights",
             BlackWhiteStrength => "Strength",
             GradingShadows => "Shadows",
-            GradingMidtones => "Mid-tones",
+            GradingMidtones => "Midtones",
             GradingHighlights => "Highlights",
             GradingBalance => "Balance",
             LensProfile => "Profile",

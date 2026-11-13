@@ -915,10 +915,10 @@ mod tests {
         // A grading wheel is named, with what moved on it.
         let mut e = base.clone();
         e.grading.midtones.saturation = 0.25;
-        assert_eq!(describe(&base, &e, &[]), "Color grading mid-tones 25%");
+        assert_eq!(describe(&base, &e, &[]), "Color grading midtones 25%");
         let mut turned = e.clone();
         turned.grading.midtones.hue = 40.0;
-        assert_eq!(describe(&e, &turned, &[]), "Color grading mid-tones 40°");
+        assert_eq!(describe(&e, &turned, &[]), "Color grading midtones 40°");
         let mut both = base.clone();
         both.grading.shadows = crate::grading::Wheel {
             hue: 200.0,
