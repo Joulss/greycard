@@ -2606,6 +2606,10 @@ pub(crate) mod tests {
             let (at, size) = (option.absolute_position(), option.size());
             click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
             assert_eq!(app.get_scope(), name, "the click chose {name}");
+            // The scope now lives in Section: its body takes 120 ms to
+            // reach the new height after the scope changes.
+            crate::testing::settle(&app);
+            crate::testing::settle(&app);
         };
         let shot = || crate::testing::count_labeled(&app, "1/250 s");
         for from in ["RGB", "Wave"] {
@@ -2623,9 +2627,10 @@ pub(crate) mod tests {
             let left = plot_at.x - box_at.x;
             let right = box_at.x + box_size.width - (plot_at.x + plot_size.width);
             assert!((left - right).abs() <= 0.5, "centered: {left} and {right}");
-            // Three lines of 16 px and their spacing of 2 folded away.
+            // Three 14 px lines and their three 2 px gaps fold away.
             let moved = bounds("App::panel-view").0.y - top;
-            assert_eq!(moved, 180.0 - before.height - 3.0 * 18.0, "from {from}");
+            let expected = 180.0 - before.height - (3.0 * 14.0 + 3.0 * 2.0);
+            assert!((moved - expected).abs() < 0.5, "from {from}: {moved} vs {expected}");
 
             choose(from);
             assert_eq!(shot(), 1, "{from}: the lines back");
@@ -5112,10 +5117,35 @@ pub(crate) mod tests {
         // The white balance has an Auto of its own above: the Light
         // section's is the first one under its last slider.
         let (blacks, _) = labeled(&app, "Blacks");
+        let panel = ElementHandle::find_by_element_id(&app, "App::panel-view")
+            .next()
+            .expect("the panel's view");
+        let (panel_at, panel_size) = (panel.absolute_position(), panel.size());
+        let (auto_at, auto_size) = ElementHandle::find_by_accessible_label(&app, "Auto")
+            .map(|e| (e.absolute_position(), e.size()))
+            .find(|(at, _)| at.x >= panel_at.x && at.y > blacks.y)
+            .expect("an Auto under the Blacks slider");
+        // Blacks can be the last visible slider while Auto itself is
+        // under the view's foot. Bring the button fully into view before
+        // clicking it, then find its new position after the scroll.
+        let content_y = auto_at.y - app.get_panel_scroll();
+        let beyond = (auto_at.y + auto_size.height - panel_at.y - panel_size.height + 8.0)
+            .max(0.0);
+        app.set_panel_scroll(app.get_panel_scroll() - beyond);
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
         let (at, size) = ElementHandle::find_by_accessible_label(&app, "Auto")
             .map(|e| (e.absolute_position(), e.size()))
-            .find(|(at, _)| at.y > blacks.y)
-            .expect("an Auto under the Blacks slider");
+            .find(|(at, _)| {
+                at.x >= panel_at.x && (at.y - app.get_panel_scroll() - content_y).abs() < 0.5
+            })
+            .expect("the Light Auto after scrolling");
+        assert!(
+            at.y >= panel_at.y && at.y + size.height <= panel_at.y + panel_size.height,
+            "the Light Auto is fully in the panel view"
+        );
         let grid: Vec<[f32; 3]> = (0..4000)
             .map(|i| {
                 let stops = MIDDLE - 3.0 + 4.0 * (i as f32 + 0.5) / 4000.0;
@@ -6336,7 +6366,7 @@ pub(crate) mod tests {
         assert_eq!(app.get_tip_text(), "Show panel");
     }
 
-    /// NAVIGATOR is one height, its header and a box the pane's width
+    /// NAVIGATOR is one height, its header and an inset box
     /// at 3:2, with a 3:2 frame, a 16:9 one, a portrait one, and a
     /// chosen frame whose picture is on its way: nothing below it
     /// moves. The frame sits centered in the box at its own shape,
@@ -6375,13 +6405,17 @@ pub(crate) mod tests {
             let (section_at, section) = find("App::navigator-section");
             heights.push(section.height);
             let (held_at, held) = find("NavigatorSection::held");
+            let inset = held_at.x - section_at.x;
             assert!(
                 (held.height - held.width / 1.5).abs() < 0.5,
                 "the box at 3:2: {held:?}"
             );
             assert!(
                 held_at.y > section_at.y
-                    && (held_at.y + held.height - section_at.y - section.height).abs() < 0.5,
+                    && (inset - 8.0).abs() < 0.5
+                    && (section.width - held.width - 2.0 * inset).abs() < 0.5
+                    && (section_at.y + section.height - held_at.y - held.height - inset).abs()
+                        < 0.5,
                 "the header, then the box: {held_at:?} {held:?} in {section_at:?} {section:?}"
             );
             let (at, shown) = find("NavigatorSection::shown");
