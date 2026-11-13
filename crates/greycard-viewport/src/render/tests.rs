@@ -2659,8 +2659,8 @@ fn random_case(
         weights: [0.0; 8],
         strength: rng.moved(0.0, greycard_edit::bw::STRENGTH_MAX),
     };
-    for b in 0..8 {
-        bw.weights[b] = rng.slider(0.5, -1.0, 1.0, 0.0);
+    for w in &mut bw.weights {
+        *w = rng.slider(0.5, -1.0, 1.0, 0.0);
     }
     if has("black and white") {
         edit.bw = bw;

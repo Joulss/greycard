@@ -937,8 +937,8 @@ mod tests {
             let fill = fill_of(&truth, &hole, |v, _| v * f);
             let (out, gains) = matched(&truth, &hole, &fill);
             let gains = gains.expect("an edge");
-            for k in 0..3 {
-                assert!(gains.gain[k] >= GAINS.0 && gains.gain[k] <= GAINS.1);
+            for gain in &gains.gain[..3] {
+                assert!(*gain >= GAINS.0 && *gain <= GAINS.1);
             }
             let v = to_linear(out.at(120, 90)[0]);
             assert!((v - near).abs() < 2e-4, "{f}: {v}");

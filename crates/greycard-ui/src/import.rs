@@ -675,11 +675,11 @@ pub fn temporary_pid_ending(name: &str, ending: &str) -> Option<u32> {
 /// Whether process `pid` is running. Unix asks with signal 0; elsewhere
 /// it cannot be told cheaply and a temporary is judged by its age alone.
 pub fn alive(pid: u32) -> bool {
-    if pid == std::process::id() {
-        return true;
-    }
     #[cfg(unix)]
     {
+        if pid == std::process::id() {
+            return true;
+        }
         let Ok(pid) = libc::pid_t::try_from(pid) else {
             return false;
         };
@@ -690,7 +690,7 @@ pub fn alive(pid: u32) -> bool {
     }
     #[cfg(not(unix))]
     {
-        false
+        pid == std::process::id()
     }
 }
 

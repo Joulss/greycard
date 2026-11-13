@@ -1525,8 +1525,8 @@ pub(crate) mod tests {
     #[test]
     fn the_shape_is_read_at_its_level() {
         let mut bins = ShapeBins::uniform([1.0; 2]);
-        for b in 0..BINS / 2 {
-            bins.sums[b] = [[0.25, 1.0]; 2];
+        for sum in &mut bins.sums[..BINS / 2] {
+            *sum = [[0.25, 1.0]; 2];
         }
         assert!((bins.at(0.02).ratio[0] - 0.5).abs() < 1e-6);
         assert!((bins.at(0.8).ratio[0] - 1.0).abs() < 1e-6);

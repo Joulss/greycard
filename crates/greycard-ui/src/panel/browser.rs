@@ -4470,8 +4470,8 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         {
             let mut st = state.borrow_mut();
-            for i in 500..1000 {
-                st.sidecars[i].meta.flag = meta::Flag::Reject;
+            for s in &mut st.sidecars[500..1000] {
+                s.meta.flag = meta::Flag::Reject;
             }
             st.views.filter = filter::Filter::from_name("No rejects").expect("it parses");
             rebuild_browser(&mut st, &app);

@@ -627,15 +627,15 @@ pub(crate) mod tests {
         let (_app, state, files, dir) = three("batch-lands", 0.0, 0.5);
         let mut st = state.borrow_mut();
         st.window.xmp_sidecars = true;
-        for f in 0..3 {
-            st.sidecars[f].meta.rating = 3;
+        for s in &mut st.sidecars[..3] {
+            s.meta.rating = 3;
         }
         HOLD.set(true);
         save(&mut st, &[0, 1, 2]);
         HOLD.set(false);
         assert!(out(&st));
-        for f in 0..3 {
-            assert_eq!(st.sidecars[f].xmp, None, "{f}");
+        for (f, s) in st.sidecars[..3].iter().enumerate() {
+            assert_eq!(s.xmp, None, "{f}");
         }
         // The list sorted the other way under the batch: each file is
         // found where it is now.
@@ -721,8 +721,8 @@ pub(crate) mod tests {
         st.window.write_sidecars = true;
         st.window.xmp_sidecars = true;
         st.window.placement = Placement::Beside;
-        for f in 0..2 {
-            st.sidecars[f].meta.rating = 2;
+        for s in &mut st.sidecars[..2] {
+            s.meta.rating = 2;
         }
         save(&mut st, &[0, 1]);
         assert!(!out(&st));

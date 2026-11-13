@@ -1000,9 +1000,9 @@ pub(crate) mod tests {
     pub(crate) fn rec2020_camera_matrix() -> Vec<f32> {
         let m = WORKING_SPACE.from_xyz_matrix().unwrap();
         let mut flat = Vec::with_capacity(9);
-        for r in 0..3 {
-            for c in 0..3 {
-                flat.push(m.rows[r][c] as f32);
+        for row in &m.rows[..3] {
+            for v in &row[..3] {
+                flat.push(*v as f32);
             }
         }
         flat

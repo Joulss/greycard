@@ -5363,8 +5363,8 @@ mod tests {
         let (state, _worker) = state_for(&app, folder(3));
         {
             let mut st = state.borrow_mut();
-            for i in 0..3 {
-                st.sidecars[i].meta.set_rating(2);
+            for s in &mut st.sidecars[..3] {
+                s.meta.set_rating(2);
             }
             st.views.shown = (0..3).collect();
             st.current = Some(1);

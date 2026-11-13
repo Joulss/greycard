@@ -902,20 +902,14 @@ pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// sync is `F_FULLFSYNC`, with no fallback, which a volume without it
 /// (a network share, often) refuses with one of these.
 pub fn sync_is_unsupported(e: &std::io::Error) -> bool {
-    if e.kind() == std::io::ErrorKind::Unsupported {
-        return true;
-    }
+    let unsupported = e.kind() == std::io::ErrorKind::Unsupported;
     #[cfg(unix)]
-    {
-        matches!(
+    let unsupported = unsupported
+        || matches!(
             e.raw_os_error(),
             Some(code) if code == libc::ENOTSUP || code == libc::ENOTTY || code == libc::EINVAL
-        )
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+        );
+    unsupported
 }
 
 /// Mark a folder hidden where a leading dot does not do it. Windows

@@ -1074,9 +1074,9 @@ fn a_preset_lands_on_the_frames_it_was_pressed_on() {
     assert_eq!(state.borrow().current, Some(51));
     assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
     let st = state.borrow();
-    for f in 0..50 {
-        assert_eq!(st.sidecars[f].history.len(), 1, "frame {f} took the preset");
-        assert_eq!(st.sidecars[f].current.light.exposure, 1.5, "frame {f}");
+    for (f, s) in st.sidecars[..50].iter().enumerate() {
+        assert_eq!(s.history.len(), 1, "frame {f} took the preset");
+        assert_eq!(s.current.light.exposure, 1.5, "frame {f}");
     }
     assert_eq!(st.sidecars[50].history.len(), 0, "not chosen");
     assert_eq!(

@@ -2265,8 +2265,8 @@ mod tests {
         from.curves.green = vec![[0.0, 0.05], [1.0, 1.0]];
         from.curves.red_green = vec![[0.0, 0.45], [1.0, 0.5]];
         from.curves.blue_yellow = vec![[0.0, 0.55], [1.0, 0.5]];
-        for b in 0..crate::mixer::BANDS {
-            from.mixer.hue[b] = 0.1 * (b as f32 + 1.0);
+        for (b, hue) in from.mixer.hue.iter_mut().enumerate() {
+            *hue = 0.1 * (b as f32 + 1.0);
         }
         from.bw.weights = [0.3; crate::mixer::BANDS];
         from.bw.strength = 0.5;

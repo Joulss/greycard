@@ -758,8 +758,8 @@ mod tests {
         let app = crate::testing::window(0);
         let (state, worker) = crate::testing::state_for(&app, crate::testing::folder(3));
         let mut st = state.borrow_mut();
-        for i in 0..3 {
-            st.views.thumb_base[i] = Some((1, 1, vec![i as u8; 3]));
+        for (i, base) in st.views.thumb_base[..3].iter_mut().enumerate() {
+            *base = Some((1, 1, vec![i as u8; 3]));
         }
         st.current = Some(2);
         st.views.picked = vec![1, 2];
