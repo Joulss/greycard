@@ -1071,11 +1071,11 @@ const HIGHLIGHTS_EASE: vec2<f32> = vec2<f32>(0.75, 1.2);
 const HIGHLIGHTS_EASE_DEPTH: f32 = 0.5;
 const HIGHLIGHTS_PEAK: f32 = 0.42;
 // Where midtones acts, by the frame's own range, as `finish.rs` has
-// it: its peak, how far under the span's foot it reaches, the least it
-// reaches over it, and what the summed slider is held to.
-const MIDTONES_PEAK: f32 = 0.5;
-const MIDTONES_BELOW: f32 = 2.0;
-const MIDTONES_ABOVE: f32 = 2.0;
+// it: its peak, how far under the span's foot it is full, how far it
+// reaches either way from there, and what the summed slider is held to.
+const MIDTONES_PEAK: f32 = 0.4375;
+const MIDTONES_UNDER_FOOT: f32 = 0.5;
+const MIDTONES_REACH: f32 = 1.75;
 const MIDTONES_LIMIT: f32 = 2.0;
 
 // The foot of the highlights ramp's span and the span, in stops over
@@ -1098,12 +1098,11 @@ fn highlights_weight(g: f32, span: vec2<f32>) -> f32 {
         * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.x, HIGHLIGHTS_EASE.y, u));
 }
 // The midtones' share by where a region sits in the span, as
-// `midtones_weight` in `finish.rs`: a bell full at the span's foot,
-// nothing `MIDTONES_BELOW` under it and nothing at the frame's top.
+// `midtones_weight` in `finish.rs`: a bell full `MIDTONES_UNDER_FOOT`
+// under the span's foot, nothing `MIDTONES_REACH` either way from there.
 fn midtones_weight(g: f32, span: vec2<f32>) -> f32 {
-    let d = g - span.x;
-    let reach = select(max(span.y, MIDTONES_ABOVE), MIDTONES_BELOW, d < 0.0);
-    return MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, abs(d) / reach));
+    let d = g - (span.x - MIDTONES_UNDER_FOOT);
+    return MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, abs(d) / MIDTONES_REACH));
 }
 // A merge's kept range as the highlights' negative travel pulls it,
 // as `Kept` in `finish.rs`: the frame's median and top at the

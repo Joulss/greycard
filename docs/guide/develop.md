@@ -244,9 +244,10 @@ single pixels, so the texture inside a sky or a shadow keeps its
 contrast.
 
 **Midtones** finds the middle of the frame from the frame itself, as
-**Highlights** does: full at its middle tone, it fades to nothing two
-stops darker and at the frame's brightest areas. At ±2 the middle
-moves a stop. It is not **Exposure**, which moves every tone alike,
+**Highlights** does: full half a stop under its middle tone, it fades
+to nothing a stop and three quarters either side, short of where
+**Highlights** is strongest. At ±2 the middle moves 0.875 of a stop.
+It is not **Exposure**, which moves every tone alike,
 nor **Contrast**, which moves the dark and the bright apart around mid
 grey; it is closer to the curve's **Lights** and **Darks**, but works
 on areas and follows the frame rather than fixed places on the curve.

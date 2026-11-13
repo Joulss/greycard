@@ -74,11 +74,13 @@ fn the_shaders_shift_fade_at_black_is_the_cpus() {
 /// The shader's midtones bell is the render crate's exactly.
 #[test]
 fn the_shaders_midtones_bell_is_the_cpus() {
-    use greycard_render::finish::{MIDTONES_ABOVE, MIDTONES_BELOW, MIDTONES_LIMIT, MIDTONES_PEAK};
+    use greycard_render::finish::{
+        MIDTONES_LIMIT, MIDTONES_PEAK, MIDTONES_REACH, MIDTONES_UNDER_FOOT,
+    };
     for (name, value) in [
         ("MIDTONES_PEAK", MIDTONES_PEAK),
-        ("MIDTONES_BELOW", MIDTONES_BELOW),
-        ("MIDTONES_ABOVE", MIDTONES_ABOVE),
+        ("MIDTONES_UNDER_FOOT", MIDTONES_UNDER_FOOT),
+        ("MIDTONES_REACH", MIDTONES_REACH),
         ("MIDTONES_LIMIT", MIDTONES_LIMIT),
     ] {
         assert_eq!(shader_literal(name), value, "the shader's {name}");

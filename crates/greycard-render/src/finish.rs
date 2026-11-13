@@ -1437,19 +1437,22 @@ fn highlights_weight(g: f32, span: [f32; 2]) -> f32 {
 }
 
 /// How much of the midtones slider the middle of the frame takes: a
-/// slider of ±2 moves it a stop either way.
-pub const MIDTONES_PEAK: f32 = 0.5;
-/// How far under the middle the midtones bell reaches, in stops: from
-/// the foot of the span, where it is full, to nothing two stops down,
-/// so what shadows owns three and a half stops under grey is its own.
-pub const MIDTONES_BELOW: f32 = 2.0;
-/// The least it reaches over the middle, in stops: up to the frame's
-/// top, where it is nothing, on a frame whose span is at least this;
-/// on a narrower one, a little past the top. With [`MIDTONES_BELOW`]
-/// it sets the bell's steepest slope at the slider's limit,
-/// `1.5 * 2 * MIDTONES_PEAK / 2` or 0.75, so on its own it never turns
-/// the curve back.
-pub const MIDTONES_ABOVE: f32 = 2.0;
+/// slider of ±2 moves it 0.875 of a stop either way.
+pub const MIDTONES_PEAK: f32 = 0.4375;
+/// How far under the highlights span's foot the midtones bell is full,
+/// in stops: half a stop, so it sits under the highlights ramp's rise
+/// rather than on it.
+pub const MIDTONES_UNDER_FOOT: f32 = 0.5;
+/// How far the midtones bell reaches either way from where it is full,
+/// in stops: to nothing 1.75 under, so what shadows owns three and a
+/// half stops under grey on a typical frame is its own, and 1.75 over,
+/// a stop and a quarter over the span's foot, so it is next to nothing
+/// where the highlights ramp is strongest and nothing at the frame's
+/// top, the span being never narrower than 1.6 stops. With
+/// [`MIDTONES_PEAK`] it sets the bell's steepest slope at the slider's
+/// limit, `1.5 * 2 * MIDTONES_PEAK / MIDTONES_REACH` or 0.75, so on its
+/// own it never turns the curve back.
+pub const MIDTONES_REACH: f32 = 1.75;
 /// What the midtones that reaches [`midtones_weight`] is held to, once
 /// a picture's and its masks' are summed: the slider's own limit, where
 /// the bell's slope is the 0.75 above. Unheld, a mask at the limit over
@@ -1457,17 +1460,16 @@ pub const MIDTONES_ABOVE: f32 = 2.0;
 pub const MIDTONES_LIMIT: f32 = 2.0;
 
 /// How much of the midtones slider a region takes, by where it sits
-/// in the frame's span ([`highlights_span`]): a bell, full at the
-/// span's foot (the frame's median where the span is its own, the
-/// middle of the frame), falling by a smoothstep to nothing
-/// [`MIDTONES_BELOW`] under it and to nothing at the frame's top
-/// over it (the span's width, at least [`MIDTONES_ABOVE`]). Placed by
-/// the frame's range as highlights is, so it finds the middle of a
-/// low-key frame and of a high-key one alike; the ends stay where they
-/// are, black at black and the frame's top at its top. Where the
-/// highlights ramp is strongest, three quarters up the span, it is a
-/// sixth of its peak; at the foot, where it is full, highlights takes
-/// a fifth of its own.
+/// in the frame's span ([`highlights_span`]): a bell, full
+/// [`MIDTONES_UNDER_FOOT`] under the span's foot (the frame's median
+/// where the span is its own, the middle of the frame), falling by a
+/// smoothstep to nothing [`MIDTONES_REACH`] either way. Placed by the
+/// frame's range as highlights is, so it finds the middle of a low-key
+/// frame and of a high-key one alike; the ends stay where they are,
+/// black at black and the frame's top at its top. Where the highlights
+/// ramp is strongest it is nothing, but for a four-hundredth of its
+/// peak on the least span; where it is full, highlights takes at most a
+/// sixteenth of its own, on the widest span.
 ///
 /// Not exposure, which moves every tone alike; not contrast, a power
 /// about mid grey that moves the two ends apart and holds the middle;
@@ -1477,13 +1479,8 @@ pub const MIDTONES_LIMIT: f32 = 2.0;
 /// ends, by region, so a region keeps its texture.
 #[inline]
 fn midtones_weight(g: f32, span: [f32; 2]) -> f32 {
-    let d = g - span[0];
-    let reach = if d < 0.0 {
-        MIDTONES_BELOW
-    } else {
-        span[1].max(MIDTONES_ABOVE)
-    };
-    MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, d.abs() / reach))
+    let d = g - (span[0] - MIDTONES_UNDER_FOOT);
+    MIDTONES_PEAK * (1.0 - smoothstep(0.0, 1.0, d.abs() / MIDTONES_REACH))
 }
 
 /// Scene white, in stops over mid grey: where a channel at the
@@ -3076,11 +3073,12 @@ mod tests {
     }
 
     /// Midtones moves the middle of the frame and holds its ends: at
-    /// zero it is nothing, to the bit; it is full at the foot of the
-    /// span, the frame's median, half a stop a stop of slider; nothing
-    /// two stops under that or at the frame's top and past it; and it
-    /// finds the middle of a low-key frame, a typical one, and a
-    /// high-key one alike, by the frame's range.
+    /// zero it is nothing, to the bit; it is full half a stop under the
+    /// foot of the span (the frame's median), 0.4375 of a stop a stop
+    /// of slider; nothing 1.75 stops either side of that, so nothing at
+    /// the frame's top and past it; and it finds the middle of a
+    /// low-key frame, a typical one, and a high-key one alike, by the
+    /// frame's range.
     #[test]
     fn midtones_moves_the_middle_and_holds_the_ends() {
         let none = Tone::default();
@@ -3124,27 +3122,31 @@ mod tests {
                     ..none
                 };
                 let moved = |stops: f32| shifted(&t, span, stops) - stops;
-                // Full at the foot: half a stop a stop of slider.
+                // Full half a stop under the foot: 0.4375 of a stop a
+                // stop of slider.
+                let full = foot - MIDTONES_UNDER_FOOT;
                 assert!(
-                    (moved(foot) - m * MIDTONES_PEAK).abs() < 1e-4,
+                    (moved(full) - m * MIDTONES_PEAK).abs() < 1e-4,
                     "{name} {m}: {}",
-                    moved(foot)
+                    moved(full)
                 );
-                // Nothing two stops under it, nor deeper; black is black.
-                for under in [MIDTONES_BELOW, 3.0, 6.0] {
-                    assert!(moved(foot - under).abs() < 1e-5, "{name} {m} {under}");
+                // Nothing the reach under it, nor deeper; black is black.
+                for under in [MIDTONES_REACH, 3.0, 6.0] {
+                    assert!(moved(full - under).abs() < 1e-5, "{name} {m} {under}");
                 }
                 assert_eq!(shape([0.0; 3], &t, None, span), [0.0; 3]);
-                // Nothing over the reach: the frame's top where its span
-                // is at least the least reach.
-                let reach = width.max(MIDTONES_ABOVE);
-                for over in [reach, reach + 1.0, 8.0] {
-                    assert!(moved(foot + over).abs() < 1e-5, "{name} {m} {over}");
+                // Nothing the reach over it, nor higher: the span is
+                // never narrower than the reach over its foot, so the
+                // frame's top is never moved.
+                for over in [MIDTONES_REACH, MIDTONES_REACH + 1.0, 8.0] {
+                    assert!(moved(full + over).abs() < 1e-5, "{name} {m} {over}");
                 }
+                assert!(width > MIDTONES_REACH - MIDTONES_UNDER_FOOT, "{name}");
+                assert!(moved(top).abs() < 1e-5, "{name} {m}");
                 // The middle moves more than anything else.
                 for k in 0..=80 {
                     let s = foot - 4.0 + k as f32 * 0.1;
-                    assert!(moved(s).abs() <= moved(foot).abs() + 1e-5, "{name} {m} {s}");
+                    assert!(moved(s).abs() <= moved(full).abs() + 1e-5, "{name} {m} {s}");
                 }
             }
             // The foot is the frame's median where the span is its own.
@@ -3157,8 +3159,11 @@ mod tests {
             };
             let at = |s: f32| shifted(&t, span, s) - s;
             eprintln!(
-                "{name}: foot {foot:.2}, width {width:.2}; at +2 the median {:.3}, grey {:.3}, \
-                 a stop under the foot {:.3}, a stop over {:.3}, the top {:.3}",
+                "{name}: foot {foot:.2}, width {width:.2}; at +2 half a stop under the foot \
+                 {:.3}, the foot {:.3}, the median {:.3}, grey {:.3}, a stop under the foot \
+                 {:.3}, a stop over {:.3}, the top {:.3}",
+                at(foot - MIDTONES_UNDER_FOOT),
+                at(foot),
                 at(median),
                 at(0.0),
                 at(foot - 1.0),
@@ -3166,18 +3171,22 @@ mod tests {
                 at(top)
             );
         }
-        // The typical frame by the numbers: a stop at its middle at the
-        // slider's limit, three quarters of one at mid grey, a sixth of
-        // the peak where the highlights peak, half a stop a stop under.
+        // The typical frame by the numbers, at the slider's limit:
+        // 0.875 of a stop half a stop under its median, 0.70 at the
+        // median and a stop under it alike, a tenth at mid grey, a
+        // twentieth a stop over the median, and nothing where the
+        // highlights peak nor at the top.
         let t = Tone {
             midtones: 2.0,
             ..none
         };
         let at = |s: f32| shifted(&t, typical(), s) - s;
-        assert!((at(-0.9) - 1.0).abs() < 1e-4, "{}", at(-0.9));
-        assert!((at(0.0) - 0.757).abs() < 2e-3, "{}", at(0.0));
-        assert!((at(-1.9) - 0.5).abs() < 1e-4, "{}", at(-1.9));
-        assert!((at(1.2) - 0.156).abs() < 2e-3, "{}", at(1.2));
+        assert!((at(-1.4) - 0.875).abs() < 1e-4, "{}", at(-1.4));
+        assert!((at(-0.9) - 0.7015).abs() < 1e-3, "{}", at(-0.9));
+        assert!((at(-1.9) - 0.7015).abs() < 1e-3, "{}", at(-1.9));
+        assert!((at(0.0) - 0.091).abs() < 2e-3, "{}", at(0.0));
+        assert!((at(0.1) - 0.0485).abs() < 2e-3, "{}", at(0.1));
+        assert!(at(1.2).abs() < 1e-5, "{}", at(1.2));
         assert!(at(1.9).abs() < 1e-5, "{}", at(1.9));
         // A color keeps its channel ratios.
         let c = shape([0.06, 0.04, 0.02], &t, None, typical());
@@ -3241,8 +3250,10 @@ mod tests {
         );
         // Each step's own least: shadows 0.14, midtones 0.25,
         // highlights 0.125; the product is the floor, and the sweep
-        // finds 0.0052 against 0.020 without midtones, all three at +2
-        // on the least span, where each is falling at once.
+        // finds 0.017 against 0.020 without midtones, shadows and
+        // midtones at +2 and highlights at -2 on the least span, just
+        // over where the midtones bell is full, where each is falling
+        // at once.
         assert!(least.0 > 0.14 * 0.25 * 0.125, "{least:?}");
         assert!(least_without > 0.14 * 0.125, "{least_without}");
     }

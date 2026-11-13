@@ -372,6 +372,16 @@ impl Edit {
             && (self.sharpen.options().is_some() || self.detail_wants().sharpen)
     }
 
+    /// Whether Midtones moves anything: the picture's own slider or a
+    /// mask's set.
+    pub fn sets_midtones(&self) -> bool {
+        self.light.tone.midtones != 0.0
+            || self
+                .adjustments
+                .iter()
+                .any(|a| a.look.light.tone.midtones != 0.0)
+    }
+
     /// Whether the range masks read a picture of their own, the one
     /// from before the Detail section: some mask has a Luminance or
     /// Color shape and the section does something. Switched off or on,

@@ -87,9 +87,10 @@ design note behind it.
   [§656](https://github.com/jessolmstead/greycard/blob/master/docs/notes/656-olympus-and-om-system-styles.md)).
 - Midtones, a slider in Light between Highlights and Shadows (and in
   a mask's Light): it lifts or sinks the middle of the frame's own
-  range by up to a stop and leaves the blacks and the brightest
-  tones where they are
-  ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md)).
+  range by up to 0.875 of a stop and leaves the blacks and the
+  brightest tones where they are
+  ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md),
+  [§661](https://github.com/jessolmstead/greycard/blob/master/docs/notes/661-midtones-lower-and-narrower.md)).
 - A camera profile from a DCP file now applies its look table, which
   is where Adobe's Camera Standard, Natural, Vivid, and the rest carry
   their color: they differ from each other, and greens no longer come

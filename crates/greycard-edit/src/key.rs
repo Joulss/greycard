@@ -58,6 +58,13 @@ pub const DEVELOP_RECIPE: u32 = 5;
 /// edit with all three at zero makes the picture it made, to the bit.
 pub const SHARPEN_GUIDE: &str = "sharpen-guide-1";
 
+/// The Midtones bell's shape, by version: taken into the key of an edit
+/// that sets Midtones ([`Edit::sets_midtones`]), so the pictures kept
+/// of such an edit are made again when it changes, and those of every
+/// other edit are kept. 1: full half a stop under the highlights span's
+/// foot, reaching 1.75 stops either way, 2026-11-12.
+pub const MIDTONES_SHAPE: &str = "midtones-1";
+
 /// The learned masks' stages, by version: raise one when its raster
 /// comes to be another from the same shape. greycard-ui's mask cache
 /// keys its rasters by these, and the develop key of an edit with such
@@ -176,6 +183,11 @@ impl Edit {
             hasher.update(&(SHARPEN_GUIDE.len() as u64).to_le_bytes());
             hasher.update(SHARPEN_GUIDE.as_bytes());
         }
+        if self.sets_midtones() {
+            hasher.update(b"midtones shape\0");
+            hasher.update(&(MIDTONES_SHAPE.len() as u64).to_le_bytes());
+            hasher.update(MIDTONES_SHAPE.as_bytes());
+        }
         for Read { name, contents } in read {
             hasher.update(&(name.len() as u64).to_le_bytes());
             hasher.update(name.as_bytes());
@@ -255,6 +267,22 @@ mod tests {
         edit.detail.enabled = true;
         edit.sharpen.enabled = false;
         assert!(!edit.sharpen_reads_guide(), "nothing to guide");
+    }
+
+    /// The Midtones bell's shape is in the key of an edit that sets
+    /// Midtones, the picture's own or a mask's, and of no other.
+    #[test]
+    fn the_midtones_shape_is_keyed_only_where_midtones_is_set() {
+        let mut edit = Edit::default();
+        edit.light.tone.shadows = 0.5;
+        assert!(!edit.sets_midtones());
+        edit.light.tone.midtones = -0.25;
+        assert!(edit.sets_midtones());
+        edit.light.tone.midtones = 0.0;
+        edit.adjustments.push(crate::Adjustment::default());
+        assert!(!edit.sets_midtones());
+        edit.adjustments[0].look.light.tone.midtones = 1.0;
+        assert!(edit.sets_midtones(), "a mask's");
     }
 
     #[test]
