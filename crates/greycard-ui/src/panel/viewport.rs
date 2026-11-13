@@ -2625,7 +2625,11 @@ pub(crate) mod tests {
             assert!((left - right).abs() <= 0.5, "centered: {left} and {right}");
             // Three 14 px lines, a 6 px spacer, and 2 px of net spacing fold away.
             let moved = bounds("App::panel-view").0.y - top;
-            assert_eq!(moved, 180.0 - before.height - (3.0 * 14.0 + 6.0 + 2.0), "from {from}");
+            assert_eq!(
+                moved,
+                180.0 - before.height - (3.0 * 14.0 + 6.0 + 2.0),
+                "from {from}"
+            );
 
             choose(from);
             assert_eq!(shot(), 1, "{from}: the lines back");
