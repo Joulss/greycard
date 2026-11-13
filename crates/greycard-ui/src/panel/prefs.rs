@@ -2385,6 +2385,34 @@ mod tests {
         assert_eq!(app.get_settings_copyright(), "© Jo");
     }
 
+    /// A field on the sheet takes every key, the window's shortcuts
+    /// among them, and the arrows, Home, and End move in its text, not
+    /// the frame or the edit behind the sheet.
+    #[test]
+    fn a_sheets_field_takes_every_key() {
+        use slint::platform::Key;
+        let (app, state, _worker) = develop_window();
+        open_editing(&app);
+        let look = crate::panel::edit::read_look(&app);
+        type_into(&app, "author-field", "gGeLx1[]/?c", false);
+        for key in [
+            Key::Home,
+            Key::RightArrow,
+            Key::Delete,
+            Key::End,
+            Key::LeftArrow,
+        ] {
+            crate::testing::press(&app, key);
+        }
+        crate::testing::press(&app, Key::Backspace);
+        crate::testing::type_text(&app, "z");
+        assert_eq!(app.get_settings_author(), "geLx1[]/zc");
+        assert!(app.get_settings_open());
+        assert!(!app.get_grid_open() && !app.get_lightbox() && !app.get_cull_mode());
+        assert_eq!(state.borrow().current, Some(0));
+        assert_eq!(crate::panel::edit::read_look(&app), look);
+    }
+
     /// What the fields keep in the file: the text, and an empty one
     /// left out, as a file that never had it.
     #[test]

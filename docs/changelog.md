@@ -137,6 +137,11 @@ design note behind it.
 
 ### Fixes
 
+- Tab stays inside an open sheet. Before, it walked out onto the
+  panel behind, where the arrows then changed the edit under the
+  sheet; and Escape now closes the import and Lightroom sheets from
+  their text fields
+  ([§664](https://github.com/jessolmstead/greycard/blob/master/docs/notes/664-a-sheet-holds-the-focus.md)).
 - One section open at a time holds across the tabs: opening a mask's
   Light, or Metadata while culling, no longer leaves a second section
   open on Develop

@@ -248,10 +248,12 @@ the reasoning lives in `docs/notes.md`.
       blank room under a short one, double-click back to automatic;
       same weights, one rule in the layout. Pick it up if the live
       gaps turn out too rare (2026-11-08)
-- [ ] The Settings sheet does not hold the focus: Tab walks out of
-      it onto the panel behind, and the arrows then move a slider and
-      change the edit under the sheet. Letters do not leak. Likely
-      every sheet; hold the Tab walk inside the open one (§658)
+- [ ] A sheet's close gives the focus back to the control that had
+      it, not the window: a field under a second sheet stops taking
+      text until clicked. And Escape closes the top sheet first, where
+      today the model sheet over another outlives it (§664)
+- [ ] `sheet-open()` defined from `sheets-up`, one list in place of
+      two; the every-sheet focus test made cheaper, 45 s today (§664)
 - [ ] The window's size and place are written at a close or a quit
       only, so an editor ended by a signal, a force quit, or a logout
       opens as it was the time before (§623). Low priority

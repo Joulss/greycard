@@ -103,181 +103,181 @@ msgstr "Pas maintenant"
 msgid "Download all"
 msgstr "Tout télécharger"
 
-#: crates/greycard-slint/ui/app.slint:3749
+#: crates/greycard-slint/ui/app.slint:3794
 msgid "Queued for export, shown as it will export. Edit it from its folder."
 msgstr ""
 "Ajoutée à la file d'exportation, cette photo est affichée telle qu'elle sera "
 "exportée. Modifiez-la depuis son dossier."
 
 #. The Loupe's mode button at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:3758
+#: crates/greycard-slint/ui/app.slint:3803
 msgid "Cull"
 msgstr "Tri"
 
-#: crates/greycard-slint/ui/app.slint:3763
+#: crates/greycard-slint/ui/app.slint:3808
 msgid "Cull mode"
 msgstr "Mode tri"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:3780
+#: crates/greycard-slint/ui/app.slint:3825
 msgid "Crop"
 msgstr "Recadrage"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:3780
+#: crates/greycard-slint/ui/app.slint:3825
 msgid "Develop"
 msgstr "Développement"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:3780
+#: crates/greycard-slint/ui/app.slint:3825
 msgid "Masks"
 msgstr "Masques"
 
 #. The Loupe's mode buttons at the top of the develop panel
-#: crates/greycard-slint/ui/app.slint:3780
+#: crates/greycard-slint/ui/app.slint:3825
 msgid "Retouch"
 msgstr "Retouche"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:4609
+#: crates/greycard-slint/ui/app.slint:4654
 msgid "Full screen"
 msgstr "Plein écran"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:4609
+#: crates/greycard-slint/ui/app.slint:4654
 msgid "Full screen (F11)"
 msgstr "Plein écran (F11)"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:4617
+#: crates/greycard-slint/ui/app.slint:4662
 msgid "Export..."
 msgstr "Exporter..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:4617
+#: crates/greycard-slint/ui/app.slint:4662
 msgid "Stop export"
 msgstr "Arrêter l'exportation"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:4709
+#: crates/greycard-slint/ui/app.slint:4754
 msgid "Right panel"
 msgstr "Panneau droit"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:4711
+#: crates/greycard-slint/ui/app.slint:4756
 msgid "Hide panel"
 msgstr "Masquer le panneau"
 
 #. View menu
-#: crates/greycard-slint/ui/app.slint:4711
+#: crates/greycard-slint/ui/app.slint:4756
 msgid "Show panel"
 msgstr "Afficher le panneau"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:4748
+#: crates/greycard-slint/ui/app.slint:4793
 msgid "Filmstrip"
 msgstr "Film fixe"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:4750
+#: crates/greycard-slint/ui/app.slint:4795
 msgid "Hide filmstrip"
 msgstr "Masquer le film fixe"
 
 #. View menu: the filmstrip
-#: crates/greycard-slint/ui/app.slint:4750
+#: crates/greycard-slint/ui/app.slint:4795
 msgid "Show filmstrip"
 msgstr "Afficher le film fixe"
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:4930
+#: crates/greycard-slint/ui/app.slint:4975
 msgid "Library"
 msgstr "Bibliothèque"
 
-#: crates/greycard-slint/ui/app.slint:4934
+#: crates/greycard-slint/ui/app.slint:4979
 msgid "Library view"
 msgstr "Vue Bibliothèque"
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:4948
+#: crates/greycard-slint/ui/app.slint:4993
 msgid "Loupe"
 msgstr "Loupe"
 
-#: crates/greycard-slint/ui/app.slint:4952
+#: crates/greycard-slint/ui/app.slint:4997
 msgid "Loupe view"
 msgstr "Vue Loupe"
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5017
+#: crates/greycard-slint/ui/app.slint:5062
 msgid "Open folder..."
 msgstr "Ouvrir un dossier..."
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5050
+#: crates/greycard-slint/ui/app.slint:5095
 msgid "Import..."
 msgstr "Importer..."
 
-#: crates/greycard-slint/ui/app.slint:5073
+#: crates/greycard-slint/ui/app.slint:5118
 msgid "Stop import"
 msgstr "Arrêter l'importation"
 
-#: crates/greycard-slint/ui/app.slint:5073
+#: crates/greycard-slint/ui/app.slint:5118
 msgid "Stopping..."
 msgstr "Arrêt en cours..."
 
-#: crates/greycard-slint/ui/app.slint:5074
+#: crates/greycard-slint/ui/app.slint:5119
 msgid "Importing the catalog..."
 msgstr "Importation du catalogue..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5095
+#: crates/greycard-slint/ui/app.slint:5140
 msgid "From a card or folder..."
 msgstr "Depuis une carte ou un dossier..."
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5100
+#: crates/greycard-slint/ui/app.slint:5145
 msgid "A Lightroom catalog..."
 msgstr "Un catalogue Lightroom..."
 
-#: crates/greycard-slint/ui/app.slint:5222
+#: crates/greycard-slint/ui/app.slint:5267
 msgid "Export queue"
 msgstr "File d'exportation"
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:5422
+#: crates/greycard-slint/ui/app.slint:5467
 msgid "{} is available"
 msgstr "{} est disponible"
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:5431
+#: crates/greycard-slint/ui/app.slint:5476
 msgid "Not now: do not offer {} again"
 msgstr "Pas maintenant : ne plus proposer {}"
 
-#: crates/greycard-slint/ui/app.slint:5439
+#: crates/greycard-slint/ui/app.slint:5484
 msgid "Settings..."
 msgstr "Paramètres..."
 
-#: crates/greycard-slint/ui/app.slint:5447
+#: crates/greycard-slint/ui/app.slint:5492
 msgid "Help"
 msgstr "Aide"
 
-#: crates/greycard-slint/ui/app.slint:5450
+#: crates/greycard-slint/ui/app.slint:5495
 msgid "Help menu"
 msgstr "Menu Aide"
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:5471
+#: crates/greycard-slint/ui/app.slint:5516
 msgid "Keys (?)"
 msgstr "Raccourcis (?)"
 
-#: crates/greycard-slint/ui/app.slint:5475
+#: crates/greycard-slint/ui/app.slint:5520
 msgid "User guide"
 msgstr "Guide d'utilisation"
 
-#: crates/greycard-slint/ui/app.slint:5480
+#: crates/greycard-slint/ui/app.slint:5525
 msgid "Report a problem..."
 msgstr "Signaler un problème..."
 
-#: crates/greycard-slint/ui/app.slint:5547
+#: crates/greycard-slint/ui/app.slint:5592
 msgid "Left panel"
 msgstr "Panneau gauche"
 
@@ -450,21 +450,21 @@ msgstr "Réinitialiser"
 msgid "partly checked"
 msgstr "partiellement coché"
 
-#: crates/greycard-slint/ui/panel/carry-list.slint:119
+#: crates/greycard-slint/ui/panel/carry-list.slint:115
 msgid "Check all"
 msgstr "Tout cocher"
 
-#: crates/greycard-slint/ui/panel/carry-list.slint:123
+#: crates/greycard-slint/ui/panel/carry-list.slint:119
 msgid "Uncheck all"
 msgstr "Tout décocher"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:161
+#: crates/greycard-slint/ui/panel/carry-list.slint:157
 msgid "Add to masks"
 msgstr "Ajouter aux masques"
 
 #. Sync sheet: how the masks go across
-#: crates/greycard-slint/ui/panel/carry-list.slint:161
+#: crates/greycard-slint/ui/panel/carry-list.slint:157
 msgid "Replace masks"
 msgstr "Remplacer les masques"
 
@@ -1793,25 +1793,25 @@ msgstr "HISTORIQUE"
 msgid "No changes yet."
 msgstr "Aucune modification."
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:105
+#: crates/greycard-slint/ui/panel/import-sheet.slint:118
 msgid "Import"
 msgstr "Importer"
 
 #. Import sheet: copy the files in, or add them where they are
-#: crates/greycard-slint/ui/panel/import-sheet.slint:113
+#: crates/greycard-slint/ui/panel/import-sheet.slint:126
 msgid "Add in place"
 msgstr "Ajouter sur place"
 
 #. Import sheet: copy the files in, or add them where they are
-#: crates/greycard-slint/ui/panel/import-sheet.slint:113
+#: crates/greycard-slint/ui/panel/import-sheet.slint:126
 msgid "Copy"
 msgstr "Copier"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:118
+#: crates/greycard-slint/ui/panel/import-sheet.slint:131
 msgid "Copies are verified; the card is untouched."
 msgstr "Les copies sont vérifiées ; la carte n'est pas modifiée."
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:119
+#: crates/greycard-slint/ui/panel/import-sheet.slint:132
 msgid ""
 "Adds a folder and its subfolders to the library where it is; nothing is "
 "copied."
@@ -1819,62 +1819,62 @@ msgstr ""
 "Ajoute le dossier et ses sous-dossiers à la bibliothèque à leur emplacement "
 "actuel ; rien n'est copié."
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:131
+#: crates/greycard-slint/ui/panel/import-sheet.slint:144
 msgid "No folder chosen"
 msgstr "Aucun dossier sélectionné"
 
 #. Import sheet: the source row
-#: crates/greycard-slint/ui/panel/import-sheet.slint:149
+#: crates/greycard-slint/ui/panel/import-sheet.slint:162
 msgid "From"
 msgstr "Depuis"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:151
+#: crates/greycard-slint/ui/panel/import-sheet.slint:164
 msgid "No card found"
 msgstr "Aucune carte trouvée"
 
 #. Import sheet: the destination row
-#: crates/greycard-slint/ui/panel/import-sheet.slint:166
+#: crates/greycard-slint/ui/panel/import-sheet.slint:179
 msgid "To"
 msgstr "Vers"
 
 #. Import sheet: the subfolder pattern row
-#: crates/greycard-slint/ui/panel/import-sheet.slint:174
+#: crates/greycard-slint/ui/panel/import-sheet.slint:187
 msgid "Folders"
 msgstr "Dossiers"
 
 #. Import sheet: the subfolder pattern when it is empty
-#: crates/greycard-slint/ui/panel/import-sheet.slint:179
+#: crates/greycard-slint/ui/panel/import-sheet.slint:192
 msgid "none"
 msgstr "aucun"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:194
+#: crates/greycard-slint/ui/panel/import-sheet.slint:207
 msgid "{}; a / in Folders makes a folder in a folder."
 msgstr "{} ; un / dans Dossiers crée un sous-dossier."
 
 #. Import sheet: the backup row
-#: crates/greycard-slint/ui/panel/import-sheet.slint:222
+#: crates/greycard-slint/ui/panel/import-sheet.slint:235
 msgid "Backup"
 msgstr "Sauvegarde"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:224
+#: crates/greycard-slint/ui/panel/import-sheet.slint:237
 msgid "None: one copy only"
 msgstr "Aucune : une seule copie"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:240
+#: crates/greycard-slint/ui/panel/import-sheet.slint:253
 msgid "Verify against the card"
 msgstr "Vérifier par rapport à la carte"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:244
+#: crates/greycard-slint/ui/panel/import-sheet.slint:257
 msgid "Verify compares every byte (slower)."
 msgstr "La vérification compare chaque octet (plus lent)."
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:265
+#: crates/greycard-slint/ui/panel/import-sheet.slint:278
 msgid "Import {n} frame"
 msgid_plural "Import {n} frames"
 msgstr[0] "Importer {n} photo"
 msgstr[1] "Importer {n} photos"
 
-#: crates/greycard-slint/ui/panel/import-sheet.slint:266
+#: crates/greycard-slint/ui/panel/import-sheet.slint:279
 msgid "Add {n} frame"
 msgid_plural "Add {n} frames"
 msgstr[0] "Ajouter {n} photo"
@@ -1979,45 +1979,45 @@ msgstr "Prélever une teinte"
 msgid "Details"
 msgstr "Détails"
 
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:275
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:288
 msgid "Collection set"
 msgstr "Ensemble de collections"
 
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:283
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:296
 msgid "None: the collections at the top"
 msgstr "Aucun : collections à la racine"
 
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:287
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:300
 msgid "Books, prints, slideshows, and web pages as collections"
 msgstr "Livres, tirages, diaporamas et pages web sous forme de collections"
 
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:291
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:304
 msgid "Write over the {n} frame with edits here already"
 msgid_plural "Write over the {n} frames with edits here already"
 msgstr[0] "Écraser la {n} photo déjà modifiée ici"
 msgstr[1] "Écraser les {n} photos déjà modifiées ici"
 
 #. Lightroom import sheet: the buttons
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:318
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:331
 msgid "Back"
 msgstr "Retour"
 
 #. Lightroom import sheet: the buttons
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:324
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:337
 msgid "Check"
 msgstr "Vérifier"
 
 #. Lightroom import sheet: the buttons
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:331
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:344
 msgid "Write"
 msgstr "Écrire"
 
 #. Lightroom import sheet: the buttons
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:338
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:351
 msgid "OK"
 msgstr "OK"
 
-#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:354
+#: crates/greycard-slint/ui/panel/lightroom-sheet.slint:368
 msgid "Scroll for more"
 msgstr "Faire défiler pour voir la suite"
 
@@ -2948,11 +2948,11 @@ msgstr "Décaler"
 msgid "{} set or shift"
 msgstr "{} défini ou décalé"
 
-#: crates/greycard-slint/ui/panel/sync-sheet.slint:115
+#: crates/greycard-slint/ui/panel/sync-sheet.slint:101
 msgid "Sync settings"
 msgstr "Synchroniser les paramètres"
 
-#: crates/greycard-slint/ui/panel/sync-sheet.slint:127
+#: crates/greycard-slint/ui/panel/sync-sheet.slint:113
 msgid ""
 "Crop and retouch never copy; camera profiles only to the same camera. A part "
 "copied alone leaves the rest of its section as each frame has it."
@@ -2961,11 +2961,11 @@ msgstr ""
 "ne le sont que vers le même appareil. Copier un seul réglage laisse le reste "
 "de sa section tel quel sur chaque photo."
 
-#: crates/greycard-slint/ui/panel/sync-sheet.slint:186
+#: crates/greycard-slint/ui/panel/sync-sheet.slint:172
 msgid "Apply"
 msgstr "Appliquer"
 
-#: crates/greycard-slint/ui/panel/sync-sheet.slint:186
+#: crates/greycard-slint/ui/panel/sync-sheet.slint:172
 msgid "Paste"
 msgstr "Coller"
 
@@ -3923,11 +3923,11 @@ msgstr "Aucun"
 msgid "Also: {}"
 msgstr "Aussi : {}"
 
-#: crates/greycard-ui/src/keys.rs:1388
+#: crates/greycard-ui/src/keys.rs:1404
 msgid "the guide is open in the browser"
 msgstr "le guide est ouvert dans le navigateur"
 
-#: crates/greycard-ui/src/keys.rs:1399
+#: crates/greycard-ui/src/keys.rs:1415
 msgid "no browser would open: the guide is at {url}"
 msgstr "aucun navigateur ne s'est ouvert : le guide se trouve sur {url}"
 
