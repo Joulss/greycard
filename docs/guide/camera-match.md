@@ -2,7 +2,8 @@
 
 Every raw file carries a JPEG the camera made from it, in the picture
 style you had set: Canon's Faithful or Standard, Fujifilm's Provia or
-Reala Ace, Nikon's Neutral, Sony's Standard, Panasonic's Natural.
+Reala Ace, Nikon's Neutral, Sony's Standard, Panasonic's Natural,
+Olympus's Natural.
 **Fit this camera's look…** learns that rendering from your own raws
 and keeps it as a look you can put on any frame. Use it when you like
 how your camera's JPEGs look and want that as a starting point for
@@ -29,11 +30,11 @@ a slider, you get the camera's rendering of the changed picture.
 
 ## What frames it needs
 
-- **Canon `.CR3`, Fujifilm `.RAF`, Nikon `.NEF`, Sony `.ARW` or
-  Panasonic `.RW2` raws.** greycard reads the picture style from these;
-  other makers' raws, and Canon's older `.CR2`, are not fitted yet. A
-  library indexed before a maker was read reads that maker's frames
-  again on its next pass.
+- **Canon `.CR3`, Fujifilm `.RAF`, Nikon `.NEF`, Sony `.ARW`,
+  Panasonic `.RW2`, or Olympus and OM System `.ORF` raws.** greycard
+  reads the picture style from these; other makers' raws, and Canon's
+  older `.CR2`, are not fitted yet. A library indexed before a maker
+  was read reads that maker's frames again on its next pass.
 - **About 20 frames or more** of one body and one style. A group is
   sampled down to about 40. A group under 20 can borrow a look (see
   below) or is skipped.
@@ -62,6 +63,7 @@ sample.
 | Nikon | Active D-Lighting, Contrast or Saturation set to A |
 | Sony | Dynamic Range Optimizer (any level or Auto) |
 | Panasonic | Intelligent D-Range (Intelligent Exposure on older bodies) |
+| Olympus and OM System | Gradation at High Key or Low Key, Highlight & Shadow Control (or the midtones) not at 0 |
 
 Settings that render in place of the style, or draw over it, take the
 frame out of every group: it was not rendered in that style, so it is
@@ -74,6 +76,7 @@ picture style. So does a style that adapts to the scene itself.
 | Nikon | the Auto Picture Control (and a custom one built on it), a scene mode, the Auto, scene and effects positions of the mode dial |
 | Sony | the scene modes, Intelligent Auto and Superior Auto, Auto HDR, a Picture Effect |
 | Panasonic | the scene modes and Intelligent Auto, the Auto photo style, HDR, a creative filter (Filter Settings) |
+| Olympus and OM System | the i-Enhance and e-Portrait picture modes, Color Creator, the Color and Monochrome Profiles, a scene mode, an Art Filter, a frame the camera merged from several (HDR, Live ND, Live Composite, focus stacking, High Res Shot) |
 
 A setting greycard cannot read or does not recognize takes the frame
 out of every group too, so a frame is never taken as fixed on a guess.
@@ -216,12 +219,13 @@ look to use it on another machine.
 ## Limits
 
 - Picture styles are read from Canon CR3, Fujifilm RAF, Nikon NEF, Sony
-  ARW and Panasonic RW2.
+  ARW, Panasonic RW2, and Olympus and OM System ORF.
 - Canon's per-style contrast, saturation and color tone settings,
   Fujifilm's Color, Color Chrome and Clarity, a Nikon Picture Control's
   sharpening, contrast, saturation and hue steps, Sony's contrast,
-  saturation and Creative Look settings, and a Panasonic Photo Style's
-  own adjustments are not read, so a group may mix frames shot with
+  saturation and Creative Look settings, a Panasonic Photo Style's
+  own adjustments, and an Olympus Picture Mode's saturation, contrast,
+  and sharpness are not read, so a group may mix frames shot with
   different settings.
 - Panasonic writes the same code for Standard and for its custom
   styles, so they share one group, "Standard or Custom", and a fit may

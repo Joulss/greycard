@@ -435,6 +435,101 @@ fn check_panasonic(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, Stri
     c.eq("shading compensation", style.peripheral_correction, shading);
 }
 
+fn check_olympus(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, String>) {
+    let cs = |tag: &str| kt.get(&format!("Exif.OlympusCs.{tag}")).map(String::as_str);
+    // The tags exiv2 has no name for, which it prints only with `-u`.
+    let kv = exiv2(c.path, "-uPkv");
+    let raw = |tag: &str| kv.get(&format!("Exif.OlympusCs.{tag}")).map(String::as_str);
+    // exiv2 names the mode; Monotone takes the filter and toning
+    // unless they are Neutral, and is not fixed when either is not
+    // named.
+    let (expected, fixed) = match cs("PictureMode") {
+        None => (None, false),
+        Some(t) if unnamed(t) => (Some(format!("Unknown ({})", &t[1..t.len() - 1])), false),
+        Some("Monotone") => {
+            let named = |tag| cs(tag).filter(|t| !unnamed(t) && *t != "n/a");
+            match (named("PictureModeBWFilter"), named("PictureModeTone")) {
+                (Some(f), Some(t)) => {
+                    let mut name = "Monotone".to_string();
+                    if f != "Neutral" {
+                        name.push_str(&format!(" + {f} Filter"));
+                    }
+                    if t != "Neutral" {
+                        name.push_str(&format!(" + {t} Tone"));
+                    }
+                    (Some(name), true)
+                }
+                _ => (Some("Monotone".to_string()), false),
+            }
+        }
+        Some(t) => {
+            let fixed = matches!(t, "Vivid" | "Natural" | "Muted" | "Portrait" | "Sepia");
+            (Some(t.to_string()), fixed)
+        }
+    };
+    c.eq("Picture Mode", style.style.clone(), expected);
+    c.eq("style fixed", style.style_fixed, fixed);
+    let gradation = match cs("Gradation") {
+        Some("Normal" | "Normal, User-Selected") => Some(false),
+        Some("Low Key" | "Low Key, User-Selected" | "High Key" | "High Key, User-Selected") => {
+            Some(true)
+        }
+        _ => None,
+    };
+    c.eq("Gradation", find(style, "Gradation"), expect(gradation));
+    for (tag, name) in [("ArtFilter", "Art Filter"), ("MagicFilter", "Magic Filter")] {
+        let on = match cs(tag) {
+            None | Some("Off") => Some(false),
+            Some(t) if unnamed(t) => None,
+            Some(_) => Some(true),
+        };
+        c.eq(name, find(style, name), expect(on));
+    }
+    let scene = match cs("SceneMode") {
+        Some("Standard") => Some(false),
+        Some(t) if !unnamed(t) => Some(true),
+        _ => None,
+    };
+    c.eq("Scene Mode", find(style, "Scene Mode"), expect(scene));
+    // exiv2 names neither the stacked modes nor the tone levels; their
+    // numbers are compared.
+    let stacked = match raw("0x0804") {
+        None | Some("0 0") => Some(false),
+        Some(v) if v.split(' ').count() == 2 => Some(true),
+        _ => None,
+    };
+    c.eq(
+        "Stacked Image",
+        find(style, "Stacked Image"),
+        expect(stacked),
+    );
+    let levels: Vec<i64> = raw("0x052e")
+        .map(|v| v.split(' ').filter_map(|n| n.parse().ok()).collect())
+        .unwrap_or_default();
+    for (kind, name) in [
+        (-31999, "Highlight Tone"),
+        (-31998, "Shadow Tone"),
+        (-31997, "Midtone"),
+    ] {
+        let moved = levels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|g| g[0] == kind && g[1] != 0);
+        c.eq(
+            name,
+            find(style, name),
+            moved.then(|| expect(Some(true)).unwrap()),
+        );
+    }
+    let shading = match cs("ShadingCompensation") {
+        Some("Off") => Some(false),
+        Some("On") => Some(true),
+        _ => None,
+    };
+    c.eq("shading compensation", style.peripheral_correction, shading);
+}
+
 #[test]
 fn camera_style_agrees_with_exiv2() {
     let files = samples();
@@ -488,6 +583,7 @@ fn camera_style_agrees_with_exiv2() {
             Maker::Nikon => Some(&["Exif.Nikon3."][..]),
             Maker::Sony => Some(&["Exif.Sony1.", "Exif.Sony2."][..]),
             Maker::Panasonic => Some(&["Exif.Panasonic."][..]),
+            Maker::Olympus | Maker::OmDigital => Some(&["Exif.OlympusCs."][..]),
             _ => None,
         };
         if let Some(group) = group {
@@ -505,6 +601,7 @@ fn camera_style_agrees_with_exiv2() {
             (Maker::Nikon, "nef" | "nrw") => check_nikon(&mut c, &style, &kt),
             (Maker::Sony, "arw") => check_sony(&mut c, &style, &kt),
             (Maker::Panasonic, "rw2") => check_panasonic(&mut c, &style, &kt),
+            (Maker::Olympus | Maker::OmDigital, "orf") => check_olympus(&mut c, &style, &kt),
             _ => c.eq("style", style.style.clone(), None),
         }
         compared += 1;

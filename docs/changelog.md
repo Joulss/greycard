@@ -68,6 +68,11 @@ design note behind it.
 
 ### Develop
 
+- "Fit this camera's look" reads Olympus and OM System raws: an
+  ORF's Picture Mode is its style, and a frame with an Art Filter, a
+  scene mode, or an in-camera stack is left out of the fit. Thanks to
+  the tester who shot the five modes (issue 139,
+  [§656](https://github.com/jessolmstead/greycard/blob/master/docs/notes/656-olympus-and-om-system-styles.md)).
 - Midtones, a slider in Light between Highlights and Shadows (and in
   a mask's Light): it lifts or sinks the middle of the frame's own
   range by up to a stop and leaves the blacks and the brightest

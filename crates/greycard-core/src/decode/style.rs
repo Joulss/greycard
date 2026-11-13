@@ -9,14 +9,15 @@
 //! decodes the file but does not expose the maker note's contents, so
 //! a CR3's boxes and a RAF's JPEG are walked here with rawler's own
 //! `formats::bmff` and `formats::tiff` parsers, and the TIFF-based raws
-//! (NEF, ARW, RW2) with a small IFD reader of our own that holds every
-//! count and offset to the file before it reads or allocates.
+//! (NEF, ARW, RW2, ORF) with a small IFD reader of our own that holds
+//! every count and offset to the file before it reads or allocates.
 //!
-//! Canon CR3, Fujifilm RAF, Nikon NEF, Sony ARW and Panasonic RW2 are
-//! read: the style, the scene-adaptive settings and the vignetting
-//! flag. Any other TIFF raw of those makers (a Canon CR2, or a DNG,
-//! whose preview is its converter's rendering rather than the camera's)
-//! is recognized and named, with no style.
+//! Canon CR3, Fujifilm RAF, Nikon NEF, Sony ARW, Panasonic RW2, and
+//! Olympus and OM System ORF are read: the style, the scene-adaptive
+//! settings and the vignetting flag. Any other TIFF raw of those
+//! makers (a Canon CR2, or a DNG, whose preview is its converter's
+//! rendering rather than the camera's) is recognized and named, with
+//! no style.
 //!
 //! A setting the reader expects and cannot find or cannot name counts
 //! as on, marked `known: false`, so a frame is never called fixed on a
@@ -27,23 +28,29 @@
 //! Chrome FX Blue and Clarity, a Nikon Picture Control's fixed
 //! sharpening, contrast, brightness, saturation and hue steps, Sony's
 //! contrast, saturation, sharpness and Creative Look fade, shadows and
-//! highlights, and a Panasonic Photo Style's contrast, saturation and
-//! the like. A group may mix frames that differ in them.
+//! highlights, a Panasonic Photo Style's contrast, saturation and
+//! the like, and an Olympus Picture Mode's saturation, contrast,
+//! sharpness, hue and effect steps (and the Custom Saturation,
+//! Contrast and Sharpness that go with them). A group may mix frames
+//! that differ in them.
 //!
 //! The tag numbers, array indexes and the names of their values follow
 //! exiv2's maker note tables, `src/canonmn_int.cpp`, `src/fujimn_int.cpp`,
-//! `src/nikonmn_int.cpp`, `src/sonymn_int.cpp` and
-//! `src/panasonicmn_int.cpp` at <https://github.com/Exiv2/exiv2>,
-//! GPL-2.0-or-later, copyright the Exiv2 authors. The names were taken
-//! from exiv2's own output on real and exiv2-written files. The layout
+//! `src/nikonmn_int.cpp`, `src/sonymn_int.cpp`,
+//! `src/panasonicmn_int.cpp` and `src/olympusmn_int.cpp` at
+//! <https://github.com/Exiv2/exiv2>, GPL-2.0-or-later, copyright the
+//! Exiv2 authors. The names were taken from exiv2's own output on real
+//! and exiv2-written files. The layout
 //! of the second and third versions of Nikon's Picture Control record,
 //! which exiv2 reads with the first version's offsets, follows
 //! ExifTool's `lib/Image/ExifTool/Nikon.pm` (PictureControl2 and
-//! PictureControl3), and Panasonic's Filter Settings tag, which exiv2
+//! PictureControl3), Panasonic's Filter Settings tag, which exiv2
 //! does not list, follows `lib/Image/ExifTool/Panasonic.pm`
-//! (FilterEffect), copyright Phil Harvey, distributed under the same
-//! terms as Perl (the GPL or the Artistic License); both were checked
-//! on the bytes of real files. The reading code is ours.
+//! (FilterEffect), and Olympus's Tone Level and Stacked Image tags,
+//! which exiv2 does not name, follow `lib/Image/ExifTool/Olympus.pm`
+//! (ToneLevel, StackedImage), copyright Phil Harvey, distributed under
+//! the same terms as Perl (the GPL or the Artistic License); each was
+//! checked on the bytes of real files. The reading code is ours.
 //!
 //! A setting on that renders in place of the style (a scene mode, a
 //! picture effect, an in-camera HDR) takes the frame out of its
@@ -71,6 +78,12 @@ pub enum Maker {
     Nikon,
     Sony,
     Panasonic,
+    /// Olympus, whose Make is "OLYMPUS IMAGING CORP.", "OLYMPUS
+    /// CORPORATION" or "OLYMPUS OPTICAL CO.,LTD".
+    Olympus,
+    /// OM Digital Solutions, Olympus's camera business since 2021 and
+    /// the OM System bodies' Make. The same maker note as Olympus's.
+    OmDigital,
     /// Any other maker. [`CameraStyle::read`] returns `None` for one.
     Other,
 }
@@ -89,12 +102,18 @@ impl Maker {
             Maker::Sony
         } else if make.starts_with("panasonic") {
             Maker::Panasonic
+        } else if make.starts_with("olympus") {
+            Maker::Olympus
+        } else if make.starts_with("om digital") {
+            Maker::OmDigital
         } else {
             Maker::Other
         }
     }
 
-    /// The maker's name as a group key begins with it.
+    /// The maker's name as a group key begins with it: the start of
+    /// the Make the camera writes, as a look's name strips it after the
+    /// body's.
     pub fn name(self) -> &'static str {
         match self {
             Maker::Canon => "Canon",
@@ -102,6 +121,8 @@ impl Maker {
             Maker::Nikon => "Nikon",
             Maker::Sony => "Sony",
             Maker::Panasonic => "Panasonic",
+            Maker::Olympus => "Olympus",
+            Maker::OmDigital => "OM Digital Solutions",
             Maker::Other => "Other",
         }
     }
@@ -114,8 +135,9 @@ pub enum AdaptiveKind {
     /// Bends the style's tone per scene and leaves the style in charge:
     /// Canon's Auto Lighting Optimizer and Highlight Tone Priority,
     /// Fujifilm's Dynamic Range, Nikon's Active D-Lighting, Sony's DRO,
-    /// Panasonic's Intelligent D-Range. A frame with one on is still of
-    /// its style's group, and fills a group short of fixed frames.
+    /// Panasonic's Intelligent D-Range, Olympus's Gradation. A frame
+    /// with one on is still of its style's group, and fills a group
+    /// short of fixed frames.
     Tone,
     /// Renders in place of the style, or draws over it: a scene or
     /// intelligent auto mode, a picture effect or filter, an in-camera
@@ -189,8 +211,8 @@ pub struct CameraStyle {
     /// Each scene-adaptive setting the maker has and whether it was on,
     /// in the maker's order. One the file leaves out or gives a value
     /// the reader cannot name is listed on and not known. Fujifilm's
-    /// highlight and shadow tone are listed only when they were moved
-    /// off zero.
+    /// highlight and shadow tone, and Olympus's highlight, shadow and
+    /// midtone, are listed only when they were moved off zero.
     pub adaptive: Vec<Adaptive>,
     /// The camera's own vignetting correction, where the file says.
     pub peripheral_correction: Option<bool>,
@@ -211,7 +233,7 @@ impl CameraStyle {
     /// The rendering settings of the raw at `path`. `None` for a TIFF
     /// raw whose maker is not one of [`Maker`]'s named ones, and for a
     /// file that is neither a CR3, a RAF nor TIFF-based. An error is a
-    /// file that could not be read, a CR3, RAF, NEF, ARW or RW2 whose
+    /// file that could not be read, a CR3, RAF, NEF, ARW, RW2 or ORF whose
     /// boxes or maker note are damaged, or a file that begins like a
     /// TIFF (`II`/`MM`) and is not a valid one.
     pub fn read(path: &Path) -> Result<Option<CameraStyle>> {
@@ -286,6 +308,10 @@ pub(crate) fn read_stream(mut file: impl Read + Seek) -> Result<Option<CameraSty
             Maker::Panasonic => match note(&mut tiff)? {
                 Some(note) => panasonic_from_note(&mut tiff, &note)?,
                 None => panasonic_from_jpeg(&mut tiff, &ifd0)?,
+            },
+            Maker::Olympus | Maker::OmDigital => match note(&mut tiff)? {
+                Some(note) => olympus_from_note(&mut tiff, &note, maker)?,
+                None => CameraStyle::bare(maker),
             },
             Maker::Canon | Maker::Fujifilm => CameraStyle::bare(maker),
         }));
@@ -1385,6 +1411,256 @@ fn panasonic_from_note<R: Read + Seek>(tiff: &mut Tiff<R>, note: &Field) -> Resu
     Ok(style)
 }
 
+// Olympus and OM System. An ORF's maker note is in its Exif IFD, in one
+// of three forms: "OM SYSTEM", three NULs, the byte order and a version
+// (16 bytes), or "OLYMPUS", a NUL, the byte order and a version (12
+// bytes), each an IFD after the header with offsets from the note's
+// start; or the first bodies' "OLYMP", a NUL and a version (8 bytes),
+// an IFD in the file's byte order with offsets from the file's start.
+// The settings are in the note's Camera Settings sub-IFD. Tag numbers
+// and values are exiv2's (its Olympus2 and OlympusCs groups), checked
+// against exiv2's output on OM-1 and OM-5 files; the Tone Level and
+// Stacked Image layouts, which exiv2 does not name, are ExifTool's.
+
+const OLYMPUS_CAMERA_SETTINGS: u16 = 0x2020;
+const OLYMPUS_SCENE_MODE: u16 = 0x0509;
+const OLYMPUS_SHADING_COMPENSATION: u16 = 0x050c;
+const OLYMPUS_GRADATION: u16 = 0x050f;
+const OLYMPUS_PICTURE_MODE: u16 = 0x0520;
+const OLYMPUS_BW_FILTER: u16 = 0x0525;
+const OLYMPUS_PICTURE_TONE: u16 = 0x0526;
+const OLYMPUS_ART_FILTER: u16 = 0x0529;
+const OLYMPUS_MAGIC_FILTER: u16 = 0x052c;
+const OLYMPUS_TONE_LEVEL: u16 = 0x052e;
+const OLYMPUS_STACKED_IMAGE: u16 = 0x0804;
+
+/// A Picture Mode code by exiv2's name for it, and whether it renders
+/// every frame the same way. i-Enhance picks its colors by the scene
+/// and e-Portrait smooths the skin it finds, as Canon's Auto adapts;
+/// Color Creator and the Color and Monochrome Profiles are the user's
+/// own, with no preset the file names as their base, as a Nikon custom
+/// control with no base is. ExifTool's 8 (Underwater) and 17 (Art
+/// Mode) exiv2 does not name.
+fn olympus_mode_name(code: i64) -> (String, bool) {
+    let (name, fixed) = match code {
+        1 => ("Vivid", true),
+        2 => ("Natural", true),
+        3 => ("Muted", true),
+        4 => ("Portrait", true),
+        5 => ("i-Enhance", false),
+        6 => ("e-Portrait", false),
+        7 => ("Color Creator", false),
+        9 => ("Color Profile 1", false),
+        10 => ("Color Profile 2", false),
+        11 => ("Color Profile 3", false),
+        12 => ("Monochrome Profile 1", false),
+        13 => ("Monochrome Profile 2", false),
+        14 => ("Monochrome Profile 3", false),
+        256 => ("Monotone", true),
+        512 => ("Sepia", true),
+        _ => return (format!("Unknown ({code})"), false),
+    };
+    (name.to_string(), fixed)
+}
+
+/// Monotone's color filter and toning by exiv2's names, 1 the neutral
+/// one and 0 not applicable.
+fn olympus_filter_name(code: i64) -> Option<&'static str> {
+    Some(match code {
+        1 => "Neutral",
+        2 => "Yellow",
+        3 => "Orange",
+        4 => "Red",
+        5 => "Green",
+        _ => return None,
+    })
+}
+
+fn olympus_tone_name(code: i64) -> Option<&'static str> {
+    Some(match code {
+        1 => "Neutral",
+        2 => "Sepia",
+        3 => "Blue",
+        4 => "Purple",
+        5 => "Green",
+        _ => return None,
+    })
+}
+
+/// Whether an Art Filter or Magic Filter code is one exiv2 names (0 is
+/// Off).
+fn olympus_filter_named(code: i64) -> bool {
+    matches!(code, 0..=6 | 9 | 10 | 12..=29 | 31..=41)
+}
+
+/// Whether a Scene Mode code is one exiv2 names (0 is Standard, no
+/// scene).
+fn olympus_scene_named(code: i64) -> bool {
+    matches!(code, 0 | 6..=20 | 22..=50)
+}
+
+fn olympus_from_note<R: Read + Seek>(
+    tiff: &mut Tiff<R>,
+    note: &Field,
+    maker: Maker,
+) -> Result<CameraStyle> {
+    let mut style = CameraStyle::bare(maker);
+    let head = tiff.read_at(note.at, (note.count as u64).min(16))?;
+    let order = |b: &[u8]| match b {
+        b"II" => Some(Endian::Little),
+        b"MM" => Some(Endian::Big),
+        _ => None,
+    };
+    // Where the IFD is, the offsets' base and the byte order.
+    let (at, base, endian) = if head.len() >= 16 && head.starts_with(b"OM SYSTEM\0\0\0") {
+        match order(&head[12..14]) {
+            Some(e) => (note.at + 16, note.at, e),
+            None => return Ok(style),
+        }
+    } else if head.len() >= 12 && head.starts_with(b"OLYMPUS\0") {
+        match order(&head[8..10]) {
+            Some(e) => (note.at + 12, note.at, e),
+            None => return Ok(style),
+        }
+    } else if head.len() >= 8 && head.starts_with(b"OLYMP\0") {
+        (note.at + 8, 0, note.endian)
+    } else {
+        return Ok(style);
+    };
+    let ifd = tiff.ifd(at, base, endian)?;
+    // A sub-IFD's entry: an offset (IFD or LONG), or the older bodies'
+    // UNDEFINED block that is the IFD itself. A note without Camera
+    // Settings is a maker with no style, as a Nikon type 1 note is.
+    let cs_at = match find(&ifd, OLYMPUS_CAMERA_SETTINGS) {
+        Some(f) if f.typ == 7 && f.count > 4 => f.at,
+        Some(f) if matches!(f.typ, 4 | 13) => match tiff.int(&f) {
+            Some(offset) => base + offset as u64,
+            None => return Ok(style),
+        },
+        _ => return Ok(style),
+    };
+    let cs = tiff.ifd(cs_at, base, endian)?;
+    let int = |tiff: &mut Tiff<R>, tag| int_tag(tiff, &cs, tag);
+    let ints = |tiff: &mut Tiff<R>, tag| find(&cs, tag).and_then(|f| tiff.ints(&f));
+    // A tag exiv2 types int16s, read as one whatever type the file
+    // declares, so a SHORT's 0xffff is -1 as an SSHORT's is.
+    let i16s = |tiff: &mut Tiff<R>, tag| {
+        ints(tiff, tag).map(|v| v.into_iter().map(|n| n as i16 as i64).collect::<Vec<_>>())
+    };
+
+    if let Some(code) = int(tiff, OLYMPUS_PICTURE_MODE) {
+        let (mut name, mut fixed) = olympus_mode_name(code);
+        // Monotone's filter and toning are part of the style, as a
+        // Fujifilm monochrome simulation's filter is: "Monotone + Red
+        // Filter + Sepia Tone". One the reader cannot name leaves the
+        // style unfixed.
+        if code == 256 {
+            let filter = int(tiff, OLYMPUS_BW_FILTER).and_then(olympus_filter_name);
+            let tone = int(tiff, OLYMPUS_PICTURE_TONE).and_then(olympus_tone_name);
+            match (filter, tone) {
+                (Some(filter), Some(tone)) => {
+                    if filter != "Neutral" {
+                        name.push_str(&format!(" + {filter} Filter"));
+                    }
+                    if tone != "Neutral" {
+                        name.push_str(&format!(" + {tone} Tone"));
+                    }
+                }
+                _ => fixed = false,
+            }
+        }
+        style.style = Some(name);
+        style.style_fixed = fixed;
+    }
+
+    // Gradation: three values and, on the newer bodies, a fourth.
+    // Normal is "0 -1 1", Low Key "-1 -1 1" and High Key "1 -1 1", each
+    // a tone curve on the Picture Mode; the fourth is 0 for the user's
+    // choice and 1 for one the camera overrode. An override, a value
+    // exiv2 does not name and a note without the tag are not known.
+    const GRADATION: &str = "Gradation";
+    style
+        .adaptive
+        .push(match i16s(tiff, OLYMPUS_GRADATION).as_deref() {
+            Some([a, -1, 1] | [a, -1, 1, 0]) if (-1..=1).contains(a) => {
+                Adaptive::known(GRADATION, *a != 0)
+            }
+            _ => Adaptive::unknown(GRADATION),
+        });
+    // The Art Filter (Pop Art, Grainy Film, Dramatic Tone and the rest)
+    // and the compacts' Magic Filter, from one table, drawn over the
+    // Picture Mode; the first value is the filter, 0 for Off. The
+    // bodies without one do not write the tag.
+    for (tag, name) in [
+        (OLYMPUS_ART_FILTER, "Art Filter"),
+        (OLYMPUS_MAGIC_FILTER, "Magic Filter"),
+    ] {
+        style.adaptive.push(
+            match find(&cs, tag).map(|f| tiff.int(&f)) {
+                None | Some(Some(0)) => Adaptive::known(name, false),
+                Some(Some(v)) if olympus_filter_named(v) => Adaptive::known(name, true),
+                Some(_) => Adaptive::unknown(name),
+            }
+            .replacing(),
+        );
+    }
+    // 0 Standard; every other is a scene mode, which renders in place
+    // of the Picture Mode.
+    const SCENE: &str = "Scene Mode";
+    style.adaptive.push(
+        match int(tiff, OLYMPUS_SCENE_MODE) {
+            Some(0) => Adaptive::known(SCENE, false),
+            Some(v) if olympus_scene_named(v) => Adaptive::known(SCENE, true),
+            _ => Adaptive::unknown(SCENE),
+        }
+        .replacing(),
+    );
+    // Two 32-bit words, "0 0" for a single frame; anything else is a
+    // frame the camera merged from several (in-camera HDR, Live ND,
+    // Live Composite, a focus stack, high resolution). exiv2 does not
+    // name the tag; the layout is ExifTool's (StackedImage). The bodies
+    // without the modes do not write it.
+    const STACKED: &str = "Stacked Image";
+    style.adaptive.push(
+        match find(&cs, OLYMPUS_STACKED_IMAGE).map(|f| tiff.ints(&f)) {
+            None => Adaptive::known(STACKED, false),
+            Some(Some(v)) if v.len() == 2 => Adaptive::known(STACKED, v != [0, 0]),
+            Some(_) => Adaptive::unknown(STACKED),
+        }
+        .replacing(),
+    );
+    // Highlight and shadow control: groups of four, a kind (-31999
+    // highlights, -31998 shadows, -31997 midtones), the step, its least
+    // and most; a step off zero is a tone tweak on the Picture Mode,
+    // listed only when moved, as Fujifilm's tones are. The layout is
+    // ExifTool's (ToneLevel).
+    if let Some(levels) = i16s(tiff, OLYMPUS_TONE_LEVEL) {
+        for (kind, name) in [
+            (-31999, "Highlight Tone"),
+            (-31998, "Shadow Tone"),
+            (-31997, "Midtone"),
+        ] {
+            let moved = levels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|g| g[0] == kind && g[1] != 0);
+            if moved {
+                style.adaptive.push(Adaptive::known(name, true));
+            }
+        }
+    }
+
+    // 0 Off, 1 On.
+    style.peripheral_correction = match int(tiff, OLYMPUS_SHADING_COMPENSATION) {
+        Some(0) => Some(false),
+        Some(1) => Some(true),
+        _ => None,
+    };
+
+    Ok(style)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1957,7 +2233,17 @@ mod tests {
         assert_eq!(Maker::from_make("SONY"), Maker::Sony);
         assert_eq!(Maker::from_make("Panasonic"), Maker::Panasonic);
         assert_eq!(Maker::from_make("FUJIFILM"), Maker::Fujifilm);
-        assert_eq!(Maker::from_make("OM Digital Solutions"), Maker::Other);
+        assert_eq!(Maker::from_make("OLYMPUS IMAGING CORP."), Maker::Olympus);
+        assert_eq!(Maker::from_make("OLYMPUS CORPORATION"), Maker::Olympus);
+        assert_eq!(Maker::from_make("OLYMPUS OPTICAL CO.,LTD"), Maker::Olympus);
+        assert_eq!(
+            Maker::from_make("OM Digital Solutions   "),
+            Maker::OmDigital
+        );
+        assert_eq!(
+            Maker::from_make("RICOH IMAGING COMPANY, LTD."),
+            Maker::Other
+        );
     }
 
     const ASCII: u16 = 2;
@@ -2584,6 +2870,415 @@ mod tests {
             style(1).group_key().as_deref(),
             Some("Panasonic Standard or Custom")
         );
+    }
+
+    /// The scrubbed heads of five OM-1 ORFs, one a Picture Mode, all
+    /// with Gradation Normal, no Art Filter, no scene mode and shading
+    /// compensation off: each a fixed style and a group of its own.
+    /// Each head is cut at 12,632 bytes, after the last Camera Settings
+    /// value read, with every byte zeroed but the TIFF header, the
+    /// tag, type and count of each entry of IFD0, the Exif IFD, the
+    /// maker note's IFD and its Camera Settings IFD, the value fields
+    /// the reader follows or reads, the Make, the note's 16-byte header
+    /// and the Camera Settings values read: about 735 bytes not zero,
+    /// and no picture, thumbnail, date or serial number.
+    #[test]
+    fn olympus_om1_heads_read_their_picture_modes() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for (file, name) in [
+            ("monotone", "Monotone"),
+            ("muted", "Muted"),
+            ("natural", "Natural"),
+            ("portrait", "Portrait"),
+            ("vivid", "Vivid"),
+        ] {
+            let path = fixtures.join(format!("scrubbed-om1-{file}-head.ORF"));
+            let s = CameraStyle::read(&path).unwrap().unwrap();
+            assert_eq!(s.maker, Maker::OmDigital, "{file}");
+            assert_eq!(s.style.as_deref(), Some(name), "{file}");
+            assert_eq!(
+                s.adaptive,
+                vec![
+                    Adaptive::known("Gradation", false),
+                    Adaptive::known("Art Filter", false).replacing(),
+                    Adaptive::known("Magic Filter", false).replacing(),
+                    Adaptive::known("Scene Mode", false).replacing(),
+                    Adaptive::known("Stacked Image", false).replacing(),
+                ],
+                "{file}"
+            );
+            assert_eq!(s.peripheral_correction, Some(false), "{file}");
+            assert!(s.is_fixed(), "{file}");
+            assert_eq!(
+                s.group_key(),
+                Some(format!("OM Digital Solutions {name}")),
+                "{file}"
+            );
+        }
+    }
+
+    fn sshorts(tag: u16, v: &[i16]) -> (u16, u16, u32, Vec<u8>) {
+        (tag, SSHORT, v.len() as u32, i16s(v))
+    }
+
+    fn shorts(tag: u16, v: &[u16]) -> (u16, u16, u32, Vec<u8>) {
+        let bytes = v.iter().flat_map(|n| n.to_le_bytes()).collect();
+        (tag, SHORT, v.len() as u32, bytes)
+    }
+
+    /// Camera Settings as the OM-1 heads carry them: Vivid, Gradation
+    /// Normal, no Art Filter, Standard (no scene), a single frame, no
+    /// highlight or shadow control, shading compensation off.
+    fn olympus_base() -> Vec<(u16, u16, u32, Vec<u8>)> {
+        let mut levels = vec![0i16; 28];
+        for (i, kind) in [-31999i16, -31998, -31997].into_iter().enumerate() {
+            levels[4 * i..4 * i + 4].copy_from_slice(&[kind, 0, -7, 7]);
+        }
+        vec![
+            shorts(OLYMPUS_PICTURE_MODE, &[1, 2]),
+            sshorts(OLYMPUS_GRADATION, &[0, -1, 1, 0]),
+            shorts(OLYMPUS_ART_FILTER, &[0, 0, 0, 0]),
+            short(OLYMPUS_SCENE_MODE, 0),
+            short(OLYMPUS_SHADING_COMPENSATION, 0),
+            (OLYMPUS_STACKED_IMAGE, LONG, 2, vec![0; 8]),
+            sshorts(OLYMPUS_TONE_LEVEL, &levels),
+        ]
+    }
+
+    /// An ORF with a maker note of the given header ("OM SYSTEM",
+    /// "OLYMPUS" or the first bodies' "OLYMP") whose Camera Settings
+    /// hold `cs`, little-endian.
+    fn orf_with(make: &str, header: &'static [u8], cs: &[(u16, u16, u32, Vec<u8>)]) -> Vec<u8> {
+        let cs = cs.to_vec();
+        raw_file(make, move |at| {
+            // OLYMP's offsets count from the file's start, the others'
+            // from the note's.
+            let base = if header.starts_with(b"OLYMP\0") {
+                at
+            } else {
+                0
+            };
+            let main_at = header.len();
+            let cs_at = main_at + 18;
+            let mut note = header.to_vec();
+            note.extend(ifd_bytes(
+                base + main_at,
+                &[long(OLYMPUS_CAMERA_SETTINGS, (base + cs_at) as u32)],
+            ));
+            note.extend(ifd_bytes(base + cs_at, &cs));
+            note
+        })
+    }
+
+    const OM_SYSTEM: &[u8] = b"OM SYSTEM\0\0\0II\x04\0";
+
+    fn orf(cs: &[(u16, u16, u32, Vec<u8>)]) -> CameraStyle {
+        read_bytes(orf_with("OM Digital Solutions", OM_SYSTEM, cs))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn olympus_with(tag: u16, entry: Option<(u16, u16, u32, Vec<u8>)>) -> CameraStyle {
+        let mut entries: Vec<_> = olympus_base().into_iter().filter(|e| e.0 != tag).collect();
+        entries.extend(entry);
+        orf(&entries)
+    }
+
+    #[test]
+    fn olympus_vivid_with_gradation_normal_is_fixed() {
+        let s = orf(&olympus_base());
+        assert_eq!(s.style.as_deref(), Some("Vivid"));
+        assert!(s.is_fixed());
+        assert_eq!(s.group_key().as_deref(), Some("OM Digital Solutions Vivid"));
+        // The same note under an Olympus header and Make.
+        for header in [&b"OLYMPUS\0II\x03\0"[..], &b"OLYMP\0\x01\0"[..]] {
+            let bytes = orf_with("OLYMPUS IMAGING CORP.", header, &olympus_base());
+            let s = read_bytes(bytes).unwrap().unwrap();
+            assert_eq!(s.maker, Maker::Olympus);
+            assert_eq!(s.group_key().as_deref(), Some("Olympus Vivid"));
+            assert!(s.is_fixed());
+        }
+    }
+
+    #[test]
+    fn olympus_gradation_bends_the_tone_and_what_it_cannot_name_is_not_known() {
+        let gradation = |v: &[i16]| {
+            olympus_with(OLYMPUS_GRADATION, Some(sshorts(OLYMPUS_GRADATION, v))).adaptive[0]
+        };
+        // Low Key and High Key: on, a tone curve; the frame keeps its
+        // group and is not fixed.
+        for v in [[-1, -1, 1, 0], [1, -1, 1, 0]] {
+            assert_eq!(gradation(&v), Adaptive::known("Gradation", true), "{v:?}");
+            let s = olympus_with(OLYMPUS_GRADATION, Some(sshorts(OLYMPUS_GRADATION, &v)));
+            assert!(!s.is_fixed());
+            assert_eq!(s.group_key().as_deref(), Some("OM Digital Solutions Vivid"));
+        }
+        // The older bodies' three values.
+        assert_eq!(gradation(&[0, -1, 1]), Adaptive::known("Gradation", false));
+        // The camera's override, a value exiv2 does not name, and no tag.
+        for v in [&[0, -1, 1, 1][..], &[2, -1, 1, 0], &[0, 0, 0, 0]] {
+            assert_eq!(gradation(v), Adaptive::unknown("Gradation"), "{v:?}");
+        }
+        let none = olympus_with(OLYMPUS_GRADATION, None);
+        assert_eq!(none.adaptive[0], Adaptive::unknown("Gradation"));
+        assert_eq!(none.group_key(), None);
+    }
+
+    #[test]
+    fn olympus_art_filters_scenes_and_stacks_take_the_frame_out_of_its_group() {
+        for (tag, entry, index) in [
+            (
+                OLYMPUS_ART_FILTER,
+                shorts(OLYMPUS_ART_FILTER, &[2, 0, 0, 0]),
+                1,
+            ),
+            (
+                OLYMPUS_ART_FILTER,
+                shorts(OLYMPUS_ART_FILTER, &[39, 0, 0, 2]),
+                1,
+            ),
+            (
+                OLYMPUS_MAGIC_FILTER,
+                shorts(OLYMPUS_MAGIC_FILTER, &[12, 0, 0, 0]),
+                2,
+            ),
+            (OLYMPUS_SCENE_MODE, short(OLYMPUS_SCENE_MODE, 8), 3),
+            (
+                OLYMPUS_STACKED_IMAGE,
+                (OLYMPUS_STACKED_IMAGE, LONG, 2, i32s(&[5, 4])),
+                4,
+            ),
+            (
+                OLYMPUS_STACKED_IMAGE,
+                (OLYMPUS_STACKED_IMAGE, LONG, 2, i32s(&[3, 8])),
+                4,
+            ),
+        ] {
+            let s = olympus_with(tag, Some(entry));
+            let a = s.adaptive[index];
+            assert!(a.on && a.known, "{tag:#x}");
+            assert_eq!(a.kind, AdaptiveKind::Replaces, "{tag:#x}");
+            assert_eq!(s.group_key(), None, "{tag:#x}");
+        }
+        // Codes exiv2 does not name, and a scene mode not written: not
+        // known, so of no group.
+        for (tag, entry, index) in [
+            (
+                OLYMPUS_ART_FILTER,
+                Some(shorts(OLYMPUS_ART_FILTER, &[7, 0, 0, 0])),
+                1,
+            ),
+            (OLYMPUS_SCENE_MODE, Some(short(OLYMPUS_SCENE_MODE, 21)), 3),
+            (OLYMPUS_SCENE_MODE, None, 3),
+            (
+                OLYMPUS_STACKED_IMAGE,
+                Some(short(OLYMPUS_STACKED_IMAGE, 0)),
+                4,
+            ),
+        ] {
+            let s = olympus_with(tag, entry);
+            assert!(!s.adaptive[index].known, "{tag:#x}");
+            assert_eq!(s.group_key(), None, "{tag:#x}");
+        }
+        // The bodies without Art Filters or the stacked modes do not
+        // write them.
+        assert!(olympus_with(OLYMPUS_ART_FILTER, None).is_fixed());
+        assert!(olympus_with(OLYMPUS_STACKED_IMAGE, None).is_fixed());
+    }
+
+    #[test]
+    fn olympus_tone_levels_are_listed_only_when_moved() {
+        let mut levels = vec![0i16; 28];
+        levels[..12].copy_from_slice(&[-31999, -2, -7, 7, -31998, 0, -7, 7, -31997, 3, -7, 7]);
+        let s = olympus_with(
+            OLYMPUS_TONE_LEVEL,
+            Some(sshorts(OLYMPUS_TONE_LEVEL, &levels)),
+        );
+        assert_eq!(
+            s.adaptive[5..],
+            [
+                Adaptive::known("Highlight Tone", true),
+                Adaptive::known("Midtone", true),
+            ]
+        );
+        assert!(!s.is_fixed());
+        assert_eq!(s.group_key().as_deref(), Some("OM Digital Solutions Vivid"));
+        assert!(olympus_with(OLYMPUS_TONE_LEVEL, None).is_fixed());
+    }
+
+    /// Tone Level and Gradation stored as SHORT rather than SSHORT read
+    /// the same: a moved highlight is listed, Low Key is on.
+    #[test]
+    fn olympus_signed_tags_stored_unsigned_read_the_same() {
+        let as_short = |tag: u16, v: &[i16]| (tag, SHORT, v.len() as u32, i16s(v));
+        let mut levels = vec![0i16; 28];
+        levels[..4].copy_from_slice(&[-31999, -2, -7, 7]);
+        let s = olympus_with(
+            OLYMPUS_TONE_LEVEL,
+            Some(as_short(OLYMPUS_TONE_LEVEL, &levels)),
+        );
+        assert_eq!(s.adaptive[5..], [Adaptive::known("Highlight Tone", true)]);
+        assert!(!s.is_fixed());
+        let s = olympus_with(
+            OLYMPUS_GRADATION,
+            Some(as_short(OLYMPUS_GRADATION, &[-1, -1, 1, 0])),
+        );
+        assert_eq!(s.adaptive[0], Adaptive::known("Gradation", true));
+        assert!(!s.is_fixed());
+    }
+
+    /// The older bodies' Camera Settings as an UNDEFINED block that is
+    /// the IFD itself, its values' offsets from the note's start.
+    #[test]
+    fn olympus_camera_settings_as_an_undefined_block() {
+        let bytes = raw_file("OLYMPUS IMAGING CORP.", |_| {
+            let header = b"OLYMPUS\0II\x03\0";
+            // The note's IFD at 12, one entry and no inline value: 18
+            // bytes, the block's data right after it.
+            let cs_at = header.len() + 18;
+            let block = ifd_bytes(cs_at, &olympus_base());
+            let mut note = header.to_vec();
+            note.extend(ifd_bytes(
+                header.len(),
+                &[(
+                    OLYMPUS_CAMERA_SETTINGS,
+                    UNDEFINED,
+                    block.len() as u32,
+                    block,
+                )],
+            ));
+            note
+        });
+        let s = read_bytes(bytes).unwrap().unwrap();
+        assert_eq!(s.group_key().as_deref(), Some("Olympus Vivid"));
+        assert!(s.is_fixed());
+    }
+
+    /// A big-endian "OLYMPUS" note in a little-endian file.
+    #[test]
+    fn olympus_big_endian_note() {
+        let bytes = raw_file("OLYMPUS CORPORATION", |_| {
+            let header = b"OLYMPUS\0MM\x03\0";
+            let cs_at = header.len() + 18;
+            let be16 = |v: &[i16]| v.iter().flat_map(|n| n.to_be_bytes()).collect::<Vec<_>>();
+            let cs = [
+                (OLYMPUS_PICTURE_MODE, SHORT, 2, be16(&[1, 2])),
+                (OLYMPUS_GRADATION, SSHORT, 4, be16(&[0, -1, 1, 0])),
+                (OLYMPUS_ART_FILTER, SHORT, 4, be16(&[0, 0, 0, 0])),
+                (OLYMPUS_SCENE_MODE, SHORT, 1, be16(&[0])),
+                (OLYMPUS_SHADING_COMPENSATION, SHORT, 1, be16(&[1])),
+            ];
+            let mut note = header.to_vec();
+            note.extend(ifd_bytes_in(
+                header.len(),
+                &[(
+                    OLYMPUS_CAMERA_SETTINGS,
+                    LONG,
+                    1,
+                    (cs_at as u32).to_be_bytes().to_vec(),
+                )],
+                true,
+            ));
+            note.extend(ifd_bytes_in(cs_at, &cs, true));
+            note
+        });
+        let s = read_bytes(bytes).unwrap().unwrap();
+        assert_eq!(s.style.as_deref(), Some("Vivid"));
+        assert_eq!(s.peripheral_correction, Some(true));
+        assert!(s.is_fixed());
+        assert_eq!(s.group_key().as_deref(), Some("Olympus Vivid"));
+    }
+
+    #[test]
+    fn olympus_modes_that_adapt_or_are_the_users_own_are_not_fitted() {
+        let mode = |code: u16| {
+            olympus_with(
+                OLYMPUS_PICTURE_MODE,
+                Some(shorts(OLYMPUS_PICTURE_MODE, &[code, 2])),
+            )
+        };
+        for (code, name) in [
+            (5, "i-Enhance"),
+            (6, "e-Portrait"),
+            (7, "Color Creator"),
+            (9, "Color Profile 1"),
+            (14, "Monochrome Profile 3"),
+            (8, "Unknown (8)"),
+            (17, "Unknown (17)"),
+        ] {
+            let s = mode(code);
+            assert_eq!(s.style.as_deref(), Some(name));
+            assert_eq!(s.group_key(), None, "{name}");
+        }
+        for (code, name) in [
+            (2, "Natural"),
+            (3, "Muted"),
+            (4, "Portrait"),
+            (512, "Sepia"),
+        ] {
+            assert_eq!(
+                mode(code).group_key(),
+                Some(format!("OM Digital Solutions {name}"))
+            );
+        }
+        assert_eq!(olympus_with(OLYMPUS_PICTURE_MODE, None).style, None);
+    }
+
+    #[test]
+    fn olympus_monotone_takes_its_filter_and_tone() {
+        let monotone = |filter: Option<i16>, tone: Option<i16>| {
+            let mut entries: Vec<_> = olympus_base()
+                .into_iter()
+                .filter(|e| e.0 != OLYMPUS_PICTURE_MODE)
+                .collect();
+            entries.push(shorts(OLYMPUS_PICTURE_MODE, &[256, 2]));
+            entries.extend(filter.map(|v| sshorts(OLYMPUS_BW_FILTER, &[v])));
+            entries.extend(tone.map(|v| sshorts(OLYMPUS_PICTURE_TONE, &[v])));
+            orf(&entries)
+        };
+        for (filter, tone, name) in [
+            (1, 1, "Monotone"),
+            (4, 1, "Monotone + Red Filter"),
+            (1, 2, "Monotone + Sepia Tone"),
+            (2, 3, "Monotone + Yellow Filter + Blue Tone"),
+        ] {
+            let s = monotone(Some(filter), Some(tone));
+            assert_eq!(s.style.as_deref(), Some(name));
+            assert!(s.is_fixed(), "{name}");
+        }
+        for (filter, tone) in [(Some(0), Some(0)), (Some(9), Some(1)), (None, Some(1))] {
+            let s = monotone(filter, tone);
+            assert_eq!(s.style.as_deref(), Some("Monotone"));
+            assert_eq!(s.group_key(), None, "{filter:?} {tone:?}");
+        }
+    }
+
+    #[test]
+    fn olympus_notes_it_cannot_read_are_bare() {
+        // An unknown header, and a note with no Camera Settings.
+        let other = raw_file("OM Digital Solutions", |_| {
+            b"SOMETHING ELSE\0\0\0\0\0\0".to_vec()
+        });
+        assert_eq!(
+            read_bytes(other).unwrap(),
+            Some(CameraStyle::bare(Maker::OmDigital))
+        );
+        let no_cs = raw_file("OLYMPUS CORPORATION", |_| {
+            let mut note = OM_SYSTEM.to_vec();
+            note.extend(ifd_bytes(16, &[short(0x0200, 0)]));
+            note
+        });
+        assert_eq!(
+            read_bytes(no_cs).unwrap(),
+            Some(CameraStyle::bare(Maker::Olympus))
+        );
+        // A Camera Settings pointer past the end is an error.
+        let past = raw_file("OM Digital Solutions", |_| {
+            let mut note = OM_SYSTEM.to_vec();
+            note.extend(ifd_bytes(16, &[long(OLYMPUS_CAMERA_SETTINGS, 1 << 30)]));
+            note
+        });
+        assert!(read_bytes(past).is_err());
     }
 
     #[test]

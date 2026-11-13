@@ -4135,6 +4135,57 @@ pub(crate) mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// An ORF indexed before the style reader read Olympus's maker note
+    /// has its tags read and no maker; a schema 14 library marks it
+    /// unread, so the next pass over its folder reads its tags, and
+    /// leaves every other row alone.
+    #[test]
+    fn a_schema_14_library_marks_its_orfs_unread() {
+        let dir = scratch("migrate-14");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let (r5, r6, a7) = shoot(&shoot_dir);
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            // As a schema 14 build left them, named as raws: an ORF of
+            // each Make with no maker, and a Canon raw.
+            for (path, name, make) in [
+                (&r5, "a.ORF", "OM Digital Solutions"),
+                (&r6, "b.ORF", "OLYMPUS IMAGING CORP."),
+                (&a7, "c.CR3", "Canon"),
+            ] {
+                lib.conn
+                    .execute(
+                        "UPDATE files SET name = ?, make = ?, maker = NULL, style_read = 1 \
+                         WHERE path = ?",
+                        params![name, make, path_bytes(path)],
+                    )
+                    .unwrap();
+            }
+            lib.conn.execute_batch("PRAGMA user_version = 14;").unwrap();
+        }
+        let lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(lib.styles_unread(None).unwrap(), 2);
+        let unread: Vec<String> = lib
+            .conn
+            .prepare("SELECT name FROM files WHERE style_read = 0 ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(unread, ["a.ORF", "b.ORF"]);
+        drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// On a network mount only a CR3's or a RAF's preview is read, from
     /// the file's ends: a NEF stays unscored after the pass and the
     /// scorer, and a CR3 is read (this one, a picture under a raw's

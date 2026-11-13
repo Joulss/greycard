@@ -104,7 +104,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 14;
+pub const SCHEMA_VERSION: i32 = 15;
 
 /// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
 /// schema 11 both: `taken` moved by `shift` seconds, worked out by
@@ -180,6 +180,10 @@ macro_rules! taken_at {
 /// NULL, and the scorer ([`score`]) reads its preview, the pass
 /// nothing. The looks kept go, since their focus was
 /// the variance of the Laplacian, and are made again with the score.
+/// Schema 15 adds nothing: the style reader learned Olympus's and OM
+/// System's maker note, so every row of theirs that has no maker yet
+/// is marked unread, and the next pass over its folder reads its tags
+/// and nothing else of the file.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -244,6 +248,11 @@ const MIGRATIONS: &[(i32, &str)] = &[
         13,
         "ALTER TABLE files ADD COLUMN focus REAL;
          DELETE FROM looks;",
+    ),
+    (
+        14,
+        "UPDATE files SET style_read = 0 WHERE maker IS NULL
+             AND (make LIKE 'OLYMPUS%' OR make LIKE 'OM Digital%');",
     ),
 ];
 
