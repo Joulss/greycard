@@ -539,6 +539,10 @@ comes across with its ratings and collections.
       hand), and an error row in the index for a file whose hash fails
       so it stops showing under every chip (§168). The all-roots view
       and the filter remembered between sessions are there since §174
+- [ ] ISO and focal length filtered by a range, a low and a high end
+      that snap to the values the folder has, in place of a chip for
+      every value; they write the `iso>=` and `iso<=` terms the filter
+      reads already. After the Cull panel's rows (PR 137)
 - [ ] A frame renamed on one side of a backup pair keeps its old name
       in the destination's stack copy (§511): a stack's revision
       without file names, or Back up renaming the destination's file;
