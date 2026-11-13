@@ -248,6 +248,9 @@ the reasoning lives in `docs/notes.md`.
       blank room under a short one, double-click back to automatic;
       same weights, one rule in the layout. Pick it up if the live
       gaps turn out too rare (2026-11-08)
+- [ ] The window's size and place are written at a close or a quit
+      only, so an editor ended by a signal, a force quit, or a logout
+      opens as it was the time before (§623). Low priority
 
 ## Next
 
