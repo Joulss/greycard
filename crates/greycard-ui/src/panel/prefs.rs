@@ -2406,7 +2406,14 @@ mod tests {
         }
         crate::testing::press(&app, Key::Backspace);
         crate::testing::type_text(&app, "z");
-        assert_eq!(app.get_settings_author(), "geLx1[]/zc");
+        // On macOS Home is not a move in a line of text, so the Delete
+        // after it finds the end and takes nothing.
+        let typed = if cfg!(target_os = "macos") {
+            "gGeLx1[]/zc"
+        } else {
+            "geLx1[]/zc"
+        };
+        assert_eq!(app.get_settings_author(), typed);
         assert!(app.get_settings_open());
         assert!(!app.get_grid_open() && !app.get_lightbox() && !app.get_cull_mode());
         assert_eq!(state.borrow().current, Some(0));
