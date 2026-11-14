@@ -2075,8 +2075,9 @@ export component EdgeArrow inherits Rectangle {
 // track at rest when the bars are set to stay; a press in the band is
 // the bar's and never what is under it.
 export component ScrollBand inherits TouchArea {
-    /// Along the foot rather than down the right edge.
+    /// Along the foot rather than down a vertical edge.
     in property <bool> horizontal;
+    /// Place a vertical thumb against the left edge of its band.
     /// How far the owner is scrolled, and how far it can be.
     in property <length> scroll;
     in property <length> max;
@@ -2368,6 +2369,7 @@ export component ScrollPane {
     }
     ScrollBand {
         horizontal: true;
+        x: 0px;
         y: parent.height - self.height;
         height: ScrollBars.band;
         width: root.max-y > 0 ? parent.width - ScrollBars.band : parent.width;
