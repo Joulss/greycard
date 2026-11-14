@@ -181,95 +181,95 @@ msgid "Show filmstrip"
 msgstr ""
 
 #. The view button at the top left: the grid
-#: crates/greycard-slint/ui/app.slint:4975
+#: crates/greycard-slint/ui/app.slint:4980
 msgid "Library"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:4979
+#: crates/greycard-slint/ui/app.slint:4984
 msgid "Library view"
 msgstr ""
 
 #. The view button at the top left: one frame
-#: crates/greycard-slint/ui/app.slint:4993
+#: crates/greycard-slint/ui/app.slint:4998
 msgid "Loupe"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:4997
+#: crates/greycard-slint/ui/app.slint:5002
 msgid "Loupe view"
 msgstr ""
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5062
+#: crates/greycard-slint/ui/app.slint:5079
 msgid "Open folder..."
 msgstr ""
 
 #. File menu
-#: crates/greycard-slint/ui/app.slint:5095
+#: crates/greycard-slint/ui/app.slint:5112
 msgid "Import..."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5118
+#: crates/greycard-slint/ui/app.slint:5135
 msgid "Stop import"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5118
+#: crates/greycard-slint/ui/app.slint:5135
 msgid "Stopping..."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5119
+#: crates/greycard-slint/ui/app.slint:5136
 msgid "Importing the catalog..."
 msgstr ""
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5140
+#: crates/greycard-slint/ui/app.slint:5157
 msgid "From a card or folder..."
 msgstr ""
 
 #. File menu, under Import
-#: crates/greycard-slint/ui/app.slint:5145
+#: crates/greycard-slint/ui/app.slint:5162
 msgid "A Lightroom catalog..."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5267
+#: crates/greycard-slint/ui/app.slint:5284
 msgid "Export queue"
 msgstr ""
 
 #. Help menu: a newer version is out; {} is its number
-#: crates/greycard-slint/ui/app.slint:5467
+#: crates/greycard-slint/ui/app.slint:5488
 msgid "{} is available"
 msgstr ""
 
 #. Help menu: under the version note
-#: crates/greycard-slint/ui/app.slint:5476
+#: crates/greycard-slint/ui/app.slint:5497
 msgid "Not now: do not offer {} again"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5484
+#: crates/greycard-slint/ui/app.slint:5505
 msgid "Settings..."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5492
+#: crates/greycard-slint/ui/app.slint:5513
 msgid "Help"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5495
+#: crates/greycard-slint/ui/app.slint:5516
 msgid "Help menu"
 msgstr ""
 
 #. Help menu: the keys sheet, with the key that opens it
-#: crates/greycard-slint/ui/app.slint:5516
+#: crates/greycard-slint/ui/app.slint:5537
 msgid "Keys (?)"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5520
+#: crates/greycard-slint/ui/app.slint:5541
 msgid "User guide"
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5525
+#: crates/greycard-slint/ui/app.slint:5546
 msgid "Report a problem..."
 msgstr ""
 
-#: crates/greycard-slint/ui/app.slint:5592
+#: crates/greycard-slint/ui/app.slint:5615
 msgid "Left panel"
 msgstr ""
 
@@ -1737,42 +1737,42 @@ msgstr ""
 msgid "SNAPSHOTS"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/history.slint:186
+#: crates/greycard-slint/ui/panel/history.slint:187
 msgid "Restore {}"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/history.slint:187
+#: crates/greycard-slint/ui/panel/history.slint:188
 msgid "Restore"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/history.slint:195
+#: crates/greycard-slint/ui/panel/history.slint:196
 msgid "Rename {}"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/history.slint:196
+#: crates/greycard-slint/ui/panel/history.slint:197
 msgid "Rename"
 msgstr ""
 
 #. Snapshots: remove the snapshot
-#: crates/greycard-slint/ui/panel/history.slint:209
+#: crates/greycard-slint/ui/panel/history.slint:210
 msgid "Remove"
 msgstr ""
 
 #. Snapshots: the list when there are none
-#: crates/greycard-slint/ui/panel/history.slint:222
+#: crates/greycard-slint/ui/panel/history.slint:224
 msgid "None yet."
 msgstr ""
 
 #. Snapshots: take a snapshot of the edit as it is
-#: crates/greycard-slint/ui/panel/history.slint:230
+#: crates/greycard-slint/ui/panel/history.slint:233
 msgid "Take"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/history.slint:248
+#: crates/greycard-slint/ui/panel/history.slint:251
 msgid "HISTORY"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/history.slint:330
+#: crates/greycard-slint/ui/panel/history.slint:328
 msgid "No changes yet."
 msgstr ""
 
@@ -2360,16 +2360,16 @@ msgstr ""
 msgid "PRESETS"
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/presets.slint:286
+#: crates/greycard-slint/ui/panel/presets.slint:281
 msgid "Save the edit or import a Lightroom preset."
 msgstr ""
 
-#: crates/greycard-slint/ui/panel/presets.slint:296
+#: crates/greycard-slint/ui/panel/presets.slint:294
 msgid "Remove {} from the list?"
 msgstr ""
 
 #. Presets section: the button that opens the sync sheet
-#: crates/greycard-slint/ui/panel/presets.slint:337
+#: crates/greycard-slint/ui/panel/presets.slint:339
 msgid "Sync..."
 msgstr ""
 
@@ -5390,7 +5390,7 @@ msgstr ""
 #. Two lines that say nothing: the same line twice, or a
 #. pair crossing at the center. Keep the tool in hand
 #. rather than setting a wrong angle silently.
-#: crates/greycard-ui/src/panel/crop.rs:911
+#: crates/greycard-ui/src/panel/crop.rs:972
 msgid "the guide needs two different lines"
 msgstr ""
 

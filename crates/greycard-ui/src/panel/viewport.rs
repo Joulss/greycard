@@ -6472,4 +6472,61 @@ pub(crate) mod tests {
             "the header alone: {header} against {heights:?}"
         );
     }
+
+    /// At a wide pane NAVIGATOR keeps the pane's width but stops
+    /// growing taller: a panorama takes the whole width, and a
+    /// portrait the capped height, the section one height for both.
+    #[test]
+    fn the_navigator_grows_no_taller_at_a_wide_pane() {
+        use crate::testing::settle;
+        use i_slint_backend_testing::ElementHandle;
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        app.set_left_size(500.0);
+        app.set_selected(0);
+        let find = |id: &str| {
+            let e = ElementHandle::find_by_element_id(&app, id)
+                .next()
+                .unwrap_or_else(|| panic!("{id} in the window"));
+            (e.absolute_position(), e.size())
+        };
+        let show = |w: u32, h: u32| {
+            app.set_navigator(slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+                slint::Rgba8Pixel,
+            >::new(w, h)));
+            settle(&app);
+            settle(&app);
+        };
+        // The cap: a 3:2 box 260 px wide.
+        let tallest = 260.0 / 1.5;
+        show(1000, 200);
+        let section = find("App::navigator-section").1;
+        let (_, held) = find("NavigatorSection::held");
+        let (_, shown) = find("NavigatorSection::shown");
+        assert!(
+            held.width > 400.0 && (held.width - section.width).abs() < 0.5,
+            "the box the pane's width: {held:?} in {section:?}"
+        );
+        assert!((held.height - tallest).abs() < 0.5, "capped: {held:?}");
+        assert!(
+            (shown.width - held.width).abs() < 0.5 && (shown.height - held.width / 5.0).abs() < 0.5,
+            "the panorama across the whole width: {shown:?} in {held:?}"
+        );
+        show(200, 300);
+        let (_, portrait) = find("NavigatorSection::held");
+        let (_, shown) = find("NavigatorSection::shown");
+        assert!(
+            (portrait.height - tallest).abs() < 0.5,
+            "the portrait's box no taller: {portrait:?}"
+        );
+        assert!(
+            (shown.height - tallest).abs() < 0.5 && (shown.width - tallest * 2.0 / 3.0).abs() < 0.5,
+            "the portrait at the capped height: {shown:?}"
+        );
+        assert!(
+            (find("App::navigator-section").1.height - section.height).abs() < 0.5,
+            "one height for both"
+        );
+    }
 }

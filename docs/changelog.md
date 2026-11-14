@@ -25,6 +25,12 @@ design note behind it.
 
 ### Window
 
+- The Navigator stays in sight above the left pane's lists however
+  far they scroll, and grows with the pane up to a fixed height.
+  Folders, Presets, Snapshots, and History lose their inner frames
+  and take less room, and the pane's gutters are narrower, so a deep
+  folder tree and longer translations fit. Thanks to Joulss (PR 138,
+  [§669](https://github.com/jessolmstead/greycard/blob/master/docs/notes/669-the-left-pane-navigator-pinned-lists-unframed.md)).
 - Quit in full screen and greycard starts in full screen; leaving it
   returns to the window as it was before
   ([§649](https://github.com/jessolmstead/greycard/blob/master/docs/notes/649-the-window-opens-full-screen-as-it-was-closed.md)).

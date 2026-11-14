@@ -554,6 +554,45 @@ mod tests {
         assert!(app.invoke_share_live(0, 2), "a move asked: live again");
     }
 
+    /// The share edges lie in the gaps between the sections, never
+    /// over a section's foot: a press low on TAKE takes a snapshot,
+    /// and one low on the last folder row picks that folder.
+    #[test]
+    fn a_press_at_a_sections_foot_is_the_sections() {
+        use i_slint_backend_testing::ElementHandle;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let app = pane(3, 3);
+        app.set_selected(0);
+        sized(&app, 1600.0);
+        let found = |label: &str| {
+            let e = ElementHandle::find_by_accessible_label(&app, label)
+                .next()
+                .unwrap_or_else(|| panic!("{label} in the left pane"));
+            (e.absolute_position(), e.size())
+        };
+        let taken = Rc::new(Cell::new(0));
+        let t = taken.clone();
+        app.on_snapshot_taken(move || t.set(t.get() + 1));
+        let (at, size) = found("Take");
+        for dy in [2.0, size.height / 2.0, size.height - 2.0] {
+            let before = taken.get();
+            click(&app, at.x + size.width / 2.0, at.y + dy);
+            settle(&app);
+            assert_eq!(taken.get(), before + 1, "TAKE {dy} px down its {size:?}");
+        }
+        let picked = Rc::new(Cell::new(-1));
+        let p = picked.clone();
+        app.on_folder_tree_picked(move |i| p.set(i));
+        let (at, size) = found("folder 2");
+        for dy in [2.0, size.height / 2.0, size.height - 2.0] {
+            picked.set(-1);
+            click(&app, at.x + size.width / 2.0, at.y + dy);
+            settle(&app);
+            assert_eq!(picked.get(), 2, "the last folder {dy} px down its {size:?}");
+        }
+    }
+
     /// Timers and change handlers a few frames on, unlike `settle`,
     /// which also moves the pointer to the corner.
     fn tick() {
