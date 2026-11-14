@@ -1111,6 +1111,13 @@ clears or a tester asks for it.
 
 - [ ] Flexible dual monitor support; color management per display.
 - [ ] Different frameline options when cropping
+- [ ] The crop frame easier to take hold of: an edge is grabbed along
+      its whole length today, but a tester found only the corners
+      (reddit, 2026-11-14); measure the edges' reach, widen it, and
+      show the resize cursor over it
+- [ ] Level quicker to reach in the crop: a key for it, and a drag
+      with a modifier or the right button that draws the ruler
+      without the button first (reddit, 2026-11-14)
 - [ ] A crop past the picture's edge after a perspective or a turn,
       the empty corners kept for a pixel editor, and a scale beside
       the perspective sliders to bring back what was pushed out, as
