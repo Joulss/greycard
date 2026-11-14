@@ -173,6 +173,7 @@ mod tests {
                 merged: false,
                 headroom: 0.0,
                 lens_corrected: false,
+                monochrome: false,
             },
             identity: Identity {
                 make: "Canon".into(),

@@ -137,6 +137,11 @@ design note behind it.
 
 ### Fixes
 
+- DNGs from monochrome sensors open (Leica Monochrom bodies, the
+  Ricoh GR IV Monochrome); before, each failed with "Linear layout
+  with 1 samples per pixel". They develop to a neutral grey, and
+  Temperature and Tint leave them alone; tone them with color grading
+  ([§668](https://github.com/jessolmstead/greycard/blob/master/docs/notes/668-monochrome-sensors-open.md)).
 - A sidecar with brush masks is about a quarter the size: a stroke's
   points are written on one line, not a number a line. One tester's
   went from 28 MB to 6.6 MB. A sidecar takes the new layout the next

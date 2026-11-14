@@ -487,7 +487,15 @@ pub(crate) fn local_white_shift(st: &mut State, panel: WhiteKey) -> Option<White
         st.develop.shown_white = shift.clone();
         return shift;
     }
+    let monochrome = st
+        .develop
+        .frame
+        .as_ref()
+        .is_some_and(|(f, _)| f.layout == greycard_core::raw::SensorLayout::Monochrome);
     let shift = match (white_profile(st), st.develop.base_white) {
+        (_, Some(base)) if monochrome => base
+            .temp_tint
+            .map(|own| WhiteShift::neutral(global.unwrap_or(own))),
         (Some(profile), Some(base)) => base.temp_tint.map(|own| {
             WhiteShift::from_parts(profile, base.gains, base.matrix, global.unwrap_or(own))
         }),

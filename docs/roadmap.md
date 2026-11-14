@@ -7,6 +7,20 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The capture sharpen's early stop sits on a knife edge: the
+      device and the CPU can stop a 32x32 block an iteration apart,
+      and the block moves by up to 3% (§668). A margin past an
+      epsilon, or a stop that is continuous across the crossing
+- [ ] The noise estimate reads up to twice a plane's own
+      neighbor-difference variance in deep shadows, on a Bayer frame
+      as on a monochrome one (§668); waits on a measurement across
+      cameras
+- [ ] Texture alone differs by 1.9e-4 between the device and the CPU
+      on one monochrome file: the CPU's running sums against the
+      shader's window sums, most likely (§668)
+- [ ] A monochrome frame: Temperature and Tint do nothing and are not
+      dimmed (§668); waits on a decision. Untested there: the camera
+      match, and HDR, panorama, and focus merges
 - [ ] Dehaze alone still collapses the capture sharpen's threshold
       on a noisy frame (ISO 3200, Dehaze +50: to zero). The guide
       could be taken before Dehaze too, at the cost of changing
