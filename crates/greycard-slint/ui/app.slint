@@ -3786,8 +3786,8 @@ export component App inherits Window {
                 // lone Cull tab would be a mode switch posing as a bar.
                 // In its place, over a frame, a line saying why.
                 tabs := HorizontalLayout {
-                    padding-left: Theme.space-4;
-                    padding-right: Theme.space-4;
+                    padding-left: Theme.space-1;
+                    padding-right: Theme.space-1;
                     padding-top: root.frozen && root.selected < 0 ? 0 : Theme.space-2;
                     spacing: Theme.space-2;
                     if root.frozen && root.selected >= 0: Text {
@@ -3797,7 +3797,7 @@ export component App inherits Window {
                         wrap: word-wrap;
                     }
                     if !root.frozen: Segmented {
-                        width: 56px;
+                        width: 40px;
                         options: ["Cull"];
                         // The Loupe's mode button at the top of the develop panel
                         labels: [@tr("Cull")];
@@ -3823,6 +3823,12 @@ export component App inherits Window {
                         options: ["Develop", "Crop", "Masks", "Retouch"];
                         // The Loupe's mode buttons at the top of the develop panel
                         labels: [@tr("Develop"), @tr("Crop"), @tr("Masks"), @tr("Retouch")];
+                        // Apart in French too, where the four only
+                        // just fit beside Cull.
+                        label-margin: 2px;
+                        rounded: false;
+                        padded: false;
+                        bordered: false;
                         current <=> root.panel-tab;
                         selected(t) => { root.tab-chosen(t); }
                     }
@@ -3833,8 +3839,8 @@ export component App inherits Window {
                 // under it, and the scroll counts from its foot, so
                 // the list's own height never moves what they show.
                 if root.shown-tab == "Masks": VerticalLayout {
-                    padding-left: Theme.space-4;
-                    padding-right: Theme.space-4;
+                    padding-left: Theme.space-1;
+                    padding-right: Theme.space-1;
                     padding-top: Theme.space-2;
                     padding-bottom: Theme.space-2;
                     AdjustmentsList {
@@ -3943,11 +3949,10 @@ export component App inherits Window {
                     min-height: root.shown-tab == "Masks" ? 0px : 50px;
                     panel-sections := VerticalLayout {
                         alignment: start;
-                        padding: Theme.space-4;
+                        padding: Theme.space-1;
                         // Clear of the scroll bar's band, however wide it is.
-                        padding-right: max(Theme.space-4, ScrollBars.band + 2px);
-                        padding-top: Theme.space-2;
-                        spacing: Theme.space-2;
+                        padding-right: max(Theme.space-1, ScrollBars.band + 2px);
+                        padding-top: Theme.space-1;
                         // Culling: what the mode is, the browser's
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
@@ -4022,8 +4027,6 @@ export component App inherits Window {
                         }
                         if root.shown-tab == "Masks" && root.target > 0: mask-section := AdjustmentsSection {
                             one-of-panel: !root.grid-open;
-                            // The list's foot above is its line.
-                            line-above: false;
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
@@ -4602,8 +4605,8 @@ export component App inherits Window {
                     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
                     HorizontalLayout {
                         padding: Theme.space-3;
-                        padding-left: Theme.space-4;
-                        padding-right: Theme.space-4;
+                        padding-left: Theme.space-2;
+                        padding-right: Theme.space-2;
                         spacing: Theme.space-2;
                         // A click fits; the chevron or a right-click
                         // offers the zooms, each about the view's
@@ -5028,6 +5031,7 @@ export component App inherits Window {
             padding-left: Theme.space-1;
             padding-right: Theme.space-1;
             navigator-section := NavigatorSection {
+                boxed: false;
                 line-above: false;
                 zoom-text: root.zoom-text;
                 collapsed-navigator <=> root.collapsed-navigator;
@@ -5181,6 +5185,7 @@ export component App inherits Window {
                 }
                 // The library's roots, with the grid: a row a root.
                 if root.grid-open: RootsSection {
+                    boxed: false;
                     vertical-stretch: 0;
                     roots: root.library-roots;
                     all-on: root.library-all-on;
@@ -5220,6 +5225,7 @@ export component App inherits Window {
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(0, self.grown, self.room); }
                     folders-section := FoldersSection {
+                        boxed: false;
                         rows: root.folder-tree;
                         subfolders <=> root.folder-tree-subfolders;
                         collapsed-folders <=> root.collapsed-folders;
@@ -5249,6 +5255,7 @@ export component App inherits Window {
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(1, self.grown, self.room); }
                     collections-section := CollectionsSection {
+                        boxed: false;
                         collections: root.collections;
                         ctrl-click-menu: root.ctrl-click-menu;
                         collapsed-collections <=> root.collapsed-collections;
@@ -5293,6 +5300,7 @@ export component App inherits Window {
                 // the roots, folders and collections, which say where
                 // the user is; this says what is chosen there.
                 if root.grid-open: MetaSection {
+                    boxed: false;
                     vertical-stretch: 0;
                     frame-meta-on: root.frame-meta-on;
                     frame-title: root.frame-title;
@@ -5334,6 +5342,7 @@ export component App inherits Window {
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(2, self.grown, self.room); }
                     presets-section := PresetsSection {
+                        boxed: false;
                         selected <=> root.selected;
                         collapsed-presets <=> root.collapsed-presets;
                         preset-names <=> root.preset-names;
@@ -5401,6 +5410,7 @@ export component App inherits Window {
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(3, self.grown, self.room); }
                     snapshots-section := SnapshotsSection {
+                        boxed: false;
                         selected <=> root.selected;
                         snapshot-names <=> root.snapshot-names;
                         snapshot-editing <=> root.snapshot-editing;
@@ -5445,6 +5455,7 @@ export component App inherits Window {
                     property <int> asked: root.share-ask;
                     changed asked => { root.share-laid(4, self.grown, self.room); }
                     history-section := HistorySection {
+                        boxed: false;
                         history-rows <=> root.history-rows;
                         hint: root.history-version;
                         history-current <=> root.history-current;

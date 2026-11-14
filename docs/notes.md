@@ -681,3 +681,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§667. A sidecar's lists of numbers on one line](notes/667-a-sidecars-numbers-on-one-line.md) (2026-11-13)
 - [§668. Monochrome sensors open](notes/668-monochrome-sensors-open.md) (2026-11-14)
 - [§669. The left pane: the Navigator pinned, the lists unframed](notes/669-the-left-pane-navigator-pinned-lists-unframed.md) (2026-11-14)
+- [§670. The right panel's sections and tools](notes/670-the-right-panels-sections-and-tools.md) (2026-11-14)

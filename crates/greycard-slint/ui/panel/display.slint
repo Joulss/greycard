@@ -110,6 +110,7 @@ export component MonitorSection inherits Section {
         Text { text: @tr("Canvas"); width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Swatches {
             colors: root.canvas-colors;
+            ringed: true;
             current <=> root.canvas-choice;
             selected(i) => { root.canvas-changed(); }
         }

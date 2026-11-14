@@ -282,9 +282,6 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
-    // The hairline along the section's top; off where a rule is drawn
-    // there already (under the Masks tab's pinned list).
-    in property <bool> line-above: true;
     // Whether a fold moves or lands at once: a click on the header
     // moves it, and a fold the view brings, set false around it,
     // lands as the sections around it appear.
@@ -348,23 +345,69 @@ export component Section inherits VerticalLayout {
     // one child of the body that stretches. Its other children must
     // each have a bounded height.
     in property <bool> shares: false;
-    spacing: 6px;
-    padding-top: Theme.space-1;
-    // The header, with a hairline along the section's top, in the
-    // padding above it: a run of folded sections reads as a list of
-    // headers. Drawn outside the header's box, so it takes no room.
+    // A raised box round the body, the header above it and the body
+    // padded inside it, as the right panel's sections are. Off, the
+    // left pane's: a header over a rule, the body unpadded, so its
+    // lists keep the pane's width and their floors (§669).
+    in property <bool> boxed: true;
+    // Unboxed, the hairline along the section's top; off where a rule
+    // is drawn there already (over the pinned Navigator).
+    in property <bool> line-above: true;
+    // The width the body gives its rows, inside its padding.
+    out property <length> body-width: body.width - body.padding-left - body.padding-right;
+    // The header under the pointer: all of it answers at once.
+    property <bool> lit: root.boxed ? row.has-hover : head.has-hover;
+    function fold-clicked() {
+        // A focused slider elsewhere in the panel keeps the keys, and
+        // the panel keeps it in view as this section opens or folds;
+        // one in this section lets go, since the fold takes it out of
+        // view, as does one anywhere in the panel when this one opens
+        // under One section open at a time, which folds all others.
+        let folds-the-rest = root.collapsed && root.one-of-panel && Folds.one-open;
+        if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
+            Typing.close-all();
+        }
+        root.animated = true;
+        root.collapsed = !root.collapsed;
+        if (!root.collapsed && root.one-of-panel && Folds.one-open) {
+            root.chased = true;
+            Folds.reveal-first = true;
+            root.show-opened();
+        }
+    }
+    spacing: root.boxed ? 0px : 6px;
+    padding-top: root.boxed ? 0px : Theme.space-1;
+    // The header. Boxed, it stays above the body as it folds away,
+    // and the whole row takes the press and lights under the pointer:
+    // the hover's fill, as a button's, not the accent, which is what
+    // is chosen. Unboxed, with a hairline along the section's top, in
+    // the padding above it: a run of folded sections reads as a list
+    // of headers. Drawn outside the header's box, so it takes no room.
     Rectangle {
+        border-radius: Theme.radius-sm;
+        background: root.boxed && root.lit ? Theme.hover : transparent;
+        animate background { duration: Theme.quick; }
+        row := TouchArea {
+            enabled: root.boxed;
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { root.fold-clicked(); }
+        }
         HorizontalLayout {
-            spacing: Theme.space-2;
+            spacing: root.boxed ? Theme.space-3 : Theme.space-2;
+            padding-top: root.boxed ? Theme.space-2 : 0px;
+            padding-bottom: root.boxed ? Theme.space-2 : 0px;
+            padding-right: root.boxed ? Theme.space-1 : 0px;
             Rectangle {
                 horizontal-stretch: 1;
-                height: Theme.icon + Theme.space-1;
                 HorizontalLayout {
+                    // Unboxed, a row of 20 px round the 16 px icons.
+                    padding-top: root.boxed ? 0px : Theme.space-1 / 2;
+                    padding-bottom: root.boxed ? 0px : Theme.space-1 / 2;
                     spacing: Theme.space-2;
                     alignment: start;
                     Image {
                         source: @image-url("icons/chevron-down.svg");
-                        colorize: head.has-hover ? Theme.text : Theme.text-muted;
+                        colorize: root.boxed || root.lit ? Theme.text : Theme.text-muted;
                         width: Theme.icon;
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
@@ -373,14 +416,14 @@ export component Section inherits VerticalLayout {
                     }
                     if root.icon.width > 0: Image {
                         source: root.icon;
-                        colorize: Theme.text-secondary;
+                        colorize: root.boxed ? Theme.text : Theme.text-secondary;
                         width: Theme.icon;
                         height: Theme.icon;
                         y: (parent.height - self.height) / 2;
                     }
                     if root.owner != "": Text {
                         text: root.owner;
-                        color: head.has-hover ? Theme.text : Theme.text-secondary;
+                        color: root.boxed || root.lit ? Theme.text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         vertical-alignment: center;
@@ -388,7 +431,7 @@ export component Section inherits VerticalLayout {
                     }
                     Text {
                         text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
-                        color: head.has-hover ? Theme.text : Theme.text-secondary;
+                        color: root.boxed || root.lit ? Theme.text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
                         letter-spacing: 0.8px;
@@ -418,26 +461,9 @@ export component Section inherits VerticalLayout {
                     height: 100%;
                 }
                 head := TouchArea {
+                    enabled: !root.boxed;
                     mouse-cursor: MouseCursor.pointer;
-                    // A focused slider elsewhere in the panel keeps the
-                    // keys, and the panel keeps it in view as this
-                    // section opens or folds; one in this section lets
-                    // go, since the fold takes it out of view, as does
-                    // one anywhere in the panel when this one opens under
-                    // One section open at a time, which folds all others.
-                    clicked => {
-                        let folds-the-rest = root.collapsed && root.one-of-panel && Folds.one-open;
-                        if (SliderKeys.holder == 0 || Typing.editing || root.holds-the-keys() || folds-the-rest) {
-                            Typing.close-all();
-                        }
-                        root.animated = true;
-                        root.collapsed = !root.collapsed;
-                        if (!root.collapsed && root.one-of-panel && Folds.one-open) {
-                            root.chased = true;
-                            Folds.reveal-first = true;
-                            root.show-opened();
-                        }
-                    }
+                    clicked => { root.fold-clicked(); }
                 }
             }
             if root.action != "": Rectangle {
@@ -472,16 +498,24 @@ export component Section inherits VerticalLayout {
             height: 1px;
             width: 100%;
             background: Theme.border;
-            visible: root.line-above;
+            visible: !root.boxed && root.line-above;
         }
     }
-    Rectangle {
+    if !root.boxed: Rectangle {
         height: 1px;
         background: Theme.border;
     }
-    // The body, clipped to nothing when folded.
+    // The body, clipped to nothing when folded. Boxed, it folds down
+    // to a solid 1 px line under the header.
     fold-box := Rectangle {
+        width: 100%;
         clip: true;
+        property <bool> line-only: root.collapsed && self.height <= 1px;
+        background: !root.boxed ? transparent : self.line-only ? Theme.border : Theme.raised;
+        border-color: Theme.border;
+        border-width: root.boxed && !self.line-only ? 1px : 0px;
+        // Boxed, never under the line it folds to.
+        property <length> least: root.boxed ? 1px : 0px;
         property <length> full: root.collapsed ? 0px : body.preferred-height;
         animate full { duration: root.fold-time; easing: ease-out; }
         // For the sliders' focus walk alone: closed all the way, the
@@ -505,12 +539,12 @@ export component Section inherits VerticalLayout {
         property <bool> moving: self.open < 1;
         property <bool> folding: self.moving && root.collapsed;
         property <length> span: self.held > 0 ? self.held : body.preferred-height;
-        preferred-height: !root.shares ? self.full
-            : self.folding ? self.open * self.span : self.open * body.preferred-height;
-        max-height: !root.shares ? self.full
-            : self.folding ? self.open * self.span : self.open * body.max-height;
-        min-height: !root.shares ? self.full
-            : self.folding ? self.open * self.span : self.open * body.min-height;
+        preferred-height: max(self.least, !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.preferred-height);
+        max-height: max(self.least, !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.max-height);
+        min-height: max(self.least, !root.shares ? self.full
+            : self.folding ? self.open * self.span : self.open * body.min-height);
         // Kept only for a sharing section, so no other lays itself out
         // as it is made (a change handler reads its height at once).
         if root.shares: Rectangle {
@@ -522,6 +556,12 @@ export component Section inherits VerticalLayout {
             changed laid => { if (self.settled && self.laid > 0) { fold-box.held = self.laid; } }
         }
         body := VerticalLayout {
+            // Boxed, 8 px above and below and 6 at the sides: the body
+            // as wide as before the box, so a button's words keep
+            // their letters.
+            padding: root.boxed ? Theme.space-2 : 0px;
+            padding-left: root.boxed ? Theme.space-2 - 2px : 0px;
+            padding-right: root.boxed ? Theme.space-2 - 2px : 0px;
             x: parent.shut >= 1 ? -100000px : 0;
             y: 0;
             width: 100%;
@@ -529,7 +569,7 @@ export component Section inherits VerticalLayout {
             // rather than squeezing its list.
             height: !root.shares ? self.preferred-height
                 : max(parent.height, self.preferred-height, parent.folding ? parent.span : 0px);
-            spacing: Theme.space-1;
+            spacing: root.boxed ? 0px : Theme.space-1;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
@@ -1522,6 +1562,12 @@ export component Segmented inherits Rectangle {
     /// Why each option cannot be chosen, by index: one with words is
     /// greyed, takes no click, and says them in place of its tip.
     in property <[string]> why-not;
+    // Whether the options are all the same width, or each just wide
+    // enough for its label.
+    in property <bool> equal-width: false;
+    // The least room each side of an option's words, when each is as
+    // wide as its words: a gap between them however tight the row.
+    in property <length> label-margin: 0px;
     in property <bool> rounded: true;
     in property <bool> bordered: true;
     in property <bool> padded: true;
@@ -1533,7 +1579,7 @@ export component Segmented inherits Rectangle {
     border-color: Theme.border;
     opacity: root.enabled ? 1 : 0.45;
     HorizontalLayout {
-        padding: root.padded ? 2px : 0px;
+        padding: root.padded ? 3px : 0px;
         spacing: 2px;
         for option[i] in root.options: Rectangle {
             property <bool> on: option == root.current;
@@ -1541,7 +1587,9 @@ export component Segmented inherits Rectangle {
             border-radius: root.rounded ? Theme.radius-sm : 0px;
             background: on ? Theme.raised : (t.has-hover && root.enabled && usable ? Theme.hover : transparent);
             animate background { duration: Theme.quick; }
-            Text {
+            min-width: root.equal-width ? 0px : label.preferred-width + 2 * root.label-margin;
+            preferred-width: root.equal-width ? 0px : label.preferred-width + 2 * root.label-margin;
+            label := Text {
                 text: i < root.labels.length ? root.labels[i] : option;
                 color: !usable ? Theme.text-muted : on ? Theme.text : Theme.text-secondary;
                 font-size: Theme.font-xs;
@@ -1627,6 +1675,9 @@ export component Swatches inherits Rectangle {
     in property <[color]> colors;
     in-out property <int> current: 0;
     in property <bool> enabled: true;
+    // A hairline round each swatch, for shades one of which may be the
+    // ground's own (a canvas grey on a section's box).
+    in property <bool> ringed: false;
     callback selected(int);
     height: Theme.control-height;
     HorizontalLayout {
@@ -1638,8 +1689,8 @@ export component Swatches inherits Rectangle {
             property <bool> pale: color.to-hsv().value > 0.5 && color.to-hsv().saturation < 0.2;
             border-radius: self.height / 2;
             background: color;
-            border-width: on ? 2px : 0;
-            border-color: self.pale ? Theme.over-plate-dense : Theme.text;
+            border-width: on ? 2px : root.ringed ? 1px : 0;
+            border-color: !on ? Theme.border-strong : self.pale ? Theme.over-plate-dense : Theme.text;
             opacity: !root.enabled ? 0.3 : (on || t.has-hover) ? 1 : 0.55;
             animate opacity { duration: Theme.quick; }
             t := TouchArea {

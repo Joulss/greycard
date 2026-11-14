@@ -4599,6 +4599,20 @@ mod tests {
                     );
                 }
                 assert!(rows >= 1, "{scope} at {height}: a row in sight");
+                // A row is given up before the sections' view goes
+                // under 150 px (`chrome` in mask.slint).
+                let view = i_slint_backend_testing::ElementHandle::find_by_element_id(
+                    &app,
+                    "App::panel-view",
+                )
+                .next()
+                .expect("the sections' view")
+                .size()
+                .height;
+                assert!(
+                    rows == 1 || view >= 149.5,
+                    "{scope} at {height}: {rows} rows over a view of {view}"
+                );
                 assert!(
                     !placed(&app, "Mask 10").is_empty(),
                     "{scope} at {height}: the chosen row is in sight"

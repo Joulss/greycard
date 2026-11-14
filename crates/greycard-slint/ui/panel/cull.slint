@@ -69,7 +69,7 @@ export component CullSection inherits Section {
     // label and both buttons whole beside it, the label goes over them,
     // as the filter's group names do.
     property <bool> picture-over: 68px + 2 * Theme.space-2 + camera-jpeg.preferred-width
-        + developed.preferred-width > self.width - self.padding-left - self.padding-right;
+        + developed.preferred-width > self.body-width;
     // Culling section: the row that picks which picture is shown
     if root.picture-over: Text { text: @tr("Picture"); color: Theme.text; font-size: Theme.font-sm; }
     HorizontalLayout {

@@ -56,6 +56,11 @@ design note behind it.
 - Language offers English explicitly, so a translated system can
   switch back to the source wording
   ([§637](https://github.com/jessolmstead/greycard/blob/master/docs/notes/637-english-in-the-language-picker.md)).
+- The right panel's sections sit in raised boxes, with narrower
+  gutters, brighter titles, and flat tabs; a section's whole header
+  folds it. Crop, Rotate, and Perspective group their tools. Thanks to
+  Joulss (PR 136,
+  [§670](https://github.com/jessolmstead/greycard/blob/master/docs/notes/670-the-right-panels-sections-and-tools.md)).
 
 ### Library
 
