@@ -644,20 +644,15 @@ msgstr "ÉTALONNAGE DES COULEURS"
 msgid "Enlarged wheel"
 msgstr "Roue agrandie"
 
-#: crates/greycard-slint/ui/panel/color.slint:609
+#: crates/greycard-slint/ui/panel/color.slint:615
 msgid "Highlights"
 msgstr "Hautes lumières"
 
 #: crates/greycard-slint/ui/panel/color.slint:615
-msgid "Mid-tones"
-msgstr "Tons moyens"
-
-#: crates/greycard-slint/ui/panel/color.slint:609
-#, fuzzy
 msgid "Midtones"
 msgstr "Tons moyens"
 
-#: crates/greycard-slint/ui/panel/color.slint:609
+#: crates/greycard-slint/ui/panel/color.slint:615
 msgid "Shadows"
 msgstr "Ombres"
 
