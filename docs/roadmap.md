@@ -252,9 +252,12 @@ the reasoning lives in `docs/notes.md`.
       mask or cut from it, and an experienced tester could not find
       the way; the Masks tab wants the next shape's entry under the
       mask it joins, with the mode in view. Asked 2026-10-18
-- [ ] The NOISE section's chroma denoiser on a picture: it works on
-      RGB where the learned tier wants a mosaic, so a JPEG could have
-      it; the section says "raw only" today (§602, 2026-11-07)
+- [ ] The profiled denoise on a picture (a JPEG, a TIFF): it works on
+      RGB where the learned tier wants a mosaic, so a picture could
+      have it, luma and chroma both; the section says "raw only"
+      today (§602, 2026-11-07; wanted 2026-11-14). A picture carries
+      no noise model, so one is measured from its own flat areas,
+      after the camera's tone curve and its own smoothing
 - [ ] The left pane's gaps as a drag that wins: today a drag moves
       room only between a list cut short and one grown past its floor,
       so on a window where every list fits no gap is live (§603). The
