@@ -694,6 +694,11 @@ brackets and the panorama to shoot for testing are in
       mattering (issue 134, 2026-11-12)
 - [ ] The focus stack's memory bound against available rather than
       physical memory, once a reader exists (§573)
+- [ ] Focus breathing in a focus stack: each frame scaled to the
+      reference before the merge, the scale fitted with the alignment
+      (issue 134, 2026-11-13)
+- [ ] A focus stack corrected by hand: a region taken from a chosen
+      frame, as Canon DPP and Shine Stacker offer (issue 134)
 - [ ] Phase 1's leftovers (§525): the CA fit taken from the frame with
       the most voting tiles rather than the reference, measured on a
       real bracket with a clipped sky (§529); the Highlights pull's aim
@@ -1103,6 +1108,18 @@ clears or a tester asks for it.
 
 - [ ] Flexible dual monitor support; color management per display.
 - [ ] Different frameline options when cropping
+- [ ] A crop past the picture's edge after a perspective or a turn,
+      the empty corners kept for a pixel editor, and a scale beside
+      the perspective sliders to bring back what was pushed out, as
+      darktable has (discussion 149, 2026-11-14)
+- [ ] A crop copied to other frames, and the crop's numbers shown so
+      one can be typed (discussion 59, 2026-11-12)
+- [ ] A reset on each section's header, on Develop, Crop, and a
+      mask's sections (discussion 59, 2026-11-12); double-click
+      resets one slider and Reset all the tab today
+- [ ] Refine edge steps between 0 and 1%: off, then the edge fit over
+      its smallest reach, which smooths a speckled range mask at once
+      (discussion 59, 2026-11-12); waits on a measurement
 - [ ] Camera tethering
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
