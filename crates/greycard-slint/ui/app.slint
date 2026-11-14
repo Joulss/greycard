@@ -4966,7 +4966,7 @@ export component App inherits Window {
         // finds the way to the other from either. The Loupe comes back
         // in the mode it was left in, Cull or Develop.
         HorizontalLayout {
-            padding: Theme.space-2;
+            padding: Theme.space-4;
             padding-top: Theme.space-3;
             padding-bottom: 0;
             spacing: Theme.space-2;
@@ -5028,12 +5028,12 @@ export component App inherits Window {
                 // Stretched, so the lists take the room; all else
                 // here keeps its height (a stretch of none), and the
                 // room the lists leave goes to the foot below them.
-                padding: Theme.space-1;
+                padding: Theme.space-4;
                 // Clear of the scroll bar's band, however wide it is.
-                padding-right: max(Theme.space-1, ScrollBars.band + 2px);
-                padding-top: Theme.space-1;
+                padding-right: max(Theme.space-4, ScrollBars.band + 2px);
+                padding-top: Theme.space-2;
                 // The foot's own gap makes up the rest.
-                padding-bottom: Theme.space-1;
+                padding-bottom: Theme.space-4 - Theme.space-2;
                 spacing: Theme.space-2;
                 // The frame's, and so the loupe's alone: first, so
                 // it keeps the pane's top left corner whatever the
@@ -5455,10 +5455,8 @@ export component App inherits Window {
             }
         }
         VerticalLayout {
-            padding: Theme.space-3;
-            padding-top: Theme.space-3 - 1px;
-            padding-left: Theme.space-2;
-            padding-right: Theme.space-2;
+            padding: Theme.space-4;
+            padding-top: Theme.space-2;
             spacing: Theme.space-2;
             // A newer release, when the check found one: the
             // page in the browser, or Not now for this one.
