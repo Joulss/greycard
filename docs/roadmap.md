@@ -197,19 +197,20 @@ the reasoning lives in `docs/notes.md`.
       Structure, each band's gain eased back where that band is already
       strong, so a flat area gains depth and a busy one is not crunched
       (discussion 95; Nik's Dynamic Contrast is the reference)
-- [ ] Highlights' reach over display white: on a night frame with neon
+- [ ] Whites' reach over display white: on a night frame with neon
       signs at Exposure +1, the lettering and its glow sit 1 to 2
       stops over white, and Highlights at -2 takes under half a stop
       off them (§250's ease past the 99th percentile costs 0.4 of
       that). Measured on the reporter's raw: the letters are clipped
       on every channel and read only by their edge against a glow
       measured in red alone; Highlights -2 with Whites -2 renders them
-      today; a range to -3 or no ease-off does nothing alone. What
-      would let Highlights do it alone is a pull of the regions near
-      or over white, which greys a blown sky behind a backlit subject
-      and re-renders stored edits, so it waits on a decision. Until
-      then the guide should say to reach for Whites with Highlights
-      on a light source (issue 132, 2026-11-14)
+      today, faintly; a range to -3 or no ease-off does nothing alone.
+      Decided: Highlights keeps its span and the top stays Whites'
+      (unlike Lightroom, where Highlights is the catch-all). So the
+      work is Whites' reach over white without flattening the 85th
+      to 95th percentiles (Whites at -3 took 0.77 stops off them),
+      and the guide saying to reach for Whites on a light source
+      (issue 132, 2026-11-14)
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a
