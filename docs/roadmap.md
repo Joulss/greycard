@@ -643,6 +643,10 @@ and a picture found across the library by a phrase or by a person.
 A model suggests; a flag, a rating or a keyword is only ever set by
 the user.
 
+- [ ] The capture date in the Cull panel: a date range beside the
+      other filters, and the camera's own copyright and artist
+      shown read-only in METADATA (discussion 147, 2026-11-14);
+      `date:` in the search field is the only date filter today
 - [ ] The focus score taken on the subject where the Subject mask
       finds one, on the frame otherwise (§559); the command line's
       passes scoring too
