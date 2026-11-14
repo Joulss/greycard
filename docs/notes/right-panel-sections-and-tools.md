@@ -2,34 +2,28 @@
 
 *2026-11-12*
 
-The right panel gives the picture more of its width. Its tabs and
-section stack use narrower gutters, and the Develop, Crop, Masks, and
-Retouch tabs use flat segmented controls. The shared Section header
-keeps its icon, title, switch, and fold action, with stronger text and
-room around the header. The open body has a restrained raised surface,
-a square border, and inner padding; a folded body settles to a 1 px
-rule. This same Section treatment reaches the left and Cull panels
-where they use the shared control.
+The right panel's tabs and section stack use narrower gutters, leaving
+more width for their controls. Its Develop, Crop, Masks, and Retouch tabs
+use flat segmented controls. Section headers have stronger text and
+more room around their contents. An open Section body has a raised
+surface, a square 1 px border, and inner padding; a folded body becomes
+a 1 px rule. Because Section is shared, this treatment also appears in
+the left and Cull panels.
 
-The histogram, waveform, and vectorscope stay pinned in the panel
-head, above the scrolling sections. Their layout and controls keep
-the laptop-height room used by the Masks list and footer.
+The panel head uses denser camera and exposure lines, removes the
+scopes' rounded frame, and gives their selector the same flat style as
+the tabs. The Masks list's height calculation follows the revised
+header spacing.
 
-**Crop tools keep their groups.** Crop and Draw, the aspect choice
-and custom ratio, and Portrait are laid out together. Rotate groups
-the Level and Auto level actions, edit turns and flips, Angle, and the
-separate frame turns. Perspective groups its guide actions and
-sliders; Reset remains at the end of the Crop tab, where it applies
-to the whole crop edit. These are layout changes: the existing crop,
-rotation, perspective, and frame-turn actions still drive them.
+**Crop tools have clearer groups.** Crop, Draw, the aspect choice,
+custom ratio, and Portrait are gathered into one layout. Rotate groups
+Level and Auto level, edit turns and flips, Angle, and the separate
+frame turns. Perspective groups its guide actions and sliders.
 
-**Controls fit their words.** Segmented controls can size choices to
-their labels or give them equal widths, and can opt out of the rounded
-frame, padding, and border. The Display curve's Per channel and AgX
-choices use equal widths.
+**Controls fit their words.** Segmented controls can give every choice
+the same width; the Display curve uses this for Per channel and AgX.
 The three grading wheels keep equal columns when a translated label
 wraps to two lines, with their labels centered. White balance, mixer,
 black and white, grading, tint, light, noise, grain, lens, and metadata
-gain spacing between their groups so the shared Section body does not
-run their controls together. The tint swatch and other small controls
-are aligned to the new control rhythm.
+gain spacing between their groups. The tint swatch is aligned with its
+row.
