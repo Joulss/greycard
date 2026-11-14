@@ -197,6 +197,16 @@ the reasoning lives in `docs/notes.md`.
       Structure, each band's gain eased back where that band is already
       strong, so a flat area gains depth and a busy one is not crunched
       (discussion 95; Nik's Dynamic Contrast is the reference)
+- [ ] Canon Dual Pixel RAW's second image read for highlights: it is
+      one half of each pixel, a stop darker, so the first stop over
+      the clip is measured where the summed image clipped. rawler
+      parses the dual track and decodes it only through a
+      process-wide environment switch (`RAWLER_CRX_RAW_TRAK`), so
+      first a decode parameter upstream; then alignment, the
+      half-image's falloff, and a blend held to the clipped regions
+      and eased where the picture is out of focus (parallax). CR2
+      ignores the index. Wants frames with blown highlights; RawDB
+      has R7 dual files (discussion 59, 2026-11-14)
 - [ ] Whites' reach over display white: on a night frame with neon
       signs at Exposure +1, the lettering and its glow sit 1 to 2
       stops over white, and Highlights at -2 takes under half a stop
