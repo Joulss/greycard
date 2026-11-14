@@ -637,6 +637,10 @@ msgstr ""
 msgid "Highlights"
 msgstr ""
 
+#: crates/greycard-slint/ui/panel/color.slint:615
+msgid "Mid-tones"
+msgstr ""
+
 #: crates/greycard-slint/ui/panel/color.slint:609
 msgid "Midtones"
 msgstr ""
