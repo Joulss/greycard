@@ -788,6 +788,23 @@ mod tests {
         assert_eq!(place(Some(b), Some(sub)), "to b");
     }
 
+    /// A High Res Shot's merge and its single frame into one folder:
+    /// the second numbered under every policy, so neither is lost.
+    #[test]
+    fn a_high_res_shot_and_its_single_frame_export_to_two_names() {
+        let (a, out) = (Path::new("a"), Path::new("out"));
+        for policy in [OnExists::Increment, OnExists::Overwrite, OnExists::Skip] {
+            let got = names(
+                &[a.join("P1.ORF"), a.join("P1.ORI")],
+                Some(out),
+                None,
+                Format::Jpeg,
+                policy,
+            );
+            assert_eq!(got, vec![out.join("P1.jpg"), out.join("P1-1.jpg")]);
+        }
+    }
+
     #[test]
     fn a_pair_re_exported_goes_to_the_next_free_names_not_a_name_hunting_a_name() {
         let dir = std::env::temp_dir().join(format!("greycard-names-{}", std::process::id()));

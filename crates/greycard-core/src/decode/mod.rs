@@ -113,8 +113,15 @@ pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>>
     rawler_backend::mosaic_path(path.as_ref())
 }
 
-/// The extensions taken for a raw the decoder opens.
-pub const RAW_EXTENSIONS: [&str; 8] = ["cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2"];
+/// The extensions taken for a raw the decoder opens. `ori` is an ORF
+/// under another name: the single frame an Olympus or OM System body
+/// saves beside a High Res Shot's `.ORF`, which never takes its stem's
+/// short names or JPEG ([`always_yields`]). The order is the one a
+/// camera JPEG picks its raw by among raws of one stem
+/// (`greycard_library::pairs::raw_rank`).
+pub const RAW_EXTENSIONS: [&str; 9] = [
+    "cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2", "ori",
+];
 
 /// Whether a file's name begins with a dot, as a hidden file's does:
 /// macOS's `._NAME` resource forks beside the raws on a share or a
@@ -131,6 +138,113 @@ pub fn is_raw_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| RAW_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// What a raw is to the short-named files of its stem, the other
+/// tools' `NAME.xmp` and `NAME.pp3`: whose they are when more than one
+/// raw has the stem ([`short_names`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortNames {
+    /// No other raw has its stem: they are its own.
+    Alone,
+    /// It is there, and the others of its stem are its lesser siblings
+    /// (an `.ORF`'s `.ORI`): they are its own all the same.
+    Owns,
+    /// They are never its: it is an `.ORI` ([`always_yields`]), or an
+    /// `.ORF` gone from beside its `.ORI`. It takes nothing from them.
+    Yields,
+    /// Another raw of its stem that is neither (a `.DNG` beside a
+    /// `.RAF`): which of the two they are for, the names do not say.
+    Shared,
+}
+
+/// Whether `other` is `raw`'s lesser sibling: the single frame an
+/// Olympus or OM System body saves as `NAME.ORI` beside the High Res
+/// Shot it made, `NAME.ORF`. Extensions only, so no answer about whose
+/// a short name is: that is [`short_names`]'s, over a real listing.
+fn is_lesser_sibling(raw: &Path, other: &Path) -> bool {
+    let ext = |p: &Path| {
+        p.extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+    };
+    ext(raw).as_deref() == Some("orf") && ext(other).as_deref() == Some("ori")
+}
+
+/// Whether `raw` yields its stem's short names (`NAME.xmp`,
+/// `NAME.pp3`, a Lightroom take, the camera's `NAME.JPG`) whatever is
+/// beside it: an `.ORI`, the single frame of a High Res Shot. Its own
+/// are its long names alone (`NAME.ORI.xmp`, `NAME.ORI.gcd`). Whether
+/// its `.ORF` is there or not never changes this, so nothing it reads
+/// or writes moves with the listing. The half of [`short_names`] that
+/// needs no listing.
+pub fn always_yields(raw: &Path) -> bool {
+    raw.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ori"))
+}
+
+/// [`ShortNames`] for `raw` among the names in its folder (`names`,
+/// file names or paths: what is there, `raw`'s own among them when it
+/// is), the stems compared without case as the pairs compare them. The
+/// one rule for every reader of a stem's short names: an `.ORI` never
+/// owns them; another raw owns them alone, or beside its lesser
+/// siblings when it is there itself.
+pub fn short_names<P: AsRef<Path>>(raw: &Path, names: impl IntoIterator<Item = P>) -> ShortNames {
+    if always_yields(raw) {
+        return ShortNames::Yields;
+    }
+    let (Some(stem), Some(name)) = (raw.file_stem(), raw.file_name()) else {
+        return ShortNames::Alone;
+    };
+    let stem = stem.to_string_lossy().to_lowercase();
+    let (mut there, mut lesser, mut rival) = (false, false, false);
+    for other in names {
+        let other = other.as_ref();
+        if other.file_name() == Some(name) {
+            there = true;
+            continue;
+        }
+        let same_stem = other
+            .file_stem()
+            .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem);
+        if !same_stem || !is_raw_path(other) {
+            continue;
+        }
+        // An `.ORI` is no rival: it never owns them.
+        if is_lesser_sibling(raw, other) {
+            lesser = true;
+        } else if !always_yields(other) {
+            rival = true;
+        }
+    }
+    match (rival, lesser, there) {
+        (true, _, _) => ShortNames::Shared,
+        (false, false, _) => ShortNames::Alone,
+        (false, true, true) => ShortNames::Owns,
+        (false, true, false) => ShortNames::Yields,
+    }
+}
+
+/// Whether `raw` owns its stem's short names among `names` (what is in
+/// its folder): [`ShortNames::Alone`] or [`ShortNames::Owns`].
+pub fn owns_short_names<P: AsRef<Path>>(raw: &Path, names: impl IntoIterator<Item = P>) -> bool {
+    matches!(
+        short_names(raw, names),
+        ShortNames::Alone | ShortNames::Owns
+    )
+}
+
+/// [`short_names`] over `raw`'s folder as it is now; [`ShortNames::Alone`]
+/// for a folder that will not read.
+pub fn short_names_on_disk(raw: &Path) -> ShortNames {
+    let Some(entries) = raw.parent().and_then(|d| std::fs::read_dir(d).ok()) else {
+        return ShortNames::Alone;
+    };
+    short_names(
+        raw,
+        entries
+            .flatten()
+            .map(|e| std::path::PathBuf::from(e.file_name())),
+    )
 }
 
 /// How a file's frame stands, without decoding a pixel of it.
@@ -260,6 +374,51 @@ pub fn orientation_path(path: impl AsRef<Path>) -> Result<Orientation> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    /// A stem's short names are a lone raw's, an ORF's over its ORI,
+    /// and nobody's between two raws that are not siblings; an ORI's
+    /// never, whatever is beside it. Pictures and sidecars claim
+    /// nothing.
+    #[test]
+    fn a_stems_short_names_go_to_the_raw_alone_or_the_greater_sibling() {
+        use super::{ShortNames, short_names};
+        let of =
+            |raw: &str, names: &[&str]| short_names(Path::new(raw), names.iter().map(Path::new));
+        let both = ["P1.ORF", "P1.ORI", "P1.JPG", "P1.xmp", "P1.ORF.gcd"];
+        assert_eq!(of("P1.ORF", &both), ShortNames::Owns);
+        assert_eq!(of("P1.ORI", &both), ShortNames::Yields);
+        assert_eq!(of("p1.ori", &["P1.orf"]), ShortNames::Yields, "case aside");
+        assert_eq!(
+            of("P1.ORI", &["P1.ORI", "P1.JPG", "P1.pp3"]),
+            ShortNames::Yields
+        );
+        assert_eq!(of("P1.ORI", &[] as &[&str]), ShortNames::Yields);
+        assert!(super::always_yields(Path::new("x.Ori")));
+        assert!(!super::always_yields(Path::new("x.ORF")));
+        assert_eq!(of("P1.ORF", &["P1.ORF", "P2.ORI"]), ShortNames::Alone);
+        assert_eq!(of("A.RAF", &["A.RAF", "A.DNG"]), ShortNames::Shared);
+        assert_eq!(of("A.DNG", &["A.RAF", "A.DNG"]), ShortNames::Shared);
+        // An ORF gone from beside its ORI: they are neither's.
+        let gone = ["P1.ORI", "P1.xmp", "P1.ORF.gcd"];
+        assert_eq!(of("P1.ORF", &gone), ShortNames::Yields);
+        assert_eq!(of("P1.ORI", &gone), ShortNames::Yields);
+        assert!(!super::owns_short_names(
+            Path::new("P1.ORF"),
+            gone.iter().map(Path::new)
+        ));
+        // A lone raw gone keeps its claim, as it always had.
+        assert_eq!(of("Q.CR3", &["Q.xmp"]), ShortNames::Alone);
+        // A third raw makes the ORF's nobody's; the ORI still yields.
+        let three = ["P1.ORF", "P1.ORI", "P1.DNG"];
+        assert_eq!(of("P1.ORF", &three), ShortNames::Shared);
+        assert_eq!(of("P1.ORI", &three), ShortNames::Yields);
+        assert_eq!(of("P1.DNG", &three), ShortNames::Shared);
+        // A DNG beside an ORI and no ORF owns them, as on master: the
+        // ORI is no rival.
+        let dng = ["P1.DNG", "P1.ORI", "P1.xmp"];
+        assert_eq!(of("P1.DNG", &dng), ShortNames::Alone);
+        assert_eq!(of("P1.ORI", &dng), ShortNames::Yields);
+    }
 
     /// A dot at the head of a file's name hides it; a dot inside a
     /// name, or a hidden folder above it, does not. Hidden or not, the

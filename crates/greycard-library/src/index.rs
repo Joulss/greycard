@@ -3847,6 +3847,55 @@ pub(crate) mod tests {
         greycard_core::testing::remove_dir_retry(&dir);
     }
 
+    /// An Olympus or OM System High Res Shot: the merge as `.ORF`, one
+    /// of its frames as `.ORI`. Two raw rows, each with its own hash
+    /// and sidecar; the camera's JPEG is the ORF's; and the one gone
+    /// is forgotten alone.
+    #[test]
+    fn a_high_res_shot_and_its_single_frame_are_two_frames() {
+        let dir = scratch("ori");
+        let (orf, ori, jpg) = (dir.join("P1.ORF"), dir.join("P1.ORI"), dir.join("P1.JPG"));
+        // Not raws the decoder reads, and rows all the same.
+        std::fs::write(&orf, b"the merge").unwrap();
+        std::fs::write(&ori, b"one frame").unwrap();
+        image::RgbImage::from_pixel(4, 3, image::Rgb([90, 120, 150]))
+            .save(&jpg)
+            .unwrap();
+        for (raw, rating) in [(&orf, 5), (&ori, 2)] {
+            let mut s = Sidecar::default();
+            s.meta.rating = rating;
+            s.save(raw).unwrap();
+        }
+        assert_ne!(Sidecar::path_for(&orf), Sidecar::path_for(&ori));
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.seen(), 3, "{report:?}");
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        assert_eq!(sorted(names(&lib, "kind:raw")), ["P1.ORF", "P1.ORI"]);
+        assert_eq!(sorted(names(&lib, "")), ["P1.ORF", "P1.ORI"]);
+        assert_eq!(
+            lib.companions_in(std::slice::from_ref(&dir)).unwrap(),
+            [(orf.clone(), vec![jpg.clone()])]
+        );
+        let (a, b) = (
+            lib.by_path(&orf).unwrap().unwrap(),
+            lib.by_path(&ori).unwrap().unwrap(),
+        );
+        assert_ne!(a.hash, b.hash);
+        assert_eq!((a.meta.rating, b.meta.rating), (5, 2));
+
+        std::fs::remove_file(&ori).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 1, "{report:?}");
+        assert_eq!(lib.prune_missing().unwrap(), 1);
+        assert_eq!(names(&lib, "kind:raw"), ["P1.ORF"]);
+        assert_eq!(lib.by_path(&orf).unwrap().unwrap().meta.rating, 5);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
     /// The index keeps each file's kind of mosaic, read on the same
     /// decoder as its EXIF: a Bayer DNG, an X-Trans DNG, a picture;
     /// and a row from before the column (schema 10) gets it on the next
@@ -4182,6 +4231,71 @@ pub(crate) mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(unread, ["a.ORF", "b.ORF"]);
+        drop(lib);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// An ORF a schema 15 build read before it knew Gradation Auto is
+    /// held as no style; a schema 15 library marks every Olympus and
+    /// OM System row with no style unread, so the next pass reads its
+    /// tags again, and leaves one with a style and every other row
+    /// alone.
+    #[test]
+    fn a_schema_15_library_marks_its_olympus_rows_unread() {
+        let dir = scratch("migrate-15");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let (r5, r6, a7) = shoot(&shoot_dir);
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            // As a schema 15 build left them: an Auto frame with its
+            // maker and no style, an ORF of the older Make with a style,
+            // a Canon raw with none, every one read.
+            for (path, name, make, maker, style) in [
+                (
+                    &r5,
+                    "a.ORF",
+                    "OM Digital Solutions",
+                    "OM Digital Solutions",
+                    None,
+                ),
+                (
+                    &r6,
+                    "b.ORF",
+                    "OLYMPUS IMAGING CORP.",
+                    "Olympus",
+                    Some("Olympus Vivid"),
+                ),
+                (&a7, "c.CR3", "Canon", "Canon", None),
+            ] {
+                lib.conn
+                    .execute(
+                        "UPDATE files SET name = ?, make = ?, maker = ?, style = ?, \
+                         style_read = 1 WHERE path = ?",
+                        params![name, make, maker, style, path_bytes(path)],
+                    )
+                    .unwrap();
+            }
+            lib.conn.execute_batch("PRAGMA user_version = 15;").unwrap();
+        }
+        let lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(lib.styles_unread(None).unwrap(), 1);
+        let unread: Vec<String> = lib
+            .conn
+            .prepare("SELECT name FROM files WHERE style_read = 0 ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(unread, ["a.ORF"]);
         drop(lib);
         greycard_core::testing::remove_dir_retry(&dir);
     }

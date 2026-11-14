@@ -298,8 +298,11 @@ impl Folders {
 }
 
 /// The short XMP (`IMG.xmp`) a raw and its JPEGs share, when it is
-/// there and nothing else of its stem is: the pair's, which goes where
-/// the pair goes, though it is neither file's alone
+/// there, the raw owns its stem's short names among what is in the
+/// folder (`greycard_core::decode::owns_short_names`: alone, or an
+/// `.ORF` there beside its `.ORI`), and nothing else of its stem is
+/// there but raws it owns them over: the pair's, which goes where the
+/// pair goes, though it is neither file's alone
 /// ([`greycard_edit_io::xmp::paths_of`]).
 pub fn shared_xmp(raw: &Path, companions: &[PathBuf], folders: &mut Folders) -> Option<PathBuf> {
     let short = greycard_edit_io::xmp::short_path(raw);
@@ -308,7 +311,11 @@ pub fn shared_xmp(raw: &Path, companions: &[PathBuf], folders: &mut Folders) -> 
         raw.parent()?,
         raw.file_stem()?.to_string_lossy().to_lowercase(),
     );
-    let others = folders.names(dir).iter().any(|name| {
+    let names = folders.names(dir);
+    if !greycard_core::decode::owns_short_names(raw, names.iter().map(Path::new)) {
+        return None;
+    }
+    let others = names.iter().any(|name| {
         let p = raw.with_file_name(name);
         let ours = p
             .extension()
@@ -317,7 +324,10 @@ pub fn shared_xmp(raw: &Path, companions: &[PathBuf], folders: &mut Folders) -> 
         let same = p
             .file_stem()
             .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem);
-        same && !ours && p != raw && !companions.contains(&p)
+        same && !ours
+            && p != raw
+            && !companions.contains(&p)
+            && !greycard_core::decode::is_raw_path(&p)
     });
     (!others).then_some(short)
 }
@@ -752,6 +762,101 @@ mod tests {
         let p = plan(&both, &both, &ok, false);
         assert_eq!(p.frames.len(), 2);
         assert_eq!(p.companions(), 0);
+        greycard_render::testing::remove_dir_retry(&dir);
+    }
+
+    /// The first `.ORF` in `GREYCARD_SAMPLES` with its `.ORI` beside
+    /// it, copied to a scratch folder with a stem XMP: deleted with the
+    /// ORI there, the XMP goes with the ORF; with the ORF gone first,
+    /// it stays, nobody's. Nothing is touched beside the samples.
+    #[test]
+    #[ignore = "reads the folder named by GREYCARD_SAMPLES"]
+    fn the_samples_orf_deleted_beside_its_ori() {
+        let Some(samples) = std::env::var_os("GREYCARD_SAMPLES").map(PathBuf::from) else {
+            eprintln!("set GREYCARD_SAMPLES to a folder with an ORF and its ORI");
+            return;
+        };
+        let mut orfs: Vec<PathBuf> = std::fs::read_dir(&samples)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("orf")))
+            .filter(|p| p.with_extension("ORI").is_file())
+            .collect();
+        orfs.sort();
+        let orf = orfs.first().expect("an ORF with its ORI");
+        for gone_first in [false, true] {
+            let dir = scratch("samples-ori");
+            let (here, ori) = (
+                dir.join(orf.file_name().unwrap()),
+                dir.join(orf.with_extension("ORI").file_name().unwrap()),
+            );
+            std::fs::copy(orf, &here).unwrap();
+            std::fs::copy(orf.with_extension("ORI"), &ori).unwrap();
+            let xmp = greycard_edit_io::xmp::short_path(&here);
+            std::fs::write(&xmp, b"<x/>").unwrap();
+            if gone_first {
+                std::fs::remove_file(&here).unwrap();
+            }
+            let ok = allowed(std::slice::from_ref(&dir));
+            let p = plan(std::slice::from_ref(&here), &[], &ok, false);
+            let done = delete(&p, How::Permanent, &ok, never);
+            println!(
+                "ORF {}: {} sidecars went; left {:?}",
+                if gone_first { "gone first" } else { "there" },
+                done.sidecars,
+                all(&dir)
+            );
+            assert_eq!(xmp.exists(), gone_first);
+            assert!(ori.exists());
+            greycard_render::testing::remove_dir_retry(&dir);
+        }
+    }
+
+    /// A High Res Shot's merge goes with its JPEG and the stem's XMP;
+    /// its single frame stays, with its own sidecars, and takes none of
+    /// the merge's.
+    #[test]
+    fn an_orf_takes_the_stems_xmp_and_leaves_its_ori_whole() {
+        let dir = scratch("ori");
+        for name in [
+            "P.ORF",
+            "P.ORI",
+            "P.JPG",
+            "P.xmp",
+            "P.ORF.gcd",
+            "P.ORI.gcd",
+            "P.ORI.xmp",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let ok = allowed(std::slice::from_ref(&dir));
+        let ori = plan(&[dir.join("P.ORI")], &[], &ok, false);
+        assert!(ori.frames[0].companions.is_empty());
+        assert_eq!(ori.sidecars(), 2, "its .gcd and its own XMP");
+        let p = plan(&[dir.join("P.ORF")], &[], &ok, false);
+        assert_eq!(p.frames[0].companions, [dir.join("P.JPG")]);
+        assert_eq!(p.sidecars(), 2, "its .gcd and the stem's XMP");
+        delete(&p, How::Permanent, &ok, never);
+        assert_eq!(all(&dir), ["P.ORI", "P.ORI.gcd", "P.ORI.xmp"]);
+        greycard_render::testing::remove_dir_retry(&dir);
+
+        // The ORF gone from the disk already: a delete of the ORF
+        // takes its `.gcd` alone, and the ORI's takes its own only;
+        // the stem's XMP is neither's and stays.
+        let dir = scratch("ori-gone");
+        for name in ["P.ORI", "P.ORI.gcd", "P.xmp", "P.ORF.gcd"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let ok = allowed(std::slice::from_ref(&dir));
+        let p = plan(&[dir.join("P.ORF")], &[], &ok, false);
+        assert_eq!(p.sidecars(), 1, "its .gcd, not the stem's XMP");
+        delete(&p, How::Permanent, &ok, never);
+        assert_eq!(all(&dir), ["P.ORI", "P.ORI.gcd", "P.xmp"]);
+        let ori = plan(&[dir.join("P.ORI")], &[], &ok, false);
+        assert_eq!(ori.sidecars(), 1, "its .gcd alone");
+        delete(&ori, How::Permanent, &ok, never);
+        assert_eq!(all(&dir), ["P.xmp"]);
         greycard_render::testing::remove_dir_retry(&dir);
     }
 

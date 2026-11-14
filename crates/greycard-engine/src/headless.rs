@@ -2251,7 +2251,7 @@ mod tests {
         let raw = |p: &Path| {
             p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
                 [
-                    "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "rw2", "pef",
+                    "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "ori", "rw2", "pef",
                 ]
                 .contains(&e.to_ascii_lowercase().as_str())
             })

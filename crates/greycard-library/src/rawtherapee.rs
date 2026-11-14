@@ -465,17 +465,22 @@ impl std::fmt::Display for Report {
 
 /// The profile RawTherapee keeps beside `file`: `IMG_0001.CR3.pp3`,
 /// its default name, or `IMG_0001.pp3`, the one it writes when told
-/// to replace the extension. The second is a raw's: a picture takes it
-/// only when no raw of its name is beside it, so the camera's JPEG of a
-/// raw and JPEG pair does not take the raw's lens profile, white
-/// balance and exposure.
+/// to replace the extension. The second is a raw's, but never an
+/// `.ORI`'s (`greycard_core::decode::always_yields`): a High Res
+/// Shot's crop is not laid on its single frame, whether its `.ORF` is
+/// there or not. Two raws that are not siblings (a `.RAF` and its
+/// `.DNG`) both take it, as they always did. A picture takes it only
+/// when no raw of its name (an `.ORI` aside) is beside it, so the
+/// camera's JPEG of a raw and JPEG pair does not take the raw's lens
+/// profile, white balance and exposure.
 pub fn profile_beside(file: &Path) -> Option<PathBuf> {
     profile_for(file, &mut RawStems::default())
 }
 
-/// The names of the raws in each folder asked about, each folder listed
-/// once: what [`profile_for`] asks of a picture with a replaced-extension
-/// profile beside it.
+/// The stems of the raws in each folder asked about, as the folder
+/// spells them, each folder listed once: what [`profile_for`] asks of
+/// a picture with a replaced-extension profile beside it. An `.ORI`
+/// is not among them: it takes no JPEG of its stem.
 #[derive(Default)]
 struct RawStems(HashMap<PathBuf, HashSet<OsString>>);
 
@@ -493,7 +498,9 @@ impl RawStems {
                         entries
                             .filter_map(|e| e.ok().map(|e| e.path()))
                             .filter(|p| {
-                                crate::is_indexed_path(p) && greycard_core::decode::is_raw_path(p)
+                                crate::is_indexed_path(p)
+                                    && greycard_core::decode::is_raw_path(p)
+                                    && !greycard_core::decode::always_yields(p)
                             })
                             .filter_map(|p| p.file_stem().map(|s| s.to_os_string()))
                             .collect()
@@ -516,7 +523,12 @@ fn profile_for(file: &Path, stems: &mut RawStems) -> Option<PathBuf> {
     if replaced == file || !replaced.is_file() {
         return None;
     }
-    (greycard_core::decode::is_raw_path(file) || !stems.raw_beside(file)).then_some(replaced)
+    let theirs = if greycard_core::decode::is_raw_path(file) {
+        !greycard_core::decode::always_yields(file)
+    } else {
+        !stems.raw_beside(file)
+    };
+    theirs.then_some(replaced)
 }
 
 /// Whether a path is a frame: a raw or a picture.
@@ -823,6 +835,86 @@ Enabled=true
         std::fs::write(dir.join("IMG_0001.CR3.pp3"), PROFILE).unwrap();
         assert_eq!(profile_beside(&raw), Some(dir.join("IMG_0001.CR3.pp3")));
         greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A High Res Shot's `P1.pp3` is the merge's (`.ORF`), never laid
+    /// on its single frame (`.ORI`), and an ORI alone takes no `P2.pp3`
+    /// either: its own is its long name. The camera's JPEG beside a
+    /// lone ORI is a frame and takes its stem's. A RAF and its DNG both
+    /// take theirs, as before.
+    #[test]
+    fn the_stems_profile_is_the_orfs_never_its_oris() {
+        let dir = scratch("pp3-ori");
+        for name in [
+            "P1.ORF", "P1.ORI", "P2.ORI", "P3.ORI", "P3.JPG", "D1.RAF", "D1.DNG",
+        ] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        for name in ["P1.pp3", "P2.pp3", "P3.pp3", "D1.pp3"] {
+            std::fs::write(dir.join(name), PROFILE).unwrap();
+        }
+        let at = |n: &str| dir.join(n);
+        assert_eq!(profile_beside(&at("P1.ORF")), Some(at("P1.pp3")));
+        assert_eq!(profile_beside(&at("P1.ORI")), None);
+        assert_eq!(profile_beside(&at("P2.ORI")), None);
+        assert_eq!(profile_beside(&at("P3.JPG")), Some(at("P3.pp3")));
+        assert_eq!(profile_beside(&at("D1.RAF")), Some(at("D1.pp3")));
+        assert_eq!(profile_beside(&at("D1.DNG")), Some(at("D1.pp3")));
+        std::fs::write(at("P2.ORI.pp3"), PROFILE).unwrap();
+        assert_eq!(profile_beside(&at("P2.ORI")), Some(at("P2.ORI.pp3")));
+        std::fs::remove_file(at("P2.ORI.pp3")).unwrap();
+        // The folder's run agrees.
+        let report = import(std::slice::from_ref(&dir), &write(false, false)).unwrap();
+        let mut files: Vec<String> = report
+            .profiled
+            .iter()
+            .map(|r| r.file.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        assert_eq!(files, ["D1.DNG", "D1.RAF", "P1.ORF", "P3.JPG"]);
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// On a disk that tells case apart, `img.pp3` beside `img.jpg` and
+    /// `IMG.CR3` is the JPEG's: the raw's stem is spelled otherwise.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pictures_profile_is_its_own_where_the_raw_is_spelled_otherwise() {
+        let dir = scratch("pp3-case");
+        for name in ["IMG.CR3", "img.jpg"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        std::fs::write(dir.join("img.pp3"), PROFILE).unwrap();
+        assert_eq!(
+            profile_beside(&dir.join("img.jpg")),
+            Some(dir.join("img.pp3"))
+        );
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A folder's run over 2,500 and 10,000 raws, each with its
+    /// `NAME.pp3`, timed: the second should take about four times the
+    /// first, each folder listed once and each frame a lookup. Run with
+    /// `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a test"]
+    fn ten_thousand_profiles_take_four_times_two_and_a_half() {
+        let mut took = Vec::new();
+        for n in [2_500usize, 10_000] {
+            let dir = scratch(&format!("pp3-{n}"));
+            for i in 0..n {
+                std::fs::write(dir.join(format!("F{i:05}.ORF")), b"").unwrap();
+                std::fs::write(dir.join(format!("F{i:05}.pp3")), PROFILE).unwrap();
+            }
+            let started = std::time::Instant::now();
+            let report = import(std::slice::from_ref(&dir), &write(false, false)).unwrap();
+            let seconds = started.elapsed().as_secs_f64();
+            assert_eq!(report.profiled.len(), n);
+            println!("{n} frames: {seconds:.2} s");
+            took.push(seconds);
+            greycard_core::testing::remove_dir_retry(&dir);
+        }
+        println!("ratio {:.1}", took[1] / took[0]);
     }
 
     #[test]

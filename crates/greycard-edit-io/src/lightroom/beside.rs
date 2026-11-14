@@ -10,7 +10,9 @@
 //! with their settings writes one beside every raw.
 //!
 //! **Which file.** `IMG.CR3.xmp`, and `IMG.xmp`, the name Lightroom
-//! gives it, unless another raw in the folder has the stem: of those,
+//! gives it, when it is the raw's: no other raw in the folder has the
+//! stem, or the raw is an `.ORF` and the other its `.ORI`, and never
+//! for an `.ORI` ([`short_is_its`]). Of those,
 //! the one that holds `crs:` settings, the newer if both do. A JPEG of
 //! the same stem is the raw's companion and claims none: Lightroom
 //! keeps a JPEG's settings inside it.
@@ -58,8 +60,8 @@ pub struct Taken {
 }
 
 /// The XMPs beside `raw` that could be Lightroom's for it and are
-/// there: its long name, and its stem's unless another raw in the
-/// folder has that stem.
+/// there: its long name, and its stem's when that is the raw's
+/// ([`short_is_its`]).
 fn candidates(raw: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let long = xmp::long_path(raw);
@@ -67,31 +69,24 @@ fn candidates(raw: &Path) -> Vec<PathBuf> {
         out.push(long);
     }
     let short = xmp::short_path(raw);
-    if short.is_file() && !another_raw(raw) {
+    if short.is_file() && short_is_its(raw) {
         out.push(short);
     }
     out
 }
 
-/// Whether another raw in `raw`'s folder has its stem, compared
-/// without case as the pairs compare them. Names only.
-fn another_raw(raw: &Path) -> bool {
-    let (Some(dir), Some(stem), Some(name)) = (raw.parent(), raw.file_stem(), raw.file_name())
-    else {
-        return false;
-    };
-    let stem = stem.to_string_lossy().to_lowercase();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|e| {
-        let entry = PathBuf::from(e.file_name());
-        entry.as_os_str() != name
-            && greycard_core::decode::is_raw_path(&entry)
-            && entry
-                .file_stem()
-                .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem)
-    })
+/// Whether the stem's `IMG.xmp` is `raw`'s: when the raw owns its
+/// stem's short names among what is in its folder
+/// ([`greycard_core::decode::short_names`]: alone, or an `.ORF` beside
+/// its `.ORI`); never an `.ORI`'s, and never when another raw of the
+/// stem has them or may.
+fn short_is_its(raw: &Path) -> bool {
+    use greycard_core::decode::ShortNames;
+    !greycard_core::decode::always_yields(raw)
+        && matches!(
+            greycard_core::decode::short_names_on_disk(raw),
+            ShortNames::Alone | ShortNames::Owns
+        )
 }
 
 /// An XMP beside a raw that holds `crs:` settings, read.
@@ -767,6 +762,59 @@ pub(crate) mod tests {
         std::fs::write(xmp::long_path(&twin), PACKET).unwrap();
         assert_eq!(path_for(&twin), Some(xmp::long_path(&twin)));
         greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// A High Res Shot's `P1.xmp` is the merge's (`.ORF`): the ORF
+    /// takes Lightroom's develop and meta from it, the single frame
+    /// (`.ORI`) beside it nothing, and nothing once the ORF is gone or
+    /// with no ORF at all: its own is its long name. A RAF and its DNG
+    /// still take it neither.
+    #[test]
+    fn the_stems_xmp_is_the_orfs_never_its_oris() {
+        let dir = folder("ori");
+        let orf = raw_in(&dir, "P1.ORF");
+        let ori = raw_in(&dir, "P1.ORI");
+        std::fs::write(xmp::short_path(&orf), PACKET).unwrap();
+        assert_eq!(path_for(&orf), Some(xmp::short_path(&orf)));
+        assert!(waits(&orf));
+        assert!(!waits(&ori));
+        assert_eq!(path_for(&ori), None);
+        let mut s = Sidecar::default();
+        assert!(take(&ori, &mut s).is_none());
+        assert_eq!(s.meta.rating, 0);
+        let (s, _) = load_sidecar_said(&orf, BESIDE);
+        assert_eq!(label(&s), Some("Imported from Lightroom"));
+        assert_eq!(s.meta.rating, 3);
+        assert_eq!(s.meta.keywords, ["Places/Scotland/Skye"]);
+        let (s, _) = load_sidecar_said(&ori, BESIDE);
+        assert!(s.line.history.is_empty());
+        assert_eq!(s.meta.rating, 0);
+        assert!(Sidecar::find(&ori).is_none());
+        // The ORF gone: the XMP is nobody's, the ORI's still none.
+        std::fs::remove_file(&orf).unwrap();
+        assert_eq!(path_for(&orf), None);
+        assert!(!waits(&ori));
+
+        let alone = folder("ori-alone");
+        let ori = raw_in(&alone, "P2.ORI");
+        std::fs::write(xmp::short_path(&ori), PACKET).unwrap();
+        assert!(!waits(&ori));
+        let (s, _) = load_sidecar_said(&ori, BESIDE);
+        assert!(s.line.history.is_empty());
+        assert_eq!(s.meta.rating, 0);
+        // Its long name is its own.
+        std::fs::write(xmp::long_path(&ori), PACKET).unwrap();
+        assert!(waits(&ori));
+        assert_eq!(path_for(&ori), Some(xmp::long_path(&ori)));
+
+        let pair = folder("raf-dng");
+        let raf = raw_in(&pair, "D1.RAF");
+        let dng = raw_in(&pair, "D1.DNG");
+        std::fs::write(xmp::short_path(&raf), PACKET).unwrap();
+        assert_eq!((path_for(&raf), path_for(&dng)), (None, None));
+        for d in [dir, alone, pair] {
+            greycard_core::testing::remove_dir_retry(&d);
+        }
     }
 
     #[test]

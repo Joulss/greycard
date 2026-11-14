@@ -582,6 +582,11 @@ ask for first.
 
 ### The library
 
+- [ ] `.ori` offered to greycard by the system: the Linux desktop
+      entry and the Mac's Info.plist do not name it (shared-mime-info
+      has no type, Apple's `com.olympus.raw-image` is `.orf`), so it
+      wants types of our own. And an import pattern with `{seq}`
+      numbers an ORF and its ORI apart (§671)
 Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.

@@ -2085,6 +2085,154 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A High Res Shot's merge (`.ORF`) and its single frame (`.ORI`),
+    /// each with its `.gcd` and XMP, the stem's `P.xmp` the ORF's: the
+    /// ORI out first and the ORF after, and the ORF out alone and back,
+    /// each moves whole, the ORI never an owner of `P.xmp`.
+    #[test]
+    fn an_orf_and_its_ori_move_out_and_back_with_their_xmps() {
+        let meta = greycard_edit::meta::Meta {
+            flag: greycard_edit::meta::Flag::Reject,
+            ..Default::default()
+        };
+        let names = |d: &Path| {
+            let mut all: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            all.sort();
+            all
+        };
+        let set_up = |what: &str| {
+            let (dir, rejects) = shoot_with_rejects(what);
+            let pair = [dir.join("P.ORF"), dir.join("P.ORI")];
+            for f in &pair {
+                rejected_frame(f, greycard_edit::Placement::Beside);
+            }
+            let xmp = greycard_edit_io::xmp::fresh(&meta, None);
+            std::fs::write(dir.join("P.xmp"), &xmp).unwrap();
+            std::fs::write(dir.join("P.ORI.xmp"), &xmp).unwrap();
+            (dir, rejects, pair)
+        };
+        let orf_side = ["P.ORF", "P.ORF.gcd", "P.xmp"];
+        let ori_side = ["P.ORI", "P.ORI.gcd", "P.ORI.xmp"];
+        let all = [
+            "P.ORF",
+            "P.ORF.gcd",
+            "P.ORI",
+            "P.ORI.gcd",
+            "P.ORI.xmp",
+            "P.xmp",
+        ];
+
+        // The ORI out, then the ORF in a move of its own.
+        let (dir, rejects, pair) = set_up("ori-first");
+        let out = move_rejects(&pair, &[1]).unwrap();
+        assert_eq!(out.files, vec![1], "{:?}", out.skipped);
+        assert_eq!(names(&rejects), ori_side);
+        let out = move_rejects(&pair, &[0]).unwrap();
+        assert_eq!(out.files, vec![0], "{:?}", out.skipped);
+        assert_eq!(names(&rejects), all);
+        assert!(names(&dir).is_empty());
+        crate::testing::remove_dir_retry(&dir);
+
+        // The ORF out alone, and back.
+        let (dir, rejects, pair) = set_up("orf-back");
+        let out = move_rejects(&pair, &[0]).unwrap();
+        assert_eq!(out.files, vec![0], "{:?}", out.skipped);
+        assert_eq!(names(&rejects), orf_side);
+        assert_eq!(names(&dir), ori_side);
+        let back = move_back(&[rejects.join("P.ORF")], &[0], false);
+        assert_eq!(back.files, vec![0], "{:?}", back.skipped);
+        assert_eq!(names(&dir), all);
+        assert!(names(&rejects).is_empty());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The ORI rated while its ORF is away writes only its own
+    /// `P.ORI.xmp`, never the stem's `P.xmp`: the ORF out and back, or
+    /// the ORI out first and the ORF after it, each lands with the
+    /// stem's XMP whole and the ORI's rating where it was. A `P.xmp`
+    /// some other tool left beside the ORI meanwhile is never written
+    /// over: the ORF stays where it is and the file is named.
+    #[test]
+    fn an_ori_rated_alone_never_takes_the_orfs_xmp() {
+        let ours = |rating: u8| {
+            greycard_edit_io::xmp::fresh(
+                &greycard_edit::meta::Meta {
+                    rating,
+                    flag: greycard_edit::meta::Flag::Reject,
+                    ..Default::default()
+                },
+                None,
+            )
+        };
+        let five = greycard_edit::meta::Meta {
+            rating: 5,
+            ..Default::default()
+        };
+        let set_up = |what: &str| {
+            let (dir, rejects) = shoot_with_rejects(what);
+            let pair = [dir.join("P.ORF"), dir.join("P.ORI")];
+            for f in &pair {
+                rejected_frame(f, greycard_edit::Placement::Beside);
+            }
+            std::fs::write(dir.join("P.xmp"), ours(1)).unwrap();
+            (dir, rejects, pair)
+        };
+
+        // The ORF out; the ORI, alone, rated; the ORF back.
+        let (dir, rejects, pair) = set_up("ori-rated-home");
+        let out = move_rejects(&pair, &[0]).unwrap();
+        assert_eq!(out.files, vec![0], "{:?}", out.skipped);
+        assert!(rejects.join("P.xmp").exists());
+        greycard_edit_io::xmp::save(&pair[1], &five, None).unwrap();
+        assert!(dir.join("P.ORI.xmp").exists() && !dir.join("P.xmp").exists());
+        let back = move_back(&[rejects.join("P.ORF")], &[0], false);
+        assert_eq!(back.files, vec![0], "{:?}", back.skipped);
+        assert_eq!(
+            std::fs::read(dir.join("P.xmp")).unwrap(),
+            ours(1).as_bytes()
+        );
+        let ori = std::fs::read_to_string(dir.join("P.ORI.xmp")).unwrap();
+        assert_eq!(greycard_edit_io::xmp::read(&ori).unwrap().meta.rating, 5);
+        crate::testing::remove_dir_retry(&dir);
+
+        // The ORI out first and rated there; the ORF after it.
+        let (dir, rejects, pair) = set_up("ori-rated-out");
+        let out = move_rejects(&pair, &[1]).unwrap();
+        assert_eq!(out.files, vec![1], "{:?}", out.skipped);
+        greycard_edit_io::xmp::save(&rejects.join("P.ORI"), &five, None).unwrap();
+        assert!(!rejects.join("P.xmp").exists());
+        let out = move_rejects(&pair, &[0]).unwrap();
+        assert_eq!(out.files, vec![0], "{:?}", out.skipped);
+        assert_eq!(
+            std::fs::read(rejects.join("P.xmp")).unwrap(),
+            ours(1).as_bytes()
+        );
+        crate::testing::remove_dir_retry(&dir);
+
+        // A P.xmp beside the ORI from elsewhere: refused, both whole.
+        let (dir, rejects, pair) = set_up("ori-foreign");
+        move_rejects(&pair, &[0]).unwrap();
+        std::fs::write(dir.join("P.xmp"), b"another tool's").unwrap();
+        let back = move_back(&[rejects.join("P.ORF")], &[0], false);
+        assert!(back.files.is_empty());
+        assert!(
+            back.skipped[0].1.starts_with("P.xmp is in"),
+            "{:?}",
+            back.skipped
+        );
+        assert_eq!(std::fs::read(dir.join("P.xmp")).unwrap(), b"another tool's");
+        assert_eq!(
+            std::fs::read(rejects.join("P.xmp")).unwrap(),
+            ours(1).as_bytes()
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// The camera's JPEG beside a raw is the raw's: Move rejects takes
     /// it, and the short XMP the two share, and Move back brings them
     /// home; a JPEG of its name in the rejects folder already keeps the

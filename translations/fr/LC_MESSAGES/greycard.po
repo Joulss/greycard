@@ -3234,61 +3234,61 @@ msgstr "{} est un lien"
 msgid "{} is not a file"
 msgstr "{} n'est pas un fichier"
 
-#: crates/greycard-ui/src/delete.rs:460
+#: crates/greycard-ui/src/delete.rs:470
 msgid ", {n} camera JPEG"
 msgid_plural ", {n} camera JPEGs"
 msgstr[0] ", {n} JPEG de l'appareil"
 msgstr[1] ", {n} JPEG de l'appareil"
 
-#: crates/greycard-ui/src/delete.rs:476
+#: crates/greycard-ui/src/delete.rs:486
 msgid "nothing was deleted"
 msgstr "rien n'a été supprimé"
 
-#: crates/greycard-ui/src/delete.rs:479
+#: crates/greycard-ui/src/delete.rs:489
 msgid "{how} {frames}{companions} and {sidecars}{gone}"
 msgstr "{how} {frames}{companions} et {sidecars}{gone}"
 
-#: crates/greycard-ui/src/delete.rs:481
+#: crates/greycard-ui/src/delete.rs:491
 msgid "moved to the trash:"
 msgstr "déplacés vers la corbeille :"
 
-#: crates/greycard-ui/src/delete.rs:482
+#: crates/greycard-ui/src/delete.rs:492
 msgid "deleted permanently:"
 msgstr "supprimés définitivement :"
 
-#: crates/greycard-ui/src/delete.rs:488
+#: crates/greycard-ui/src/delete.rs:498
 msgid " ({} gone already)"
 msgstr " ({} déjà absent)"
 
-#: crates/greycard-ui/src/delete.rs:503
+#: crates/greycard-ui/src/delete.rs:513
 msgid "left in {folder}"
 msgstr "resté dans {folder}"
 
-#: crates/greycard-ui/src/delete.rs:505
+#: crates/greycard-ui/src/delete.rs:515
 msgid "left in the folder"
 msgstr "resté dans le dossier"
 
-#: crates/greycard-ui/src/delete.rs:511
+#: crates/greycard-ui/src/delete.rs:521
 msgid "the trash stopped at {}: {}"
 msgstr "la mise à la corbeille s'est arrêtée sur {} : {}"
 
-#: crates/greycard-ui/src/delete.rs:514
+#: crates/greycard-ui/src/delete.rs:524
 msgid "{} was gone already, and the trash refused {}: {}"
 msgstr "{} était déjà absent, et la corbeille a refusé {} : {}"
 
-#: crates/greycard-ui/src/delete.rs:521
+#: crates/greycard-ui/src/delete.rs:531
 msgid "the trash took {} but refused {}: {}"
 msgstr "la corbeille a accepté {} mais refusé {} : {}"
 
-#: crates/greycard-ui/src/delete.rs:528
+#: crates/greycard-ui/src/delete.rs:538
 msgid "the trash refused {} ({}) after taking {} of it"
 msgstr "la corbeille a refusé {} ({}) après en avoir accepté {} éléments"
 
-#: crates/greycard-ui/src/delete.rs:534
+#: crates/greycard-ui/src/delete.rs:544
 msgid "the trash refused {} ({})"
 msgstr "la corbeille a refusé {} ({})"
 
-#: crates/greycard-ui/src/delete.rs:540
+#: crates/greycard-ui/src/delete.rs:550
 msgid "; {n} frame still where it was: ask again to delete permanently"
 msgid_plural ""
 "; {n} frames still where they were: ask again to delete permanently"
@@ -3298,17 +3298,17 @@ msgstr[1] ""
 "; {n} photos sont toujours à leur place : redemandez une suppression "
 "définitive"
 
-#: crates/greycard-ui/src/delete.rs:549
+#: crates/greycard-ui/src/delete.rs:559
 msgid "; {n} frame not deleted ({name}: {why}{each})"
 msgid_plural "; {n} frames not deleted ({name}: {why}{each})"
 msgstr[0] "; {n} photo non supprimée ({name} : {why}{each})"
 msgstr[1] "; {n} photos non supprimées ({name} : {why}{each})"
 
-#: crates/greycard-ui/src/delete.rs:554
+#: crates/greycard-ui/src/delete.rs:564
 msgid "; the log has each"
 msgstr "; chaque détail figure dans le journal"
 
-#: crates/greycard-ui/src/delete.rs:562
+#: crates/greycard-ui/src/delete.rs:572
 msgid "; {n} camera JPEG left where it was when its raw went ({name}: {why})"
 msgid_plural ""
 "; {n} camera JPEGs left where they were when their raws went ({name}: {why})"
@@ -3443,61 +3443,61 @@ msgstr "toutes les photos"
 msgid "{} or {last}"
 msgstr "{} ou {last}"
 
-#: crates/greycard-ui/src/import.rs:195
+#: crates/greycard-ui/src/import.rs:196
 msgid "{} is not a folder"
 msgstr "{} n'est pas un dossier"
 
-#: crates/greycard-ui/src/import.rs:198
+#: crates/greycard-ui/src/import.rs:199
 msgid "reading {}"
 msgstr "lecture de {}"
 
-#: crates/greycard-ui/src/import.rs:467
+#: crates/greycard-ui/src/import.rs:499
 msgid "import stopped: {done} of {n} frame imported"
 msgid_plural "import stopped: {done} of {n} frames imported"
 msgstr[0] "importation arrêtée : {done} photo importée sur {n}"
 msgstr[1] "importation arrêtée : {done} photos importées sur {n}"
 
-#: crates/greycard-ui/src/import.rs:473
+#: crates/greycard-ui/src/import.rs:505
 msgid "import failed after {done} of {n} frame"
 msgid_plural "import failed after {done} of {n} frames"
 msgstr[0] "échec de l'importation après {done} photo sur {n}"
 msgstr[1] "échec de l'importation après {done} photos sur {n}"
 
-#: crates/greycard-ui/src/import.rs:478
+#: crates/greycard-ui/src/import.rs:510
 msgid "imported {n} frame"
 msgid_plural "imported {n} frames"
 msgstr[0] "{n} photo importée"
 msgstr[1] "{n} photos importées"
 
-#: crates/greycard-ui/src/import.rs:480
+#: crates/greycard-ui/src/import.rs:512
 msgid " to {}"
 msgstr " vers {}"
 
-#: crates/greycard-ui/src/import.rs:483
+#: crates/greycard-ui/src/import.rs:515
 msgid " ({} MB at {} MB/s)"
 msgstr " ({} Mo à {} Mo/s)"
 
-#: crates/greycard-ui/src/import.rs:489
+#: crates/greycard-ui/src/import.rs:521
 msgid ", {} backed up"
 msgstr ", {} sauvegardés"
 
-#: crates/greycard-ui/src/import.rs:492
+#: crates/greycard-ui/src/import.rs:524
 msgid ", {} already there"
 msgstr ", {} déjà présents"
 
-#: crates/greycard-ui/src/import.rs:495
+#: crates/greycard-ui/src/import.rs:527
 msgid ", {} with a Lightroom edit"
 msgstr ", {} avec des modifications Lightroom"
 
-#: crates/greycard-ui/src/import.rs:499
+#: crates/greycard-ui/src/import.rs:531
 msgid ", {} renamed with -1 (the name was another file's)"
 msgstr ", {} renommés avec -1 (nom déjà utilisé par un autre fichier)"
 
-#: crates/greycard-ui/src/import.rs:505
+#: crates/greycard-ui/src/import.rs:537
 msgid ", {} JPEG or XMP not copied (the name was another file's)"
 msgstr ", {} JPEG ou XMP non copiés (nom déjà utilisé par un autre fichier)"
 
-#: crates/greycard-ui/src/import.rs:511
+#: crates/greycard-ui/src/import.rs:543
 msgid ""
 ", the preset's camera profile left off {n} frame (made for another camera)"
 msgid_plural ""
@@ -3509,97 +3509,97 @@ msgstr[1] ""
 ", profil de l'appareil du paramètre prédéfini ignoré pour {n} photos (conçu "
 "pour un autre appareil)"
 
-#: crates/greycard-ui/src/import.rs:518
+#: crates/greycard-ui/src/import.rs:550
 msgid "; {n} folder could not be read, its frames not imported"
 msgid_plural "; {n} folders could not be read, their frames not imported"
 msgstr[0] "; {n} dossier illisible, ses photos n'ont pas été importées"
 msgstr[1] "; {n} dossiers illisibles, leurs photos n'ont pas été importées"
 
-#: crates/greycard-ui/src/import.rs:594
+#: crates/greycard-ui/src/import.rs:626
 msgid "importing {} of {total}: {name}"
 msgstr "importation de {} sur {total} : {name}"
 
-#: crates/greycard-ui/src/import.rs:885 crates/greycard-ui/src/import.rs:886
-#: crates/greycard-ui/src/import.rs:966 crates/greycard-ui/src/import.rs:1102
-#: crates/greycard-ui/src/import.rs:1119 crates/greycard-ui/src/import.rs:1126
-#: crates/greycard-ui/src/import.rs:1581
+#: crates/greycard-ui/src/import.rs:917 crates/greycard-ui/src/import.rs:918
+#: crates/greycard-ui/src/import.rs:998 crates/greycard-ui/src/import.rs:1134
+#: crates/greycard-ui/src/import.rs:1151 crates/greycard-ui/src/import.rs:1158
+#: crates/greycard-ui/src/import.rs:1613
 msgid "reading it"
 msgstr "lecture en cours"
 
-#: crates/greycard-ui/src/import.rs:945
+#: crates/greycard-ui/src/import.rs:977
 msgid "no folder to write in"
 msgstr "aucun dossier de destination"
 
-#: crates/greycard-ui/src/import.rs:946
+#: crates/greycard-ui/src/import.rs:978
 msgid "making {}"
 msgstr "création de {}"
 
-#: crates/greycard-ui/src/import.rs:956 crates/greycard-ui/src/import.rs:969
-#: crates/greycard-ui/src/import.rs:985
+#: crates/greycard-ui/src/import.rs:988 crates/greycard-ui/src/import.rs:1001
+#: crates/greycard-ui/src/import.rs:1017
 msgid "writing the copy"
 msgstr "écriture de la copie"
 
-#: crates/greycard-ui/src/import.rs:980
+#: crates/greycard-ui/src/import.rs:1012
 msgid "read {bytes} bytes of the {length} it has"
 msgstr "{bytes} octets lus sur {length}"
 
-#: crates/greycard-ui/src/import.rs:992
+#: crates/greycard-ui/src/import.rs:1024
 msgid "the copy it was made from no longer matches the card"
 msgstr "la copie d'origine ne correspond plus à la carte"
 
-#: crates/greycard-ui/src/import.rs:1000
+#: crates/greycard-ui/src/import.rs:1032
 msgid "reading the copy back"
 msgstr "relecture de la copie"
 
-#: crates/greycard-ui/src/import.rs:1002
+#: crates/greycard-ui/src/import.rs:1034
 msgid "the copy does not read back the same"
 msgstr "la copie relue est différente"
 
-#: crates/greycard-ui/src/import.rs:1005 crates/greycard-ui/src/import.rs:1011
+#: crates/greycard-ui/src/import.rs:1037 crates/greycard-ui/src/import.rs:1043
 msgid "naming the copy"
 msgstr "attribution d'un nom à la copie"
 
-#: crates/greycard-ui/src/import.rs:1009
+#: crates/greycard-ui/src/import.rs:1041
 msgid "{} appeared while it was copied"
 msgstr "{} est apparu pendant la copie"
 
-#: crates/greycard-ui/src/import.rs:1360
+#: crates/greycard-ui/src/import.rs:1392
 msgid "the source {} is not a folder"
 msgstr "la source {} n'est pas un dossier"
 
-#: crates/greycard-ui/src/import.rs:1364
+#: crates/greycard-ui/src/import.rs:1396
 msgid "no destination is chosen"
 msgstr "aucune destination choisie"
 
-#: crates/greycard-ui/src/import.rs:1379
+#: crates/greycard-ui/src/import.rs:1411
 msgid "the backup {} holds the source {}"
 msgstr "la sauvegarde {} contient la source {}"
 
-#: crates/greycard-ui/src/import.rs:1385
+#: crates/greycard-ui/src/import.rs:1417
 msgid "the destination {} holds the source {}"
 msgstr "la destination {} contient la source {}"
 
-#: crates/greycard-ui/src/import.rs:1395
+#: crates/greycard-ui/src/import.rs:1427
 msgid "the backup {} is on the card ({})"
 msgstr "la sauvegarde {} se trouve sur la carte ({})"
 
-#: crates/greycard-ui/src/import.rs:1401
+#: crates/greycard-ui/src/import.rs:1433
 msgid "the destination {} is on the card ({})"
 msgstr "la destination {} se trouve sur la carte ({})"
 
-#: crates/greycard-ui/src/import.rs:1411
+#: crates/greycard-ui/src/import.rs:1443
 msgid "the backup is the destination, or inside it"
 msgstr "la sauvegarde est la destination ou se trouve dedans"
 
-#: crates/greycard-ui/src/import.rs:1628
+#: crates/greycard-ui/src/import.rs:1660
 msgid "the card read differently twice"
 msgstr "la carte a donné deux lectures différentes"
 
-#: crates/greycard-ui/src/import.rs:1661
+#: crates/greycard-ui/src/import.rs:1693
 msgid "{} (with {})"
 msgstr "{} (avec {})"
 
-#: crates/greycard-ui/src/import.rs:1758 crates/greycard-ui/src/import.rs:1775
+#: crates/greycard-ui/src/import.rs:1790 crates/greycard-ui/src/import.rs:1807
 msgid "the backup copy"
 msgstr "la copie de sauvegarde"
 
@@ -8234,20 +8234,20 @@ msgstr "elle se trouve déjà dans un dossier de photos rejetées"
 msgid "it is not in a rejects folder"
 msgstr "elle ne se trouve pas dans un dossier de photos rejetées"
 
-#: crates/greycard-ui/src/rejects.rs:178
+#: crates/greycard-ui/src/rejects.rs:186
 msgid "{} (it cannot be read)"
 msgstr "{} (lecture impossible)"
 
-#: crates/greycard-ui/src/rejects.rs:235
+#: crates/greycard-ui/src/rejects.rs:252
 msgid "no file name"
 msgstr "aucun nom de fichier"
 
-#: crates/greycard-ui/src/rejects.rs:306 crates/greycard-ui/src/rejects.rs:312
-#: crates/greycard-ui/src/rejects.rs:320
+#: crates/greycard-ui/src/rejects.rs:323 crates/greycard-ui/src/rejects.rs:329
+#: crates/greycard-ui/src/rejects.rs:337
 msgid "{} is in {} already"
 msgstr "{} se trouve déjà dans {}"
 
-#: crates/greycard-ui/src/rejects.rs:337
+#: crates/greycard-ui/src/rejects.rs:354
 msgid "{owner} there answers to {} too"
 msgstr "{owner} y répond aussi au nom de {}"
 

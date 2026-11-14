@@ -31,10 +31,11 @@ a slider, you get the camera's rendering of the changed picture.
 ## What frames it needs
 
 - **Canon `.CR3`, Fujifilm `.RAF`, Nikon `.NEF`, Sony `.ARW`,
-  Panasonic `.RW2`, or Olympus and OM System `.ORF` raws.** greycard
-  reads the picture style from these; other makers' raws, and Canon's
-  older `.CR2`, are not fitted yet. A library indexed before a maker
-  was read reads that maker's frames again on its next pass.
+  Panasonic `.RW2`, or Olympus and OM System `.ORF` and `.ORI`
+  raws.** greycard reads the picture style from these; other makers'
+  raws, and Canon's older `.CR2`, are not fitted yet. A library
+  indexed before a maker was read reads that maker's frames again on
+  its next pass.
 - **About 20 frames or more** of one body and one style. A group is
   sampled down to about 40. A group under 20 can borrow a look (see
   below) or is skipped.
@@ -63,7 +64,7 @@ sample.
 | Nikon | Active D-Lighting, Contrast or Saturation set to A |
 | Sony | Dynamic Range Optimizer (any level or Auto) |
 | Panasonic | Intelligent D-Range (Intelligent Exposure on older bodies) |
-| Olympus and OM System | Gradation at High Key or Low Key, Highlight & Shadow Control (or the midtones) not at 0 |
+| Olympus and OM System | Gradation at High Key, Low Key, or Auto, Highlight & Shadow Control (or the midtones) not at 0 |
 
 Settings that render in place of the style, or draw over it, take the
 frame out of every group: it was not rendered in that style, so it is
@@ -230,7 +231,7 @@ look to use it on another machine.
 ## Limits
 
 - Picture styles are read from Canon CR3, Fujifilm RAF, Nikon NEF, Sony
-  ARW, Panasonic RW2, and Olympus and OM System ORF.
+  ARW, Panasonic RW2, and Olympus and OM System ORF and ORI.
 - Canon's per-style contrast, saturation and color tone settings,
   Fujifilm's Color, Color Chrome and Clarity, a Nikon Picture Control's
   sharpening, contrast, saturation and hue steps, Sony's contrast,

@@ -85,7 +85,7 @@ fn is_raw(path: &Path) -> bool {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .as_deref(),
-        Some("cr2" | "cr3" | "arw" | "nef" | "dng" | "raf" | "orf" | "rw2" | "pef")
+        Some("cr2" | "cr3" | "arw" | "nef" | "dng" | "raf" | "orf" | "ori" | "rw2" | "pef")
     )
 }
 

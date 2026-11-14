@@ -172,13 +172,27 @@ pub fn above_rejects(raw: &Path) -> Option<PathBuf> {
 /// a raw and the camera's JPEG of one shot moved together share the
 /// short XMP as they did where they were, and the one that went first
 /// is no other frame's claim on it.
-fn stem_owner(xmp: &Path, dir: &Path, arrived: &[PathBuf]) -> Option<String> {
+///
+/// `raw` is where the frame the XMP goes with lands. When it owns its
+/// stem's short names among what will be there
+/// (`greycard_core::decode::owns_short_names`: an `.ORF` arriving
+/// beside its `.ORI`) and no short XMP is there yet, the other raws
+/// there answer to nothing. One that is there already beside a raw of
+/// the stem is answered to all the same: what wrote it while the frame
+/// was away cannot be told from the names, so it is never written over.
+fn stem_owner(xmp: &Path, dir: &Path, arrived: &[PathBuf], raw: &Path) -> Option<String> {
     let stem = xmp.file_stem()?.to_string_lossy().to_lowercase();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Some(tr!("{} (it cannot be read)", dir.display()));
     };
-    entries.flatten().find_map(|e| {
-        let name = e.file_name();
+    let names: Vec<std::ffi::OsString> = entries.flatten().map(|e| e.file_name()).collect();
+    let landed = raw.file_name().map(std::ffi::OsStr::to_os_string);
+    let owns = !xmp.exists()
+        && greycard_core::decode::owns_short_names(
+            raw,
+            names.iter().chain(landed.as_ref()).map(Path::new),
+        );
+    names.into_iter().find_map(|name| {
         if arrived
             .iter()
             .any(|a| a.file_name() == Some(name.as_os_str()))
@@ -186,6 +200,9 @@ fn stem_owner(xmp: &Path, dir: &Path, arrived: &[PathBuf]) -> Option<String> {
             return None;
         }
         let path = Path::new(&name);
+        if owns && greycard_core::decode::is_raw_path(path) {
+            return None;
+        }
         let ours = path
             .extension()
             .and_then(|x| x.to_str())
@@ -328,7 +345,7 @@ fn move_into(
                 .or_else(|| {
                     beside.iter().find_map(|(from, to)| {
                         if is_short_xmp(from, raw)
-                            && let Some(owner) = stem_owner(to, dir, &arrived)
+                            && let Some(owner) = stem_owner(to, dir, &arrived, &dest)
                         {
                             return Some(if to.exists() {
                                 there(to)

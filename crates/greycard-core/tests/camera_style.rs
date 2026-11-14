@@ -469,9 +469,13 @@ fn check_olympus(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, String
     };
     c.eq("Picture Mode", style.style.clone(), expected);
     c.eq("style fixed", style.style_fixed, fixed);
+    // "Auto-Override" is the camera's choice: Gradation Auto.
     let gradation = match cs("Gradation") {
         Some("Normal" | "Normal, User-Selected") => Some(false),
         Some("Low Key" | "Low Key, User-Selected" | "High Key" | "High Key, User-Selected") => {
+            Some(true)
+        }
+        Some("Normal, Auto-Override" | "Low Key, Auto-Override" | "High Key, Auto-Override") => {
             Some(true)
         }
         _ => None,
@@ -601,7 +605,9 @@ fn camera_style_agrees_with_exiv2() {
             (Maker::Nikon, "nef" | "nrw") => check_nikon(&mut c, &style, &kt),
             (Maker::Sony, "arw") => check_sony(&mut c, &style, &kt),
             (Maker::Panasonic, "rw2") => check_panasonic(&mut c, &style, &kt),
-            (Maker::Olympus | Maker::OmDigital, "orf") => check_olympus(&mut c, &style, &kt),
+            (Maker::Olympus | Maker::OmDigital, "orf" | "ori") => {
+                check_olympus(&mut c, &style, &kt)
+            }
             _ => c.eq("style", style.style.clone(), None),
         }
         compared += 1;

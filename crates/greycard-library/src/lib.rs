@@ -104,7 +104,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 15;
+pub const SCHEMA_VERSION: i32 = 16;
 
 /// `taken_at`'s expression, one text for [`SCHEMA`] and the step from
 /// schema 11 both: `taken` moved by `shift` seconds, worked out by
@@ -183,7 +183,12 @@ macro_rules! taken_at {
 /// Schema 15 adds nothing: the style reader learned Olympus's and OM
 /// System's maker note, so every row of theirs that has no maker yet
 /// is marked unread, and the next pass over its folder reads its tags
-/// and nothing else of the file.
+/// and nothing else of the file. Schema 16 adds nothing either: the
+/// reader learned Olympus's Gradation Auto, which a schema 15 row holds
+/// as no style (a setting not known leaves no group key,
+/// `CameraStyle::group_key`), so every Olympus and OM System row with
+/// no style is marked unread the same way; one with a style read the
+/// tag as it reads now.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -252,6 +257,11 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (
         14,
         "UPDATE files SET style_read = 0 WHERE maker IS NULL
+             AND (make LIKE 'OLYMPUS%' OR make LIKE 'OM Digital%');",
+    ),
+    (
+        15,
+        "UPDATE files SET style_read = 0 WHERE style IS NULL
              AND (make LIKE 'OLYMPUS%' OR make LIKE 'OM Digital%');",
     ),
 ];

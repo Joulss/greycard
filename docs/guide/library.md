@@ -140,7 +140,9 @@ sheet counts the JPEGs. An export writes the raw's develop.
 Culling shows the camera's JPEG when it is at least as large as the
 preview inside the raw, and the status line says "the camera's JPEG
 beside the raw". A JPEG with no raw of its name beside it is a frame
-of its own.
+of its own. An Olympus or OM System High Res Shot saves its merge as
+`.ORF` and one single frame as `.ORI`: both are frames, and the
+camera's JPEG goes with the `.ORF`.
 
 To list the JPEGs as frames of their own, with their own ratings, turn
 on **Treat a JPEG beside its raw as a separate frame** under

@@ -186,7 +186,8 @@ pub fn subfolders(dir: &Path) -> usize {
 /// the same name in its folder is the camera's JPEG of that raw and
 /// goes along with it; a picture with no raw is a frame of its own,
 /// as a JPEG-only camera writes them. An XMP goes with the frame it
-/// names, `IMG.xmp` or `IMG.CR3.xmp`, and is left when there is none.
+/// names, `IMG.xmp` or `IMG.CR3.xmp` (or `IMG.JPG.xmp`, with the JPEG
+/// or the raw that takes it), and is left when there is none.
 /// Two raws of one stem in one folder (`DSCF0001.RAF` and a
 /// `DSCF0001.DNG` made from it) are two frames, and the companions of
 /// that stem go with the one the browser pairs the camera's JPEG with
@@ -198,51 +199,82 @@ pub fn scan(source: &Path) -> Result<Scan> {
         walk(source, &mut files).with_context(|| tr!("reading {}", source.display()))?;
     files.sort();
     let key = |p: &Path| (p.parent().map(Path::to_path_buf), stem_of(p).to_lowercase());
-    // The raws by folder and stem: they take the companions.
+    let whole = |p: &Path| (p.parent().map(Path::to_path_buf), name_of(p).to_lowercase());
+    // The raws by folder and stem: they take the companions. The
+    // frames, a lone picture's too, by their whole names: an XMP that
+    // names one (`P1.ORI.xmp` beside `P1.ORF`) is that frame's.
     let mut raws: HashMap<(Option<PathBuf>, String), usize> = HashMap::new();
+    let mut by_name: HashMap<(Option<PathBuf>, String), usize> = HashMap::new();
     let mut items: Vec<Item> = Vec::new();
     for f in files
         .iter()
         .filter(|f| greycard_core::decode::is_raw_path(f))
     {
         let at = items.len();
-        raws.entry(key(f))
-            .and_modify(|best| {
-                let rank = greycard_library::pairs::raw_rank;
-                if rank(f) < rank(&items[*best].file) {
-                    *best = at;
-                }
-            })
-            .or_insert(at);
+        by_name.insert(whole(f), at);
+        // An `.ORI` takes nothing by its stem: the JPEG and the short
+        // XMP are its `.ORF`'s, or not a raw's.
+        if !greycard_core::decode::always_yields(f) {
+            raws.entry(key(f))
+                .and_modify(|best| {
+                    let rank = greycard_library::pairs::raw_rank;
+                    if rank(f) < rank(&items[*best].file) {
+                        *best = at;
+                    }
+                })
+                .or_insert(at);
+        }
         items.push(Item {
             file: f.clone(),
             companions: Vec::new(),
         });
     }
     let mut left = Vec::new();
+    let mut xmps = Vec::new();
     for f in &files {
         if greycard_core::decode::is_raw_path(f) {
             continue;
         }
-        let picture = greycard_core::picture::is_picture_path(f);
-        let xmp = extension_is(f, "xmp");
-        // `IMG.CR3.xmp` names its frame by the whole name.
-        let owner = raws.get(&key(f)).copied().or_else(|| {
-            xmp.then(|| {
-                let inner = f.with_extension("");
-                raws.get(&key(&inner)).copied()
-            })
-            .flatten()
-        });
-        match owner {
-            Some(i) if picture || xmp => items[i].companions.push(f.clone()),
-            None if picture => items.push(Item {
-                file: f.clone(),
-                companions: Vec::new(),
-            }),
+        if extension_is(f, "xmp") {
+            xmps.push(f);
+            continue;
+        }
+        match raws.get(&key(f)).copied() {
+            Some(i) if greycard_core::picture::is_picture_path(f) => {
+                items[i].companions.push(f.clone())
+            }
+            None if greycard_core::picture::is_picture_path(f) => {
+                by_name.insert(whole(f), items.len());
+                items.push(Item {
+                    file: f.clone(),
+                    companions: Vec::new(),
+                });
+            }
             _ => left.push(f.clone()),
         }
     }
+    // An XMP goes with the frame its whole name names (`IMG.CR3.xmp`,
+    // a lone `IMG.JPG.xmp`), else with its stem's raw: `IMG.xmp`; the
+    // `IMG.JPG.xmp` darktable writes for a raw's JPEG, which goes where
+    // the JPEG goes; and one named for a raw that is not there
+    // (`X.CR2.xmp` beside `X.DNG`).
+    for f in xmps {
+        let inner = f.with_extension("");
+        let owner = by_name.get(&whole(&inner)).copied().or_else(|| {
+            let named = greycard_core::picture::is_picture_path(&inner)
+                || greycard_core::decode::is_raw_path(&inner);
+            raws.get(&key(if named { &inner } else { f })).copied()
+        });
+        match owner {
+            Some(i) => items[i].companions.push(f.clone()),
+            None => left.push(f.clone()),
+        }
+    }
+    // In the order they were found, the path's.
+    for item in &mut items {
+        item.companions.sort();
+    }
+    left.sort();
     // Lone pictures joined the list after the raws; the camera's order
     // is the path's.
     items.sort_by(|a, b| a.file.cmp(&b.file));
@@ -1982,6 +2014,112 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// A High Res Shot's merge (`.ORF`) and its single frame (`.ORI`)
+    /// are two frames: the JPEG and the shared `P1.xmp` go with the
+    /// ORF, the XMP naming a raw whole with that raw. An ORI alone
+    /// takes nothing by its stem: the JPEG is a frame of its own, and
+    /// the short XMP is left.
+    #[test]
+    fn a_high_res_shot_and_its_single_frame_are_two_frames() {
+        let root = dir("scan-ori");
+        let card = root.join("DCIM").join("100OMSYS");
+        for name in [
+            "P1.ORI",
+            "P1.ORI.xmp",
+            "P1.JPG",
+            "P1.ORF",
+            "P1.ORF.xmp",
+            "P1.xmp",
+            "P2.ORI",
+            "P2.ORI.xmp",
+            "P2.JPG",
+            "P2.xmp",
+        ] {
+            write(&card.join(name), name.as_bytes());
+        }
+        let s = scan(&card).unwrap();
+        let at = |name: &str| card.join(name);
+        assert_eq!(
+            s.items,
+            vec![
+                Item {
+                    file: at("P1.ORF"),
+                    companions: vec![at("P1.JPG"), at("P1.ORF.xmp"), at("P1.xmp")],
+                },
+                Item {
+                    file: at("P1.ORI"),
+                    companions: vec![at("P1.ORI.xmp")],
+                },
+                Item {
+                    file: at("P2.JPG"),
+                    companions: vec![],
+                },
+                Item {
+                    file: at("P2.ORI"),
+                    companions: vec![at("P2.ORI.xmp")],
+                },
+            ]
+        );
+        assert_eq!(s.left, [at("P2.xmp")]);
+        greycard_render::testing::remove_dir_retry(&root);
+    }
+
+    /// Every way an XMP is named finds its frame: the stem's raw for
+    /// `X.xmp`, the raw it names whole in any case, the raw of a
+    /// camera JPEG for darktable's `IMG.JPG.xmp`, a lone JPEG for its
+    /// own, of two raws of a stem the one it names or else the one the
+    /// JPEG goes with, and one naming a raw not there the stem's raw.
+    #[test]
+    fn an_xmp_goes_with_the_frame_its_name_says() {
+        let root = dir("scan-xmp");
+        let card = root.join("DCIM");
+        for name in [
+            "A.RAF",
+            "A.xmp",
+            "B.RAF",
+            "B.RAF.xmp",
+            "c.raf",
+            "C.RAF.XMP",
+            "D.CR3",
+            "D.JPG",
+            "D.JPG.xmp",
+            "E.JPG",
+            "E.JPG.xmp",
+            "F.DNG",
+            "F.DNG.xmp",
+            "F.JPG",
+            "F.JPG.xmp",
+            "F.RAF",
+            "F.xmp",
+            "G.xmp",
+            "H.DNG",
+            "H.CR2.xmp",
+        ] {
+            write(&card.join(name), name.as_bytes());
+        }
+        let s = scan(&card).unwrap();
+        let at = |name: &str| card.join(name);
+        let item = |file: &str, companions: &[&str]| Item {
+            file: at(file),
+            companions: companions.iter().map(|c| at(c)).collect(),
+        };
+        assert_eq!(
+            s.items,
+            vec![
+                item("A.RAF", &["A.xmp"]),
+                item("B.RAF", &["B.RAF.xmp"]),
+                item("D.CR3", &["D.JPG", "D.JPG.xmp"]),
+                item("E.JPG", &["E.JPG.xmp"]),
+                item("F.DNG", &["F.DNG.xmp"]),
+                item("F.RAF", &["F.JPG", "F.JPG.xmp", "F.xmp"]),
+                item("H.DNG", &["H.CR2.xmp"]),
+                item("c.raf", &["C.RAF.XMP"]),
+            ]
+        );
+        assert_eq!(s.left, [at("G.xmp")]);
+        greycard_render::testing::remove_dir_retry(&root);
     }
 
     /// Every frame lands under its name, the companions beside it

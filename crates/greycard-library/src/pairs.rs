@@ -14,7 +14,8 @@
 //! camera's raw of the same name was made from it later and the JPEG
 //! was written with the camera's at the press; then the order of
 //! `RAW_EXTENSIONS`, then the name. A DNG alone with a JPEG (a camera
-//! that writes DNG) is the raw.
+//! that writes DNG) is the raw. An `.ORI` takes no companion, beside
+//! its `.ORF` or alone ([`stem_key`]).
 //!
 //! The index answers the same rule in SQL ([`COMPANION_SQL`]) through
 //! `pairkey`, which is [`pair_key`] registered with SQLite, so the two
@@ -33,9 +34,13 @@ pub fn is_jpeg(path: &Path) -> bool {
 
 /// The stem a raw or a JPEG is paired by: the name up to its last
 /// dot, case folded. `None` for any other file, which is never in a
-/// pair.
+/// pair, and for a raw that never takes its stem's companions, an
+/// `.ORI` (`greycard_core::decode::always_yields`): the camera's JPEG
+/// beside it is the `.ORF`'s, or a frame of its own.
 pub fn stem_key(path: &Path) -> Option<String> {
-    let pairs = greycard_core::decode::is_raw_path(path) || is_jpeg(path);
+    let raw =
+        greycard_core::decode::is_raw_path(path) && !greycard_core::decode::always_yields(path);
+    let pairs = raw || is_jpeg(path);
     pairs.then(|| path.file_stem().map(|s| s.to_string_lossy().to_lowercase()))?
 }
 
@@ -312,6 +317,38 @@ mod tests {
         assert_eq!(both.companions[0].1.len(), 2);
     }
 
+    /// A High Res Shot: the merge as `.ORF`, one of its frames as
+    /// `.ORI`. The camera's JPEG is the merge's, whichever name sorts
+    /// first and in either order given; the ORI is a frame alone.
+    #[test]
+    fn beside_a_high_res_shot_the_jpeg_is_the_orfs_and_the_ori_stands_alone() {
+        for names in [
+            ["/s/P1.ORF", "/s/P1.ORI", "/s/P1.JPG"],
+            ["/s/P1.JPG", "/s/P1.ORI", "/s/P1.ORF"],
+            ["/s/p1.ori", "/s/P1.jpg", "/s/p1.orf"],
+        ] {
+            let all = paths(&names);
+            let of = |ext: &str| {
+                let found = all
+                    .iter()
+                    .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)));
+                found.unwrap().clone()
+            };
+            let (orf, ori, jpg) = (of("orf"), of("ori"), of("jpg"));
+            let paired = pair(all.clone(), false);
+            assert_eq!(paired.frames.len(), 2, "{names:?}");
+            assert!(paired.frames.contains(&orf) && paired.frames.contains(&ori));
+            assert_eq!(paired.companions, vec![(orf, vec![jpg])], "{names:?}");
+        }
+        // An ORI alone takes no JPEG either: the JPEG is a frame, and
+        // the index's key says the same.
+        let alone = pair(paths(&["/s/P2.ORI", "/s/P2.JPG"]), false);
+        assert_eq!(alone.frames, paths(&["/s/P2.ORI", "/s/P2.JPG"]));
+        assert!(alone.companions.is_empty());
+        assert_eq!(pair_key(b"/s", Path::new("P2.ORI"), "raw"), None);
+        assert!(pair_key(b"/s", Path::new("P2.ORF"), "raw").is_some());
+    }
+
     #[test]
     fn only_raws_and_jpegs_have_a_stem_to_pair_by() {
         assert_eq!(
@@ -355,6 +392,17 @@ mod tests {
         assert_eq!(raw_on_disk(&dir.join("a.jpg")), Some(dir.join("A.CR3")));
         assert_eq!(raw_on_disk(&dir.join("C.JPG")), None);
         assert_eq!(raw_on_disk(&dir.join("A.CR3")), None);
+        // A High Res Shot's merge takes the JPEG; its single frame
+        // takes nothing, so a move of either leaves the other whole.
+        for name in ["H.ORI", "H.JPG", "H.ORF", "H.ORF.gcd", "H.ORI.gcd"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        assert_eq!(
+            companions_on_disk(&dir.join("H.ORF")),
+            vec![dir.join("H.JPG")]
+        );
+        assert!(companions_on_disk(&dir.join("H.ORI")).is_empty());
+        assert_eq!(raw_on_disk(&dir.join("H.JPG")), Some(dir.join("H.ORF")));
         // Many at once, in the order given, the folder read once.
         std::fs::write(dir.join("B.jpeg"), b"x").unwrap();
         assert_eq!(

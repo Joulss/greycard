@@ -682,3 +682,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§668. Monochrome sensors open](notes/668-monochrome-sensors-open.md) (2026-11-14)
 - [§669. The left pane: the Navigator pinned, the lists unframed](notes/669-the-left-pane-navigator-pinned-lists-unframed.md) (2026-11-14)
 - [§670. The right panel's sections and tools](notes/670-the-right-panels-sections-and-tools.md) (2026-11-14)
+- [§671. Olympus .ORI files and Gradation Auto](notes/671-olympus-ori-files-and-gradation-auto.md) (2026-11-14)

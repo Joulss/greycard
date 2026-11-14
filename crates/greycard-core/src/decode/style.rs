@@ -1576,8 +1576,11 @@ fn olympus_from_note<R: Read + Seek>(
     // Gradation: three values and, on the newer bodies, a fourth.
     // Normal is "0 -1 1", Low Key "-1 -1 1" and High Key "1 -1 1", each
     // a tone curve on the Picture Mode; the fourth is 0 for the user's
-    // choice and 1 for one the camera overrode. An override, a value
-    // exiv2 does not name and a note without the tag are not known.
+    // choice (exiv2's "User-Selected") and 1 for the camera's
+    // ("Auto-Override"). Gradation Auto is "0 -1 1 1" (an OM-1's): the
+    // camera bending the tone per frame, so on whatever key it names.
+    // A value exiv2 does not name and a note without the tag are not
+    // known.
     const GRADATION: &str = "Gradation";
     style
         .adaptive
@@ -1585,6 +1588,7 @@ fn olympus_from_note<R: Read + Seek>(
             Some([a, -1, 1] | [a, -1, 1, 0]) if (-1..=1).contains(a) => {
                 Adaptive::known(GRADATION, *a != 0)
             }
+            Some([a, -1, 1, 1]) if (-1..=1).contains(a) => Adaptive::known(GRADATION, true),
             _ => Adaptive::unknown(GRADATION),
         });
     // The Art Filter (Pop Art, Grainy Film, Dramatic Tone and the rest)
@@ -3015,8 +3019,27 @@ mod tests {
         }
         // The older bodies' three values.
         assert_eq!(gradation(&[0, -1, 1]), Adaptive::known("Gradation", false));
-        // The camera's override, a value exiv2 does not name, and no tag.
-        for v in [&[0, -1, 1, 1][..], &[2, -1, 1, 0], &[0, 0, 0, 0]] {
+        assert_eq!(
+            gradation(&[0, -1, 1, 0]),
+            Adaptive::known("Gradation", false)
+        );
+        // Auto (an OM-1's "0 -1 1 1") and any key the camera chose: on,
+        // the frame in its group as High Key's is.
+        for v in [[0, -1, 1, 1], [-1, -1, 1, 1], [1, -1, 1, 1]] {
+            assert_eq!(gradation(&v), Adaptive::known("Gradation", true), "{v:?}");
+            let s = olympus_with(OLYMPUS_GRADATION, Some(sshorts(OLYMPUS_GRADATION, &v)));
+            assert!(!s.is_fixed());
+            assert_eq!(s.group_key().as_deref(), Some("OM Digital Solutions Vivid"));
+        }
+        // A value exiv2 does not name, and no tag.
+        for v in [
+            &[2, -1, 1, 0][..],
+            &[2, -1, 1, 1],
+            &[0, -1, 1, 2],
+            &[0, -1, 1, -1],
+            &[0, 0, 0, 0],
+            &[0, -1, 1, 1, 0],
+        ] {
             assert_eq!(gradation(v), Adaptive::unknown("Gradation"), "{v:?}");
         }
         let none = olympus_with(OLYMPUS_GRADATION, None);
@@ -3051,6 +3074,13 @@ mod tests {
             (
                 OLYMPUS_STACKED_IMAGE,
                 (OLYMPUS_STACKED_IMAGE, LONG, 2, i32s(&[3, 8])),
+                4,
+            ),
+            // An OM-1's hand-held High Res Shot (`.ORF`); its base
+            // frame (`.ORI`) says "0 0", as `olympus_base` does.
+            (
+                OLYMPUS_STACKED_IMAGE,
+                (OLYMPUS_STACKED_IMAGE, LONG, 2, i32s(&[11, 12])),
                 4,
             ),
         ] {

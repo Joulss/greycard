@@ -64,6 +64,12 @@ design note behind it.
 
 ### Library
 
+- An Olympus or OM System High Res Shot's `.ORI` (the single frame
+  saved beside the merged `.ORF`) is a raw like any other: listed,
+  imported, developed, and exported. The stem's `NAME.xmp`, `NAME.pp3`,
+  and camera JPEG stay the `.ORF`'s; the `.ORI` keeps its own under
+  `NAME.ORI.xmp` (issue 139,
+  [§671](https://github.com/jessolmstead/greycard/blob/master/docs/notes/671-olympus-ori-files-and-gradation-auto.md)).
 - The Cull panel's Stars, Flag, and Label filters take one row each,
   with the caption beside the chips; a row too long for the panel
   scrolls sideways under the wheel, and at its end the wheel scrolls

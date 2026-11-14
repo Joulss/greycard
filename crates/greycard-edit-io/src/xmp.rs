@@ -1121,7 +1121,7 @@ pub fn long_path(frame: &Path) -> PathBuf {
 fn owned(frame: &Path, making: bool) -> (PathBuf, Option<PathBuf>) {
     let short = match short_of(frame, making) {
         Short::Ours(p) => Some(p),
-        Short::Shared(..) | Short::Unasked => None,
+        Short::Shared(..) | Short::Unasked | Short::Theirs => None,
     };
     (long_path(frame), short)
 }
@@ -1134,18 +1134,25 @@ enum Short {
     Ours(PathBuf),
     /// Other files have the stem; they are named.
     Shared(PathBuf, Vec<PathBuf>),
+    /// The frame is a raw that does not own its stem's short names
+    /// (`greycard_core::decode::short_names`: an `.ORI`, always, or a
+    /// raw beside another it cannot be told from): never read, never
+    /// written, never taken along.
+    Theirs,
 }
 
 fn short_of(frame: &Path, making: bool) -> Short {
+    if greycard_core::decode::always_yields(frame) {
+        return Short::Theirs;
+    }
     let short = short_path(frame);
     if !making && !short.exists() {
         return Short::Unasked;
     }
-    let others = stem_sharers(frame);
-    if others.is_empty() {
-        Short::Ours(short)
-    } else {
-        Short::Shared(short, others)
+    match stem_sharers(frame) {
+        None => Short::Theirs,
+        Some(others) if others.is_empty() => Short::Ours(short),
+        Some(others) => Short::Shared(short, others),
     }
 }
 
@@ -1232,7 +1239,7 @@ pub fn beside(frame: &Path) -> Beside {
     let (short, shared) = match short_of(frame, false) {
         Short::Ours(p) => (Some(p), None),
         Short::Shared(p, others) => (None, culled_for(frame, p, &others)),
-        Short::Unasked => (None, None),
+        Short::Unasked | Short::Theirs => (None, None),
     };
     Beside {
         own: newest(there(long_path(frame), short)),
@@ -1341,25 +1348,30 @@ pub fn write_path(frame: &Path, create: bool) -> Option<PathBuf> {
 
 /// The other files in the folder with this frame's stem, compared
 /// without case as the pairs compare them: the raw-plus-JPEG pair,
-/// and nothing else, since a sidecar of ours is not a picture. Names
-/// only, so the folder is read and nothing in it is stat'ed.
-fn stem_sharers(frame: &Path) -> Vec<PathBuf> {
+/// and nothing else, since a sidecar of ours is not a picture. None
+/// for a raw that does not own its stem's short names among what is
+/// there (`greycard_core::decode::owns_short_names`: an `.ORF` gone
+/// from beside its `.ORI`; a `.RAF` beside its `.DNG`; an `.ORI` is
+/// answered by [`short_of`] before any listing).
+/// When the raw owns them beside other raws (an `.ORF` beside its
+/// `.ORI`), those share nothing. Names only, so the folder is read and
+/// nothing in it is stat'ed: one pass, one folded stem an entry, and
+/// the rule asked of the stem's few names.
+fn stem_sharers(frame: &Path) -> Option<Vec<PathBuf>> {
+    let raw = greycard_core::decode::is_raw_path(frame);
     let (Some(dir), Some(stem), Some(name)) =
         (frame.parent(), frame.file_stem(), frame.file_name())
     else {
-        return Vec::new();
+        return Some(Vec::new());
     };
     let stem = stem.to_string_lossy().to_lowercase();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
+    // The stem's files but sidecars, the frame's own name among them.
+    let mut same: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
         .flatten()
         .map(|e| PathBuf::from(e.file_name()))
         .filter(|entry| {
-            if entry.as_os_str() == name {
-                return false;
-            }
             let sidecar = entry
                 .extension()
                 .and_then(|x| x.to_str())
@@ -1369,7 +1381,14 @@ fn stem_sharers(frame: &Path) -> Vec<PathBuf> {
                     .file_stem()
                     .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem)
         })
-        .collect()
+        .collect();
+    if raw && !greycard_core::decode::owns_short_names(frame, &same) {
+        return None;
+    }
+    same.retain(|entry| {
+        entry.as_os_str() != name && !(raw && greycard_core::decode::is_raw_path(entry))
+    });
+    Some(same)
 }
 
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
@@ -2231,6 +2250,115 @@ mod tests {
         );
         assert_eq!(meta.keywords, ["sea", "rocks"]);
         assert_eq!(meta.caption, "a caption", "trimmed on the way into Meta");
+    }
+
+    /// A High Res Shot's `P1.xmp` is the ORF's, never its ORI's: the
+    /// ORF reads and moves it, the ORI has only its long name, with
+    /// its ORF there or not, and never makes the short one.
+    #[test]
+    fn the_short_name_is_the_orfs_never_its_oris() {
+        let dir = tempdir("ori");
+        let (orf, ori) = (dir.join("P1.ORF"), dir.join("P1.ORI"));
+        for f in [&orf, &ori] {
+            std::fs::write(f, b"raw").unwrap();
+        }
+        std::fs::write(short_path(&orf), fresh(&full(), None)).unwrap();
+        assert_eq!(paths_of(&orf), [short_path(&orf)]);
+        assert!(paths_of(&ori).is_empty());
+        assert_eq!(beside(&ori).own, None);
+        std::fs::write(long_path(&ori), fresh(&Meta::default(), None)).unwrap();
+        assert_eq!(paths_of(&ori), [long_path(&ori)]);
+        // The ORF gone: the short name is nobody's.
+        std::fs::remove_file(&orf).unwrap();
+        assert!(paths_of(&orf).is_empty());
+        assert_eq!(paths_of(&ori), [long_path(&ori)]);
+        // An ORI alone makes only its long name, and reads no culling
+        // tool's short one.
+        let lone = dir.join("P2.ORI");
+        std::fs::write(&lone, b"raw").unwrap();
+        assert_eq!(write_path(&lone, true), Some(long_path(&lone)));
+        let culled = Meta {
+            rating: 4,
+            ..Meta::default()
+        };
+        std::fs::write(short_path(&lone), fresh(&culled, None)).unwrap();
+        let found = beside(&lone);
+        assert!(found.own.is_none() && found.shared.is_none());
+        // A DNG beside an ORI and no ORF owns the stem's, as on master.
+        let (dng, its_ori) = (dir.join("P3.DNG"), dir.join("P3.ORI"));
+        for f in [&dng, &its_ori] {
+            std::fs::write(f, b"raw").unwrap();
+        }
+        std::fs::write(short_path(&dng), fresh(&culled, None)).unwrap();
+        assert_eq!(paths_of(&dng), [short_path(&dng)]);
+        assert!(paths_of(&its_ori).is_empty());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// [`beside`] over every raw of a folder of 2,500 CR3s, each with
+    /// its short XMP, timed: one listing a raw, as an index pass reads
+    /// them. Run with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a test"]
+    fn beside_over_a_folder_of_short_xmps_timed() {
+        let dir = tempdir("timed");
+        let raws: Vec<PathBuf> = (0..2_500)
+            .map(|i| {
+                let raw = dir.join(format!("IMG_{i:05}.CR3"));
+                std::fs::write(&raw, b"raw").unwrap();
+                std::fs::write(short_path(&raw), b"<x/>").unwrap();
+                raw
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let owned = raws.iter().filter(|r| beside(r).own.is_some()).count();
+        println!(
+            "{} raws: {:.2} s",
+            raws.len(),
+            started.elapsed().as_secs_f64()
+        );
+        assert_eq!(owned, raws.len());
+        greycard_core::testing::remove_dir_retry(&dir);
+    }
+
+    /// The ORI rated 5 in its own XMP, the ORF's `P.xmp` rated 1 with
+    /// a keyword; the ORF deleted outside greycard. The ORI's next
+    /// adoption takes nothing from `P.xmp`, and its writes still go to
+    /// `P.ORI.xmp`, `P.xmp` untouched.
+    #[test]
+    fn an_ori_whose_orf_is_gone_takes_nothing_of_the_stems_xmp() {
+        let dir = tempdir("ori-gone");
+        let (orf, ori) = (dir.join("P.ORF"), dir.join("P.ORI"));
+        for f in [&orf, &ori] {
+            std::fs::write(f, b"raw").unwrap();
+        }
+        let five = Meta {
+            rating: 5,
+            ..Meta::default()
+        };
+        save(&ori, &five, None).unwrap();
+        assert!(long_path(&ori).exists());
+        let mut theirs = Meta {
+            rating: 1,
+            ..Meta::default()
+        };
+        theirs.set_keywords(vec!["harbor".into()]);
+        save(&orf, &theirs, None).unwrap();
+        assert_eq!(path_of(&orf), Some(short_path(&orf)));
+        let stem_xmp = std::fs::read(short_path(&orf)).unwrap();
+
+        std::fs::remove_file(&orf).unwrap();
+        let mut sidecar = greycard_edit::Sidecar {
+            meta: five.clone(),
+            ..Default::default()
+        };
+        adopt(&ori, &mut sidecar, || None);
+        assert_eq!(sidecar.meta.rating, 5);
+        assert!(sidecar.meta.keywords.is_empty());
+        assert_eq!(write_path(&ori, true), Some(long_path(&ori)));
+        save(&ori, &sidecar.meta, None).unwrap();
+        assert_eq!(std::fs::read(short_path(&orf)).unwrap(), stem_xmp);
+        greycard_core::testing::remove_dir_retry(&dir);
     }
 
     #[test]

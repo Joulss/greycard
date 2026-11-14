@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-const RAWS: [&str; 8] = ["cr3", "cr2", "nef", "arw", "raf", "dng", "rw2", "orf"];
+use greycard_core::decode::RAW_EXTENSIONS as RAWS;
 
 fn skipped(why: &str) {
     eprintln!("SKIPPED: the command-line set export: {why}");
