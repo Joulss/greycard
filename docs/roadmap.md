@@ -299,7 +299,15 @@ the reasoning lives in `docs/notes.md`.
 - [ ] A frame opened at the aspect chosen in the camera: Olympus
       records it (ImageProcessing AspectRatio 0x1112 and AspectFrame
       0x1113) and nothing reads it, so an ORF shot at 3:2 opens at
-      the sensor's 4:3. Waits on a 3:2 sample (issue 145, 2026-11-13)
+      the sensor's 4:3. The reader is built on a held branch
+      (worktree-agent-a404a8d71cfb9bc51) with the design in its notes
+      draft: the embedded preview is the full 4:3 too, so the
+      stand-in, the thumbnails, the develop key, and the export must
+      take the same cut. An edit with no crop resolves to the
+      camera's frame; open are what Original means in Crop there, and
+      whether the index stores the frame (a schema step, only these
+      frames remade) or every cache is remade once (issue 145,
+      2026-11-14)
 - [ ] The window's size and place are written at a close or a quit
       only, so an editor ended by a signal, a force quit, or a logout
       opens as it was the time before (§623). Low priority
@@ -1182,7 +1190,14 @@ clears or a tester asks for it.
       suggests 2.5 to 3, or epsilon 0.1 with 2)
 - [ ] A default preset applied to every frame on its first open, so
       the tools a user never wants start off (pixls, 2026-10-24;
-      asked again as a saved baseline, discussion 59, 2026-10-30)
+      asked again as a saved baseline, discussion 59, 2026-10-30).
+      The display curve with it, so AgX can be someone's default
+      before it is everyone's: an edit then has to write its curve
+      from the first change, and a sidecar without one stays per
+      channel (2026-11-14)
+- [ ] The parametric curve's three dividers show where they sit as
+      numbers and take a typed value, beside the drag on the graph
+      (2026-11-14)
 - [ ] The brush's Flow is what other apps call Opacity: one stroke
       lays down at most its amount, and strokes build on each other.
       Decide whether to rename it or add a Flow that builds within a
