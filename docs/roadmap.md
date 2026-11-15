@@ -720,6 +720,8 @@ the user.
       other filters, and the camera's own copyright and artist
       shown read-only in METADATA (discussion 147, 2026-11-14);
       `date:` in the search field is the only date filter today
+- [ ] The mouse's back and forward buttons step to the previous and
+      next frame in Cull (2026-11-15)
 - [ ] The camera's focus point read from the raw (Canon's AFInfo
       carries the frame's position and size against the image; Nikon,
       Sony, Fuji, Olympus, and Panasonic have theirs): the zoom
