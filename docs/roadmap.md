@@ -1412,6 +1412,10 @@ clears or a tester asks for it.
       a release leg on GitHub's ARM runner, ONNX Runtime's
       linux-aarch64 build in the registry, the AppImage tooling for
       ARM (issue 105, 2026-11-09)
+- [ ] Low: a window listing all of a file's metadata, the maker
+      notes' named values among it (whether the flash fired cannot be
+      told from METADATA today); read-only first, the editable fields
+      after (2026-11-15)
 - [ ] The IPTC fields kept per frame in the sidecar and written into
       exports, GPS with them (issue 106, 2026-11-09; the author and
       the copyright for every export are §652 and §658). The fields
