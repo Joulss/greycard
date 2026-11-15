@@ -81,6 +81,14 @@ the reasoning lives in `docs/notes.md`.
       the strip until the edit changes. A "let go" count per path,
       raised under the cache's lock and checked at the store, every
       stat outside it (§635)
+- [ ] A picture past the card's texture limit crashes the window, at
+      every launch after: an 18,432 px wide JPEG on a card whose
+      textures end at 16,384 (every Apple GPU, lavapipe) panics in
+      `create_texture` for the viewport's `developed` picture, and the
+      remembered last file opens it again at the next start. Show such
+      a picture reduced and export it whole; and do not reopen a frame
+      the last launch died opening. A stitched panorama can reach this
+      too (issue 152)
 - [ ] The local contrast's GPU sweep fails one case in a thousand:
       seed 1, case 758, a 55x2547 Steps scene with texture -0.82,
       clarity -1, and structure 1, the GPU 1.3e-4 and the CPU 2.3e-4
