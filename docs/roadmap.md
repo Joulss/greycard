@@ -216,6 +216,22 @@ the reasoning lives in `docs/notes.md`.
       to 95th percentiles (Whites at -3 took 0.77 stops off them),
       and the guide saying to reach for Whites on a light source
       (issue 132, 2026-11-14)
+- [ ] Highlights alone makes a hotspot stand out more: its ease past
+      the frame's 99th percentile (§250) gives a flash hotspot on skin
+      less of the slider than the skin round it (about 0.25 against
+      0.42 on a studio flash frame), so with Whites at 0 the lightness
+      between hotspot and skin grows from 10.6 to 18.1 L* as
+      Highlights goes to -2, and the display curve's shoulder letting
+      go adds to it. A slider named for highlights must never raise a
+      highlight's contrast: the ease reshaped or tied to the region's
+      reading so hotspot and surround take one gain, checked on the
+      Whites shoulder trial's grid of faces (issue 132, 2026-11-14)
+- [ ] A kept picture of an angled edit sits up to a quarter pixel off
+      the full develop: the reduced develop rounds the frame's size at
+      its own scale (`frame_of` in `edited_pictures::make`) where the
+      export rounds at full scale, so an odd full size gives a
+      different span. Frame the reduced picture over the full frame's
+      span. Exports are exact; found on issue 145's review
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a
