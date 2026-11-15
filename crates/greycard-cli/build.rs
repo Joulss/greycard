@@ -18,7 +18,9 @@ fn windows_resource() {
         .set_icon(icon)
         .set("ProductName", "greycard")
         .set("FileDescription", "greycard command line")
-        .set("LegalCopyright", "GPL-3.0-or-later")
+        .set("CompanyName", "Jess Olmstead")
+        // As the editor's: see crates/greycard-ui/build.rs.
+        .set("LegalCopyright", "Copyright © Jess Olmstead. GPL-3.0.")
         .compile()
         .expect("rc.exe compiles the resource");
 }

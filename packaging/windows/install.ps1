@@ -60,12 +60,33 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wPa
     } catch { }
 }
 
+# Explorer caches associations; after register.cmd or unregister.cmd
+# this tells it to look again (SHCNE_ASSOCCHANGED), from this process,
+# since a batch file cannot make the call. A courtesy too: the entries
+# are on disk either way and a sign-out picks them up.
+function Send-AssocChanged {
+    try {
+        if (-not ('G.Shell' -as [type])) {
+            Add-Type -Namespace G -Name Shell -MemberDefinition @'
+[DllImport("shell32.dll")]
+public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+'@
+        }
+        [G.Shell]::SHChangeNotify(0x8000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    } catch { }
+}
+
 if ($Remove) {
     Write-Host "removing greycard from $target"
 
-    if (Test-Path $target) {
-        $unregister = Join-Path $target 'unregister.cmd'
-        if (Test-Path $unregister) { & cmd.exe /c "`"$unregister`"" }
+    # The installed copy first; the setup installs none, so over a
+    # setup's install the one beside this script does the same work
+    # (it names no path of its own).
+    $unregister = @((Join-Path $target 'unregister.cmd'), (Join-Path $here 'unregister.cmd')) |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($unregister) {
+        & cmd.exe /c "`"$unregister`""
+        Send-AssocChanged
     }
 
     if (Test-Path $shortcut) {
@@ -147,6 +168,7 @@ if ($path.Key) {
 }
 
 & cmd.exe /c "`"$(Join-Path $target 'register.cmd')`""
+Send-AssocChanged
 
 Write-Host ""
 Write-Host "done. greycard is in the Start menu; greycard-ui is the editor and"

@@ -70,9 +70,11 @@ for %%E in (.cr3 .cr2 .dng .nef .arw .raf .orf .rw2 .ori) do (
     echo   %%E ^(offered^)
 )
 
-rem Explorer caches associations; this is the call that tells it not to.
-rem It is a convenience, so a failure here is not one: the entries are
-rem on disk either way and a sign-out picks them up.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -Namespace G -Name S -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'; [G.S]::SHChangeNotify(0x8000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)" >nul 2>&1
+rem Explorer caches associations, and the call that tells it to look
+rem again (SHChangeNotify) is not one a batch file can make. install.ps1
+rem makes it after running this, in its own process; run by hand, the
+rem entries work at once and Explorer's icons catch up at the next
+rem sign-out. We used to make the call from a PowerShell started here,
+rem which is a pattern antivirus heuristics flag.
 
 echo done. unregister.cmd undoes this.

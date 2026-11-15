@@ -14,8 +14,9 @@
 #
 #   packaging/notices/bundled.txt    hand-kept: the native libraries
 #                                    package.sh puts beside the
-#                                    binaries, and the artwork compiled
-#                                    into them
+#                                    binaries, Inno Setup's programs
+#                                    in the Windows installer, and the
+#                                    artwork compiled into them
 #   crates/greycard-slint/ui/icons/LICENSE
 #                                    the interface icons' license, read
 #                                    where the icons are kept

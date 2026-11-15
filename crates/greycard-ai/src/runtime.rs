@@ -365,6 +365,21 @@ fn coreml_cache_key(path: &Path, fixed: &[(&str, i64)]) -> String {
     format!("{stem}-{hex}")
 }
 
+/// A console program we ask something of, run without a console
+/// window: under the editor, which has none of its own on Windows,
+/// every one we start would otherwise flash one up. Elsewhere, and
+/// for a program with a window of its own, the flag changes nothing.
+#[cfg(any(feature = "cuda", all(feature = "coreml", target_os = "macos")))]
+fn windowless(command: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW.
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
 /// What Core ML runs on, for the provider-outcome record: the chip and
 /// the macOS version, since a system update brings a new Core ML. Asked
 /// once a process.
@@ -374,7 +389,7 @@ fn coreml_machine_identity() -> Option<String> {
     IDENTITY
         .get_or_init(|| {
             let ask = |program: &str, args: &[&str]| {
-                let out = std::process::Command::new(program)
+                let out = windowless(&mut std::process::Command::new(program))
                     .args(args)
                     .output()
                     .ok()?;
@@ -792,7 +807,7 @@ fn cuda_adapter_identity() -> Option<String> {
     static IDENTITY: OnceLock<Option<String>> = OnceLock::new();
     IDENTITY
         .get_or_init(|| {
-            let out = std::process::Command::new("nvidia-smi")
+            let out = windowless(&mut std::process::Command::new("nvidia-smi"))
                 .args(["--query-gpu=name,driver_version", "--format=csv,noheader"])
                 .output()
                 .ok()?;

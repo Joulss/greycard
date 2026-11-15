@@ -7,7 +7,9 @@
 # running user's profile. The user's Path gets an entry holding an
 # unexpanded %USERPROFILE% first, so the check also sees the installer
 # keep a variable it did not write, the trap install.ps1's header
-# describes.
+# describes. Another application's offer goes on .cr3 first too, so
+# the check sees the uninstaller take only our own value out of a key
+# it shares.
 
 [CmdletBinding()]
 param(
@@ -22,8 +24,16 @@ $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\greycard.l
 $classes = 'HKCU:\Software\Classes'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\greycard_is1'
 $marker = '%USERPROFILE%\greycard-setup-check'
+$neighbor = 'greycard-setup-check.other'
 
 function Fail([string]$what) { throw "windows-setup-check.ps1: $what" }
+
+# The raw extensions, read from register.cmd, so the setup's own copy
+# of the list is checked against the one the zip registers.
+$register = Join-Path $PSScriptRoot '..\packaging\windows\register.cmd'
+$offered = if ((Get-Content -Raw $register) -match '(?m)^for %%E in \(([^)]*)\) do') {
+    @($Matches[1] -split '\s+' | Where-Object { $_ })
+} else { Fail "no list of raw extensions in $register" }
 
 function Get-RawPath {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
@@ -34,11 +44,17 @@ function Get-RawPath {
 
 function Get-PathEntries { @((Get-RawPath) -split ';' | Where-Object { $_ }) }
 
-# The offer is a REG_NONE value with no data, so it is asked for by name.
-function Test-Offer {
-    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Classes\.cr3\OpenWithProgids')
+# An offer is a value whose data is nothing, so it is asked for by name.
+function Test-Offer([string]$ext, [string]$progid) {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\Classes\$ext\OpenWithProgids")
     if (-not $k) { return $false }
-    try { $k.GetValueNames() -contains 'greycard.photo' } finally { $k.Close() }
+    try { $k.GetValueNames() -contains $progid } finally { $k.Close() }
+}
+
+function Get-Default([string]$key) {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\Classes\$key")
+    if (-not $k) { return $null }
+    try { $k.GetValue('') } finally { $k.Close() }
 }
 
 function Run([string]$file, [string[]]$arguments) {
@@ -51,6 +67,13 @@ function Run([string]$file, [string[]]$arguments) {
 $log = Join-Path ([System.IO.Path]::GetTempPath()) 'greycard-setup.log'
 $unlog = Join-Path ([System.IO.Path]::GetTempPath()) 'greycard-uninstall.log'
 
+# Neither starts a shell: Inno logs every program it runs by its path.
+function Assert-NoShell([string]$file) {
+    if (-not (Test-Path $file)) { Fail "no log at $file" }
+    $ran = Select-String -Path $file -Pattern '\\(cmd|powershell|pwsh|reg)\.exe' -AllMatches
+    if ($ran) { Fail "$file shows a shell run: $($ran.Line -join ' | ')" }
+}
+
 Remove-Item $log, $unlog -ErrorAction SilentlyContinue
 
 try {
@@ -61,13 +84,22 @@ try {
     $key.Close()
     $before = Get-PathEntries
 
+    # Another application's offer for .cr3, in the key ours joins.
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Classes\.cr3\OpenWithProgids')
+    $key.SetValue($neighbor, '', [Microsoft.Win32.RegistryValueKind]::String)
+    $key.Close()
+
     Write-Host "installing $Setup"
     Run (Resolve-Path $Setup).Path @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"")
+    Assert-NoShell $log
 
     foreach ($f in 'greycard-ui.exe', 'greycard.exe', 'application-x-greycard-edit.ico',
-        'register.cmd', 'unregister.cmd', 'LICENSE', 'THIRD-PARTY-NOTICES', 'README.md',
-        'unins000.exe') {
+        'LICENSE', 'THIRD-PARTY-NOTICES', 'README.md', 'unins000.exe') {
         if (-not (Test-Path (Join-Path $app $f))) { Fail "$app\$f is missing" }
+    }
+    # The registration is the setup's own; the zip's scripts stay out.
+    foreach ($f in 'register.cmd', 'unregister.cmd') {
+        if (Test-Path (Join-Path $app $f)) { Fail "$app\$f was installed" }
     }
     Get-ChildItem $app -File | ForEach-Object { Write-Host "  $($_.Name)" }
 
@@ -85,26 +117,42 @@ try {
     if (-not ($after | Where-Object { $_.TrimEnd('\') -eq $app })) { Fail "$app is not on the Path" }
     if (-not ($after -contains $marker)) { Fail "the Path lost ${marker}: $(Get-RawPath)" }
 
-    if ((Get-ItemProperty "$classes\.gcd").'(default)' -ne 'greycard.gcd') { Fail '.gcd is not greycard.gcd' }
-    if (-not (Test-Offer)) { Fail '.cr3 does not offer greycard.photo' }
-    foreach ($k in 'greycard.gcd', 'greycard.photo', 'Applications\greycard-ui.exe') {
-        if (-not (Test-Path "$classes\$k\shell\open\command")) { Fail "$k is not registered" }
+    # The associations, value for value as register.cmd writes them.
+    $exe = Join-Path $app 'greycard-ui.exe'
+    $open = "`"$exe`" `"%1`""
+    $want = [ordered]@{
+        '.gcd'                                       = 'greycard.gcd'
+        'greycard.gcd'                               = 'greycard edit sidecar'
+        'greycard.gcd\DefaultIcon'                   = "`"$(Join-Path $app 'application-x-greycard-edit.ico')`""
+        'greycard.gcd\shell\open\command'            = $open
+        'greycard.photo'                             = 'greycard photo'
+        'greycard.photo\DefaultIcon'                 = "`"$exe`",0"
+        'greycard.photo\shell\open\command'          = $open
+        'Applications\greycard-ui.exe\shell\open\command' = $open
     }
-    $progids = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Classes\.gcd\OpenWithProgids')
-    if (-not $progids -or -not ($progids.GetValueNames() -contains 'greycard.gcd')) {
-        Fail '.gcd\OpenWithProgids does not hold greycard.gcd'
+    foreach ($k in $want.Keys) {
+        $got = Get-Default $k
+        if ($got -ne $want[$k]) { Fail "$k holds [$got], not [$($want[$k])]" }
     }
-    $progids.Close()
+    if ((Get-ItemProperty "$classes\Applications\greycard-ui.exe").FriendlyAppName -ne 'greycard') {
+        Fail 'Applications\greycard-ui.exe has no FriendlyAppName greycard'
+    }
+    if (-not (Test-Offer '.gcd' 'greycard.gcd')) { Fail '.gcd\OpenWithProgids does not hold greycard.gcd' }
+    foreach ($ext in $offered) {
+        if (-not (Test-Offer $ext 'greycard.photo')) { Fail "$ext does not offer greycard.photo" }
+    }
+    if (-not (Test-Offer '.cr3' $neighbor)) { Fail "the install took $neighbor off .cr3" }
 
     $entry = Get-ItemProperty $uninstallKey
     if ($entry.DisplayVersion -ne $Version) { Fail "the uninstall entry says $($entry.DisplayVersion)" }
-    Write-Host "  installed: Start menu, Path, associations, and $($entry.DisplayName) $($entry.DisplayVersion) in Installed apps"
+    Write-Host "  installed: Start menu, Path, associations ($($offered -join ' ')), and $($entry.DisplayName) $($entry.DisplayVersion) in Installed apps"
 
     Write-Host 'uninstalling'
     Run (Join-Path $app 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$unlog`"")
     # The uninstaller's first copy waits for the one that does the work,
     # but give the directory a moment rather than trust that.
     for ($i = 0; $i -lt 30 -and (Test-Path $app); $i++) { Start-Sleep -Seconds 1 }
+    Assert-NoShell $unlog
 
     if (Test-Path $app) { Fail "$app is still there: $(Get-ChildItem $app -Recurse | Out-String)" }
     if (Test-Path $link) { Fail "$link is still there" }
@@ -114,7 +162,11 @@ try {
     foreach ($k in 'greycard.gcd', 'greycard.photo', 'Applications\greycard-ui.exe') {
         if (Test-Path "$classes\$k") { Fail "$k is still registered" }
     }
-    if (Test-Offer) { Fail '.cr3 still offers greycard.photo' }
+    foreach ($ext in $offered) {
+        if (Test-Offer $ext 'greycard.photo') { Fail "$ext still offers greycard.photo" }
+    }
+    # Ours gone from the shared key, the other application's left.
+    if (-not (Test-Offer '.cr3' $neighbor)) { Fail "the uninstall took $neighbor off .cr3" }
     if (Test-Path $uninstallKey) { Fail 'the uninstall entry is still there' }
     Write-Host '  removed: files, Start menu, Path entry, associations, and the uninstall entry'
 } catch {
@@ -125,4 +177,14 @@ try {
         }
     }
     throw
+} finally {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Classes\.cr3\OpenWithProgids', $true)
+    if ($key) {
+        $key.DeleteValue($neighbor, $false)
+        $empty = $key.ValueCount -eq 0 -and $key.SubKeyCount -eq 0
+        $key.Close()
+        if ($empty) {
+            [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey('Software\Classes\.cr3\OpenWithProgids', $false)
+        }
+    }
 }

@@ -97,7 +97,11 @@ fn windows_resource() {
         .set_icon(icon)
         .set("ProductName", "greycard")
         .set("FileDescription", "greycard")
-        .set("LegalCopyright", "GPL-3.0-or-later")
+        .set("CompanyName", "Jess Olmstead")
+        // The binary links Slint, under GPL-3.0-only, so the whole is
+        // version 3; winresource writes the .rc as UTF-8 under
+        // `#pragma code_page(65001)`, which keeps the ©.
+        .set("LegalCopyright", "Copyright © Jess Olmstead. GPL-3.0.")
         .compile()
         .expect("rc.exe compiles the resource");
 }

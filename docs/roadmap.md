@@ -64,6 +64,11 @@ the reasoning lives in `docs/notes.md`.
       (`RECONCILED`, matched by prefix and hashed into the state's
       id), so a reworded or translated label changes the merge across
       machines: a kind on the step instead (review, 2026-11-11)
+- [ ] `greycard.exe` beside the editor on Windows: double-clicked,
+      or run from Win+R, the command line is a console that opens and
+      closes. A name or a place that keeps it out of the way (§684)
+- [ ] A zip install over a setup install on Windows leaves the
+      setup's entry in Installed apps after the zip's uninstall (§684)
 - [ ] dxil.dll's own terms in the notices: ours is 1.8.2502.11,
       signed by Windows and in no DXC release on GitHub, so likely the
       Windows SDK's; the notices say whose it is and no more (§660)

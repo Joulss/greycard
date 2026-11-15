@@ -11,6 +11,10 @@
 # current user, into -Destination. The x64 build runs on Windows on
 # ARM too, under emulation. On a runner the compiler's path goes into
 # $GITHUB_ENV as ISCC, where windows-setup.ps1 looks first.
+#
+# Its setup and uninstaller programs go out in ours, so its license is
+# in packaging/notices/bundled.txt under this version; a new version
+# means checking that entry against the new tag's license.txt.
 
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Destination)

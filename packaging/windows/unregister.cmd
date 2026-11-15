@@ -27,6 +27,6 @@ for %%E in (.cr3 .cr2 .dng .nef .arw .raf .orf .rw2 .ori) do (
     reg delete "%classes%\%%E\OpenWithProgids" /v "greycard.photo" /f >nul 2>&1
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -Namespace G -Name S -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'; [G.S]::SHChangeNotify(0x8000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)" >nul 2>&1
+rem Explorer is told by install.ps1, as register.cmd says.
 
 echo done.
