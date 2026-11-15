@@ -34,6 +34,7 @@ impl Scratch {
             std::process::id(),
             std::thread::current().id()
         ));
+        // remove_dir_all allowed: a last run's leftover, before anything is open.
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         crate::settings::use_file(Some(dir.join("settings.json")));

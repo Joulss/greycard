@@ -1706,7 +1706,7 @@ mod tests {
         assert!(!set_aside);
         assert_eq!(read.ui_scale, 150);
         assert!(!dir.join("settings.json.bad").exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The frames a launch opens: the chosen folder's while it is
