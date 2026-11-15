@@ -941,6 +941,9 @@ pub(crate) fn fetch(
                 size: want.size,
                 preview: Arc::new(cut_to_camera(preview, &want.path, true, want.whole)),
             });
+            // Where the camera focused, from the head of the file just
+            // read, once the picture is out: for the zoom keys on it.
+            crate::focus_points::read_and_wake(&want.path);
             if want.make_preview
                 && keeps_as_preview(companion, &want.path)
                 && let Some(previews) = previews

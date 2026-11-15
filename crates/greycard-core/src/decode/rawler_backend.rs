@@ -765,6 +765,10 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     }
     frame.shot = shot_of(&metadata);
     frame.shot.camera_frame = camera_frame_of(source, frame.crop);
+    let area = frame
+        .crop
+        .map_or((frame.width, frame.height), |c| (c.width, c.height));
+    frame.shot.focus_point = focus_point_of(source, area);
     log::info!(
         "decoded {} {}: {}x{} {}, black {}, white {}",
         frame.make,
@@ -1006,6 +1010,22 @@ fn camera_frame_of(source: &RawSource, crop: Option<Rect>) -> Option<crate::raw:
     }
 }
 
+/// The camera's focus point of a raw (`focus::focus_stream`) on the
+/// area its develop is cut to; a file the reader cannot read has none.
+fn focus_point_of(source: &RawSource, area: (usize, usize)) -> Option<crate::raw::FocusPoint> {
+    match super::focus::focus_stream(std::io::Cursor::new(source.buf()), area) {
+        Ok(Some(p)) => {
+            log::debug!("the camera's focus point {:?}", p.area);
+            Some(p)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            log::debug!("the camera's focus point: {e}");
+            None
+        }
+    }
+}
+
 /// What the frame was shot at, from the metadata: the EXIF tags, and
 /// rawler's own lens table for a lens name when the tag is empty.
 pub(crate) fn shot_of(metadata: &RawMetadata) -> Shot {
@@ -1032,6 +1052,7 @@ pub(crate) fn shot_of(metadata: &RawMetadata) -> Shot {
         iso: iso_of(exif),
         exposure_time: exif.exposure_time.as_ref().and_then(rational),
         camera_frame: None,
+        focus_point: None,
     }
 }
 

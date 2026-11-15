@@ -80,6 +80,9 @@ design note behind it.
 
 ### Library
 
+- On a Canon raw, **Space** and **Z** zoom from the fit view to where
+  the camera focused, in Cull, the lightbox, and Develop
+  ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md)).
 - Several frames chosen show in the filmstrip: each wears a ring, the
   current one the strongest
   ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).

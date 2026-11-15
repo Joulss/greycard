@@ -157,6 +157,19 @@ pub(crate) struct Develop {
         greycard_core::raw::CameraFrame,
         greycard_core::raw::Orientation,
     )>,
+    /// Where the camera focused on the raw that picture is a develop
+    /// of, and the tag its develop turns it by: where the zoom key's
+    /// 1:1 goes (`viewport::focus_center`). None for a frame whose
+    /// camera does not say, and for a picture.
+    pub(crate) drawn_focus: Option<(
+        greycard_core::raw::FocusPoint,
+        greycard_core::raw::Orientation,
+    )>,
+    /// The zoom key took this frame from fit to its zoom about the
+    /// middle before its focus point was known: when the point comes,
+    /// the view goes to it if it is still there untouched
+    /// (`viewport::focus_arrived`).
+    pub(crate) focus_pending: Option<FocusPending>,
     /// When the open frame was last turned, for the log's line on the
     /// first frame drawn after it.
     pub(crate) turn_pressed: Option<std::time::Instant>,
@@ -444,6 +457,17 @@ pub(crate) struct Develop {
     /// Which way the strip is being walked, for which neighbors are
     /// sent (`browser::Walk`).
     pub(crate) walk: crate::panel::browser::Walk,
+}
+
+/// A zoom key's press waiting on its frame's focus point: the frame
+/// (the version, not only the file), the zoom it went to, and whether
+/// it was pressed in Cull or the lightbox's loupe, whose leaving or
+/// entering drops it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FocusPending {
+    pub(crate) frame: crate::versions::Key,
+    pub(crate) level: f32,
+    pub(crate) culling: bool,
 }
 
 /// Where a middle click's 200% came from: the zoom (0 for fit) and the

@@ -1517,6 +1517,111 @@ pub(crate) fn ask_whole(st: &mut State) {
 /// and names for the overlay; the status line; and the captures a
 /// batch run waits on, once every tile has its picture.
 pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<Shared>) {
+    draw_cull(st, app, state);
+    // A focus point that came in after the zoom key went to 1:1 about
+    // the middle takes the view there now.
+    crate::panel::viewport::focus_arrived(st, app);
+}
+
+/// Whether the viewport draws the culling loupe's picture (the camera's
+/// or the edit's) rather than the develop: in Cull and the lightbox's
+/// loupe, and while the camera's picture stands in for a develop
+/// (`startup::land_pending`'s choice).
+pub(crate) fn loupe_draws(st: &State) -> bool {
+    st.culling.cull.is_some() || standing_in(st).is_some()
+}
+
+/// Where the camera focused on the frame the loupe draws, in the
+/// loupe's units for `develop.center` (the camera picture's own pixels
+/// at its turns and mirror, as `draw_cull` lays it): the point read
+/// from the file's head (`focus_points`), through the cut to the
+/// camera's frame the picture comes with, to the picture's pixels, and
+/// through the frame's quarter turns and flip. Never the edit's crop or
+/// straightening, which the camera's picture is not drawn by. None for
+/// a frame whose point is not known (yet), for the edit's picture
+/// standing in, and for a point the camera's cut leaves out.
+pub(crate) fn loupe_focus_center(st: &State, app: &App) -> Option<(f32, f32)> {
+    let holding = st.culling.cull.is_none();
+    let selected = st.current?;
+    let c = match standing_in(st) {
+        Some(file) if holding => file,
+        _ => selected,
+    };
+    if stands_for(st, app, c).is_some() {
+        return None;
+    }
+    let cull = st.culling.cull.as_ref().or(st.culling.hold.as_ref())?;
+    let preview = cull.cache.best(c)?;
+    if preview.edited {
+        return None;
+    }
+    let path = st.path_of(c);
+    let (point, tag) = crate::focus_points::known(path)??;
+    let (mut u, mut v) = point.center(tag);
+    // The camera's picture of a frame the camera framed comes cut to
+    // that frame (`cull::cut_to_camera`), and the camera's JPEG beside
+    // the raw is that cut already.
+    if (preview.cut || preview.companion)
+        && let Some(frame) = crate::edited_pictures::camera_known(path)
+    {
+        let [x, y, w, h] = frame.shown();
+        (u, v) = ((u - x) / w, (v - y) / h);
+    }
+    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+        return None;
+    }
+    let from_panel = holding && Some(c) == st.current;
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, from_panel);
+    let geometry = Geometry {
+        turns,
+        flip,
+        ..Geometry::default()
+    };
+    let (sw, sh) = (preview.source.0 as f32, preview.source.1 as f32);
+    let r = geometry.to_plane((u * sw, v * sh), sw, sh);
+    let origin = geometry.frame(sw, sh, None).origin;
+    Some((r.0 - origin.0, r.1 - origin.1))
+}
+
+/// Whether the frame the loupe draws has said where its camera focused,
+/// a point or none: its picture in hand, and its file's head read, or
+/// a file no read can find a point in.
+pub(crate) fn loupe_focus_answered(st: &State) -> bool {
+    let holding = st.culling.cull.is_none();
+    let Some(selected) = st.current else {
+        return true;
+    };
+    let c = match standing_in(st) {
+        Some(file) if holding => file,
+        _ => selected,
+    };
+    let in_hand = st
+        .culling
+        .cull
+        .as_ref()
+        .or(st.culling.hold.as_ref())
+        .is_some_and(|cull| cull.cache.best(c).is_some());
+    let path = st.path_of(c);
+    in_hand
+        && (!greycard_core::decode::may_have_focus_point(path)
+            || crate::focus_points::known(path).is_some())
+}
+
+/// The point of the frame the loupe draws is owed a read of its file's
+/// head: its picture came from the local previews, which read nothing
+/// of the file. The path to read, when one is owed.
+pub(crate) fn loupe_focus_owed(st: &State) -> Option<PathBuf> {
+    let holding = st.culling.cull.is_none();
+    let selected = st.current?;
+    let c = match standing_in(st) {
+        Some(file) if holding => file,
+        _ => selected,
+    };
+    let path = st.path_of(c);
+    crate::focus_points::wanted(path).then(|| path.clone())
+}
+
+fn draw_cull(st: &mut State, app: &App, state: &Rc<Shared>) {
     let (vw, vh) = (
         app.get_view_width().max(1) as u32,
         app.get_view_height().max(1) as u32,
@@ -3147,7 +3252,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::testing::{click, folder, press, state_for, window};
     use crate::{Pt, ScopeMark};
@@ -7614,5 +7719,315 @@ mod tests {
         drop(state);
         drop(worker);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A camera picture of a frame in the loupe's cache, `source` its
+    /// size as the file's tag turns it, with its focus point told. Out
+    /// of Cull, it is the picture standing in for the frame's develop.
+    pub(crate) fn focus_frame(
+        st: &mut State,
+        file: usize,
+        source: (u32, u32),
+        point: Option<(
+            greycard_core::raw::FocusPoint,
+            greycard_core::raw::Orientation,
+        )>,
+    ) {
+        let preview = Arc::new(cull::Preview::new(8, 6, vec![0; 192], source, false));
+        if st.culling.cull.is_none() {
+            let generation = st.develop.generation;
+            let hold = st
+                .culling
+                .hold
+                .get_or_insert_with(|| Cull::new("".into(), 2048));
+            hold.cache.insert(file, preview);
+            st.culling.placeholder = Some(placeholder::Wait::in_hand(file, generation));
+            crate::focus_points::tell(&st.path_of(file).clone(), point);
+            return;
+        }
+        let cull = st.culling.cull.as_mut().expect("culling");
+        cull.cache.insert(file, preview);
+        crate::focus_points::tell(&st.path_of(file).clone(), point);
+    }
+
+    fn near(a: (f32, f32), b: (f32, f32)) -> bool {
+        (a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5
+    }
+
+    /// In Cull, from the camera's JPEG: Space and Z from fit go to each
+    /// frame's own point as the frames are stepped through, through the
+    /// file's tag, the frame's quarter turns, and its mirror, and never
+    /// through the edit's crop or straightening, which the camera's
+    /// picture is not drawn by; a frame with no point zooms about the
+    /// middle as before.
+    #[test]
+    fn the_zoom_key_in_cull_goes_to_each_frames_own_point() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let app = window(5);
+        let names = (0..5).map(|i| format!("/nowhere/focus-cull/IMG_{i:04}.CR3").into());
+        let (state, _worker) = state_for(&app, names.collect());
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            enter_cull(&mut st, &app, 1);
+        }
+        // Right of and above the middle of the sensor.
+        let point = FocusPoint {
+            area: [0.7, 0.2, 0.1, 0.1],
+        };
+        {
+            let mut st = state.borrow_mut();
+            // A landscape frame; a portrait one, turned by its tag; one
+            // the user turned a quarter; one mirrored and cropped and
+            // straightened in its edit; and one with no point.
+            focus_frame(&mut st, 0, (6000, 4000), Some((point, Orientation::Normal)));
+            focus_frame(
+                &mut st,
+                1,
+                (4000, 6000),
+                Some((point, Orientation::Rotate270)),
+            );
+            focus_frame(&mut st, 2, (6000, 4000), Some((point, Orientation::Normal)));
+            st.sidecars[2].turn = 1;
+            focus_frame(&mut st, 3, (6000, 4000), Some((point, Orientation::Normal)));
+            let g = &mut st.sidecars[3].line.current.geometry;
+            g.flip = true;
+            g.angle = 4.0;
+            g.crop = Some(greycard_edit::geometry::Crop {
+                x: 0.5,
+                y: 0.0,
+                w: 0.5,
+                h: 1.0,
+            });
+            focus_frame(&mut st, 4, (6000, 4000), None);
+        }
+        let expected = [
+            Some((4500.0, 1000.0)),
+            // (u, v) to (v, 1 - u) on the 4000 by 6000 picture.
+            Some((1000.0, 1500.0)),
+            // A quarter clockwise on screen: (u, v) to (1 - v, u).
+            Some((3000.0, 4500.0)),
+            // Mirrored left to right, crop and angle not counted.
+            Some((1500.0, 1000.0)),
+            None,
+        ];
+        for level in [1.0, 3.0] {
+            for (file, want) in expected.iter().enumerate() {
+                app.invoke_select(file as i32);
+                let middle = {
+                    let mut st = state.borrow_mut();
+                    st.develop.zoom = 0.0;
+                    st.develop.center = (1234.0, 567.0);
+                    st.develop.center
+                };
+                app.invoke_zoom_key(level);
+                let st = state.borrow();
+                assert_eq!(st.develop.zoom, level, "frame {file}");
+                let at = st.develop.center;
+                match want {
+                    Some(w) => assert!(near(at, *w), "frame {file} at {level}: {at:?}"),
+                    None => assert!(near(at, middle), "frame {file}: {at:?}"),
+                }
+            }
+        }
+    }
+
+    /// Waits for the head read of `path` off the window's thread.
+    fn read_landed(path: &Path) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while crate::focus_points::known(path).is_none() {
+            assert!(
+                std::time::Instant::now() < until,
+                "the head read never came"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    /// A Cull window on `names` written in a scratch folder, each with
+    /// its bytes, the loupe on the first frame.
+    fn cull_on_files(
+        what: &str,
+        files: &[&[u8]],
+    ) -> (App, Rc<Shared>, Rc<crate::worker::Worker>, PathBuf) {
+        let dir = crate::testing::scratch_dir(what);
+        let names: Vec<PathBuf> = files
+            .iter()
+            .enumerate()
+            .map(|(i, bytes)| {
+                let path = dir.join(format!("IMG_{i:04}.CR3"));
+                std::fs::write(&path, bytes).unwrap();
+                path
+            })
+            .collect();
+        let app = window(files.len());
+        let (state, worker) = state_for(&app, names);
+        app.invoke_select(0);
+        enter_cull(&mut state.borrow_mut(), &app, 1);
+        (app, state, worker, dir)
+    }
+
+    const SEED: &[u8] = include_bytes!("../../../../fuzz/corpus/focus_point/seed-cr3-two-in-focus");
+
+    /// In Cull, a frame whose picture came from the local previews has
+    /// its file's head read when the key is pressed, off the window's
+    /// thread; the point coming in takes the key's untouched zoom there,
+    /// and leaves a panned one be. The seed's point, turned by its tag
+    /// (Rotate270), is at (2400, 3900) of the 4000 by 6000 picture.
+    #[test]
+    fn a_point_read_late_in_cull_takes_an_untouched_key_zoom_there() {
+        let (app, state, _worker, dir) = cull_on_files("focus-late", &[SEED, SEED]);
+        for (file, panned) in [(0, false), (1, true)] {
+            app.invoke_select(file as i32);
+            let path = {
+                let mut st = state.borrow_mut();
+                let preview = Arc::new(cull::Preview::new(8, 6, vec![0; 192], (4000, 6000), false));
+                st.culling
+                    .cull
+                    .as_mut()
+                    .unwrap()
+                    .cache
+                    .insert(file, preview);
+                st.develop.image_size = (4000, 6000);
+                st.develop.zoom = 0.0;
+                st.develop.center = (2000.0, 3000.0);
+                st.path_of(file).clone()
+            };
+            assert!(crate::focus_points::known(&path).is_none());
+            app.invoke_zoom_key(1.0);
+            assert_eq!(state.borrow().develop.center, (2000.0, 3000.0));
+            assert!(state.borrow().develop.focus_pending.is_some());
+            if panned {
+                state.borrow_mut().develop.center = (1000.0, 3000.0);
+            }
+            read_landed(&path);
+            let mut st = state.borrow_mut();
+            crate::panel::viewport::focus_arrived(&mut st, &app);
+            let want = if panned {
+                (1000.0, 3000.0)
+            } else {
+                (2400.0, 3900.0)
+            };
+            assert!(near(st.develop.center, want), "{:?}", st.develop.center);
+            assert!(st.develop.focus_pending.is_none());
+        }
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A head read that finds no point answers the press: the wait is
+    /// dropped and the view stays about the middle. Leaving Cull drops
+    /// a wait made in it, and a compare view never waits.
+    #[test]
+    fn a_wait_in_cull_ends_with_its_answer_a_mode_switch_or_never_starts() {
+        let not_a_raw: &[u8] = b"not a raw at all";
+        let (app, state, _worker, dir) = cull_on_files("focus-answered", &[not_a_raw, SEED, SEED]);
+        let pending = || state.borrow().develop.focus_pending.clone();
+        let at_fit = |file: usize, in_hand: bool| {
+            let mut st = state.borrow_mut();
+            if in_hand {
+                let preview = Arc::new(cull::Preview::new(8, 6, vec![0; 192], (6000, 4000), false));
+                st.culling
+                    .cull
+                    .as_mut()
+                    .unwrap()
+                    .cache
+                    .insert(file, preview);
+            }
+            st.develop.image_size = (6000, 4000);
+            st.develop.zoom = 0.0;
+            st.develop.center = (3000.0, 2000.0);
+            st.path_of(file).clone()
+        };
+
+        // No point in the file: answered, dropped, about the middle.
+        let path = at_fit(0, true);
+        app.invoke_zoom_key(1.0);
+        assert!(pending().is_some());
+        read_landed(&path);
+        {
+            let mut st = state.borrow_mut();
+            crate::panel::viewport::focus_arrived(&mut st, &app);
+            assert!(st.develop.focus_pending.is_none());
+            assert_eq!(st.develop.center, (3000.0, 2000.0));
+        }
+        // Pressed again, the answer known: no wait at all.
+        state.borrow_mut().develop.zoom = 0.0;
+        app.invoke_zoom_key(1.0);
+        assert!(pending().is_none());
+
+        // A wait made in Cull, its picture not in hand, and Cull left.
+        app.invoke_select(1);
+        at_fit(1, false);
+        app.invoke_zoom_key(1.0);
+        assert!(pending().is_some_and(|p| p.culling));
+        {
+            let mut st = state.borrow_mut();
+            let left = st.culling.cull.take();
+            crate::panel::viewport::focus_arrived(&mut st, &app);
+            assert!(st.develop.focus_pending.is_none(), "dropped on leaving");
+            st.culling.cull = left;
+        }
+
+        // A compare view never waits.
+        app.invoke_select(2);
+        at_fit(2, false);
+        state.borrow_mut().culling.cull.as_mut().unwrap().compare = 2;
+        app.invoke_zoom_key(1.0);
+        assert!(pending().is_none());
+        state.borrow_mut().culling.cull.as_mut().unwrap().compare = 1;
+        // Let the reads started here land before the folder goes.
+        read_landed(&state.borrow().path_of(1).clone());
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The camera's cut: a frame the camera framed comes cut to its
+    /// frame, and the point is taken into the cut; one outside it is
+    /// none.
+    #[test]
+    fn the_point_in_cull_is_taken_into_the_cameras_cut() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let app = window(2);
+        let names = (0..2).map(|i| format!("/nowhere/focus-cut/P{i:04}.ORF").into());
+        let (state, _worker) = state_for(&app, names.collect());
+        app.invoke_select(0);
+        let mut st = state.borrow_mut();
+        enter_cull(&mut st, &app, 1);
+        let path = st.path_of(0).clone();
+        let area = greycard_core::raw::Rect {
+            x: 0,
+            y: 0,
+            width: 4000,
+            height: 3000,
+        };
+        // The middle 3:2 band of a 4:3 sensor.
+        let frame = greycard_core::raw::CameraFrame {
+            area,
+            frame: greycard_core::raw::Rect {
+                x: 0,
+                y: 166,
+                width: 4000,
+                height: 2667,
+            },
+            orientation: Orientation::Normal,
+        };
+        crate::edited_pictures::note_decoded(&path, Some(frame));
+        let mut preview = cull::Preview::new(8, 6, vec![0; 192], (4000, 2667), false);
+        preview.cut = true;
+        st.culling
+            .cull
+            .as_mut()
+            .unwrap()
+            .cache
+            .insert(0, Arc::new(preview));
+        let at = |st: &State, area: [f32; 4]| {
+            crate::focus_points::tell(&path, Some((FocusPoint { area }, Orientation::Normal)));
+            loupe_focus_center(st, &app)
+        };
+        // At three quarters down the sensor: (2250 - 166) of the cut.
+        let c = at(&st, [0.45, 0.7, 0.1, 0.1]).unwrap();
+        assert!(near(c, (2000.0, 2084.0)), "{c:?}");
+        assert_eq!(at(&st, [0.45, 0.0, 0.1, 0.02]), None, "above the cut");
     }
 }

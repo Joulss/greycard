@@ -27,6 +27,7 @@ mod edited;
 mod entry;
 mod export_queue;
 mod finder;
+mod focus_points;
 mod gpu_errors;
 mod gpu_lost;
 mod grid;
@@ -998,6 +999,8 @@ impl State {
                 shown_size: (0, 0),
                 shown_turn: None,
                 drawn_camera: None,
+                drawn_focus: None,
+                focus_pending: None,
                 turn_pressed: None,
                 crop_drag: None,
                 crop_draw: None,

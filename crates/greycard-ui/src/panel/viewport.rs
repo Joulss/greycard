@@ -114,6 +114,114 @@ pub(crate) fn camera_of_frame(
     Some((frame.shot.camera_frame?, frame.orientation))
 }
 
+/// Where the camera focused on a raw, with the tag the develop turns
+/// the raw by.
+pub(crate) fn focus_of_frame(
+    frame: &greycard_core::raw::RawFrame,
+) -> Option<(
+    greycard_core::raw::FocusPoint,
+    greycard_core::raw::Orientation,
+)> {
+    Some((frame.shot.focus_point?, frame.orientation))
+}
+
+/// Where the camera focused on the picture the viewport draws, in
+/// `develop.center`'s units: the culling loupe's camera picture by its
+/// own units (`cull::loupe_focus_center`), the develop by the panel's
+/// geometry ([`focus_center`]). None in a compare view.
+pub(crate) fn focus_target(st: &State, app: &App) -> Option<(f32, f32)> {
+    if compared(st) > 1 {
+        None
+    } else if crate::panel::cull::loupe_draws(st) {
+        crate::panel::cull::loupe_focus_center(st, app)
+    } else {
+        focus_center(st, app)
+    }
+}
+
+/// A focus point known only after the zoom key took the frame from fit
+/// to its zoom about the middle: the view goes to the point if it is
+/// still that frame, at that zoom, about the middle, as the key left
+/// it; a pan, a zoom, or another frame since leaves it be. Called after
+/// each draw lays the frame out, which re-centers a picture of a new
+/// size.
+pub(crate) fn focus_arrived(st: &mut State, app: &App) {
+    let Some(pending) = st.develop.focus_pending.clone() else {
+        return;
+    };
+    let (iw, ih) = st.develop.image_size;
+    let (cx, cy) = st.develop.center;
+    let middle = (cx - iw as f32 / 2.0).abs() < 0.5 && (cy - ih as f32 / 2.0).abs() < 0.5;
+    let same = st.current.and_then(|c| st.key_of(c)).as_ref() == Some(&pending.frame);
+    let culling = st.culling.cull.is_some();
+    if !same
+        || (st.develop.zoom - pending.level).abs() > 1e-3
+        || !middle
+        || culling != pending.culling
+    {
+        st.develop.focus_pending = None;
+        return;
+    }
+    if let Some(center) = focus_target(st, app) {
+        tracing::info!(
+            "zoom key: {}:1 on the camera's focus point, come in since",
+            pending.level
+        );
+        st.develop.focus_pending = None;
+        st.develop.center = center;
+        app.window().request_redraw();
+    } else if focus_answered(st) {
+        // The source has said, and it gave no point the view can take:
+        // nothing comes for this press.
+        st.develop.focus_pending = None;
+    }
+}
+
+/// Whether the picture the viewport draws has said where its camera
+/// focused, a point or none: the loupe's picture in hand with its
+/// file's head read (or of a file no read can find a point in), the
+/// develop the open frame's own. Until then a key's press waits.
+pub(crate) fn focus_answered(st: &State) -> bool {
+    if compared(st) > 1 {
+        true
+    } else if crate::panel::cull::loupe_draws(st) {
+        crate::panel::cull::loupe_focus_answered(st)
+    } else {
+        own_develop(st).is_some()
+    }
+}
+
+/// Where the camera focused, as the image pixel a view centered on it
+/// holds at its center (`develop.center`'s units): the point on the
+/// develop the viewport draws, turned as [`camera_crop`] turns the
+/// camera's frame, taken through the panel's geometry as a click is
+/// ([`view_to_source`] backward). None in a compare view, while the
+/// picture drawn is not the open frame's own develop, for a frame
+/// whose camera does not say, and for a point the crop leaves out.
+pub(crate) fn focus_center(st: &State, app: &App) -> Option<(f32, f32)> {
+    if compared(st) > 1 || !source_known(st) {
+        return None;
+    }
+    let lag = own_develop(st)?;
+    let (point, tag) = st.develop.drawn_focus?;
+    let (_, turn) = st.develop.shown_turn?;
+    let (u, v) = point.center(tag.turned(i32::from((turn + lag) % 4)));
+    let (sw, sh) = (
+        st.develop.source_size.0 as f32,
+        st.develop.source_size.1 as f32,
+    );
+    let geometry = read_geometry(app);
+    let frame = if app.get_crop_mode() {
+        geometry.bounds(sw, sh)
+    } else {
+        geometry.frame(sw, sh, camera_crop(st))
+    };
+    let r = geometry.to_plane((u * sw, v * sh), sw, sh);
+    let at = (r.0 - frame.origin.0, r.1 - frame.origin.1);
+    let (fw, fh) = frame.size;
+    ((0.0..=fw).contains(&at.0) && (0.0..=fh).contains(&at.1)).then_some(at)
+}
+
 /// The turn the develop on the GPU lags the open frame by, when that
 /// develop is the open frame's own; none for another frame's.
 pub(crate) fn own_develop(st: &State) -> Option<u8> {
@@ -2463,12 +2571,58 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
             st.develop.mat = !st.develop.mat;
             app.window().request_redraw();
         });
+        // A focus point read off the window's thread redraws it, so a
+        // key's zoom waiting on it goes there (`focus_arrived`).
+        let app_weak = app.as_weak();
+        crate::focus_points::set_wake(move || {
+            let _ = app_weak.upgrade_in_event_loop(|app| app.window().request_redraw());
+        });
         let (state, app_weak) = (outer.clone(), app.as_weak());
         app.on_zoom_key(move |level| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let at_level = (state.borrow().develop.zoom - level).abs() < 1e-3;
+            // From fit, the key's zoom goes to where the camera focused,
+            // when it says; from any other zoom it is about the middle,
+            // keeping the place. A point not known yet is waited for.
+            {
+                let mut st = state.borrow_mut();
+                st.develop.focus_pending = None;
+                if st.develop.zoom <= 0.0 {
+                    if let Some(center) = focus_target(&st, &app) {
+                        tracing::info!("zoom key: {level}:1 on the camera's focus point");
+                        st.develop.zoom_back = None;
+                        st.develop.zoom = level;
+                        st.develop.center = center;
+                        app.window().request_redraw();
+                        return;
+                    }
+                    // Waited for only while the picture has not said:
+                    // never in a compare view, nor once it said none.
+                    if !focus_answered(&st) {
+                        let culling = st.culling.cull.is_some();
+                        st.develop.focus_pending =
+                            st.current.and_then(|c| st.key_of(c)).map(|frame| {
+                                crate::owners::FocusPending {
+                                    frame,
+                                    level,
+                                    culling,
+                                }
+                            });
+                    }
+                    // A loupe picture from the local previews read
+                    // nothing of the file: its head is read now, one
+                    // read a path; with none to be had, no wait.
+                    if st.develop.focus_pending.is_some()
+                        && crate::panel::cull::loupe_draws(&st)
+                        && let Some(path) = crate::panel::cull::loupe_focus_owed(&st)
+                        && !crate::focus_points::read_then(path)
+                    {
+                        st.develop.focus_pending = None;
+                    }
+                }
+            }
             let scale = app.window().scale_factor();
             let (cx, cy) = (
                 app.get_view_width().max(1) as f32 / 2.0 / scale,
@@ -4297,6 +4451,250 @@ pub(crate) mod tests {
         let mut merged = frame.clone();
         merged.dng.merged = Some(Default::default());
         assert_eq!(camera_of_frame(&merged), None, "a merge opens whole");
+    }
+
+    /// The zoom keys' 1:1 and 3:1 from fit go to where the camera
+    /// focused, turned with the frame, and back to fit; from any other
+    /// zoom, with no focus point, one the crop leaves out, or another
+    /// frame's develop drawn, they zoom about the view's center as ever.
+    #[test]
+    fn the_zoom_key_goes_to_the_cameras_focus_point() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = hover_frame(1.0);
+        let zoom = || state.borrow().develop.zoom;
+        let center = || state.borrow().develop.center;
+        let near =
+            |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5;
+        // Right of and above the middle of the unturned 6000 by 4000.
+        let point = FocusPoint {
+            area: [0.7, 0.2, 0.1, 0.1],
+        };
+        let fit = || {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 0.0;
+            st.develop.center = (3000.0, 2000.0);
+        };
+        state.borrow_mut().develop.drawn_focus = Some((point, Orientation::Normal));
+        app.invoke_zoom_key(1.0);
+        assert_eq!(zoom(), 1.0);
+        assert!(near(center(), (4500.0, 1000.0)), "{:?}", center());
+        app.invoke_zoom_key(1.0);
+        assert_eq!(zoom(), 0.0, "and back to fit");
+        assert!(near(center(), (3000.0, 2000.0)));
+
+        // 3:1 goes there from fit too, and back to fit.
+        app.invoke_zoom_key(3.0);
+        assert_eq!(zoom(), 3.0);
+        assert!(near(center(), (4500.0, 1000.0)), "{:?}", center());
+        app.invoke_zoom_key(3.0);
+        assert_eq!(zoom(), 0.0);
+        fit();
+
+        // From any zoom but fit, either key zooms about the view's
+        // center as it always did, keeping the place: from 3:1 panned
+        // onto a detail, 1:1 there; from a scroll's 150%, 3:1 there.
+        for (from, key) in [(3.0, 1.0), (1.5, 3.0), (1.5, 1.0)] {
+            {
+                let mut st = state.borrow_mut();
+                st.develop.zoom = from;
+                st.develop.center = (1200.0, 3100.0);
+            }
+            app.invoke_zoom_key(key);
+            assert_eq!(zoom(), key, "from {from}");
+            assert!(
+                near(center(), (1200.0, 3100.0)),
+                "from {from}: {:?}",
+                center()
+            );
+            fit();
+        }
+
+        // A raw turned a quarter by its tag develops 4000 by 6000: the
+        // point at the top right of the sensor is at the bottom right.
+        {
+            let mut st = state.borrow_mut();
+            st.develop.drawn_focus = Some((point, Orientation::Rotate90));
+            st.develop.source_size = (4000, 6000);
+            st.develop.image_size = (4000, 6000);
+            st.develop.center = (2000.0, 3000.0);
+        }
+        app.invoke_zoom_key(1.0);
+        assert!(near(center(), (3000.0, 4500.0)), "{:?}", center());
+        {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 0.0;
+            st.develop.center = (2000.0, 3000.0);
+        }
+
+        // A crop of the bottom right quarter keeps it, nearer the
+        // crop's corner.
+        app.set_geo_has_crop(true);
+        app.set_geo_crop_x(0.5);
+        app.set_geo_crop_y(0.5);
+        app.set_geo_crop_w(0.5);
+        app.set_geo_crop_h(0.5);
+        app.invoke_zoom_key(1.0);
+        assert!(near(center(), (1000.0, 1500.0)), "{:?}", center());
+        {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 0.0;
+            st.develop.center = (1000.0, 1500.0);
+        }
+
+        // One of the top left leaves it out: the view's center.
+        app.set_geo_crop_x(0.0);
+        app.set_geo_crop_y(0.0);
+        app.invoke_zoom_key(1.0);
+        assert_eq!(zoom(), 1.0);
+        assert!(near(center(), (1000.0, 1500.0)), "{:?}", center());
+    }
+
+    /// With no focus point, or another frame's develop on screen, the
+    /// zoom key's 1:1 is about the view's center.
+    #[test]
+    fn the_zoom_key_without_a_focus_point_zooms_about_the_middle() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = hover_frame(1.0);
+        let center = || state.borrow().develop.center;
+        app.invoke_zoom_key(1.0);
+        assert_eq!(state.borrow().develop.zoom, 1.0);
+        assert_eq!(center(), (3000.0, 2000.0));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 0.0;
+            st.develop.drawn_focus = Some((
+                FocusPoint {
+                    area: [0.0, 0.0, 0.1, 0.1],
+                },
+                Orientation::Normal,
+            ));
+            // The picture drawn is another frame's.
+            st.develop.shown_turn = Some((5, 0));
+        }
+        app.invoke_zoom_key(1.0);
+        assert_eq!(center(), (3000.0, 2000.0));
+    }
+
+    /// A key pressed before the frame's develop has landed zooms about
+    /// the middle; its develop landing with a point then takes the view
+    /// there, at 1:1 and at 3:1, but not once the view was panned or
+    /// zoomed, nor on another frame.
+    #[test]
+    fn a_focus_point_that_comes_late_takes_an_untouched_key_zoom_there() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = hover_frame(1.0);
+        let center = || state.borrow().develop.center;
+        let near =
+            |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5;
+        let point = Some((
+            FocusPoint {
+                area: [0.7, 0.2, 0.1, 0.1],
+            },
+            Orientation::Normal,
+        ));
+        // The frame's own develop lands, with its point.
+        let arrive = || {
+            let mut st = state.borrow_mut();
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            st.develop.drawn_focus = point;
+            focus_arrived(&mut st, &app);
+        };
+        // At fit, another frame's develop still drawn.
+        let reset = || {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 0.0;
+            st.develop.center = (3000.0, 2000.0);
+            st.develop.drawn_focus = None;
+            st.develop.shown_turn = Some((5, 0));
+        };
+        for level in [1.0, 3.0] {
+            reset();
+            app.invoke_zoom_key(level);
+            assert!(near(center(), (3000.0, 2000.0)));
+            assert!(state.borrow().develop.focus_pending.is_some(), "waits");
+            arrive();
+            assert_eq!(state.borrow().develop.zoom, level);
+            assert!(near(center(), (4500.0, 1000.0)), "{level}: {:?}", center());
+
+            // Panned since: left where it is.
+            reset();
+            app.invoke_zoom_key(level);
+            state.borrow_mut().develop.center = (2900.0, 2000.0);
+            arrive();
+            assert!(near(center(), (2900.0, 2000.0)), "{:?}", center());
+
+            // Zoomed since: left.
+            reset();
+            app.invoke_zoom_key(level);
+            state.borrow_mut().develop.zoom = level * 1.25;
+            arrive();
+            assert!(near(center(), (3000.0, 2000.0)));
+
+            // Another frame since: left.
+            reset();
+            app.invoke_zoom_key(level);
+            if let Some(pending) = state.borrow_mut().develop.focus_pending.as_mut() {
+                pending.frame.path = "elsewhere.cr3".into();
+            }
+            arrive();
+            assert!(near(center(), (3000.0, 2000.0)));
+            assert!(state.borrow().develop.focus_pending.is_none());
+        }
+    }
+
+    /// A develop that lands with no point the view can take (one the
+    /// edit's crop leaves out) is the answer to the press: the wait is
+    /// dropped, and a later re-center by a change of the crop or a turn
+    /// does not take the view anywhere. A develop already landed with
+    /// no point, and a compare view, never wait at all.
+    #[test]
+    fn a_develop_that_answers_with_no_point_drops_the_wait() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let (app, state, _worker) = hover_frame(1.0);
+        let pending = || state.borrow().develop.focus_pending.clone();
+        let point = Some((
+            FocusPoint {
+                area: [0.7, 0.2, 0.1, 0.1],
+            },
+            Orientation::Normal,
+        ));
+        {
+            let mut st = state.borrow_mut();
+            st.develop.shown_turn = Some((5, 0));
+        }
+        // A crop of the bottom left quarter leaves the point out.
+        app.set_geo_has_crop(true);
+        app.set_geo_crop_x(0.0);
+        app.set_geo_crop_y(0.5);
+        app.set_geo_crop_w(0.5);
+        app.set_geo_crop_h(0.5);
+        app.invoke_zoom_key(1.0);
+        assert!(pending().is_some());
+        {
+            let mut st = state.borrow_mut();
+            st.develop.shown_turn = Some((0, current_turn(&st)));
+            st.develop.drawn_focus = point;
+            focus_arrived(&mut st, &app);
+        }
+        assert!(pending().is_none(), "answered: none it can take");
+        // The crop taken off, the view re-centered as a draw does: no
+        // jump minutes after the press.
+        app.set_geo_has_crop(false);
+        {
+            let mut st = state.borrow_mut();
+            st.develop.center = (3000.0, 2000.0);
+            focus_arrived(&mut st, &app);
+            assert_eq!(st.develop.center, (3000.0, 2000.0));
+        }
+
+        // The frame's develop on screen with no point: no wait.
+        {
+            let mut st = state.borrow_mut();
+            st.develop.zoom = 0.0;
+            st.develop.drawn_focus = None;
+        }
+        app.invoke_zoom_key(1.0);
+        assert!(pending().is_none());
     }
 
     /// A raw of a camera that is Rec.2020 itself, calibrated under

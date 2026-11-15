@@ -1348,6 +1348,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         st.develop.image_size = frame_size;
                         st.develop.center = (frame.size.0 / 2.0, frame.size.1 / 2.0);
                     }
+                    // A focus point that came with this develop, after
+                    // the zoom key went to 1:1 about the middle.
+                    crate::panel::viewport::focus_arrived(st, &app);
                     if app.get_original_on() != st.develop.original.on {
                         app.set_original_on(st.develop.original.on);
                     }

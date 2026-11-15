@@ -909,6 +909,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .frame
                 .as_ref()
                 .and_then(|(f, _)| crate::panel::viewport::camera_of_frame(f));
+            st.develop.drawn_focus = st
+                .develop
+                .frame
+                .as_ref()
+                .and_then(|(f, _)| crate::panel::viewport::focus_of_frame(f));
             st.develop.planes_wants = planes.as_ref().map(|p| p.wants).unwrap_or_default();
             st.develop.planes_asked = Default::default();
             st.develop.pending = Some(Landed {

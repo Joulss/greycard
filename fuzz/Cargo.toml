@@ -99,3 +99,10 @@ path = "fuzz_targets/dcp.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "focus_point"
+path = "fuzz_targets/focus_point.rs"
+test = false
+doc = false
+bench = false

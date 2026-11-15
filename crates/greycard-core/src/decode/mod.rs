@@ -11,6 +11,7 @@ use std::path::Path;
 use crate::error::Result;
 use crate::raw::{Orientation, RawFrame};
 
+mod focus;
 pub mod rawler_backend;
 mod sparse;
 pub mod style;
@@ -143,6 +144,61 @@ pub fn may_have_camera_frame(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| FRAMED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Where the camera focused, read from the file's head with no decode,
+/// as fractions of the picture its decode cuts to before the file's
+/// orientation turns it, with that orientation; `None` when the file
+/// does not say, focused by hand, or is of a maker not read, and for
+/// anything at `path` that is not a regular file (a FIFO would block
+/// the open). Reads the few small pieces of the head it needs and
+/// nothing else: a CR3's box headers up to its maker note, a CR2's
+/// IFDs. Canon is the maker read.
+pub fn focus_point_path(
+    path: impl AsRef<Path>,
+) -> Result<Option<(crate::raw::FocusPoint, Orientation)>> {
+    use std::io::Read;
+    let path = path.as_ref();
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    rawler_backend::guarded(
+        || rawler_backend::half_copy_at(path),
+        || {
+            // The head in one read: a CR3's moov (30 to 60 KiB on the
+            // bodies seen) and a CR2's IFDs and maker note lie in it.
+            // Only a walk that runs past it reads the file again, a
+            // piece at a time.
+            let mut file = std::fs::File::open(path)?;
+            let mut head = Vec::with_capacity(FOCUS_HEAD as usize);
+            (&mut file).take(FOCUS_HEAD).read_to_end(&mut head)?;
+            match focus::focus_in_head(head, meta.len()) {
+                Some(read) => read,
+                None => focus::focus_head(file),
+            }
+        },
+    )
+}
+
+/// How much of a file's head [`focus_point_path`] reads at once.
+const FOCUS_HEAD: u64 = 128 << 10;
+
+/// [`focus_point_path`] on a file's bytes in memory, unguarded.
+pub fn focus_point_bytes(bytes: &[u8]) -> Result<Option<(crate::raw::FocusPoint, Orientation)>> {
+    focus::focus_head(std::io::Cursor::new(bytes))
+}
+
+/// The extensions of the raws [`focus_point_path`] can find a point
+/// in: Canon's.
+const FOCUS_EXTENSIONS: [&str; 2] = ["cr3", "cr2"];
+
+/// Whether the file at `path` is of a kind [`focus_point_path`] can
+/// find a point in, by its name alone.
+pub fn may_have_focus_point(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| FOCUS_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 /// A raw's kind of mosaic alone, without a sample decoded and without a
@@ -502,6 +558,25 @@ mod tests {
         assert_eq!((tag.kind.as_str(), tag.headroom_stops), ("hdr", 1.0));
         assert_eq!(super::merge_tag_path(&frame).unwrap(), None);
         assert_eq!(super::merge_tag_path(&text).unwrap(), None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A focus point read refuses what is not a regular file without
+    /// opening it: a FIFO named as a raw would block the open for ever.
+    #[cfg(unix)]
+    #[test]
+    fn a_focus_read_opens_no_fifo_or_folder() {
+        let dir = std::env::temp_dir().join(format!("greycard-focus-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("IMG_0001.CR3");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if made.is_ok_and(|s| s.success()) {
+            assert_eq!(super::focus_point_path(&fifo).unwrap(), None);
+        }
+        let folder = dir.join("IMG_0002.CR3");
+        std::fs::create_dir_all(&folder).unwrap();
+        assert_eq!(super::focus_point_path(&folder).unwrap(), None);
+        assert!(super::focus_point_path(dir.join("IMG_0003.CR3")).is_err());
         crate::testing::remove_dir_retry(&dir);
     }
 

@@ -1392,4 +1392,64 @@ mod tests {
         changed(st, &app, &worker);
         assert!(worker.previews_ahead_of().is_empty(), "out of it");
     }
+
+    /// In the lightbox's loupe, Space and Z from fit go to each frame's
+    /// own point as an arrow steps the frames, as in Cull; a frame with
+    /// no point zooms about the middle.
+    #[test]
+    fn the_zoom_key_in_the_lightbox_loupe_goes_to_the_point() {
+        use greycard_core::raw::{FocusPoint, Orientation};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let names = (0..3).map(|i| format!("/nowhere/focus-lightbox/IMG_{i:04}.CR3").into());
+        let (state, _worker) = state_for(&app, names.collect());
+        app.invoke_select(0);
+        settle(&app);
+        press(&app, "l");
+        press(&app, Key::Return);
+        assert!(app.get_lightbox() && app.get_lightbox_loupe());
+        let point = FocusPoint {
+            area: [0.7, 0.2, 0.1, 0.1],
+        };
+        let frames = [
+            ((6000, 4000), Some((point, Orientation::Normal))),
+            ((4000, 6000), Some((point, Orientation::Rotate270))),
+            ((6000, 4000), None),
+        ];
+        let expected = [Some((4500.0, 1000.0)), Some((1000.0, 1500.0)), None];
+        for level in [1.0, 3.0] {
+            for (file, want) in expected.iter().enumerate() {
+                if file > 0 {
+                    press(&app, Key::RightArrow);
+                }
+                assert_eq!(state.borrow().current, Some(file));
+                // The loupe's camera picture standing in for the frame,
+                // its develop not landed.
+                {
+                    let mut st = state.borrow_mut();
+                    let (source, point) = frames[file];
+                    crate::panel::cull::tests::focus_frame(&mut st, file, source, point);
+                    assert!(crate::panel::cull::loupe_draws(&st));
+                }
+                let middle = {
+                    let mut st = state.borrow_mut();
+                    st.develop.zoom = 0.0;
+                    st.develop.center = (1234.0, 567.0);
+                    st.develop.center
+                };
+                app.invoke_zoom_key(level);
+                let st = state.borrow();
+                assert_eq!(st.develop.zoom, level);
+                let at = st.develop.center;
+                let to = want.unwrap_or(middle);
+                assert!(
+                    (at.0 - to.0).abs() < 0.5 && (at.1 - to.1).abs() < 0.5,
+                    "frame {file} at {level}: {at:?}"
+                );
+            }
+            press(&app, Key::LeftArrow);
+            press(&app, Key::LeftArrow);
+        }
+    }
 }

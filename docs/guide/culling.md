@@ -154,7 +154,9 @@ They fill in once greycard has indexed the folder.
 
 - **← →** move between frames. A mouse's back and forward side
   buttons do the same, wherever the pointer is.
-- **Space** zooms to 1:1 to check focus, and back. At 1:1 you always
+- **Space** zooms to 1:1 to check focus, and back. On a Canon raw it
+  zooms where the camera focused, when the file says where; **Z**
+  does the same at 3:1. At 1:1 you always
   see the camera's full JPEG, even on an edited frame, and in compare
   every frame shows its own, versions of one frame excepted.
 - **Shift+J** paints the sharpest parts of each frame green, to see

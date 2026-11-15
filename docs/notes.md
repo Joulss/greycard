@@ -699,3 +699,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§685. Back and forward step Cull's frames](notes/685-back-and-forward-step-culls-frames.md) (2026-11-15)
 - [§686. Highlight reconstruction against darktable and RawTherapee](notes/686-highlight-reconstruction-against-darktable-and-rawtherapee.md) (2026-11-15)
 - [§687. A set that shows in the strip, and a menu known to be up](notes/687-a-set-that-shows-in-the-strip.md) (2026-11-15)
+- [§688. The camera's focus point](notes/688-the-cameras-focus-point.md) (2026-11-15)

@@ -386,20 +386,7 @@ impl CameraFrame {
     /// [`CameraFrame::fractions`] on the picture as `orientation`
     /// shows it, `orient`'s turn taken through the rectangle.
     pub fn oriented(&self, orientation: Orientation) -> [f32; 4] {
-        let [x, y, w, h] = self.fractions();
-        let at = |u: f32, v: f32| match orientation {
-            Orientation::Normal => (u, v),
-            Orientation::FlipHorizontal => (1.0 - u, v),
-            Orientation::Rotate180 => (1.0 - u, 1.0 - v),
-            Orientation::FlipVertical => (u, 1.0 - v),
-            Orientation::Transpose => (v, u),
-            Orientation::Rotate90 => (1.0 - v, u),
-            Orientation::Transverse => (1.0 - v, 1.0 - u),
-            Orientation::Rotate270 => (v, 1.0 - u),
-        };
-        let (a, b) = (at(x, y), at(x + w, y + h));
-        let (x0, y0) = (a.0.min(b.0), a.1.min(b.1));
-        [x0, y0, a.0.max(b.0) - x0, a.1.max(b.1) - y0]
+        orient_fractions(self.fractions(), orientation)
     }
 
     /// [`CameraFrame::fractions`] on the camera's preview, which the
@@ -516,6 +503,47 @@ impl CameraFrame {
             },
             orientation,
         })
+    }
+}
+
+/// A rectangle as fractions of a picture, `[x, y, w, h]`, on the same
+/// picture as `orientation` turns it.
+fn orient_fractions([x, y, w, h]: [f32; 4], orientation: Orientation) -> [f32; 4] {
+    let at = |u: f32, v: f32| match orientation {
+        Orientation::Normal => (u, v),
+        Orientation::FlipHorizontal => (1.0 - u, v),
+        Orientation::Rotate180 => (1.0 - u, 1.0 - v),
+        Orientation::FlipVertical => (u, 1.0 - v),
+        Orientation::Transpose => (v, u),
+        Orientation::Rotate90 => (1.0 - v, u),
+        Orientation::Transverse => (1.0 - v, 1.0 - u),
+        Orientation::Rotate270 => (v, 1.0 - u),
+    };
+    let (a, b) = (at(x, y), at(x + w, y + h));
+    let (x0, y0) = (a.0.min(b.0), a.1.min(b.1));
+    [x0, y0, a.0.max(b.0) - x0, a.1.max(b.1) - y0]
+}
+
+/// Where the camera focused: the AF area it found the picture sharp
+/// in, as fractions `[x, y, w, h]` of the area a develop is cut to
+/// (the decoder's crop), before the orientation turns it. Where the
+/// subject was when focus was taken, which is not where it is after a
+/// focus and recompose.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FocusPoint {
+    pub area: [f32; 4],
+}
+
+impl FocusPoint {
+    /// The area on the picture as `orientation` shows it.
+    pub fn oriented(&self, orientation: Orientation) -> [f32; 4] {
+        orient_fractions(self.area, orientation)
+    }
+
+    /// The area's center on the picture as `orientation` shows it.
+    pub fn center(&self, orientation: Orientation) -> (f32, f32) {
+        let [x, y, w, h] = self.oriented(orientation);
+        (x + w / 2.0, y + h / 2.0)
     }
 }
 
@@ -748,6 +776,8 @@ pub struct Shot {
     /// The part of the picture the camera framed, when it framed less
     /// than the raw keeps (an aspect ratio chosen on the body).
     pub camera_frame: Option<CameraFrame>,
+    /// Where the camera focused, when it says and focused itself.
+    pub focus_point: Option<FocusPoint>,
 }
 
 /// What the frame was shot at, in words, for a display to show: the
@@ -1070,6 +1100,7 @@ mod tests {
             iso: Some(400),
             focus_distance: Some(2.0),
             camera_frame: None,
+            focus_point: None,
         };
         let s = shot.summary("Canon", "Canon EOS R5");
         assert_eq!(s.camera, "Canon EOS R5 \u{b7} RF50mm F1.2 L USM");

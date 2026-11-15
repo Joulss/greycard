@@ -818,6 +818,7 @@ impl Exif {
             iso: self.iso,
             exposure_time: self.shutter.map(|v| v as f32),
             camera_frame: self.style.camera_frame,
+            focus_point: None,
         }
     }
 }

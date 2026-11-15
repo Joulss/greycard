@@ -726,13 +726,13 @@ the user.
       other filters, and the camera's own copyright and artist
       shown read-only in METADATA (discussion 147, 2026-11-14);
       `date:` in the search field is the only date filter today
-- [ ] The camera's focus point read from the raw (Canon's AFInfo
-      carries the frame's position and size against the image; Nikon,
-      Sony, Fuji, Olympus, and Panasonic have theirs): the zoom
-      toggle by key goes to 1:1 on it, culling can show it, and the
-      focus score can be taken there. Not where the subject is after
-      focus and recompose, and absent on manual focus, so a click
-      still zooms where it lands (2026-11-14)
+- [ ] The camera's focus point, the rest (§688 reads Canon's and
+      takes Space and Z there): Nikon, Sony, Fuji, Olympus, and
+      Panasonic have theirs; older Canons' AFInfo and Canon DNGs;
+      in-camera aspect and crop modes, refused today; among several
+      areas in focus the nearest the frame's middle is taken, where a
+      face or the largest cluster would be better; culling can show
+      the point, and the focus score can be taken there
 - [ ] The focus score taken on the subject where the Subject mask
       finds one, on the frame otherwise (§559); the command line's
       passes scoring too

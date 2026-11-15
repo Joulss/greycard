@@ -345,7 +345,7 @@ fn read_merge_tag(file: impl Read + Seek) -> Result<Option<crate::merge::Tag>> {
         .and_then(|b| crate::merge::Tag::parse(&b)))
 }
 
-fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+pub(super) fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
     let mut filled = 0;
     while filled < buf.len() {
         match r.read(&mut buf[filled..])? {
@@ -362,7 +362,7 @@ fn note_error(e: impl std::fmt::Display) -> Error {
 
 /// rawler's BMFF error prints its I/O case as a DNG write failure, so
 /// say what was being read and what the I/O error was.
-fn boxes_error(e: BmffError) -> Error {
+pub(super) fn boxes_error(e: BmffError) -> Error {
     Error::Decode(match e {
         BmffError::Io(io) => format!("reading the CR3 boxes: {io}"),
         BmffError::Parse(what) => format!("reading the CR3 boxes: {what}"),
@@ -375,7 +375,7 @@ fn boxes_error(e: BmffError) -> Error {
 /// file whose IFD0 points back at itself grows the chain until memory
 /// runs out, a hang the panic guard cannot catch. IFD0's Make and the
 /// pointer to the Exif IFD are all that is wanted here.
-fn tiff_ifd0<R: Read + Seek>(tiff: &mut Tiff<R>) -> Result<(Vec<Field>, Endian)> {
+pub(super) fn tiff_ifd0<R: Read + Seek>(tiff: &mut Tiff<R>) -> Result<(Vec<Field>, Endian)> {
     let header = tiff.read_at(0, 8).map_err(|_| note_error("not a TIFF"))?;
     let endian = match &header[..2] {
         b"II" => Endian::Little,
@@ -391,7 +391,7 @@ fn tiff_ifd0<R: Read + Seek>(tiff: &mut Tiff<R>) -> Result<(Vec<Field>, Endian)>
 }
 
 /// The Exif IFD's maker note entry, if the file has both.
-fn maker_note<R: Read + Seek>(
+pub(super) fn maker_note<R: Read + Seek>(
     tiff: &mut Tiff<R>,
     ifd0: &[Field],
     endian: Endian,
@@ -403,13 +403,13 @@ fn maker_note<R: Read + Seek>(
     Ok(find(&exif, TAG_MAKER_NOTE))
 }
 
-const TAG_MAKE: u16 = 0x010f;
+pub(super) const TAG_MAKE: u16 = 0x010f;
 const TAG_ORIENTATION: u16 = 0x0112;
 const TAG_IMAGE_WIDTH: u16 = 0x0100;
 const TAG_IMAGE_LENGTH: u16 = 0x0101;
 const TAG_EXIF_IFD: u16 = 0x8769;
 const TAG_MAKER_NOTE: u16 = 0x927c;
-const TAG_DNG_VERSION: u16 = 0xc612;
+pub(super) const TAG_DNG_VERSION: u16 = 0xc612;
 const TAG_DNG_PRIVATE_DATA: u16 = 0xc634;
 
 /// More entries than any maker's IFD holds: an IFD that says more is
@@ -422,13 +422,13 @@ const MAX_VALUE: u64 = 64 * 1024;
 /// One IFD entry: where its value sits and how to read it, nothing
 /// read yet.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Field {
+pub(super) struct Field {
     tag: u16,
     typ: u16,
     count: u32,
     /// The value's position in the source.
-    at: u64,
-    endian: Endian,
+    pub(super) at: u64,
+    pub(super) endian: Endian,
 }
 
 /// The size of one element of a TIFF type; `None` for a type the
@@ -459,7 +459,7 @@ fn u32_of(endian: Endian, b: &[u8]) -> u32 {
     }
 }
 
-fn find(fields: &[Field], tag: u16) -> Option<Field> {
+pub(super) fn find(fields: &[Field], tag: u16) -> Option<Field> {
     fields.iter().find(|f| f.tag == tag).copied()
 }
 
@@ -468,13 +468,13 @@ fn find(fields: &[Field], tag: u16) -> Option<Field> {
 /// allocates what an entry's count asks before it reads, so a damaged
 /// count could ask for gigabytes, an abort the panic guard cannot
 /// catch.
-struct Tiff<R> {
+pub(super) struct Tiff<R> {
     r: R,
     len: u64,
 }
 
 impl<R: Read + Seek> Tiff<R> {
-    fn new(mut r: R) -> Result<Tiff<R>> {
+    pub(super) fn new(mut r: R) -> Result<Tiff<R>> {
         let len = r.seek(SeekFrom::End(0))?;
         Ok(Tiff { r, len })
     }
@@ -494,7 +494,7 @@ impl<R: Read + Seek> Tiff<R> {
 
     /// The entries of the IFD at `at`, whose value offsets count from
     /// `base`. The chain to the next IFD is not followed.
-    fn ifd(&mut self, at: u64, base: u64, endian: Endian) -> Result<Vec<Field>> {
+    pub(super) fn ifd(&mut self, at: u64, base: u64, endian: Endian) -> Result<Vec<Field>> {
         let n = u16_of(endian, &self.read_at(at, 2)?) as usize;
         if n > MAX_ENTRIES {
             return Err(note_error(format!("an IFD of {n} entries at {at}")));
@@ -535,7 +535,7 @@ impl<R: Read + Seek> Tiff<R> {
     }
 
     /// An integer value's elements, signed or unsigned as stored.
-    fn ints(&mut self, f: &Field) -> Option<Vec<i64>> {
+    pub(super) fn ints(&mut self, f: &Field) -> Option<Vec<i64>> {
         let b = self.bytes(f)?;
         let e = f.endian;
         Some(match f.typ {
@@ -575,7 +575,7 @@ impl<R: Read + Seek> Tiff<R> {
     }
 
     /// An ASCII value up to its first NUL, spaces trimmed.
-    fn ascii(&mut self, f: &Field) -> Option<String> {
+    pub(super) fn ascii(&mut self, f: &Field) -> Option<String> {
         let b = self.bytes(f)?;
         Some(c_string(&b))
     }
