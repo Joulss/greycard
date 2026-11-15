@@ -1390,7 +1390,18 @@ clears or a tester asks for it.
       the copyright for every export are §652 and §658). The fields
       asked for: title, headline, caption, copyright, usage terms,
       copyright URL, creator, and the creator's address, email, and
-      web address
+      web address; and by a second tester the location (city,
+      country, sublocation), the model's name and age, and the model
+      and property releases (2026-11-15). Open: the whole IPTC Photo
+      Metadata Standard, or a chosen set
+- [ ] The filter bar's chip row says that it scrolls: with many
+      cameras, lenses, and ISOs it runs past the right edge and
+      nothing shows there is more (the wheel, a drag, or Shift and
+      the wheel move it, §168). An edge fade or a thin scroll bar,
+      and a sentence in the guide (issue 155)
+- [ ] The Library's roots in name order, or an order to choose: they
+      stand in the order added, which reads as disorder to someone
+      who added each shoot as its own root (issue 154)
 - [ ] "Edit in" another program reads the export sheet's Metadata
       choice: today it takes the sheet's defaults, so its TIFF carries
       everything under None too (§658)
