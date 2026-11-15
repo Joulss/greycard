@@ -1160,6 +1160,13 @@ clears or a tester asks for it.
 - [ ] Level quicker to reach in the crop: a key for it, and a drag
       with a modifier or the right button that draws the ruler
       without the button first (reddit, 2026-11-14)
+- [ ] A picture extended past its edge by the fill: something cut
+      off at the frame's edge, or the corners a turn or a perspective
+      leaves empty, made up from what is beside them. Rests on the
+      crop past the edge below (the empty area is the fill's area)
+      and on a model that can make content with picture on one side
+      only, which the removal model was not trained for; made at the
+      raw's own resolution and noise or it shows (2026-11-14)
 - [ ] A crop past the picture's edge after a perspective or a turn,
       the empty corners kept for a pixel editor, and a scale beside
       the perspective sliders to bring back what was pushed out, as
