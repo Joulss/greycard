@@ -7,297 +7,197 @@ design note behind it.
 
 ### Packages
 
-- Every package carries THIRD-PARTY-NOTICES beside LICENSE: the
-  licenses and notices of the libraries, artwork, ported code, and
-  crates greycard is built from
+- Every package carries THIRD-PARTY-NOTICES beside LICENSE, for the
+  libraries, artwork, ported code, and crates greycard is built from
   ([§660](https://github.com/jessolmstead/greycard/blob/master/docs/notes/660-third-party-notices-in-every-package.md)).
-- Each release carries a SHA256SUMS file over its downloads: check
-  them with `sha256sum -c SHA256SUMS --ignore-missing`, or
-  `shasum -a 256 -c` on a Mac
+- Each release carries a SHA256SUMS file: check downloads with
+  `sha256sum -c SHA256SUMS --ignore-missing`, or `shasum -a 256 -c` on
+  a Mac
   ([§657](https://github.com/jessolmstead/greycard/blob/master/docs/notes/657-read-only-workflow-tokens-and-sha256sums.md)).
 
 ### Windows
 
-- Windows has an installer, `greycard-<version>-x86_64-windows-setup.exe`
-  (and `-aarch64-`): no administrator needed, and greycard is in
-  Installed apps to remove. It opens no command window and runs no
-  script. The zip is still there
+- Windows has an installer that needs no administrator,
+  `greycard-<version>-x86_64-windows-setup.exe` (and `-aarch64-`),
+  beside the zip
   ([§619](https://github.com/jessolmstead/greycard/blob/master/docs/notes/619-a-windows-installer.md),
   [§684](https://github.com/jessolmstead/greycard/blob/master/docs/notes/684-a-setup-that-starts-no-shell.md)).
 
 ### Window
 
-- A pane's sections go in the order you drag them: drag a section's
-  title up or down, Esc to cancel. Develop and Masks share one order,
-  and **Reset section order** in Settings, Interface puts every pane
-  back. Thanks to Joulss (PR 156,
+- Drag a section's title to reorder a pane, and **Reset section order**
+  in Settings, Interface puts it back. Thanks to Joulss (PR 156,
   [§689](https://github.com/jessolmstead/greycard/blob/master/docs/notes/689-sections-keep-the-order-they-are-dragged-into.md)).
-- The Navigator stays in sight above the left pane's lists however
-  far they scroll, and grows with the pane up to a fixed height.
-  Folders, Presets, Snapshots, and History lose their inner frames
-  and take less room, and the pane's gutters are narrower, so a deep
-  folder tree and longer translations fit. Thanks to Joulss (PR 138,
+- The Navigator stays in sight however far the left pane's lists
+  scroll, and the lists take less room. Thanks to Joulss (PR 138,
   [§669](https://github.com/jessolmstead/greycard/blob/master/docs/notes/669-the-left-pane-navigator-pinned-lists-unframed.md)).
-- Quit in full screen and greycard starts in full screen; leaving it
-  returns to the window as it was before
+- Quit in full screen and greycard starts in full screen
   ([§649](https://github.com/jessolmstead/greycard/blob/master/docs/notes/649-the-window-opens-full-screen-as-it-was-closed.md)).
-- A switch sits right beside its label, where it used to sit at the
-  far edge of its row; White balance's As shot and Follow global keep
-  the switch at the edge with the label beside it. Only the label and
-  the switch flip it now, not the whole row
+- A switch sits right beside its label, and only the label and the
+  switch flip it
   ([§642](https://github.com/jessolmstead/greycard/blob/master/docs/notes/642-a-switch-beside-its-label.md)).
-- greycard speaks French: a French catalog brings photographic terms
-  to the window, with consistent wording for controls throughout the
-  editor. Settings, Interface, Language chooses it, or it follows the
-  system (issue 75,
+- greycard speaks French, chosen under Settings, Interface, Language or
+  followed from the system (issue 75,
   [§641](https://github.com/jessolmstead/greycard/blob/master/docs/notes/641-french-translation.md)).
-  Translations are new: some of this release's newest wording is
-  still in English, and more languages are welcome
+  Some of the newest wording is still in English, and more languages
+  are welcome
   ([how to add one](https://github.com/jessolmstead/greycard/blob/master/docs/translating.md)).
-- The line over the foot of the picture no longer lists the frame's
-  size, the develop's time, and what each tool measured after every
-  develop; that is in the log. It still says what an edit went
-  without, such as a model not yet fetched (discussion 117,
+- The line over the foot of the picture says only what an edit went
+  without (discussion 117,
   [§629](https://github.com/jessolmstead/greycard/blob/master/docs/notes/629-the-develop-summary-leaves-the-window.md)).
 - The window opens as it was closed: its size, whether it was
-  maximized, and, except on Wayland, its place. A window closed on a
-  monitor since unplugged opens on one that is there (issue 114,
+  maximized, and, except on Wayland, its place (issue 114,
   [§623](https://github.com/jessolmstead/greycard/blob/master/docs/notes/623-the-window-opens-as-it-was-closed.md)).
-- Language offers English explicitly, so a translated system can
-  switch back to the source wording
+- Language offers English, so a translated system can switch back to
+  the source wording
   ([§637](https://github.com/jessolmstead/greycard/blob/master/docs/notes/637-english-in-the-language-picker.md)).
-- The right panel's sections sit in raised boxes, with narrower
-  gutters, brighter titles, and flat tabs; a section's whole header
-  folds it. Crop, Rotate, and Perspective group their tools. Thanks to
-  Joulss (PR 136,
+- The right panel's sections sit in raised boxes, and Crop, Rotate, and
+  Perspective group their tools. Thanks to Joulss (PR 136,
   [§670](https://github.com/jessolmstead/greycard/blob/master/docs/notes/670-the-right-panels-sections-and-tools.md)).
-- Dragging the right panel wider gives the width to the sliders'
-  labels first, then to their tracks, so a long label (many in
-  French) reads whole, and the panel starts 14 px wider, at 334 px,
-  where no English label is cut
+- Widening the right panel gives long slider labels room first, and
+  the panel starts wider, at 334 px
   ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md),
   [§675](https://github.com/jessolmstead/greycard/blob/master/docs/notes/675-the-develop-panel-starts-at-334-px.md)).
-- The lightbox has a bar that comes up when the pointer moves and
-  fades at rest: a close button, the frame count, and a tile size
-  slider. The grid's header has the same slider for its cells. The
-  lightbox's surround follows MONITOR's Canvas shade
+- The lightbox has a bar with a close button, the frame count, and a
+  tile size slider, and the grid a slider too
   ([§676](https://github.com/jessolmstead/greycard/blob/master/docs/notes/676-the-lightboxs-bar-the-tile-size-slider-and-the-canvas-surround.md)).
-- A screen reader hears the panel's toggles, buttons, and section
-  switches by name, with on or off and whether they are disabled
+- A screen reader names the panel's toggles, buttons, and section
+  switches, and their state
   ([§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).
 
 ### Library
 
-- On a Canon raw, **Space** and **Z** zoom from the fit view to where
-  the camera focused, in Cull, the lightbox, and Develop
+- On a Canon raw, **Space** and **Z** zoom to where the camera
+  focused, in Cull, the lightbox, and Develop
   ([§688](https://github.com/jessolmstead/greycard/blob/master/docs/notes/688-the-cameras-focus-point.md)).
-- Several frames chosen show in the filmstrip: each wears a ring, the
-  current one the strongest
+- Several chosen frames each wear a ring in the filmstrip, the current
+  one the strongest
   ([§687](https://github.com/jessolmstead/greycard/blob/master/docs/notes/687-a-set-that-shows-in-the-strip.md)).
 - In Cull, the mouse's back and forward buttons step to the previous
-  and next frame, as the arrows do
+  and next frame
   ([§685](https://github.com/jessolmstead/greycard/blob/master/docs/notes/685-back-and-forward-step-culls-frames.md)).
-- An Olympus or OM System High Res Shot's `.ORI` (the single frame
-  saved beside the merged `.ORF`) is a raw like any other: listed,
-  imported, developed, and exported. The stem's `NAME.xmp`, `NAME.pp3`,
-  and camera JPEG stay the `.ORF`'s; the `.ORI` keeps its own under
-  `NAME.ORI.xmp` (issue 139,
+- An Olympus or OM System High Res Shot's `.ORI` is a raw like any
+  other, with its own `NAME.ORI.xmp` (issue 139,
   [§671](https://github.com/jessolmstead/greycard/blob/master/docs/notes/671-olympus-ori-files-and-gradation-auto.md)).
-- The Cull panel's Stars, Flag, and Label filters take one row each,
-  with the caption beside the chips; a row too long for the panel
-  scrolls sideways under the wheel, and at its end the wheel scrolls
-  the panel again. The search field lines up with Clear and Sort.
+- The Cull panel's Stars, Flag, and Label filters take one row each.
   Thanks to Joulss (PR 137,
   [§655](https://github.com/jessolmstead/greycard/blob/master/docs/notes/655-the-cull-panels-filters-a-row-each.md)).
 - Alt+← and Alt+→ go back and forward through the folders visited in
-  the grid, as the mouse's side buttons do, and can be rebound under
-  Settings, Keys (discussion 59,
+  the grid, rebindable under Settings, Keys (discussion 59,
   [§624](https://github.com/jessolmstead/greycard/blob/master/docs/notes/624-alt-arrows-go-back-and-forward.md)).
 
 ### Export
 
-- An author and a copyright notice written into every export (EXIF
-  and XMP): two fields under Settings, Editing, or
-  `greycard export --author --copyright`. Metadata None writes
-  neither (issue 106,
+- Every export can carry an author and a copyright, set under Settings,
+  Editing, or `greycard export --author --copyright` (issue 106,
   [§652](https://github.com/jessolmstead/greycard/blob/master/docs/notes/652-an-author-and-a-copyright-in-every-export.md),
   [§658](https://github.com/jessolmstead/greycard/blob/master/docs/notes/658-author-and-copyright-in-the-window.md)).
-- WebP joins JPEG, PNG, and TIFF as an export format: lossless, 8
-  bits, with the color profile and metadata the others carry, and
-  smaller than a PNG. A side longer than 16383 px is refused
-  (issue 121,
+- WebP joins JPEG, PNG, and TIFF as a lossless export format, smaller
+  than a PNG (issue 121,
   [§632](https://github.com/jessolmstead/greycard/blob/master/docs/notes/632-lossless-webp-export.md)).
 
 ### Develop
 
-- "Fit this camera's look" reads Olympus and OM System raws: an
-  ORF's Picture Mode is its style, and a frame with an Art Filter, a
-  scene mode, or an in-camera stack is left out of the fit. Thanks to
-  the tester who shot the five modes (issue 139,
+- "Fit this camera's look" reads Olympus and OM System raws, taking an
+  ORF's Picture Mode as its style. Thanks to the tester who shot the
+  five modes (issue 139,
   [§656](https://github.com/jessolmstead/greycard/blob/master/docs/notes/656-olympus-and-om-system-styles.md)).
-- Midtones, a slider in Light between Highlights and Shadows (and in
-  a mask's Light): it lifts or sinks the middle of the frame's own
-  range by up to 0.875 of a stop and leaves the blacks and the
-  brightest tones where they are
+- Midtones, a slider in Light and a mask's Light, lifts or sinks the
+  middle tones and leaves the blacks and brightest tones in place
   ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md),
   [§661](https://github.com/jessolmstead/greycard/blob/master/docs/notes/661-midtones-lower-and-narrower.md)).
-- A camera profile from a DCP file now applies its look table, which
-  is where Adobe's Camera Standard, Natural, Vivid, and the rest carry
-  their color: they differ from each other, and greens no longer come
-  out olive. The profile's tone curve is still not applied. An edit
-  already made keeps its colors until you choose another profile and
-  then its own again, or lay a preset or a sync with a camera profile
-  on it (issue 129,
+- A DCP camera profile now applies its look table, so Adobe's profiles
+  differ and greens no longer come out olive (issue 129,
   [§639](https://github.com/jessolmstead/greycard/blob/master/docs/notes/639-a-dcps-look-table.md)).
-- White balance has presets: Daylight, Cloudy, Shade, Tungsten,
-  Fluorescent, and Flash, on the arrow beside Auto or a right-click on
-  it. Raw files only (issue 128,
+- White balance presets for raw files, on the arrow beside Auto:
+  Daylight, Cloudy, Shade, Tungsten, Fluorescent, and Flash (issue 128,
   [§636](https://github.com/jessolmstead/greycard/blob/master/docs/notes/636-white-balance-presets.md)).
-- Switching As shot off gives back the white balance it replaced,
-  where it used to leave the camera's on the sliders (discussion 59,
+- Switching As shot off gives back the white balance it replaced
+  (discussion 59,
   [§634](https://github.com/jessolmstead/greycard/blob/master/docs/notes/634-as-shot-off-gives-back-the-white-it-replaced.md)).
 - Ctrl+Z takes back a rating, flag, or label in Develop and the
-  library when it was the last thing you did, and brings back a frame
-  the filter hid; Ctrl+Shift+Z makes it again. In Develop it reaches
-  the open frame's marks only, and never leaves the frame except to
-  bring back the one a mark just hid. Cull's undo is as it was
-  (issue 115,
+  library, and Ctrl+Shift+Z makes it again (issue 115,
   [§627](https://github.com/jessolmstead/greycard/blob/master/docs/notes/627-undo-takes-back-a-mark-out-of-cull.md),
   [§631](https://github.com/jessolmstead/greycard/blob/master/docs/notes/631-develops-undo-stays-on-the-open-frame.md)).
 - A middle click on a frame in the filmstrip or the grid syncs its
-  edit onto the other selected frames, on the sections your last sync
-  took; it sets, never shifts, so a second click changes nothing
-  (issue 56,
+  edit onto the other selected frames (issue 56,
   [§626](https://github.com/jessolmstead/greycard/blob/master/docs/notes/626-a-middle-click-on-a-frame-syncs-from-it.md)).
-- A mask has an Opacity, under Refine edge: one slider that pulls the
-  whole of its look back, its sliders left as they are. Half is half
-  of each slider (issue 141,
+- A mask has an Opacity slider, under Refine edge, that pulls its
+  whole look back (issue 141,
   [§659](https://github.com/jessolmstead/greycard/blob/master/docs/notes/659-a-masks-opacity.md)).
 - Color grading's middle wheel reads Midtones, as the Light slider
   does.
-- The camera profile folder is read with its subfolders, so Adobe's
-  CameraProfiles folder can be copied or linked in whole. A Show all
-  cameras switch under the list offers profiles made for other
-  cameras, grouped by camera (issue 135,
+- The camera profile folder is read with its subfolders, and Show all
+  cameras offers other cameras' profiles (issue 135,
   [§662](https://github.com/jessolmstead/greycard/blob/master/docs/notes/662-profile-subfolders-and-show-all-cameras.md)).
-- OUTPUT SHARPEN, a section after Sharpen: an unsharp mask on the
-  finished picture's brightness, after the tone work, with Amount,
-  Radius, and Threshold. Off until Amount is raised (issue 135,
+- OUTPUT SHARPEN, a section after Sharpen, sharpens the finished
+  picture with Amount, Radius, and Threshold (issue 135,
   [§663](https://github.com/jessolmstead/greycard/blob/master/docs/notes/663-output-sharpen.md)).
-- Fill paints first and generates when asked: strokes are only drawn
-  until Enter or the new Generate button makes them, several strokes
-  as one fill. Esc drops the strokes and Ctrl+Z right after brings
-  them back. With a Fill chosen in the list, strokes that touch it
-  are added to it and it is made again. Strokes left ungenerated wait
-  on their frame until quit and are never exported. A sidecar written
-  by 0.12.0 does not open in 0.11.0 (discussion 59,
+- Fill strokes wait for Enter or the new Generate button, and several
+  make one fill. A 0.12.0 sidecar does not open in 0.11.0 (discussion
+  59,
   [§678](https://github.com/jessolmstead/greycard/blob/master/docs/notes/678-fill-waits-for-generate.md)).
-- The histogram behind a tone curve is now of what that curve takes
-  in, so a peak sits under the part of the curve that moves it and
-  holds still while a point is dragged; the dropper's point lands on
-  it. The backdrop is sharper and the points are round. Thanks to
-  Cristian Figueiredo dos Santos, whose first pull request this was
-  (PR 150,
+- The histogram behind a tone curve shows what that curve takes in, and
+  holds still while a point is dragged. Thanks to Cristian Figueiredo
+  dos Santos, whose first pull request this was (PR 150,
   [§679](https://github.com/jessolmstead/greycard/blob/master/docs/notes/679-the-curve-editors-histogram-is-what-the-curve-takes-in.md)).
-- Profile tone curve, a switch under the CAMERA PROFILE list, shown
-  when the chosen profile carries a tone curve and off by default:
-  the picture is rendered with the profile's curve in place of the
-  display curve, as the profile's maker meant it (issue 135,
+- Profile tone curve, a switch under the CAMERA PROFILE list, renders
+  with the profile's own tone curve (issue 135,
   [§680](https://github.com/jessolmstead/greycard/blob/master/docs/notes/680-a-profiles-own-tone-curve-behind-a-switch.md)).
-- An Olympus or OM System raw opens at the aspect chosen in the
-  camera (3:2, 16:9, 1:1, 3:4): with no crop of your own it shows,
-  thumbnails, and exports at that frame where it showed the whole
-  4:3 sensor, and the rest of the sensor is still there to crop out
-  to. A crop you already made is kept as it is. The library reads
-  these files' headers once more to learn the frame (issue 145,
+- An Olympus or OM System raw opens at the aspect chosen in the camera,
+  with the whole sensor still there to crop (issue 145,
   [§681](https://github.com/jessolmstead/greycard/blob/master/docs/notes/681-a-frame-opens-at-the-cameras-aspect.md)).
-- On the grading wheels and the Tint ring, Shift (keep the hue) and
-  Ctrl (keep the strength) work whenever they are held during the
-  drag, not only at the press, and a line or a circle in the wheel
-  shows what is kept
+- On the grading wheels and the Tint ring, Shift and Ctrl keep the hue
+  or the strength whenever held during the drag
   ([§682](https://github.com/jessolmstead/greycard/blob/master/docs/notes/682-wheel-holds-that-follow-the-keys-and-their-guide.md)).
 
 ### Fixes
 
-- DNGs from monochrome sensors open (Leica Monochrom bodies, the
-  Ricoh GR IV Monochrome); before, each failed with "Linear layout
-  with 1 samples per pixel". They develop to a neutral grey, and
-  WHITE BALANCE is dimmed on them; tone them with color grading
+- DNGs from monochrome sensors (Leica Monochrom bodies, the Ricoh GR IV
+  Monochrome) open and develop to a neutral grey
   ([§668](https://github.com/jessolmstead/greycard/blob/master/docs/notes/668-monochrome-sensors-open.md),
   [§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).
-- A sidecar with brush masks is about a quarter the size: a stroke's
-  points are written on one line, not a number a line. One tester's
-  went from 28 MB to 6.6 MB. A sidecar takes the new layout the next
-  time its frame is saved, and every version reads it
+- A sidecar with brush masks is about a quarter the size
   ([§667](https://github.com/jessolmstead/greycard/blob/master/docs/notes/667-a-sidecars-numbers-on-one-line.md)).
 - A crop opened at a ratio with the Crop button and closed with Done
-  exports as it shows. Before, with the starting aspect on Last used,
-  the screen showed the ratio and the export and the thumbnail were
-  the whole frame, until the box was moved. Frames saved that way
-  need no redoing (issue 145,
+  exports as it shows (issue 145,
   [§666](https://github.com/jessolmstead/greycard/blob/master/docs/notes/666-a-ratio-over-no-crop-is-a-crop.md)).
-- A camera look fitted on a monochrome style is grey for every
-  color. Before, colors the shoot never showed kept their own color,
-  so lips could come out pale red. Fit the look again to get it
-  (issue 144,
+- A camera look fitted on a monochrome style is grey for every color
+  once fitted again (issue 144,
   [§665](https://github.com/jessolmstead/greycard/blob/master/docs/notes/665-a-monochrome-style-fits-as-a-grey.md)).
-- Tab stays inside an open sheet. Before, it walked out onto the
-  panel behind, where the arrows then changed the edit under the
-  sheet; and Escape now closes the import and Lightroom sheets from
-  their text fields
+- Tab stays inside an open sheet, and Escape closes the import and
+  Lightroom sheets from their text fields
   ([§664](https://github.com/jessolmstead/greycard/blob/master/docs/notes/664-a-sheet-holds-the-focus.md)).
-- One section open at a time holds across the tabs: opening a mask's
-  Light, or Metadata while culling, no longer leaves a second section
-  open on Develop
+- Opening a mask's Light, or Metadata while culling, no longer leaves
+  a second section open on Develop
   ([§654](https://github.com/jessolmstead/greycard/blob/master/docs/notes/654-one-section-open-over-a-fold-two-tabs-share.md)).
-- After a pick from a mask's People or Landscape menu the keys work
-  at once: Space or Return had pressed the button again, and the
-  click that closed the menu had gone through to what was under it
+- After a pick from a mask's People or Landscape menu the keys work at
+  once
   ([§648](https://github.com/jessolmstead/greycard/blob/master/docs/notes/648-the-masks-menus-hand-the-keys-back.md)).
-- Each model is fetched from a fixed commit of its repository, so a
-  release always asks for the same file; the size and hash were
-  already checked
+- Each model is fetched from a fixed commit, so a release always asks
+  for the same file
   ([§647](https://github.com/jessolmstead/greycard/blob/master/docs/notes/647-model-urls-pinned-to-commits.md)).
-- The learned denoiser runs on a 4 GB card. The develop's own working
-  memory had left it too little room; the develop now lets go first,
-  and the denoiser works in smaller tiles when it must, slower and
-  with the same result
+- The learned denoiser runs on a 4 GB card
   ([§646](https://github.com/jessolmstead/greycard/blob/master/docs/notes/646-the-denoiser-and-the-removal-on-a-small-card.md)).
-- A card too small for the Fast and Best removals (under 6.3 GiB)
-  greys them and says so ("Needs 6.3 GiB VRAM, 4.0 available. Use
-  Patch."); a new Fill there is Patch. A card that is only busy says
-  the same on the status line in place of a long failure
+- A card too small for the Fast and Best removals greys them and says
+  so, and a new Fill there is Patch
   ([§646](https://github.com/jessolmstead/greycard/blob/master/docs/notes/646-the-denoiser-and-the-removal-on-a-small-card.md)).
-- A frame moved to another folder while it was open could be listed
-  a second time at its old place with a blank edit, and a rating
-  there would have written over a `.gcd` left behind. The old place
-  now leaves the list
+- A frame moved while open is no longer listed again at its old place
   ([§645](https://github.com/jessolmstead/greycard/blob/master/docs/notes/645-a-moved-frames-old-path-leaves-the-list.md)).
-- In culling, setting Structure, Sharpen, or another control back to
-  its default on a frame other than the one last opened now takes;
-  the frame had kept its own value
+- In culling, setting a control back to its default on a frame not last
+  opened now takes
   ([§644](https://github.com/jessolmstead/greycard/blob/master/docs/notes/644-midtones.md)).
 - Texture and Clarity no longer switch off the sharpening's noise
-  protection. On a high-ISO frame Texture +50 had the whole picture
-  sharpened, grain and all; the sharpening now decides what is flat
-  from the picture before Texture, Clarity, and Structure. An edit
-  using any of the three renders with less sharpened grain; others
-  are unchanged
+  protection, which had sharpened a high-ISO frame's grain
   ([§643](https://github.com/jessolmstead/greycard/blob/master/docs/notes/643-the-sharpen-reads-flat-before-texture.md)).
-- A frame whose `.gcd` greycard cannot read (written by a later
-  version, or damaged) is left alone even when its folder is not
-  indexed yet. Before, such a frame opened with a blank edit, and the
-  next rating or edit wrote that over the file
+- A frame whose `.gcd` greycard cannot read is left alone, no longer
+  opened blank and saved over
   ([§640](https://github.com/jessolmstead/greycard/blob/master/docs/notes/640-a-sidecar-that-will-not-read-is-held.md)).
-- The flag, stars, color label, and edit, export, and collection marks
-  sit centered in their thumbnail badges. The stack icon lines up with
-  its count, and the marks have more room between them at small sizes
-  in the strip and grid
+- The thumbnail marks sit centered in their badges, with more room
+  between them at small sizes
   ([§638](https://github.com/jessolmstead/greycard/blob/master/docs/notes/638-thumbnail-marks-centered-in-their-badges.md)).
 - A save made in the other editor after Edit in shows in greycard a
-  second or two later, in Develop, the filmstrip, and the grid, with
-  your zoom, your tools, and your edit left as they were; before, it
-  showed only after leaving the frame and coming back (issue 119,
+  second or two later (issue 119,
   [§635](https://github.com/jessolmstead/greycard/blob/master/docs/notes/635-edit-in-a-save-over-the-file-shows.md)).
 - A slider moved just after a frame is opened no longer leaves the
   frame before it on screen
@@ -305,47 +205,34 @@ design note behind it.
 - Tab brings back the panes and the filmstrip it put away, and leaves
   away one you had hidden yourself (discussion 59,
   [§633](https://github.com/jessolmstead/greycard/blob/master/docs/notes/633-tab-brings-back-what-it-hid.md)).
-- A middle click on the Sync button sets and never shifts, so a second
-  click changes nothing, and it no longer changes the choice the paste
-  sheet remembers
+- A middle click on the Sync button sets and never shifts, and leaves
+  the paste sheet's remembered choice alone
   ([§630](https://github.com/jessolmstead/greycard/blob/master/docs/notes/630-the-sync-buttons-middle-click-sets.md)).
-- A frame with a brushed mask no longer keeps the window drawing, and
-  the GPU busy, while nothing is happening (issue 122,
+- A frame with a brushed mask no longer keeps the window drawing and the
+  GPU busy at rest (issue 122,
   [§628](https://github.com/jessolmstead/greycard/blob/master/docs/notes/628-an-idle-brush-mask-keeps-the-window-drawing.md)).
 - A root's row under ROOTS obeys With subfolders, as its row in the
-  tree does: the root's own frames with the switch off, everything
-  under it with the switch on (discussion 59,
+  tree does (discussion 59,
   [§625](https://github.com/jessolmstead/greycard/blob/master/docs/notes/625-a-roots-row-obeys-with-subfolders.md)).
-- The mouse's back and forward buttons come back to a folder, a root,
-  or a collection on the frame you left it on, not the first
-  (discussion 59,
+- The mouse's back and forward buttons return to a folder, root, or
+  collection on the frame you left, not the first (discussion 59,
   [§620](https://github.com/jessolmstead/greycard/blob/master/docs/notes/620-back-and-forward-come-back-on-the-frame-left.md)).
 - Ctrl+Z, Escape, and the other shortcuts work right after a click on
-  a panel button, switch, or toggle, so an undo crosses a tool's Reset
-  without the pointer first crossing the picture (discussion 59,
+  a panel button, switch, or toggle (discussion 59,
   [§621](https://github.com/jessolmstead/greycard/blob/master/docs/notes/621-a-clicked-button-passes-the-keys-on.md)).
-- The library's SQLite is 3.54.1, past CVE-2026-119375 (a database
-  opened beside a mismatched `-wal` file could read stale memory)
+- The library's SQLite is 3.54.1, past CVE-2026-119375
   ([§622](https://github.com/jessolmstead/greycard/blob/master/docs/notes/622-sqlite-3-54-1-for-rustsec-2026-0459.md)).
-- The shadows' clipping paint covers only what is black. It had also
-  covered any color outside the output space at any brightness, a
-  third of one frame in dim warm light
+- The shadows' clipping paint covers only what is black, no longer
+  colors outside the output space
   ([§618](https://github.com/jessolmstead/greycard/blob/master/docs/notes/618-the-shadows-paint-is-for-black.md)).
-- A slider nudged, the Original key, an undo, or a turn right after
-  stepping to a frame no longer leaves the panel on the last frame's
-  camera, lens, profiles, and As shot white, and a frame that fails
-  to open no longer shows the last frame's picture. A frame whose
-  file moves while it is open is read again under its new path
+- Acting right after stepping to a frame no longer leaves the panel on
+  the last frame's camera, lens, profiles, and As shot white
   ([§674](https://github.com/jessolmstead/greycard/blob/master/docs/notes/674-an-open-dropped-by-a-develop-asked-while-it-decodes.md)).
 - `greycard rawtherapee --write` puts a new sidecar where the
-  editor's setting says, in the folder's `.greycard` when that is
-  on; it always wrote beside the raw.
-- A picture wider or taller than the graphics card's largest texture
-  (16,384 pixels on every Mac) crashed the window, and every launch
-  after it, since the last picture is opened again at the start.
-  Such a picture now opens, shown reduced on screen and exported
-  whole, and greycard no longer goes back to a picture that the
-  last launch died opening (issue 152,
+  editor's setting says, no longer always beside the raw.
+- A picture past the graphics card's largest texture (16,384 pixels on
+  every Mac) opens reduced and exports whole, no longer crashing every
+  launch (issue 152,
   [§683](https://github.com/jessolmstead/greycard/blob/master/docs/notes/683-a-picture-past-the-cards-textures.md)).
 
 ## 0.11.0, 2026-11-09
