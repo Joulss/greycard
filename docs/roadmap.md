@@ -64,6 +64,12 @@ the reasoning lives in `docs/notes.md`.
       (`RECONCILED`, matched by prefix and hashed into the state's
       id), so a reworded or translated label changes the merge across
       machines: a kind on the step instead (review, 2026-11-11)
+- [ ] On a window 800 px high the Masks tab leaves the sections
+      198 px under the pinned mask list, about six rows: a section's
+      top sliders sit out of sight behind the list (issue 157, not
+      reproduced as reported; a debug line on a panel slider's change
+      with the panel's scroll and the section's top would tell a
+      scroll from a draw fault)
 - [ ] `greycard.exe` beside the editor on Windows: double-clicked,
       or run from Win+R, the command line is a console that opens and
       closes. A name or a place that keeps it out of the way (§684)
