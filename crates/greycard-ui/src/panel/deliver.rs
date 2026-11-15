@@ -323,6 +323,14 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
             st.views.thumb_base[index] = Some((width, height, rgb));
             st.views.thumb_made[index] = size;
             st.views.thumb_failed[index] = false;
+            // The pool makes at the size wanted when it begins, not when
+            // it was asked: a picture asked for large and begun after the
+            // cells shrank lands small. What was asked is brought back to
+            // what is in hand, or a later growth would find it asked for
+            // already and leave the small picture up for good.
+            if grid::asks_again(size, st.views.thumb_asked[index]) {
+                st.views.thumb_asked[index] = size;
+            }
             // One that was being made when the cells grew, the grid's
             // or the strip's, comes back at the old size. Nothing else
             // would ask for it again until the view next moved, and a
@@ -334,7 +342,7 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
                 st.views.strip_shown
             };
             if grid::wants_bigger(size, st.views.thumb_want)
-                && st.views.thumb_asked[index] < st.views.thumb_want
+                && grid::asks_again(st.views.thumb_asked[index], st.views.thumb_want)
                 && shown.is_some_and(|(f, l)| (f..=l).contains(&(index as i32)))
             {
                 st.views.thumb_asked[index] = st.views.thumb_want;
@@ -352,6 +360,10 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
         }
         Outcome::NoThumbnail { index, frame } if st.key_of(index).as_ref() == Some(&frame) => {
             count_thumb(st, index, None, 0.0);
+            // Nothing larger came: what was asked is what is in hand,
+            // so the next look at a larger cell asks again.
+            st.views.thumb_asked[index] =
+                st.views.thumb_made[index].max(crate::worker::THUMB_WIDTH);
             show_no_thumb(st, app, index);
         }
         _ => {}

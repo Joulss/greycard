@@ -557,13 +557,17 @@ pub(crate) fn carry(
                 thumb_base.push(st.views.thumb_base.get_mut(i).and_then(Option::take));
                 thumb_shown.push(st.views.thumb_shown.get(i).copied().flatten());
                 thumb_made.push(st.views.thumb_made.get(i).copied().unwrap_or(0));
-                thumb_asked.push(
-                    st.views
-                        .thumb_asked
-                        .get(i)
-                        .copied()
-                        .unwrap_or(crate::worker::THUMB_WIDTH),
-                );
+                // What was asked, no more than what is in hand: a
+                // change of the list drops the pool's queued asks, and
+                // one still counted would never be asked again.
+                let made = st.views.thumb_made.get(i).copied().unwrap_or(0);
+                let asked = st
+                    .views
+                    .thumb_asked
+                    .get(i)
+                    .copied()
+                    .unwrap_or(crate::worker::THUMB_WIDTH);
+                thumb_asked.push(asked.min(made.max(crate::worker::THUMB_WIDTH)));
                 thumb_failed.push(st.views.thumb_failed.get(i).copied().unwrap_or(false));
             }
             None => {

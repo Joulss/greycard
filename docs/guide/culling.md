@@ -226,38 +226,53 @@ that aren't reachable right now, or are slow to read.
 
 The lightbox is for judging a set as a whole: whether a run of frames
 holds together in color and tone, before you send it out. It shows
-each frame large and as edited, on a dark ground, with nothing else
-drawn: no names, no badges, no marks, no header. A
-[stack](#stacks)'s badge is the one exception, so a closed stack is not
-taken for a single frame.
+each frame large and as edited, on the canvas you chose under
+**MONITOR** (black unless you changed it), with nothing else drawn
+at rest: no names, no badges, no marks, no header. A
+[stack](#stacks)'s badge is the one exception, so a closed stack is
+not taken for a single frame.
 
-Press **L** in the grid, the loupe or culling, or click **Lightbox**
+Press **L** in the grid, the loupe, or culling, or click **Lightbox**
 in the grid's header. The lightbox lays out whatever the grid shows,
 as the filter leaves it and in the grid's
 [order](library.md#sort-order): a folder, a root, a
 [collection](library.md#collections), or only your picks (the
 **Pick** chip, then **L**).
 
-- **+** and **−**, or **Ctrl+wheel** while
+Move the mouse and a bar comes up over the top of the frames; leave
+the mouse still and it fades after two seconds. It stays while the
+pointer is on it. On a touch screen or with a pen, a tap brings it
+up. It holds:
+
+- at the left, **×**, which closes the lightbox, as **L** does;
+- in the middle, the frame you are on (or it and how many others are
+  selected) and how many frames there are;
+- at the right, the **Tile size** slider.
+
+In the lightbox:
+
+- The **Tile size** slider, **+** and **−**, or **Ctrl+wheel** while
   [Resize with the wheel](settings.md#resize-with-the-wheel) is on,
-  set how many frames go across, from two to six. It starts at four,
-  and greycard keeps your choice for the next session.
-- The arrow keys, **Home** and **End** move through the frames. A ring
+  set how many frames go across, from two to six: right is fewer and
+  larger. It starts at four, and greycard keeps your choice for the
+  next session. The lightbox's count across is kept separately from
+  the grid's cell size: changing one leaves the other as it was.
+- The arrow keys, **Home**, and **End** move through the frames. A ring
   marks the frame you are on, and a thinner one the rest of the
   selection.
 - **Return**, or a double-click, opens the frame in the loupe.
-  **Return**, **Esc** or **L** there bring you back to the lightbox
+  **Return**, **Esc**, or **L** there bring you back to the lightbox
   where you were.
-- The rating, flag and label keys work as everywhere.
+- The rating, flag, and label keys work as everywhere.
 - **Ctrl+Shift+S** syncs the frame you are on onto the rest of the
   selection: choose the frame that is right, Ctrl+click the ones that
   stand out, and sync. The frame menu has the same as **Sync settings
   of** *frame* **onto 3 other frames...**.
 - In a collection in its hand order, a drag still reorders it.
 - **Tab** shows or hides the left pane.
-- **Esc**, **G** or **L** leave for the grid, as does **Leave
-  lightbox** on the frame menu. With several frames selected, the
-  first **Esc** goes back to one.
+- **Esc**, **G**, or **L** leave for the grid, as do the bar's **×**
+  and **Leave lightbox** on the frame menu. With several frames
+  selected, the first **Esc** goes back to one.
 - **E** leaves for the loupe on the frame you are on, in the mode you
   left it in, and **D** for the loupe in Develop.
 

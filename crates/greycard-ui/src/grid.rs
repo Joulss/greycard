@@ -24,7 +24,6 @@ pub const LABEL: f32 = 22.0;
 pub const STEPS: [f32; 6] = [96.0, 128.0, 176.0, 256.0, 360.0, 512.0];
 /// The cell the grid opens at when nothing is remembered.
 pub const CELL: f32 = STEPS[2];
-#[cfg(test)]
 use greycard_engine::made::made_size;
 pub use greycard_engine::made::{MADE, MAX_RENDER};
 // The engine's largest thumbnail is the grid's last step but one.
@@ -36,6 +35,16 @@ pub fn render_size(cell: f32) -> u32 {
         return MAX_RENDER;
     }
     (cell.ceil().max(1.0) as u32).min(MAX_RENDER)
+}
+
+/// Whether a frame last asked for at `asked` is asked for again at
+/// `want`: only when the size the pool makes it at is larger, since an
+/// ask within one made size gets the very picture asked for already. A
+/// slider dragged through every pixel would otherwise ask each frame
+/// on screen again at each one, and a frame whose root is offline is a
+/// cache lookup each time.
+pub fn asks_again(asked: u32, want: u32) -> bool {
+    made_size(asked) < made_size(want)
 }
 
 /// Whether a picture made at `made` is too small for a cell asking
@@ -271,6 +280,51 @@ pub fn clamp_cell(cell: f32) -> f32 {
     } else {
         CELL
     }
+}
+
+/// The largest cell the grid is laid out at on a sheet `width` wide:
+/// the last of [`STEPS`], or less where two of it would not go across,
+/// so the largest size still sets two frames side by side (a 1366 px
+/// window with the left pane at its widest, 455 px, has 911 for the
+/// sheet: two of 441). Never under the first step; and the last step
+/// before the sheet is laid out, at a width of zero.
+pub fn most(width: f32) -> f32 {
+    let last = STEPS[STEPS.len() - 1];
+    if !width.is_finite() || width <= 0.0 {
+        return last;
+    }
+    let room = width - 2.0 * PAD + GAP;
+    (room / 2.0 - GAP).floor().clamp(STEPS[0], last)
+}
+
+/// The cell the grid lays out for the size asked, on a sheet `width`
+/// wide: held to the range, and no larger than [`most`].
+pub fn laid(cell: f32, width: f32) -> f32 {
+    clamp_cell(cell).min(most(width))
+}
+
+/// Where a cell sits on the tile size slider, 0 at the first step and
+/// 1 at `most`, in proportion rather than in pixels: each step of
+/// [`STEPS`] a similar distance along, as a zoom's steps are.
+pub fn slider_at(cell: f32, most: f32) -> f32 {
+    let least = STEPS[0];
+    if most.is_nan() || most <= least || !cell.is_finite() {
+        return 1.0;
+    }
+    ((cell.max(least) / least).ln() / (most / least).ln()).clamp(0.0, 1.0)
+}
+
+/// The cell at a place on the slider, whole logical pixels: the
+/// inverse of [`slider_at`].
+pub fn slider_cell(at: f32, most: f32) -> f32 {
+    let least = STEPS[0];
+    let most = most.max(least);
+    let at = if at.is_finite() {
+        at.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    (least * (most / least).powf(at)).round().clamp(least, most)
 }
 
 /// A heading row's height, logical pixels: a line of small text and
@@ -955,6 +1009,65 @@ mod tests {
         assert_eq!(clamp_cell(4000.0), 512.0);
         assert_eq!(clamp_cell(1.0), 96.0);
         assert_eq!(clamp_cell(f32::NAN), CELL);
+    }
+
+    /// A frame is asked for again only when the made size grows.
+    #[test]
+    fn a_picture_is_asked_again_once_a_made_size() {
+        assert!(asks_again(176, 220));
+        assert!(!asks_again(220, 221));
+        assert!(!asks_again(220, 256));
+        assert!(asks_again(256, 257));
+        assert!(!asks_again(257, 360));
+        assert!(!asks_again(360, 200));
+    }
+
+    /// The largest cell keeps two across: the last step on a wide
+    /// sheet, two to a row on a narrow one, the first step at the
+    /// least, and no hold before the sheet is laid out.
+    #[test]
+    fn the_most_keeps_two_across() {
+        assert_eq!(most(1260.0), 512.0);
+        // 1366 less the left pane at its widest, 455.
+        assert_eq!(most(911.0), 441.0);
+        assert_eq!(columns(911.0, most(911.0)), 2);
+        for width in [300.0, 640.0, 911.0, 1000.0, 1050.0, 1500.0, 2560.0] {
+            assert!(columns(width, most(width)) >= 2, "{width}");
+            assert!(columns(width, most(width) + 1.0) <= 2 || most(width) == 512.0);
+        }
+        assert_eq!(most(100.0), STEPS[0]);
+        assert_eq!(most(0.0), 512.0);
+        assert_eq!(most(f32::NAN), 512.0);
+        assert_eq!(laid(512.0, 911.0), 441.0);
+        assert_eq!(laid(176.0, 911.0), 176.0);
+        assert_eq!(laid(9999.0, 2560.0), 512.0);
+    }
+
+    /// The slider's place and the cell are each other's inverse, the
+    /// ends the first step and the most, the steps in order along it.
+    #[test]
+    fn the_slider_runs_from_the_least_to_the_most() {
+        for most in [441.0, 512.0] {
+            assert_eq!(slider_at(STEPS[0], most), 0.0);
+            assert_eq!(slider_at(most, most), 1.0);
+            assert_eq!(slider_cell(0.0, most), STEPS[0]);
+            assert_eq!(slider_cell(1.0, most), most);
+            assert_eq!(slider_cell(-3.0, most), STEPS[0]);
+            assert_eq!(slider_cell(7.0, most), most);
+            for cell in STEPS.iter().copied().filter(|&c| c <= most) {
+                assert_eq!(slider_cell(slider_at(cell, most), most), cell, "{cell}");
+            }
+        }
+        // Each step a similar distance on: in proportion, not pixels.
+        let gaps: Vec<f32> = STEPS
+            .windows(2)
+            .map(|w| slider_at(w[1], 512.0) - slider_at(w[0], 512.0))
+            .collect();
+        assert!(gaps.iter().all(|&g| g > 0.12 && g < 0.25), "{gaps:?}");
+        // Over the most, at the end; nothing to slide, at the end.
+        assert_eq!(slider_at(512.0, 441.0), 1.0);
+        assert_eq!(slider_at(96.0, 96.0), 1.0);
+        assert_eq!(slider_cell(f32::NAN, 512.0), 512.0);
     }
 
     /// The strip's size and the grid's cells land on a few made

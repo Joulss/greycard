@@ -568,9 +568,33 @@ export component App inherits Window {
     callback lightbox-changed();
     /// The cell the grid's sheet is laid out at: the lightbox's tiles
     /// while it is on, else the grid's own size, which the lightbox
-    /// leaves alone.
+    /// leaves alone, held to two across the sheet (`grid-most`).
     out property <length> tile-cell: root.lightbox
-        ? root.lightbox-cell(root.grid-w, root.lightbox-across) : root.grid-cell;
+        ? root.lightbox-cell(root.grid-w, root.lightbox-across)
+        : min(root.grid-cell, root.grid-most(root.grid-w));
+    /// The largest the grid's cell is laid out at on a sheet this wide.
+    pure callback grid-most(length) -> length;
+    /// Where the tile size slider's knob sits, 0 to 1: the grid's cell
+    /// between its least and its most, or the lightbox's tiles across.
+    pure callback grid-slider-at(length, length) -> float;
+    pure callback lightbox-slider-at(int) -> float;
+    /// The lightbox's fewest and most tiles across, and the grid's
+    /// least cell, from Rust's constants: the slider's range, and the
+    /// lightbox's intervals it snaps to, one a count across.
+    in property <int> lightbox-fewest: 2;
+    in property <int> lightbox-most: 6;
+    in property <length> grid-least: 96px;
+    /// The slider moved to a place: the grid's cell, or the lightbox's
+    /// tiles across, by which is on.
+    callback tile-size-moved(float);
+    /// Whether the lightbox's bar is up. Out for the tests.
+    in-out property <bool> lightbox-bar-up;
+    /// The lightbox's surround: MONITOR's canvas shade, as behind the
+    /// picture in the loupe (Black, the default, the near black it had
+    /// before it followed the shade).
+    out property <color> lightbox-surround: root.canvas-colors[root.canvas-choice];
+    /// The grid's sheet's ground: its grey, or the lightbox's surround.
+    out property <color> grid-ground: root.lightbox ? root.lightbox-surround : Theme.sheet;
     public function lightbox-enter() {
         if (root.lightbox) { return; }
         root.lightbox-left-was = root.left-hidden;
@@ -4869,6 +4893,20 @@ export component App inherits Window {
         lightbox: root.lightbox;
         lightbox-badges: root.lightbox-badges;
         lightbox-asked => { root.lightbox-enter(); }
+        lightbox-close => { root.lightbox-leave(); }
+        lightbox-ground: root.lightbox-surround;
+        ground: root.grid-ground;
+        bar-up <=> root.lightbox-bar-up;
+        size-at: root.lightbox ? root.lightbox-slider-at(root.lightbox-across)
+            : root.grid-slider-at(root.tile-cell, root.grid-most(root.grid-w));
+        size-steps: root.lightbox ? root.lightbox-most - root.lightbox-fewest : 0;
+        size-least: root.lightbox ? root.lightbox-cell(root.grid-w, root.lightbox-most) : root.grid-least;
+        size-most: root.lightbox ? root.lightbox-cell(root.grid-w, root.lightbox-fewest)
+            : root.grid-most(root.grid-w);
+        size-moved(at) => { root.tile-size-moved(at); }
+        size-stepped(by) => {
+            if (root.lightbox) { root.lightbox-zoom(by); } else { root.grid-zoom(by); }
+        }
         grid-pad: root.grid-pad;
         grid-label: root.grid-label;
         grid-w <=> root.grid-w;
@@ -5633,15 +5671,16 @@ export component App inherits Window {
 
     // The left pane's arrow, over the grid too, at the grid's edge
     // and the window's middle there: the grid keeps the pane, and the
-    // arrow is its way back. Quiet only in the loupe with all three
-    // away, as the others.
+    // arrow is its way back. Quiet in the loupe with all three away,
+    // as the others, and in the lightbox, which shows nothing but the
+    // pictures until the pointer asks; there its ground is the canvas.
     EdgeArrow {
         x: root.left-w;
         y: root.grid-open ? (root.height - self.height) / 2 : root.arrow-top(self.x, root.left-w + root.crop-left);
         width: 16px;
         height: 40px;
-        quiet: root.all-hidden() && !root.grid-open;
-        light-ground: root.canvas-light && !root.grid-open;
+        quiet: (root.all-hidden() && !root.grid-open) || (root.lightbox && root.grid-open);
+        light-ground: root.canvas-light && (!root.grid-open || root.lightbox);
         label: @tr("Left panel");
         words: root.left-hidden ? @tr("Show panel") : @tr("Hide panel");
         icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");

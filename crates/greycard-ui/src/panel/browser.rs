@@ -1288,6 +1288,45 @@ pub(crate) fn reject_count(st: &State) -> usize {
         .count()
 }
 
+/// The tile size slider, the grid header's and the lightbox bar's: its
+/// knob's place asked of `grid` and `lightbox`, its range handed down
+/// from their constants, and a place it is moved to taken as the
+/// grid's cell or the lightbox's tiles across, by which is on. Both
+/// are kept in the settings as the keys' sizes are.
+pub(crate) fn tile_size(app: &App) {
+    app.on_grid_most(grid::most);
+    app.on_grid_slider_at(grid::slider_at);
+    app.on_lightbox_slider_at(crate::lightbox::slider_at);
+    app.set_grid_least(grid::STEPS[0]);
+    app.set_lightbox_fewest(crate::lightbox::FEWEST);
+    app.set_lightbox_most(crate::lightbox::MOST);
+    let weak = app.as_weak();
+    app.on_tile_size_moved(move |at| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if app.get_lightbox() {
+            let across = crate::lightbox::slider_across(at);
+            if across != app.get_lightbox_across() {
+                app.set_lightbox_across(across);
+            }
+        } else {
+            // The right end is the largest step, as plus's last step
+            // is, whatever the sheet holds it to now: a wider window
+            // gives the largest back.
+            let cell = if at >= 1.0 {
+                grid::STEPS[grid::STEPS.len() - 1]
+            } else {
+                grid::slider_cell(at, grid::most(app.get_grid_w()))
+            };
+            if cell != app.get_grid_cell() {
+                app.set_grid_cell(cell);
+                crate::panel::prefs::show_grid_cell(&app);
+            }
+        }
+    });
+}
+
 /// The grid's layout under its headings, asked of the arithmetic in
 /// `grid`: where each frame sits, how far the sheet scrolls, and the
 /// scroll that shows a frame.
@@ -3853,7 +3892,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 };
                 if st.views.thumb_made[i] > 0
                     && grid::wants_bigger(st.views.thumb_made[i], want)
-                    && st.views.thumb_asked[i] < want
+                    && grid::asks_again(st.views.thumb_asked[i], want)
                 {
                     st.views.thumb_asked[i] = want;
                     worker.send(crate::rows::thumb_job(&st, i));
@@ -3956,16 +3995,19 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
         });
     }
     // Ctrl and the wheel, or the plus and minus keys: the cell takes
-    // a step and the grid re-flows.
+    // a step and the grid re-flows. The step is from the cell laid
+    // out, which a narrow sheet holds under the size asked.
     {
         let app_weak = app.as_weak();
         app.on_grid_zoom(move |by| {
             if let Some(app) = app_weak.upgrade() {
-                app.set_grid_cell(grid::zoom(app.get_grid_cell(), by));
+                let laid = grid::laid(app.get_grid_cell(), app.get_grid_w());
+                app.set_grid_cell(grid::zoom(laid, by));
                 crate::panel::prefs::show_grid_cell(&app);
             }
         });
     }
+    tile_size(app);
     // The frames the grid shows, from where it is scrolled: the
     // strip's mechanism over a rectangle rather than a row. A folder
     // of hundreds is never rendered up front; what is on screen
@@ -4015,7 +4057,7 @@ pub(crate) fn install(app: &App, state: &Rc<Shared>, worker: &Rc<Worker>) {
                 let i = st.views.shown[row];
                 if st.views.thumb_made[i] > 0
                     && grid::wants_bigger(st.views.thumb_made[i], want)
-                    && st.views.thumb_asked[i] < want
+                    && grid::asks_again(st.views.thumb_asked[i], want)
                 {
                     st.views.thumb_asked[i] = want;
                     worker.send(crate::rows::thumb_job(&st, i));

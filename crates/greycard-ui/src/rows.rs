@@ -1658,8 +1658,10 @@ pub(crate) fn thumb_job(st: &State, c: usize) -> Job {
 
 /// The roots found offline changed under the list: a frame whose root
 /// came back has its picture asked for again, since a miss in the
-/// cache while it was offline was counted as a failure; every tile's
-/// dimming follows in the rebuild the caller does.
+/// cache while it was offline was counted as a failure, and so has one
+/// whose picture is smaller than the cells want, since a miss at the
+/// larger size left the smaller up; every tile's dimming follows in the
+/// rebuild the caller does.
 pub(crate) fn roots_changed(
     st: &mut State,
     worker: &crate::worker::Worker,
@@ -1671,12 +1673,22 @@ pub(crate) fn roots_changed(
         return;
     }
     let mut again = 0;
+    let want = st.views.thumb_want;
     for c in 0..st.cells.len() {
-        if back.iter().any(|r| st.path_of(c).starts_with(r))
-            && st.views.thumb_failed.get(c) == Some(&true)
-            && st.views.thumb_base.get(c).is_some_and(Option::is_none)
-        {
+        if !back.iter().any(|r| st.path_of(c).starts_with(r)) {
+            continue;
+        }
+        let failed = st.views.thumb_failed.get(c) == Some(&true)
+            && st.views.thumb_base.get(c).is_some_and(Option::is_none);
+        // A picture in hand smaller than the cells want, a larger one
+        // missed in the cache while the root was away.
+        let made = st.views.thumb_made.get(c).copied().unwrap_or(0);
+        let small = made > 0 && crate::grid::wants_bigger(made, want);
+        if failed || small {
             st.views.thumb_failed[c] = false;
+            if small {
+                st.views.thumb_asked[c] = want;
+            }
             worker.send(thumb_job(st, c));
             again += 1;
         }

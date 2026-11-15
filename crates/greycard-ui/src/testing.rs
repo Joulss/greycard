@@ -83,6 +83,7 @@ pub(crate) fn window(count: usize) -> App {
     app.on_grid_tiles_top(grid::tiles_top);
     app.on_grid_common_pitch(grid::common_pitch);
     app.on_lightbox_cell(crate::lightbox::cell);
+    crate::panel::browser::tile_size(&app);
     app.on_tab_panes(crate::panes::tab);
     app.on_bar_length(grid::bar_length);
     app.on_bar_offset(grid::bar_offset);

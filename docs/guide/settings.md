@@ -108,8 +108,11 @@ while the bar is off.
 ### Cell size
 
 The grid's cell, in pixels, from 96 to 512; 176 by default. Type a
-size and press Enter, or close the sheet. **Ctrl+wheel**, **+** and
-**−** change it too, and the row shows where they left it.
+size and press Enter, or close the sheet. The grid header's **Tile
+size** slider, **Ctrl+wheel**, **+**, and **−** change it too, and the
+row shows where they left it. On a window too narrow for two frames
+across at this size, the grid lays them out smaller and its header
+shows that size; the row keeps the one you set.
 
 ### Resize with the wheel
 

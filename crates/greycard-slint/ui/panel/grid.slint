@@ -4,9 +4,48 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile, SortMenu, GridHead, GridPlace } from "../structs.slint";
-import { NameTip, PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
+import { ButtonKeys, NameTip, PanelButton, ScrollBand, SizeSlider, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag, TipArea } from "../controls.slint";
 import { FilterBar, SortButton } from "filter.slint";
 import { LoadingCard } from "loading.slint";
+
+// A button on the lightbox's bar: an icon alone on the bar's dark
+// plate, in the plate's own colors in every theme, its words at the
+// pointer after a rest.
+component BarButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> words;
+    in property <string> label;
+    callback clicked();
+    out property <bool> hovered: ta.has-hover;
+    out property <bool> focused: fs.has-focus;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    width: Theme.control-height;
+    height: Theme.control-height;
+    border-radius: Theme.radius-md;
+    background: ta.pressed ? #ffffff33 : ta.has-hover ? #ffffff1f : transparent;
+    border-width: fs.has-focus ? 2px : 0;
+    border-color: Theme.accent;
+    animate background { duration: Theme.quick; }
+    Image {
+        source: root.icon;
+        colorize: Theme.over-text;
+        width: Theme.icon;
+        height: Theme.icon;
+    }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            return ButtonKeys.pass(e) ? accept : reject;
+        }
+    }
+    ta := TipArea {
+        words: root.words;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
 
 export component GridSheet inherits Rectangle {
     /// Every row, for the header; the cells are drawn from `cells`,
@@ -71,6 +110,80 @@ export component GridSheet inherits Rectangle {
     in property <bool> lightbox-badges;
     /// The header's Lightbox button.
     callback lightbox-asked();
+    /// The bar's close: out of the lightbox to the grid, as L.
+    callback lightbox-close();
+    /// The lightbox's surround: MONITOR's canvas shade, the viewport's
+    /// own. What is drawn on it straight (the rings, a tile's word, the
+    /// badges' plates, the bar's scrim) reads its lightness.
+    in property <color> lightbox-ground: #0f0f0f;
+    /// The sheet's ground as the window works it out: the grid's grey,
+    /// or the lightbox's surround. Drawn as it is, with no choice here.
+    in property <color> ground;
+    property <float> ground-value: root.lightbox-ground.to-hsv().value;
+    /// White: the rings in the dark blue, the plates denser.
+    property <bool> ground-light: root.ground-value > 0.5;
+    /// The greys between black and white, where the quiet word takes
+    /// a lighter grey to stay read.
+    property <bool> ground-mid: root.ground-value > 0.12 && !root.ground-light;
+    /// The tiles' size: where the slider's knob sits (0 to 1), the
+    /// intervals it snaps to (none for a slider that does not), the
+    /// size in logical pixels and its range, for a screen reader. The
+    /// window works each out for the grid or the lightbox.
+    in property <float> size-at;
+    in property <int> size-steps;
+    in property <length> size-least;
+    in property <length> size-most;
+    /// The slider moved to a place, or a step asked by its keys.
+    callback size-moved(float);
+    callback size-stepped(int);
+    /// The lightbox's bar: close, the count, and the tiles' size, over
+    /// the top of the sheet on a scrim. Up when the pointer moves over
+    /// the sheet (or a finger or a pen touches it, having no hover),
+    /// and as the lightbox opens, so it is seen once; down after
+    /// `bar-rest` with the pointer still, unless the pointer is on it
+    /// or one of its controls is held or has the keys.
+    in-out property <bool> bar-up;
+    in property <duration> bar-rest: 2s;
+    property <length> bar-h: Theme.control-height + 2 * Theme.space-2;
+    /// The pointer still over the bar's strip of the sheet: the move
+    /// that woke the bar landed there, and the bar, come up under it,
+    /// has heard nothing of the pointer since.
+    property <bool> bar-under: sheet-ta.has-hover && root.seen-y >= 0 && root.seen-y < root.bar-h;
+    /// Where the pointer was over the sheet, down from its top, at the
+    /// last event seen: kept rather than worked out from the scroll, so
+    /// a scroll by the keys under a still pointer does not move it.
+    property <length> seen-y: -1px;
+    property <bool> bar-held: bar-ta.has-hover || root.bar-under || bar-close.hovered
+        || bar-close.focused || bar-size.held || bar-size.focused || bar-size.hovered;
+    function bar-wake() {
+        if (!root.lightbox) { return; }
+        root.bar-up = true;
+        bar-timer.running = true;
+        bar-timer.restart();
+    }
+    bar-timer := Timer {
+        interval: root.bar-rest;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (!root.bar-held) { root.bar-up = false; }
+        }
+    }
+    // Let go of (the pointer off it, the drag over, the keys gone): the
+    // rest starts again from here.
+    changed bar-held => { if (!root.bar-held && root.bar-up) { root.bar-wake(); } }
+    changed lightbox => {
+        if (root.lightbox) { root.bar-wake(); } else { root.bar-up = false; }
+    }
+    init => {
+        if (root.lightbox) { root.bar-wake(); } else { root.bar-up = false; }
+    }
+    /// A pointer's event over the sheet: a move, or a press, wakes the
+    /// lightbox's bar.
+    function pointer-seen(e: PointerEvent) {
+        root.seen-y = sheet-ta.mouse-y - root.grid-scroll;
+        if (e.kind == PointerEventKind.move || e.kind == PointerEventKind.down) { root.bar-wake(); }
+    }
     /// The rows are a collection's own order, which a drag changes.
     in property <bool> reorder;
     /// A frame dragged from its row to before the row of the slot, or
@@ -248,7 +361,7 @@ export component GridSheet inherits Rectangle {
     in property <float> loading-fraction;
     in property <string> loading-line;
 
-    background: root.lightbox ? Theme.lightbox : Theme.sheet;
+    background: root.ground;
     // Nothing may fall through to the viewport behind, the wheel
     // over the header least of all: it would zoom a picture that
     // is not on screen, or size the brush in hand.
@@ -375,6 +488,21 @@ export component GridSheet inherits Rectangle {
                         color: Theme.text-muted;
                         font-size: Theme.font-xs;
                         vertical-alignment: center;
+                    }
+                    // The cells' size, beside the size in words: the
+                    // lightbox's bar has the same slider for its tiles.
+                    SizeSlider {
+                        width: 96px;
+                        label: @tr("Tile size");
+                        words: @tr("Tile size");
+                        value: root.size-at;
+                        steps: root.size-steps;
+                        shown: root.grid-cell / 1px;
+                        least: root.size-least / 1px;
+                        most: root.size-most / 1px;
+                        moved(at) => { root.size-moved(at); }
+                        stepped(by) => { root.size-stepped(by); }
+                        released => { root.focus-keys(); }
                     }
                     if root.archive-text != "": archive-button := PanelButton {
                         text: root.archive-text;
@@ -516,14 +644,14 @@ export component GridSheet inherits Rectangle {
             // and it rises to this, its parent, wherever the
             // pointer is. One offset moves the sheet, rather than
             // a binding on every cell.
-            TouchArea {
+            sheet-ta := TouchArea {
                 y: -root.grid-scroll;
                 width: parent.width;
                 // The sheet, or the window's worth of it when
                 // the folder is short: what can be scrolled past
                 // is exactly how far it scrolls.
                 height: parent.height + root.grid-max;
-                pointer-event(e) => { root.side-press(e); }
+                pointer-event(e) => { root.pointer-seen(e); root.side-press(e); }
                 scroll-event(e) => {
                     // A sideways wheel is nobody's here, and with
                     // Ctrl it would zoom out on a delta of zero.
@@ -708,7 +836,10 @@ export component GridSheet inherits Rectangle {
                     // (unlike `hover` itself) being translucent too.
                     background: t.label == 0 || root.lightbox ? transparent : Theme.plate-tint(Theme.sheet, t.label);
                     border-width: on ? 2px : (in-set ? 1px : 0);
-                    border-color: on ? Theme.accent : Theme.accent-muted;
+                    // On a white surround the blue is lost: the dark one.
+                    border-color: root.lightbox && root.ground-light
+                        ? (on ? Theme.accent-dark : Theme.accent-dark-muted)
+                        : (on ? Theme.accent : Theme.accent-muted);
                     Rectangle {
                         x: 0;
                         y: 0;
@@ -767,7 +898,9 @@ export component GridSheet inherits Rectangle {
                         height: parent.height;
                         // A tile's word while its picture is made
                         text: @tr("Developing");
-                        color: Theme.dark-muted;
+                        // 4:1 on black and 4.7:1 on white; the greys
+                        // between take the lighter one, 4:1 and up.
+                        color: root.ground-mid ? Theme.over-text-secondary : Theme.dark-muted;
                         font-size: Theme.font-xs;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -872,6 +1005,7 @@ export component GridSheet inherits Rectangle {
                         label: t.label;
                         stars: root.meta-stars;
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                        light-ground: root.ground-light;
                     }
                     if !root.lightbox: ThumbMarks {
                         // On the picture's top right corner, held
@@ -958,6 +1092,7 @@ export component GridSheet inherits Rectangle {
                             }
                         }
                         pointer-event(e) => {
+                            root.pointer-seen(e);
                             if (e.kind == PointerEventKind.down) { self.downs += 1; }
                             if (root.side-press(e)) { return; }
                             if (e.kind == PointerEventKind.cancel) {
@@ -1056,6 +1191,7 @@ export component GridSheet inherits Rectangle {
                         place: t.stack-place;
                         open: t.stack-open;
                         glyph: clamp(parent.width / 24, 9px, 18px);
+                        light-ground: root.ground-light;
                         clicked => {
                             root.focus-keys();
                             root.stack-clicked(i);
@@ -1077,7 +1213,11 @@ export component GridSheet inherits Rectangle {
                 }
             }
             // The scroll bar, over the cells at the sheet's right edge.
-            ScrollBand {
+            // A move over it wakes the lightbox's bar as one over the
+            // cells does.
+            property <length> band-y: band.mouse-y;
+            changed band-y => { root.bar-wake(); }
+            band := ScrollBand {
                 x: parent.width - Theme.scrollbar-band;
                 width: Theme.scrollbar-band;
                 height: parent.height;
@@ -1118,6 +1258,87 @@ export component GridSheet inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 fraction: root.loading-fraction;
                 line: root.loading-line;
+            }
+            // The lightbox's bar, over the sheet's top on its own scrim,
+            // so the tiles stay where they are as it comes and goes:
+            // close at the left, the selection and the count in the
+            // grid header's words in the middle, the tiles' size at the
+            // right. Faded out, it takes no press; the sheet under it
+            // wakes it.
+            // Short of the scroll bar's band, whose thumb and track stay
+            // the band's under it.
+            bar := Rectangle {
+                property <length> side: 160px;
+                y: 0;
+                width: parent.width - Theme.scrollbar-band;
+                height: root.bar-h;
+                visible: root.lightbox && (root.bar-up || self.opacity > 0);
+                opacity: root.bar-up ? 1 : 0;
+                animate opacity { duration: root.bar-up ? 120ms : 400ms; easing: ease-out; }
+                // The viewport's plates' scrim, denser on a white canvas.
+                background: root.ground-light ? Theme.over-plate-dense : #00000099;
+                bar-ta := TouchArea {
+                    pointer-event(e) => { root.side-press(e); }
+                    scroll-event(e) => {
+                        if (e.delta-y == 0px) { return reject; }
+                        root.grid-wheel(e.delta-y, e.modifiers.control);
+                        return accept;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-4;
+                    padding-right: Theme.space-4;
+                    padding-top: Theme.space-2;
+                    padding-bottom: Theme.space-2;
+                    spacing: Theme.space-3;
+                    HorizontalLayout {
+                        width: bar.side;
+                        alignment: start;
+                        bar-close := BarButton {
+                            icon: @image-url("../icons/x.svg");
+                            label: @tr("Close lightbox");
+                            // The key in brackets after the words, as
+                            // the View menu's Full screen (F11) shows
+                            // one; outside `@tr` here, where that one
+                            // is inside it, so the words translate
+                            // alone and the key is the same in every
+                            // language.
+                            words: @tr("Close lightbox") + " (L)";
+                            clicked => { root.focus-keys(); root.lightbox-close(); }
+                        }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        // The grid header's own words: the frame on
+                        // screen, or it and the rest of the set, and
+                        // how many frames the view has.
+                        text: (root.selected >= 0 && root.selected < root.thumbs.length
+                                ? (root.set-count > 1
+                                    ? @tr("{} and {n} other" | "{} and {n} others" % (root.set-count - 1), root.thumbs[root.selected].name)
+                                    : root.thumbs[root.selected].name) + " · "
+                                : "")
+                            + @tr("{n} frame" | "{n} frames" % root.thumbs.length);
+                        color: Theme.over-text;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    bar-size := SizeSlider {
+                        width: bar.side;
+                        over: true;
+                        label: @tr("Tile size");
+                        words: @tr("Tile size");
+                        value: root.size-at;
+                        steps: root.size-steps;
+                        shown: root.grid-cell / 1px;
+                        least: root.size-least / 1px;
+                        most: root.size-most / 1px;
+                        moved(at) => { root.size-moved(at); }
+                        stepped(by) => { root.size-stepped(by); }
+                        released => { root.focus-keys(); }
+                    }
+                }
             }
         }
     }

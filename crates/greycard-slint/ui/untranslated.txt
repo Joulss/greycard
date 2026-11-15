@@ -58,6 +58,7 @@
 # Keys, as a hint names them.
 "C"
 "S"
+" (L)"
 # Color spaces, channels, file formats, and forms of a value.
 "R/G"
 "RGB"

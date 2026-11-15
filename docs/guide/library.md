@@ -37,8 +37,8 @@ own and leaves the window alone.
   along the bottom holds the rest of the folder.
 - The **grid** fills the window with thumbnails, for browsing and
   sorting a whole shoot.
-- The **lightbox** lays the frames out large and as edited on a dark
-  ground, for judging a set side by side. Press **L**. See
+- The **lightbox** lays the frames out large and as edited on the
+  canvas, for judging a set side by side. Press **L**. See
   [the lightbox](culling.md#the-lightbox).
 
 **Library** and **Loupe** at the top of the left pane switch
@@ -73,10 +73,12 @@ In the grid:
 - The scroll bar down the right edge, and the one under the
   filmstrip, show where you are in the folder; drag either, or click
   its track to page.
-- **Ctrl+wheel**, or **+** and **−**, change the cell size. They step
-  through six sizes, from 96 to 512 px; the header shows the current
-  one, and greycard remembers it. To set any size between, or to stop
-  the wheel resizing, see [Settings](settings.md#cell-size).
+- The **Tile size** slider in the header, beside the size in pixels,
+  sets the cell size anywhere from 96 to 512 px. **Ctrl+wheel**, or
+  **+** and **−**, step it through six sizes, and the slider follows.
+  On a narrow window the largest size is held to two frames across.
+  greycard remembers the size. To type one, or to stop the wheel
+  resizing, see [Settings](settings.md#cell-size).
 - A color label tints the whole cell in the grid. In the filmstrip it
   shows as a thin colored line under the thumbnail.
 - A frame greycard can't read says **Unreadable**.

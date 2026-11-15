@@ -136,9 +136,6 @@ export global Theme {
     // frame is judged against a neutral. A cell's hover and its
     // selection still step from it.
     out property <color> sheet: now.sheet;
-    // The lightbox's surround: pictures alone, so the same near black
-    // whatever the theme.
-    out property <color> lightbox: #0f0f0f;
 
     // Text.
     out property <color> text: now.text;
@@ -156,8 +153,9 @@ export global Theme {
     // denser so the same words keep their contrast; and the dark ring
     // round a light swatch chosen.
     out property <color> over-plate-dense: #000000cc;
-    // Charcoal's muted words and marks, on grounds dark in every theme
-    // (the histogram's, the lightbox's), and the clipping marks' ink.
+    // Charcoal's muted words and marks, on grounds the same in every
+    // theme (the histogram's; the lightbox's canvas when it is black or
+    // white, 4:1 and 4.7:1), and the clipping marks' ink.
     out property <color> dark-muted: #737373;
     out property <color> scope-ink: #0f0f0f;
     // Focus peaking's paint over the picture, the same in every
@@ -171,6 +169,11 @@ export global Theme {
     out property <color> accent-hover: #8dbbff;
     out property <color> accent-pressed: #5b95ec;
     out property <color> accent-muted: #6ea8ff40;
+    // The accent on a ground light in every theme (the lightbox on a
+    // white canvas), where the blue itself is lost: Light's darker
+    // blue, 8.6:1 on white, and its muted ring.
+    out property <color> accent-dark: #174a96;
+    out property <color> accent-dark-muted: #174a9666;
     // A chosen row's fill and the keyboard's focus: the blue on the
     // dark themes, darker on Light, where it would not show.
     out property <color> selection: now.selection;

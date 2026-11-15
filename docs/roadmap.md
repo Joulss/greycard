@@ -1196,12 +1196,6 @@ clears or a tester asks for it.
 #### User Requests
 
 - [ ] MIDI Controller support
-- [ ] Zoom bar for grid and lightbox
-- [ ] The lightbox reads as unfinished: nothing on screen says how to
-      leave it or size its tiles. A bar that comes up when the pointer
-      moves and fades at rest: close, the frame count, the tile size
-      (the zoom bar above), and the surround following MONITOR's
-      Canvas shade in place of the fixed near black (2026-11-14)
 - [ ] HEIC/HEIF as pictures: HEVC is patent-encumbered, so nothing of
       ours ships a decoder; macOS through ImageIO, Linux and Windows
       through a libheif found at runtime and loaded by name as ONNX

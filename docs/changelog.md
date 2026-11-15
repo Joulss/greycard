@@ -67,6 +67,11 @@ design note behind it.
   where no English label is cut
   ([§672](https://github.com/jessolmstead/greycard/blob/master/docs/notes/672-the-panels-label-column-grows-with-the-panel.md),
   [§675](https://github.com/jessolmstead/greycard/blob/master/docs/notes/675-the-develop-panel-starts-at-334-px.md)).
+- The lightbox has a bar that comes up when the pointer moves and
+  fades at rest: a close button, the frame count, and a tile size
+  slider. The grid's header has the same slider for its cells. The
+  lightbox's surround follows MONITOR's Canvas shade
+  ([§676](https://github.com/jessolmstead/greycard/blob/master/docs/notes/676-the-lightboxs-bar-the-tile-size-slider-and-the-canvas-surround.md)).
 - A screen reader hears the panel's toggles, buttons, and section
   switches by name, with on or off and whether they are disabled
   ([§673](https://github.com/jessolmstead/greycard/blob/master/docs/notes/673-white-balance-rests-on-a-monochrome-frame.md)).

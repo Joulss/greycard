@@ -76,6 +76,22 @@ pub fn step(across: i32, by: i32) -> i32 {
     (across - by).clamp(FEWEST, MOST)
 }
 
+/// Where `across` sits on the tile size slider: the most tiles across
+/// (the smallest) at 0, the fewest (the largest) at 1.
+pub fn slider_at(across: i32) -> f32 {
+    (MOST - held(across)) as f32 / (MOST - FEWEST) as f32
+}
+
+/// The tiles across at a place on the slider: the nearest count.
+pub fn slider_across(at: f32) -> i32 {
+    let at = if at.is_finite() {
+        at.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    MOST - (at * (MOST - FEWEST) as f32).round() as i32
+}
+
 /// The size to ask for a tile's picture at: the tile's box is the cell
 /// and the room a name would take under it, which a tall frame fills,
 /// in physical pixels; the least of [`SIZES`] that covers it.
@@ -578,6 +594,9 @@ pub(crate) fn install(app: &App, state: &std::rc::Rc<crate::Shared>, worker: &st
 }
 
 #[cfg(test)]
+mod bar;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
@@ -656,6 +675,24 @@ mod tests {
         assert_eq!(step(FEWEST, 1), FEWEST);
         assert_eq!(step(MOST, -1), MOST);
         assert!(cell(1500.0, step(4, 1)) > cell(1500.0, 4));
+    }
+
+    /// The slider's place for each count across and back: the most
+    /// across at the left, the fewest at the right, the nearest count
+    /// between.
+    #[test]
+    fn the_slider_runs_from_the_most_across_to_the_fewest() {
+        assert_eq!(slider_at(MOST), 0.0);
+        assert_eq!(slider_at(FEWEST), 1.0);
+        for across in FEWEST..=MOST {
+            assert_eq!(slider_across(slider_at(across)), across);
+        }
+        assert_eq!(slider_across(0.3), MOST - 1);
+        assert_eq!(slider_across(0.45), ACROSS);
+        assert_eq!(slider_across(-1.0), MOST);
+        assert_eq!(slider_across(2.0), FEWEST);
+        assert_eq!(slider_across(f32::NAN), MOST);
+        assert_eq!(slider_at(99), 0.0, "held to the range");
     }
 
     #[test]

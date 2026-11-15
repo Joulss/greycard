@@ -52,6 +52,9 @@ export component TipArea inherits TouchArea {
     callback down(PointerEvent);
     /// A release of any button.
     callback up(PointerEvent);
+    /// A press that ends with no release: the grab lost (the window
+    /// left, another took the pointer).
+    callback canceled();
     changed has-hover => { if (!root.has-hover) { root.untip(); } }
     pointer-event(e) => {
         if (e.kind == PointerEventKind.down) {
@@ -59,6 +62,8 @@ export component TipArea inherits TouchArea {
             root.down(e);
         } else if (e.kind == PointerEventKind.up) {
             root.up(e);
+        } else if (e.kind == PointerEventKind.cancel) {
+            root.canceled();
         }
     }
 }
@@ -2063,12 +2068,15 @@ export component ThumbStack inherits Rectangle {
     in property <int> place;
     in property <bool> open;
     in property <length> glyph: 9px;
+    /// Over a light surround rather than a picture: the denser scrim
+    /// at rest too.
+    in property <bool> light-ground: false;
     callback clicked();
     visible: root.count > 1;
     width: row.preferred-width;
     height: root.glyph + 6px;
     border-radius: Theme.radius-sm;
-    background: touch.has-hover ? #000000cc : #00000080;
+    background: touch.has-hover || root.light-ground ? Theme.over-plate-dense : #00000080;
     accessible-role: button;
     accessible-label: root.open
         // Spoken by a screen reader: a thumbnail's stack badge
@@ -2130,6 +2138,115 @@ export component ThumbTag inherits Rectangle {
         font-size: root.glyph + 1px;
         vertical-alignment: center;
         overflow: elide;
+    }
+}
+
+// The tiles' size, the grid's and the lightbox's: a short track and a
+// knob, no words (the grid's header says the size beside it, the
+// lightbox shows it). `value` is where the knob sits, 0 to 1, which
+// the host works out; a press on the track jumps there and a drag
+// follows, each place handed back through `moved`, snapped to `steps`
+// intervals when there are any (the lightbox's tiles across). With
+// the keys, the arrows take a step each way through `stepped`, the
+// host's own plus and minus, and Home and End the ends; every other
+// key goes on to the window. `over` paints it for a dark plate over
+// the pictures rather than the header's surface. A screen reader
+// hears the size in logical pixels between `least` and `most`.
+export component SizeSlider inherits Rectangle {
+    in property <float> value;
+    in property <int> steps: 0;
+    in property <bool> over: false;
+    in property <string> label;
+    in property <string> words;
+    in property <float> shown;
+    in property <float> least;
+    in property <float> most;
+    callback moved(float);
+    callback stepped(int);
+    /// The press let go: the host hands the keys back.
+    callback released();
+    /// A drag under way, the keys held, the pointer over it.
+    out property <bool> held: ta.pressed;
+    out property <bool> focused: fs.has-focus;
+    out property <bool> hovered: ta.has-hover;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value: round(root.shown);
+    accessible-value-minimum: root.least;
+    accessible-value-maximum: root.most;
+    // A screen reader's step: a snapping slider's interval, on average,
+    // or a whole pixel.
+    accessible-value-step: root.steps > 0 ? (root.most - root.least) / root.steps : 1;
+    accessible-action-increment => { root.stepped(1); }
+    accessible-action-decrement => { root.stepped(-1); }
+    height: Theme.control-height;
+    property <length> knob: 12px;
+    property <length> track-x: root.knob / 2;
+    property <length> track-w: max(1px, root.width - root.knob);
+    property <float> at: clamp(root.value, 0, 1);
+    property <bool> active: ta.has-hover || ta.pressed || fs.has-focus;
+    function to(x: length) {
+        let f = clamp((x - root.track-x) / root.track-w, 0, 1);
+        root.moved(root.steps > 0 ? round(f * root.steps) / root.steps : f);
+    }
+    // The steps' marks, under the track, for a slider that snaps.
+    for s in root.steps > 0 ? root.steps + 1 : 0: Rectangle {
+        x: root.track-x + s / root.steps * root.track-w - 1px;
+        y: (root.height - self.height) / 2;
+        width: 2px;
+        height: 8px;
+        border-radius: 1px;
+        background: root.over ? Theme.over-track : Theme.border-strong;
+    }
+    Rectangle {
+        x: root.track-x;
+        width: root.track-w;
+        y: (root.height - self.height) / 2;
+        height: root.active ? 5px : 4px;
+        border-radius: self.height / 2;
+        background: root.over ? Theme.over-track : Theme.border-strong;
+        animate height { duration: Theme.quick; }
+        Rectangle {
+            x: 0;
+            width: root.at * parent.width;
+            height: 100%;
+            border-radius: parent.border-radius;
+            background: ta.pressed ? Theme.accent-pressed : root.active ? Theme.accent-hover : Theme.accent;
+        }
+    }
+    Rectangle {
+        x: root.track-x + root.at * root.track-w - self.width / 2;
+        y: (root.height - self.height) / 2;
+        width: root.active ? root.knob + 2px : root.knob;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.over ? Theme.over-text : ta.pressed ? Theme.text-strong : Theme.text;
+        border-width: fs.has-focus ? 2px : 0;
+        border-color: root.over ? Theme.accent : Theme.focus-ring;
+        animate width { duration: Theme.quick; }
+    }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.RightArrow || e.text == Key.UpArrow) { root.stepped(1); return accept; }
+            if (e.text == Key.LeftArrow || e.text == Key.DownArrow) { root.stepped(-1); return accept; }
+            if (e.text == Key.Home) { root.moved(0); return accept; }
+            if (e.text == Key.End) { root.moved(1); return accept; }
+            return ButtonKeys.pass(e) ? accept : reject;
+        }
+    }
+    ta := TipArea {
+        words: root.words;
+        mouse-cursor: MouseCursor.pointer;
+        down(e) => {
+            if (e.button == PointerEventButton.left) {
+                fs.focus();
+                root.to(self.mouse-x);
+            }
+        }
+        moved => { if (self.pressed) { root.to(self.mouse-x); } }
+        up(e) => { if (e.button == PointerEventButton.left) { root.released(); } }
+        // A press that never comes up hands the keys back all the same.
+        canceled => { root.released(); }
     }
 }
 
